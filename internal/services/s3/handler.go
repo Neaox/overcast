@@ -30,6 +30,10 @@ type Handler struct {
 	clk   clock.Clock
 	bus   *events.Bus
 
+	// lifecycle caches every bucket's lifecycle configuration so the object
+	// routes cost an atomic load rather than a store read. See lifecycle.go.
+	lifecycle lifecycleIndex
+
 	bucketGetRoutes    []s3Route
 	bucketPutRoutes    []s3Route
 	bucketDeleteRoutes []s3Route

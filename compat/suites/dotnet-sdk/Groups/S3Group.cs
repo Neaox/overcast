@@ -1,3 +1,4 @@
+using Amazon.S3;
 using Amazon.S3.Model;
 using OvercastCompat.Clients;
 using OvercastCompat.Harness;
@@ -35,6 +36,10 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         ["GetBucketWebsite"] = GetBucketWebsiteAsync,
         ["PutBucketCors"] = PutBucketCorsAsync,
         ["GetBucketCors"] = GetBucketCorsAsync,
+        ["PutBucketLifecycleConfiguration"] = PutBucketLifecycleConfigurationAsync,
+        ["GetBucketLifecycleConfiguration"] = GetBucketLifecycleConfigurationAsync,
+        ["DeleteBucketLifecycle"] = DeleteBucketLifecycleAsync,
+        ["GetBucketLifecycleConfigurationAfterDelete"] = GetBucketLifecycleConfigurationAfterDeleteAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Setups() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
@@ -46,6 +51,7 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         ["s3-tagging"] = SetupTaggingAsync,
         ["s3-website"] = SetupWebsiteAsync,
         ["s3-cors"] = SetupCorsAsync,
+        ["s3-lifecycle"] = SetupLifecycleAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Teardowns() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
@@ -61,6 +67,7 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         ["s3-tagging"] = context => EmptyAndDeleteBucketAsync(context.GetString("s3TagBucket")),
         ["s3-website"] = context => EmptyAndDeleteBucketAsync(context.GetString("s3WebBucket")),
         ["s3-cors"] = context => EmptyAndDeleteBucketAsync(context.GetString("s3CorsBucket")),
+        ["s3-lifecycle"] = TeardownLifecycleAsync,
     };
 
     private async Task SetupCrudAsync(TestContext context)
@@ -448,6 +455,113 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         var bucket = context.GetString("s3CorsBucket") ?? throw new InvalidOperationException("s3CorsBucket not set");
         var resp = await clients.S3().GetCORSConfigurationAsync(new GetCORSConfigurationRequest { BucketName = bucket });
         Assertions.True((resp.Configuration?.Rules?.Count ?? 0) > 0, "GetBucketCors: no CORS rules found");
+    }
+
+    private async Task SetupLifecycleAsync(TestContext context)
+    {
+        var bucket = $"{context.RunId}-s3lifecycle";
+        await clients.S3().PutBucketAsync(new PutBucketRequest { BucketName = bucket });
+        context.Set("s3LifecycleBucket", bucket);
+    }
+
+    private async Task TeardownLifecycleAsync(TestContext context)
+    {
+        var bucket = context.GetString("s3LifecycleBucket");
+        if (string.IsNullOrWhiteSpace(bucket)) return;
+        try
+        {
+            await clients.S3().DeleteLifecycleConfigurationAsync(
+                new DeleteLifecycleConfigurationRequest { BucketName = bucket });
+        }
+        catch (Exception)
+        {
+            // Best-effort: a failure here must not stop the bucket being removed.
+        }
+        await EmptyAndDeleteBucketAsync(bucket);
+    }
+
+    /// <summary>
+    /// Returns the stored rule with the given ID. Matching on the ID rather than
+    /// taking the first rule back keeps the assertion about this group's own rule.
+    /// </summary>
+    private async Task<LifecycleRule> LifecycleRuleAsync(string bucket, string id)
+    {
+        var resp = await clients.S3().GetLifecycleConfigurationAsync(
+            new GetLifecycleConfigurationRequest { BucketName = bucket });
+        var rules = resp.Configuration?.Rules ?? [];
+        var rule = rules.FirstOrDefault(r => r.Id == id);
+        Assertions.NotNull(rule, $"lifecycle rule {id} among {rules.Count} rules");
+        return rule!;
+    }
+
+    private async Task PutBucketLifecycleConfigurationAsync(TestContext context)
+    {
+        var bucket = context.GetString("s3LifecycleBucket") ?? throw new InvalidOperationException("s3LifecycleBucket not set");
+        await clients.S3().PutLifecycleConfigurationAsync(new PutLifecycleConfigurationRequest
+        {
+            BucketName = bucket,
+            Configuration = new LifecycleConfiguration
+            {
+                Rules =
+                [
+                    new LifecycleRule
+                    {
+                        Id = "expire-logs",
+                        Status = LifecycleRuleStatus.Enabled,
+                        Filter = new LifecycleFilter
+                        {
+                            LifecycleFilterPredicate = new LifecyclePrefixPredicate { Prefix = "logs/" },
+                        },
+                        Expiration = new LifecycleRuleExpiration { Days = 30 },
+                        Transitions =
+                        [
+                            new LifecycleTransition
+                            {
+                                Days = 7,
+                                StorageClass = S3StorageClass.Glacier,
+                            },
+                        ],
+                    },
+                ],
+            },
+        });
+
+        var rule = await LifecycleRuleAsync(bucket, "expire-logs");
+        Assertions.Equal(30, rule.Expiration?.Days ?? 0, "PutBucketLifecycleConfiguration: expiration days mismatch");
+    }
+
+    private async Task GetBucketLifecycleConfigurationAsync(TestContext context)
+    {
+        var bucket = context.GetString("s3LifecycleBucket") ?? throw new InvalidOperationException("s3LifecycleBucket not set");
+        var rule = await LifecycleRuleAsync(bucket, "expire-logs");
+        Assertions.Equal(LifecycleRuleStatus.Enabled, rule.Status, "GetBucketLifecycleConfiguration: status mismatch");
+        var prefix = (rule.Filter?.LifecycleFilterPredicate as LifecyclePrefixPredicate)?.Prefix ?? "";
+        Assertions.Equal("logs/", prefix, "GetBucketLifecycleConfiguration: filter prefix mismatch");
+        Assertions.True((rule.Transitions?.Count ?? 0) > 0, "GetBucketLifecycleConfiguration: no transitions returned");
+        Assertions.Equal(S3StorageClass.Glacier, rule.Transitions![0].StorageClass, "GetBucketLifecycleConfiguration: transition storage class mismatch");
+    }
+
+    private async Task DeleteBucketLifecycleAsync(TestContext context)
+    {
+        var bucket = context.GetString("s3LifecycleBucket") ?? throw new InvalidOperationException("s3LifecycleBucket not set");
+        await clients.S3().DeleteLifecycleConfigurationAsync(new DeleteLifecycleConfigurationRequest { BucketName = bucket });
+    }
+
+    private async Task GetBucketLifecycleConfigurationAfterDeleteAsync(TestContext context)
+    {
+        var bucket = context.GetString("s3LifecycleBucket") ?? throw new InvalidOperationException("s3LifecycleBucket not set");
+        try
+        {
+            var resp = await clients.S3().GetLifecycleConfigurationAsync(
+                new GetLifecycleConfigurationRequest { BucketName = bucket });
+            throw new InvalidOperationException(
+                $"GetBucketLifecycleConfigurationAfterDelete: expected an error, got {resp.Configuration?.Rules?.Count ?? 0} rules");
+        }
+        catch (AmazonS3Exception e)
+        {
+            Assertions.Equal("NoSuchLifecycleConfiguration", e.ErrorCode ?? "",
+                "GetBucketLifecycleConfigurationAfterDelete: unexpected error code");
+        }
     }
 
     private async Task TeardownMultipartAsync(TestContext context)

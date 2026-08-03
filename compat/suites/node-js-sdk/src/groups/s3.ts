@@ -9,6 +9,7 @@
  *   s3-tagging    — object + bucket tagging (TODO: P2)
  *   s3-website    — static website config (not implemented)
  *   s3-cors       — CORS configuration (not implemented)
+ *   s3-lifecycle  — bucket lifecycle rules
  */
 
 import {
@@ -37,6 +38,9 @@ import {
   GetBucketWebsiteCommand,
   PutBucketCorsCommand,
   GetBucketCorsCommand,
+  PutBucketLifecycleConfigurationCommand,
+  GetBucketLifecycleConfigurationCommand,
+  DeleteBucketLifecycleCommand,
 } from "@aws-sdk/client-s3";
 import { makeClients } from "../lib/clients.js";
 import type { TestGroup } from "../lib/harness.js";
@@ -813,6 +817,115 @@ export function makeS3Groups(suite: string): TestGroup[] {
         try {
           await s3.send(
             new DeleteBucketCommand({ Bucket: `${ctx.runId}-s3-cors` }),
+          );
+        } catch {}
+      },
+    },
+
+    // ── s3-lifecycle ───────────────────────────────────────────────────────
+    {
+      suite,
+      service: "s3",
+      name: "s3-lifecycle",
+      tests: [
+        {
+          name: "PutBucketLifecycleConfiguration",
+          fn: async (ctx) => {
+            const { s3 } = makeClients(ctx);
+            const bucket = `${ctx.runId}-s3-lifecycle`;
+            await s3.send(
+              new PutBucketLifecycleConfigurationCommand({
+                Bucket: bucket,
+                LifecycleConfiguration: {
+                  Rules: [
+                    {
+                      ID: "expire-logs",
+                      Status: "Enabled",
+                      Filter: { Prefix: "logs/" },
+                      Expiration: { Days: 30 },
+                      Transitions: [{ Days: 7, StorageClass: "GLACIER" }],
+                    },
+                  ],
+                },
+              }),
+            );
+            const resp = await s3.send(
+              new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }),
+            );
+            const rule = (resp.Rules ?? []).find((r) => r.ID === "expire-logs");
+            assert.ok(
+              rule,
+              `PutBucketLifecycleConfiguration: rule expire-logs missing from ${JSON.stringify(resp.Rules)}`,
+            );
+            assert.equal(rule.Expiration?.Days, 30);
+          },
+        },
+        {
+          name: "GetBucketLifecycleConfiguration",
+          fn: async (ctx) => {
+            const { s3 } = makeClients(ctx);
+            const bucket = `${ctx.runId}-s3-lifecycle`;
+            const resp = await s3.send(
+              new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }),
+            );
+            const rule = (resp.Rules ?? []).find((r) => r.ID === "expire-logs");
+            assert.ok(
+              rule,
+              `GetBucketLifecycleConfiguration: rule expire-logs missing from ${JSON.stringify(resp.Rules)}`,
+            );
+            assert.equal(rule.Status, "Enabled");
+            assert.equal(rule.Filter?.Prefix, "logs/");
+            assert.equal(rule.Transitions?.[0]?.StorageClass, "GLACIER");
+          },
+        },
+        {
+          name: "DeleteBucketLifecycle",
+          fn: async (ctx) => {
+            const { s3 } = makeClients(ctx);
+            await s3.send(
+              new DeleteBucketLifecycleCommand({
+                Bucket: `${ctx.runId}-s3-lifecycle`,
+              }),
+            );
+          },
+        },
+        {
+          name: "GetBucketLifecycleConfigurationAfterDelete",
+          fn: async (ctx) => {
+            const { s3 } = makeClients(ctx);
+            const bucket = `${ctx.runId}-s3-lifecycle`;
+            await assert.rejects(
+              () =>
+                s3.send(
+                  new GetBucketLifecycleConfigurationCommand({
+                    Bucket: bucket,
+                  }),
+                ),
+              (err: { name?: string }) =>
+                err.name === "NoSuchLifecycleConfiguration",
+              "GetBucketLifecycleConfigurationAfterDelete: expected NoSuchLifecycleConfiguration",
+            );
+          },
+        },
+      ],
+      setup: async (ctx) => {
+        const { s3 } = makeClients(ctx);
+        await s3.send(
+          new CreateBucketCommand({ Bucket: `${ctx.runId}-s3-lifecycle` }),
+        );
+      },
+      teardown: async (ctx) => {
+        const { s3 } = makeClients(ctx);
+        try {
+          await s3.send(
+            new DeleteBucketLifecycleCommand({
+              Bucket: `${ctx.runId}-s3-lifecycle`,
+            }),
+          );
+        } catch {}
+        try {
+          await s3.send(
+            new DeleteBucketCommand({ Bucket: `${ctx.runId}-s3-lifecycle` }),
           );
         } catch {}
       },

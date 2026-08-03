@@ -42,7 +42,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 | 2 | SNS → Lambda delivery — **done 2026-08-03 (#468)** | Comprehensive | `Publish`'s fan-out switch now has a `case "lambda"` that invokes the function with AWS's `Records[].Sns` event; failed deliveries dead-letter via `RedrivePolicy` instead of vanishing ([sns/handler_publish.go](../../internal/services/sns/handler_publish.go)) |
 | 3 | ~~Step Functions execution engine~~ **DONE 2026-08-03 (#469)** | ~~Minimal-stub~~ → Core | The ASL interpreter landed: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real `GetExecutionHistory`. Unsupported ASL fails loudly with `States.Runtime` |
 | 4 | IAM policy evaluation | Core, no enforcement | `SimulatePrincipalPolicy` "Always returns allowed — no enforcement engine" ([iam/handler.go:1952](../../internal/services/iam/handler.go)) — no local signal for the single most common real-AWS failure mode (`AccessDenied`) |
-| 5 | S3 lifecycle rules | Comprehensive, stub gap | `Get/Put/DeleteBucketLifecycleConfiguration` are pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets) |
+| 5 | S3 lifecycle rules | ~~Comprehensive, stub gap~~ **done 2026-08-03** | `Get/Put/DeleteBucketLifecycleConfiguration` were pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets). Shipped in §3 Wave 3 item 9 |
 | 6 | CloudWatch Alarms auto-evaluation ✅ shipped (#473) | Core, complete | The evaluator that existed ignored dimensions, `DatapointsToAlarm` and `TreatMissingData`, fired no actions, and left unevaluable alarm shapes sitting in `INSUFFICIENT_DATA`. Now epoch-aligned M-of-N evaluation with real transitions, actions and history |
 | 7 | Auto Scaling real reconciliation | Tier 1 (fully inert — 19/19 ops `StatusInert`) | Desired-capacity CRUD only; no instance launch/terminate loop against the existing EC2 service; pairs with #6 for alarm-driven scaling |
 | 8 | API Gateway usage-plan throttle/quota enforcement — **done 2026-08-03 (#472)** | Comprehensive, complete | Throttle and quota are now measured per (plan, API key) and readable through `GetUsage`; rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off |
@@ -377,15 +377,32 @@ The theme: close out well-known, specifically-named gaps in services that are ot
 high user-visible payoff per unit of work because these are "the one thing missing" in services people
 already trust.
 
-**9. S3 lifecycle rules** — Comprehensive, stub gap → complete
+**9. S3 lifecycle rules** — Comprehensive, stub gap → complete — **DONE 2026-08-03** (issue #475)
 Score: usage 4, leverage 2, fit 4, cost M, dep-ready 5, risk low.
-`GetBucketLifecycleConfiguration`/`PutBucketLifecycleConfiguration`/`DeleteBucketLifecycle` are pure `501`
-stubs today (`internal/capabilities/all.gen.go` s3 rows). Definition of done: store lifecycle rules;
+`GetBucketLifecycleConfiguration`/`PutBucketLifecycleConfiguration`/`DeleteBucketLifecycle` were pure `501`
+stubs. Definition of done: store lifecycle rules;
 a clock-driven sweeper (same pattern as DynamoDB TTL) expires/deletes objects past their `Expiration`
 rule and (optionally) tags objects past a `Transition` rule with a synthetic storage-class marker rather
 than actually moving bytes to Glacier semantics (real Glacier retrieval delay emulation is explicitly out
-of scope — see §6 non-goals). This is a very common CDK default (`autoDeleteObjects: true` on log buckets,
-temp/staging buckets with TTL) that currently provisions silently and then does nothing.
+of scope — see §7 non-goals). This is a very common CDK default (`autoDeleteObjects: true` on log buckets,
+temp/staging buckets with TTL) that previously provisioned silently and then did nothing.
+
+Shipped as described, in [internal/services/s3/lifecycle.go](../../internal/services/s3/lifecycle.go)
+(model, in-memory index, hourly sweeper) and
+[handler_lifecycle.go](../../internal/services/s3/handler_lifecycle.go) (wire format, validation), with a
+read-only rule list and per-object expiry hints in `web/src/features/s3/`. Two decisions worth carrying
+forward:
+
+- **§2.1 line.** `Expiration` (`Days`/`Date`), `Transition`, `AbortIncompleteMultipartUpload` and every
+  filter form (prefix, tag, object size, `And`) are evaluated by the sweeper. The three constructs that
+  depend on object *versioning* — `NoncurrentVersionExpiration`, `NoncurrentVersionTransition`,
+  `ExpiredObjectDeleteMarker` — are refused at `Put` time with an `InvalidArgument` naming the element,
+  because the object store keeps exactly one live object per key and has no version history or delete
+  markers. They become implementable only if S3 gains real versioning.
+- **Deferred.** The `AWS::S3::Bucket` CloudFormation handler still ignores `LifecycleConfiguration`, as it
+  ignores every other bucket sub-resource property (versioning, notifications, tags, encryption). Wiring
+  them is one piece of work on the provisioner rather than part of this item, and is tracked separately —
+  so a CDK stack's `lifecycleRules` still do not reach the bucket, though an SDK call does.
 
 **10. Secrets Manager rotation + resource policies** — Core (14/21) → Comprehensive.
 **Status: done, 2026-08-03** (issue #476). Registry now reads 19 Supported / 3 Unsupported of 22.

@@ -233,6 +233,9 @@ func (h *Handler) DeleteBucket(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
+	// deleteBucket drops the bucket's lifecycle record too; republish the
+	// snapshot so the sweeper and the object paths stop seeing it at once.
+	h.invalidateLifecycleIndex(r)
 
 	if h.bus != nil {
 		h.bus.Publish(r.Context(), events.Event{
@@ -351,7 +354,7 @@ func (h *Handler) ListObjectsV1(w http.ResponseWriter, r *http.Request) {
 				LastModified: e.obj.LastModified,
 				ETag:         e.obj.ETag,
 				Size:         e.obj.ContentLength,
-				StorageClass: "STANDARD",
+				StorageClass: e.obj.effectiveStorageClass(),
 			})
 		}
 	}
@@ -592,7 +595,7 @@ func (h *Handler) ListObjectsV2(w http.ResponseWriter, r *http.Request) {
 				LastModified: e.obj.LastModified,
 				ETag:         e.obj.ETag,
 				Size:         e.obj.ContentLength,
-				StorageClass: "STANDARD",
+				StorageClass: e.obj.effectiveStorageClass(),
 			})
 		}
 	}
@@ -751,7 +754,7 @@ func (h *Handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
 			LastModified: obj.LastModified,
 			ETag:         obj.ETag,
 			Size:         obj.ContentLength,
-			StorageClass: "STANDARD",
+			StorageClass: obj.effectiveStorageClass(),
 		}
 	}
 

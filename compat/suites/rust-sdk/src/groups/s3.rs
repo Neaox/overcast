@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{
-    BucketVersioningStatus, CompletedMultipartUpload, CompletedPart, CorsConfiguration,
-    CorsRule, Delete, ErrorDocument, IndexDocument, ObjectIdentifier, Tag, Tagging,
-    VersioningConfiguration, WebsiteConfiguration,
+    BucketLifecycleConfiguration, BucketVersioningStatus, CompletedMultipartUpload, CompletedPart,
+    CorsConfiguration, CorsRule, Delete, ErrorDocument, ExpirationStatus, IndexDocument,
+    LifecycleExpiration, LifecycleRule, LifecycleRuleFilter, ObjectIdentifier, Tag, Tagging,
+    Transition, TransitionStorageClass, VersioningConfiguration, WebsiteConfiguration,
 };
 
 use crate::clients::AwsClients;
@@ -737,6 +738,146 @@ impl ServiceGroup for S3Group {
             }),
         );
 
+        let clients = self.clients.clone();
+        impls.insert(
+            "PutBucketLifecycleConfiguration".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let bucket = ctx
+                        .get("s3LifecycleBucket")
+                        .ok_or_else(|| "s3LifecycleBucket not set".to_string())?;
+                    let rule = LifecycleRule::builder()
+                        .id("expire-logs")
+                        .status(ExpirationStatus::Enabled)
+                        .filter(
+                            LifecycleRuleFilter::builder()
+                                .prefix("logs/")
+                                .build(),
+                        )
+                        .expiration(LifecycleExpiration::builder().days(30).build())
+                        .transitions(
+                            Transition::builder()
+                                .days(7)
+                                .storage_class(TransitionStorageClass::Glacier)
+                                .build(),
+                        )
+                        .build()
+                        .map_err(crate::harness::sdk_error)?;
+                    let cfg = BucketLifecycleConfiguration::builder()
+                        .rules(rule)
+                        .build()
+                        .map_err(crate::harness::sdk_error)?;
+                    clients
+                        .s3()
+                        .put_bucket_lifecycle_configuration()
+                        .bucket(&bucket)
+                        .lifecycle_configuration(cfg)
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+
+                    let stored = lifecycle_rule(&clients, &bucket, "expire-logs").await?;
+                    match stored.expiration().and_then(|e| e.days()) {
+                        Some(30) => Ok(()),
+                        other => Err(format!(
+                            "PutBucketLifecycleConfiguration: expiration days = {other:?}, want 30"
+                        )),
+                    }
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        impls.insert(
+            "GetBucketLifecycleConfiguration".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let bucket = ctx
+                        .get("s3LifecycleBucket")
+                        .ok_or_else(|| "s3LifecycleBucket not set".to_string())?;
+                    let rule = lifecycle_rule(&clients, &bucket, "expire-logs").await?;
+                    if rule.status() != &ExpirationStatus::Enabled {
+                        return Err(format!(
+                            "GetBucketLifecycleConfiguration: status = {:?}, want Enabled",
+                            rule.status()
+                        ));
+                    }
+                    match rule.filter().and_then(|f| f.prefix()) {
+                        Some("logs/") => {}
+                        other => {
+                            return Err(format!(
+                                "GetBucketLifecycleConfiguration: filter prefix = {other:?}, want logs/"
+                            ))
+                        }
+                    }
+                    match rule.transitions().first().and_then(|t| t.storage_class()) {
+                        Some(TransitionStorageClass::Glacier) => Ok(()),
+                        other => Err(format!(
+                            "GetBucketLifecycleConfiguration: transition storage class = {other:?}, want GLACIER"
+                        )),
+                    }
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        impls.insert(
+            "DeleteBucketLifecycle".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let bucket = ctx
+                        .get("s3LifecycleBucket")
+                        .ok_or_else(|| "s3LifecycleBucket not set".to_string())?;
+                    clients
+                        .s3()
+                        .delete_bucket_lifecycle()
+                        .bucket(&bucket)
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    Ok(())
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        impls.insert(
+            "GetBucketLifecycleConfigurationAfterDelete".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let bucket = ctx
+                        .get("s3LifecycleBucket")
+                        .ok_or_else(|| "s3LifecycleBucket not set".to_string())?;
+                    match clients
+                        .s3()
+                        .get_bucket_lifecycle_configuration()
+                        .bucket(&bucket)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) => Err(format!(
+                            "GetBucketLifecycleConfigurationAfterDelete: expected an error, got {} rules",
+                            resp.rules().len()
+                        )),
+                        Err(err) => {
+                            let text = crate::harness::sdk_error(err);
+                            if text.contains("NoSuchLifecycleConfiguration") {
+                                Ok(())
+                            } else {
+                                Err(format!(
+                                    "GetBucketLifecycleConfigurationAfterDelete: expected NoSuchLifecycleConfiguration, got {text}"
+                                ))
+                            }
+                        }
+                    }
+                })
+            }),
+        );
+
         impls
     }
 
@@ -849,6 +990,20 @@ impl ServiceGroup for S3Group {
                     let bucket = format!("{}-s3-cors", ctx.run_id.as_ref());
                     clients.s3().create_bucket().bucket(&bucket).send().await.map_err(crate::harness::sdk_error)?;
                     ctx.set("s3CorsBucket", bucket);
+                    Ok(())
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        setups.insert(
+            "s3-lifecycle".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let bucket = format!("{}-s3-lifecycle", ctx.run_id.as_ref());
+                    clients.s3().create_bucket().bucket(&bucket).send().await.map_err(crate::harness::sdk_error)?;
+                    ctx.set("s3LifecycleBucket", bucket);
                     Ok(())
                 })
             }),
@@ -971,8 +1126,47 @@ impl ServiceGroup for S3Group {
             }),
         );
 
+        let clients = self.clients.clone();
+        teardowns.insert(
+            "s3-lifecycle".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    if let Some(bucket) = ctx.get("s3LifecycleBucket") {
+                        // Best-effort: a failure here must not stop the bucket
+                        // being removed.
+                        let _ = clients.s3().delete_bucket_lifecycle().bucket(&bucket).send().await;
+                        cleanup_bucket(&clients, &bucket).await;
+                    }
+                    Ok(())
+                })
+            }),
+        );
+
         teardowns
     }
+}
+
+/// Returns the stored lifecycle rule with the given ID. Matching on the ID
+/// rather than taking the first rule back keeps the assertion about this
+/// group's own rule.
+async fn lifecycle_rule(
+    clients: &AwsClients,
+    bucket: &str,
+    id: &str,
+) -> Result<LifecycleRule, String> {
+    let resp = clients
+        .s3()
+        .get_bucket_lifecycle_configuration()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(crate::harness::sdk_error)?;
+    resp.rules()
+        .iter()
+        .find(|rule| rule.id() == Some(id))
+        .cloned()
+        .ok_or_else(|| format!("lifecycle rule {id} not found among {} rules", resp.rules().len()))
 }
 
 async fn cleanup_bucket(clients: &AwsClients, bucket: &str) {

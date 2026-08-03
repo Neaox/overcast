@@ -31,8 +31,9 @@ func (h *Handler) GetBucketCors(w http.ResponseWriter, r *http.Request) {
 // GetBucketLifecycleConfiguration handles GET /{bucket}?lifecycle
 // Covers both GetBucketLifecycle (deprecated) and GetBucketLifecycleConfiguration.
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLifecycleConfiguration.html
+// Implemented in handler_lifecycle.go.
 func (h *Handler) GetBucketLifecycleConfiguration(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.getBucketLifecycleConfiguration(w, r)
 }
 
 // GetBucketWebsite handles GET /{bucket}?website
@@ -164,8 +165,9 @@ func (h *Handler) PutBucketCors(w http.ResponseWriter, r *http.Request) {
 // PutBucketLifecycleConfiguration handles PUT /{bucket}?lifecycle
 // Covers both PutBucketLifecycle (deprecated) and PutBucketLifecycleConfiguration.
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
+// Implemented in handler_lifecycle.go.
 func (h *Handler) PutBucketLifecycleConfiguration(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.putBucketLifecycleConfiguration(w, r)
 }
 
 // PutBucketWebsite handles PUT /{bucket}?website
@@ -270,8 +272,9 @@ func (h *Handler) DeleteBucketCors(w http.ResponseWriter, r *http.Request) {
 
 // DeleteBucketLifecycle handles DELETE /{bucket}?lifecycle
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html
+// Implemented in handler_lifecycle.go.
 func (h *Handler) DeleteBucketLifecycle(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.deleteBucketLifecycle(w, r)
 }
 
 // DeleteBucketWebsite handles DELETE /{bucket}?website

@@ -2,7 +2,8 @@
  * BucketConfig — Config tab for /s3/$bucket/config
  *
  * Shows bucket event notification configurations and lets the user add new
- * SQS queue notification rules or delete existing ones.
+ * SQS queue notification rules or delete existing ones, plus a read-only view
+ * of the bucket's lifecycle rules and what the sweeper will do with them.
  */
 import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
@@ -16,14 +17,17 @@ import {
   Trash2,
   Check,
   Plus,
+  Timer,
 } from "lucide-react"
 import { useNavigate } from "@tanstack/react-router"
 import { Route } from "@/routes/s3/$bucket/config"
 import {
   s3BucketNotificationQueryOptions,
+  s3BucketLifecycleQueryOptions,
   s3Keys,
   putBucketNotificationMutationOptions,
 } from "@/features/s3/data"
+import { describeLifecycleFilter, describeLifecycleActions } from "@/features/s3/lifecycle"
 import { sqsQueuesQueryOptions } from "@/features/sqs/data"
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
@@ -48,6 +52,7 @@ import type {
   LambdaNotificationConfig,
   NotificationFilterRule,
   BucketNotificationConfig,
+  S3LifecycleRule,
   SQSQueue,
 } from "@/types"
 import { sectionLabel } from "@/lib/typography"
@@ -331,6 +336,7 @@ export function BucketConfig() {
   const [editingQueue, setEditingQueue] = useState<QueueNotificationConfig | undefined>(undefined)
 
   const { data, isLoading } = useQuery(s3BucketNotificationQueryOptions(bucket))
+  const { data: lifecycle } = useQuery(s3BucketLifecycleQueryOptions(bucket))
 
   const deleteMut = useMutation({
     ...putBucketNotificationMutationOptions(bucket),
@@ -380,17 +386,20 @@ export function BucketConfig() {
           <Spinner className="h-6 w-6" />
         </div>
       ) : !hasConfig ? (
-        <EmptyState
-          icon={<BellOff className="h-8 w-8" />}
-          title="No event notifications"
-          description="Add a notification rule to route S3 events to an SQS queue."
-          action={
-            <Button onClick={() => setShowAdd(true)}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Add Notification
-            </Button>
-          }
-        />
+        <div className="flex flex-col gap-6">
+          <EmptyState
+            icon={<BellOff className="h-8 w-8" />}
+            title="No event notifications"
+            description="Add a notification rule to route S3 events to an SQS queue."
+            action={
+              <Button onClick={() => setShowAdd(true)}>
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
+                Add Notification
+              </Button>
+            }
+          />
+          <LifecycleRules rules={lifecycle?.rules ?? []} />
+        </div>
       ) : (
         <div className="flex flex-col gap-6">
           {(data?.queueConfigurations.length ?? 0) > 0 && (
@@ -434,6 +443,8 @@ export function BucketConfig() {
               ))}
             </ConfigSection>
           )}
+
+          <LifecycleRules rules={lifecycle?.rules ?? []} />
         </div>
       )}
 
@@ -450,6 +461,59 @@ export function BucketConfig() {
         editing={editingQueue}
       />
     </div>
+  )
+}
+
+// ─── Lifecycle rules ──────────────────────────────────────────────────────────
+
+/**
+ * LifecycleRules — read-only view of the bucket's lifecycle configuration.
+ *
+ * Rules are created through the API (`PutBucketLifecycleConfiguration`) or a
+ * CDK/CloudFormation stack rather than here; what this panel is for is making
+ * visible that objects in this bucket are on a clock.
+ */
+function LifecycleRules({ rules }: { rules: S3LifecycleRule[] }) {
+  if (rules.length === 0) return null
+
+  return (
+    <ConfigSection title="Lifecycle Rules" icon={<Timer className="h-4 w-4 text-sky-400" />}>
+      {rules.map((rule) => {
+        const actions = describeLifecycleActions(rule)
+        return (
+          <div key={rule.id} className="flex flex-col gap-3 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <ChevronRight className="h-3 w-3 shrink-0 text-fg-subtle" />
+              <span className="truncate font-mono text-sm text-fg">{rule.id}</span>
+              <Badge
+                variant={rule.status === "Enabled" ? "accent" : "default"}
+                className="ml-auto shrink-0 text-[10px]"
+              >
+                {rule.status}
+              </Badge>
+            </div>
+            <ConfigRow label="Applies to">
+              <span className="font-mono text-xs text-fg-muted">
+                {describeLifecycleFilter(rule)}
+              </span>
+            </ConfigRow>
+            <ConfigRow label="Actions">
+              {actions.length === 0 ? (
+                <span className="font-mono text-xs text-fg-subtle">none</span>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {actions.map((action) => (
+                    <Badge key={action} variant="default" className="font-mono text-[10px]">
+                      {action}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </ConfigRow>
+          </div>
+        )
+      })}
+    </ConfigSection>
   )
 }
 

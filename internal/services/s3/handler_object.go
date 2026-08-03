@@ -58,6 +58,55 @@ func (h *Handler) initObjectRoutes() {
 	}
 }
 
+// storageClassStandard is S3's default object storage class. AWS omits the
+// x-amz-storage-class header on responses for objects in it.
+const storageClassStandard = "STANDARD"
+
+// objectStorageClasses are the classes S3 accepts on the x-amz-storage-class
+// request header. Overcast records the class and stores every object the same
+// way — there are no per-class durability or retrieval semantics
+// (docs/plans/full-emulation-priority.md §7).
+var objectStorageClasses = map[string]bool{
+	storageClassStandard:  true,
+	"REDUCED_REDUNDANCY":  true,
+	"STANDARD_IA":         true,
+	"ONEZONE_IA":          true,
+	"INTELLIGENT_TIERING": true,
+	"GLACIER":             true,
+	"GLACIER_IR":          true,
+	"DEEP_ARCHIVE":        true,
+	"OUTPOSTS":            true,
+	"SNOW":                true,
+	"EXPRESS_ONEZONE":     true,
+}
+
+// requestedStorageClass reads and validates the x-amz-storage-class header.
+// An absent header (or an explicit STANDARD) stores nothing, so the object
+// reads back as STANDARD; an unrecognised class is refused the way AWS
+// refuses it rather than being silently dropped.
+func requestedStorageClass(r *http.Request) (string, *protocol.AWSError) {
+	raw := r.Header.Get("x-amz-storage-class")
+	if raw == "" || raw == storageClassStandard {
+		return "", nil
+	}
+	if !objectStorageClasses[raw] {
+		return "", &protocol.AWSError{
+			Code:       "InvalidStorageClass",
+			Message:    "The storage class you specified is not valid: " + raw,
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return raw, nil
+}
+
+// writeObjectStorageClass sets x-amz-storage-class, which AWS sends only when
+// the object is not in STANDARD.
+func writeObjectStorageClass(w http.ResponseWriter, obj *Object) {
+	if class := obj.effectiveStorageClass(); class != storageClassStandard {
+		w.Header().Set("x-amz-storage-class", class)
+	}
+}
+
 // PutObject handles PUT /{bucket}/{key}.
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
 func (h *Handler) PutObject(w http.ResponseWriter, r *http.Request) {
@@ -79,12 +128,19 @@ func (h *Handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 
+	storageClass, aerr := requestedStorageClass(r)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+
 	// Extract x-amz-meta-* headers into the metadata map.
 	meta := serviceutil.HeaderPrefix(r, "X-Amz-Meta-")
 
 	obj := &Object{
 		Bucket:             bucket,
 		Key:                key,
+		StorageClass:       storageClass,
 		ContentType:        contentType,
 		LastModified:       h.clk.Now().UTC(),
 		Metadata:           meta,
@@ -122,6 +178,9 @@ func (h *Handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("ETag", etag)
+	// AWS tells the caller, on the write itself, when a lifecycle rule will
+	// expire the object it just stored.
+	h.setExpirationHeader(r.Context(), w, obj)
 	protocol.WriteEmpty(w, r, http.StatusOK)
 }
 
@@ -151,6 +210,8 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", obj.ETag)
 	w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
 	w.Header().Set("x-amz-request-id", protocol.RequestIDFromContext(r.Context()))
+	writeObjectStorageClass(w, obj)
+	h.setExpirationHeader(r.Context(), w, obj)
 
 	// Restore stored response headers.
 	if obj.ContentDisposition != "" {
@@ -303,6 +364,8 @@ func (h *Handler) HeadObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", obj.ETag)
 	w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
 	w.Header().Set("x-amz-request-id", protocol.RequestIDFromContext(r.Context()))
+	writeObjectStorageClass(w, obj)
+	h.setExpirationHeader(r.Context(), w, obj)
 	if obj.ContentDisposition != "" {
 		w.Header().Set("Content-Disposition", obj.ContentDisposition)
 	}
@@ -475,6 +538,14 @@ func (h *Handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A copy takes the requested storage class, or STANDARD — it does not
+	// inherit the source's, which is what AWS does too.
+	storageClass, aerr := requestedStorageClass(r)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+
 	// Stream source body to destination file, computing MD5 incrementally.
 	etag, n, err := h.store.copyBody(srcBucket, srcKey, destBucket, destKey)
 	if err != nil {
@@ -486,6 +557,7 @@ func (h *Handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 	dest := &Object{
 		Bucket:        destBucket,
 		Key:           destKey,
+		StorageClass:  storageClass,
 		ContentType:   src.ContentType,
 		ContentLength: n,
 		ETag:          etag,
@@ -516,6 +588,8 @@ func (h *Handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 			EventName: "ObjectCreated:Copy",
 		},
 	})
+
+	h.setExpirationHeader(r.Context(), w, dest)
 
 	protocol.WriteXML(w, r, http.StatusOK, &copyObjectResponse{
 		LastModified: now,

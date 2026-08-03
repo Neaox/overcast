@@ -17,7 +17,7 @@ import java.util.Map;
  * S3 compatibility test group.
  *
  * <p>Groups: s3-crud, s3-copy, s3-multipart, s3-versioning, s3-tagging,
- * s3-website, s3-cors.
+ * s3-website, s3-cors, s3-lifecycle.
  */
 public final class S3Group implements ServiceGroup {
 
@@ -58,7 +58,11 @@ public final class S3Group implements ServiceGroup {
                 Map.entry("PutBucketWebsite",        this::putBucketWebsite),
                 Map.entry("GetBucketWebsite",        this::getBucketWebsite),
                 Map.entry("PutBucketCors",           this::putBucketCors),
-                Map.entry("GetBucketCors",           this::getBucketCors)
+                Map.entry("GetBucketCors",           this::getBucketCors),
+                Map.entry("PutBucketLifecycleConfiguration",            this::putBucketLifecycleConfiguration),
+                Map.entry("GetBucketLifecycleConfiguration",            this::getBucketLifecycleConfiguration),
+                Map.entry("DeleteBucketLifecycle",                      this::deleteBucketLifecycle),
+                Map.entry("GetBucketLifecycleConfigurationAfterDelete", this::getBucketLifecycleConfigurationAfterDelete)
         );
     }
 
@@ -71,7 +75,8 @@ public final class S3Group implements ServiceGroup {
                 Map.entry("s3-versioning", this::setupVersioning),
                 Map.entry("s3-tagging",    this::setupTagging),
                 Map.entry("s3-website",    this::setupWebsite),
-                Map.entry("s3-cors",       this::setupCors)
+                Map.entry("s3-cors",       this::setupCors),
+                Map.entry("s3-lifecycle",  this::setupLifecycle)
         );
     }
 
@@ -84,7 +89,8 @@ public final class S3Group implements ServiceGroup {
                 Map.entry("s3-versioning", ctx -> emptyAndDeleteBucket(ctx.getString("s3VerBucket"))),
                 Map.entry("s3-tagging",    ctx -> emptyAndDeleteBucket(ctx.getString("s3TagBucket"))),
                 Map.entry("s3-website",    ctx -> emptyAndDeleteBucket(ctx.getString("s3WebBucket"))),
-                Map.entry("s3-cors",       ctx -> emptyAndDeleteBucket(ctx.getString("s3CorsBucket")))
+                Map.entry("s3-cors",       ctx -> emptyAndDeleteBucket(ctx.getString("s3CorsBucket"))),
+                Map.entry("s3-lifecycle",  this::teardownLifecycle)
         );
     }
 
@@ -380,6 +386,85 @@ public final class S3Group implements ServiceGroup {
         String bucket = ctx.getString("s3CorsBucket");
         var resp = s3().getBucketCors(r -> r.bucket(bucket));
         Assertions.assertNotEmpty(resp.corsRules(), "GetBucketCors: no CORS rules returned");
+    }
+
+    // ── s3-lifecycle ──────────────────────────────────────────────────────────
+
+    private void setupLifecycle(TestContext ctx) throws Exception {
+        String bucket = ctx.runId() + "-s3lifecycle";
+        s3().createBucket(r -> r.bucket(bucket));
+        ctx.set("s3LifecycleBucket", bucket);
+    }
+
+    private void teardownLifecycle(TestContext ctx) {
+        String bucket = ctx.getString("s3LifecycleBucket");
+        if (bucket == null) return;
+        try { s3().deleteBucketLifecycle(r -> r.bucket(bucket)); } catch (Exception ignored) {}
+        emptyAndDeleteBucket(bucket);
+    }
+
+    /**
+     * Returns the stored rule with the given ID. Matching on the ID rather than
+     * taking the first rule back keeps the assertion about this group's own rule.
+     */
+    private LifecycleRule lifecycleRule(String bucket, String id) throws Exception {
+        var resp = s3().getBucketLifecycleConfiguration(r -> r.bucket(bucket));
+        for (LifecycleRule rule : resp.rules()) {
+            if (id.equals(rule.id())) return rule;
+        }
+        throw new AssertionError("lifecycle rule " + id + " not found among " + resp.rules().size() + " rules");
+    }
+
+    private void putBucketLifecycleConfiguration(TestContext ctx) throws Exception {
+        String bucket = ctx.getString("s3LifecycleBucket");
+        s3().putBucketLifecycleConfiguration(r -> r.bucket(bucket)
+                .lifecycleConfiguration(c -> c.rules(
+                        LifecycleRule.builder()
+                                .id("expire-logs")
+                                .status(ExpirationStatus.ENABLED)
+                                .filter(LifecycleRuleFilter.builder().prefix("logs/").build())
+                                .expiration(LifecycleExpiration.builder().days(30).build())
+                                .transitions(Transition.builder()
+                                        .days(7)
+                                        .storageClass(TransitionStorageClass.GLACIER)
+                                        .build())
+                                .build())));
+
+        LifecycleRule rule = lifecycleRule(bucket, "expire-logs");
+        Assertions.assertEquals(30, rule.expiration().days(),
+                "PutBucketLifecycleConfiguration: expiration days mismatch");
+    }
+
+    private void getBucketLifecycleConfiguration(TestContext ctx) throws Exception {
+        String bucket = ctx.getString("s3LifecycleBucket");
+        LifecycleRule rule = lifecycleRule(bucket, "expire-logs");
+        Assertions.assertEquals(ExpirationStatus.ENABLED, rule.status(),
+                "GetBucketLifecycleConfiguration: status mismatch");
+        Assertions.assertEquals("logs/", rule.filter().prefix(),
+                "GetBucketLifecycleConfiguration: filter prefix mismatch");
+        Assertions.assertNotEmpty(rule.transitions(),
+                "GetBucketLifecycleConfiguration: no transitions returned");
+        Assertions.assertEquals(TransitionStorageClass.GLACIER, rule.transitions().get(0).storageClass(),
+                "GetBucketLifecycleConfiguration: transition storage class mismatch");
+    }
+
+    private void deleteBucketLifecycle(TestContext ctx) throws Exception {
+        String bucket = ctx.getString("s3LifecycleBucket");
+        s3().deleteBucketLifecycle(r -> r.bucket(bucket));
+    }
+
+    private void getBucketLifecycleConfigurationAfterDelete(TestContext ctx) throws Exception {
+        String bucket = ctx.getString("s3LifecycleBucket");
+        try {
+            var resp = s3().getBucketLifecycleConfiguration(r -> r.bucket(bucket));
+            throw new AssertionError(
+                    "GetBucketLifecycleConfigurationAfterDelete: expected an error, got "
+                            + resp.rules().size() + " rules");
+        } catch (S3Exception e) {
+            String code = e.awsErrorDetails() == null ? "" : e.awsErrorDetails().errorCode();
+            Assertions.assertEquals("NoSuchLifecycleConfiguration", code,
+                    "GetBucketLifecycleConfigurationAfterDelete: unexpected error code");
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

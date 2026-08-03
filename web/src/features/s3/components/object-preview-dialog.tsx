@@ -24,6 +24,9 @@ interface ObjectMetadata {
   lastModified: string
   etag: string
   metadata: Record<string, string>
+  storageClass?: string
+  /** S3's x-amz-expiration hint — present only when a rule will expire this object. */
+  expiration?: { expiryDate: string; ruleId: string }
 }
 
 interface ObjectPreviewDialogProps {
@@ -79,6 +82,15 @@ export function ObjectPreviewDialog({
               <Definition label="Size" value={formatBytes(metadata.contentLength)} />
               <Definition label="Last Modified" value={formatDate(metadata.lastModified)} />
               <Definition label="ETag" value={metadata.etag} />
+              {metadata.storageClass && metadata.storageClass !== "STANDARD" && (
+                <Definition label="Storage Class" value={metadata.storageClass} />
+              )}
+              {metadata.expiration && (
+                <Definition
+                  label="Expires"
+                  value={`${metadata.expiration.expiryDate} (lifecycle rule ${metadata.expiration.ruleId})`}
+                />
+              )}
             </DefinitionList>
             {previewUrl && canPreviewImage && (
               <div className="min-h-0 overflow-auto rounded-lg border border-border bg-bg-muted p-3">

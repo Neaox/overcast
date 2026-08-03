@@ -48,6 +48,11 @@ func S3() ServiceGroup {
 			// s3-cors
 			"PutBucketCors": g.PutBucketCors,
 			"GetBucketCors": g.GetBucketCors,
+			// s3-lifecycle
+			"PutBucketLifecycleConfiguration":            g.PutBucketLifecycleConfiguration,
+			"GetBucketLifecycleConfiguration":            g.GetBucketLifecycleConfiguration,
+			"DeleteBucketLifecycle":                      g.DeleteBucketLifecycle,
+			"GetBucketLifecycleConfigurationAfterDelete": g.GetBucketLifecycleConfigurationAfterDelete,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"s3-crud":       g.setupCrud,
@@ -57,6 +62,7 @@ func S3() ServiceGroup {
 			"s3-tagging":    g.setupTagging,
 			"s3-website":    g.setupWebsite,
 			"s3-cors":       g.setupCors,
+			"s3-lifecycle":  g.setupLifecycle,
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
 			"s3-crud":       g.teardownBucket,
@@ -66,6 +72,7 @@ func S3() ServiceGroup {
 			"s3-tagging":    g.teardownBucket,
 			"s3-website":    g.teardownBucket,
 			"s3-cors":       g.teardownBucket,
+			"s3-lifecycle":  g.teardownLifecycle,
 		},
 	}
 }
@@ -80,6 +87,7 @@ var (
 	s3TagNamer     = harness.NewNamer("s3-tag")
 	s3WebNamer     = harness.NewNamer("s3-web")
 	s3CorsNamer    = harness.NewNamer("s3-cors")
+	s3LcNamer      = harness.NewNamer("s3-lc")
 )
 
 type s3Group struct{}
@@ -764,6 +772,111 @@ func (g *s3Group) GetBucketCors(_ context.Context, t *harness.TestContext) error
 	rules, _ := out["CORSRules"].([]any)
 	if len(rules) == 0 {
 		return fmt.Errorf("s3 GetBucketCors: expected CORS rules, got none")
+	}
+	return nil
+}
+
+// ─── s3-lifecycle ────────────────────────────────────────────────────────────
+
+// lifecycleConfiguration is the rule this group stores. It is kept as one
+// literal so put and get assert against the same intent.
+const lifecycleConfiguration = `{"Rules":[{"ID":"expire-logs","Status":"Enabled",` +
+	`"Filter":{"Prefix":"logs/"},"Expiration":{"Days":30},` +
+	`"Transitions":[{"Days":7,"StorageClass":"GLACIER"}]}]}`
+
+func (g *s3Group) setupLifecycle(_ context.Context, t *harness.TestContext) error {
+	t.Set("bucket", s3LcNamer.Name(t))
+	if err := awscli.Run(t.Endpoint, t.Region, "s3api", "create-bucket", "--bucket", g.bucket(t)); err != nil && !isAlreadyExists(err) {
+		return err
+	}
+	return nil
+}
+
+func (g *s3Group) teardownLifecycle(ctx context.Context, t *harness.TestContext) error {
+	// Best-effort: a failure here must not stop the bucket being removed.
+	_ = awscli.Run(t.Endpoint, t.Region, "s3api", "delete-bucket-lifecycle", "--bucket", g.bucket(t))
+	return g.teardownBucket(ctx, t)
+}
+
+// lifecycleRule returns the stored rule with the given ID. Matching on the ID
+// rather than taking Rules[0] keeps the assertion about this group's own rule.
+func (g *s3Group) lifecycleRule(t *harness.TestContext, id string) (map[string]any, error) {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"s3api", "get-bucket-lifecycle-configuration",
+		"--bucket", g.bucket(t),
+	)
+	if err != nil {
+		return nil, err
+	}
+	rules, _ := out["Rules"].([]any)
+	for _, raw := range rules {
+		rule, ok := raw.(map[string]any)
+		if ok && rule["ID"] == id {
+			return rule, nil
+		}
+	}
+	return nil, fmt.Errorf("lifecycle rule %q not found among %d rules", id, len(rules))
+}
+
+func (g *s3Group) PutBucketLifecycleConfiguration(_ context.Context, t *harness.TestContext) error {
+	if err := awscli.Run(t.Endpoint, t.Region,
+		"s3api", "put-bucket-lifecycle-configuration",
+		"--bucket", g.bucket(t),
+		"--lifecycle-configuration", lifecycleConfiguration,
+	); err != nil {
+		return err
+	}
+	rule, err := g.lifecycleRule(t, "expire-logs")
+	if err != nil {
+		return fmt.Errorf("s3 PutBucketLifecycleConfiguration: verify failed: %w", err)
+	}
+	expiration, _ := rule["Expiration"].(map[string]any)
+	if days, _ := expiration["Days"].(float64); days != 30 {
+		return fmt.Errorf("s3 PutBucketLifecycleConfiguration: expiration = %v, want 30 days", expiration)
+	}
+	return nil
+}
+
+func (g *s3Group) GetBucketLifecycleConfiguration(_ context.Context, t *harness.TestContext) error {
+	rule, err := g.lifecycleRule(t, "expire-logs")
+	if err != nil {
+		return err
+	}
+	if rule["Status"] != "Enabled" {
+		return fmt.Errorf("s3 GetBucketLifecycleConfiguration: status = %v, want Enabled", rule["Status"])
+	}
+	filter, _ := rule["Filter"].(map[string]any)
+	if filter["Prefix"] != "logs/" {
+		return fmt.Errorf("s3 GetBucketLifecycleConfiguration: filter = %v, want prefix logs/", filter)
+	}
+	transitions, _ := rule["Transitions"].([]any)
+	if len(transitions) != 1 {
+		return fmt.Errorf("s3 GetBucketLifecycleConfiguration: %d transitions, want 1", len(transitions))
+	}
+	transition, _ := transitions[0].(map[string]any)
+	if transition["StorageClass"] != "GLACIER" {
+		return fmt.Errorf("s3 GetBucketLifecycleConfiguration: transition = %v, want GLACIER", transition)
+	}
+	return nil
+}
+
+func (g *s3Group) DeleteBucketLifecycle(_ context.Context, t *harness.TestContext) error {
+	return awscli.Run(t.Endpoint, t.Region,
+		"s3api", "delete-bucket-lifecycle",
+		"--bucket", g.bucket(t),
+	)
+}
+
+func (g *s3Group) GetBucketLifecycleConfigurationAfterDelete(_ context.Context, t *harness.TestContext) error {
+	_, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"s3api", "get-bucket-lifecycle-configuration",
+		"--bucket", g.bucket(t),
+	)
+	if err == nil {
+		return fmt.Errorf("s3 GetBucketLifecycleConfigurationAfterDelete: expected an error, got a configuration")
+	}
+	if !strings.Contains(err.Error(), "NoSuchLifecycleConfiguration") {
+		return fmt.Errorf("s3 GetBucketLifecycleConfigurationAfterDelete: expected NoSuchLifecycleConfiguration, got %w", err)
 	}
 	return nil
 }

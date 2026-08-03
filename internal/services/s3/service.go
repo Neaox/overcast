@@ -43,26 +43,42 @@ const serviceName = "s3"
 
 // Service implements router.Service for S3.
 type Service struct {
-	cfg     *config.Config
-	store   state.Store
-	log     *serviceutil.ServiceLogger
-	handler *Handler
+	cfg             *config.Config
+	store           state.Store
+	log             *serviceutil.ServiceLogger
+	handler         *Handler
+	lifecycleCancel context.CancelFunc
 }
 
 // New returns a configured S3 Service ready to be registered.
 // bus is the shared event bus; pass events.NewBus() from the router.
+//
+// Starting the lifecycle sweeper here costs one goroutine parked on a ticker —
+// it reads nothing from the store until its first tick, so New stays free of
+// blocking work (AGENTS.md startup budget).
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock, bus *events.Bus) *Service {
 	log := serviceutil.NewServiceLogger(logger, serviceName)
-	return &Service{
-		cfg:     cfg,
-		store:   store,
-		log:     log,
-		handler: newHandler(cfg, store, log, clk, bus),
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	svc := &Service{
+		cfg:             cfg,
+		store:           store,
+		log:             log,
+		handler:         newHandler(cfg, store, log, clk, bus),
+		lifecycleCancel: lifecycleCancel,
 	}
+	svc.handler.startLifecycleSweeper(lifecycleCtx)
+	return svc
 }
 
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
+
+// Stop cancels the lifecycle sweeper goroutine. Satisfies router.Stopper.
+func (s *Service) Stop(_ context.Context) {
+	if s.lifecycleCancel != nil {
+		s.lifecycleCancel()
+	}
+}
 
 // InitNotifications wires up the S3 event notification dispatcher.
 // Call this after constructing both the S3 and SQS services so the router can

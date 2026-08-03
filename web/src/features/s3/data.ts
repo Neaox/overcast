@@ -42,6 +42,8 @@ export const s3Keys = {
     [...s3Keys.objectMeta(bucket, key), "preview"] as const,
   notification: () => [...s3Keys.all(), "notification"] as const,
   bucketNotification: (bucket: string) => [...s3Keys.notification(), bucket] as const,
+  lifecycle: () => [...s3Keys.all(), "lifecycle"] as const,
+  bucketLifecycle: (bucket: string) => [...s3Keys.lifecycle(), bucket] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -81,6 +83,18 @@ export function s3BucketNotificationQueryOptions(bucket: string) {
   return queryOptions({
     queryKey: s3Keys.bucketNotification(bucket),
     queryFn: () => s3.getBucketNotification(bucket),
+  })
+}
+
+/**
+ * The bucket's lifecycle rules, or null when it has none. Feeds both the
+ * configuration tab's rule list and the object list's per-row expiry hint, so
+ * the object list costs one extra request per bucket rather than one per row.
+ */
+export function s3BucketLifecycleQueryOptions(bucket: string) {
+  return queryOptions({
+    queryKey: s3Keys.bucketLifecycle(bucket),
+    queryFn: () => s3.getBucketLifecycle(bucket),
   })
 }
 
