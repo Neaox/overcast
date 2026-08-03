@@ -22,6 +22,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
@@ -49,8 +50,15 @@ type Service struct {
 	clk     clock.Clock
 	log     *serviceutil.ServiceLogger
 	bus     *events.Bus
-	router  http.Handler
 	typedOp map[string]op.Operation
+
+	// patterns caches compiled rule event patterns across PutEvents calls.
+	patterns *patternCache
+	// deliveries is the console's recent target-delivery outcome feed.
+	deliveries *deliveryLog
+	// targets dispatches to the sinks a rule's targets name. Built once from
+	// the root router in InitRouter; nil until then.
+	targets *eventtarget.Dispatcher
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -59,17 +67,31 @@ type Service struct {
 }
 
 // New returns a configured EventBridge Service.
+//
+// It allocates only — no store reads, no network, nothing that would put work
+// on the router's construction path (docs/dev/performance.md § Startup budget).
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock) *Service {
-	s := &Service{cfg: cfg, store: store, clk: clk, log: serviceutil.NewServiceLogger(logger, serviceName), stopCh: make(chan struct{})}
+	s := &Service{
+		cfg:        cfg,
+		store:      store,
+		clk:        clk,
+		log:        serviceutil.NewServiceLogger(logger, serviceName),
+		patterns:   newPatternCache(),
+		deliveries: newDeliveryLog(),
+		stopCh:     make(chan struct{}),
+	}
 	s.typedOp = s.typedOps()
 	return s
 }
 
 // InitRouter wires the root router for same-process target delivery.
 func (s *Service) InitRouter(router http.Handler) {
-	s.router = router
+	s.targets = eventtarget.NewDispatcher(router, s.cfg.Region)
 	s.startEngine()
 }
+
+// dispatcher returns the target dispatcher, or nil before InitRouter has run.
+func (s *Service) dispatcher() *eventtarget.Dispatcher { return s.targets }
 
 // Stop terminates the scheduled-rule engine.
 func (s *Service) Stop(ctx context.Context) {
@@ -105,8 +127,10 @@ func (s *Service) region(ctx context.Context) string {
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
 
-// RegisterRoutes satisfies router.Service.
-func (s *Service) RegisterRoutes(_ chi.Router) {}
+// RegisterRoutes satisfies router.Service. EventBridge's AWS surface is
+// dispatched by X-Amz-Target; the only routes it registers are the web
+// console's read-only delivery-visibility endpoints.
+func (s *Service) RegisterRoutes(r chi.Router) { s.registerAdminRoutes(r) }
 
 // TargetPrefix satisfies router.TargetDispatcher.
 func (s *Service) TargetPrefix() string { return targetPrefix }
@@ -197,15 +221,44 @@ type ebRule struct {
 	ScheduleExpr string `json:"ScheduleExpression" cbor:"ScheduleExpression"`
 }
 
+// ebInputTransformer is AWS's Target.InputTransformer: named JSONPath
+// selections substituted into a template before delivery.
+type ebInputTransformer struct {
+	InputPathsMap map[string]string `json:"InputPathsMap,omitempty" cbor:"InputPathsMap,omitempty"`
+	InputTemplate string            `json:"InputTemplate" cbor:"InputTemplate"`
+}
+
 type ebTarget struct {
-	ID          string         `json:"Id" cbor:"Id"`
-	ARN         string         `json:"Arn" cbor:"Arn"`
-	RoleARN     string         `json:"RoleArn,omitempty" cbor:"RoleArn,omitempty"`
-	Input       string         `json:"Input,omitempty" cbor:"Input,omitempty"`
-	InputPath   string         `json:"InputPath,omitempty" cbor:"InputPath,omitempty"`
-	ECSParams   map[string]any `json:"EcsParameters,omitempty" cbor:"EcsParameters,omitempty"`
-	RetryPolicy map[string]any `json:"RetryPolicy,omitempty" cbor:"RetryPolicy,omitempty"`
-	DLQConfig   map[string]any `json:"DeadLetterConfig,omitempty" cbor:"DeadLetterConfig,omitempty"`
+	ID               string              `json:"Id" cbor:"Id"`
+	ARN              string              `json:"Arn" cbor:"Arn"`
+	RoleARN          string              `json:"RoleArn,omitempty" cbor:"RoleArn,omitempty"`
+	Input            string              `json:"Input,omitempty" cbor:"Input,omitempty"`
+	InputPath        string              `json:"InputPath,omitempty" cbor:"InputPath,omitempty"`
+	InputTransformer *ebInputTransformer `json:"InputTransformer,omitempty" cbor:"InputTransformer,omitempty"`
+	ECSParams        map[string]any      `json:"EcsParameters,omitempty" cbor:"EcsParameters,omitempty"`
+	KinesisParams    map[string]any      `json:"KinesisParameters,omitempty" cbor:"KinesisParameters,omitempty"`
+	SQSParams        map[string]any      `json:"SqsParameters,omitempty" cbor:"SqsParameters,omitempty"`
+	RetryPolicy      map[string]any      `json:"RetryPolicy,omitempty" cbor:"RetryPolicy,omitempty"`
+	DLQConfig        map[string]any      `json:"DeadLetterConfig,omitempty" cbor:"DeadLetterConfig,omitempty"`
+
+	// kind caches the target type resolved at PutTargets time. It is not part
+	// of the wire shape and is not persisted; delivery re-resolves it from the
+	// ARN for targets loaded from the store.
+	kind eventtarget.Kind `json:"-" cbor:"-"`
+}
+
+// displayType names the target's resolved type for the console ("Lambda",
+// "Step Functions", …), or "Unknown" for an ARN that no longer classifies.
+func (t ebTarget) displayType() string {
+	kind := t.kind
+	if kind == "" {
+		resolved, err := eventtarget.Classify(t.ARN)
+		if err != nil {
+			return "Unknown"
+		}
+		kind = resolved
+	}
+	return eventtarget.DisplayName(kind)
 }
 
 func (s *Service) createEventBus(w http.ResponseWriter, r *http.Request) {
@@ -437,27 +490,38 @@ func (s *Service) putTargets(w http.ResponseWriter, r *http.Request) {
 	if req.EventBusName == "" {
 		req.EventBusName = "default"
 	}
-	key := serviceutil.RegionKey(s.region(r.Context()), req.EventBusName+"/"+req.Rule)
-	// Merge with existing targets
-	existing := []ebTarget{}
-	if raw, found, _ := s.store.Get(r.Context(), nsTargets, key); found {
-		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
+	accepted, failed, aerr := validateTargets(req.Targets)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	// Update by ID
-	targetMap := map[string]ebTarget{}
-	for _, t := range existing {
-		targetMap[t.ID] = t
+	key := ruleKey(s.region(r.Context()), req.EventBusName, req.Rule)
+	existing, err := s.loadTargets(r.Context(), req.EventBusName, req.Rule)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
 	}
-	for _, t := range req.Targets {
-		targetMap[t.ID] = t
-	}
-	merged := make([]ebTarget, 0, len(targetMap))
-	for _, t := range targetMap {
-		merged = append(merged, t)
-	}
+	merged := mergeTargets(existing, accepted)
 	b, _ := json.Marshal(merged)
-	s.store.Set(r.Context(), nsTargets, key, string(b)) //nolint:errcheck
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"FailedEntryCount": 0, "FailedEntries": []any{}})
+	if err := s.store.Set(r.Context(), nsTargets, key, string(b)); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, targetsMutationBody(failed))
+}
+
+// targetsMutationBody renders AWS's PutTargets/RemoveTargets response.
+// FailedEntries is always present — the SDKs model it as a list, and an
+// omitted list is not the same wire shape as an empty one.
+func targetsMutationBody(failed []failedTargetEntry) map[string]any {
+	entries := failed
+	if entries == nil {
+		entries = []failedTargetEntry{}
+	}
+	return map[string]any{
+		"FailedEntryCount": len(entries),
+		"FailedEntries":    entries,
+	}
 }
 
 func (s *Service) listTargetsByRule(w http.ResponseWriter, r *http.Request) {
@@ -471,10 +535,13 @@ func (s *Service) listTargetsByRule(w http.ResponseWriter, r *http.Request) {
 	if req.EventBusName == "" {
 		req.EventBusName = "default"
 	}
-	key := serviceutil.RegionKey(s.region(r.Context()), req.EventBusName+"/"+req.Rule)
-	targets := []ebTarget{}
-	if raw, found, _ := s.store.Get(r.Context(), nsTargets, key); found {
-		json.Unmarshal([]byte(raw), &targets) //nolint:errcheck
+	targets, err := s.loadTargets(r.Context(), req.EventBusName, req.Rule)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	if targets == nil {
+		targets = []ebTarget{}
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Targets": targets})
 }
@@ -491,13 +558,24 @@ func (s *Service) removeTargets(w http.ResponseWriter, r *http.Request) {
 	if req.EventBusName == "" {
 		req.EventBusName = "default"
 	}
-	key := serviceutil.RegionKey(s.region(r.Context()), req.EventBusName+"/"+req.Rule)
-	existing := []ebTarget{}
-	if raw, found, _ := s.store.Get(r.Context(), nsTargets, key); found {
-		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
+	existing, err := s.loadTargets(r.Context(), req.EventBusName, req.Rule)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
 	}
-	removeSet := map[string]bool{}
-	for _, id := range req.Ids {
+	kept := removeTargetIDs(existing, req.Ids)
+	b, _ := json.Marshal(kept)
+	if err := s.store.Set(r.Context(), nsTargets, ruleKey(s.region(r.Context()), req.EventBusName, req.Rule), string(b)); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, targetsMutationBody(nil))
+}
+
+// removeTargetIDs drops the named targets, keeping the order of the rest.
+func removeTargetIDs(existing []ebTarget, ids []string) []ebTarget {
+	removeSet := make(map[string]bool, len(ids))
+	for _, id := range ids {
 		removeSet[id] = true
 	}
 	kept := make([]ebTarget, 0, len(existing))
@@ -506,9 +584,7 @@ func (s *Service) removeTargets(w http.ResponseWriter, r *http.Request) {
 			kept = append(kept, t)
 		}
 	}
-	b, _ := json.Marshal(kept)
-	s.store.Set(r.Context(), nsTargets, key, string(b)) //nolint:errcheck
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"FailedEntryCount": 0, "FailedEntries": []any{}})
+	return kept
 }
 
 func (s *Service) disableRule(w http.ResponseWriter, r *http.Request) {
@@ -577,12 +653,16 @@ func (s *Service) putEvents(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
+	// Assign every entry an ID first, then fan the whole batch out in one
+	// pass: deliverEntries reads each bus's rules once for the batch rather
+	// than once per entry.
+	eventIDs := make([]string, len(req.Entries))
 	results := make([]map[string]any, 0, len(req.Entries))
-	for _, entry := range req.Entries {
-		eventID := uuid.New().String()
-		results = append(results, map[string]any{"EventId": eventID})
-		s.deliverEvent(r.Context(), eventID, entry)
+	for i := range req.Entries {
+		eventIDs[i] = uuid.New().String()
+		results = append(results, map[string]any{"EventId": eventIDs[i]})
 	}
+	s.deliverEntries(r.Context(), eventIDs, req.Entries)
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"FailedEntryCount": 0,
 		"Entries":          results,

@@ -18,19 +18,41 @@ EventBridge accepts AWS JSON 1.1 via `X-Amz-Target: AWSEvents.<operation>`.
 It also accepts Smithy RPC v2 CBOR at `/service/EventBridge/operation/<operation>`
 with `Smithy-Protocol: rpc-v2-cbor` and `Content-Type: application/cbor`.
 Overcast implements event buses, rules, targets, tagging, event ingestion, and
-partial same-process target delivery.
+same-process target delivery.
 
 > [!WARNING]
-> **Emulation tier: Partial** — EventBridge matches common event patterns and invokes
-> SQS targets for `PutEvents`; scheduled rules can invoke ECS/Fargate `RunTask` targets.
-> Other target types and advanced pattern operators are still incomplete.
+> **Emulation tier: Partial** — EventBridge matches common event patterns and fans
+> matched events out to Lambda, SQS, SNS, Step Functions, Kinesis and Firehose targets;
+> scheduled rules can also invoke ECS/Fargate `RunTask` targets. Target types outside
+> that list, archives/replay, API destinations and advanced pattern operators
+> (`prefix`, `numeric`, `anything-but`, …) are still incomplete.
 
 ---
 
 ## Notes
 
-- **Partial event routing.** `PutEvents` evaluates exact-match rule patterns and delivers
-  matching events to SQS targets. Unsupported target types are skipped and logged.
+- **Target fan-out.** `PutEvents` evaluates exact-match rule patterns and delivers matching
+  events to every target type listed above. A target ARN naming any other service is
+  **rejected by `PutTargets`** with a `FailedEntries` entry carrying `ErrorCode:
+  UnsupportedTargetType`, rather than being accepted and silently dropped at delivery time.
+  This is a deliberate divergence from AWS, where all ~20 target types work: an honest
+  refusal is preferred to a rule that provisions cleanly and never fires.
+- **Input transformation.** `Input`, `InputPath` and `InputTransformer` are applied before
+  delivery, and a target may set at most one of them (as on AWS). `InputPath` and
+  `InputTransformer.InputPathsMap` accept the JSONPath subset AWS uses: `$`, dotted member
+  access and array indexing. `InputTransformer` templates may reference
+  `<aws.events.rule-name>`, `<aws.events.rule-arn>`, `<aws.events.event.json>` and
+  `<aws.events.event.ingestion-time>`.
+- **Retries and dead-letter queues.** A failed delivery is retried up to the target's
+  `RetryPolicy.MaximumRetryAttempts` (capped at 5 retries), then sent to the target's
+  `DeadLetterConfig` SQS queue if one is configured, and otherwise dropped with a logged
+  warning. Retries are immediate: real EventBridge backs off over up to 24 hours, which a
+  synchronous emulator has nowhere to wait for.
+- **Delivery visibility.** Recent per-target outcomes (delivered / retried / dead-lettered /
+  dropped) are exposed to the web console at `GET /_overcast/eventbridge/deliveries`, and
+  each rule's targets with their resolved type at `GET /_overcast/eventbridge/rule-targets`.
+  Both are emulator-only console endpoints, not AWS APIs, and the outcome feed is a bounded
+  in-memory ring that does not survive a restart.
 - **Scheduled ECS targets.** Rate and basic AWS cron expressions are evaluated by an
   in-process clock-driven engine. ECS/Fargate targets call ECS `RunTask` with the
   configured target parameters.
@@ -80,17 +102,17 @@ partial same-process target delivery.
 
 ### Targets
 
-| Operation           | Status       | Notes                                                              | AWS Docs                                                                                       |
-| ------------------- | ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `PutTargets`        | ✅ Supported | Adds targets; supports SQS delivery and scheduled ECS task targets | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutTargets.html)        |
-| `ListTargetsByRule` | ✅ Supported | Lists targets including ECS target parameters                      | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTargetsByRule.html) |
-| `RemoveTargets`     | ✅ Supported | Removes targets from a rule                                        | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_RemoveTargets.html)     |
+| Operation           | Status       | Notes                                                                                                            | AWS Docs                                                                                       |
+| ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `PutTargets`        | ✅ Supported | Adds Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and ECS targets; rejects other target types at add time | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutTargets.html)        |
+| `ListTargetsByRule` | ✅ Supported | Lists targets including input transformers and ECS/Kinesis/SQS target parameters                                 | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTargetsByRule.html) |
+| `RemoveTargets`     | ✅ Supported | Removes targets from a rule                                                                                      | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_RemoveTargets.html)     |
 
 ### Events
 
-| Operation   | Status       | Notes                                                     | AWS Docs                                                                               |
-| ----------- | ------------ | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `PutEvents` | ✅ Supported | Accepts events and delivers matching rules to SQS targets | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html) |
+| Operation   | Status       | Notes                                                                                                                                              | AWS Docs                                                                               |
+| ----------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `PutEvents` | ✅ Supported | Delivers matching rules to Lambda, SQS, SNS, Step Functions, Kinesis and Firehose targets, applying InputPath/InputTransformer and RetryPolicy/DLQ | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html) |
 
 ### Tags
 

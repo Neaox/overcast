@@ -38,7 +38,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 
 | # | Item | Current tier | One-line why |
 |---|------|---------------|---------------|
-| 1 | EventBridge Rules target fan-out (Lambda/SNS/Step Functions/Kinesis/Firehose) | Core, delivery gap | `PutEvents`/`PutTargets` only deliver to SQS + scheduled ECS today ([eventbridge/service.go](../../internal/services/eventbridge/service.go)) — the single most common CDK pattern (`rule.addTarget(new targets.LambdaFunction(fn))`) silently no-ops |
+| 1 | EventBridge Rules target fan-out (Lambda/SNS/Step Functions/Kinesis/Firehose) | **Comprehensive — done 2026-08-03 (#467)** | Was: `PutEvents`/`PutTargets` only delivered to SQS + scheduled ECS, so the single most common CDK pattern (`rule.addTarget(new targets.LambdaFunction(fn))`) silently no-oped. Now fans out to all six sink types through [internal/eventtarget](../../internal/eventtarget) |
 | 2 | SNS → Lambda delivery — **done 2026-08-03 (#468)** | Comprehensive | `Publish`'s fan-out switch now has a `case "lambda"` that invokes the function with AWS's `Records[].Sns` event; failed deliveries dead-letter via `RedrivePolicy` instead of vanishing ([sns/handler_publish.go](../../internal/services/sns/handler_publish.go)) |
 | 3 | Step Functions execution engine | Minimal-stub | `StartExecution` records the call and immediately marks it `SUCCEEDED` ([stepfunctions/handler.go:224](../../internal/services/stepfunctions/handler.go)) — zero of the ASL is interpreted; blocks every workflow-shaped local architecture |
 | 4 | IAM policy evaluation | Core, no enforcement | `SimulatePrincipalPolicy` "Always returns allowed — no enforcement engine" ([iam/handler.go:1952](../../internal/services/iam/handler.go)) — no local signal for the single most common real-AWS failure mode (`AccessDenied`) |
@@ -126,9 +126,16 @@ is applied — shown here as the pre-inversion S/M/L/XL and risk label for reada
 The theme: Overcast can create every resource in an event-driven or workflow architecture, but roughly a
 third of the *wiring* between them is a no-op. This wave is "make what's already provisioned actually run."
 
-**1. EventBridge Rules target fan-out** — Core → Comprehensive
+**1. EventBridge Rules target fan-out** — Core → Comprehensive — **done 2026-08-03 (#467)**
 Score: usage 5, leverage 5, fit 5, cost M, dep-ready 5, risk low → **highest in the backlog**.
-Current state: `PutTargets`/`PutEvents` deliver to SQS targets and scheduled ECS task targets only
+Status: shipped. `PutEvents` now fans matched events out to Lambda, SNS, Step Functions, Kinesis and
+Firehose as well as SQS; `PutTargets` validates every target synchronously and rejects one it cannot
+deliver to (§2.1); `InputPath`/`InputTransformer` apply before delivery; `RetryPolicy`/`DeadLetterConfig`
+are honoured. The reusable dispatch seam is [internal/eventtarget](../../internal/eventtarget) —
+`Classify` for ARN → target type and `Dispatcher.Deliver` for the sinks, which item 4 (Pipes) reuses
+rather than rebuilding. Delivery outcomes are surfaced on the web console's bus view.
+Historical current state (for the reasoning below): `PutTargets`/`PutEvents` delivered to SQS targets
+and scheduled ECS task targets only
 ([eventbridge/capabilities_dev.go](../../internal/services/eventbridge/capabilities_dev.go) notes on
 `PutEvents`: "delivers matching rules to SQS targets"). Real EventBridge has ~20 target types; the ones
 that matter for a local dev loop are Lambda, SNS, Step Functions, Kinesis, and Firehose — all Tier-2 or
@@ -209,9 +216,12 @@ why the item sits in the same wave as EventBridge fan-out (both need "invoke Lam
 inside an event/workflow handler," which is worth building once, shared).
 
 **4. Pipes: sources/targets beyond DynamoDB Streams→SQS** — Minimal-stub → Core
-Score: usage 2, leverage 3, fit 4, cost M, dep-ready 3 (waits on item 1), risk low. Sequenced last in this
-wave specifically because it shares the target-dispatch code Wave 1 item 1 builds for EventBridge Rules —
-building it twice is the wrong order. Definition of done: Kinesis stream and SQS queue as additional
+Score: usage 2, leverage 3, fit 4, cost M, dep-ready 3 (**unblocked as of 2026-08-03**), risk low.
+Sequenced last in this wave specifically because it shares the target-dispatch code Wave 1 item 1 builds
+for EventBridge Rules — building it twice is the wrong order. That code now exists as
+[internal/eventtarget](../../internal/eventtarget): `Classify` resolves an ARN to a target type,
+`Dispatcher.Deliver` reaches the Lambda/SQS/SNS/Step Functions/Kinesis/Firehose sinks, and
+`InputTransformer`/`SelectPath` cover the input shaping Pipes needs too. Definition of done: Kinesis stream and SQS queue as additional
 sources; Lambda, Step Functions, and EventBridge bus as additional targets; enrichment step (optional
 Lambda invoke between source and target).
 
