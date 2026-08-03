@@ -45,12 +45,12 @@ public final class ApiGatewayGroup implements ServiceGroup {
                 // apigateway-usage-plans — group-qualified because CreateApiKey
                 // and GetUsagePlan are generic enough to collide with another
                 // service's group.
-                Map.entry("apigateway-usage-plans:CreateUsagePlanWithLimits", this::createUsagePlanWithLimits),
-                Map.entry("apigateway-usage-plans:GetUsagePlan",              this::getUsagePlan),
-                Map.entry("apigateway-usage-plans:CreateApiKey",              this::createApiKey),
-                Map.entry("apigateway-usage-plans:CreateUsagePlanKey",        this::createUsagePlanKey),
-                Map.entry("apigateway-usage-plans:GetUsage",                  this::getUsage),
-                Map.entry("apigateway-usage-plans:DeleteUsagePlan",           this::deleteUsagePlan)
+                Map.entry("apigateway-usage-plans/CreateUsagePlanWithLimits", this::createUsagePlanWithLimits),
+                Map.entry("apigateway-usage-plans/GetUsagePlan",              this::getUsagePlan),
+                Map.entry("apigateway-usage-plans/CreateApiKey",              this::createApiKey),
+                Map.entry("apigateway-usage-plans/CreateUsagePlanKey",        this::createUsagePlanKey),
+                Map.entry("apigateway-usage-plans/GetUsage",                  this::getUsage),
+                Map.entry("apigateway-usage-plans/DeleteUsagePlan",           this::deleteUsagePlan)
         );
     }
 
