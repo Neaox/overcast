@@ -68,7 +68,10 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 		return got.State.Name
 	}
 
-	clk.Add(time.Millisecond)
+	// Fire each transition and wait for it: the mock clock runs the callback on
+	// a goroutine of its own, so advancing the clock alone leaves the read on
+	// the next line racing it.
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := state(); got != "running" {
 		t.Fatalf("after launch: state = %q, want %q (pending → running no-oped)", got, "running")
 	}
@@ -76,7 +79,7 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 	if code := post(h.StopInstances, url.Values{"InstanceId.1": []string{id}}); code != 200 {
 		t.Fatalf("StopInstances: HTTP %d", code)
 	}
-	clk.Add(time.Millisecond)
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := state(); got != "stopped" {
 		t.Fatalf("after stop: state = %q, want %q (stopping → stopped no-oped)", got, "stopped")
 	}
@@ -84,7 +87,7 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 	if code := post(h.StartInstances, url.Values{"InstanceId.1": []string{id}}); code != 200 {
 		t.Fatalf("StartInstances: HTTP %d", code)
 	}
-	clk.Add(time.Millisecond)
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := state(); got != "running" {
 		t.Fatalf("after start: state = %q, want %q (pending → running no-oped)", got, "running")
 	}
@@ -92,7 +95,7 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 	if code := post(h.TerminateInstances, url.Values{"InstanceId.1": []string{id}}); code != 200 {
 		t.Fatalf("TerminateInstances: HTTP %d", code)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if got := state(); got != "terminated" {
 		t.Fatalf("after terminate: state = %q, want %q (shutting-down → terminated no-oped)", got, "terminated")
 	}

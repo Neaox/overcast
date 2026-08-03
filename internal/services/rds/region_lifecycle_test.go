@@ -27,7 +27,8 @@ import (
 const nonDefaultRegion = "eu-west-1"
 
 // newRegionTestHandler returns a handler with a mock clock (so delayed
-// transitions are driven explicitly via clk.Add) and no Docker.
+// transitions are driven explicitly via scheduler.AdvanceAndSettle) and no
+// Docker.
 func newRegionTestHandler(t *testing.T) (*Handler, *clock.Mock) {
 	t.Helper()
 	clk := clock.NewMock()
@@ -71,7 +72,10 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 		t.Fatal("instance unexpectedly visible under the default region")
 	}
 
-	clk.Add(time.Millisecond) // fire the 0-delay creating → available transition
+	// Fire the 0-delay creating → available transition and wait for it: the
+	// mock clock runs the callback on a goroutine of its own, so advancing the
+	// clock alone leaves the read on the next line racing it.
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := instanceStatus(t, h, ctx, id); got != "available" {
 		t.Fatalf("after create: status = %q, want %q (creating → available no-oped)", got, "available")
 	}
@@ -79,7 +83,7 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
 		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
-	clk.Add(time.Millisecond)
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
 		t.Fatalf("after stop: status = %q, want %q (stopping → stopped no-oped)", got, "stopped")
 	}
@@ -87,7 +91,7 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 	if _, aerr := h.startDBInstanceTyped(ctx, &startDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
 		t.Fatalf("StartDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
-	clk.Add(time.Millisecond)
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := instanceStatus(t, h, ctx, id); got != "available" {
 		t.Fatalf("after start: status = %q, want %q (starting → available no-oped)", got, "available")
 	}
@@ -98,7 +102,7 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 	}); aerr != nil {
 		t.Fatalf("ModifyDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if got := instanceStatus(t, h, ctx, id); got != "available" {
 		t.Fatalf("after modify: status = %q, want %q (modifying → available no-oped)", got, "available")
 	}
@@ -106,7 +110,7 @@ func TestInstanceLifecycle_nonDefaultRegion(t *testing.T) {
 	if _, aerr := h.deleteDBInstanceTyped(ctx, &deleteDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
 		t.Fatalf("DeleteDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if _, aerr := h.store.getDBInstance(ctx, id); aerr == nil {
 		t.Fatal("after delete: instance record still present (deferred delete no-oped)")
 	}
@@ -135,7 +139,7 @@ func TestClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	}); aerr != nil {
 		t.Fatalf("CreateDBCluster: %s: %s", aerr.Code, aerr.Message)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if got := clusterStatus(); got != "available" {
 		t.Fatalf("after create: status = %q, want %q (creating → available no-oped)", got, "available")
 	}
@@ -143,7 +147,7 @@ func TestClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	if _, aerr := h.stopDBClusterTyped(ctx, &stopDBClusterReq{DBClusterIdentifier: id}); aerr != nil {
 		t.Fatalf("StopDBCluster: %s: %s", aerr.Code, aerr.Message)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if got := clusterStatus(); got != "stopped" {
 		t.Fatalf("after stop: status = %q, want %q (stopping → stopped no-oped)", got, "stopped")
 	}
@@ -151,7 +155,7 @@ func TestClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	if _, aerr := h.startDBClusterTyped(ctx, &startDBClusterReq{DBClusterIdentifier: id}); aerr != nil {
 		t.Fatalf("StartDBCluster: %s: %s", aerr.Code, aerr.Message)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if got := clusterStatus(); got != "available" {
 		t.Fatalf("after start: status = %q, want %q (starting → available no-oped)", got, "available")
 	}
@@ -159,7 +163,7 @@ func TestClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	if _, aerr := h.deleteDBClusterTyped(ctx, &deleteDBClusterReq{DBClusterIdentifier: id}); aerr != nil {
 		t.Fatalf("DeleteDBCluster: %s: %s", aerr.Code, aerr.Message)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if _, aerr := h.store.getDBCluster(ctx, id); aerr == nil {
 		t.Fatal("after delete: cluster record still present (deferred delete no-oped)")
 	}
@@ -229,7 +233,7 @@ func TestLegacyHandlers_nonDefaultRegion(t *testing.T) {
 	}); code != 200 {
 		t.Fatalf("CreateDBInstance: HTTP %d", code)
 	}
-	clk.Add(time.Millisecond)
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := instanceStatus(t, h, ctx, id); got != "available" {
 		t.Fatalf("after create: status = %q, want %q", got, "available")
 	}
@@ -237,7 +241,7 @@ func TestLegacyHandlers_nonDefaultRegion(t *testing.T) {
 	if code := post("StopDBInstance", map[string]string{"DBInstanceIdentifier": id}); code != 200 {
 		t.Fatalf("StopDBInstance: HTTP %d", code)
 	}
-	clk.Add(time.Millisecond)
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
 		t.Fatalf("after stop: status = %q, want %q", got, "stopped")
 	}
@@ -245,7 +249,7 @@ func TestLegacyHandlers_nonDefaultRegion(t *testing.T) {
 	if code := post("StartDBInstance", map[string]string{"DBInstanceIdentifier": id}); code != 200 {
 		t.Fatalf("StartDBInstance: HTTP %d", code)
 	}
-	clk.Add(time.Millisecond)
+	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
 	if got := instanceStatus(t, h, ctx, id); got != "available" {
 		t.Fatalf("after start: status = %q, want %q", got, "available")
 	}
@@ -253,7 +257,7 @@ func TestLegacyHandlers_nonDefaultRegion(t *testing.T) {
 	if code := post("DeleteDBInstance", map[string]string{"DBInstanceIdentifier": id}); code != 200 {
 		t.Fatalf("DeleteDBInstance: HTTP %d", code)
 	}
-	clk.Add(time.Second)
+	h.scheduler.AdvanceAndSettle(clk, time.Second)
 	if _, aerr := h.store.getDBInstance(ctx, id); aerr == nil {
 		t.Fatal("after delete: instance record still present")
 	}
