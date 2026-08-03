@@ -120,3 +120,54 @@ func TestInputTransformer_nonJSONTemplateIsPassedThrough(t *testing.T) {
 		t.Fatalf("Render = %s", got)
 	}
 }
+
+// PathTemplate is the EventBridge Pipes flavour of input transformation: JSON
+// paths are written inline as <$.a.b> rather than named through an
+// InputPathsMap. It shares SelectPath with the rule-target transformer, which
+// is why both live in this package.
+func TestPathTemplateRender(t *testing.T) {
+	record := map[string]any{
+		"messageId": "m-1",
+		"body":      map[string]any{"orderId": "o-1", "total": float64(42)},
+		"items":     []any{"a", "b"},
+	}
+	reserved := map[string]any{
+		"aws.pipes.pipe-name":  "orders",
+		"aws.pipes.event.json": record,
+	}
+
+	cases := map[string]string{
+		// Free text passes through untouched.
+		"Hello, sender": "Hello, sender",
+		// A bare string selection is quoted for the caller, so the result is
+		// valid JSON without the template having to say so.
+		`{"id":<$.messageId>}`: `{"id":"m-1"}`,
+		// Quotes the template already supplies are not doubled.
+		`{"id":"<$.messageId>"}`: `{"id":"m-1"}`,
+		// Objects and arrays substitute as JSON, unquoted.
+		`{"body":<$.body>}`:   `{"body":{"orderId":"o-1","total":42}}`,
+		`{"items":<$.items>}`: `{"items":["a","b"]}`,
+		// Numbers keep their JSON form.
+		`{"total":<$.body.total>}`: `{"total":42}`,
+		// Reserved variables resolve from the pipe, not the record.
+		`{"pipe":<aws.pipes.pipe-name>}`: `{"pipe":"orders"}`,
+		`{"e":<aws.pipes.event.json>}`:   `{"e":{"body":{"orderId":"o-1","total":42},"items":["a","b"],"messageId":"m-1"}}`,
+		// "If you specify a variable to match a JSON path that doesn't exist in
+		// the event, that variable isn't created and won't appear in the output."
+		`{"missing":"<$.nope>"}`: `{"missing":""}`,
+	}
+	for template, want := range cases {
+		got, err := PathTemplate(template).Render(record, reserved)
+		if err != nil {
+			t.Fatalf("Render(%q): %v", template, err)
+		}
+		if string(got) != want {
+			t.Errorf("Render(%q) = %q, want %q", template, got, want)
+		}
+	}
+
+	// An empty template is not a transformation at all.
+	if _, err := PathTemplate("").Render(record, nil); err == nil {
+		t.Fatal("expected an empty InputTemplate to be rejected")
+	}
+}

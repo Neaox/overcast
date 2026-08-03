@@ -633,8 +633,11 @@ func TestAlarmAutoTransitionsToAlarm(t *testing.T) {
 	defer put.Body.Close()
 	helpers.AssertStatus(t, put, http.StatusOK)
 
-	// When: the evaluator tick advances
-	srv.Clock.Add(2 * time.Second)
+	// When: the clock advances past the end of the period the datapoint
+	// landed in. Alarms evaluate *closed* periods aligned to the epoch,
+	// exactly as real CloudWatch does, so a datapoint in the period still
+	// accumulating is not yet a datapoint to evaluate.
+	srv.Clock.Add(90 * time.Second)
 
 	// Then: alarm state is ALARM
 	resp := cwCall(t, srv, "DescribeAlarms", url.Values{"AlarmNames.member.1": {"cpu-alarm"}})

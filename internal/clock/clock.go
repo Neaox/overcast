@@ -45,6 +45,12 @@ type Mock = clock.Mock
 // Timer is the handle returned by Clock.AfterFunc / Clock.Timer.
 type Timer = clock.Timer
 
+// Ticker is the handle returned by Clock.Ticker. Name it when a background
+// loop must create its ticker on the constructing goroutine rather than
+// inside the spawned one — a mock clock only delivers ticks to tickers that
+// already existed when it was advanced.
+type Ticker = clock.Ticker
+
 // New returns a real wall-clock backed Clock.
 // Use this in production NewXxx constructors and in main.go.
 func New() Clock { return clock.New() }

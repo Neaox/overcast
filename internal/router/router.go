@@ -18,6 +18,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/alarmaction"
 	"github.com/Neaox/overcast/internal/awsapi"
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
@@ -617,6 +618,15 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// EventBridge: wire bus for bus/rule lifecycle events.
 	ebSvc.InitBus(bus)
 	ebSvc.InitRouter(r)
+	// CloudWatch: wire alarm-action dispatch. Deliveries go back through the
+	// root router, so an alarm's SNS action takes exactly the path an SDK
+	// Publish would, and the state-change event goes onto the default event
+	// bus through the real PutEvents. A service that owns an alarm action
+	// ARN type — Auto Scaling scaling policies, issue #474 — claims it with
+	// alarmActions.Register("autoscaling", …) here, rather than by adding a
+	// case inside the CloudWatch package.
+	alarmActions := alarmaction.NewDispatcher(r, cfg.Region, bus, logger)
+	cloudwatchSvc.InitAlarmActions(alarmActions)
 	// Step Functions: wire bus for state machine/execution lifecycle events,
 	// plus the root router so Task states reach Lambda/SQS/SNS/DynamoDB
 	// through the same handlers an SDK call would.
@@ -640,8 +650,15 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	lambdaSvc.AddTriggerSource(apigwSvc)
 	lambdaSvc.AddTriggerSource(appsyncSvc)
 	apigwSvc.InitCognitoValidator(cognitoSvc)
-	// DynamoDB Streams → SQS via Pipes: subscribe to stream events and enqueue.
-	pipesSvc.InitDelivery(bus, sqsSvc.Enqueuer())
+	// EventBridge Pipes: subscribe to DynamoDB stream events, wire the polled
+	// sources (SQS, Kinesis) and the Lambda enrichment, and hand the service the
+	// root router so a target is reached the same way an SDK call would reach it.
+	pipesSvc.InitDelivery(bus, pipes.Sources{
+		Messages: sqsSvc.Receiver(),
+		Streams:  kinesisSvc.StreamReceiver(),
+		Enricher: lambdaSvc.SyncInvoker(),
+	})
+	pipesSvc.InitRouter(r)
 	ti := scheduler.TargetInvoker{}
 	ti.Lambda = lambdaSvc.Invoker()
 	ti.SQS = sqsSvc.Enqueuer()

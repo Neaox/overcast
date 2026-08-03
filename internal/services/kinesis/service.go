@@ -5,6 +5,7 @@
 package kinesis
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -43,6 +44,61 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus
 }
+
+// StreamReceiver returns an events.StreamRecordReceiver backed by this
+// service's store, so a consumer inside the emulator — the EventBridge Pipes
+// Kinesis source poller — can read a stream without an HTTP round trip or an
+// import cycle. It allocates only; no store access happens until a call.
+func (s *Service) StreamReceiver() events.StreamRecordReceiver {
+	return &streamReceiver{store: s.handler.store}
+}
+
+// streamReceiver satisfies events.StreamRecordReceiver.
+type streamReceiver struct {
+	store *kinesisStore
+}
+
+// ListStreamShards returns the stream's shard IDs.
+func (r *streamReceiver) ListStreamShards(ctx context.Context, streamName string) ([]string, error) {
+	stream, aerr := r.store.getStream(ctx, streamName)
+	if aerr != nil {
+		return nil, aerr
+	}
+	ids := make([]string, 0, len(stream.Shards))
+	for _, shard := range stream.Shards {
+		ids = append(ids, shard.ShardId)
+	}
+	return ids, nil
+}
+
+// ReceiveStreamRecords reads one page of a shard and returns the cursor to
+// resume from. The cursor is the last sequence number returned, so a caller
+// that sees no records keeps the cursor it already had.
+func (r *streamReceiver) ReceiveStreamRecords(ctx context.Context, streamName, shardID, afterSeqNo string, limit int) ([]events.StreamRecord, string, error) {
+	if limit <= 0 {
+		limit = defaultStreamPageSize
+	}
+	page, aerr := r.store.listRecordsPage(ctx, streamName, shardID, afterSeqNo, limit)
+	if aerr != nil {
+		return nil, afterSeqNo, aerr
+	}
+	out := make([]events.StreamRecord, 0, len(page))
+	next := afterSeqNo
+	for _, rec := range page {
+		out = append(out, events.StreamRecord{
+			ShardID:                     shardID,
+			SequenceNumber:              rec.SequenceNumber,
+			PartitionKey:                rec.PartitionKey,
+			Data:                        rec.Data,
+			ApproximateArrivalTimestamp: rec.ApproximateArrivalTimestamp,
+		})
+		next = rec.SequenceNumber
+	}
+	return out, next, nil
+}
+
+// defaultStreamPageSize caps a ReceiveStreamRecords call that asks for no limit.
+const defaultStreamPageSize = 100
 
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }

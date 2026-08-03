@@ -55,6 +55,7 @@ import { Route as SnsTopicRouteImport } from './routes/sns/$topic'
 import { Route as SecretsmanagerSecretNameRouteImport } from './routes/secretsmanager/$secretName'
 import { Route as S3BucketRouteImport } from './routes/s3/$bucket'
 import { Route as RdsInstanceRouteImport } from './routes/rds/$instance'
+import { Route as PipesPipeNameRouteImport } from './routes/pipes/$pipeName'
 import { Route as LambdaNameRouteImport } from './routes/lambda/$name'
 import { Route as KmsKeyIdRouteImport } from './routes/kms/$keyId'
 import { Route as KinesisStreamNameRouteImport } from './routes/kinesis/$streamName'
@@ -326,6 +327,11 @@ const RdsInstanceRoute = RdsInstanceRouteImport.update({
   path: '/rds/$instance',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PipesPipeNameRoute = PipesPipeNameRouteImport.update({
+  id: '/pipes/$pipeName',
+  path: '/pipes/$pipeName',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LambdaNameRoute = LambdaNameRouteImport.update({
   id: '/lambda/$name',
   path: '/lambda/$name',
@@ -562,6 +568,7 @@ export interface FileRoutesByFullPath {
   '/kinesis/$streamName': typeof KinesisStreamNameRoute
   '/kms/$keyId': typeof KmsKeyIdRoute
   '/lambda/$name': typeof LambdaNameRoute
+  '/pipes/$pipeName': typeof PipesPipeNameRoute
   '/rds/$instance': typeof RdsInstanceRoute
   '/s3/$bucket': typeof S3BucketRouteWithChildren
   '/secretsmanager/$secretName': typeof SecretsmanagerSecretNameRoute
@@ -647,6 +654,7 @@ export interface FileRoutesByTo {
   '/kinesis/$streamName': typeof KinesisStreamNameRoute
   '/kms/$keyId': typeof KmsKeyIdRoute
   '/lambda/$name': typeof LambdaNameRoute
+  '/pipes/$pipeName': typeof PipesPipeNameRoute
   '/rds/$instance': typeof RdsInstanceRoute
   '/secretsmanager/$secretName': typeof SecretsmanagerSecretNameRoute
   '/sns/$topic': typeof SnsTopicRoute
@@ -733,6 +741,7 @@ export interface FileRoutesById {
   '/kinesis/$streamName': typeof KinesisStreamNameRoute
   '/kms/$keyId': typeof KmsKeyIdRoute
   '/lambda/$name': typeof LambdaNameRoute
+  '/pipes/$pipeName': typeof PipesPipeNameRoute
   '/rds/$instance': typeof RdsInstanceRoute
   '/s3/$bucket': typeof S3BucketRouteWithChildren
   '/secretsmanager/$secretName': typeof SecretsmanagerSecretNameRoute
@@ -822,6 +831,7 @@ export interface FileRouteTypes {
     | '/kinesis/$streamName'
     | '/kms/$keyId'
     | '/lambda/$name'
+    | '/pipes/$pipeName'
     | '/rds/$instance'
     | '/s3/$bucket'
     | '/secretsmanager/$secretName'
@@ -907,6 +917,7 @@ export interface FileRouteTypes {
     | '/kinesis/$streamName'
     | '/kms/$keyId'
     | '/lambda/$name'
+    | '/pipes/$pipeName'
     | '/rds/$instance'
     | '/secretsmanager/$secretName'
     | '/sns/$topic'
@@ -992,6 +1003,7 @@ export interface FileRouteTypes {
     | '/kinesis/$streamName'
     | '/kms/$keyId'
     | '/lambda/$name'
+    | '/pipes/$pipeName'
     | '/rds/$instance'
     | '/s3/$bucket'
     | '/secretsmanager/$secretName'
@@ -1080,6 +1092,7 @@ export interface RootRouteChildren {
   KinesisStreamNameRoute: typeof KinesisStreamNameRoute
   KmsKeyIdRoute: typeof KmsKeyIdRoute
   LambdaNameRoute: typeof LambdaNameRoute
+  PipesPipeNameRoute: typeof PipesPipeNameRoute
   RdsInstanceRoute: typeof RdsInstanceRoute
   S3BucketRoute: typeof S3BucketRouteWithChildren
   SecretsmanagerSecretNameRoute: typeof SecretsmanagerSecretNameRoute
@@ -1451,6 +1464,13 @@ declare module '@tanstack/react-router' {
       path: '/rds/$instance'
       fullPath: '/rds/$instance'
       preLoaderRoute: typeof RdsInstanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pipes/$pipeName': {
+      id: '/pipes/$pipeName'
+      path: '/pipes/$pipeName'
+      fullPath: '/pipes/$pipeName'
+      preLoaderRoute: typeof PipesPipeNameRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/lambda/$name': {
@@ -1828,6 +1848,7 @@ const rootRouteChildren: RootRouteChildren = {
   KinesisStreamNameRoute: KinesisStreamNameRoute,
   KmsKeyIdRoute: KmsKeyIdRoute,
   LambdaNameRoute: LambdaNameRoute,
+  PipesPipeNameRoute: PipesPipeNameRoute,
   RdsInstanceRoute: RdsInstanceRoute,
   S3BucketRoute: S3BucketRouteWithChildren,
   SecretsmanagerSecretNameRoute: SecretsmanagerSecretNameRoute,

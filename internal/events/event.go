@@ -87,6 +87,13 @@ const (
 	// PipesStateChanged fires when a Pipe transitions between lifecycle states (e.g. CREATING→RUNNING, RUNNING→DELETING).
 	PipesStateChanged Type = "pipes:StateChanged"
 
+	// CloudWatchAlarmStateChange fires when an alarm moves between OK,
+	// ALARM and INSUFFICIENT_DATA — whether the evaluator decided it or
+	// SetAlarmState forced it. Transitions only: a re-evaluation that lands
+	// on the same state publishes nothing, matching when real CloudWatch
+	// fires alarm actions.
+	CloudWatchAlarmStateChange Type = "cloudwatch:AlarmStateChange"
+
 	// ---- Resource lifecycle events ----------------------------------------.
 	// These fire when resources are created or deleted, allowing connected
 	// clients (e.g. the topology map) to update without polling.
@@ -651,6 +658,20 @@ type PipesStateChangedPayload struct {
 	OldState string `json:"oldState"`
 	NewState string `json:"newState"`
 }
+
+// CloudWatchAlarmStateChangePayload carries one alarm state transition.
+// Reason is the alarm's StateReason, which is what makes the event readable
+// on its own without a follow-up DescribeAlarms.
+type CloudWatchAlarmStateChangePayload struct {
+	AlarmName string `json:"alarmName"`
+	ARN       string `json:"arn,omitempty"`
+	OldState  string `json:"oldState"`
+	NewState  string `json:"newState"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// arnFromPayload implements arnCarrier for CloudWatchAlarmStateChangePayload.
+func (p CloudWatchAlarmStateChangePayload) arnFromPayload() string { return p.ARN }
 
 // ResourcePayload is the payload for resource lifecycle events (created, deleted, updated).
 // Name is the bare resource name (not an ARN) — e.g. bucket name, queue name, table name.

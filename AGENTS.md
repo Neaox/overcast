@@ -20,8 +20,9 @@
 
 ## Repo-local skills
 
-This repo includes opencode skills under `.agents/skills`. The project `opencode.json`
-registers that directory explicitly so agents can discover them without prompting.
+This repo includes skills under `.agents/skills`. The project `opencode.json`
+registers that directory explicitly, and `.claude/skills` is a symlink to it, so
+opencode and Claude Code both discover them without prompting.
 
 - `aws-compatibility-review`: Use for AWS fidelity audits, compatibility tests, wire-format drift, and service behaviour parity.
 - `bug-fix`: Use for diagnosing and fixing bugs with reproducing tests and full verification.
@@ -31,6 +32,7 @@ registers that directory explicitly so agents can discover them without promptin
 - `github-issue-lifecycle`: Use for creating, triaging, updating, linking, and closing GitHub issues.
 - `new-feature`: Use for adding AWS endpoints, services, CloudFormation resources, or other product features.
 - `pull-request`: Use for preparing PRs, PR descriptions, commit hygiene, screenshots for visual changes, and CHANGELOG decisions.
+- `stacked-prs`: Use when a PR depends on another PR that has not merged yet — building, linking, syncing and landing a chain of dependent PRs.
 
 ---
 
@@ -180,6 +182,8 @@ Check for, at minimum:
 - **Stale comments and docs** — a comment describing what the code did two iterations ago is worse than no comment. Same for a plan doc under `docs/plans/` that must be accurate as of this commit, a service doc's *both* tables, and STATUS.md.
 - **Completeness against your own claims** — every `state.Store` change in both implementations, every new resource type registered in `provisioner.go`, the changelog fragment under `.changelog/`, the test that was supposed to fail first. Re-read the task and the [Before finishing](#before-finishing) list against the diff, not against your recollection.
 - **Commit coherence** — if the branch has grown several unrelated reasons, split it into commits that each stand alone rather than pushing one commit that does four things.
+
+**A review that finds something after the commit is not too late — amend.** Reviewing before you commit is the ideal, but a commit is cheap to correct while the branch is still yours, so never let "I have already committed it" become the reason a leftover ships. Fix it and `git commit --amend`, which is what [What agents must NOT do](#what-agents-must-not-do) already asks for mistakes you find in your own work: amending is fine even after pushing, on a branch you own that nobody shares, with `git push --force-with-lease`. Use a follow-up commit instead once the change is merged, the branch is genuinely shared, or unrelated commits sit on top — and note that a PR with auto-merge enabled can merge underneath you mid-task, which turns an intended amend into a follow-up whether you like it or not. A rejected `--force-with-lease` is that situation announcing itself; re-fetch and look before overriding it. What is never acceptable is committing something you know does not belong and leaving it for the reviewer, or narrating it as a known issue in the PR body.
 
 For a substantial or long-running branch, run the [`code-review` skill](./.agents/skills/code-review/SKILL.md) over the diff before pushing — it applies the full AWS-parity, regression-risk, and maintainability checklists that a quick read-through will not. Delegating the read to a sub-agent is a good use of one: it reviews the diff without the anchoring bias of having written it. Fix what it finds before the push, not in a follow-up commit.
 
@@ -335,6 +339,38 @@ release is ready. Merge it as a deliberate, separate step.
 This is a merge-timing rule, not a publishing safeguard — the `release`
 environment's required reviewer already means nothing ships without the
 maintainer approving the exact SHA.
+
+## Stacked pull requests
+
+When your work needs code from a PR that has not merged yet, stack on it rather
+than duplicating the code or waiting: target that PR's branch instead of `main`.
+GitHub understands stacks natively — it runs CI on **every** layer, not just the
+bottom, and rebases and retargets the branches above when the bottom merges.
+
+Build one with the `gh stack` extension (`gh stack init` / `add` / `submit` /
+`sync`), turn existing branches into one with `gh stack init branch1 branch2`,
+join **already-open** PRs with `gh stack link` (remote-only — it rebases and
+force-pushes nothing, so it is safe against another agent's branch), or open a
+PR against another PR's branch in the web UI. REST, GraphQL and webhooks expose
+the stack for automation. Not supported in GitHub Desktop.
+
+Four rules, each of which has cost this repo a recovery:
+
+- **Merge bottom-up**, and **never `--delete-branch` a base that has children** —
+  it closes the child PR and deletes its head branch, and a closed PR cannot be
+  retargeted.
+- **Never rebase or force-push a branch you do not own while its PR is open.** If
+  a lower PR conflicts with `main`, its owner fixes it; ask rather than fixing it
+  for them.
+- **After anything in the stack merges, `gh stack sync`** (or fetch and reset to
+  the remote) — GitHub has already rebased the branches above, so a local
+  `git rebase` replays commits the server dropped.
+- **A PR showing no checks at all is `CONFLICTING`, not queued** — GitHub
+  dispatches no workflows on a conflicting PR. Check `mergeStateStatus` before
+  waiting on CI.
+
+Full workflow, including the generated-file conflict recipe, is in the
+`stacked-prs` skill.
 
 ## Reserved ports — 4566 and 4567 belong to the user
 

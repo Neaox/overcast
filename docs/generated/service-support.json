@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1327,
+  "total_ops": 1332,
   "services": [
     {
       "service": "s3",
@@ -6551,19 +6551,19 @@
           "operation": "CreatePipe",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Creates with async state machine (CREATING→RUNNING)"
+          "notes": "Validates source/enrichment/target wiring up front; async state machine (CREATING→RUNNING)"
         },
         {
           "operation": "DescribePipe",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Returns pipe details and current state"
+          "notes": "Returns the full pipe configuration and current state"
         },
         {
           "operation": "UpdatePipe",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Updates DesiredState and Description"
+          "notes": "Updates DesiredState, description, role and parameter blocks (UPDATING→previous state)"
         },
         {
           "operation": "DeletePipe",
@@ -6575,7 +6575,7 @@
           "operation": "ListPipes",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Lists all pipes"
+          "notes": "Lists all pipes as PipeSummary"
         }
       ]
     },
@@ -6778,26 +6778,44 @@
     {
       "service": "cloudwatch",
       "display_name": "CloudWatch",
-      "total_ops": 12,
-      "implemented_ops": 12,
+      "total_ops": 17,
+      "implemented_ops": 15,
       "operations": [
         {
           "operation": "DeleteAlarms",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Deletes one or more alarms by name"
+          "notes": "Deletes one or more alarms by name, along with their history"
+        },
+        {
+          "operation": "DescribeAlarmHistory",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Returns StateUpdate, ConfigurationUpdate and Action items; filters by alarm name, item type, date range, MaxRecords and ScanBy. The most recent 100 items per alarm are retained"
         },
         {
           "operation": "DescribeAlarms",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Lists alarms, supports filtering"
+          "notes": "Lists alarms, supports filtering; reports the evaluator's live StateValue, StateReason and StateReasonData"
         },
         {
           "operation": "DescribeAlarmsForMetric",
           "category": "General",
           "status": "✅ Supported",
           "notes": "Lists alarms for a specific metric"
+        },
+        {
+          "operation": "DisableAlarmActions",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Clears ActionsEnabled so transitions stop firing actions"
+        },
+        {
+          "operation": "EnableAlarmActions",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Sets ActionsEnabled so transitions fire actions again"
         },
         {
           "operation": "GetMetricData",
@@ -6827,7 +6845,7 @@
           "operation": "PutMetricAlarm",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Creates or updates an alarm"
+          "notes": "Creates or updates a single-metric alarm, which is then evaluated automatically (Threshold, ComparisonOperator, Period, EvaluationPeriods, DatapointsToAlarm, Dimensions, TreatMissingData). Metric-math/multi-metric alarms, anomaly detection (ThresholdMetricId) and extended statistics are refused with 501 rather than created un-evaluated"
         },
         {
           "operation": "PutMetricData",
@@ -6839,7 +6857,19 @@
           "operation": "SetAlarmState",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Manually sets the state of an alarm"
+          "notes": "Forces an alarm's state and fires that state's actions; the forced state is held against the evaluator for one evaluation range"
+        },
+        {
+          "operation": "PutAnomalyDetector",
+          "category": "General",
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501 — there is no anomaly-detection model behind the emulator"
+        },
+        {
+          "operation": "PutCompositeAlarm",
+          "category": "General",
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501 — composite alarm rules are not evaluated"
         },
         {
           "operation": "TagResource",

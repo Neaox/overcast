@@ -44,6 +44,7 @@
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>cloudwatchlogs</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>ses</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>eventbridge</artifactId></dependency>
+    <dependency><groupId>software.amazon.awssdk</groupId><artifactId>pipes</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>cloudformation</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>ec2</artifactId></dependency>
     <dependency><groupId>software.amazon.awssdk</groupId><artifactId>ecs</artifactId></dependency>

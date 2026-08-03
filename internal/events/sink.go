@@ -1,6 +1,9 @@
 package events
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // MessageEnqueuer is the narrow interface used by notification dispatchers
 // to deliver event payloads to destination queues (SQS). It lives in the
@@ -35,6 +38,33 @@ type MessageReceiver interface {
 	// receipt handle) from queueName. Best-effort: individual failures are
 	// logged but do not abort the batch.
 	DeleteMessages(ctx context.Context, queueName string, receiptHandles []string) error
+}
+
+// StreamRecord is a single record read from a Kinesis data stream shard.
+type StreamRecord struct {
+	ShardID                     string
+	SequenceNumber              string
+	PartitionKey                string
+	Data                        []byte
+	ApproximateArrivalTimestamp time.Time
+}
+
+// StreamRecordReceiver is the narrow interface used by the EventBridge Pipes
+// Kinesis source poller to read a stream without importing the Kinesis service.
+// It lives in the events package for the same reason MessageReceiver does:
+// avoiding an import cycle between the consumer and the producing service.
+//
+// It is deliberately cursor-in / cursor-out rather than iterator-based, so the
+// caller owns the per-shard position and the Kinesis service keeps no
+// per-consumer state.
+type StreamRecordReceiver interface {
+	// ListStreamShards returns the shard IDs of a stream. A stream that does
+	// not exist is an error, not an empty list.
+	ListStreamShards(ctx context.Context, streamName string) ([]string, error)
+	// ReceiveStreamRecords returns up to limit records written to shardID
+	// after afterSeqNo ("" reads from the start of the shard), together with
+	// the sequence number to pass on the next call.
+	ReceiveStreamRecords(ctx context.Context, streamName, shardID, afterSeqNo string, limit int) (records []StreamRecord, next string, err error)
 }
 
 // FunctionInvoker is the narrow interface used by notification dispatchers

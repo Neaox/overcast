@@ -101,7 +101,7 @@
 | ACM             | 7   |
 | Athena          | 8   |
 | Bedrock         | 2   |
-| CloudWatch      | 12  |
+| CloudWatch      | 17  |
 | DynamoDB Streams | 4   |
 | Firehose        | 6   |
 | Glue            | 8   |
