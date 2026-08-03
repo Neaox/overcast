@@ -354,6 +354,29 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # The two lint steps below compare this PR's compat files against the
+      # base revision, which the shallow checkout above (fetch-depth 1, the
+      # merge ref only) does not put in the object store. Letting checkout
+      # fetch it beats shelling out to `git fetch` inside each lint step: the
+      # action retries a transient git failure, where a bare fetch under
+      # `bash -e` aborts the step on the first one. That is how run
+      # 30799505091 failed on #562 — a 503 from GitHub killed the step before
+      # the linter ran, and `continue-on-error` handed the gate an outcome it
+      # reported as "a new quarantine, or an entry without a reason" on a PR
+      # that touches no compat files at all.
+      #
+      # sparse-checkout because only compat/ is read. base.sha rather than the
+      # live tip of main so the verdict is deterministic — the same commit
+      # cannot pass one run and fail the next because main moved underneath it
+      # — and so the lint agrees with the diff a reviewer sees on the PR.
+      - name: Check out base compat files
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          sparse-checkout: compat
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -423,14 +446,13 @@ jobs:
         if: github.event_name == 'pull_request'
         continue-on-error: true
         run: |
-          git fetch --depth=1 origin main
-          if git show origin/main:compat/baseline.json > compat-baseline-main.json 2>/dev/null; then
+          if [[ -f base/compat/baseline.json ]]; then
             go run ./cmd/compat \
-              --lint-baseline-from compat-baseline-main.json \
+              --lint-baseline-from base/compat/baseline.json \
               --lint-baseline-to compat/baseline.json \
               --annotate
           else
-            echo "No baseline exists on origin/main yet; skipping downgrade lint."
+            echo "No baseline exists on the base commit yet; skipping downgrade lint."
           fi
 
       # Quarantining a test removes it from the baseline gate in both
@@ -449,15 +471,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          git fetch --depth=1 origin main
-          git show origin/main:compat/flaky.json > compat-flaky-main.json 2>/dev/null || echo '{"version":1,"flaky":[]}' > compat-flaky-main.json
           growth=""
           if gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" --jq '.[].name' | grep -qx 'quarantine-approved'; then
             echo "quarantine-approved label present — a reviewer has agreed to the new quarantine(s)."
             growth="--flaky-growth-approved"
           fi
+          # No guard on the from-file: readFlakyFileRaw treats a missing path
+          # as an empty list, which is what a base commit predating the file
+          # means. The baseline lint above still needs its guard —
+          # readBaselineFile errors on a missing file rather than defaulting.
           go run ./cmd/compat \
-            --lint-flaky-from compat-flaky-main.json \
+            --lint-flaky-from base/compat/flaky.json \
             --lint-flaky-to compat/flaky.json \
             --annotate $growth
 

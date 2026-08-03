@@ -96,6 +96,85 @@ class ParseEntriesTest(unittest.TestCase):
 		self.assertEqual([], errors)
 		self.assertFalse(entries[0].breaking)
 
+	def test_marker_after_the_area_is_rejected(self) -> None:
+		# '~ [autoscaling]! …' used to parse: the area group needs whitespace
+		# after its ']', so the '!' made it backtrack out and the brackets landed
+		# in the prose. The entry came out neither breaking nor scoped, was never
+		# asked for a migration note, and reached a release section unmarked.
+		_, errors = changelog.parse_entries(
+			"~ [autoscaling]! group shapes the reconciler cannot converge "
+			"are now refused\n"
+		)
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("marker is after the area", errors[0])
+		self.assertIn("~! [autoscaling] group shapes", errors[0])
+
+	def test_marker_after_the_area_is_rejected_for_not_breaking_too(self) -> None:
+		_, errors = changelog.parse_entries("- [sqs]. an unreleased debug flag\n")
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("-. [sqs] an unreleased debug flag", errors[0])
+
+	def test_marker_after_the_kind_stays_valid(self) -> None:
+		# The corrected form of the line above: the whole point of the rule.
+		entries, errors = changelog.parse_entries(
+			"~! [autoscaling] group shapes the reconciler cannot converge "
+			"are now refused\n"
+			"  migration: stop declaring a LaunchTemplate group\n"
+		)
+
+		self.assertEqual([], errors)
+		self.assertTrue(entries[0].breaking)
+		self.assertEqual(["autoscaling"], entries[0].areas)
+
+	def test_rejects_prose_beginning_with_a_bracket(self) -> None:
+		# An unclosed area reads as prose to the regex, which is the other way a
+		# leading '[' arrives. A prose that genuinely wants to start with one is
+		# not supported: the character is the area syntax, so it is always
+		# ambiguous there and the entry has to be reworded.
+		_, errors = changelog.parse_entries("+ [autoscaling group shapes\n")
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("prose cannot begin with '['", errors[0])
+
+	def test_rejects_a_second_bracket_group_after_a_valid_area(self) -> None:
+		_, errors = changelog.parse_entries("~ [web] [beta] flag removed\n")
+
+		self.assertEqual(1, len(errors))
+		self.assertIn("prose cannot begin with '['", errors[0])
+
+	def test_refusal_prose_forces_an_explicit_marker(self) -> None:
+		# The prose the misplaced marker was hiding: it should have been asked
+		# about on its own merits, and now is.
+		_, errors = changelog.parse_entries(
+			"~ [autoscaling] group shapes the reconciler cannot converge are now "
+			"refused instead of stored and ignored\n"
+		)
+
+		self.assertTrue(any("reads like a compatibility break" in e for e in errors))
+
+	def test_past_tense_rejection_describes_a_bug_and_is_not_a_hint(self) -> None:
+		# "was rejected" is how this repo describes what an entry is fixing.
+		entries, errors = changelog.parse_entries(
+			"* [s3] `CopyObject` with an encoded separator was rejected with "
+			"\"Invalid copy source\"\n"
+		)
+
+		self.assertEqual([], errors)
+		self.assertFalse(entries[0].breaking)
+
+	def test_an_unimplemented_status_code_is_not_a_hint(self) -> None:
+		# "still return 501" is the house idiom for declaring what an Added entry
+		# does not cover yet — the opposite of a break.
+		entries, errors = changelog.parse_entries(
+			"+ [wafv2] `CreateWebACL` and `GetWebACL`; all other operations still "
+			"return 501\n"
+		)
+
+		self.assertEqual([], errors)
+		self.assertFalse(entries[0].breaking)
+
 	def test_splits_areas_on_slash(self) -> None:
 		entries, errors = changelog.parse_entries(
 			"+ [efs/ecs] mounts honour root directories\n"

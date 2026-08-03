@@ -363,6 +363,85 @@ The `docker-compose.yml` in `compat/` wires up:
 Suite images are pre-built and injected via `OVERCAST_COMPAT_NODEJS_IMAGE`
 so the Go runner can `docker run` them, directing stdout to its NDJSON parser.
 
+### Flags that read a results file instead of producing one
+
+`--max-failures`, `--compare-baseline`, `--update-baseline`, `--report` and
+`--check-parity` are **gate modes**. Each reads an existing `--results-file`
+and exits without running a single test. So this does not do what it looks
+like:
+
+```bash
+# WRONG — runs nothing, fails with "read compat-results.json: no such file"
+go run ./cmd/compat --results-file out.json --max-failures 0
+```
+
+Run the suites first, gate second:
+
+```bash
+go run ./cmd/compat --format json --results-file out.json
+go run ./cmd/compat --results-file out.json --max-failures 0
+```
+
+Two more shapes that look reasonable and are not:
+
+- **Under compose, arguments after the service name go to the entrypoint**, not
+  to the runner — `docker compose ... run --rm compat --suite go-sdk` dies with
+  `exec: "--suite": executable file not found`. Use the environment variable:
+  `OVERCAST_COMPAT_SUITE=go-sdk,cli docker compose -f compat/docker-compose.yml run --rm compat`.
+- **`scripts/docker-go.sh run ./cmd/compat` cannot work at all.** That container
+  has no Docker socket, so the runner reports "no way to start Overcast".
+  Use the compose path, or `--endpoint` against an instance you started.
+
+### Testing a published image rather than a source build
+
+The `overcast` service declares `build:` with no `image:`, so there is no
+override that points it at a registry tag — useful when the thing under test is
+a release candidate and you want the bits CI published, not a local rebuild.
+Build the harness, then retag:
+
+```bash
+docker compose -f compat/docker-compose.yml build
+docker tag ghcr.io/neaox/overcast:<version>-rc.<n> compat-overcast
+docker compose -f compat/docker-compose.yml run --rm compat
+```
+
+`compose run` reuses an existing image, so the run then exercises the published
+bits. Confirm you are testing what you think you are:
+
+```bash
+docker image inspect compat-overcast --format '{{index .RepoDigests 0}}'
+```
+
+against the digest in the release PR's RC comment.
+
+### When every Lambda test fails at once
+
+A run where the *only* failures are Lambda-backed — and each one says
+`the function is in a failed state` or `Failed to pull container image` — is
+almost never a Lambda regression. It is the emulator container being unable to
+reach the Docker socket, which surfaces about nineteen tests away from its
+cause. Check membership before believing the result:
+
+```bash
+docker exec compat-overcast-1 sh -c \
+  'stat -c %g /var/run/docker.sock; getent group | grep ":$(stat -c %g /var/run/docker.sock):"'
+```
+
+No group for the socket's gid means the emulator's user is not in it. The
+entrypoint (`docker/entrypoint.sh`) derives that group **once**, at container
+start, so anything that changes the socket's ownership afterwards locks it out
+until it restarts. `docker compose restart overcast` is the cure.
+
+The compose file used to cause this itself, by `chgrp`-ing the shared socket
+from the runner after the emulator had already started; it now joins the
+socket's group with `group_add` instead. On native Linux pass the gid, since
+the default only covers Docker Desktop's root-owned socket:
+
+```bash
+COMPAT_DOCKER_GID=$(stat -c %g /var/run/docker.sock) \
+  docker compose -f compat/docker-compose.yml run --rm compat
+```
+
 ### Cross-platform rules for suite authors
 
 - Do **not** use shell scripts as entry points (`sh -c "..."`) — use a proper
