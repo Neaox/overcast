@@ -51,6 +51,11 @@ type Handler struct {
 	seedMu        sync.Mutex      // guards seededRegions
 	seededRegions map[string]bool // regions where ensureBuiltinProviders has run
 
+	// serviceLocks serialises the read-modify-write of one service's record —
+	// see lockService. serviceLocksMu guards the map itself, not the records.
+	serviceLocksMu sync.Mutex
+	serviceLocks   map[string]*sync.Mutex
+
 	// endpoint maps AWS resource URLs and hostnames onto an address task
 	// containers can dial. Resolved on first task start — see containerEndpoint.
 	endpoint     *containerendpoint.Mapper

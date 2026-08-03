@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -512,6 +513,37 @@ func primaryDeployment(svc *ecsService) *Deployment {
 // for CODE_DEPLOY and EXTERNAL.
 func usesECSController(svc *ecsService) bool {
 	return svc.DeploymentController == nil || svc.DeploymentController.Type == "" || svc.DeploymentController.Type == "ECS"
+}
+
+// lockService serialises the read-modify-write of one service's record,
+// returning the function that releases it. A service is stored as one JSON
+// blob, so every writer reads the whole record, edits it and writes the whole
+// record back: two of them overlapping means the second silently discards the
+// first's edit.
+//
+// That is not hypothetical here. A crash loop drives both writers at once — the
+// scheduler reconciling the service while the Docker event stream reports the
+// container that just died — and the edit that gets discarded is the failure
+// count, which is the one thing a crash loop is supposed to make visible.
+//
+// Held across a whole reconcile, container launches included, because the
+// placement decisions are derived from the reads: releasing between the read
+// and the write is the race. Two reconciles of one service overlapping would
+// also both see the same shortfall and each place a task for it.
+func (h *Handler) lockService(ctx context.Context, clusterName, serviceName string) func() {
+	key := h.store.region(ctx) + "/" + clusterName + "/" + serviceName
+	h.serviceLocksMu.Lock()
+	if h.serviceLocks == nil {
+		h.serviceLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := h.serviceLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		h.serviceLocks[key] = mu
+	}
+	h.serviceLocksMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }
 
 // deploymentCounts is one deployment's share of a service's tasks. settled is
@@ -1036,6 +1068,8 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 // keep serving, and the service reports steady state on a deployment that never
 // happened.
 func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string) {
+	defer h.lockService(ctx, clusterName, serviceName)()
+
 	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
 	if aerr != nil || svc == nil {
 		return
