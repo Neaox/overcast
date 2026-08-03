@@ -6,10 +6,14 @@ import { ArnText } from "@/components/ui/arn-link"
 import {
   secretDetailQueryOptions,
   secretValueQueryOptions,
+  secretRotationQueryOptions,
+  secretResourcePolicyQueryOptions,
   smKeys,
   updateSecretValueMutationOptions,
   deleteSecretMutationOptions,
 } from "@/features/secretsmanager/data"
+import { SecretRotationCard } from "@/features/secretsmanager/components/secret-rotation-card"
+import { SecretResourcePolicyCard } from "@/features/secretsmanager/components/secret-resource-policy-card"
 import { useToast } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
 import { PageHeader, Spinner, EmptyState, CodeBlock } from "@/components/ui/primitives"
@@ -58,6 +62,14 @@ export function SecretDetail({ secretName }: Props) {
     enabled: revealed,
   })
 
+  const { data: rotation, refetch: refetchRotation } = useQuery(
+    secretRotationQueryOptions(secretName),
+  )
+
+  const { data: resourcePolicy, refetch: refetchPolicy } = useQuery(
+    secretResourcePolicyQueryOptions(secretName),
+  )
+
   // ─── Mutations ──────────────────────────────────────────────────────────────
 
   const updateMut = useMutation({
@@ -105,6 +117,8 @@ export function SecretDetail({ secretName }: Props) {
 
   function handleRefresh() {
     void refetchSecret()
+    void refetchRotation()
+    void refetchPolicy()
     if (revealed) void refetchValue()
   }
 
@@ -174,6 +188,10 @@ export function SecretDetail({ secretName }: Props) {
         <Definition label="Last accessed" value={formatDate(secret.LastAccessedDate)} />
         <Definition label="Rotation" value={secret.RotationEnabled ? "Enabled" : "Disabled"} />
       </DefinitionCard>
+
+      <SecretRotationCard status={rotation} />
+
+      <SecretResourcePolicyCard policy={resourcePolicy} />
 
       {/* Secret value */}
       <section className="flex flex-col gap-2">

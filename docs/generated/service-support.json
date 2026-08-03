@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1332,
+  "total_ops": 1333,
   "services": [
     {
       "service": "s3",
@@ -5635,8 +5635,8 @@
     {
       "service": "secretsmanager",
       "display_name": "Secrets Manager",
-      "total_ops": 21,
-      "implemented_ops": 14,
+      "total_ops": 22,
+      "implemented_ops": 19,
       "operations": [
         {
           "operation": "CreateSecret",
@@ -5648,19 +5648,19 @@
           "operation": "GetSecretValue",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "By name, ARN, or version ID"
+          "notes": "By name, ARN, version ID, or stage"
         },
         {
           "operation": "DescribeSecret",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "Metadata, tags, version map"
+          "notes": "Metadata, tags, versions, rotation dates"
         },
         {
           "operation": "PutSecretValue",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "Creates new AWSCURRENT version"
+          "notes": "Staging labels + ClientRequestToken"
         },
         {
           "operation": "UpdateSecret",
@@ -5672,7 +5672,7 @@
           "operation": "ListSecrets",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "All secrets, sorted by name"
+          "notes": "Sorted by name, optional filters"
         },
         {
           "operation": "ListSecretVersionIds",
@@ -5696,13 +5696,19 @@
           "operation": "RotateSecret",
           "category": "Rotation",
           "status": "✅ Supported",
-          "notes": "Config only (no Lambda invocation)"
+          "notes": "Invokes the rotation Lambda, all four steps"
         },
         {
           "operation": "CancelRotateSecret",
           "category": "Rotation",
           "status": "✅ Supported",
-          "notes": "Clears rotation config"
+          "notes": "Turns rotation off, keeps the config"
+        },
+        {
+          "operation": "UpdateSecretVersionStage",
+          "category": "Rotation",
+          "status": "✅ Supported",
+          "notes": "Moves staging labels between versions"
         },
         {
           "operation": "TagResource",
@@ -5723,25 +5729,31 @@
           "notes": "Configurable length + exclusions"
         },
         {
-          "operation": "RestoreSecret",
-          "category": "Policy/Misc",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
-        },
-        {
           "operation": "GetResourcePolicy",
           "category": "Policy/Misc",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
+          "status": "✅ Supported",
+          "notes": "Stored policy; not evaluated (#496)"
         },
         {
           "operation": "PutResourcePolicy",
           "category": "Policy/Misc",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
+          "status": "✅ Supported",
+          "notes": "Validated + stored; not evaluated (#496)"
         },
         {
           "operation": "DeleteResourcePolicy",
+          "category": "Policy/Misc",
+          "status": "✅ Supported",
+          "notes": "Removes the stored policy"
+        },
+        {
+          "operation": "ValidateResourcePolicy",
+          "category": "Policy/Misc",
+          "status": "✅ Supported",
+          "notes": "Syntax + schema checks, no evaluation"
+        },
+        {
+          "operation": "RestoreSecret",
           "category": "Policy/Misc",
           "status": "❌ Unsupported",
           "notes": "stub; returns 501"
@@ -5754,12 +5766,6 @@
         },
         {
           "operation": "RemoveRegionsFromReplication",
-          "category": "Policy/Misc",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
-        },
-        {
-          "operation": "ValidateResourcePolicy",
           "category": "Policy/Misc",
           "status": "❌ Unsupported",
           "notes": "stub; returns 501"

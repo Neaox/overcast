@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
 	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
@@ -11,32 +12,50 @@ import (
 	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 )
 
+// pendingToken is the ClientRequestToken the staging-label tests use. AWS wants
+// 32–64 characters and the token becomes the version ID, so a fixed UUID keeps
+// the assertions readable.
+const pendingToken = "0f9c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f"
+
+// compatResourcePolicy is a minimal, well-formed secret resource policy.
+const compatResourcePolicy = `{"Version":"2012-10-17","Statement":[{"Sid":"OvercastCompatRead","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::000000000000:root"},"Action":"secretsmanager:GetSecretValue","Resource":"*"}]}`
+
 func SecretsManager(c *clients.Clients) ServiceGroup {
 	g := &smGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateSecret":         g.CreateSecret,
-			"GetSecretValue":       g.GetSecretValue,
-			"PutSecretValue":       g.PutSecretValue,
-			"UpdateSecret":         g.UpdateSecret,
-			"DescribeSecret":       g.DescribeSecret,
-			"ListSecrets":          g.ListSecrets,
-			"TagResource":          g.TagResource,
-			"UntagResource":        g.UntagResource,
-			"ListSecretVersionIds": g.ListSecretVersionIds,
-			"DeleteSecret":         g.DeleteSecret,
-			"GetRandomPassword":    g.GetRandomPassword,
-			"BatchGetSecretValue":  g.BatchGetSecretValue,
-			"RotateSecret":         g.RotateSecret,
-			"CancelRotateSecret":   g.CancelRotateSecret,
+			"CreateSecret":              g.CreateSecret,
+			"GetSecretValue":            g.GetSecretValue,
+			"PutSecretValue":            g.PutSecretValue,
+			"UpdateSecret":              g.UpdateSecret,
+			"DescribeSecret":            g.DescribeSecret,
+			"ListSecrets":               g.ListSecrets,
+			"TagResource":               g.TagResource,
+			"UntagResource":             g.UntagResource,
+			"ListSecretVersionIds":      g.ListSecretVersionIds,
+			"DeleteSecret":              g.DeleteSecret,
+			"GetRandomPassword":         g.GetRandomPassword,
+			"BatchGetSecretValue":       g.BatchGetSecretValue,
+			"RotateSecretWithoutLambda": g.RotateSecretWithoutLambda,
+			"RotateSecret":              g.RotateSecret,
+			"PutSecretValuePending":     g.PutSecretValuePending,
+			"GetSecretValueByStage":     g.GetSecretValueByStage,
+			"UpdateSecretVersionStage":  g.UpdateSecretVersionStage,
+			"CancelRotateSecret":        g.CancelRotateSecret,
+			"ValidateResourcePolicy":    g.ValidateResourcePolicy,
+			"PutResourcePolicy":         g.PutResourcePolicy,
+			"GetResourcePolicy":         g.GetResourcePolicy,
+			"DeleteResourcePolicy":      g.DeleteResourcePolicy,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"secretsmanager-crud":   g.setup,
 			"secretsmanager-rotate": g.setupRotate,
+			"secretsmanager-policy": g.setupPolicy,
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
 			"secretsmanager-crud":   g.teardown,
 			"secretsmanager-rotate": g.teardownRotate,
+			"secretsmanager-policy": g.teardownPolicy,
 		},
 	}
 }
@@ -297,18 +316,157 @@ func (g *smGroup) teardownRotate(ctx context.Context, t *harness.TestContext) er
 	return nil
 }
 
-func (g *smGroup) RotateSecret(ctx context.Context, t *harness.TestContext) error {
+// rotationLambdaARN is a placeholder function ARN. Rotation is configured with
+// RotateImmediately=false throughout this group, so it is never invoked —
+// driving the four-step protocol needs a real rotation Lambda and belongs with
+// the Docker-dependent Lambda groups.
+func rotationLambdaARN(t *harness.TestContext) string {
+	return fmt.Sprintf("arn:aws:lambda:%s:000000000000:function:oc-rotate-fn", t.Region)
+}
+
+func (g *smGroup) RotateSecretWithoutLambda(ctx context.Context, t *harness.TestContext) error {
 	_, err := g.cl().RotateSecret(ctx, &secretsmanager.RotateSecretInput{
+		SecretId:      aws.String(t.GetString("sm_rotate_arn")),
+		RotationRules: &smtypes.RotationRulesType{AutomaticallyAfterDays: aws.Int64(30)},
+	})
+	if err == nil {
+		return fmt.Errorf("RotateSecretWithoutLambda: expected InvalidRequestException, call succeeded")
+	}
+	if harness.IsUnimplemented(err) {
+		return err
+	}
+	if !strings.Contains(err.Error(), "InvalidRequestException") {
+		return fmt.Errorf("RotateSecretWithoutLambda: expected InvalidRequestException, got %w", err)
+	}
+	return nil
+}
+
+func (g *smGroup) RotateSecret(ctx context.Context, t *harness.TestContext) error {
+	arn := rotationLambdaARN(t)
+	_, err := g.cl().RotateSecret(ctx, &secretsmanager.RotateSecretInput{
+		SecretId:          aws.String(t.GetString("sm_rotate_arn")),
+		RotationLambdaARN: aws.String(arn),
+		RotationRules:     &smtypes.RotationRulesType{AutomaticallyAfterDays: aws.Int64(30)},
+		RotateImmediately: aws.Bool(false),
+	})
+	if err != nil {
+		return err
+	}
+	desc, err := g.cl().DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
 		SecretId: aws.String(t.GetString("sm_rotate_arn")),
 	})
-	// RotateSecret without a Lambda rotation function may return an error;
-	// either success or a recognised error is acceptable.
 	if err != nil {
-		if harness.IsUnimplemented(err) {
-			return nil
+		return fmt.Errorf("RotateSecret: DescribeSecret verify failed: %w", err)
+	}
+	if !aws.ToBool(desc.RotationEnabled) {
+		return fmt.Errorf("RotateSecret: RotationEnabled is false after configuring rotation")
+	}
+	if aws.ToString(desc.RotationLambdaARN) != arn {
+		return fmt.Errorf("RotateSecret: RotationLambdaARN = %q, want %q", aws.ToString(desc.RotationLambdaARN), arn)
+	}
+	if desc.NextRotationDate == nil {
+		return fmt.Errorf("RotateSecret: NextRotationDate not set")
+	}
+	return nil
+}
+
+func (g *smGroup) PutSecretValuePending(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
+		SecretId:           aws.String(t.GetString("sm_rotate_arn")),
+		SecretString:       aws.String("pending-value"),
+		ClientRequestToken: aws.String(pendingToken),
+		VersionStages:      []string{"AWSPENDING"},
+	})
+	if err != nil {
+		return err
+	}
+	if aws.ToString(resp.VersionId) != pendingToken {
+		return fmt.Errorf("PutSecretValuePending: VersionId = %q, want the ClientRequestToken %q",
+			aws.ToString(resp.VersionId), pendingToken)
+	}
+	if !containsStage(resp.VersionStages, "AWSPENDING") {
+		return fmt.Errorf("PutSecretValuePending: VersionStages = %v, want AWSPENDING", resp.VersionStages)
+	}
+	// Staging a pending version must not change AWSCURRENT.
+	cur, err := g.cl().GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(t.GetString("sm_rotate_arn")),
+	})
+	if err != nil {
+		return fmt.Errorf("PutSecretValuePending: GetSecretValue verify failed: %w", err)
+	}
+	if aws.ToString(cur.SecretString) != "rotate-me" {
+		return fmt.Errorf("PutSecretValuePending: AWSCURRENT = %q, want the untouched %q",
+			aws.ToString(cur.SecretString), "rotate-me")
+	}
+	return nil
+}
+
+func (g *smGroup) GetSecretValueByStage(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId:     aws.String(t.GetString("sm_rotate_arn")),
+		VersionStage: aws.String("AWSPENDING"),
+	})
+	if err != nil {
+		return err
+	}
+	if aws.ToString(resp.SecretString) != "pending-value" {
+		return fmt.Errorf("GetSecretValueByStage: SecretString = %q, want %q",
+			aws.ToString(resp.SecretString), "pending-value")
+	}
+	return nil
+}
+
+func (g *smGroup) UpdateSecretVersionStage(ctx context.Context, t *harness.TestContext) error {
+	desc, err := g.cl().DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
+		SecretId: aws.String(t.GetString("sm_rotate_arn")),
+	})
+	if err != nil {
+		return err
+	}
+	current := ""
+	for id, stages := range desc.VersionIdsToStages {
+		if containsStage(stages, "AWSCURRENT") {
+			current = id
 		}
-		// Accept the call being made even if it fails due to missing rotation config
-		return nil
+	}
+	if current == "" {
+		return fmt.Errorf("UpdateSecretVersionStage: no AWSCURRENT version")
+	}
+
+	// This is what a rotation function's finishSecret step does.
+	if _, err := g.cl().UpdateSecretVersionStage(ctx, &secretsmanager.UpdateSecretVersionStageInput{
+		SecretId:            aws.String(t.GetString("sm_rotate_arn")),
+		VersionStage:        aws.String("AWSCURRENT"),
+		MoveToVersionId:     aws.String(pendingToken),
+		RemoveFromVersionId: aws.String(current),
+	}); err != nil {
+		return err
+	}
+
+	after, err := g.cl().GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(t.GetString("sm_rotate_arn")),
+	})
+	if err != nil {
+		return fmt.Errorf("UpdateSecretVersionStage: GetSecretValue verify failed: %w", err)
+	}
+	if aws.ToString(after.SecretString) != "pending-value" {
+		return fmt.Errorf("UpdateSecretVersionStage: AWSCURRENT = %q, want %q",
+			aws.ToString(after.SecretString), "pending-value")
+	}
+	if aws.ToString(after.VersionId) != pendingToken {
+		return fmt.Errorf("UpdateSecretVersionStage: AWSCURRENT version = %q, want %q",
+			aws.ToString(after.VersionId), pendingToken)
+	}
+
+	post, err := g.cl().DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
+		SecretId: aws.String(t.GetString("sm_rotate_arn")),
+	})
+	if err != nil {
+		return fmt.Errorf("UpdateSecretVersionStage: DescribeSecret verify failed: %w", err)
+	}
+	if !containsStage(post.VersionIdsToStages[current], "AWSPREVIOUS") {
+		return fmt.Errorf("UpdateSecretVersionStage: displaced version stages = %v, want AWSPREVIOUS",
+			post.VersionIdsToStages[current])
 	}
 	return nil
 }
@@ -318,10 +476,135 @@ func (g *smGroup) CancelRotateSecret(ctx context.Context, t *harness.TestContext
 		SecretId: aws.String(t.GetString("sm_rotate_arn")),
 	})
 	if err != nil {
-		if harness.IsUnimplemented(err) {
-			return nil
-		}
 		return err
+	}
+	desc, err := g.cl().DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
+		SecretId: aws.String(t.GetString("sm_rotate_arn")),
+	})
+	if err != nil {
+		return fmt.Errorf("CancelRotateSecret: DescribeSecret verify failed: %w", err)
+	}
+	if aws.ToBool(desc.RotationEnabled) {
+		return fmt.Errorf("CancelRotateSecret: rotation still enabled after cancel")
+	}
+	// AWS keeps the function configured so rotation can be turned back on.
+	if want := rotationLambdaARN(t); aws.ToString(desc.RotationLambdaARN) != want {
+		return fmt.Errorf("CancelRotateSecret: RotationLambdaARN = %q, want it retained as %q",
+			aws.ToString(desc.RotationLambdaARN), want)
+	}
+	return nil
+}
+
+func containsStage(stages []string, want string) bool {
+	for _, s := range stages {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// ── secretsmanager-policy ─────────────────────────────────────────────────────
+//
+// Overcast stores and validates a secret's resource policy but does not
+// evaluate it, so these assert the round-trip and the validation verdict,
+// never an access decision.
+
+func (g *smGroup) setupPolicy(ctx context.Context, t *harness.TestContext) error {
+	name := fmt.Sprintf("oc/%s/policy", t.RunID)
+	resp, err := g.cl().CreateSecret(ctx, &secretsmanager.CreateSecretInput{
+		Name:         aws.String(name),
+		SecretString: aws.String("policy-value"),
+	})
+	if err != nil {
+		return err
+	}
+	t.Set("sm_policy_name", name)
+	t.Set("sm_policy_arn", aws.ToString(resp.ARN))
+	return nil
+}
+
+func (g *smGroup) teardownPolicy(ctx context.Context, t *harness.TestContext) error {
+	if arn := t.GetString("sm_policy_arn"); arn != "" {
+		g.cl().DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
+			SecretId:                   aws.String(arn),
+			ForceDeleteWithoutRecovery: aws.Bool(true),
+		}) //nolint:errcheck
+	}
+	return nil
+}
+
+func (g *smGroup) ValidateResourcePolicy(ctx context.Context, t *harness.TestContext) error {
+	ok, err := g.cl().ValidateResourcePolicy(ctx, &secretsmanager.ValidateResourcePolicyInput{
+		ResourcePolicy: aws.String(compatResourcePolicy),
+	})
+	if err != nil {
+		return err
+	}
+	if !ok.PolicyValidationPassed {
+		return fmt.Errorf("ValidateResourcePolicy: valid policy rejected: %v", ok.ValidationErrors)
+	}
+
+	bad, err := g.cl().ValidateResourcePolicy(ctx, &secretsmanager.ValidateResourcePolicyInput{
+		ResourcePolicy: aws.String(`{"Version":"2012-10-17"}`),
+	})
+	if err != nil {
+		return fmt.Errorf("ValidateResourcePolicy: validating a bad policy errored: %w", err)
+	}
+	if bad.PolicyValidationPassed {
+		return fmt.Errorf("ValidateResourcePolicy: policy with no Statement should not pass")
+	}
+	if len(bad.ValidationErrors) == 0 {
+		return fmt.Errorf("ValidateResourcePolicy: no ValidationErrors for a failing policy")
+	}
+	return nil
+}
+
+func (g *smGroup) PutResourcePolicy(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().PutResourcePolicy(ctx, &secretsmanager.PutResourcePolicyInput{
+		SecretId:       aws.String(t.GetString("sm_policy_arn")),
+		ResourcePolicy: aws.String(compatResourcePolicy),
+	})
+	if err != nil {
+		return err
+	}
+	if aws.ToString(resp.ARN) == "" {
+		return fmt.Errorf("PutResourcePolicy: missing ARN")
+	}
+	if got, want := aws.ToString(resp.Name), t.GetString("sm_policy_name"); got != want {
+		return fmt.Errorf("PutResourcePolicy: Name = %q, want %q", got, want)
+	}
+	return nil
+}
+
+func (g *smGroup) GetResourcePolicy(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().GetResourcePolicy(ctx, &secretsmanager.GetResourcePolicyInput{
+		SecretId: aws.String(t.GetString("sm_policy_arn")),
+	})
+	if err != nil {
+		return err
+	}
+	policy := aws.ToString(resp.ResourcePolicy)
+	if !strings.Contains(policy, "OvercastCompatRead") {
+		return fmt.Errorf("GetResourcePolicy: policy %q does not carry the Sid that was stored", policy)
+	}
+	return nil
+}
+
+func (g *smGroup) DeleteResourcePolicy(ctx context.Context, t *harness.TestContext) error {
+	if _, err := g.cl().DeleteResourcePolicy(ctx, &secretsmanager.DeleteResourcePolicyInput{
+		SecretId: aws.String(t.GetString("sm_policy_arn")),
+	}); err != nil {
+		return err
+	}
+	resp, err := g.cl().GetResourcePolicy(ctx, &secretsmanager.GetResourcePolicyInput{
+		SecretId: aws.String(t.GetString("sm_policy_arn")),
+	})
+	if err != nil {
+		return fmt.Errorf("DeleteResourcePolicy: GetResourcePolicy verify failed: %w", err)
+	}
+	if aws.ToString(resp.ResourcePolicy) != "" {
+		return fmt.Errorf("DeleteResourcePolicy: policy still present: %q", aws.ToString(resp.ResourcePolicy))
 	}
 	return nil
 }
