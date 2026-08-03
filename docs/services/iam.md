@@ -44,6 +44,17 @@ with `MatchedStatements` naming the policy and statement that decided it, and
 nothing else and changes nothing: it is the "what would happen" view, and it is available
 whether or not enforcement is switched on.
 
+Each `MatchedStatements` entry carries `SourcePolicyId`/`SourcePolicyType` plus AWS's
+`StartPosition`/`EndPosition` (`Line`/`Column`), which point at the deciding statement's
+opening `{` and closing `}` in the exact document text supplied on the call (a
+`PolicyInputList` entry, an inline/managed policy document, or `ResourcePolicy`). This is
+what lets a caller tell two statements apart when they come from the *same* document — for
+example an `Allow` and a `Deny` in one policy — which `SourcePolicyId`/`SourcePolicyType`
+alone cannot do. The positions are Overcast's own byte-accurate computation against the
+document text it was given; they are not copied from any upstream source, and a caller
+should not expect them to match what real AWS would report for the same document down to
+the byte.
+
 What the evaluator covers:
 
 - `Effect`, `Action`/`NotAction`, `Resource`/`NotResource`, with `*` and `?` wildcards.
