@@ -163,6 +163,143 @@ func TestBuildGroupsAllowsUnambiguousBareFallback(t *testing.T) {
 	}
 }
 
+// recorder returns an impl that records which source it came from, so a merge
+// can be checked for having kept the right implementation rather than just a
+// key of the right name.
+func recorder(id string, into *string) harness.TestFn {
+	return func(_ context.Context, _ *harness.TestContext) error {
+		*into = id
+		return nil
+	}
+}
+
+// Two service files registering the same key must abort the run.
+//
+// This is the gap ValidateImpls cannot close. The merge that builds the suite's
+// impl map is last-writer-wins, so one of the two implementations is discarded
+// before validation ever sees the map — and the surviving key resolves
+// perfectly well, so nothing is reported. The discarded test then runs the
+// other file's implementation under its own name.
+func TestMergeImplsRejectsDuplicateKey(t *testing.T) {
+	var ran string
+	_, err := MergeImpls([]ImplSource{
+		{Name: "lambda", Impls: ImplMap{"lambda-crud:CreateFunction": recorder("lambda", &ran)}},
+		{Name: "appsync", Impls: ImplMap{"lambda-crud:CreateFunction": recorder("appsync", &ran)}},
+	}, "cli")
+	if err == nil {
+		t.Fatal("MergeImpls(duplicate key) = nil error, want error")
+	}
+	// Both registering files must be named: the key alone does not say where to
+	// look, and the whole point is that one of the two files is in the wrong.
+	for _, sub := range []string{`"lambda-crud:CreateFunction"`, `"lambda"`, `"appsync"`, "duplicate impl registration"} {
+		if !strings.Contains(err.Error(), sub) {
+			t.Errorf("error %q does not name %q", err, sub)
+		}
+	}
+}
+
+// A bare key is just as clobberable as a qualified one, and the message must
+// still name both sources.
+func TestMergeImplsRejectsDuplicateBareKey(t *testing.T) {
+	var ran string
+	_, err := MergeImpls([]ImplSource{
+		{Name: "iam", Impls: ImplMap{"CreateUser": recorder("iam", &ran)}},
+		{Name: "cognito", Impls: ImplMap{"CreateUser": recorder("cognito", &ran)}},
+	}, "cli")
+	if err == nil {
+		t.Fatal("MergeImpls(duplicate bare key) = nil error, want error")
+	}
+	for _, sub := range []string{`"CreateUser"`, `"iam"`, `"cognito"`} {
+		if !strings.Contains(err.Error(), sub) {
+			t.Errorf("error %q does not name %q", err, sub)
+		}
+	}
+}
+
+// One source registering a key twice reads differently from two sources
+// colliding — "both X and Y" would be nonsense when X and Y are the same file.
+func TestMergeImplsReportsSingleSourceDuplicateAsSuch(t *testing.T) {
+	var ran string
+	_, err := MergeImpls([]ImplSource{
+		{Name: "iam", Impls: ImplMap{"CreateUser": recorder("first", &ran)}},
+		{Name: "iam", Impls: ImplMap{"CreateUser": recorder("second", &ran)}},
+	}, "cli")
+	if err == nil {
+		t.Fatal("MergeImpls(same source twice) = nil error, want error")
+	}
+	if !strings.Contains(err.Error(), `registered twice by "iam"`) {
+		t.Errorf("error %q does not read as a single-source duplicate", err)
+	}
+}
+
+// Every collision is reported, not just the first — otherwise fixing one
+// duplicate only reveals the next.
+func TestMergeImplsReportsEveryDuplicate(t *testing.T) {
+	var ran string
+	_, err := MergeImpls([]ImplSource{
+		{Name: "iam", Impls: ImplMap{
+			"iam-users:ListUsers":  recorder("iam", &ran),
+			"iam-users:CreateUser": recorder("iam", &ran),
+		}},
+		{Name: "cognito", Impls: ImplMap{
+			"iam-users:ListUsers":  recorder("cognito", &ran),
+			"iam-users:CreateUser": recorder("cognito", &ran),
+		}},
+	}, "cli")
+	if err == nil {
+		t.Fatal("MergeImpls(two duplicates) = nil error, want error")
+	}
+	if !strings.Contains(err.Error(), "2 duplicate impl registration(s)") {
+		t.Errorf("error %q does not report both duplicates", err)
+	}
+	// Sorted by key, so the message is the same on every run despite Go's
+	// randomised map iteration order.
+	createIdx := strings.Index(err.Error(), "iam-users:CreateUser")
+	listIdx := strings.Index(err.Error(), "iam-users:ListUsers")
+	if createIdx > listIdx {
+		t.Errorf("problems not sorted by key; got:\n%v", err)
+	}
+}
+
+// Negative control: distinct keys across sources merge cleanly, and each key
+// keeps the implementation its own source registered.
+func TestMergeImplsAcceptsDisjointSources(t *testing.T) {
+	var ran string
+	merged, err := MergeImpls([]ImplSource{
+		{Name: "iam", Impls: ImplMap{
+			"iam-users:ListUsers": recorder("iam", &ran),
+			"CreateUser":          recorder("iam", &ran),
+		}},
+		{Name: "cognito", Impls: ImplMap{
+			"cognito-userpools:ListUsers": recorder("cognito", &ran),
+		}},
+	}, "cli")
+	if err != nil {
+		t.Fatalf("MergeImpls(disjoint sources) = %v, want nil", err)
+	}
+	if len(merged) != 3 {
+		t.Fatalf("merged %d keys, want 3: %v", len(merged), merged)
+	}
+	for key, want := range map[string]string{
+		"iam-users:ListUsers":         "iam",
+		"CreateUser":                  "iam",
+		"cognito-userpools:ListUsers": "cognito",
+	} {
+		fn, ok := merged[key]
+		if !ok {
+			t.Errorf("merged map is missing %q", key)
+			continue
+		}
+		ran = ""
+		if err := fn(context.Background(), nil); err != nil {
+			t.Errorf("%s() = %v", key, err)
+		}
+		if ran != want {
+			t.Errorf("%s bound to %q's impl, want %q's", key, ran, want)
+		}
+	}
+}
+
 // The real registry must not contain a group whose tests cannot be told apart
 // from another group's by name alone without qualification — this is the data
 // the rules above are enforced against.

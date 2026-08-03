@@ -71,21 +71,28 @@ func main() {
 
 	svcGroups := groups.All()
 
-	// Flatten all impls and setup/teardown from every service group.
-	impls := registry.ImplMap{}
+	// Flatten all impls and setup/teardown from every service group. The impls
+	// go through MergeImpls rather than a plain map assignment: a key two
+	// service files both register would otherwise lose one implementation with
+	// nothing said about it.
+	implSources := make([]registry.ImplSource, 0, len(svcGroups))
 	setupFns := map[string]func(context.Context, *harness.TestContext) error{}
 	teardownFns := map[string]func(context.Context, *harness.TestContext) error{}
 
 	for _, sg := range svcGroups {
-		for name, fn := range sg.Impls {
-			impls[name] = fn
-		}
+		implSources = append(implSources, registry.ImplSource{Name: sg.Name, Impls: sg.Impls})
 		for name, fn := range sg.Setup {
 			setupFns[name] = fn
 		}
 		for name, fn := range sg.Teardown {
 			teardownFns[name] = fn
 		}
+	}
+
+	impls, err := registry.MergeImpls(implSources, suite)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
 	}
 
 	if err := registry.ValidateImpls(reg, impls, suite); err != nil {
