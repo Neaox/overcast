@@ -112,6 +112,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web/sns] the topic detail view shows each subscription's live delivery state, and `lambda` is selectable when subscribing
 
+- [web] a route that fails now shows a proper error screen — the message, a retry that re-runs the page's data, a collapsed stack trace, and a one-click copy of route, endpoint, region and stack for a bug report. A connection failure says the emulator is unreachable and names the endpoint; a stale tab after an update is told to reload
+
 ### Changed
 
 - **BREAKING** [cloudwatch] alarms now evaluate their own metrics: epoch-aligned periods, `DatapointsToAlarm` M-of-N, `Dimensions`, and all four `TreatMissingData` modes
