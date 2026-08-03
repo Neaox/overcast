@@ -13,6 +13,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import * as Dialog from "@radix-ui/react-dialog"
 import { infiniteQueryOptions, useInfiniteQuery } from "@tanstack/react-query"
 import { X, FileText, Zap } from "lucide-react"
+import { AnsiText } from "@/components/logs/ansi-text"
 import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
@@ -411,7 +412,9 @@ function LogsPane({
             <span className="shrink-0 font-mono text-fg-muted tabular-nums">
               {fmtTimestamp(e.timestamp ?? 0)}
             </span>
-            <span className="min-w-0 wrap-break-word text-fg">{e.message}</span>
+            <span className="min-w-0 wrap-break-word text-fg">
+              <AnsiText text={e.message ?? ""} />
+            </span>
           </div>
         ))}
       </div>

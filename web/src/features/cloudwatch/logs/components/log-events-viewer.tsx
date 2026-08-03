@@ -23,6 +23,8 @@ import { Input } from "@/components/ui/input"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { cn } from "@/lib/utils"
 import Prism from "@/lib/prism"
+import { stripAnsi } from "@/lib/ansi"
+import { AnsiText } from "@/components/logs/ansi-text"
 import type { FilteredLogEvent } from "@/types/logs"
 import { parseLogFilterTerms, tailLogEvents } from "@/features/cloudwatch/logs/tail"
 
@@ -44,10 +46,12 @@ function highlightMatches(message: string, filterPattern: string): React.ReactNo
   const terms = parseLogFilterTerms(filterPattern)
   if (terms.length === 0) return message
   const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-  const regex = new RegExp(`(${escaped.join("|")})`, "gi")
-  const parts = message.split(regex)
+  const parts = message.split(new RegExp(`(${escaped.join("|")})`, "gi"))
+  // `split` with a capturing group interleaves the captures, so the matches are
+  // exactly the odd indices. Re-testing each part against the pattern would
+  // read a global regex's `lastIndex` between calls and skip every other match.
   return parts.map((part, i) =>
-    regex.test(part) ? (
+    i % 2 === 1 ? (
       <mark key={i} className="rounded-sm bg-yellow-400/30 px-0.5 text-inherit">
         {part}
       </mark>
@@ -201,8 +205,11 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     () =>
       events.map((evt) => {
         const msg = evt.message ?? ""
-        const level = detectLogLevel(msg)
-        return { msg, level }
+        // `plain` is the message without its escape sequences — what the level
+        // detector reads, what the row height is estimated from, and what the
+        // copy button puts on the clipboard.
+        const plain = stripAnsi(msg)
+        return { msg, plain, level: detectLogLevel(plain) }
       }),
     [events],
   )
@@ -210,7 +217,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const virtualizer = useVirtualizer({
     count: events.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: (index) => estimateRowHeight(rowMeta[index]?.msg ?? "", formatted),
+    estimateSize: (index) => estimateRowHeight(rowMeta[index]?.plain ?? "", formatted),
     overscan: 15,
   })
 
@@ -522,7 +529,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                     {/* Actions */}
                     <div className="flex w-8 shrink-0 items-start justify-center pt-1.5">
                       <CopyButton
-                        value={meta.msg}
+                        value={meta.plain}
                         noun="log message"
                         tone="inline"
                         className="p-0.5 text-fg-muted/40 opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-fg-muted"
@@ -574,7 +581,9 @@ function LogMessage({
 }) {
   const jsonText = useMemo(() => {
     if (!formatted && !syntaxHighlight) return null
-    const json = tryParseJSON(message)
+    // A colourised JSON line is still JSON; the escape sequences around it are
+    // not, so they come off before the parse attempt.
+    const json = tryParseJSON(stripAnsi(message))
     if (!json) return null
     return stringifyJSON(json, formatted)
   }, [formatted, message, syntaxHighlight])
@@ -629,7 +638,10 @@ function LogMessage({
           wrapLines ? "wrap-break-word whitespace-pre-wrap" : "whitespace-pre",
         )}
       >
-        {highlightMatches(displayText, filterPattern)}
+        <AnsiText
+          text={displayText}
+          renderText={(chunk) => highlightMatches(chunk, filterPattern)}
+        />
       </pre>
     </div>
   )
