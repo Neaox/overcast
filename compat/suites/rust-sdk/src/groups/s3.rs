@@ -247,6 +247,145 @@ impl ServiceGroup for S3Group {
             }),
         );
 
+        // Content-Type is metadata on AWS, not a parsing instruction. An
+        // emulator that sniffs it to spot AWS Query traffic can consume the
+        // body before the S3 handler sees it and silently store zero bytes.
+        // Every SDK picks a sensible default type, so only application code
+        // that sets this one explicitly reaches the case.
+        let clients = self.clients.clone();
+        impls.insert(
+            "PutObjectFormContentType".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let bucket = ctx
+                        .get("s3Bucket")
+                        .ok_or_else(|| "s3Bucket not set".to_string())?;
+                    clients
+                        .s3()
+                        .put_object()
+                        .bucket(&bucket)
+                        .key("form-content-type")
+                        .content_type("application/x-www-form-urlencoded")
+                        .body(ByteStream::from_static(b"hello-body-check"))
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    let object = clients
+                        .s3()
+                        .get_object()
+                        .bucket(&bucket)
+                        .key("form-content-type")
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    let content_type = object.content_type().unwrap_or_default().to_string();
+                    let body = object
+                        .body
+                        .collect()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    if body.into_bytes().as_ref() != b"hello-body-check" {
+                        return Err(
+                            "PutObjectFormContentType: stored body does not match what was sent"
+                                .to_string(),
+                        );
+                    }
+                    if content_type != "application/x-www-form-urlencoded" {
+                        return Err(format!(
+                            "PutObjectFormContentType: expected ContentType \
+                             application/x-www-form-urlencoded, got {content_type}"
+                        ));
+                    }
+                    // Leave the group bucket as it was found: some suites'
+                    // DeleteBucket test deletes this shared bucket and needs
+                    // it empty by then.
+                    clients
+                        .s3()
+                        .delete_object()
+                        .bucket(&bucket)
+                        .key("form-content-type")
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    Ok(())
+                })
+            }),
+        );
+
+        // SDKs percent-encode "+" as %2B in the request path — unlike a space
+        // or a multi-byte character, whose encodings survive a round trip
+        // through a server's URL canonicalisation — so a server that reads the
+        // raw path without decoding stores the literal "%2B" in the key.
+        let clients = self.clients.clone();
+        impls.insert(
+            "PutObjectPlusInKey".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let bucket = ctx
+                        .get("s3Bucket")
+                        .ok_or_else(|| "s3Bucket not set".to_string())?;
+                    let key = "plusonly/a+b.txt";
+                    clients
+                        .s3()
+                        .put_object()
+                        .bucket(&bucket)
+                        .key(key)
+                        .body(ByteStream::from_static(b"plus-body"))
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    let object = clients
+                        .s3()
+                        .get_object()
+                        .bucket(&bucket)
+                        .key(key)
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    let body = object
+                        .body
+                        .collect()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    if body.into_bytes().as_ref() != b"plus-body" {
+                        return Err(format!("PutObjectPlusInKey: body mismatch for {key}"));
+                    }
+                    let response = clients
+                        .s3()
+                        .list_objects_v2()
+                        .bucket(&bucket)
+                        .prefix("plusonly/")
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    let keys: Vec<&str> = response
+                        .contents()
+                        .iter()
+                        .map(|item| item.key().unwrap_or_default())
+                        .collect();
+                    if !keys.contains(&key) {
+                        return Err(format!(
+                            "PutObjectPlusInKey: expected {key} in ListObjectsV2, got {keys:?}"
+                        ));
+                    }
+                    // Leave the group bucket as it was found: some suites'
+                    // DeleteBucket test deletes this shared bucket and needs
+                    // it empty by then.
+                    clients
+                        .s3()
+                        .delete_object()
+                        .bucket(&bucket)
+                        .key(key)
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    Ok(())
+                })
+            }),
+        );
+
         let clients = self.clients.clone();
         impls.insert(
             "DeleteObject".to_string(),

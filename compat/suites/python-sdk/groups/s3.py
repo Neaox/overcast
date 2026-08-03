@@ -108,6 +108,61 @@ def ListObjectsV2Delimiter(ctx: TestContext) -> None:
         raise AssertionError(f"ListObjectsV2Delimiter: expected 'multi/' prefix; got {prefixes}")
 
 
+def PutObjectFormContentType(ctx: TestContext) -> None:
+    """Content-Type is metadata on AWS, not a parsing instruction.
+
+    An emulator that sniffs it to spot AWS Query traffic can consume the body
+    before the S3 handler sees it and silently store zero bytes. Every SDK picks
+    a sensible default type, so only application code that sets this one
+    explicitly reaches the case.
+    """
+    s3 = _s3(ctx)
+    bucket = ctx["s3_crud_bucket"]
+    body = b"hello-body-check"
+    s3.put_object(
+        Bucket=bucket,
+        Key="form-content-type",
+        Body=body,
+        ContentType="application/x-www-form-urlencoded",
+    )
+    resp = s3.get_object(Bucket=bucket, Key="form-content-type")
+    stored = resp["Body"].read()
+    if stored != body:
+        raise AssertionError(f"PutObjectFormContentType: wrong body {stored!r}, want {body!r}")
+    if resp.get("ContentType") != "application/x-www-form-urlencoded":
+        raise AssertionError(
+            f"PutObjectFormContentType: ContentType not preserved: {resp.get('ContentType')!r}"
+        )
+    # Leave the group bucket as it was found: some suites' DeleteBucket test
+    # deletes this shared bucket and needs it empty by then.
+    s3.delete_object(Bucket=bucket, Key="form-content-type")
+
+
+def PutObjectPlusInKey(ctx: TestContext) -> None:
+    """A key containing "+" is percent-encoded as %2B in the request path.
+
+    Unlike a space or a multi-byte character, whose encodings survive a round
+    trip through a server's URL canonicalisation, %2B does not — so a server
+    that reads the raw path without decoding stores the literal "%2B" instead.
+    """
+    s3 = _s3(ctx)
+    bucket = ctx["s3_crud_bucket"]
+    key = "plusonly/a+b.txt"
+    body = b"plus-body"
+    s3.put_object(Bucket=bucket, Key=key, Body=body)
+    resp = s3.get_object(Bucket=bucket, Key=key)
+    stored = resp["Body"].read()
+    if stored != body:
+        raise AssertionError(f"PutObjectPlusInKey: wrong body {stored!r}, want {body!r}")
+    listed = s3.list_objects_v2(Bucket=bucket, Prefix="plusonly/")
+    keys = [o["Key"] for o in listed.get("Contents", [])]
+    if key not in keys:
+        raise AssertionError(f"PutObjectPlusInKey: expected {key!r} in ListObjectsV2; got {keys}")
+    # Leave the group bucket as it was found: some suites' DeleteBucket test
+    # deletes this shared bucket and needs it empty by then.
+    s3.delete_object(Bucket=bucket, Key=key)
+
+
 def DeleteObject(ctx: TestContext) -> None:
     s3 = _s3(ctx)
     bucket = ctx["s3_crud_bucket"]
@@ -579,6 +634,8 @@ IMPLS = {
     "ListObjectsV2": ListObjectsV2,
     "PutObjectMultipleKeys": PutObjectMultipleKeys,
     "ListObjectsV2Delimiter": ListObjectsV2Delimiter,
+    "PutObjectFormContentType": PutObjectFormContentType,
+    "PutObjectPlusInKey": PutObjectPlusInKey,
     "DeleteObject": DeleteObject,
     "DeleteObjects": DeleteObjects,
     "DeleteBucket": DeleteBucket,

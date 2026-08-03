@@ -16,6 +16,8 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
         ["ListObjectsV2"] = ListObjectsV2Async,
         ["PutObjectMultipleKeys"] = PutObjectMultipleKeysAsync,
         ["ListObjectsV2Delimiter"] = ListObjectsV2DelimiterAsync,
+        ["PutObjectFormContentType"] = PutObjectFormContentTypeAsync,
+        ["PutObjectPlusInKey"] = PutObjectPlusInKeyAsync,
         ["DeleteObject"] = DeleteObjectAsync,
         ["DeleteObjects"] = DeleteObjectsAsync,
         ["DeleteBucket"] = DeleteBucketAsync,
@@ -212,6 +214,89 @@ public sealed class S3Group(AwsClients clients) : IServiceGroup
             Delimiter = "/",
         });
         Assertions.GreaterThanOrEqual(2, response.S3Objects.Count, "ListObjectsV2Delimiter: expected >= 2 objects under prefix/");
+    }
+
+    // Content-Type is metadata on AWS, not a parsing instruction. An emulator
+    // that sniffs it to spot AWS Query traffic can consume the body before the
+    // S3 handler sees it and silently store zero bytes. Every SDK picks a
+    // sensible default type, so only application code that sets this one
+    // explicitly reaches the case.
+    private async Task PutObjectFormContentTypeAsync(TestContext context)
+    {
+        var bucket = RequireBucket(context);
+        const string key = "form-content-type";
+        const string body = "hello-body-check";
+        await clients.S3().PutObjectAsync(new PutObjectRequest
+        {
+            BucketName = bucket,
+            Key = key,
+            ContentBody = body,
+            ContentType = "application/x-www-form-urlencoded",
+        });
+
+        using var response = await clients.S3().GetObjectAsync(new GetObjectRequest
+        {
+            BucketName = bucket,
+            Key = key,
+        });
+        using var reader = new StreamReader(response.ResponseStream);
+        var stored = await reader.ReadToEndAsync();
+        Assertions.Equal(body, stored, "PutObjectFormContentType: stored body does not match what was sent");
+        Assertions.Equal(
+            "application/x-www-form-urlencoded",
+            response.Headers.ContentType,
+            "PutObjectFormContentType: ContentType was not preserved");
+
+        // Leave the group bucket as it was found: some suites' DeleteBucket
+        // test deletes this shared bucket and needs it empty by then.
+        await clients.S3().DeleteObjectAsync(new DeleteObjectRequest
+        {
+            BucketName = bucket,
+            Key = key,
+        });
+    }
+
+    // SDKs percent-encode "+" as %2B in the request path — unlike a space or a
+    // multi-byte character, whose encodings survive a round trip through a
+    // server's URL canonicalisation — so a server that reads the raw path
+    // without decoding stores the literal "%2B" in the key.
+    private async Task PutObjectPlusInKeyAsync(TestContext context)
+    {
+        var bucket = RequireBucket(context);
+        const string key = "plusonly/a+b.txt";
+        const string body = "plus-body";
+        await clients.S3().PutObjectAsync(new PutObjectRequest
+        {
+            BucketName = bucket,
+            Key = key,
+            ContentBody = body,
+        });
+
+        using var response = await clients.S3().GetObjectAsync(new GetObjectRequest
+        {
+            BucketName = bucket,
+            Key = key,
+        });
+        using var reader = new StreamReader(response.ResponseStream);
+        var stored = await reader.ReadToEndAsync();
+        Assertions.Equal(body, stored, $"PutObjectPlusInKey: could not read back {key}");
+
+        var listed = await clients.S3().ListObjectsV2Async(new ListObjectsV2Request
+        {
+            BucketName = bucket,
+            Prefix = "plusonly/",
+        });
+        Assertions.True(
+            listed.S3Objects.Any(item => item.Key == key),
+            $"PutObjectPlusInKey: expected {key} in ListObjectsV2, got {string.Join(", ", listed.S3Objects.Select(item => item.Key))}");
+
+        // Leave the group bucket as it was found: some suites' DeleteBucket
+        // test deletes this shared bucket and needs it empty by then.
+        await clients.S3().DeleteObjectAsync(new DeleteObjectRequest
+        {
+            BucketName = bucket,
+            Key = key,
+        });
     }
 
     private async Task DeleteObjectAsync(TestContext context)
