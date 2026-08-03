@@ -66,6 +66,205 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.29] - 2026-08-03
+
+### Added
+
+- [apigateway] usage-plan throttle and quota limits are measured on every request that presents an API key — `GetUsage` returns AWS's daily `[used, remaining]` log per key, and reaching a limit publishes an `apigateway:Throttled` event `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` (default off) turns that measurement into rejection, answering an over-limit request with API Gateway's `429`: `TooManyRequestsException` for the rate limit, `LimitExceededException` for the quota
+
+- [autoscaling] Auto Scaling groups converge for real — a single background reconciler launches and terminates EC2 instances until the owned instance set matches `DesiredCapacity`, runs the `Pending`/`InService`/`Terminating` lifecycle, replaces unhealthy instances, and records a `DescribeScalingActivities` entry for every launch and termination
+
+- [autoscaling] `PutScalingPolicy` executes `SimpleScaling` and `StepScaling` policies, through `ExecutePolicy` or from a CloudWatch alarm that names the policy ARN in its actions, honouring cooldowns and `MinAdjustmentMagnitude`
+
+- [autoscaling] `PutLifecycleHook` really pauses a launch or termination in `Pending:Wait`/`Terminating:Wait`, publishes the EventBridge lifecycle-action event, and waits for `CompleteLifecycleAction` or the heartbeat timeout
+
+- [autoscaling] `DescribeScalingActivities`, `ExecutePolicy`, `CompleteLifecycleAction`, `RecordLifecycleActionHeartbeat`, `SetInstanceHealth` and `SetInstanceProtection`
+
+- [cloudwatch] alarm state transitions publish the `CloudWatch Alarm State Change` event to EventBridge and notify SNS alarm actions
+
+- [cloudwatch] `DescribeAlarmHistory`, `EnableAlarmActions` and `DisableAlarmActions`, plus `StateReasonData`, `Dimensions`, `DatapointsToAlarm` and the action lists on `DescribeAlarms`
+
+- **BREAKING** [cloudwatch] `PutMetricAlarm` refuses alarm shapes it cannot evaluate — metric math, anomaly detection, extended statistics — with a `501` instead of creating an alarm that never fires
+  migration: replace a metric-math, anomaly-detection or percentile alarm with a single-metric alarm using Average, Sum, SampleCount, Minimum or Maximum
+
+- [ecs/secretsmanager/ssm] a container definition's `secrets` are resolved and injected as environment variables at task start, from Secrets Manager (including the `:json-key:` suffix that `ecs.Secret.fromSecretsManager(secret, "password")` produces) or SSM Parameter Store. They were parsed into nothing, so a task promised its credentials started without them and the application failed to reach its database with no explanation. A secret that cannot be resolved is named in a warning and left out rather than injected empty, which would be indistinguishable from a secret whose value is the empty string
+
+- [ecs] deployments report `rolloutState`, `rolloutStateReason` and `failedTasks`, and a service records the AWS-shaped events for a placement failure, for being unable to consistently start tasks, and for a tripped deployment circuit breaker
+
+- [ecs/logs] task containers using the `awslogs` log driver have their output shipped to CloudWatch Logs, into the group from `awslogs-group` and a stream named `<prefix>/<container>/<task-id>` as on ECS — under either launch type and however the task was started. A crash-looping task previously explained itself nowhere, its container being gone before `docker logs` could reach it
+
+- [ecs/elbv2] a service registers its tasks with the target groups in its `loadBalancers`, at the task's ENI address and container port, and deregisters them when they stop or the service scales in
+
+- [efs] mount targets can serve a real NFSv4 export — `OVERCAST_EFS_NFS=true` in live mode starts one unprivileged NFS-Ganesha container per mount target, with access points as pseudo-paths
+
+- [elbv2/ecs] a load balancer forwards to its targets, so `ApplicationLoadBalancedFargateService` hands out a URL that serves the application. A listener now stores the `DefaultActions` carrying its target group — previously parsed by the CloudFormation handler and dropped — and a request arriving on the load balancer's DNS name is proxied round robin to a registered target, preserving the Host so an app behind it builds its own links correctly. A load balancer with nothing healthy behind it answers 503, as ALB does
+
+- [eventbridge] rule targets now fan out to Lambda, SNS, Step Functions, Kinesis and Firehose, not just SQS and scheduled ECS tasks
+
+- [eventbridge] `InputPath` and `InputTransformer` are applied to a target's payload before delivery, and a failed delivery honours the target's `RetryPolicy` and dead-letter queue
+
+- [eventbridge] an EventBridge event bus is now a valid rule target, delivered through `PutEvents` with a hop budget so bus-to-bus forwarding cannot recurse
+
+- [iam] `SimulateCustomPolicy`, evaluating policy documents passed in the request without touching any stored entity
+
+- [iam] opt-in request-time enforcement (`OVERCAST_ENFORCE_IAM`, unchanged and still off by default) now shares the simulator's evaluator, so a simulation describes what enforcement would decide, and it is documented in the IAM service reference
+
+- [pipes/web] a pipe detail view showing the resolved source, enrichment and target types, recent executions, and whether a pipe is actually wired or only stored
+
+- [release] breaking changes wait while a minor or patch release PR is open. That PR's section of `CHANGELOG.md` is written and reviewed while it sits there, and every push to `main` is folded into it, so a break merged in the window ships under a version number that promised there was none. The release bot comments on the held pull request with the entries holding it and the ways out — wait, split the compatible part out, correct an entry that is not really a break, or `/retarget <branch>` onto a next-major branch, which it creates if it does not exist yet — then clears the check itself once the release leaves flight. Pre-1.0 is exempt: `0.x` promises no compatibility, so nothing fires below 1.0
+
+- [s3] bucket lifecycle rules: `PutBucketLifecycleConfiguration`, `GetBucketLifecycleConfiguration` and `DeleteBucketLifecycle` are implemented, and an hourly clock-driven sweeper applies them — `Expiration` deletes objects, `Transition` marks a synthetic storage class, and `AbortIncompleteMultipartUpload` abandons stale uploads. Objects in a bucket with an expiration rule are now really deleted, where before nothing ever expired. Prefix, tag and object-size filters are evaluated; the rules that depend on object versioning (`NoncurrentVersionExpiration`, `NoncurrentVersionTransition`, `ExpiredObjectDeleteMarker`) are rejected at `Put` time rather than stored and ignored
+
+- [secretsmanager] `BatchGetSecretValue` accepts `Filters` (name, description, tag-key, tag-value, all), which it previously ignored: a filtered request returned an empty result rather than the matching secrets, so a caller saw a successful lookup that found nothing. Supplying both `Filters` and `SecretIdList` is now the documented `InvalidParameterException`
+
+- [secretsmanager] `RotateSecret` now runs AWS's four-step rotation protocol against the configured Lambda function — `createSecret`, `setSecret`, `testSecret`, `finishSecret` — and a single clock-driven loop fires rotations that come due on a `RotationRules` schedule
+
+- [secretsmanager] `UpdateSecretVersionStage`, staging labels and `ClientRequestToken` on `PutSecretValue`, and `GetSecretValue` by `VersionStage` — the version machinery a rotation function drives
+
+- [secretsmanager] resource policies: `PutResourcePolicy`, `GetResourcePolicy`, `DeleteResourcePolicy` and `ValidateResourcePolicy` store, return and validate a secret's policy instead of returning 501. Nothing evaluates it — a stored policy grants and denies nothing (issue #496)
+
+- **BREAKING** [stepfunctions] a real Amazon States Language interpreter — `StartExecution` now runs the state machine instead of reporting `SUCCEEDED` immediately. All eight state types, `Retry`/`Catch`, the full Choice operator set and the input/output pipeline are interpreted; `Task` states invoke Lambda, SQS, SNS, DynamoDB and nested state machines through Overcast's own router. `DescribeExecution`, `GetExecutionHistory`, `ListExecutions`, `StopExecution`, `DescribeStateMachineForExecution` and `StartSyncExecution` report what really ran, and the web UI gains an executions list and a state-history view. Anything Overcast cannot interpret — `.waitForTaskToken`, activity tasks, `aws-sdk:` integrations, distributed `Map`, JSONata — fails the execution loudly with `States.Runtime` rather than passing through silently. `CreateStateMachine` now rejects definitions that are not valid ASL with `InvalidDefinition`, as AWS does. `StartExecution` returns while the execution is `RUNNING` and `StopExecution` really interrupts it, both matching AWS; `StartSyncExecution` is the synchronous path.
+  migration: an execution that used to report `SUCCEEDED` unconditionally can now legitimately end `FAILED` or `TIMED_OUT` — assert on the real outcome. State machines created with a definition that is not valid ASL are rejected at create time. `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` (default `15m`) is a runaway guard on each execution; it is not on the request path, so ordinary `Wait` states are unaffected.
+
+- [web] the SNS topic detail view shows each subscription's live delivery state, and `lambda` is selectable when subscribing
+
+- [web/apigateway] the Usage Plans page shows each plan's rate, burst and quota, today's usage per API key, and a live feed of limits being reached
+
+- [web] a live alarms view on the CloudWatch page showing state, reason, what is being evaluated, and recent transitions
+
+- [web/eventbridge] the bus view lists each rule's targets with its resolved type and the last delivery outcome — delivered, retried, dead-lettered or dropped
+
+- [web/ecs] the Run Task and Create Service dialogs take subnets, security groups and assignPublicIp, so a Fargate task can be started from the UI at all — it previously always failed with "Network Configuration must be provided when networkMode is 'awsvpc'"
+
+- [web/ecs] a service row expands to show its deployment rollout state, failed task count and event log, and task detail shows `stopCode` and per-container failure reasons
+
+- [web/iam] a policy simulator on the IAM page — pick a principal or paste a policy, see the decision and the statements behind it — with the enforcement flag's state shown beside it, so an `AccessDenied` can be told apart from an application bug
+
+- [web] the Secrets Manager detail page shows rotation status, schedule, version staging labels, the last rotation attempt including which of the four steps failed, and the stored resource policy
+
+### Changed
+
+- **BREAKING** [cloudwatch] alarms now evaluate their own metrics: epoch-aligned periods, `DatapointsToAlarm` M-of-N, `Dimensions`, and all four `TreatMissingData` modes
+  migration: an alarm that previously only moved when you called `SetAlarmState` now changes state on its own and fires its `AlarmActions`/`OKActions`/`InsufficientDataActions`. Call `DisableAlarmActions` on alarms whose actions you do not want fired locally
+
+- [docker] the published images pin their base images by digest, so a release is reproducible and an upstream retag of `alpine:3.20`, `node:22-alpine` or `golang:1.24-alpine` can no longer change what ships without appearing in the diff. Dependabot keeps the digests current
+
+- [ecs/efs] the skipped-EFS-mount warning names which of the three causes applied and what it costs — that mock mode still emulates the whole EFS control plane and only the data plane is missing, so the task runs without the mount and writes to that path are lost when it stops
+
+- **BREAKING** [eventbridge] `PutTargets` now rejects a target ARN it cannot deliver to instead of accepting it and silently dropping the event: a malformed ARN fails the call with `ValidationException`, and a well-formed ARN naming an unsupported service comes back in `FailedEntries` with `ErrorCode: UnsupportedTargetType`
+  migration: replace any EventBridge target outside Lambda/SQS/SNS/Step Functions/Kinesis/Firehose/ECS — those never fired, and a CloudFormation stack carrying one now fails to create rather than provisioning a rule that does nothing
+
+- [iam] `SimulatePrincipalPolicy` answers with a real evaluation of the principal's identity policies — `allowed`, `explicitDeny` or `implicitDeny`, with `MatchedStatements` naming the statement that decided it and `MissingContextValues` naming condition keys the call did not supply — where it used to answer `allowed` to everything An optional `ResourcePolicy` and `PermissionsBoundaryPolicyInputList` are evaluated too, and a policy construct the evaluator does not implement comes back as AWS's `PolicyEvaluation` error instead of being resolved to an allow or a deny
+
+- **BREAKING** [pipes] pipes run every source, enrichment and target Overcast can reach — DynamoDB Streams, Kinesis and SQS sources, an optional Lambda enrichment, and Lambda/SQS/SNS/Step Functions/Kinesis/Firehose/EventBridge-bus targets — instead of only DynamoDB Streams to SQS
+  migration: `CreatePipe` and `UpdatePipe` now require `RoleArn` (as AWS does) and reject any source, enrichment, target or `FilterCriteria` Overcast cannot run, with a `ValidationException` naming the field. A pipe that was accepted before and did nothing will now fail to create — wire it to a supported target, or drop it. `UpdatePipe` is now routed on `PUT /v1/pipes/{name}` as AWS routes it, not `PATCH` — every SDK and the CLI already sent `PUT` and were answered `405`. `CreatePipe` also answers AWS's `200` with the six-member response body rather than `201` with the whole pipe.
+
+- [release] a changelog entry folded into an open release PR is placed next to bullets about the same area instead of at the bottom of its category, so the section stays grouped as it grows. Area is read from the `[sqs]` prefix or from a curated heading like `**SQS (long polling)**`; when nothing matches it goes at the end, as before. Existing bullets are still never rewritten, reordered or removed
+
+- **BREAKING** [s3] `PutObject` now honours `x-amz-storage-class` instead of ignoring it: listings and `HeadObject` report the class an object was stored with, and an unrecognised class is rejected with `InvalidStorageClass`
+  migration: send a documented S3 storage class, or omit the header — an unrecognised `x-amz-storage-class` used to be discarded silently and now fails the request
+
+- **BREAKING** [secretsmanager] `RotateSecret` rejects a secret with no rotation function configured, as AWS does, rather than saving the schedule and rotating nothing
+  migration: pass `RotationLambdaARN` on the call or configure it first, and add `RotateImmediately: false` if you only want the schedule
+
+- [secretsmanager] secret ARNs carry AWS's six-character random suffix; the partial ARN without it still resolves, as on AWS
+
+- [autoscaling]! group shapes the reconciler cannot converge are now refused instead of stored and ignored: `LaunchTemplate`, `MixedInstancesPolicy` and `InstanceId` groups, and `TargetTrackingScaling`/`PredictiveScaling` policies, return `501`, and a group with no launch source at all returns AWS's `ValidationError`. A group that reports a desired capacity it never acts on is the failure this rule exists to prevent
+
+### Fixed
+
+- [appconfig] the four hosted configuration version operations — `CreateHostedConfigurationVersion`, `GetHostedConfigurationVersion`, `ListHostedConfigurationVersions`, `DeleteHostedConfigurationVersion` — are now declared capabilities, so `docs/services/appconfig.md` and the capability snapshot report what the service has been serving all along
+
+- [appregistry] `ListAssociatedAttributeGroups` is now a declared capability rather than a footnote on `AssociateAttributeGroup`
+
+- [autoscaling] void responses carried a Go type name as their XML root element instead of AWS's `<OperationNameResponse>`
+
+- [awsapi/waf] the `waf` service key no longer validates against the WAF Classic model — Overcast implements WAF v2 (`AWSWAF_20190729`), but the key matched the manifest's `waf` identity, which is WAF Classic (`AWSWAF_20150824`); the two share operation names like `CreateWebACL`, so the capability rows were being checked against the wrong API and v2-only operations such as `AssociateWebACL` counted as unmodelled
+
+- [awsapi/ses] SES v2 operations now resolve to the `ses` service key — the `sesv2` manifest identity (112 operations) was aliased to nothing, so the v2 half of a service documented as "v1 + v2" was absent from model-backed validation and coverage accounting
+
+- [capgen] `--check` now sees operations registered only in a service's typed registry (`map[string]op.Operation`, built by `typedOps()`) — detection previously recognised `map[string]http.HandlerFunc` and action-dispatch switches only, so an operation the emulator dispatches but never lists in the legacy map produced no MISSING row and made its capability entry look like an ORPHAN. A typed registry does not mark detection comprehensive: REST-routed services such as Route 53 and AppRegistry register only part of their surface there, so their remaining rows stay reported as undetectable rather than as violations
+
+- [capgen] `--check-model` now fails on a service key that no modelled AWS identity backs, and on a `compat/suites/registry.json` group whose `service` is not a capability service key — the two mis-mappings above were both invisible because nothing asserted that a key resolves to a model identity by key or alias
+
+- [ci] `softprops/action-gh-release` is pinned to a commit SHA rather than a tag. A tag can be moved to point at different code, so a tag pin is a convenience and not a supply-chain control; the version stays readable as a trailing comment
+
+- [cloudformation/ecs] a stack update waits for the ECS service's new deployment the same way a create does, so an update that swaps in a task definition whose tasks cannot start fails the resource and unwinds instead of reporting UPDATE_COMPLETE around a service still catching up — or, worse, around one sitting on a failed rollout
+
+- [cloudformation/ecs] `AWS::ECS::Cluster` and `AWS::ECS::Service` get a generated physical name when the template gives none, as CloudFormation does — CDK never emits `ServiceName` and emits a cluster with no properties at all, so a service was rejected for having no name and every stack's cluster collided on the ECS API's default name of "default"
+
+- [cloudwatch] Query-protocol errors use AWS's `ErrorResponse` envelope, so SDKs read the error code instead of a generic failure
+
+- [docker] pulling an image no longer runs `docker image prune` afterwards. "Dangling" means untagged, and an image pulled by digest (`repo@sha256:…`) has no tag, so the prune deleted the image the pull had just fetched — the pull reported success and the next container create failed with `No such image`. The prune was also daemon-wide, deleting the user's own untagged images on every pull
+
+- [docker] a digest or tag is now sent to Docker in the `tag` parameter rather than folded into `fromImage`, which is what the Engine API expects
+
+- [docker] a container starts from an image the daemon already holds even when the registry pull fails. An unreachable or rate-limiting registry, or Docker Desktop's containerd image store returning a stale-lease 404, no longer stops a local image being used — which is the whole point of having pulled it
+
+- [dynamodb] LSI queries read only the queried partition instead of scanning the whole table, and LSI reads now honour the sparse-index rule — an item without the index sort key is no longer returned
+
+- **BREAKING** [dynamodb] `ConsistentRead=true` on a Query or Scan against a global secondary index is rejected with the `ValidationException` AWS returns, instead of silently serving a read AWS has no way to serve
+  migration: drop `ConsistentRead` (or set it to `false`) on GSI queries — the same call already fails against real AWS
+
+- [dynamodb] a parallel Scan segment costs a page rather than the whole table, and an item's segment no longer shifts when other items are written — a worker-per-segment scan of a table being written to could previously return an item twice or not at all A `Limit=25` page of one segment of a 4-way scan over 8 000 items: 852 µs/67.5 KB per op before, 16 µs/4.6 KB after (memory backend); over 1 500 items on the SQLite backend, 4.92 ms/3.09 MB before, 0.41 ms/0.21 MB after. Measured with `go test -bench BenchmarkDynamoDB_ParallelScan -benchmem -benchtime 200x ./internal/services/dynamodb/`, three runs each side agreeing within 10%, Go 1.24 in a `golang:1.24-bookworm` container (container-native filesystem) on a Ryzen 9 5900X / Windows 11 host.
+
+- [dynamodb] a parallel Scan of a global secondary index reads the index rather than the base table, so it returns only the index's projected attributes and only items the index actually contains
+
+- [ecs/cloudformation] a CDK-deployed Fargate service starts its tasks — `AWS::ECS::Service` applies CloudFormation's documented default of `DesiredCount: 1` for a new service, which CDK depends on because the construct omits the property, and the resource waits for the service to reach that count so one that cannot place its tasks fails the stack instead of reaching CREATE_COMPLETE sitting at 0/0
+
+- [ecs] services place real containers. A service's scheduler goes through the same path as `RunTask`, so its tasks carry the service's `networkConfiguration`, the ENI attachment, the Fargate platform version and the deployment ID in `startedBy` — previously a service task was a metadata-only record with no container behind it, and the service reported it RUNNING
+
+- **BREAKING** [ecs] `networkConfiguration` is required when the task definition's `networkMode` is `awsvpc`, as on AWS, rather than when `launchType` is `FARGATE`. An awsvpc task definition launched under EC2, or under a `capacityProviderStrategy` with no launch type — the shape CDK emits — was accepted and produced a service that could never place a task
+  migration: pass `networkConfiguration` (subnets, plus security groups if any) to RunTask and CreateService for awsvpc task definitions; the same call already fails against real AWS without it
+
+- [ecs] a task whose containers fail to start is STOPPED with `stopCode` `TaskFailedToStart` and a reason naming the AWS stopped-task error code, instead of being reported RUNNING with nothing behind it; StopTask, scheduler scale-down and essential-container exits set their AWS stop codes too
+
+- [ecs] a service replaces a task whose containers exited, instead of draining to zero the first time one finishes; replacements back off from 500 ms to 30 s as tasks keep dying, so a container that exits immediately crash-loops slowly rather than spinning
+
+- [ecs] `entryPoint`, `workingDirectory`, `user` and `dockerLabels` on a container definition reach the container. All were dropped, so a task definition setting any of them silently ran something other than what it asked for
+
+- [ecs] task and service properties CDK sets on nearly every stack round-trip instead of being dropped: `taskRoleArn`, `executionRoleArn`, `runtimePlatform`, `ephemeralStorage`, `pidMode` and `ipcMode` on a task definition; `secrets`, `healthCheck`, `dependsOn`, `readonlyRootFilesystem`, `privileged` and the start/stop timeouts on a container; `healthCheckGracePeriodSeconds`, `enableExecuteCommand`, `propagateTags`, `serviceRegistries`, `placementStrategy` and `placementConstraints` on a service; `startedBy` on RunTask. Overcast acts on the ones it can and echoes the rest, so DescribeTaskDefinition and DescribeServices agree with what was registered. Container `secrets` are still not injected, but a task carrying them now says so rather than starting quietly without them
+
+- [efs/ec2] a mount target's availability zone comes from the subnet's real zone in EC2 rather than a hash of the subnet ID, which put unrelated zones in collision and rejected the second mount target of any multi-AZ file system — the shape every CDK `efs.FileSystem` produces
+
+- [elasticache] deleting a cache cluster or replication group while its container was still starting no longer leaks the container — the delete path had nothing to stop (the container ID was not persisted yet), so the start goroutine now checks for a mid-start delete and tears its own container down, and container fields merge into a fresh read instead of overwriting concurrent transitions with the pre-start snapshot
+
+- [elbv2] a load balancer's `DNSName` is built on Overcast's external hostname, as every other service handing out an endpoint already does, instead of a hardcoded `.elb.localhost` that `OVERCAST_HOSTNAME` could not reach. Unchanged by default, since the hostname defaults to `localhost`
+
+- [eventbridge/pipes] target delivery no longer re-enters the emulator's router on the caller's chi routing context, which raced with the inbound request still in flight and could hand a sink that request's URL params
+
+- [iam] inline policy documents are percent-encoded per RFC 3986, as AWS documents them, instead of form-encoded — a space came back as `+`, so a client decoding correctly got a literal `+` in place of the space and any policy that was not minified JSON arrived corrupted
+
+- [lambda] deleting a function while an invocation was still running no longer leaks its execution environment — the in-flight instance was released back into the warm pool for a function that no longer existed, leaving a container nothing would reclaim; it is now destroyed on release, and a function recreated with the same name pools normally again
+
+- [lambda/sns] a throttled function is retried inside Lambda instead of bouncing the event back to whatever raised it — an SNS notification to a function reserved to zero concurrency reached the subscription dead-letter queue, where the same function invoked over HTTP would have retried
+
+- [lambda/sns] a `lambda` subscription pointing at a function Lambda cannot run — a missing layer version, or a runtime the emulator has no support for — reports the failed delivery instead of reporting success and dropping the notification
+
+- [msk] deleting a cluster while its Redpanda container was still starting no longer leaks the container — the delete stopped the container ID on the record, which is empty until the start completes, so the start goroutine now tears down its own container when the cluster went away
+
+- [pipes] a DynamoDB-sourced pipe is no longer cancelled part-way through delivery when the write that triggered it answers its client
+
+- [protocol/rds] Query-protocol lists whose members carry a model `locationName` now decode — RDS `CreateDBSubnetGroup` rejected every real AWS SDK with "At least one SubnetId is required" because the SDKs serialise `SubnetIds.SubnetIdentifier.N` and the codec only recognised `member.N`, flattened, and map forms
+
+- [protocol] Query-protocol map entries no longer lose their values — `entry.N.key` and `entry.N.value` arrive as separate wire keys and were never merged by index, so maps decoded with every value empty
+
+- [rds/ecs] an ECS task can connect to an RDS instance by its endpoint hostname. The instance's container is attached to the VPC network — and to the ECS network for tasks outside a VPC — advertising that hostname as a DNS alias, which is what RDS already did for the Lambda network. Without the alias the name fell through to Overcast's own address and the task connected to a port nothing was listening on
+
+- [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
+
+- [router] AWS Query-protocol requests with structures nested more than two levels deep decoded those fields as absent
+
+- [s3] `CopyObject` accepts a fully URL-encoded `x-amz-copy-source`, which AWS requires be URL-encoded and decodes. The header was split on `/` before decoding, so a client that encodes the separator too — the AWS SDK for .NET does — was rejected with "Invalid copy source"
+
+- [s3] re-creating a bucket you already own in `us-east-1` returns 200 instead of `BucketAlreadyOwnedByYou`, matching S3, which documents that conflict as returned "in all AWS Regions except in the North Virginia Region" and answers 200 there for legacy compatibility. Every other region still conflicts, and idempotent bucket creation — what the AWS SDK examples do — now works against the default region
+
+- [sns/lambda] a `lambda`-protocol subscription is now actually delivered to — `Publish` invokes the function with AWS's `Records[].Sns` event instead of dropping the message
+
+- [sns] a delivery that fails is logged and moved to the subscription's `RedrivePolicy` dead-letter queue, for every protocol, rather than being swallowed
+
+- [sns] notification `Timestamp` uses AWS's millisecond form (`2012-04-25T21:49:25.719Z`)
+
 ## [0.0.1-alpha.28] - 2026-07-31
 
 ### Added
@@ -646,7 +845,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.28...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.29...HEAD
+[0.0.1-alpha.29]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.28...v0.0.1-alpha.29
 [0.0.1-alpha.28]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.27...v0.0.1-alpha.28
 [0.0.1-alpha.27]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.26...v0.0.1-alpha.27
 [0.0.1-alpha.26]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.25...v0.0.1-alpha.26

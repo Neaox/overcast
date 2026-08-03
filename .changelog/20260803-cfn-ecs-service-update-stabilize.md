@@ -1,1 +1,0 @@
-* [cloudformation/ecs] a stack update waits for the ECS service's new deployment the same way a create does, so an update that swaps in a task definition whose tasks cannot start fails the resource and unwinds instead of reporting UPDATE_COMPLETE around a service still catching up — or, worse, around one sitting on a failed rollout

@@ -1,5 +1,0 @@
-+ [eventbridge] rule targets now fan out to Lambda, SNS, Step Functions, Kinesis and Firehose, not just SQS and scheduled ECS tasks
-+ [eventbridge] `InputPath` and `InputTransformer` are applied to a target's payload before delivery, and a failed delivery honours the target's `RetryPolicy` and dead-letter queue
-~! [eventbridge] `PutTargets` now rejects a target ARN it cannot deliver to instead of accepting it and silently dropping the event: a malformed ARN fails the call with `ValidationException`, and a well-formed ARN naming an unsupported service comes back in `FailedEntries` with `ErrorCode: UnsupportedTargetType`
-  migration: replace any EventBridge target outside Lambda/SQS/SNS/Step Functions/Kinesis/Firehose/ECS — those never fired, and a CloudFormation stack carrying one now fails to create rather than provisioning a rule that does nothing
-+ [web/eventbridge] the bus view lists each rule's targets with its resolved type and the last delivery outcome — delivered, retried, dead-lettered or dropped

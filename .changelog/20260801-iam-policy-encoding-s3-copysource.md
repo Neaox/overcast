@@ -1,2 +1,0 @@
-* [iam] inline policy documents are percent-encoded per RFC 3986, as AWS documents them, instead of form-encoded — a space came back as `+`, so a client decoding correctly got a literal `+` in place of the space and any policy that was not minified JSON arrived corrupted
-* [s3] `CopyObject` accepts a fully URL-encoded `x-amz-copy-source`, which AWS requires be URL-encoded and decodes. The header was split on `/` before decoding, so a client that encodes the separator too — the AWS SDK for .NET does — was rejected with "Invalid copy source"

@@ -1,2 +1,0 @@
-* [docker] pulling an image no longer runs `docker image prune` afterwards. "Dangling" means untagged, and an image pulled by digest (`repo@sha256:…`) has no tag, so the prune deleted the image the pull had just fetched — the pull reported success and the next container create failed with `No such image`. The prune was also daemon-wide, deleting the user's own untagged images on every pull
-* [docker] a digest or tag is now sent to Docker in the `tag` parameter rather than folded into `fromImage`, which is what the Engine API expects
