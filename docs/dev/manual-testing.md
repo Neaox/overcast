@@ -71,6 +71,29 @@ const r = await new SQSClient({}).send(new SendMessageCommand({ QueueUrl: proces
 console.log(r.MessageId)
 ```
 
+## Your own AWS environment is a variable too
+
+Before trusting any hand-run `aws` result, account for what your shell already sets. A developer
+machine carries `AWS_PROFILE`, `AWS_REGION`, SSO state, sometimes a stale `AWS_ENDPOINT_URL` — and
+they leak into every call silently. A wrong region is the nastiest of them, because resources really
+are per-region here as on AWS: a create in one region and a list in another correctly disagree, and
+it reads exactly like data loss.
+
+Use the wrapper rather than remembering:
+
+```sh
+OVERCAST_PORT=4580 scripts/awslocal.sh sqs list-queues
+```
+
+It unsets **every** `AWS_*` variable in its own process and sets back only the endpoint, placeholder
+credentials, the region (`OVERCAST_REGION`, default `us-east-1`) and an empty `AWS_PAGER`. Exporting
+`AWS_ACCESS_KEY_ID` by hand is not equivalent — it leaves everything you did not think of in place.
+
+**But not for the checks on this page.** The wrapper passes `--endpoint-url`, which is precisely
+what suppresses the queue-URL origin override described above. Endpoint, origin and routing checks
+need a bare client with no endpoint configured. Use the wrapper for setup and for everything else;
+drop to a bare SDK client for the thing being tested.
+
 ## Endpoint configurations worth covering
 
 A Lambda using AWS SDKs must reach Overcast **out of the box**. The deployment shapes that behave
@@ -177,6 +200,8 @@ found real bugs:
 
 ## Before concluding a manual test passed
 
+- Was your **own AWS environment** neutralised (`scripts/awslocal.sh`), so an ambient `AWS_REGION`
+  or `AWS_PROFILE` is not what you are actually observing?
 - Did a **real SDK client** exercise it, not just `aws`?
 - Was the endpoint **remapped**, so a config-derived origin could not accidentally be right?
 - Was the client **bare** — no `--endpoint-url`, no explicit `endpoint`?
