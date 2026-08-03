@@ -40,7 +40,7 @@ public final class AppSyncGroup implements ServiceGroup {
                 Map.entry("StartSchemaCreation",     this::startSchemaCreation),
                 Map.entry("GetSchemaCreationStatus", this::getSchemaCreationStatus),
                 // appsync-api-keys
-                Map.entry("CreateApiKey", this::createApiKey),
+                Map.entry("appsync-api-keys:CreateApiKey", this::createApiKey),
                 Map.entry("ListApiKeys",  this::listApiKeys),
                 Map.entry("UpdateApiKey", this::updateApiKey),
                 Map.entry("DeleteApiKey", this::deleteApiKey),
