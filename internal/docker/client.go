@@ -106,6 +106,7 @@ type ContainerConfig struct {
 	Cmd          []string            `json:"Cmd,omitempty"`
 	Entrypoint   []string            `json:"Entrypoint,omitempty"`
 	WorkingDir   string              `json:"WorkingDir,omitempty"`
+	User         string              `json:"User,omitempty"`
 	ExposedPorts map[string]struct{} `json:"ExposedPorts,omitempty"`
 	Labels       map[string]string   `json:"Labels,omitempty"`
 }

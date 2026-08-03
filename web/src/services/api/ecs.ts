@@ -103,6 +103,8 @@ export const ecs = {
             status: td.status ?? "UNKNOWN",
             cpu: td.cpu,
             memory: td.memory,
+            networkMode: td.networkMode,
+            requiresCompatibilities: td.requiresCompatibilities,
           }
         } catch {
           return {
@@ -163,6 +165,9 @@ export const ecs = {
     taskDefinition: string
     count?: number
     launchType?: string
+    subnets?: string[]
+    securityGroups?: string[]
+    assignPublicIp?: string
   }): Promise<EcsTask[]> => {
     const res = await awsClients.ecs().send(
       new RunTaskCommand({
@@ -170,6 +175,7 @@ export const ecs = {
         taskDefinition: opts.taskDefinition,
         count: opts.count ?? 1,
         launchType: (opts.launchType as LaunchType | undefined) ?? "FARGATE",
+        ...networkConfigurationFor(opts),
       }),
     )
     return (res.tasks ?? []).map(mapTask)
@@ -193,6 +199,10 @@ export const ecs = {
     serviceName: string
     taskDefinition: string
     desiredCount: number
+    launchType?: string
+    subnets?: string[]
+    securityGroups?: string[]
+    assignPublicIp?: string
   }): Promise<EcsService> => {
     const res = await awsClients.ecs().send(
       new CreateServiceCommand({
@@ -200,6 +210,8 @@ export const ecs = {
         serviceName: params.serviceName,
         taskDefinition: params.taskDefinition,
         desiredCount: params.desiredCount,
+        launchType: params.launchType as LaunchType | undefined,
+        ...networkConfigurationFor(params),
       }),
     )
     return mapService(res.service!)
@@ -262,6 +274,33 @@ export const ecs = {
   },
 }
 
+/**
+ * Builds the awsvpc networkConfiguration ECS requires whenever the task
+ * definition's networkMode is awsvpc — which every Fargate task definition's
+ * is. Omitted entirely when no subnet was chosen, so a bridge-mode task
+ * definition is not sent a configuration it cannot use.
+ */
+function networkConfigurationFor(opts: {
+  subnets?: string[]
+  securityGroups?: string[]
+  assignPublicIp?: string
+}) {
+  const subnets = (opts.subnets ?? []).filter(Boolean)
+  if (subnets.length === 0) return {}
+  const securityGroups = (opts.securityGroups ?? []).filter(Boolean)
+  return {
+    networkConfiguration: {
+      awsvpcConfiguration: {
+        subnets,
+        ...(securityGroups.length > 0 ? { securityGroups } : {}),
+        ...(opts.assignPublicIp
+          ? { assignPublicIp: opts.assignPublicIp as "ENABLED" | "DISABLED" }
+          : {}),
+      },
+    },
+  }
+}
+
 function mapTask(t: {
   taskArn?: string
   taskDefinitionArn?: string
@@ -273,12 +312,16 @@ function mapTask(t: {
   startedAt?: Date
   stoppedAt?: Date
   stoppedReason?: string
+  stopCode?: string
+  startedBy?: string
+  group?: string
   containers?: Array<{
     containerArn?: string
     name?: string
     image?: string
     lastStatus?: string
     exitCode?: number
+    reason?: string
     networkBindings?: Array<{
       hostPort?: number
       containerPort?: number
@@ -297,12 +340,16 @@ function mapTask(t: {
     startedAt: t.startedAt?.toISOString(),
     stoppedAt: t.stoppedAt?.toISOString(),
     stoppedReason: t.stoppedReason,
+    stopCode: t.stopCode,
+    startedBy: t.startedBy,
+    group: t.group,
     containers: (t.containers ?? []).map((c) => ({
       containerArn: c.containerArn,
       name: c.name ?? "",
       image: c.image,
       lastStatus: c.lastStatus ?? "UNKNOWN",
       exitCode: c.exitCode,
+      reason: c.reason,
       networkBindings: c.networkBindings?.map((b) => ({
         hostPort: b.hostPort,
         containerPort: b.containerPort,
@@ -329,6 +376,9 @@ function mapService(s: {
     desiredCount?: number
     runningCount?: number
     pendingCount?: number
+    failedTasks?: number
+    rolloutState?: string
+    rolloutStateReason?: string
     createdAt?: Date
   }>
   events?: Array<{
@@ -355,6 +405,9 @@ function mapService(s: {
       desiredCount: d.desiredCount ?? 0,
       runningCount: d.runningCount ?? 0,
       pendingCount: d.pendingCount ?? 0,
+      failedTasks: d.failedTasks,
+      rolloutState: d.rolloutState,
+      rolloutStateReason: d.rolloutStateReason,
       createdAt: d.createdAt?.toISOString() ?? "",
     })),
     events: (s.events ?? []).map((e) => ({

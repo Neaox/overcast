@@ -3699,7 +3699,7 @@
           "operation": "CreateService",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Validates cluster + task def; creates PRIMARY deployment; reconciler starts tasks; Fargate: networkConfiguration required, deploymentController defaults to ECS"
+          "notes": "Validates cluster + task def; creates PRIMARY deployment with rolloutState; scheduler starts Docker-backed tasks carrying the service networkConfiguration, ENI attachment and deployment ID in startedBy; networkConfiguration required when the task definition's networkMode is awsvpc; deploymentController defaults to ECS; failed placements are recorded as service events and a FAILED rollout when a deploymentCircuitBreaker is enabled"
         },
         {
           "operation": "CreateTaskSet",
@@ -3896,7 +3896,7 @@
           "operation": "RunTask",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Docker-backed when available; async state transitions; falls back to metadata-only; Fargate: networkConfiguration required, synthetic ENI attachment returned, platformVersion defaults to LATEST"
+          "notes": "Docker-backed when available, metadata-only when no container runtime is wired; a task whose containers fail to start is STOPPED with stopCode TaskFailedToStart rather than reported RUNNING; async state transitions; networkConfiguration required when the task definition's networkMode is awsvpc, synthetic ENI attachment returned, platformVersion defaults to LATEST"
         },
         {
           "operation": "StartTask",
@@ -3908,7 +3908,7 @@
           "operation": "StopTask",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Stops Docker containers; sets STOPPED; cancels pending transitions"
+          "notes": "Stops Docker containers; sets STOPPED with stopCode UserInitiated; cancels pending transitions"
         },
         {
           "operation": "TagResource",

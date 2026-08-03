@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/containerendpoint"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
@@ -30,6 +30,7 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 		PlatformVersion      string                `json:"platformVersion"`
 		Overrides            *TaskOverride         `json:"overrides"`
 		Group                string                `json:"group"`
+		StartedBy            string                `json:"startedBy"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -40,16 +41,6 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Count < 1 {
 		req.Count = 1
-	}
-
-	// Fargate requires networkConfiguration.
-	if req.LaunchType == "FARGATE" && req.NetworkConfiguration == nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterException",
-			Message:    "Network Configuration must be provided when networkMode is 'awsvpc'.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
 	}
 
 	clusterName := extractClusterName(req.Cluster)
@@ -74,9 +65,12 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := h.clk.Now().Unix()
-	tasks := make([]Task, 0, req.Count)
-	useDocker := h.dockerReady.Load()
+	// awsvpc networking is required by the task definition's networkMode, so
+	// this can only be checked once the task definition has been resolved.
+	if aerr := validateAwsvpcNetworkConfiguration(td, req.LaunchType, req.NetworkConfiguration); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	// Determine platform version for Fargate.
 	platformVersion := req.PlatformVersion
@@ -84,12 +78,10 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 		platformVersion = "LATEST"
 	}
 
-	awsvpcSubnetID := ""
-	awsvpcNetworkID := ""
-	awsvpcSubnetResolved := false
+	var placement awsvpcPlacement
 	if req.NetworkConfiguration != nil {
 		var placementErr *protocol.AWSError
-		awsvpcSubnetID, _, awsvpcNetworkID, awsvpcSubnetResolved, placementErr =
+		placement.subnetID, _, placement.networkID, placement.subnetResolved, placementErr =
 			h.resolveAwsvpcPlacement(r.Context(), req.NetworkConfiguration, "awsvpc tasks")
 		if placementErr != nil {
 			protocol.WriteJSONError(w, r, placementErr)
@@ -97,77 +89,29 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tasks := make([]Task, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
-		taskID := uuid.New().String()
-		taskArn := h.taskARN(r.Context(), clusterName, taskID)
-
-		containers := make([]Container, 0, len(td.ContainerDefinitions))
-		for _, cd := range td.ContainerDefinitions {
-			containers = append(containers, Container{
-				ContainerArn: h.containerARN(r.Context(), uuid.New().String()),
-				Name:         cd.Name,
-				Image:        cd.Image,
-				LastStatus:   "PENDING",
-			})
-		}
-
-		// Generate a synthetic ENI attachment for awsvpc tasks.
-		var attachments []Attachment
-		if req.NetworkConfiguration != nil {
-			attachmentPrivateIP := "10.0." + fmt.Sprintf("%d.%d", (i+1)/256, (i+1)%256)
-			if awsvpcSubnetResolved && h.vpcResolver != nil {
-				if translated := h.vpcResolver.AllocatePrivateIPForSubnet(r.Context(), awsvpcSubnetID); translated != "" {
-					attachmentPrivateIP = translated
-				}
-			}
-			eniID := "eni-" + taskID[:8]
-			attachments = []Attachment{{
-				Id:     uuid.New().String(),
-				Type:   "ElasticNetworkInterface",
-				Status: "ATTACHING",
-				Details: []KeyValuePair{
-					{Name: "networkInterfaceId", Value: eniID},
-					{Name: "subnetId", Value: awsvpcSubnetID},
-					{Name: "privateIPv4Address", Value: attachmentPrivateIP},
-				},
-			}}
-		}
-
-		task := Task{
-			TaskArn:              taskArn,
-			TaskDefinitionArn:    td.TaskDefinitionArn,
-			ClusterArn:           cluster.ClusterArn,
-			LastStatus:           "PROVISIONING",
-			DesiredStatus:        "RUNNING",
-			LaunchType:           req.LaunchType,
-			Cpu:                  td.Cpu,
-			Memory:               td.Memory,
-			PlatformVersion:      platformVersion,
-			CreatedAt:            now,
-			Group:                req.Group,
-			Containers:           containers,
-			Overrides:            req.Overrides,
-			NetworkConfiguration: req.NetworkConfiguration,
-			Attachments:          attachments,
-		}
-
-		if useDocker {
-			if err := h.startTaskContainers(r.Context(), &task, td, clusterName, taskID, awsvpcNetworkID); err != nil {
-				h.log.Warn("ecs: failed to start Docker containers, falling back to metadata-only",
-					zap.String("task", taskID), zap.Error(err))
-				// Fall through to metadata-only behaviour.
-				h.scheduleMetadataTransition(h.store.region(r.Context()), clusterName, taskID)
-			}
-		} else {
-			h.scheduleMetadataTransition(h.store.region(r.Context()), clusterName, taskID)
-		}
-
-		if aerr := h.store.putTask(r.Context(), &task); aerr != nil {
+		// A task that fails to start is returned like any other: AWS reports
+		// the ARN from RunTask and the failure through the task's own STOPPED
+		// state, reserving the failures array for placement rejections.
+		task, aerr, _ := h.launchTask(r.Context(), taskLaunchSpec{
+			clusterName:     clusterName,
+			clusterArn:      cluster.ClusterArn,
+			td:              td,
+			launchType:      req.LaunchType,
+			platformVersion: platformVersion,
+			group:           req.Group,
+			startedBy:       req.StartedBy,
+			overrides:       req.Overrides,
+			netCfg:          req.NetworkConfiguration,
+			placement:       placement,
+			ordinal:         i,
+		})
+		if aerr != nil {
 			protocol.WriteJSONError(w, r, aerr)
 			return
 		}
-
-		tasks = append(tasks, task)
+		tasks = append(tasks, *task)
 	}
 
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
@@ -205,9 +149,11 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 	for i, cd := range td.ContainerDefinitions {
 		image := cd.Image
 
-		// Pull the image (deduplicated).
+		// Pull the image (deduplicated). The puller's error already names the
+		// image and the failure, so it is not wrapped again — this message
+		// reaches the user as a task's stoppedReason.
 		if err := h.puller.Ensure(ctx, image); err != nil {
-			return fmt.Errorf("ecs: pull image %s: %w", image, err)
+			return fmt.Errorf("ecs: %w", err)
 		}
 
 		// Build environment variables.
@@ -242,17 +188,37 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			}
 		}
 
+		// Secrets are modelled but not resolved yet, so say so rather than
+		// starting a container quietly missing the variables it was promised.
+		if len(cd.Secrets) > 0 {
+			names := make([]string, 0, len(cd.Secrets))
+			for _, s := range cd.Secrets {
+				names = append(names, s.Name)
+			}
+			h.log.Warn("ecs: container secrets are not injected — the container starts without them",
+				zap.String("container", cd.Name),
+				zap.Strings("secrets", names),
+				zap.String("hint", "resolve the value and pass it through containerDefinitions[].environment for now"))
+		}
+
 		containerName := fmt.Sprintf("overcast-ecs-%s-%s-%s", clusterName, taskID[:8], cd.Name)
 
 		ccfg := &docker.CreateContainerRequest{
 			ContainerConfig: &docker.ContainerConfig{
-				Image:        image,
-				Env:          env,
-				Cmd:          cmd,
+				Image: image,
+				Env:   env,
+				Cmd:   cmd,
+				// entryPoint and workingDirectory override the image's own, as
+				// they do on ECS. A task definition that sets either and has it
+				// dropped runs something other than what it asked for, silently.
+				Entrypoint:   cd.EntryPoint,
+				WorkingDir:   cd.WorkingDirectory,
+				User:         cd.User,
 				ExposedPorts: exposedPorts,
-				Labels:       docker.ManagedLabels("ecs", resourceID),
+				Labels:       mergeDockerLabels(docker.ManagedLabels("ecs", resourceID), cd.DockerLabels),
 			},
 			HostConfig: &docker.HostConfig{AutoRemove: true,
+				Privileged:   cd.Privileged != nil && *cd.Privileged,
 				Mounts:       h.efsMountsForContainer(ctx, td, &td.ContainerDefinitions[i]),
 				NetworkMode:  h.cfg.ECSNetwork,
 				PortBindings: portBindings,
@@ -299,31 +265,31 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 
 		task.Containers[i].DockerID = dockerID
 		task.Containers[i].RuntimeId = dockerID
+
+		// Ship this container's output to CloudWatch Logs when the task
+		// definition asked for the awslogs driver. Started after the container
+		// is running so the stream exists to attach to.
+		h.startLogStreaming(ctx, dockerID, taskID, cd)
 	}
 
-	// Schedule PROVISIONING → RUNNING transition with a short delay.
-	capturedCluster := clusterName
-	capturedTaskID := taskID
-	h.scheduler.AfterScoped(h.store.region(ctx), taskID, "pending", 200*time.Millisecond, func(bgCtx context.Context) {
-		got, aerr := h.store.getTask(bgCtx, capturedCluster, capturedTaskID)
-		if aerr != nil || got == nil {
-			return
-		}
-		if got.LastStatus == "PROVISIONING" || got.LastStatus == "PENDING" {
-			got.LastStatus = "RUNNING"
-			startedAt := h.clk.Now().Unix()
-			got.StartedAt = &startedAt
-			for j := range got.Containers {
-				got.Containers[j].LastStatus = "RUNNING"
-			}
-			h.store.putTask(bgCtx, got) //nolint:errcheck
-			if h.bus != nil {
-				h.bus.Publish(bgCtx, events.Event{Type: events.ECSTaskStarted, Payload: events.ResourcePayload{Name: capturedTaskID}})
-			}
-		}
-	})
-
+	h.scheduleRunningTransition(h.store.region(ctx), clusterName, taskID)
 	return nil
+}
+
+// mergeDockerLabels adds a container definition's dockerLabels to Overcast's
+// own. Overcast's win: the GC and the exit notifier find containers by them.
+func mergeDockerLabels(managed, extra map[string]string) map[string]string {
+	if len(extra) == 0 {
+		return managed
+	}
+	merged := make(map[string]string, len(managed)+len(extra))
+	for k, v := range extra {
+		merged[k] = v
+	}
+	for k, v := range managed {
+		merged[k] = v
+	}
+	return merged
 }
 
 // containerEndpoint returns the endpoint mapper for ECS task containers,
@@ -340,6 +306,24 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 // best-effort posture of EFS live mode. A rootDirectory subpath that does not
 // exist in the volume makes the container start fail, which mirrors AWS's
 // mount failure for missing root directories.
+// efsMountSkipReason explains why an EFS volume could not be resolved, which
+// is almost always the mode EFS is running in rather than anything wrong with
+// the task definition. The three causes need different things from the reader,
+// so they get different messages instead of one that lists all three.
+func (h *Handler) efsMountSkipReason() (msg, hint string) {
+	switch {
+	case h.cfg != nil && h.cfg.EFSMode != config.EFSModeLive:
+		return "ecs: EFS mount skipped — EFS is in mock mode, so file systems have no storage behind them",
+			"the EFS control plane is fully emulated in mock mode (file systems, mount targets, access points, tags) — only the data plane is absent. Set OVERCAST_EFS_MODE=live to back each file system with a Docker volume that tasks can actually read and write."
+	case !h.dockerReady.Load():
+		return "ecs: EFS mount skipped — no container runtime, so there is no volume to mount",
+			"EFS live mode backs file systems with Docker volumes; start Overcast with a Docker socket available."
+	default:
+		return "ecs: EFS mount skipped — the file system or access point in the task definition was not found",
+			"check that the efsVolumeConfiguration references a file system (and access point) that exists in this region."
+	}
+}
+
 func (h *Handler) efsMountsForContainer(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition) []docker.Mount {
 	if len(cd.MountPoints) == 0 || h.efsResolver == nil {
 		return nil
@@ -366,10 +350,13 @@ func (h *Handler) efsMountsForContainer(ctx context.Context, td *TaskDefinition,
 			subpath = strings.Trim(cfg.RootDirectory, "/")
 		}
 		if !ok {
-			h.log.Warn("ecs: EFS mount skipped — no backing volume (mock mode, Docker down, or unknown reference)",
+			msg, hint := h.efsMountSkipReason()
+			h.log.Warn(msg,
 				zap.String("container", cd.Name),
 				zap.String("file_system", cfg.FileSystemId),
-				zap.String("container_path", mp.ContainerPath))
+				zap.String("container_path", mp.ContainerPath),
+				zap.String("consequence", "the container starts without the mount: writes to "+mp.ContainerPath+" go to its own writable layer and are lost when the task stops, and nothing is shared with other tasks"),
+				zap.String("hint", hint))
 			continue
 		}
 		m := docker.Mount{Type: "volume", Source: volume, Target: mp.ContainerPath, ReadOnly: mp.ReadOnly}
@@ -428,10 +415,16 @@ func buildContainerEnv(cd ContainerDefinition, co *ContainerOverride, endpoint *
 	return env
 }
 
-// scheduleMetadataTransition sets up the PROVISIONING → RUNNING transition for
-// metadata-only tasks (no Docker). region is the region the task is stored
-// under, resolved from the request context at schedule time.
-func (h *Handler) scheduleMetadataTransition(region, clusterName, taskID string) {
+// scheduleRunningTransition sets up a task's PROVISIONING → RUNNING transition.
+// Both placement paths use it: Docker-backed tasks, whose containers are
+// already started by the time it runs, and metadata-only tasks placed while no
+// container runtime is wired. region is the region the task is stored under,
+// resolved from the request context at schedule time.
+//
+// A task owned by a service settles that service when it starts, which is what
+// moves the service to its running count and, at the desired count, into a
+// steady state.
+func (h *Handler) scheduleRunningTransition(region, clusterName, taskID string) {
 	capturedCluster := clusterName
 	capturedTaskID := taskID
 	h.scheduler.AfterScoped(region, taskID, "pending", 200*time.Millisecond, func(ctx context.Context) {
@@ -439,17 +432,21 @@ func (h *Handler) scheduleMetadataTransition(region, clusterName, taskID string)
 		if aerr != nil || got == nil {
 			return
 		}
-		if got.LastStatus == "PROVISIONING" || got.LastStatus == "PENDING" {
-			got.LastStatus = "RUNNING"
-			startedAt := h.clk.Now().Unix()
-			got.StartedAt = &startedAt
-			for i := range got.Containers {
-				got.Containers[i].LastStatus = "RUNNING"
-			}
-			h.store.putTask(ctx, got) //nolint:errcheck
-			if h.bus != nil {
-				h.bus.Publish(ctx, events.Event{Type: events.ECSTaskStarted, Payload: events.ResourcePayload{Name: capturedTaskID}})
-			}
+		if got.LastStatus != "PROVISIONING" && got.LastStatus != "PENDING" {
+			return
+		}
+		got.LastStatus = "RUNNING"
+		startedAt := h.clk.Now().Unix()
+		got.StartedAt = &startedAt
+		for i := range got.Containers {
+			got.Containers[i].LastStatus = "RUNNING"
+		}
+		h.store.putTask(ctx, got) //nolint:errcheck
+		if h.bus != nil {
+			h.bus.Publish(ctx, events.Event{Type: events.ECSTaskStarted, Payload: events.ResourcePayload{Name: capturedTaskID}})
+		}
+		if serviceName, ok := serviceNameFromGroup(got.Group); ok {
+			h.settleService(ctx, capturedCluster, serviceName)
 		}
 	})
 }
@@ -509,8 +506,10 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 	task.LastStatus = "STOPPED"
 	task.DesiredStatus = "STOPPED"
 	task.StoppedReason = req.Reason
+	task.StopCode = "UserInitiated"
 	stoppedAt := h.clk.Now().Unix()
 	task.StoppedAt = &stoppedAt
+	task.StoppingAt = &stoppedAt
 	for i := range task.Containers {
 		task.Containers[i].LastStatus = "STOPPED"
 	}

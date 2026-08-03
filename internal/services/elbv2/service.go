@@ -1,6 +1,7 @@
 package elbv2
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"time"
@@ -57,6 +58,18 @@ type Listener struct {
 	Protocol        string `json:"Protocol"`
 	Port            int    `json:"Port"`
 	Region          string `json:"Region"`
+	// DefaultActions is what the listener does with a request no rule matched.
+	// It carries the listener's link to its target group, so without it a load
+	// balancer cannot forward anywhere.
+	DefaultActions []Action `json:"DefaultActions,omitempty"`
+}
+
+// Action is a listener action. Only "forward" has a data-plane effect; the
+// others are stored and echoed back.
+type Action struct {
+	Type           string `json:"Type"`
+	TargetGroupArn string `json:"TargetGroupArn,omitempty"`
+	Order          int    `json:"Order,omitempty"`
 }
 
 type Target struct {
@@ -78,8 +91,31 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	}
 }
 
-func (s *Service) Name() string                { return serviceName }
-func (s *Service) RegisterRoutes(_ chi.Router) {}
+func (s *Service) Name() string { return serviceName }
+
+// RegisterRoutes mounts the load balancer data plane. Requests arriving on a
+// load balancer's DNS name are rewritten onto /_elb by HostRouteRewrite and
+// forwarded to a registered target from here.
+func (s *Service) RegisterRoutes(r chi.Router) {
+	r.HandleFunc("/_elb", s.handler.ProxyRequest)
+	r.HandleFunc("/_elb/*", s.handler.ProxyRequest)
+}
+
+// RegisterTarget adds an address to a target group, and DeregisterTarget
+// removes it. ECS calls these as it places and stops the tasks of a service
+// with a loadBalancers configuration, which is what puts a Fargate service
+// behind its load balancer.
+func (s *Service) RegisterTarget(ctx context.Context, targetGroupArn, address string, port int) error {
+	return s.handler.putTarget(ctx, s.handler.region(ctx), &Target{
+		TargetGroupArn: targetGroupArn,
+		Id:             address,
+		Port:           port,
+	})
+}
+
+func (s *Service) DeregisterTarget(ctx context.Context, targetGroupArn, address string) error {
+	return s.handler.removeTarget(ctx, s.handler.region(ctx), targetGroupArn, address)
+}
 
 func (s *Service) OwnsVersion(version string) bool { return version == awsapi.VersionELBv2 }
 
@@ -126,10 +162,21 @@ type xmlTG struct {
 }
 
 type xmlListener struct {
-	ListenerArn     string `xml:"ListenerArn"`
-	LoadBalancerArn string `xml:"LoadBalancerArn"`
-	Protocol        string `xml:"Protocol"`
-	Port            int    `xml:"Port"`
+	ListenerArn     string            `xml:"ListenerArn"`
+	LoadBalancerArn string            `xml:"LoadBalancerArn"`
+	Protocol        string            `xml:"Protocol"`
+	Port            int               `xml:"Port"`
+	DefaultActions  *xmlActionMembers `xml:"DefaultActions,omitempty"`
+}
+
+type xmlActionMembers struct {
+	Member []xmlAction `xml:"member"`
+}
+
+type xmlAction struct {
+	Type           string `xml:"Type"`
+	TargetGroupArn string `xml:"TargetGroupArn,omitempty"`
+	Order          int    `xml:"Order,omitempty"`
 }
 
 type xmlCreateLoadBalancerResponse struct {

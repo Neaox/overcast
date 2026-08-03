@@ -126,6 +126,7 @@ export const EventType = {
     TaskDefinitionDeregistered: "ecs:TaskDefinitionDeregistered",
     TaskStarted: "ecs:TaskStarted",
     TaskStopped: "ecs:TaskStopped",
+    TaskStartFailed: "ecs:TaskStartFailed",
     ServiceCreated: "ecs:ServiceCreated",
     ServiceUpdated: "ecs:ServiceUpdated",
     ServiceDeleted: "ecs:ServiceDeleted",

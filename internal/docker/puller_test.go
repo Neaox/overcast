@@ -45,6 +45,9 @@ func TestImagePullerEnsure_failedPullRetriesOnNextCall(t *testing.T) {
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case strings.Contains(r.URL.Path, "/images/prune"):
 			_, _ = w.Write([]byte(`{}`)) // post-pull dangling-image prune
+		case strings.HasSuffix(r.URL.Path, "/json"):
+			// A failed pull asks whether the image is already here; it is not.
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -67,6 +70,44 @@ func TestImagePullerEnsure_failedPullRetriesOnNextCall(t *testing.T) {
 	}
 	if err := p.Ensure(context.Background(), "img:1"); err != nil || pulls.Load() != 2 {
 		t.Fatalf("third Ensure should be a cache hit (err=%v pulls=%d)", err, pulls.Load())
+	}
+}
+
+func TestImagePullerEnsure_failedPullSucceedsWhenImageAlreadyLocal(t *testing.T) {
+	// Given: a daemon that cannot pull — offline, rate-limited, or (as Docker
+	// Desktop's containerd image store does) 404ing a stale lease — but which
+	// already holds the image.
+	var pulls, inspects atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/images/create"):
+			pulls.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"unable to lease content: lease does not exist: not found"}`))
+		case strings.Contains(r.URL.Path, "/images/prune"):
+			_, _ = w.Write([]byte(`{}`))
+		case strings.HasSuffix(r.URL.Path, "/json"):
+			inspects.Add(1)
+			_, _ = w.Write([]byte(`{"Id":"sha256:abc"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	p := NewImagePuller(&Client{httpClient: srv.Client(), host: srv.URL, logger: zap.NewNop(), sem: make(chan struct{}, maxConcurrentOps)})
+
+	// When: a launch asks for the image.
+	if err := p.Ensure(context.Background(), "img:1"); err != nil {
+		t.Fatalf("Ensure should succeed on a locally present image, got %v", err)
+	}
+
+	// Then: the pull was attempted, the local copy was found, and the result is
+	// cached like any other success — a container can start.
+	if pulls.Load() != 1 || inspects.Load() != 1 {
+		t.Fatalf("pulls = %d, inspects = %d, want 1 and 1", pulls.Load(), inspects.Load())
+	}
+	if err := p.Ensure(context.Background(), "img:1"); err != nil || pulls.Load() != 1 {
+		t.Fatalf("second Ensure should be a cache hit (err=%v pulls=%d)", err, pulls.Load())
 	}
 }
 

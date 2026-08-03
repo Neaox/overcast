@@ -60,6 +60,37 @@ type Service struct {
 	// materialized dedupes successful root-directory creations
 	// ("volume/subpath" → struct{}) so repeat mounts skip the helper run.
 	materialized sync.Map
+
+	// subnetZones resolves a subnet's availability zone against EC2. Nil until
+	// wired, and it returns empty for a subnet EC2 does not know, in which case
+	// the zone is derived from the subnet ID instead.
+	subnetZones SubnetZoneResolver
+}
+
+// SubnetZoneResolver reports the availability zone a subnet was created in.
+// Implemented by the EC2 service.
+type SubnetZoneResolver interface {
+	AvailabilityZoneForSubnet(ctx context.Context, subnetID string) string
+}
+
+// SetSubnetZoneResolver wires EC2 so mount targets land in the zone their
+// subnet is actually in. Without it the zone is derived by hashing the subnet
+// ID, which puts genuinely different zones in collision with each other and
+// rejects the second mount target of a multi-AZ file system — the shape every
+// CDK `efs.FileSystem` produces.
+func (s *Service) SetSubnetZoneResolver(r SubnetZoneResolver) {
+	s.subnetZones = r
+}
+
+// zoneForSubnet resolves a subnet's zone, preferring EC2's answer and falling
+// back to the subnet-ID hash for synthetic subnets EC2 never created.
+func (s *Service) zoneForSubnet(ctx context.Context, region, subnetID string) (name, id string) {
+	if s.subnetZones != nil {
+		if az := s.subnetZones.AvailabilityZoneForSubnet(ctx, subnetID); az != "" {
+			return az, azIDForName(region, az)
+		}
+	}
+	return azForSubnet(region, subnetID)
 }
 
 // New returns a configured EFS service. Pure field assignment — no store

@@ -62,9 +62,12 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
             label="Started At"
             value={task.startedAt ? new Date(task.startedAt).toLocaleString() : null}
           />
+          {task.group && <Definition label="Group" value={task.group} />}
+          {task.startedBy && <Definition label="Started By" value={task.startedBy} />}
           {task.stoppedAt && (
             <Definition label="Stopped At" value={new Date(task.stoppedAt).toLocaleString()} />
           )}
+          {task.stopCode && <Definition label="Stop Code" value={task.stopCode} />}
           {task.stoppedReason && (
             <Definition label="Stop Reason" value={task.stoppedReason} variant="prose" />
           )}
@@ -103,6 +106,9 @@ function ContainerCard({ container }: { container: EcsContainer }) {
           </Badge>
         )}
       </div>
+
+      {/* Why the container is in this state — set when it could not be started. */}
+      {container.reason && <p className="text-sm text-danger">{container.reason}</p>}
 
       {/* Port mappings */}
       {container.networkBindings && container.networkBindings.length > 0 && (

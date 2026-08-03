@@ -297,6 +297,9 @@ const (
 	ECSTaskStarted Type = "ecs:TaskStarted"
 	// ECSTaskStopped fires after a task reaches the STOPPED state.
 	ECSTaskStopped Type = "ecs:TaskStopped"
+	// ECSTaskStartFailed fires when a task's containers could not be started
+	// and the task was stopped with stopCode TaskFailedToStart.
+	ECSTaskStartFailed Type = "ecs:TaskStartFailed"
 	// ECSServiceCreated fires after a new ECS service is created.
 	ECSServiceCreated Type = "ecs:ServiceCreated"
 	// ECSServiceUpdated fires after an ECS service configuration is updated.

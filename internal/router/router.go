@@ -491,6 +491,9 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// backing volume in live mode.
 	lambdaSvc.SetEFSResolver(efsSvc)
 	ecsSvc.SetEFSResolver(efsSvc)
+	ecsSvc.InitLogWriter(logsSvc.LogWriter())
+	ecsSvc.SetTargetRegistrar(elbv2Svc)
+	efsSvc.SetSubnetZoneResolver(ec2Svc)
 	// ECS/RDS → EC2: resolve subnet-backed launches against VPC network state.
 	ecsSvc.SetVPCResolver(ec2Svc)
 	rdsSvc.SetVPCResolver(ec2Svc)
@@ -732,6 +735,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// host, and Amplify derives it by substituting into the GraphQL URL.
 	// Both labels reach the same service; the rewrite picks the endpoint.
 	hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelAppSyncRealtimeAPI, Rewrite: appsyncSvc.HostRouteRewrite})
+	hostRoutes = append(hostRoutes, middleware.HostRouteRow{Label: middleware.LabelELB, Rewrite: elbv2Svc.HostRouteRewrite})
 
 	// ---- /v2/apis service dispatch ----------------------------------------
 	// Both API Gateway v2 and AppSync Events API register routes under /v2/apis.

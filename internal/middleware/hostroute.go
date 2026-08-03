@@ -78,6 +78,7 @@ const (
 	LabelAppSyncAPI         = "appsync-api"
 	LabelAppSyncRealtimeAPI = "appsync-realtime-api"
 	LabelCloudFront         = "cloudfront"
+	LabelELB                = "elb"
 )
 
 var hostRouteLabels = map[string]string{
@@ -86,6 +87,7 @@ var hostRouteLabels = map[string]string{
 	LabelAppSyncAPI:         "appsync",
 	LabelAppSyncRealtimeAPI: "appsync",
 	LabelCloudFront:         "cloudfront",
+	LabelELB:                "elbv2",
 }
 
 // nonHyphenatedLabelRationale documents why a label that is a single word is
@@ -95,6 +97,7 @@ var hostRouteLabels = map[string]string{
 // must never be added.
 var nonHyphenatedLabelRationale = map[string]string{
 	LabelCloudFront: "AWS brand term; {distributionId}.cloudfront.net is the real distribution address",
+	LabelELB:        "AWS brand term; {name}-{id}.{region}.elb.amazonaws.com is the real load balancer address",
 }
 
 // isAWSRegionShaped matches AWS region shapes: us-east-1, ap-southeast-2,

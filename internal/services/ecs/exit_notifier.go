@@ -64,8 +64,10 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 		task.LastStatus = "STOPPED"
 		task.DesiredStatus = "STOPPED"
 		task.StoppedReason = "Essential container in task exited"
+		task.StopCode = "EssentialContainerExited"
 		stoppedAt := h.clk.Now().Unix()
 		task.StoppedAt = &stoppedAt
+		task.StoppingAt = &stoppedAt
 
 		// Cancel any pending scheduler transition.
 		h.scheduler.CancelScoped(region, taskID, "pending")
@@ -78,5 +80,18 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 			Type:    events.ECSTaskStopped,
 			Payload: events.ResourcePayload{Name: taskID},
 		})
+	}
+
+	// A service keeps its desired count: a task whose containers exited is
+	// replaced. Without this a service drains to zero the first time a task
+	// finishes and stays there, which is not what ECS does with one.
+	if allStopped {
+		if serviceName, ok := serviceNameFromGroup(task.Group); ok {
+			// Out of the load balancer's rotation first, then replaced.
+			if svc, aerr := h.store.getService(ctx, parts[0], serviceName); aerr == nil && svc != nil {
+				h.deregisterTaskTargets(ctx, svc, task)
+			}
+			h.scheduleServiceReplacement(ctx, region, parts[0], serviceName)
+		}
 	}
 }

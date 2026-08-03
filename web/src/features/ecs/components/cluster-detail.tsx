@@ -43,6 +43,8 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Link } from "@tanstack/react-router"
+import { AwsvpcFields } from "@/features/ecs/components/awsvpc-fields"
+import { emptyAwsvpcNetworking, type AwsvpcNetworking } from "@/features/ecs/awsvpc"
 import type { EcsTask, EcsTaskDefinition, EcsService, EcsContainerInstance } from "@/types"
 import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
@@ -245,12 +247,15 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
         onClose={() => setShowRunTask(false)}
         isPending={runMut.isPending}
         taskDefs={taskDefs}
-        onSubmit={(taskDef, count, launchType) =>
+        onSubmit={(taskDef, count, launchType, networking) =>
           runMut.mutate({
             cluster: clusterName,
             taskDefinition: taskDef,
             count,
             launchType,
+            subnets: networking.subnets,
+            securityGroups: networking.securityGroups,
+            assignPublicIp: networking.assignPublicIp,
           })
         }
       />
@@ -476,6 +481,7 @@ function ServicesPanel({ clusterName }: { clusterName: string }) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [updateTarget, setUpdateTarget] = useState<EcsService>()
+  const [expandedService, setExpandedService] = useState<string>()
 
   const {
     data: services = [],
@@ -549,53 +555,84 @@ function ServicesPanel({ clusterName }: { clusterName: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {services.map((svc) => (
-              <TableRow key={svc.serviceArn}>
-                <TableCell className="font-medium">{svc.serviceName}</TableCell>
-                <TableCell>
-                  <TaskStatusBadge status={svc.status} />
-                </TableCell>
-                <TableCell>
-                  <span
-                    className={cn(
-                      svc.runningCount < svc.desiredCount ? "text-warning" : "text-success",
-                    )}
+            {services.map((svc) => {
+              const isExpanded = expandedService === svc.serviceArn
+              const primary = svc.deployments.find((d) => d.status === "PRIMARY")
+              return (
+                <Fragment key={svc.serviceArn}>
+                  <TableRow
+                    className="cursor-pointer"
+                    onClick={() =>
+                      setExpandedService(isExpanded ? undefined : svc.serviceArn)
+                    }
                   >
-                    {svc.runningCount}/{svc.desiredCount} running
-                  </span>
-                  {svc.pendingCount > 0 && (
-                    <span className="ml-1 text-xs text-fg-muted">({svc.pendingCount} pending)</span>
+                    <TableCell className="font-medium">{svc.serviceName}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <TaskStatusBadge status={svc.status} />
+                        {primary?.rolloutState && (
+                          <RolloutStateBadge state={primary.rolloutState} />
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={cn(
+                          svc.runningCount < svc.desiredCount ? "text-warning" : "text-success",
+                        )}
+                      >
+                        {svc.runningCount}/{svc.desiredCount} running
+                      </span>
+                      {svc.pendingCount > 0 && (
+                        <span className="ml-1 text-xs text-fg-muted">
+                          ({svc.pendingCount} pending)
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="max-w-xs truncate text-fg-muted">
+                      {shortTaskDef(svc.taskDefinition)}
+                    </TableCell>
+                    <TableCell>{svc.launchType || "—"}</TableCell>
+                    <TableCell className="text-fg-muted">
+                      {svc.createdAt ? new Date(svc.createdAt).toLocaleString() : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-fg-muted"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setUpdateTarget(svc)
+                          }}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-fg-muted hover:text-danger"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeleteTarget(svc.serviceName)
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {isExpanded && (
+                    <TableRow key={`${svc.serviceArn}-detail`}>
+                      <TableCell colSpan={7} className="bg-bg-muted p-4">
+                        <ServiceDetailPanel service={svc} />
+                      </TableCell>
+                    </TableRow>
                   )}
-                </TableCell>
-                <TableCell className="max-w-xs truncate text-fg-muted">
-                  {shortTaskDef(svc.taskDefinition)}
-                </TableCell>
-                <TableCell>{svc.launchType || "—"}</TableCell>
-                <TableCell className="text-fg-muted">
-                  {svc.createdAt ? new Date(svc.createdAt).toLocaleString() : "—"}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-fg-muted"
-                      onClick={() => setUpdateTarget(svc)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-fg-muted hover:text-danger"
-                      onClick={() => setDeleteTarget(svc.serviceName)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
+                </Fragment>
+              )
+            })}
           </TableBody>
         </Table>
       )}
@@ -605,12 +642,16 @@ function ServicesPanel({ clusterName }: { clusterName: string }) {
         onClose={() => setShowCreate(false)}
         isPending={createMut.isPending}
         taskDefs={taskDefs}
-        onSubmit={(serviceName, taskDefinition, desiredCount) =>
+        onSubmit={(serviceName, taskDefinition, desiredCount, launchType, networking) =>
           createMut.mutate({
             cluster: clusterName,
             serviceName,
             taskDefinition,
             desiredCount,
+            launchType,
+            subnets: networking.subnets,
+            securityGroups: networking.securityGroups,
+            assignPublicIp: networking.assignPublicIp,
           })
         }
       />
@@ -667,6 +708,94 @@ function ServicesPanel({ clusterName }: { clusterName: string }) {
   )
 }
 
+// ─── Service detail ───────────────────────────────────────────────────────
+
+/**
+ * The deployment and event view ECS surfaces for a service. The event log is
+ * where a service that cannot place its tasks explains itself — a service can
+ * sit ACTIVE and healthy-looking while every task it tries to start fails, and
+ * these messages are the only place that says so.
+ */
+function ServiceDetailPanel({ service }: { service: EcsService }) {
+  const primary = service.deployments.find((d) => d.status === "PRIMARY")
+
+  return (
+    <div className="flex flex-col gap-4">
+      {primary && (
+        <div>
+          <h4 className={cn(fieldLabel, "mb-1.5 text-fg")}>Primary deployment</h4>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-4">
+            <div>
+              <dt className="text-xs text-fg-muted">Rollout</dt>
+              <dd>
+                {primary.rolloutState ? (
+                  <RolloutStateBadge state={primary.rolloutState} />
+                ) : (
+                  <span className="text-fg-muted">—</span>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-fg-muted">Running</dt>
+              <dd className="text-fg">
+                {primary.runningCount}/{primary.desiredCount}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-fg-muted">Pending</dt>
+              <dd className="text-fg">{primary.pendingCount}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-fg-muted">Failed tasks</dt>
+              <dd className={cn(primary.failedTasks ? "text-danger" : "text-fg")}>
+                {primary.failedTasks ?? 0}
+              </dd>
+            </div>
+          </dl>
+          {primary.rolloutStateReason && (
+            <p className="mt-1.5 text-xs text-fg-muted">{primary.rolloutStateReason}</p>
+          )}
+        </div>
+      )}
+
+      <div>
+        <h4 className={cn(fieldLabel, "mb-1.5 text-fg")}>Events</h4>
+        {service.events.length === 0 ? (
+          <p className="text-sm text-fg-muted">No events yet.</p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {service.events.map((e) => (
+              <li key={e.id} className="flex gap-3 text-sm">
+                <span className="shrink-0 tabular-nums text-xs text-fg-muted">
+                  {e.createdAt ? new Date(e.createdAt).toLocaleTimeString() : "—"}
+                </span>
+                <span className={cn(isFailureEvent(e.message) ? "text-danger" : "text-fg")}>
+                  {e.message}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Highlights the service events that report a task the scheduler could not place. */
+function isFailureEvent(message: string) {
+  return (
+    message.includes("unable to place") ||
+    message.includes("unable to consistently start") ||
+    message.includes("deployment failed")
+  )
+}
+
+function RolloutStateBadge({ state }: { state: string }) {
+  const variant =
+    state === "COMPLETED" ? "success" : state === "FAILED" ? "danger" : "warning"
+  return <Badge variant={variant}>{state}</Badge>
+}
+
 // ─── Shared helpers ───────────────────────────────────────────────────────
 
 function TaskStatusBadge({ status }: { status: string }) {
@@ -700,11 +829,25 @@ function RunTaskDialog({
   onClose: () => void
   isPending: boolean
   taskDefs: EcsTaskDefinition[]
-  onSubmit: (taskDef: string, count: number, launchType: string) => void
+  onSubmit: (
+    taskDef: string,
+    count: number,
+    launchType: string,
+    networking: AwsvpcNetworking,
+  ) => void
 }) {
   const [taskDef, setTaskDef] = useState("")
   const [count, setCount] = useState(1)
   const [launchType, setLaunchType] = useState("FARGATE")
+  const [networking, setNetworking] = useState<AwsvpcNetworking>(emptyAwsvpcNetworking)
+
+  // A Fargate task definition always uses awsvpc networking, so ECS rejects the
+  // call without a subnet. An EC2 launch may still be awsvpc, so the fields
+  // stay available rather than being hidden.
+  const selected = taskDefs.find((td) => td.taskDefinitionArn === taskDef)
+  const requiresNetworking =
+    launchType === "FARGATE" || selected?.networkMode === "awsvpc"
+  const canRun = !!taskDef && (!requiresNetworking || networking.subnets.length > 0)
 
   return (
     <Dialog
@@ -754,14 +897,19 @@ function RunTaskDialog({
               <option value="EC2">EC2</option>
             </select>
           </div>
+          <AwsvpcFields
+            value={networking}
+            onChange={setNetworking}
+            required={requiresNetworking}
+          />
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button
-            disabled={isPending || !taskDef}
-            onClick={() => onSubmit(taskDef, count, launchType)}
+            disabled={isPending || !canRun}
+            onClick={() => onSubmit(taskDef, count, launchType, networking)}
           >
             {isPending && <Spinner className="mr-2" />}
             Run
@@ -852,11 +1000,24 @@ function CreateServiceDialog({
   onClose: () => void
   isPending: boolean
   taskDefs: EcsTaskDefinition[]
-  onSubmit: (serviceName: string, taskDefinition: string, desiredCount: number) => void
+  onSubmit: (
+    serviceName: string,
+    taskDefinition: string,
+    desiredCount: number,
+    launchType: string,
+    networking: AwsvpcNetworking,
+  ) => void
 }) {
   const [serviceName, setServiceName] = useState("")
   const [taskDef, setTaskDef] = useState("")
   const [desiredCount, setDesiredCount] = useState(1)
+  const [launchType, setLaunchType] = useState("FARGATE")
+  const [networking, setNetworking] = useState<AwsvpcNetworking>(emptyAwsvpcNetworking)
+
+  const selected = taskDefs.find((td) => td.taskDefinitionArn === taskDef)
+  const requiresNetworking = launchType === "FARGATE" || selected?.networkMode === "awsvpc"
+  const canCreate =
+    !!serviceName && !!taskDef && (!requiresNetworking || networking.subnets.length > 0)
 
   return (
     <Dialog
@@ -903,14 +1064,26 @@ function CreateServiceDialog({
               onChange={(e) => setDesiredCount(parseInt(e.target.value) || 0)}
             />
           </div>
+          <div>
+            <label className={cn(fieldLabel, "mb-1 block text-fg")}>Launch Type</label>
+            <select
+              value={launchType}
+              onChange={(e) => setLaunchType(e.target.value)}
+              className="w-full rounded border border-border bg-bg px-3 py-2 text-sm text-fg"
+            >
+              <option value="FARGATE">FARGATE</option>
+              <option value="EC2">EC2</option>
+            </select>
+          </div>
+          <AwsvpcFields value={networking} onChange={setNetworking} required={requiresNetworking} />
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button
-            disabled={isPending || !serviceName || !taskDef}
-            onClick={() => onSubmit(serviceName, taskDef, desiredCount)}
+            disabled={isPending || !canCreate}
+            onClick={() => onSubmit(serviceName, taskDef, desiredCount, launchType, networking)}
           >
             {isPending && <Spinner className="mr-2" />}
             Create

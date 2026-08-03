@@ -52,6 +52,12 @@ type registerTaskDefinitionRequest struct {
 	RequiresCompatibilities []string              `json:"requiresCompatibilities" cbor:"requiresCompatibilities"`
 	Cpu                     string                `json:"cpu" cbor:"cpu"`
 	Memory                  string                `json:"memory" cbor:"memory"`
+	TaskRoleArn             string                `json:"taskRoleArn" cbor:"taskRoleArn"`
+	ExecutionRoleArn        string                `json:"executionRoleArn" cbor:"executionRoleArn"`
+	RuntimePlatform         *RuntimePlatform      `json:"runtimePlatform" cbor:"runtimePlatform"`
+	EphemeralStorage        *EphemeralStorage     `json:"ephemeralStorage" cbor:"ephemeralStorage"`
+	PidMode                 string                `json:"pidMode" cbor:"pidMode"`
+	IpcMode                 string                `json:"ipcMode" cbor:"ipcMode"`
 	Volumes                 []TaskVolume          `json:"volumes" cbor:"volumes"`
 }
 
@@ -113,6 +119,7 @@ type runTaskRequest struct {
 	PlatformVersion      string                `json:"platformVersion" cbor:"platformVersion"`
 	Overrides            *TaskOverride         `json:"overrides" cbor:"overrides"`
 	Group                string                `json:"group" cbor:"group"`
+	StartedBy            string                `json:"startedBy" cbor:"startedBy"`
 }
 
 type stopTaskRequest struct {
@@ -141,8 +148,17 @@ type createServiceRequest struct {
 	SchedulingStrategy       string                         `json:"schedulingStrategy" cbor:"schedulingStrategy"`
 	NetworkConfiguration     *NetworkConfiguration          `json:"networkConfiguration" cbor:"networkConfiguration"`
 	DeploymentController     *DeploymentController          `json:"deploymentController" cbor:"deploymentController"`
+	DeploymentConfiguration  *DeploymentConfiguration       `json:"deploymentConfiguration" cbor:"deploymentConfiguration"`
 	CapacityProviderStrategy []CapacityProviderStrategyItem `json:"capacityProviderStrategy" cbor:"capacityProviderStrategy"`
+	LoadBalancers            []ServiceLoadBalancer          `json:"loadBalancers" cbor:"loadBalancers"`
 	PlatformVersion          string                         `json:"platformVersion" cbor:"platformVersion"`
+
+	HealthCheckGracePeriodSeconds *int              `json:"healthCheckGracePeriodSeconds" cbor:"healthCheckGracePeriodSeconds"`
+	EnableExecuteCommand          bool              `json:"enableExecuteCommand" cbor:"enableExecuteCommand"`
+	PropagateTags                 string            `json:"propagateTags" cbor:"propagateTags"`
+	ServiceRegistries             []ServiceRegistry `json:"serviceRegistries" cbor:"serviceRegistries"`
+	PlacementStrategy             []PlacementItem   `json:"placementStrategy" cbor:"placementStrategy"`
+	PlacementConstraints          []PlacementItem   `json:"placementConstraints" cbor:"placementConstraints"`
 }
 
 type updateServiceRequest struct {
@@ -620,6 +636,12 @@ func (h *Handler) registerTaskDefinitionTyped(ctx context.Context, req *register
 		Memory:                  req.Memory,
 		ContainerDefinitions:    req.ContainerDefinitions,
 		Volumes:                 req.Volumes,
+		TaskRoleArn:             req.TaskRoleArn,
+		ExecutionRoleArn:        req.ExecutionRoleArn,
+		RuntimePlatform:         req.RuntimePlatform,
+		EphemeralStorage:        req.EphemeralStorage,
+		PidMode:                 req.PidMode,
+		IpcMode:                 req.IpcMode,
 	}
 	if aerr := h.store.putTaskDefinition(ctx, td); aerr != nil {
 		return nil, aerr
@@ -721,11 +743,6 @@ func (h *Handler) runTaskTyped(ctx context.Context, req *runTaskRequest) (*runTa
 	if req.Count < 1 {
 		req.Count = 1
 	}
-	if req.LaunchType == "FARGATE" && req.NetworkConfiguration == nil {
-		return nil, &protocol.AWSError{
-			Code: "InvalidParameterException", Message: "Network Configuration must be provided when networkMode is 'awsvpc'.", HTTPStatus: http.StatusBadRequest,
-		}
-	}
 	clusterName := extractClusterName(req.Cluster)
 	cluster, aerr := h.store.getCluster(ctx, clusterName)
 	if aerr != nil {
@@ -741,83 +758,42 @@ func (h *Handler) runTaskTyped(ctx context.Context, req *runTaskRequest) (*runTa
 	if aerr != nil {
 		return nil, aerr
 	}
-	now := h.clk.Now().Unix()
-	tasks := make([]Task, 0, req.Count)
-	useDocker := h.dockerReady.Load()
+	// awsvpc networking is required by the task definition's networkMode, so
+	// this can only be checked once the task definition has been resolved.
+	if aerr := validateAwsvpcNetworkConfiguration(td, req.LaunchType, req.NetworkConfiguration); aerr != nil {
+		return nil, aerr
+	}
 	platformVersion := req.PlatformVersion
 	if platformVersion == "" && req.LaunchType == "FARGATE" {
 		platformVersion = "LATEST"
 	}
-	awsvpcSubnetID := ""
-	awsvpcNetworkID := ""
-	awsvpcSubnetResolved := false
+	var placement awsvpcPlacement
 	if req.NetworkConfiguration != nil {
 		var placementErr *protocol.AWSError
-		awsvpcSubnetID, _, awsvpcNetworkID, awsvpcSubnetResolved, placementErr = h.resolveAwsvpcPlacement(ctx, req.NetworkConfiguration, "awsvpc tasks")
+		placement.subnetID, _, placement.networkID, placement.subnetResolved, placementErr = h.resolveAwsvpcPlacement(ctx, req.NetworkConfiguration, "awsvpc tasks")
 		if placementErr != nil {
 			return nil, placementErr
 		}
 	}
+	tasks := make([]Task, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
-		taskID := uuid.New().String()
-		taskArn := h.taskARN(ctx, clusterName, taskID)
-		containers := make([]Container, 0, len(td.ContainerDefinitions))
-		for _, cd := range td.ContainerDefinitions {
-			containers = append(containers, Container{
-				ContainerArn: h.containerARN(ctx, uuid.New().String()),
-				Name:         cd.Name,
-				Image:        cd.Image,
-				LastStatus:   "PENDING",
-			})
-		}
-		var attachments []Attachment
-		if req.NetworkConfiguration != nil {
-			attachmentPrivateIP := "10.0." + fmt.Sprintf("%d.%d", (i+1)/256, (i+1)%256)
-			if awsvpcSubnetResolved && h.vpcResolver != nil {
-				if translated := h.vpcResolver.AllocatePrivateIPForSubnet(ctx, awsvpcSubnetID); translated != "" {
-					attachmentPrivateIP = translated
-				}
-			}
-			eniID := "eni-" + taskID[:8]
-			attachments = []Attachment{{
-				Id:     uuid.New().String(),
-				Type:   "ElasticNetworkInterface",
-				Status: "ATTACHING",
-				Details: []KeyValuePair{
-					{Name: "networkInterfaceId", Value: eniID},
-					{Name: "subnetId", Value: awsvpcSubnetID},
-					{Name: "privateIPv4Address", Value: attachmentPrivateIP},
-				},
-			}}
-		}
-		task := Task{
-			TaskArn:              taskArn,
-			TaskDefinitionArn:    td.TaskDefinitionArn,
-			ClusterArn:           cluster.ClusterArn,
-			LastStatus:           "PROVISIONING",
-			DesiredStatus:        "RUNNING",
-			LaunchType:           req.LaunchType,
-			Cpu:                  td.Cpu,
-			Memory:               td.Memory,
-			PlatformVersion:      platformVersion,
-			CreatedAt:            now,
-			Group:                req.Group,
-			Containers:           containers,
-			Overrides:            req.Overrides,
-			NetworkConfiguration: req.NetworkConfiguration,
-			Attachments:          attachments,
-		}
-		if useDocker {
-			if err := h.startTaskContainers(ctx, &task, td, clusterName, taskID, awsvpcNetworkID); err != nil {
-				h.scheduleMetadataTransition(h.store.region(ctx), clusterName, taskID)
-			}
-		} else {
-			h.scheduleMetadataTransition(h.store.region(ctx), clusterName, taskID)
-		}
-		if aerr := h.store.putTask(ctx, &task); aerr != nil {
+		task, aerr, _ := h.launchTask(ctx, taskLaunchSpec{
+			clusterName:     clusterName,
+			clusterArn:      cluster.ClusterArn,
+			td:              td,
+			launchType:      req.LaunchType,
+			platformVersion: platformVersion,
+			group:           req.Group,
+			startedBy:       req.StartedBy,
+			overrides:       req.Overrides,
+			netCfg:          req.NetworkConfiguration,
+			placement:       placement,
+			ordinal:         i,
+		})
+		if aerr != nil {
 			return nil, aerr
 		}
-		tasks = append(tasks, task)
+		tasks = append(tasks, *task)
 	}
 	return &runTaskResponse{Tasks: tasks, Failures: []any{}}, nil
 }
@@ -857,8 +833,10 @@ func (h *Handler) stopTaskTyped(ctx context.Context, req *stopTaskRequest) (*sto
 	task.LastStatus = "STOPPED"
 	task.DesiredStatus = "STOPPED"
 	task.StoppedReason = req.Reason
+	task.StopCode = "UserInitiated"
 	stoppedAt := h.clk.Now().Unix()
 	task.StoppedAt = &stoppedAt
+	task.StoppingAt = &stoppedAt
 	for i := range task.Containers {
 		task.Containers[i].LastStatus = "STOPPED"
 	}
@@ -926,14 +904,6 @@ func (h *Handler) createServiceTyped(ctx context.Context, req *createServiceRequ
 	if req.DeploymentController == nil {
 		req.DeploymentController = &DeploymentController{Type: "ECS"}
 	}
-	if req.LaunchType == "FARGATE" && req.NetworkConfiguration == nil {
-		return nil, &protocol.AWSError{
-			Code: "InvalidParameterException", Message: "Network Configuration must be provided when networkMode is 'awsvpc'.", HTTPStatus: http.StatusBadRequest,
-		}
-	}
-	if _, _, _, _, placementErr := h.resolveAwsvpcPlacement(ctx, req.NetworkConfiguration, "awsvpc services"); placementErr != nil {
-		return nil, placementErr
-	}
 	clusterName := extractClusterName(req.Cluster)
 	cluster, aerr := h.store.getCluster(ctx, clusterName)
 	if aerr != nil {
@@ -958,6 +928,14 @@ func (h *Handler) createServiceTyped(ctx context.Context, req *createServiceRequ
 	}
 	if aerr != nil {
 		return nil, aerr
+	}
+	// awsvpc networking is required by the task definition's networkMode, so
+	// this can only be checked once the task definition has been resolved.
+	if aerr := validateAwsvpcNetworkConfiguration(td, req.LaunchType, req.NetworkConfiguration); aerr != nil {
+		return nil, aerr
+	}
+	if _, _, _, _, placementErr := h.resolveAwsvpcPlacement(ctx, req.NetworkConfiguration, "awsvpc services"); placementErr != nil {
+		return nil, placementErr
 	}
 	existing, _ := h.store.getService(ctx, clusterName, req.ServiceName)
 	if existing != nil && existing.Status == "ACTIVE" {
@@ -988,23 +966,20 @@ func (h *Handler) createServiceTyped(ctx context.Context, req *createServiceRequ
 		SchedulingStrategy:       req.SchedulingStrategy,
 		NetworkConfiguration:     req.NetworkConfiguration,
 		DeploymentController:     req.DeploymentController,
+		DeploymentConfiguration:  req.DeploymentConfiguration,
+		LoadBalancers:            req.LoadBalancers,
 		CapacityProviderStrategy: req.CapacityProviderStrategy,
-		PlatformVersion:          platformVersion,
-		Events:                   make([]ServiceEvent, 0),
-		Deployments: []Deployment{{
-			ID:                   uuid.New().String(),
-			Status:               "PRIMARY",
-			TaskDefinition:       td.TaskDefinitionArn,
-			DesiredCount:         desired,
-			RunningCount:         0,
-			PendingCount:         0,
-			CreatedAt:            now,
-			UpdatedAt:            now,
-			NetworkConfiguration: req.NetworkConfiguration,
-			PlatformVersion:      platformVersion,
-		}},
+
+		HealthCheckGracePeriodSeconds: req.HealthCheckGracePeriodSeconds,
+		EnableExecuteCommand:          req.EnableExecuteCommand,
+		PropagateTags:                 req.PropagateTags,
+		ServiceRegistries:             req.ServiceRegistries,
+		PlacementStrategy:             req.PlacementStrategy,
+		PlacementConstraints:          req.PlacementConstraints,
+		PlatformVersion:               platformVersion,
+		Events:                        make([]ServiceEvent, 0),
+		Deployments:                   []Deployment{newPrimaryDeployment(td.TaskDefinitionArn, desired, now, platformVersion, req.NetworkConfiguration, req.DeploymentController)},
 	}
-	h.addServiceEvent(svc, fmt.Sprintf("(service %s) has reached a steady state.", req.ServiceName))
 	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
 		return nil, aerr
 	}

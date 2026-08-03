@@ -97,6 +97,28 @@ type TaskDefinition struct {
 	Memory                  string                `json:"memory,omitempty"`
 	ContainerDefinitions    []ContainerDefinition `json:"containerDefinitions"`
 	Volumes                 []TaskVolume          `json:"volumes,omitempty"`
+	// Fields below are stored and echoed rather than acted on: Overcast does
+	// not enforce task IAM roles or emulate a CPU architecture. They round-trip
+	// because CDK sets them on nearly every task definition and CloudFormation
+	// reads them back — dropping them makes DescribeTaskDefinition disagree
+	// with what was registered.
+	TaskRoleArn      string            `json:"taskRoleArn,omitempty"`
+	ExecutionRoleArn string            `json:"executionRoleArn,omitempty"`
+	RuntimePlatform  *RuntimePlatform  `json:"runtimePlatform,omitempty"`
+	EphemeralStorage *EphemeralStorage `json:"ephemeralStorage,omitempty"`
+	PidMode          string            `json:"pidMode,omitempty"`
+	IpcMode          string            `json:"ipcMode,omitempty"`
+}
+
+// RuntimePlatform is the OS and CPU architecture a task runs on.
+type RuntimePlatform struct {
+	CpuArchitecture       string `json:"cpuArchitecture,omitempty"`
+	OperatingSystemFamily string `json:"operatingSystemFamily,omitempty"`
+}
+
+// EphemeralStorage is the scratch space a Fargate task gets.
+type EphemeralStorage struct {
+	SizeInGiB int `json:"sizeInGiB"`
 }
 
 // TaskVolume is a named volume in a task definition. Only EFS-backed volumes
@@ -137,9 +159,47 @@ type ContainerDefinition struct {
 	Essential        *bool             `json:"essential,omitempty"`
 	PortMappings     []PortMapping     `json:"portMappings,omitempty"`
 	Environment      []KeyValuePair    `json:"environment,omitempty"`
+	EntryPoint       []string          `json:"entryPoint,omitempty"`
 	Command          []string          `json:"command,omitempty"`
+	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	LogConfiguration *LogConfiguration `json:"logConfiguration,omitempty"`
 	MountPoints      []MountPoint      `json:"mountPoints,omitempty"`
+	// User and DockerLabels reach the container. The rest round-trip so a
+	// definition reads back as it was registered; see TaskDefinition above.
+	User         string            `json:"user,omitempty"`
+	DockerLabels map[string]string `json:"dockerLabels,omitempty"`
+	// Secrets are stored and echoed but NOT yet injected into the container —
+	// resolving them needs a Secrets Manager/SSM lookup. A definition carrying
+	// them logs a warning at task start rather than silently starting a
+	// container missing the variables it was promised.
+	Secrets                []ContainerSecret     `json:"secrets,omitempty"`
+	HealthCheck            *ContainerHealth      `json:"healthCheck,omitempty"`
+	DependsOn              []ContainerDependency `json:"dependsOn,omitempty"`
+	ReadonlyRootFilesystem *bool                 `json:"readonlyRootFilesystem,omitempty"`
+	Privileged             *bool                 `json:"privileged,omitempty"`
+	StopTimeout            int                   `json:"stopTimeout,omitempty"`
+	StartTimeout           int                   `json:"startTimeout,omitempty"`
+}
+
+// ContainerSecret sources an environment variable from Secrets Manager or SSM.
+type ContainerSecret struct {
+	Name      string `json:"name"`
+	ValueFrom string `json:"valueFrom"`
+}
+
+// ContainerHealth is a container's health check definition.
+type ContainerHealth struct {
+	Command     []string `json:"command,omitempty"`
+	Interval    int      `json:"interval,omitempty"`
+	Timeout     int      `json:"timeout,omitempty"`
+	Retries     int      `json:"retries,omitempty"`
+	StartPeriod int      `json:"startPeriod,omitempty"`
+}
+
+// ContainerDependency orders container startup within a task.
+type ContainerDependency struct {
+	ContainerName string `json:"containerName"`
+	Condition     string `json:"condition"`
 }
 
 // PortMapping maps a container port to a host port.
@@ -195,9 +255,12 @@ type Task struct {
 	PlatformFamily       string                `json:"platformFamily,omitempty"`
 	StartedAt            *int64                `json:"startedAt,omitempty"`
 	StoppedAt            *int64                `json:"stoppedAt,omitempty"`
+	StoppingAt           *int64                `json:"stoppingAt,omitempty"`
 	StoppedReason        string                `json:"stoppedReason,omitempty"`
+	StopCode             string                `json:"stopCode,omitempty"`
 	CreatedAt            int64                 `json:"createdAt"`
 	Group                string                `json:"group,omitempty"`
+	StartedBy            string                `json:"startedBy,omitempty"`
 	Containers           []Container           `json:"containers"`
 	Overrides            *TaskOverride         `json:"overrides,omitempty"`
 	NetworkConfiguration *NetworkConfiguration `json:"networkConfiguration,omitempty"`
@@ -228,9 +291,33 @@ type ContainerOverride struct {
 	Environment []KeyValuePair `json:"environment,omitempty"`
 }
 
+// ServiceLoadBalancer attaches a service's tasks to an ELB target group.
+type ServiceLoadBalancer struct {
+	TargetGroupArn   string `json:"targetGroupArn,omitempty"`
+	LoadBalancerName string `json:"loadBalancerName,omitempty"`
+	ContainerName    string `json:"containerName,omitempty"`
+	ContainerPort    int    `json:"containerPort,omitempty"`
+}
+
 // DeploymentController specifies the controller type for an ECS service deployment.
 type DeploymentController struct {
 	Type string `json:"type"`
+}
+
+// DeploymentConfiguration holds the rolling-update settings for a service.
+type DeploymentConfiguration struct {
+	MaximumPercent           *int                      `json:"maximumPercent,omitempty"`
+	MinimumHealthyPercent    *int                      `json:"minimumHealthyPercent,omitempty"`
+	DeploymentCircuitBreaker *DeploymentCircuitBreaker `json:"deploymentCircuitBreaker,omitempty"`
+}
+
+// DeploymentCircuitBreaker decides whether a deployment that cannot reach a
+// steady state fails. AWS leaves it off unless a service asks for it, and while
+// it is off a stuck deployment stays IN_PROGRESS indefinitely rather than
+// transitioning to FAILED — the failure is reported through service events only.
+type DeploymentCircuitBreaker struct {
+	Enable   bool `json:"enable"`
+	Rollback bool `json:"rollback"`
 }
 
 // CapacityProviderStrategyItem specifies a capacity provider and its weight/base.
@@ -242,25 +329,52 @@ type CapacityProviderStrategyItem struct {
 
 // ecsService represents an ECS service resource.
 type ecsService struct {
-	ServiceName              string                         `json:"serviceName"`
-	ServiceArn               string                         `json:"serviceArn"`
-	ClusterArn               string                         `json:"clusterArn"`
-	TaskDefinition           string                         `json:"taskDefinition"`
-	DesiredCount             int                            `json:"desiredCount"`
-	RunningCount             int                            `json:"runningCount"`
-	PendingCount             int                            `json:"pendingCount"`
-	Status                   string                         `json:"status"`
-	LaunchType               string                         `json:"launchType"`
-	Events                   []ServiceEvent                 `json:"events"`
-	CreatedAt                int64                          `json:"createdAt"`
-	Deployments              []Deployment                   `json:"deployments"`
-	SchedulingStrategy       string                         `json:"schedulingStrategy"`
-	NetworkConfiguration     *NetworkConfiguration          `json:"networkConfiguration,omitempty"`
-	DeploymentController     *DeploymentController          `json:"deploymentController,omitempty"`
-	CapacityProviderStrategy []CapacityProviderStrategyItem `json:"capacityProviderStrategy,omitempty"`
-	PlatformVersion          string                         `json:"platformVersion,omitempty"`
-	PlatformFamily           string                         `json:"platformFamily,omitempty"`
-	TaskSets                 []string                       `json:"taskSets,omitempty"`
+	ServiceName             string                   `json:"serviceName"`
+	ServiceArn              string                   `json:"serviceArn"`
+	ClusterArn              string                   `json:"clusterArn"`
+	TaskDefinition          string                   `json:"taskDefinition"`
+	DesiredCount            int                      `json:"desiredCount"`
+	RunningCount            int                      `json:"runningCount"`
+	PendingCount            int                      `json:"pendingCount"`
+	Status                  string                   `json:"status"`
+	LaunchType              string                   `json:"launchType"`
+	Events                  []ServiceEvent           `json:"events"`
+	CreatedAt               int64                    `json:"createdAt"`
+	Deployments             []Deployment             `json:"deployments"`
+	SchedulingStrategy      string                   `json:"schedulingStrategy"`
+	NetworkConfiguration    *NetworkConfiguration    `json:"networkConfiguration,omitempty"`
+	DeploymentController    *DeploymentController    `json:"deploymentController,omitempty"`
+	DeploymentConfiguration *DeploymentConfiguration `json:"deploymentConfiguration,omitempty"`
+	LoadBalancers           []ServiceLoadBalancer    `json:"loadBalancers,omitempty"`
+	// Stored and echoed; Overcast has no health-check grace period, no ECS Exec
+	// and no Cloud Map registration to act on them with. They round-trip because
+	// CDK sets them and DescribeServices is read back after a deploy.
+	HealthCheckGracePeriodSeconds *int                           `json:"healthCheckGracePeriodSeconds,omitempty"`
+	EnableExecuteCommand          bool                           `json:"enableExecuteCommand,omitempty"`
+	PropagateTags                 string                         `json:"propagateTags,omitempty"`
+	ServiceRegistries             []ServiceRegistry              `json:"serviceRegistries,omitempty"`
+	PlacementStrategy             []PlacementItem                `json:"placementStrategy,omitempty"`
+	PlacementConstraints          []PlacementItem                `json:"placementConstraints,omitempty"`
+	CapacityProviderStrategy      []CapacityProviderStrategyItem `json:"capacityProviderStrategy,omitempty"`
+	PlatformVersion               string                         `json:"platformVersion,omitempty"`
+	PlatformFamily                string                         `json:"platformFamily,omitempty"`
+	TaskSets                      []string                       `json:"taskSets,omitempty"`
+}
+
+// ServiceRegistry links a service to a service-discovery registry (Cloud Map).
+type ServiceRegistry struct {
+	RegistryArn   string `json:"registryArn,omitempty"`
+	Port          int    `json:"port,omitempty"`
+	ContainerName string `json:"containerName,omitempty"`
+	ContainerPort int    `json:"containerPort,omitempty"`
+}
+
+// PlacementItem is a placement strategy or constraint. Overcast places every
+// task the same way, so these are recorded rather than applied.
+type PlacementItem struct {
+	Type       string `json:"type,omitempty"`
+	Field      string `json:"field,omitempty"`
+	Expression string `json:"expression,omitempty"`
 }
 
 // ServiceEvent represents a timestamped event in a service's history.
@@ -278,11 +392,16 @@ type Deployment struct {
 	DesiredCount         int                   `json:"desiredCount"`
 	RunningCount         int                   `json:"runningCount"`
 	PendingCount         int                   `json:"pendingCount"`
+	FailedTasks          int                   `json:"failedTasks"`
 	CreatedAt            int64                 `json:"createdAt"`
 	UpdatedAt            int64                 `json:"updatedAt"`
 	NetworkConfiguration *NetworkConfiguration `json:"networkConfiguration,omitempty"`
 	PlatformVersion      string                `json:"platformVersion,omitempty"`
 	PlatformFamily       string                `json:"platformFamily,omitempty"`
+	// RolloutState is reported only for the ECS (rolling update) deployment
+	// controller, matching AWS, which omits it for CODE_DEPLOY and EXTERNAL.
+	RolloutState       string `json:"rolloutState,omitempty"`
+	RolloutStateReason string `json:"rolloutStateReason,omitempty"`
 }
 
 // ecsStore wraps state.Store with ECS-specific helpers.

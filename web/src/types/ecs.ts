@@ -26,6 +26,9 @@ export interface EcsTaskDefinition {
   status: string
   cpu?: string
   memory?: string
+  /** awsvpc | bridge | host | none — decides whether a networkConfiguration is required. */
+  networkMode?: string
+  requiresCompatibilities?: string[]
 }
 
 export interface EcsTask {
@@ -39,6 +42,11 @@ export interface EcsTask {
   startedAt?: string
   stoppedAt?: string
   stoppedReason?: string
+  /** TaskFailedToStart | EssentialContainerExited | UserInitiated | ServiceSchedulerInitiated | … */
+  stopCode?: string
+  /** The deployment ID when a service started this task. */
+  startedBy?: string
+  group?: string
   containers: EcsContainer[]
 }
 
@@ -48,6 +56,7 @@ export interface EcsContainer {
   image?: string
   lastStatus: string
   exitCode?: number
+  reason?: string
   networkBindings?: Array<{ hostPort?: number; containerPort?: number; protocol?: string }>
 }
 
@@ -73,6 +82,10 @@ export interface EcsDeployment {
   desiredCount: number
   runningCount: number
   pendingCount: number
+  failedTasks?: number
+  /** COMPLETED | FAILED | IN_PROGRESS — reported only for the ECS controller. */
+  rolloutState?: string
+  rolloutStateReason?: string
   createdAt: string
 }
 
