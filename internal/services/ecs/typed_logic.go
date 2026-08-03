@@ -767,13 +767,9 @@ func (h *Handler) runTaskTyped(ctx context.Context, req *runTaskRequest) (*runTa
 	if platformVersion == "" && req.LaunchType == "FARGATE" {
 		platformVersion = "LATEST"
 	}
-	var placement awsvpcPlacement
-	if req.NetworkConfiguration != nil {
-		var placementErr *protocol.AWSError
-		placement.subnetID, _, placement.networkID, placement.subnetResolved, placementErr = h.resolveAwsvpcPlacement(ctx, req.NetworkConfiguration, "awsvpc tasks")
-		if placementErr != nil {
-			return nil, placementErr
-		}
+	placement, placementErr := h.resolveAwsvpcPlacement(ctx, req.NetworkConfiguration, "awsvpc tasks")
+	if placementErr != nil {
+		return nil, placementErr
 	}
 	tasks := make([]Task, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
@@ -934,7 +930,7 @@ func (h *Handler) createServiceTyped(ctx context.Context, req *createServiceRequ
 	if aerr := validateAwsvpcNetworkConfiguration(td, req.LaunchType, req.NetworkConfiguration); aerr != nil {
 		return nil, aerr
 	}
-	if _, _, _, _, placementErr := h.resolveAwsvpcPlacement(ctx, req.NetworkConfiguration, "awsvpc services"); placementErr != nil {
+	if _, placementErr := h.resolveAwsvpcPlacement(ctx, req.NetworkConfiguration, "awsvpc services"); placementErr != nil {
 		return nil, placementErr
 	}
 	existing, _ := h.store.getService(ctx, clusterName, req.ServiceName)
@@ -1034,7 +1030,7 @@ func (h *Handler) updateServiceTyped(ctx context.Context, req *updateServiceRequ
 			if newNetCfg == nil {
 				newNetCfg = svc.NetworkConfiguration
 			}
-			if _, _, _, _, placementErr := h.resolveAwsvpcPlacement(ctx, newNetCfg, "awsvpc services"); placementErr != nil {
+			if _, placementErr := h.resolveAwsvpcPlacement(ctx, newNetCfg, "awsvpc services"); placementErr != nil {
 				return nil, placementErr
 			}
 			newPlatformVersion := req.PlatformVersion

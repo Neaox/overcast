@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -62,46 +65,123 @@ func validateAwsvpcNetworkConfiguration(td *TaskDefinition, launchType string, n
 // resolveAwsvpcPlacement validates that a VPC is launchable for ECS awsvpc tasks/services.
 // A VPC is launchable when its network status is ok, shared, or remapped.
 // VPCs with status conflict (strict mode collision) or unbacked (Docker unavailable)
-// are rejected with InvalidParameterException. The boolean subnetResolved indicates
+// are rejected with InvalidParameterException. placement.subnetResolved indicates
 // whether the subnet was successfully resolved to a VPC (vs. synthetic/non-EC2 subnet).
-// Returns (subnetID, vpcID, dockerNetworkID, subnetResolved, error).
 func (h *Handler) resolveAwsvpcPlacement(
 	ctx context.Context,
 	networkConfiguration *NetworkConfiguration,
 	opName string,
-) (subnetID, vpcID, networkID string, subnetResolved bool, aerr *protocol.AWSError) {
+) (awsvpcPlacement, *protocol.AWSError) {
 	if networkConfiguration == nil {
-		return "", "", "", false, nil
+		return awsvpcPlacement{}, nil
 	}
-	subnetID = firstOrEmpty(networkConfiguration.AwsvpcConfiguration, func(a *AwsvpcConfiguration) string {
-		if len(a.Subnets) > 0 {
-			return a.Subnets[0]
-		}
-		return ""
-	})
-	if subnetID == "" || h.vpcResolver == nil {
-		return subnetID, "", "", false, nil
+	placement := awsvpcPlacement{
+		subnetID: firstOrEmpty(networkConfiguration.AwsvpcConfiguration, func(a *AwsvpcConfiguration) string {
+			if len(a.Subnets) > 0 {
+				return a.Subnets[0]
+			}
+			return ""
+		}),
 	}
-	vpcID = h.vpcResolver.VpcIDForSubnet(ctx, subnetID)
+	if placement.subnetID == "" || h.vpcResolver == nil {
+		return placement, nil
+	}
+	vpcID := h.vpcResolver.VpcIDForSubnet(ctx, placement.subnetID)
 	if vpcID == "" {
 		// Preserve existing ECS behaviour for synthetic/non-EC2 subnets.
-		return subnetID, "", "", false, nil
+		return placement, nil
 	}
-	switch status := h.vpcResolver.VPCNetworkStatus(ctx, vpcID); status {
+	status := h.vpcResolver.VPCNetworkStatus(ctx, vpcID)
+	switch status {
 	case "", "ok", "shared", "remapped":
-		networkID = h.vpcResolver.DockerNetworkForVpc(ctx, vpcID)
-		return subnetID, vpcID, networkID, true, nil
-	case "conflict", "unbacked":
-		return subnetID, vpcID, "", true, &protocol.AWSError{
+		placement.subnetResolved = true
+		placement.remapped = status == "remapped"
+		placement.networkID = h.vpcResolver.DockerNetworkForVpc(ctx, vpcID)
+		return placement, nil
+	default:
+		placement.subnetResolved = true
+		return placement, &protocol.AWSError{
 			Code:       "InvalidParameterException",
 			Message:    fmt.Sprintf("VPC '%s' is not launchable for %s (network status=%s).", vpcID, opName, status),
 			HTTPStatus: http.StatusBadRequest,
 		}
-	default:
-		return subnetID, vpcID, "", true, &protocol.AWSError{
-			Code:       "InvalidParameterException",
-			Message:    fmt.Sprintf("VPC '%s' is not launchable for %s (network status=%s).", vpcID, opName, status),
-			HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// attachTaskENI joins a task container to its VPC's Docker network and leaves
+// the task reporting the address that container really holds.
+//
+// The two have to agree. The ENI address is what DescribeTasks reports and what
+// an ip-type target group is registered with, so a load balancer dials it — and
+// it was allocated by EC2's own counter, independently of Docker's IPAM, which
+// hands out addresses of its own from the same subnet. The two drift apart the
+// moment either allocates once more than the other, and the load balancer then
+// dials an address nothing answers on.
+//
+// So the address is asked for rather than assumed: the connect requests the
+// allocated one, and whatever the container ends up with is read back and
+// recorded. carriesENI is false for a task's second and later containers, which
+// share the task's one reported address on AWS and cannot be given it here.
+func (h *Handler) attachTaskENI(ctx context.Context, task *Task, placement awsvpcPlacement, dockerID string, carriesENI bool) error {
+	wanted := ""
+	if carriesENI && !placement.remapped {
+		wanted = taskTargetAddress(task)
+	}
+
+	if wanted != "" {
+		err := h.docker.ConnectNetworkWithConfig(ctx, placement.networkID, dockerID, &docker.EndpointSettings{
+			IPAMConfig: &docker.EndpointIPAMConfig{IPv4Address: wanted},
+		})
+		if err == nil {
+			return nil
+		}
+		// Docker refuses an address outside the network's subnet or already in
+		// use. Neither is fatal: connect on its terms and record what it gave.
+		h.log.Debug("ecs: could not pin the task's ENI address; using Docker's",
+			zap.String("network", placement.networkID),
+			zap.String("requested", wanted),
+			zap.Error(err))
+	}
+
+	if err := h.docker.ConnectNetwork(ctx, placement.networkID, dockerID); err != nil {
+		return err
+	}
+	if !carriesENI || placement.remapped {
+		return nil
+	}
+	if actual := h.containerIPOnNetwork(ctx, dockerID, placement.networkID); actual != "" {
+		setTaskENIAddress(task, actual)
+	}
+	return nil
+}
+
+// containerIPOnNetwork returns the address a container holds on one specific
+// network. Docker keys a container's networks by name, so the network the
+// caller knows by ID is found through each entry's own NetworkID.
+func (h *Handler) containerIPOnNetwork(ctx context.Context, dockerID, networkID string) string {
+	info, err := h.docker.InspectContainer(ctx, dockerID)
+	if err != nil || info == nil {
+		return ""
+	}
+	for _, n := range info.NetworkSettings.Networks {
+		if n.NetworkID == networkID && n.IPAddress != "" {
+			return n.IPAddress
+		}
+	}
+	return ""
+}
+
+// setTaskENIAddress rewrites the privateIPv4Address on a task's ENI attachment.
+func setTaskENIAddress(task *Task, ip string) {
+	for i := range task.Attachments {
+		if task.Attachments[i].Type != "ElasticNetworkInterface" {
+			continue
+		}
+		for j := range task.Attachments[i].Details {
+			if task.Attachments[i].Details[j].Name == "privateIPv4Address" {
+				task.Attachments[i].Details[j].Value = ip
+				return
+			}
 		}
 	}
 }

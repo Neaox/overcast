@@ -25,6 +25,11 @@ type awsvpcPlacement struct {
 	subnetID       string
 	networkID      string
 	subnetResolved bool
+	// remapped marks a VPC whose Docker network sits on a shadow CIDR rather
+	// than the one the API reports. The address a container really holds is
+	// then deliberately not the address AWS callers are shown, so the ENI
+	// address must not be reconciled against it.
+	remapped bool
 }
 
 // taskLaunchSpec describes one task about to be placed.
@@ -88,7 +93,7 @@ func (h *Handler) launchTask(ctx context.Context, spec taskLaunchSpec) (*Task, *
 
 	startErr := error(nil)
 	if h.dockerReady.Load() {
-		startErr = h.startTaskContainers(ctx, task, td, spec.clusterName, taskID, spec.placement.networkID)
+		startErr = h.startTaskContainers(ctx, task, td, spec.clusterName, taskID, spec.placement)
 		if startErr != nil {
 			h.log.Warn("ecs: task failed to start",
 				zap.String("cluster", spec.clusterName),

@@ -345,12 +345,7 @@ func (s *strictVPCStrategy) SetInternal(ctx context.Context, vpcID string, inter
 			zap.String("vpc", vpcID), zap.Error(err))
 		return
 	}
-	netID, err := s.h.docker.CreateNetworkWithOptions(ctx, docker.CreateNetworkOptions{
-		Name:     "overcast-vpc-" + vpc.VpcID,
-		Labels:   docker.ManagedLabels("ec2", vpc.VpcID),
-		Subnet:   preferredDockerSubnet(vpc),
-		Internal: internal,
-	})
+	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
 	if err != nil {
 		s.h.log.Warn("vpc network: strict: toggle internal — recreate",
 			zap.String("vpc", vpcID), zap.Error(err))
@@ -565,12 +560,7 @@ func (s *remappedVPCStrategy) SetInternal(ctx context.Context, vpcID string, int
 			zap.String("vpc", vpcID), zap.Error(err))
 		return
 	}
-	netID, err := s.h.docker.CreateNetworkWithOptions(ctx, docker.CreateNetworkOptions{
-		Name:     "overcast-vpc-" + vpc.VpcID,
-		Labels:   docker.ManagedLabels("ec2", vpc.VpcID),
-		Subnet:   preferredDockerSubnet(vpc),
-		Internal: internal,
-	})
+	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
 	if err != nil {
 		s.h.log.Warn("vpc network: remapped: toggle internal — recreate",
 			zap.String("vpc", vpcID), zap.Error(err))
@@ -872,12 +862,7 @@ func (s *sharedVPCStrategy) SetInternal(ctx context.Context, vpcID string, inter
 			zap.String("vpc", vpcID), zap.Error(err))
 		return
 	}
-	netID, err := s.h.docker.CreateNetworkWithOptions(ctx, docker.CreateNetworkOptions{
-		Name:     "overcast-vpc-" + vpc.VpcID,
-		Labels:   docker.ManagedLabels("ec2", vpc.VpcID),
-		Subnet:   vpc.CidrBlock,
-		Internal: internal,
-	})
+	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
 	if err != nil {
 		s.h.log.Warn("vpc network: toggle internal — recreate",
 			zap.String("vpc", vpcID), zap.Error(err))
