@@ -6,6 +6,13 @@
         "hooks": [
           {
             "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "bash scripts/hooks/commit-self-review-reminder.sh",
+            "timeout": 10,
+            "statusMessage": "Self-review reminder"
+          },
+          {
+            "type": "command",
             "if": "Bash(git push*)",
             "command": "bash scripts/verify-changed.sh",
             "timeout": 900,
