@@ -250,9 +250,16 @@ func ValidateImpls(reg *Registry, impls ImplMap, suite string) error {
 			}
 			problems = append(problems, msg)
 		case len(owners[name]) > 1:
+			// Naming every candidate rather than guessing one: only the author
+			// knows which group this implementation is for, and binding it to
+			// the wrong one is the failure this check exists to prevent.
+			qualified := make([]string, 0, len(owners[name]))
+			for _, group := range owners[name] {
+				qualified = append(qualified, fmt.Sprintf("%q", group+":"+name))
+			}
 			problems = append(problems, fmt.Sprintf(
-				"impl %q is ambiguous: groups %v all declare a test named %q — register it as %q",
-				name, owners[name], name, owners[name][0]+":"+name))
+				"impl %q is ambiguous: groups %v all declare a test named %q — qualify it with the group it implements, one of: %s",
+				name, owners[name], name, strings.Join(qualified, ", ")))
 		}
 	}
 	if len(problems) == 0 {

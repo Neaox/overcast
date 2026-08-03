@@ -22,12 +22,12 @@ func Lambda(c *clients.Clients) ServiceGroup {
 	g := &lambdaGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateFunction":              g.CreateFunction,
-			"GetFunction":                 g.GetFunction,
-			"ListFunctions":               g.ListFunctions,
+			"lambda-crud:CreateFunction":  g.CreateFunction,
+			"lambda-crud:GetFunction":     g.GetFunction,
+			"lambda-crud:ListFunctions":   g.ListFunctions,
 			"UpdateFunctionCode":          g.UpdateFunctionCode,
 			"UpdateFunctionConfiguration": g.UpdateFunctionConfiguration,
-			"DeleteFunction":              g.DeleteFunction,
+			"lambda-crud:DeleteFunction":  g.DeleteFunction,
 			"InvokeSync":                  g.InvokeSync,
 			"InvokeAsync":                 g.InvokeAsync,
 			"InvokeDryRun":                g.InvokeDryRun,
