@@ -48,6 +48,9 @@ type Service struct {
 	log             *serviceutil.ServiceLogger
 	handler         *Handler
 	lifecycleCancel context.CancelFunc
+	// lifecycleDone closes when the sweeper loop has exited, so Stop can drain
+	// an in-flight sweep instead of returning while it is still deleting.
+	lifecycleDone <-chan struct{}
 }
 
 // New returns a configured S3 Service ready to be registered.
@@ -66,17 +69,36 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		handler:         newHandler(cfg, store, log, clk, bus),
 		lifecycleCancel: lifecycleCancel,
 	}
-	svc.handler.startLifecycleSweeper(lifecycleCtx)
+	svc.lifecycleDone = svc.handler.startLifecycleSweeper(lifecycleCtx)
 	return svc
 }
 
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
 
-// Stop cancels the lifecycle sweeper goroutine. Satisfies router.Stopper.
-func (s *Service) Stop(_ context.Context) {
+// Stop cancels the lifecycle sweeper and waits for it to drain, so shutdown
+// does not return while a sweep is still deleting objects and rewriting
+// metadata. Satisfies router.Stopper.
+//
+// ctx is the shutdown deadline: if the sweeper has not finished by the time it
+// expires, Stop gives up waiting and says so rather than blocking the process
+// from exiting. The sweep loop checks ctx.Err() between buckets and between
+// objects, so cancellation normally ends it within one object.
+func (s *Service) Stop(ctx context.Context) {
 	if s.lifecycleCancel != nil {
 		s.lifecycleCancel()
+	}
+	if s.lifecycleDone == nil {
+		return
+	}
+	if ctx == nil {
+		<-s.lifecycleDone
+		return
+	}
+	select {
+	case <-s.lifecycleDone:
+	case <-ctx.Done():
+		s.log.Warn("lifecycle: sweeper still running at the shutdown deadline")
 	}
 }
 

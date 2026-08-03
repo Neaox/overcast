@@ -198,11 +198,22 @@ func transitionAt(t *LifecycleTransition, obj *Object) time.Time {
 	return nextUTCMidnight(obj.LastModified.UTC().AddDate(0, 0, t.Days))
 }
 
-// nextUTCMidnight rounds t up to the following UTC midnight. Truncate works on
+// nextUTCMidnight rounds t up to the next UTC midnight. Truncate works on
 // absolute time, which is UTC-aligned, so truncating to 24h yields the UTC
 // midnight that starts t's day.
+//
+// A time that is *already* midnight is returned unchanged: AWS rounds the
+// computed expiry to the next midnight, and a value sitting on one needs no
+// rounding. Rounding it forward anyway would give an object written at
+// 00:00:00 UTC a whole extra day of life. Rare against wall-clock timestamps,
+// routine against a mock clock started at a round time.
 func nextUTCMidnight(t time.Time) time.Time {
-	return t.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	utc := t.UTC()
+	day := utc.Truncate(24 * time.Hour)
+	if day.Equal(utc) {
+		return day
+	}
+	return day.Add(24 * time.Hour)
 }
 
 // expirationFor returns the earliest expiry the configuration schedules for
@@ -441,9 +452,15 @@ func (h *Handler) setExpirationHeader(ctx context.Context, w http.ResponseWriter
 // startLifecycleSweeper starts the single background loop that applies every
 // bucket's lifecycle rules. One goroutine and one ticker for the whole
 // service — never one per bucket or per object — cancelled by ctx on shutdown.
-func (h *Handler) startLifecycleSweeper(ctx context.Context) {
+//
+// The returned channel is closed once the loop has exited, so a caller can
+// wait for an in-flight sweep to finish rather than returning from shutdown
+// while the sweeper is still deleting objects. See Service.Stop.
+func (h *Handler) startLifecycleSweeper(ctx context.Context) <-chan struct{} {
 	ticker := h.clk.Ticker(lifecycleSweepInterval)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer ticker.Stop()
 		for {
 			select {
@@ -454,6 +471,7 @@ func (h *Handler) startLifecycleSweeper(ctx context.Context) {
 			}
 		}
 	}()
+	return done
 }
 
 // sweepLifecycle applies every stored configuration once.

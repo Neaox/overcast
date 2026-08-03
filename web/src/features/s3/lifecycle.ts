@@ -59,11 +59,17 @@ function matchesIgnoringTags(rule: S3LifecycleRule, object: LifecycleCandidate):
 }
 
 /**
- * Rounds a time up to the following UTC midnight, which is how S3 turns
- * "N days after the object was written" into a concrete expiry.
+ * Rounds a time up to the next UTC midnight, which is how S3 turns "N days
+ * after the object was written" into a concrete expiry.
+ *
+ * A time already sitting on a midnight is returned unchanged — rounding it
+ * forward would hand the object an extra day. Mirrors `nextUTCMidnight` in
+ * internal/services/s3/lifecycle.go; the two must agree or the UI's hint and
+ * the sweeper's deletion disagree by a day.
  */
 export function nextUtcMidnight(at: Date): Date {
-  return new Date(Math.floor(at.getTime() / MS_PER_DAY) * MS_PER_DAY + MS_PER_DAY)
+  const day = Math.floor(at.getTime() / MS_PER_DAY) * MS_PER_DAY
+  return new Date(day === at.getTime() ? day : day + MS_PER_DAY)
 }
 
 /** When the given rule would expire the object, if it expires it at all. */

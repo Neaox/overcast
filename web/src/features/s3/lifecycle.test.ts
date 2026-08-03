@@ -28,8 +28,16 @@ describe("nextUtcMidnight", () => {
     )
   })
 
-  it("moves a time already at midnight to the next day", () => {
+  it("leaves a time already at midnight alone", () => {
+    // Rounding it forward would hand the object an extra day, and would put
+    // the UI a day out from the emulator's own sweeper.
     expect(nextUtcMidnight(new Date("2026-03-01T00:00:00Z")).toISOString()).toBe(
+      "2026-03-01T00:00:00.000Z",
+    )
+  })
+
+  it("rounds a time one millisecond past midnight to the next day", () => {
+    expect(nextUtcMidnight(new Date("2026-03-01T00:00:00.001Z")).toISOString()).toBe(
       "2026-03-02T00:00:00.000Z",
     )
   })
@@ -37,8 +45,9 @@ describe("nextUtcMidnight", () => {
 
 describe("estimateExpiry", () => {
   it("reports none when no rule expires the object", () => {
-    expect(estimateExpiry([rule({ transitions: [{ days: 1, storageClass: "GLACIER" }] })], object))
-      .toEqual({ kind: "none" })
+    expect(
+      estimateExpiry([rule({ transitions: [{ days: 1, storageClass: "GLACIER" }] })], object),
+    ).toEqual({ kind: "none" })
   })
 
   it("applies the same next-midnight rounding as the emulator", () => {
@@ -50,9 +59,9 @@ describe("estimateExpiry", () => {
   })
 
   it("ignores disabled rules", () => {
-    expect(
-      estimateExpiry([rule({ status: "Disabled", expirationDays: 1 })], object),
-    ).toEqual({ kind: "none" })
+    expect(estimateExpiry([rule({ status: "Disabled", expirationDays: 1 })], object)).toEqual({
+      kind: "none",
+    })
   })
 
   it("ignores rules whose prefix does not select the object", () => {
@@ -79,16 +88,11 @@ describe("estimateExpiry", () => {
 
   it("applies exclusive object-size bounds", () => {
     expect(
-      estimateExpiry(
-        [rule({ filter: { objectSizeGreaterThan: 100 }, expirationDays: 1 })],
-        object,
-      ),
+      estimateExpiry([rule({ filter: { objectSizeGreaterThan: 100 }, expirationDays: 1 })], object),
     ).toEqual({ kind: "none" })
     expect(
-      estimateExpiry(
-        [rule({ filter: { objectSizeGreaterThan: 99 }, expirationDays: 1 })],
-        object,
-      ).kind,
+      estimateExpiry([rule({ filter: { objectSizeGreaterThan: 99 }, expirationDays: 1 })], object)
+        .kind,
     ).toBe("expires")
   })
 
@@ -110,6 +114,15 @@ describe("estimateExpiry", () => {
       object,
     )
     expect(got.kind === "expires" && got.ruleId).toBe("plain")
+  })
+
+  it("does not add an extra day to an object written at midnight", () => {
+    const got = estimateExpiry([rule({ expirationDays: 1 })], {
+      key: "logs/app.log",
+      size: 100,
+      lastModified: "2026-03-01T00:00:00Z",
+    })
+    expect(got.kind === "expires" && got.date.toISOString()).toBe("2026-03-02T00:00:00.000Z")
   })
 
   it("uses an absolute expiration date as given", () => {
@@ -144,7 +157,11 @@ describe("describeLifecycleFilter", () => {
       describeLifecycleFilter(
         rule({
           filter: {
-            and: { prefix: "data/", tags: [{ key: "temp", value: "yes" }], objectSizeGreaterThan: 10 },
+            and: {
+              prefix: "data/",
+              tags: [{ key: "temp", value: "yes" }],
+              objectSizeGreaterThan: 10,
+            },
           },
         }),
       ),

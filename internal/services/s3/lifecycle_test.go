@@ -12,6 +12,7 @@ package s3
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -89,8 +90,17 @@ func TestLifecycleRule_expiresAt_roundsToNextUTCMidnight(t *testing.T) {
 			want: "2026-03-03T00:00:00Z",
 		},
 		{
-			name:         "write exactly at midnight",
+			name: "write exactly at midnight needs no rounding",
+			// +1 day lands exactly on a UTC midnight, so AWS's "round to the
+			// next midnight" has nothing to do. Rounding it forward anyway
+			// would hand the object a whole extra day.
 			lastModified: "2026-03-01T00:00:00Z",
+			days:         1,
+			want:         "2026-03-02T00:00:00Z",
+		},
+		{
+			name:         "one nanosecond after midnight rounds to the following day",
+			lastModified: "2026-03-01T00:00:00.000000001Z",
 			days:         1,
 			want:         "2026-03-03T00:00:00Z",
 		},
@@ -237,7 +247,9 @@ func TestLifecycleConfiguration_expirationForPicksTheEarliestRule(t *testing.T) 
 	if rule == nil || rule.ID != "fast" {
 		t.Fatalf("rule = %+v, want the 1-day rule", rule)
 	}
-	if want := mustTime(t, "2026-03-03T00:00:00Z"); !at.Equal(want) {
+	// The object was written at midnight, so +1 day is already a midnight and
+	// needs no rounding.
+	if want := mustTime(t, "2026-03-02T00:00:00Z"); !at.Equal(want) {
 		t.Errorf("expiry = %s, want %s", at.Format(time.RFC3339), want.Format(time.RFC3339))
 	}
 }
@@ -275,21 +287,59 @@ func TestSweepLifecycle_expiresOnlyMatchingObjects(t *testing.T) {
 }
 
 func TestSweepLifecycle_doesNotExpireBeforeTheRoundedExpiry(t *testing.T) {
-	// Given: an object one day old under a 1-day rule. AWS rounds the expiry
-	// up to the following UTC midnight, so 24 hours is not yet enough.
+	// Given: an object written mid-morning under a 1-day rule. AWS adds the
+	// day and rounds up to the next UTC midnight, so the object outlives a
+	// plain 24 hours.
 	h, mock, ctx := newLifecycleTestHandler(t)
-	seedObject(t, h, ctx, &Object{Bucket: "b", Key: "a.txt", LastModified: mock.Now().UTC()})
+	written := mock.Now().UTC().Add(9 * time.Hour)
+	seedObject(t, h, ctx, &Object{Bucket: "b", Key: "a.txt", LastModified: written})
 	seedLifecycle(t, h, ctx, "b", &LifecycleConfiguration{Rules: []LifecycleRule{
 		withExpiration(enabledRule("all", ""), 1),
 	}})
 
-	// When: exactly 24 hours pass
-	mock.Add(24 * time.Hour)
+	// When: exactly 24 hours have passed since the write
+	mock.Set(written.Add(24 * time.Hour))
 	h.sweepLifecycle(ctx)
 
-	// Then: the object is still there
+	// Then: the object is still there — its expiry is the following midnight
 	if !objectExists(t, h, ctx, "b", "a.txt") {
 		t.Error("object expired 24h after its write, before the next UTC midnight")
+	}
+
+	// And: it goes once that midnight arrives
+	mock.Set(nextUTCMidnight(written.AddDate(0, 0, 1)))
+	h.sweepLifecycle(ctx)
+	if objectExists(t, h, ctx, "b", "a.txt") {
+		t.Error("object survived its rounded expiry")
+	}
+}
+
+func TestSweepLifecycle_expiresAtMidnightWithoutAnExtraDay(t *testing.T) {
+	// Given: an object written exactly at UTC midnight under a 1-day rule —
+	// the shape a mock clock started at a round time produces, and the one
+	// that an over-eager round-up would silently give an extra day.
+	h, mock, ctx := newLifecycleTestHandler(t)
+	written := mock.Now().UTC()
+	if !written.Equal(written.Truncate(24 * time.Hour)) {
+		t.Fatalf("fixture assumption broken: mock clock starts at %s, not a UTC midnight", written)
+	}
+	seedObject(t, h, ctx, &Object{Bucket: "b", Key: "a.txt", LastModified: written})
+	seedLifecycle(t, h, ctx, "b", &LifecycleConfiguration{Rules: []LifecycleRule{
+		withExpiration(enabledRule("all", ""), 1),
+	}})
+
+	// When: one second short of a day passes
+	mock.Set(written.Add(24*time.Hour - time.Second))
+	h.sweepLifecycle(ctx)
+	if !objectExists(t, h, ctx, "b", "a.txt") {
+		t.Fatal("object expired before its 1-day expiry")
+	}
+
+	// Then: it expires on day one, not day two
+	mock.Set(written.Add(24 * time.Hour))
+	h.sweepLifecycle(ctx)
+	if objectExists(t, h, ctx, "b", "a.txt") {
+		t.Error("a midnight write was rounded forward an extra day")
 	}
 }
 
@@ -479,6 +529,108 @@ func TestStartLifecycleSweeper_ticksOnTheInjectedClock(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if !objectExists(t, h, ctx, "b", "b.txt") {
 		t.Error("the sweeper kept running after its context was cancelled")
+	}
+}
+
+// blockingScanStore lets a test hold a sweep open inside its very first store
+// read, which is what makes the drain in Service.Stop observable rather than
+// merely plausible.
+type blockingScanStore struct {
+	state.Store
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingScanStore) Scan(ctx context.Context, namespace, prefix string) ([]state.KV, error) {
+	if namespace == nsLifecycle {
+		s.once.Do(func() {
+			close(s.entered)
+			<-s.release
+		})
+	}
+	return s.Store.Scan(ctx, namespace, prefix)
+}
+
+// TestServiceStop_drainsTheInFlightSweep pins that shutdown waits for a sweep
+// that is already running. Returning from Stop while the sweeper is still
+// deleting objects and rewriting metadata is the failure this guards.
+func TestServiceStop_drainsTheInFlightSweep(t *testing.T) {
+	// Given: a service whose next sweep will block inside its first store read
+	store := &blockingScanStore{
+		Store:   state.NewMemoryStore(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", DataDir: t.TempDir()}
+	mock := clock.NewMock()
+	svc := New(cfg, store, zap.NewNop(), mock, events.NewBus())
+
+	// When: a tick starts a sweep, which blocks
+	mock.Add(lifecycleSweepInterval)
+	select {
+	case <-store.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the sweeper never started after its ticker fired")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		svc.Stop(context.Background())
+		close(stopped)
+	}()
+
+	// Then: Stop does not return while the sweep is in flight
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while a sweep was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// And: it returns once the sweep finishes
+	close(store.release)
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop did not return after the sweep finished")
+	}
+}
+
+// TestServiceStop_honoursTheShutdownDeadline pins the other half: a sweep that
+// will not finish must not hold the process open for ever.
+func TestServiceStop_honoursTheShutdownDeadline(t *testing.T) {
+	// Given: a service whose sweep is stuck
+	store := &blockingScanStore{
+		Store:   state.NewMemoryStore(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000", DataDir: t.TempDir()}
+	mock := clock.NewMock()
+	svc := New(cfg, store, zap.NewNop(), mock, events.NewBus())
+	t.Cleanup(func() { close(store.release) })
+
+	mock.Add(lifecycleSweepInterval)
+	select {
+	case <-store.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the sweeper never started after its ticker fired")
+	}
+
+	// When: Stop is given a deadline the sweep will not meet
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	stopped := make(chan struct{})
+	go func() {
+		svc.Stop(ctx)
+		close(stopped)
+	}()
+
+	// Then: it gives up waiting rather than blocking shutdown for ever
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop ignored its shutdown deadline and blocked on the drain")
 	}
 }
 
