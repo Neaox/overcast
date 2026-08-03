@@ -294,6 +294,189 @@ func TestErrorMatches_statesALLNeverMatchesStatesRuntime(t *testing.T) {
 	}
 }
 
+// predefinedErrorNamesForTest is the reserved ASL error-name vocabulary, as
+// AWS's "Error names" table spells it. Two of these are wildcards in an
+// ErrorEquals; the rest match only themselves.
+var predefinedErrorNamesForTest = []string{
+	"States.ALL",
+	"States.BranchFailed",
+	"States.DataLimitExceeded",
+	"States.ExceedToleratedFailureThreshold",
+	"States.HeartbeatTimeout",
+	"States.IntrinsicFailure",
+	"States.ItemReaderFailed",
+	"States.NoChoiceMatched",
+	"States.ParameterPathFailure",
+	"States.Permissions",
+	"States.ResultPathMatchFailure",
+	"States.ResultWriterFailed",
+	"States.Runtime",
+	"States.TaskFailed",
+	"States.Timeout",
+}
+
+func TestErrorMatches_statesTaskFailedIsAWildcard(t *testing.T) {
+	// Given: the ErrorEquals real state machines reach for first
+	wildcard := []string{errTaskFailed}
+
+	// Then: it matches whatever the Task actually raised, not just the literal
+	// name — this is the matcher that made Retry/Catch look like a no-op
+	for _, name := range []string{
+		"Lambda.ResourceNotFoundException",
+		"Lambda.Unknown",
+		"CustomFunctionError",
+		errTimeout,
+		errTaskFailed,
+	} {
+		if !errorMatches(wildcard, &stateError{name: name}) {
+			t.Errorf("States.TaskFailed should match %q", name)
+		}
+	}
+
+	// … but never States.Runtime, so an Overcast gap stays uncatchable
+	if errorMatches(wildcard, unsupportedError("the frobnicate integration")) {
+		t.Error("States.TaskFailed must not match States.Runtime")
+	}
+}
+
+func TestErrorMatches_predefinedNames(t *testing.T) {
+	// Given: every reserved error name in the language
+	for _, name := range predefinedErrorNamesForTest {
+		t.Run(name, func(t *testing.T) {
+			failure := &stateError{name: name}
+
+			// Then: naming it explicitly always matches it
+			if !errorMatches([]string{name}, failure) {
+				t.Errorf("ErrorEquals [%q] should match the error %q", name, name)
+			}
+
+			// And: both wildcards cover it, except States.Runtime
+			wantWildcard := name != errRuntime
+			for _, wildcard := range []string{errAll, errTaskFailed} {
+				if got := errorMatches([]string{wildcard}, failure); got != wantWildcard {
+					t.Errorf("ErrorEquals [%q] matching %q = %v, want %v", wildcard, name, got, wantWildcard)
+				}
+			}
+
+			// And: it is not a wildcard itself unless it is one of the two —
+			// States.Timeout must not catch a States.Permissions failure
+			if name == errAll || name == errTaskFailed {
+				return
+			}
+			if errorMatches([]string{name}, &stateError{name: "SomeOtherError"}) {
+				t.Errorf("ErrorEquals [%q] must match literally, not as a wildcard", name)
+			}
+		})
+	}
+}
+
+func TestMatchRetrier_statesTaskFailedRetriesAServiceError(t *testing.T) {
+	// Given: the retrier shape AWS's own documentation suggests, against the
+	// error a Lambda Task really raises
+	two := 2
+	retriers := []aslRetrier{{ErrorEquals: []string{errTaskFailed}, MaxAttempts: &two}}
+	attempts := []int{0}
+	failure := &stateError{name: "Lambda.ResourceNotFoundException"}
+
+	// When/Then: it retries until its attempts run out
+	for i := 0; i < 2; i++ {
+		if got := matchRetrier(retriers, attempts, failure); got != 0 {
+			t.Fatalf("attempt %d: matchRetrier = %d, want 0", i, got)
+		}
+		attempts[0]++
+	}
+	if got := matchRetrier(retriers, attempts, failure); got != -1 {
+		t.Fatalf("matchRetrier after exhaustion = %d, want -1", got)
+	}
+}
+
+func TestMatchCatcher_statesTaskFailedCatchesAServiceError(t *testing.T) {
+	// Given: the Catch shape real state machines are written with
+	catchers := []aslCatcher{{ErrorEquals: []string{errTaskFailed}, Next: "Handled"}}
+
+	// When: a Task fails with a service error name
+	got := matchCatcher(catchers, &stateError{name: "Lambda.ResourceNotFoundException"})
+
+	// Then: it is caught
+	if got == nil {
+		t.Fatal("States.TaskFailed did not catch Lambda.ResourceNotFoundException")
+	}
+	if got.Next != "Handled" {
+		t.Fatalf("catcher Next = %q, want Handled", got.Next)
+	}
+
+	// And: an Overcast gap still is not
+	if matchCatcher(catchers, unsupportedError("distributed Map")) != nil {
+		t.Error("States.TaskFailed must not catch States.Runtime")
+	}
+}
+
+// ─── Per-state fields Overcast cannot evaluate ────────────────────────────────
+
+func TestUnsupportedStateFields_refusesJSONataAndVariables(t *testing.T) {
+	cases := []struct {
+		name  string
+		state string
+		want  bool
+	}{
+		{name: "plain JSONPath Pass", state: `{"Type": "Pass", "End": true}`, want: false},
+		{name: "explicit JSONPath", state: `{"Type": "Pass", "QueryLanguage": "JSONPath", "End": true}`, want: false},
+		{name: "per-state JSONata", state: `{"Type": "Pass", "QueryLanguage": "JSONata", "Output": "{% 1+1 %}", "End": true}`, want: true},
+		{name: "per-state JSONata without Output", state: `{"Type": "Pass", "QueryLanguage": "JSONata", "End": true}`, want: true},
+		{name: "Output alone", state: `{"Type": "Pass", "Output": "{% 1+1 %}", "End": true}`, want: true},
+		{name: "Assign", state: `{"Type": "Pass", "Assign": {"total": 1}, "End": true}`, want: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: one state as written in a definition
+			var state aslState
+			if err := json.Unmarshal([]byte(tc.state), &state); err != nil {
+				t.Fatalf("unmarshal state: %v", err)
+			}
+
+			// When: the interpreter checks what it can evaluate
+			serr := unsupportedStateFields("S", &state)
+
+			// Then: anything it cannot evaluate is a loud States.Runtime, never
+			// a field quietly dropped
+			if tc.want != (serr != nil) {
+				t.Fatalf("unsupportedStateFields = %v, want refusal = %v", serr, tc.want)
+			}
+			if serr != nil && serr.name != errRuntime {
+				t.Errorf("error name = %q, want %s", serr.name, errRuntime)
+			}
+		})
+	}
+}
+
+func TestTaskTimeout_resolvesSecondsAndPath(t *testing.T) {
+	input := map[string]any{"budget": float64(7)}
+
+	// Given: no timeout declared — AWS leaves only the execution's own
+	got, serr := taskTimeout(&aslState{}, input, nil)
+	if serr != nil || got != nil {
+		t.Fatalf("taskTimeout(no fields) = %v, %v; want nil, nil", got, serr)
+	}
+
+	// Given: a literal TimeoutSeconds
+	got, serr = taskTimeout(&aslState{TimeoutSeconds: 3}, input, nil)
+	if serr != nil || got == nil || *got != 3 {
+		t.Fatalf("taskTimeout(TimeoutSeconds: 3) = %v, %v", got, serr)
+	}
+
+	// Given: a TimeoutSecondsPath, which takes precedence
+	got, serr = taskTimeout(&aslState{TimeoutSeconds: 3, TimeoutSecondsPath: "$.budget"}, input, nil)
+	if serr != nil || got == nil || *got != 7 {
+		t.Fatalf("taskTimeout(TimeoutSecondsPath) = %v, %v", got, serr)
+	}
+
+	// Given: a path that does not resolve to a positive number
+	if _, serr = taskTimeout(&aslState{TimeoutSecondsPath: "$.missing"}, input, nil); serr == nil {
+		t.Fatal("an unresolvable TimeoutSecondsPath should fail the state, not be ignored")
+	}
+}
+
 func TestMatchRetrier_exhaustsAttempts(t *testing.T) {
 	// Given: a retrier with two attempts
 	two := 2
@@ -431,9 +614,13 @@ func TestStatusForError_distinguishesAbortFromTimeoutAndFailure(t *testing.T) {
 	}{
 		{"stopped by StopExecution", &stateError{name: "OperatorStop", cause: "asked", aborted: true}, statusAborted},
 		{"stopped with no reason given", &stateError{aborted: true}, statusAborted},
-		{"runaway guard fired", &stateError{name: errTimeout, cause: "budget"}, statusTimedOut},
+		{"runaway guard fired", &stateError{name: errTimeout, cause: "budget", budgetExpired: true}, statusTimedOut},
 		{"ordinary failure", &stateError{name: errTaskFailed}, statusFailed},
 		{"unsupported ASL", unsupportedError("something"), statusFailed},
+		// Only the execution's own budget ends an execution TIMED_OUT. A Task
+		// that blew its TimeoutSeconds, and a Fail state that happens to spell
+		// States.Timeout, are ordinary failures on AWS.
+		{"task-level timeout", &stateError{name: errTimeout, cause: "the Task state \"T\" exceeded its TimeoutSeconds of 1"}, statusFailed},
 	}
 
 	for _, tc := range cases {

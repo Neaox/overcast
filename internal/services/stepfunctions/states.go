@@ -217,6 +217,9 @@ func (in *interpreter) runRetryable(ctx context.Context, name string, state *asl
 		if catcher == nil {
 			return nil, "", false, serr
 		}
+		if unsupported := unsupportedCatcherFields(name, catcher); unsupported != nil {
+			return nil, "", false, unsupported
+		}
 		errorOutput := map[string]any{"Error": serr.name, "Cause": serr.cause}
 		output, applyErr := applyResultPath(catcher.ResultPath, raw, errorOutput)
 		if applyErr != nil {
@@ -255,6 +258,19 @@ func matchRetrier(retriers []aslRetrier, attempts []int, serr *stateError) int {
 	return -1
 }
 
+// unsupportedCatcherFields is unsupportedStateFields for the catcher that
+// matched. It is checked at the point the catcher fires rather than up front,
+// because a Catch that never runs changes nothing about the execution.
+func unsupportedCatcherFields(name string, catcher *aslCatcher) *stateError {
+	if len(catcher.Output) > 0 {
+		return unsupportedError("the JSONata Output field on a Catch of state %q", name)
+	}
+	if len(catcher.Assign) > 0 {
+		return unsupportedError("Assign (variables) on a Catch of state %q", name)
+	}
+	return nil
+}
+
 func matchCatcher(catchers []aslCatcher, serr *stateError) *aslCatcher {
 	for i := range catchers {
 		if errorMatches(catchers[i].ErrorEquals, serr) {
@@ -264,15 +280,36 @@ func matchCatcher(catchers []aslCatcher, serr *stateError) *aslCatcher {
 	return nil
 }
 
-// errorMatches implements ASL's ErrorEquals matching. States.ALL is a wildcard
-// over every error name except States.Runtime, which AWS documents as neither
-// retriable nor catchable.
+// wildcardErrorEquals are the two ErrorEquals entries AWS treats as wildcards
+// rather than as literal error names.
+//
+// States.ALL is the language's own wildcard. States.TaskFailed is documented
+// as one too — "when used in a retry or catch, States.TaskFailed acts as a
+// wildcard that matches any known error name except for States.Runtime" — and
+// it is the matcher real state machines reach for first, because it is what
+// catches a Lambda function error whose name the workflow does not know in
+// advance (`Lambda.ResourceNotFoundException`, a custom `errorType`, …).
+// Comparing it as a literal string made every `Retry`/`Catch` written the
+// normal way do nothing at all.
+//
+// Every other predefined name matches literally, which is what the spec asks
+// for: States.Timeout, States.Permissions, States.ResultPathMatchFailure,
+// States.ParameterPathFailure, States.BranchFailed, States.NoChoiceMatched,
+// States.IntrinsicFailure, States.ExceedToleratedFailureThreshold and
+// States.DataLimitExceeded are error names a state raises, not wildcards over
+// other names — as are service and Lambda error names.
+var wildcardErrorEquals = map[string]bool{errAll: true, errTaskFailed: true}
+
+// errorMatches implements ASL's ErrorEquals matching. Neither wildcard reaches
+// States.Runtime, which AWS documents as neither retriable nor catchable and
+// which is also how an Overcast "not supported" failure stays loud; naming it
+// explicitly still matches.
 func errorMatches(errorEquals []string, serr *stateError) bool {
 	for _, want := range errorEquals {
-		if want == errAll && serr.name != errRuntime {
+		if want == serr.name {
 			return true
 		}
-		if want == serr.name {
+		if wildcardErrorEquals[want] && serr.name != errRuntime {
 			return true
 		}
 	}
