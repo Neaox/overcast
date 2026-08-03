@@ -85,7 +85,15 @@ for (const g of existingGroups) {
 }
 
 const registry = loadRegistry();
-validateImpls(registry, impls, SUITE);
+try {
+  validateImpls(registry, impls, SUITE);
+} catch (err) {
+  // Unusable impl registrations — see validateImpls. Aborting is the point:
+  // binding a test to another group's implementation would report a result for
+  // a test that never ran. Print the message, not a stack trace.
+  process.stderr.write(`${(err as Error).message}\n`);
+  process.exit(1);
+}
 
 const allGroups = buildGroupsFromRegistry(registry, impls, {
   suite: SUITE,
