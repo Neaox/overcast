@@ -560,9 +560,9 @@ func (h *Handler) deliverStreamEvent(ctx context.Context, evt events.Event) {
 			continue
 		}
 		record := dynamoDBStreamRecord(p.SourceArn, payload)
-		//nolint:errcheck // execute records the outcome; a stream record has
-		// nowhere to be redelivered from.
-		_ = h.execute(ctx, p, []map[string]any{record})
+		// A stream record has nowhere to be redelivered from, so a failed
+		// delivery is retried in place and dead-lettered rather than dropped.
+		h.executeStream(ctx, p, []map[string]any{record})
 	}
 }
 

@@ -35,19 +35,24 @@ const (
 	outcomeDelivered = "delivered"
 	outcomeFiltered  = "filtered"
 	outcomeFailed    = "failed"
+	outcomeDLQ       = "dlq"
 )
 
 // deliveryRecord is one pipe execution.
 type deliveryRecord struct {
-	Region     string    `json:"Region"`
-	Pipe       string    `json:"Pipe"`
-	SourceARN  string    `json:"SourceArn"`
-	TargetARN  string    `json:"TargetArn"`
-	TargetType string    `json:"TargetType"`
-	Records    int       `json:"Records"`
-	Outcome    string    `json:"Outcome"`
-	Error      string    `json:"Error,omitempty"`
-	Time       time.Time `json:"Time"`
+	Region     string `json:"Region"`
+	Pipe       string `json:"Pipe"`
+	SourceARN  string `json:"SourceArn"`
+	TargetARN  string `json:"TargetArn"`
+	TargetType string `json:"TargetType"`
+	Records    int    `json:"Records"`
+	Outcome    string `json:"Outcome"`
+	// Attempts is how many delivery attempts the execution took. A stream
+	// source retries in place (see executeStream); a polled source retries by
+	// leaving its cursor or message alone, so it always reports 1.
+	Attempts int       `json:"Attempts"`
+	Error    string    `json:"Error,omitempty"`
+	Time     time.Time `json:"Time"`
 }
 
 // deliveryLog is a fixed-capacity ring of execution outcomes, newest last.

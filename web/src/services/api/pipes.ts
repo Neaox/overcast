@@ -40,8 +40,10 @@ export interface PipeDelivery {
   TargetArn: string
   TargetType: string
   Records: number
-  /** "delivered" | "filtered" | "failed" */
+  /** "delivered" | "filtered" | "failed" | "dlq" */
   Outcome: string
+  /** How many delivery attempts the execution took. */
+  Attempts: number
   Error?: string
   Time: string
 }

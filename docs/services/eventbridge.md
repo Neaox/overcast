@@ -22,7 +22,8 @@ same-process target delivery.
 
 > [!WARNING]
 > **Emulation tier: Partial** — EventBridge matches common event patterns and fans
-> matched events out to Lambda, SQS, SNS, Step Functions, Kinesis and Firehose targets;
+> matched events out to Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and
+> EventBridge event bus targets;
 > scheduled rules can also invoke ECS/Fargate `RunTask` targets. Target types outside
 > that list, archives/replay, API destinations and advanced pattern operators
 > (`prefix`, `numeric`, `anything-but`, …) are still incomplete.
@@ -43,11 +44,20 @@ same-process target delivery.
   access and array indexing. `InputTransformer` templates may reference
   `<aws.events.rule-name>`, `<aws.events.rule-arn>`, `<aws.events.event.json>` and
   `<aws.events.event.ingestion-time>`.
+- **Event bus targets.** A rule may target another event bus. The event is republished
+  there through `PutEvents` carrying the **original** `source`, `detail-type`, `detail` and
+  `resources`, so a rule on the downstream bus can match on the fields a real rule filters
+  on. A target that sets `Input`, `InputPath` or `InputTransformer` replaces the forwarded
+  `detail` with the transformed payload and keeps the routing fields. Every hop is a nested
+  in-process call, so a chain is capped at 4 hops: a cycle of buses forwarding to each other
+  terminates with a delivery error naming the hop budget rather than exhausting the stack.
 - **Retries and dead-letter queues.** A failed delivery is retried up to the target's
-  `RetryPolicy.MaximumRetryAttempts` (capped at 5 retries), then sent to the target's
-  `DeadLetterConfig` SQS queue if one is configured, and otherwise dropped with a logged
-  warning. Retries are immediate: real EventBridge backs off over up to 24 hours, which a
-  synchronous emulator has nowhere to wait for.
+  `RetryPolicy.MaximumRetryAttempts` (capped at 5 retries) and stops early once the event is
+  older than `RetryPolicy.MaximumEventAgeInSeconds`, measured from the envelope's own `time`.
+  The event is then sent to the target's `DeadLetterConfig` SQS queue if one is configured,
+  and otherwise dropped with a logged warning. Retries are immediate: real EventBridge backs
+  off over up to 24 hours, which a synchronous emulator has nowhere to wait for — so in
+  practice the age limit only bites when a target itself is slow to fail.
 - **Delivery visibility.** Recent per-target outcomes (delivered / retried / dead-lettered /
   dropped) are exposed to the web console at `GET /_overcast/eventbridge/deliveries`, and
   each rule's targets with their resolved type at `GET /_overcast/eventbridge/rule-targets`.

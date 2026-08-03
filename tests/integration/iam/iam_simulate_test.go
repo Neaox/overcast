@@ -38,9 +38,16 @@ type evaluationXML struct {
 	} `xml:"PermissionsBoundaryDecisionDetail"`
 }
 
+type positionXML struct {
+	Line   int `xml:"Line"`
+	Column int `xml:"Column"`
+}
+
 type matchedStatement struct {
-	SourcePolicyId   string `xml:"SourcePolicyId"`
-	SourcePolicyType string `xml:"SourcePolicyType"`
+	SourcePolicyId   string       `xml:"SourcePolicyId"`
+	SourcePolicyType string       `xml:"SourcePolicyType"`
+	StartPosition    *positionXML `xml:"StartPosition"`
+	EndPosition      *positionXML `xml:"EndPosition"`
 }
 
 type resourceSpecific struct {
@@ -372,6 +379,46 @@ func TestSimulateCustomPolicy_allowStatement_allowed(t *testing.T) {
 	}
 	if results[0].MatchedStatements[0].SourcePolicyId != "PolicyInputList.1" {
 		t.Fatalf("SourcePolicyId = %q, want PolicyInputList.1", results[0].MatchedStatements[0].SourcePolicyId)
+	}
+}
+
+func TestSimulateCustomPolicy_multipleStatementsSameDocument_distinctPositions(t *testing.T) {
+	// Given: one policy document carrying two statements — an allow and a
+	// deny — the shape that used to make MatchedStatements report two
+	// identical entries, since SourcePolicyId/SourcePolicyType alone cannot
+	// tell statements within the same document apart
+	srv := helpers.NewTestServer(t)
+	doc := `{"Version":"2012-10-17","Statement":[` +
+		`{"Sid":"AllowAll","Effect":"Allow","Action":"s3:*","Resource":"*"},` +
+		`{"Sid":"DenyDelete","Effect":"Deny","Action":"s3:DeleteObject","Resource":"arn:aws:s3:::iamrc-bucket/*"}]}`
+
+	// When: the denied action is simulated
+	results := simulate(t, srv, "SimulateCustomPolicy", url.Values{
+		"PolicyInputList.member.1": {doc},
+		"ActionNames.member.1":     {"s3:DeleteObject"},
+		"ResourceArns.member.1":    {"arn:aws:s3:::iamrc-bucket/file.txt"},
+	})
+
+	// Then: the explicit deny wins, both statements are reported (AWS lists
+	// everything that applied, not just the winner) with the same
+	// SourcePolicyId (one input document) — and distinct positions, without
+	// which there is no way to tell which one actually decided the outcome
+	if results[0].EvalDecision != "explicitDeny" {
+		t.Fatalf("EvalDecision = %q, want explicitDeny", results[0].EvalDecision)
+	}
+	if len(results[0].MatchedStatements) != 2 {
+		t.Fatalf("MatchedStatements = %#v, want 2", results[0].MatchedStatements)
+	}
+	first, second := results[0].MatchedStatements[0], results[0].MatchedStatements[1]
+	if first.SourcePolicyId != "PolicyInputList.1" || second.SourcePolicyId != "PolicyInputList.1" {
+		t.Fatalf("SourcePolicyId = %+v / %+v, want both PolicyInputList.1", first, second)
+	}
+	if first.StartPosition == nil || second.StartPosition == nil {
+		t.Fatalf("StartPosition = %+v / %+v, want both set", first.StartPosition, second.StartPosition)
+	}
+	if *first.StartPosition == *second.StartPosition {
+		t.Fatalf("both statements report StartPosition %+v — cannot tell which one decided the outcome",
+			*first.StartPosition)
 	}
 }
 
