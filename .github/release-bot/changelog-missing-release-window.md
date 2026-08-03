@@ -38,7 +38,12 @@ Only the repository owner, an organisation member or a collaborator can waive
 it. If that is not you, say in a comment why no note is needed and ask a
 maintainer to run the command.
 
-> While the release **PR** is still open none of this applies — add a fragment
+> This is the window *after* the release PR merged, where there is nothing left
+> to fold a fragment into. It is the only one that reads this way.
+>
+> While that PR is still **open**, none of the above applies: add a fragment
 > exactly as usual and I fold it into the release section for you on the next
-> push to `main`, deleting the fragment as I go. This window is the one after
-> that PR merged, where there is nothing left to fold into.
+> push to `main`, deleting the fragment as I go.
+>
+> And if you are reading this on the release PR itself, I am wrong and it is a
+> bug — that PR is exempt and I should have said nothing.

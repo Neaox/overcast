@@ -19,6 +19,9 @@ Three exemptions, none of them a judgement about the change:
   * Every file the PR touches is in an area that never produces a release
     note — `EXEMPT_*` below. Every one: a single file outside them puts the
     whole PR back in scope, because that file is the one that might ship.
+  * The PR *is* the release — `release_pr` below. It consumes other PRs'
+    fragments into a version section and adds none by construction, so the
+    question has no answer it could give.
 
 Editing `CHANGELOG.md` is never an answer here, in any window. Only the release
 PR touches that file: while one is open, `release-prep.yml` merges `main` into
@@ -27,9 +30,10 @@ merely conflict — the bot aborts the merge and the release PR stops refreshing
 itself until somebody untangles it. Fragments exist precisely so that concurrent
 PRs never meet in one file. See RELEASE.md § Keeping The Release PR Current.
 
-Three questions, deliberately apart:
+Four questions, deliberately apart:
 
     exempt(path)               can a change to this file ever be release-noted?
+    release_pr(paths, ...)     is this PR the release itself?
     parse_command(body)        is this comment a waiver command, and a valid one?
     latest_waiver(comments)    what is the standing answer on this PR?
 
@@ -64,8 +68,14 @@ MAX_REASON = 500
 
 VERDICT_FRAGMENT = "fragment"
 VERDICT_NOT_APPLICABLE = "not-applicable"
+VERDICT_RELEASE_PR = "release-pr"
 VERDICT_WAIVED = "waived"
 VERDICT_MISSING = "missing"
+
+# The whole of what a release-prep PR touches: the version it names, the
+# section that names it, and the fragments it consumes into that section.
+RELEASE_PR_FILES = frozenset({"VERSION", "CHANGELOG.md"})
+FRAGMENT_DIR = ".changelog/"
 
 # Areas whose contents cannot reach a user of Overcast, so a change confined to
 # them can never owe a release note.
@@ -172,6 +182,17 @@ class Waiver:
     url: str = ""
 
 
+def tidy(path: str) -> str:
+    """A path in the form the tables here are written in.
+
+    Not lstrip("./"): that strips a character *set*, and every dotted path —
+    .agents/, .changelog/README.md — would lose its leading dot and stop
+    matching.
+    """
+    path = path.strip()
+    return path[2:] if path.startswith("./") else path
+
+
 def exempt(path: str) -> bool:
     """Can a change to this file ever be worth a release note?
 
@@ -179,12 +200,7 @@ def exempt(path: str) -> bool:
     changed inside a file would be a judgement about the change, and judging
     the change is the thing only the author can do.
     """
-    # Not lstrip("./"): that strips a character *set*, and every exempt dotted
-    # path — .agents/, .changelog/README.md — would lose its leading dot and
-    # stop matching.
-    path = path.strip()
-    if path.startswith("./"):
-        path = path[2:]
+    path = tidy(path)
     if not path:
         return False
     return (
@@ -197,6 +213,72 @@ def exempt(path: str) -> bool:
 def in_scope(paths: list[str]) -> list[str]:
     """The files that put this PR in scope — empty when none of them do."""
     return [path for path in paths if path.strip() and not exempt(path)]
+
+
+def has_release_section(changelog: str, version: str) -> bool:
+    """Does `changelog` carry a non-empty `## [<version>]` section?
+
+    A deliberately small reading of the file rather than a second copy of
+    check-release-changelog.py's validator. That one decides whether a release
+    may publish and has to be exhaustive about it; this one only has to
+    recognise a release PR, and a stricter reading here would turn a
+    malformed changelog into a *missing fragment* complaint — the wrong
+    message about the wrong file. The release gate says what is wrong with
+    `CHANGELOG.md`, on the same PR, in its own words.
+    """
+    changelog = re.sub(r"<!--.*?-->", "", changelog, flags=re.S)
+    heading = re.search(rf"^## \[{re.escape(version)}\].*$", changelog, flags=re.M)
+    if heading is None:
+        return False
+    rest = changelog[heading.end() :]
+    following = re.search(r"^## ", rest, flags=re.M)
+    body = rest[: following.start()] if following else rest
+    # Category headings are the section's skeleton, not its contents: a
+    # section holding only `### Fixed` is as empty as one holding nothing.
+    return any(
+        line.strip() and not line.strip().startswith("###") for line in body.splitlines()
+    )
+
+
+def release_pr(paths: list[str], *, candidate: bool, version: str, changelog: str) -> bool:
+    """Is this PR the release itself?
+
+    A release-prep PR consumes other PRs' fragments into a version section and
+    adds none of its own, by construction. There is no fragment it could add
+    and no reason it could give, so asking it the question means a
+    `/no-changelog` comment on every single release — the reflex the reason
+    field exists to prevent, performed on a schedule.
+
+    Structural, and all three parts required, because this is the one
+    exemption that is not a statement about where a file lives:
+
+      * `VERSION` and `CHANGELOG.md` both change, and nothing else does bar
+        fragment files. **Every** file, as with the exempt areas: one code
+        file on the branch and the PR is asked again, because a release branch
+        is an ordinary branch that a late fix can land on and that fix ships.
+      * The version it names has no tag yet, so a PR that moves `VERSION` back
+        to something already published is not mistaken for a release. The
+        caller supplies this — it is `scripts/release-candidate-check.sh`, the
+        same predicate the rest of CI hangs off.
+      * `CHANGELOG.md` carries a non-empty `## [<version>]` section: the
+        release note this PR exists to write, and the thing that distinguishes
+        curating a release from merely bumping a number.
+
+    Not spoofable by an ordinary PR wanting the gate to go quiet: `VERSION` is
+    owned in CODEOWNERS, and test.yml fails any PR that changes it whose
+    author is neither the repository owner nor the release App.
+    """
+    if not candidate or not version:
+        return False
+    touched = {tidy(path) for path in paths if path.strip()}
+    if not RELEASE_PR_FILES <= touched:
+        return False
+    if any(
+        path not in RELEASE_PR_FILES and not path.startswith(FRAGMENT_DIR)
+        for path in touched
+    ):
+        return False
+    return has_release_section(changelog, version)
 
 
 def clean_reason(text: str) -> str:
@@ -307,6 +389,22 @@ def load_changed(path: str) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+def load_changelog(path: str) -> str:
+    """CHANGELOG.md's text, or none of it.
+
+    Degrades towards asking: an unreadable changelog has no release section in
+    it, so the PR is not recognised as the release and the question gets asked
+    rather than skipped.
+    """
+    if not path:
+        return ""
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError as err:
+        print(f"::warning::could not read {path} ({err}); assuming this is not the release PR", file=sys.stderr)
+        return ""
+
+
 def command_check(args: argparse.Namespace) -> int:
     """Print one verdict word; write the waiver's details when there is one."""
     if [path for path in args.fragments if path.strip()]:
@@ -315,9 +413,27 @@ def command_check(args: argparse.Namespace) -> int:
 
     changed = load_changed(args.changed_files_file)
 
+    # Before the scope test, not after: a release PR is never all-exempt —
+    # VERSION and CHANGELOG.md are both in scope on purpose — so it would fall
+    # through to `missing` and ask the release to write itself a release note.
+    version = args.version.strip()
+    if release_pr(
+        changed,
+        candidate=args.release_candidate == "true",
+        version=version,
+        changelog=load_changelog(args.changelog),
+    ):
+        print(
+            f"::notice::This is the release PR for {version}: it consumes fragments into the release section and adds none.",
+            file=sys.stderr,
+        )
+        print(VERDICT_RELEASE_PR)
+        return 0
+
     # No CHANGELOG.md carve-out, deliberately. A release window forbids
     # fragments, but the way out of that is to wait for the tag or to waive —
-    # never to hand-edit the file the release PR owns.
+    # never to hand-edit the file the release PR owns. The exemption above is
+    # not one: it takes the whole shape of the PR, not the presence of an edit.
     scoped = in_scope(changed)
     if changed and not scoped:
         print("::notice::Every file changed here is in an area that never produces a release note.", file=sys.stderr)
@@ -378,6 +494,15 @@ def main() -> int:
     )
     check.add_argument(
         "--waiver-file", default="", help="write the standing waiver here as JSON"
+    )
+    check.add_argument(
+        "--release-candidate",
+        default="false",
+        help="'true' when the checked-out VERSION has no tag yet (release-candidate-check.sh)",
+    )
+    check.add_argument("--version", default="", help="the checked-out VERSION")
+    check.add_argument(
+        "--changelog", default="", help="the checked-out CHANGELOG.md"
     )
     check.add_argument("fragments", nargs="*", help="fragment paths this PR adds")
     check.set_defaults(func=command_check)

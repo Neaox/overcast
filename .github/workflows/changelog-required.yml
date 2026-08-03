@@ -66,14 +66,26 @@ jobs:
       # any follow-up after a failed release run, which a release/* branch-name
       # test would miss.
       #
-      # It changes only which message is posted, never the verdict. While the
-      # release *PR* is open this is false, and a fragment is asked for as
-      # usual — release-prep.yml folds it into the release section on the next
-      # push to main and deletes the fragment, unattended. Once that PR has
-      # merged there is nothing left to fold into and an unconsumed fragment
-      # fails the release, so the ask has to say "wait for the tag or waive"
-      # rather than "add a fragment". Neither message offers a CHANGELOG.md
-      # edit: that file belongs to the release PR.
+      # It is read *twice below*, for two different things, and the difference
+      # is the whole of why this job used to get the release PR wrong.
+      #
+      # Which window a PR is in. On an ordinary PR the checked-out VERSION
+      # comes from main, so while the release PR is merely open this is false
+      # and a fragment is asked for exactly as usual — release-prep.yml folds
+      # it into the release section on the next push to main and deletes the
+      # fragment, unattended. Once that PR has merged, main carries the
+      # untagged version, an unconsumed fragment fails the release, and there
+      # is nothing left to fold into — so the ask changes wording to "wait for
+      # the tag or waive". Neither message offers a CHANGELOG.md edit: that
+      # file belongs to the release PR.
+      #
+      # Whether this PR *is* the release. On the release branch the
+      # checked-out VERSION is the new one, so this is true there too — which
+      # is a third case, not the second one. Passed to the check as one part of
+      # the release-PR shape (with VERSION, CHANGELOG.md and the version
+      # section), it exempts that PR outright. Left to select a message on its
+      # own, as it was, it posted the merged-and-untagged text on the very PR
+      # that had not merged yet.
       - name: Check release candidate
         id: release
         run: |
@@ -99,6 +111,8 @@ jobs:
         id: decide
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RELEASE_CANDIDATE: ${{ steps.release.outputs.candidate }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
 
@@ -116,10 +130,25 @@ jobs:
           # area still shows the path it came from.
           git diff --name-only --no-renames "$BASE_SHA...HEAD" > changed.txt
 
+          # Which of the two release-window messages to use, if one is needed
+          # at all. A PR that moves VERSION to the untagged version *is* the
+          # release, whatever else it carries — so it must never be told the
+          # release has already merged. The pure case is exempted outright by
+          # the check below; this covers the impure one, a release branch that
+          # also carries a code change and therefore does owe a note.
+          if grep -qx 'VERSION' changed.txt; then
+            echo "on_release_branch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "on_release_branch=false" >> "$GITHUB_OUTPUT"
+          fi
+
           verdict="$(python3 scripts/changelog-required.py check \
             --changed-files-file changed.txt \
             --comments-file comments.json \
             --waiver-file waiver.json \
+            --release-candidate "$RELEASE_CANDIDATE" \
+            --version "$RELEASE_VERSION" \
+            --changelog CHANGELOG.md \
             "${fragments[@]}")"
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           echo "Verdict: $verdict"
@@ -130,6 +159,7 @@ jobs:
           VERDICT: ${{ steps.decide.outputs.verdict }}
           RELEASE_CANDIDATE: ${{ steps.release.outputs.candidate }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          ON_RELEASE_BRANCH: ${{ steps.decide.outputs.on_release_branch }}
         run: |
           set -euo pipefail
           if [ "$VERDICT" = "waived" ]; then
@@ -138,9 +168,15 @@ jobs:
             WAIVER_URL="$(jq -r '.url' waiver.json)"
             export WAIVED_BY WAIVER_REASON WAIVER_URL
             python3 scripts/render-template.py .github/release-bot/changelog-waived.md > comment.md
+          elif [ "$RELEASE_CANDIDATE" = "true" ] && [ "$ON_RELEASE_BRANCH" = "true" ]; then
+            # This PR is the release and carries something else besides. The
+            # note goes into its own release section — the one PR where a
+            # CHANGELOG.md edit is the answer rather than the thing to avoid.
+            python3 scripts/render-template.py \
+              .github/release-bot/changelog-missing-release-branch.md > comment.md
           elif [ "$RELEASE_CANDIDATE" = "true" ]; then
-            # A fragment would fail the release, so the ask has to name the
-            # other place to write it.
+            # The release has merged and is waiting to be tagged: a fragment
+            # would fail it, so the ask has to name the other place to write it.
             python3 scripts/render-template.py \
               .github/release-bot/changelog-missing-release-window.md > comment.md
           else
@@ -152,6 +188,17 @@ jobs:
         if: steps.decide.outputs.verdict == 'not-applicable'
         run: |
           echo "::notice::Every file changed here is in an area that never produces a release note (compat/, tests/ and test files, docs/plans/, docs/dev/, agent and editor config, contributor docs, local tooling). The full list is EXEMPT_* in scripts/changelog-required.py."
+
+      # The release PR writes the release notes; it does not owe one. Silent on
+      # the PR itself rather than a comment, because the release PR already
+      # carries the prep summary, the refresh comments and the RC comment, and
+      # a fourth saying nothing happened is noise on the busiest PR in the repo.
+      - name: Note that this is the release PR
+        if: steps.decide.outputs.verdict == 'release-pr'
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          echo "::notice::This is the release PR for $RELEASE_VERSION — it touches only VERSION, CHANGELOG.md and the fragments it consumes, so it adds no fragment by construction. Push anything else to this branch and the check asks again."
 
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         if: steps.app.outputs.available == 'true'
