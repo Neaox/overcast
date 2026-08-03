@@ -156,8 +156,10 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			return fmt.Errorf("ecs: %w", err)
 		}
 
-		// Build environment variables.
+		// Build environment variables, including any resolved from Secrets
+		// Manager or SSM via the definition's secrets.
 		env := buildContainerEnv(cd, overrides[cd.Name], endpoint)
+		env = append(env, h.secretEnv(ctx, cd)...)
 
 		// Build command.
 		var cmd []string
@@ -186,19 +188,6 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 					}
 				}
 			}
-		}
-
-		// Secrets are modelled but not resolved yet, so say so rather than
-		// starting a container quietly missing the variables it was promised.
-		if len(cd.Secrets) > 0 {
-			names := make([]string, 0, len(cd.Secrets))
-			for _, s := range cd.Secrets {
-				names = append(names, s.Name)
-			}
-			h.log.Warn("ecs: container secrets are not injected — the container starts without them",
-				zap.String("container", cd.Name),
-				zap.Strings("secrets", names),
-				zap.String("hint", "resolve the value and pass it through containerDefinitions[].environment for now"))
 		}
 
 		containerName := fmt.Sprintf("overcast-ecs-%s-%s-%s", clusterName, taskID[:8], cd.Name)

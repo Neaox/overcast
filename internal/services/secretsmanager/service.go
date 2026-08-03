@@ -3,6 +3,7 @@
 package secretsmanager
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -64,6 +65,26 @@ func (s *Service) InitBus(bus *events.Bus) {
 // drives. Rotation refuses to run rather than pretending, when it is absent.
 func (s *Service) InitLambdaInvoker(invoker events.FunctionSyncInvoker) {
 	s.handler.InitLambdaInvoker(invoker)
+}
+
+// SecretValue returns the current SecretString for a secret named by ID, name
+// or ARN. Used by ECS to resolve a container definition's `secrets`, which is
+// how a task receives credentials without them being written into the task
+// definition. ok is false for an unknown secret or one holding only binary.
+func (s *Service) SecretValue(ctx context.Context, secretID string) (string, bool) {
+	sec, aerr := s.handler.store.resolveSecret(ctx, secretID)
+	if aerr != nil || sec == nil {
+		return "", false
+	}
+	for i := range sec.Versions {
+		if sec.Versions[i].VersionId == sec.CurrentVersionId {
+			if sec.Versions[i].SecretString == "" {
+				return "", false
+			}
+			return sec.Versions[i].SecretString, true
+		}
+	}
+	return "", false
 }
 
 // Name returns the service identifier.

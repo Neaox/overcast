@@ -3,6 +3,7 @@
 package ssm
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -43,6 +44,21 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 // InitBus wires the event bus for parameter lifecycle events.
 func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus
+}
+
+// ParameterValue returns the latest value of an SSM parameter. Used by ECS to
+// resolve a container definition's `secrets` that point at Parameter Store.
+// ok is false for an unknown parameter.
+func (s *Service) ParameterValue(ctx context.Context, name string) (string, bool) {
+	rec, err := s.handler.store.Get(ctx, name)
+	if err != nil || rec == nil {
+		return "", false
+	}
+	latest := rec.Latest()
+	if latest == nil {
+		return "", false
+	}
+	return latest.Value, true
 }
 
 // Name satisfies router.Service.

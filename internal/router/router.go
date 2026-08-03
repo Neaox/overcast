@@ -494,6 +494,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	ecsSvc.SetEFSResolver(efsSvc)
 	ecsSvc.InitLogWriter(logsSvc.LogWriter())
 	ecsSvc.SetTargetRegistrar(elbv2Svc)
+	ecsSvc.SetSecretResolvers(smSvc, ssmSvc)
 	efsSvc.SetSubnetZoneResolver(ec2Svc)
 	// ECS/RDS → EC2: resolve subnet-backed launches against VPC network state.
 	ecsSvc.SetVPCResolver(ec2Svc)

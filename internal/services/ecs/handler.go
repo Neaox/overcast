@@ -43,6 +43,8 @@ type Handler struct {
 	vpcResolver VPCNetworkResolver
 	efsResolver EFSVolumeResolver
 	targets     TargetRegistrar
+	secrets     SecretsManagerResolver
+	parameters  ParameterResolver
 	// logWriter ships task container output to CloudWatch Logs for containers
 	// using the awslogs driver. Nil until InitLogWriter is called.
 	logWriter     events.LogWriter
