@@ -702,6 +702,35 @@ class FoldEntriesTest(unittest.TestCase):
 
 		self.assertIn("- **BREAKING** [state] the v1 layout\n  migration: export first", result)
 
+	def test_repeated_folds_do_not_stack_blank_lines(self) -> None:
+		# `\s*$` on the category heading matched across the newline, so
+		# `heading.end()` landed past it and the rejoin's "\n\n" added one more
+		# newline every time. release-prep folds on every push to `main` while a
+		# release PR is open, so the section grew a blank line per push — three
+		# had accumulated under 0.0.1-alpha.29's `### Fixed` before anyone looked.
+		text = FOLD_FIXTURE
+		for source in ("+ [lambda] one\n", "+ [kinesis] two\n", "+ [efs] three\n"):
+			entries, errors = changelog.parse_entries(source)
+			self.assertEqual([], errors)
+
+			text = changelog.fold_entries(text, "0.0.1-alpha.2", entries)
+
+			after = text[text.index("### Added") + len("### Added") :]
+			self.assertEqual(2, len(after) - len(after.lstrip("\n")))
+
+	def test_matches_a_category_heading_with_trailing_whitespace(self) -> None:
+		# What the `\s*` was there for; `[ \t]*` keeps it without eating the
+		# line ending.
+		entries, errors = changelog.parse_entries("+ [lambda] a new feature\n")
+		self.assertEqual([], errors)
+
+		result = changelog.fold_entries(
+			FOLD_FIXTURE.replace("### Added", "### Added  "), "0.0.1-alpha.2", entries
+		)
+
+		self.assertIn("- [lambda] a new feature", result)
+		self.assertIn("### Added  \n\n- **SQS (long polling)**", result)
+
 	def test_rejects_a_missing_release_section(self) -> None:
 		entries, _ = changelog.parse_entries("+ [sqs] a thing\n")
 
