@@ -9,7 +9,6 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as StepfunctionsRouteImport } from './routes/stepfunctions'
 import { Route as SesRouteImport } from './routes/ses'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as MapRouteImport } from './routes/map'
@@ -22,6 +21,7 @@ import { Route as DebugRouteImport } from './routes/debug'
 import { Route as ServiceRouteImport } from './routes/$service'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as StsIndexRouteImport } from './routes/sts/index'
+import { Route as StepfunctionsIndexRouteImport } from './routes/stepfunctions/index'
 import { Route as SsmIndexRouteImport } from './routes/ssm/index'
 import { Route as SqsIndexRouteImport } from './routes/sqs/index'
 import { Route as SnsIndexRouteImport } from './routes/sns/index'
@@ -48,6 +48,7 @@ import { Route as CloudformationIndexRouteImport } from './routes/cloudformation
 import { Route as AppsyncIndexRouteImport } from './routes/appsync/index'
 import { Route as ApplicationsIndexRouteImport } from './routes/applications/index'
 import { Route as ApigatewayIndexRouteImport } from './routes/apigateway/index'
+import { Route as StepfunctionsNameRouteImport } from './routes/stepfunctions/$name'
 import { Route as SsmNameRouteImport } from './routes/ssm/$name'
 import { Route as SqsQueueRouteImport } from './routes/sqs/$queue'
 import { Route as SnsTopicRouteImport } from './routes/sns/$topic'
@@ -90,14 +91,10 @@ import { Route as CloudwatchLogsEventsRouteImport } from './routes/cloudwatch/lo
 import { Route as ApigatewayRestApiIdRouteImport } from './routes/apigateway/rest.$apiId'
 import { Route as ApigatewayHttpApiIdRouteImport } from './routes/apigateway/http.$apiId'
 import { Route as CloudwatchLogsGroupNameIndexRouteImport } from './routes/cloudwatch/logs/$groupName/index'
+import { Route as StepfunctionsExecutionNameExecutionRouteImport } from './routes/stepfunctions/execution.$name.$execution'
 import { Route as EcsClusterTasksTaskIdRouteImport } from './routes/ecs/$cluster.tasks.$taskId'
 import { Route as CloudwatchLogsGroupNameStreamNameRouteImport } from './routes/cloudwatch/logs/$groupName/$streamName'
 
-const StepfunctionsRoute = StepfunctionsRouteImport.update({
-  id: '/stepfunctions',
-  path: '/stepfunctions',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SesRoute = SesRouteImport.update({
   id: '/ses',
   path: '/ses',
@@ -156,6 +153,11 @@ const IndexRoute = IndexRouteImport.update({
 const StsIndexRoute = StsIndexRouteImport.update({
   id: '/sts/',
   path: '/sts/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StepfunctionsIndexRoute = StepfunctionsIndexRouteImport.update({
+  id: '/stepfunctions/',
+  path: '/stepfunctions/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SsmIndexRoute = SsmIndexRouteImport.update({
@@ -286,6 +288,11 @@ const ApplicationsIndexRoute = ApplicationsIndexRouteImport.update({
 const ApigatewayIndexRoute = ApigatewayIndexRouteImport.update({
   id: '/apigateway/',
   path: '/apigateway/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StepfunctionsNameRoute = StepfunctionsNameRouteImport.update({
+  id: '/stepfunctions/$name',
+  path: '/stepfunctions/$name',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SsmNameRoute = SsmNameRouteImport.update({
@@ -505,6 +512,12 @@ const CloudwatchLogsGroupNameIndexRoute =
     path: '/cloudwatch/logs/$groupName/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const StepfunctionsExecutionNameExecutionRoute =
+  StepfunctionsExecutionNameExecutionRouteImport.update({
+    id: '/stepfunctions/execution/$name/$execution',
+    path: '/stepfunctions/execution/$name/$execution',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const EcsClusterTasksTaskIdRoute = EcsClusterTasksTaskIdRouteImport.update({
   id: '/tasks/$taskId',
   path: '/tasks/$taskId',
@@ -529,7 +542,6 @@ export interface FileRoutesByFullPath {
   '/map': typeof MapRoute
   '/metrics': typeof MetricsRoute
   '/ses': typeof SesRoute
-  '/stepfunctions': typeof StepfunctionsRoute
   '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
   '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
   '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
@@ -556,6 +568,7 @@ export interface FileRoutesByFullPath {
   '/sns/$topic': typeof SnsTopicRoute
   '/sqs/$queue': typeof SqsQueueRouteWithChildren
   '/ssm/$name': typeof SsmNameRoute
+  '/stepfunctions/$name': typeof StepfunctionsNameRoute
   '/apigateway/': typeof ApigatewayIndexRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/appsync/': typeof AppsyncIndexRoute
@@ -582,6 +595,7 @@ export interface FileRoutesByFullPath {
   '/sns/': typeof SnsIndexRoute
   '/sqs/': typeof SqsIndexRoute
   '/ssm/': typeof SsmIndexRoute
+  '/stepfunctions/': typeof StepfunctionsIndexRoute
   '/sts/': typeof StsIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
@@ -600,6 +614,7 @@ export interface FileRoutesByFullPath {
   '/sqs/$queue/': typeof SqsQueueIndexRoute
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
   '/cloudwatch/logs/$groupName/': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRoutesByTo {
@@ -614,7 +629,6 @@ export interface FileRoutesByTo {
   '/map': typeof MapRoute
   '/metrics': typeof MetricsRoute
   '/ses': typeof SesRoute
-  '/stepfunctions': typeof StepfunctionsRoute
   '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
   '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
   '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
@@ -637,6 +651,7 @@ export interface FileRoutesByTo {
   '/secretsmanager/$secretName': typeof SecretsmanagerSecretNameRoute
   '/sns/$topic': typeof SnsTopicRoute
   '/ssm/$name': typeof SsmNameRoute
+  '/stepfunctions/$name': typeof StepfunctionsNameRoute
   '/apigateway': typeof ApigatewayIndexRoute
   '/applications': typeof ApplicationsIndexRoute
   '/appsync': typeof AppsyncIndexRoute
@@ -663,6 +678,7 @@ export interface FileRoutesByTo {
   '/sns': typeof SnsIndexRoute
   '/sqs': typeof SqsIndexRoute
   '/ssm': typeof SsmIndexRoute
+  '/stepfunctions': typeof StepfunctionsIndexRoute
   '/sts': typeof StsIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
@@ -681,6 +697,7 @@ export interface FileRoutesByTo {
   '/sqs/$queue': typeof SqsQueueIndexRoute
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
   '/cloudwatch/logs/$groupName': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRoutesById {
@@ -696,7 +713,6 @@ export interface FileRoutesById {
   '/map': typeof MapRoute
   '/metrics': typeof MetricsRoute
   '/ses': typeof SesRoute
-  '/stepfunctions': typeof StepfunctionsRoute
   '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
   '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
   '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
@@ -723,6 +739,7 @@ export interface FileRoutesById {
   '/sns/$topic': typeof SnsTopicRoute
   '/sqs/$queue': typeof SqsQueueRouteWithChildren
   '/ssm/$name': typeof SsmNameRoute
+  '/stepfunctions/$name': typeof StepfunctionsNameRoute
   '/apigateway/': typeof ApigatewayIndexRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/appsync/': typeof AppsyncIndexRoute
@@ -749,6 +766,7 @@ export interface FileRoutesById {
   '/sns/': typeof SnsIndexRoute
   '/sqs/': typeof SqsIndexRoute
   '/ssm/': typeof SsmIndexRoute
+  '/stepfunctions/': typeof StepfunctionsIndexRoute
   '/sts/': typeof StsIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
@@ -767,6 +785,7 @@ export interface FileRoutesById {
   '/sqs/$queue/': typeof SqsQueueIndexRoute
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
+  '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
   '/cloudwatch/logs/$groupName/': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRouteTypes {
@@ -783,7 +802,6 @@ export interface FileRouteTypes {
     | '/map'
     | '/metrics'
     | '/ses'
-    | '/stepfunctions'
     | '/apigateway/api-keys'
     | '/apigateway/usage-plans'
     | '/applications/$applicationId'
@@ -810,6 +828,7 @@ export interface FileRouteTypes {
     | '/sns/$topic'
     | '/sqs/$queue'
     | '/ssm/$name'
+    | '/stepfunctions/$name'
     | '/apigateway/'
     | '/applications/'
     | '/appsync/'
@@ -836,6 +855,7 @@ export interface FileRouteTypes {
     | '/sns/'
     | '/sqs/'
     | '/ssm/'
+    | '/stepfunctions/'
     | '/sts/'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
@@ -854,6 +874,7 @@ export interface FileRouteTypes {
     | '/sqs/$queue/'
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
+    | '/stepfunctions/execution/$name/$execution'
     | '/cloudwatch/logs/$groupName/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -868,7 +889,6 @@ export interface FileRouteTypes {
     | '/map'
     | '/metrics'
     | '/ses'
-    | '/stepfunctions'
     | '/apigateway/api-keys'
     | '/apigateway/usage-plans'
     | '/applications/$applicationId'
@@ -891,6 +911,7 @@ export interface FileRouteTypes {
     | '/secretsmanager/$secretName'
     | '/sns/$topic'
     | '/ssm/$name'
+    | '/stepfunctions/$name'
     | '/apigateway'
     | '/applications'
     | '/appsync'
@@ -917,6 +938,7 @@ export interface FileRouteTypes {
     | '/sns'
     | '/sqs'
     | '/ssm'
+    | '/stepfunctions'
     | '/sts'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
@@ -935,6 +957,7 @@ export interface FileRouteTypes {
     | '/sqs/$queue'
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
+    | '/stepfunctions/execution/$name/$execution'
     | '/cloudwatch/logs/$groupName'
   id:
     | '__root__'
@@ -949,7 +972,6 @@ export interface FileRouteTypes {
     | '/map'
     | '/metrics'
     | '/ses'
-    | '/stepfunctions'
     | '/apigateway/api-keys'
     | '/apigateway/usage-plans'
     | '/applications/$applicationId'
@@ -976,6 +998,7 @@ export interface FileRouteTypes {
     | '/sns/$topic'
     | '/sqs/$queue'
     | '/ssm/$name'
+    | '/stepfunctions/$name'
     | '/apigateway/'
     | '/applications/'
     | '/appsync/'
@@ -1002,6 +1025,7 @@ export interface FileRouteTypes {
     | '/sns/'
     | '/sqs/'
     | '/ssm/'
+    | '/stepfunctions/'
     | '/sts/'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
@@ -1020,6 +1044,7 @@ export interface FileRouteTypes {
     | '/sqs/$queue/'
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
+    | '/stepfunctions/execution/$name/$execution'
     | '/cloudwatch/logs/$groupName/'
   fileRoutesById: FileRoutesById
 }
@@ -1035,7 +1060,6 @@ export interface RootRouteChildren {
   MapRoute: typeof MapRoute
   MetricsRoute: typeof MetricsRoute
   SesRoute: typeof SesRoute
-  StepfunctionsRoute: typeof StepfunctionsRoute
   ApigatewayApiKeysRoute: typeof ApigatewayApiKeysRoute
   ApigatewayUsagePlansRoute: typeof ApigatewayUsagePlansRoute
   ApplicationsApplicationIdRoute: typeof ApplicationsApplicationIdRoute
@@ -1062,6 +1086,7 @@ export interface RootRouteChildren {
   SnsTopicRoute: typeof SnsTopicRoute
   SqsQueueRoute: typeof SqsQueueRouteWithChildren
   SsmNameRoute: typeof SsmNameRoute
+  StepfunctionsNameRoute: typeof StepfunctionsNameRoute
   ApigatewayIndexRoute: typeof ApigatewayIndexRoute
   ApplicationsIndexRoute: typeof ApplicationsIndexRoute
   AppsyncIndexRoute: typeof AppsyncIndexRoute
@@ -1088,6 +1113,7 @@ export interface RootRouteChildren {
   SnsIndexRoute: typeof SnsIndexRoute
   SqsIndexRoute: typeof SqsIndexRoute
   SsmIndexRoute: typeof SsmIndexRoute
+  StepfunctionsIndexRoute: typeof StepfunctionsIndexRoute
   StsIndexRoute: typeof StsIndexRoute
   ApigatewayHttpApiIdRoute: typeof ApigatewayHttpApiIdRoute
   ApigatewayRestApiIdRoute: typeof ApigatewayRestApiIdRoute
@@ -1099,18 +1125,12 @@ export interface RootRouteChildren {
   CloudwatchLogsIndexRoute: typeof CloudwatchLogsIndexRoute
   LambdaLayersIndexRoute: typeof LambdaLayersIndexRoute
   CloudwatchLogsGroupNameStreamNameRoute: typeof CloudwatchLogsGroupNameStreamNameRoute
+  StepfunctionsExecutionNameExecutionRoute: typeof StepfunctionsExecutionNameExecutionRoute
   CloudwatchLogsGroupNameIndexRoute: typeof CloudwatchLogsGroupNameIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/stepfunctions': {
-      id: '/stepfunctions'
-      path: '/stepfunctions'
-      fullPath: '/stepfunctions'
-      preLoaderRoute: typeof StepfunctionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/ses': {
       id: '/ses'
       path: '/ses'
@@ -1193,6 +1213,13 @@ declare module '@tanstack/react-router' {
       path: '/sts'
       fullPath: '/sts/'
       preLoaderRoute: typeof StsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/stepfunctions/': {
+      id: '/stepfunctions/'
+      path: '/stepfunctions'
+      fullPath: '/stepfunctions/'
+      preLoaderRoute: typeof StepfunctionsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ssm/': {
@@ -1375,6 +1402,13 @@ declare module '@tanstack/react-router' {
       path: '/apigateway'
       fullPath: '/apigateway/'
       preLoaderRoute: typeof ApigatewayIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/stepfunctions/$name': {
+      id: '/stepfunctions/$name'
+      path: '/stepfunctions/$name'
+      fullPath: '/stepfunctions/$name'
+      preLoaderRoute: typeof StepfunctionsNameRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ssm/$name': {
@@ -1671,6 +1705,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CloudwatchLogsGroupNameIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/stepfunctions/execution/$name/$execution': {
+      id: '/stepfunctions/execution/$name/$execution'
+      path: '/stepfunctions/execution/$name/$execution'
+      fullPath: '/stepfunctions/execution/$name/$execution'
+      preLoaderRoute: typeof StepfunctionsExecutionNameExecutionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/ecs/$cluster/tasks/$taskId': {
       id: '/ecs/$cluster/tasks/$taskId'
       path: '/tasks/$taskId'
@@ -1766,7 +1807,6 @@ const rootRouteChildren: RootRouteChildren = {
   MapRoute: MapRoute,
   MetricsRoute: MetricsRoute,
   SesRoute: SesRoute,
-  StepfunctionsRoute: StepfunctionsRoute,
   ApigatewayApiKeysRoute: ApigatewayApiKeysRoute,
   ApigatewayUsagePlansRoute: ApigatewayUsagePlansRoute,
   ApplicationsApplicationIdRoute: ApplicationsApplicationIdRoute,
@@ -1794,6 +1834,7 @@ const rootRouteChildren: RootRouteChildren = {
   SnsTopicRoute: SnsTopicRoute,
   SqsQueueRoute: SqsQueueRouteWithChildren,
   SsmNameRoute: SsmNameRoute,
+  StepfunctionsNameRoute: StepfunctionsNameRoute,
   ApigatewayIndexRoute: ApigatewayIndexRoute,
   ApplicationsIndexRoute: ApplicationsIndexRoute,
   AppsyncIndexRoute: AppsyncIndexRoute,
@@ -1820,6 +1861,7 @@ const rootRouteChildren: RootRouteChildren = {
   SnsIndexRoute: SnsIndexRoute,
   SqsIndexRoute: SqsIndexRoute,
   SsmIndexRoute: SsmIndexRoute,
+  StepfunctionsIndexRoute: StepfunctionsIndexRoute,
   StsIndexRoute: StsIndexRoute,
   ApigatewayHttpApiIdRoute: ApigatewayHttpApiIdRoute,
   ApigatewayRestApiIdRoute: ApigatewayRestApiIdRoute,
@@ -1832,6 +1874,8 @@ const rootRouteChildren: RootRouteChildren = {
   LambdaLayersIndexRoute: LambdaLayersIndexRoute,
   CloudwatchLogsGroupNameStreamNameRoute:
     CloudwatchLogsGroupNameStreamNameRoute,
+  StepfunctionsExecutionNameExecutionRoute:
+    StepfunctionsExecutionNameExecutionRoute,
   CloudwatchLogsGroupNameIndexRoute: CloudwatchLogsGroupNameIndexRoute,
 }
 export const routeTree = rootRouteImport

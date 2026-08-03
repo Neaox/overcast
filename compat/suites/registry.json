@@ -3111,6 +3111,39 @@
       ]
     },
     {
+      "service": "stepfunctions",
+      "name": "sfn-executions",
+      "tests": [
+        {
+          "name": "StartExecution"
+        },
+        {
+          "name": "DescribeExecution",
+          "depends": [
+            "StartExecution"
+          ]
+        },
+        {
+          "name": "GetExecutionHistory",
+          "depends": [
+            "StartExecution"
+          ]
+        },
+        {
+          "name": "ListExecutions",
+          "depends": [
+            "StartExecution"
+          ]
+        },
+        {
+          "name": "StopExecution",
+          "depends": [
+            "StartExecution"
+          ]
+        }
+      ]
+    },
+    {
       "service": "waf",
       "name": "waf-webacls",
       "tests": [

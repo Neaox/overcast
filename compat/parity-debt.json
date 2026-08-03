@@ -323,6 +323,12 @@
     {
       "suite": "dotnet-sdk",
       "service": "stepfunctions",
+      "group": "sfn-executions",
+      "tests": 5
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "stepfunctions",
       "group": "sfn-statemachines",
       "tests": 5
     },
@@ -679,6 +685,12 @@
       "service": "ses",
       "group": "ses-templates",
       "tests": 6
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "tests": 5
     },
     {
       "suite": "rust-sdk",

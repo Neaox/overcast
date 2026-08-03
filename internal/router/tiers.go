@@ -52,13 +52,17 @@ var ServiceTiers = map[string]EmulationTier{
 	"cognito":         TierPartial,
 	"scheduler":       TierPartial,
 	"appconfigdata":   TierPartial,
+	// stepfunctions interprets the Amazon States Language for real: all eight
+	// state types, the optimized Lambda/SQS/SNS/DynamoDB/Step Functions Task
+	// integrations, Retry/Catch, and a real execution history. What it cannot
+	// interpret fails the execution loudly rather than passing through.
+	"stepfunctions": TierPartial,
 
 	// Inert — full CRUD, resources stored, but no enforcement / side-effects
-	"iam":           TierInert,
-	"eventbridge":   TierInert,
-	"stepfunctions": TierInert,
-	"appsync":       TierInert,
-	"cloudfront":    TierInert,
+	"iam":         TierInert,
+	"eventbridge": TierInert,
+	"appsync":     TierInert,
+	"cloudfront":  TierInert,
 
 	// Stub — all 501, bar the odd hardcoded response that unblocks a bootstrap
 	"waf":    TierStub,
@@ -102,7 +106,11 @@ var ServiceGoalTiers = map[string]EmulationTier{
 	"secretsmanager": TierFull,
 
 	// WIP — currently inert, goal is partial
-	"iam":           TierPartial,
-	"eventbridge":   TierPartial,
-	"stepfunctions": TierPartial,
+	"iam":         TierPartial,
+	"eventbridge": TierPartial,
+
+	// WIP — currently partial, goal is full. The execution engine landed, so
+	// Step Functions is no longer inert; `.waitForTaskToken`, activities and
+	// distributed Map are what still stand between it and full.
+	"stepfunctions": TierFull,
 }

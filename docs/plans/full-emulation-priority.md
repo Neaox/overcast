@@ -40,7 +40,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 |---|------|---------------|---------------|
 | 1 | EventBridge Rules target fan-out (Lambda/SNS/Step Functions/Kinesis/Firehose) | **Comprehensive — done 2026-08-03 (#467)** | Was: `PutEvents`/`PutTargets` only delivered to SQS + scheduled ECS, so the single most common CDK pattern (`rule.addTarget(new targets.LambdaFunction(fn))`) silently no-oped. Now fans out to all six sink types through [internal/eventtarget](../../internal/eventtarget) |
 | 2 | SNS → Lambda delivery — **done 2026-08-03 (#468)** | Comprehensive | `Publish`'s fan-out switch now has a `case "lambda"` that invokes the function with AWS's `Records[].Sns` event; failed deliveries dead-letter via `RedrivePolicy` instead of vanishing ([sns/handler_publish.go](../../internal/services/sns/handler_publish.go)) |
-| 3 | Step Functions execution engine | Minimal-stub | `StartExecution` records the call and immediately marks it `SUCCEEDED` ([stepfunctions/handler.go:224](../../internal/services/stepfunctions/handler.go)) — zero of the ASL is interpreted; blocks every workflow-shaped local architecture |
+| 3 | ~~Step Functions execution engine~~ **DONE 2026-08-03 (#469)** | ~~Minimal-stub~~ → Core | The ASL interpreter landed: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real `GetExecutionHistory`. Unsupported ASL fails loudly with `States.Runtime` |
 | 4 | IAM policy evaluation | Core, no enforcement | `SimulatePrincipalPolicy` "Always returns allowed — no enforcement engine" ([iam/handler.go:1952](../../internal/services/iam/handler.go)) — no local signal for the single most common real-AWS failure mode (`AccessDenied`) |
 | 5 | S3 lifecycle rules | Comprehensive, stub gap | `Get/Put/DeleteBucketLifecycleConfiguration` are pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets) |
 | 6 | CloudWatch Alarms auto-evaluation | Core, manual-only | `SetAlarmState` is documented "Manually sets the state" — no loop evaluates `PutMetricData` against a `PutMetricAlarm` threshold; alarms never fire on their own |
@@ -191,15 +191,34 @@ Not covered: no compat group was added — no operation changed (`Publish`/`Subs
 `sns-publish`/`sns-subscriptions`), and a black-box SNS→Lambda assertion needs Docker, so the group could
 only ever record `skip` in CI while costing an implementation in every uniform suite.
 
-**3. Step Functions execution engine** — Minimal-stub → Core
+**3. Step Functions execution engine** — Minimal-stub → Core — **DONE 2026-08-03 (#469)**
 Score: usage 4, leverage 5, fit 4, cost XL, dep-ready 4, risk medium (see §2.1 shape 2) → **second-highest
 by leverage, held back only by cost**.
-Current state: `CreateStateMachine`/`DescribeStateMachine`/`ListStateMachines`/`DeleteStateMachine` are
-real CRUD; `StartExecution` records an execution row and sets it `SUCCEEDED` immediately
-([stepfunctions/handler.go:224](../../internal/services/stepfunctions/handler.go),
-[typed_logic.go:179](../../internal/services/stepfunctions/typed_logic.go)) — no ASL is parsed or run, so
-`DescribeExecution`, `GetExecutionHistory`, and any test asserting on execution output are all fiction
-today.
+Current state (as shipped): a real Amazon States Language interpreter runs inside `StartExecution`. All
+eight state types are interpreted, with `Retry`/`Catch`, the full Choice operator set, the `$$` context
+object, the input/output pipeline (`InputPath`/`Parameters`/`ResultSelector`/`ResultPath`/`OutputPath`), and
+optimized Task integrations for Lambda (function ARN and `lambda:invoke`), `sqs:sendMessage`,
+`sns:publish`, `dynamodb:putItem`/`getItem`/`updateItem`, and `states:startExecution` (+ `.sync`/`.sync:2`).
+`DescribeExecution`, `GetExecutionHistory`, `ListExecutions`, `StopExecution`,
+`DescribeStateMachineForExecution` and `StartSyncExecution` all report what really ran. Task states
+dispatch through Overcast's own router, so a workflow step runs the same handler an SDK call would.
+Per §2.1, everything **not** interpreted — `.waitForTaskToken`, activity tasks, `aws-sdk:` integrations,
+distributed Map / `ItemReader` / `ItemBatcher` / `ResultWriter`, JSONata, unsupported intrinsics, JSONPath
+wildcards — fails the execution with `States.Runtime` and a cause naming the feature. `States.Runtime` is
+neither retriable nor catchable (matching AWS), so a `Catch` on `States.ALL` cannot turn an Overcast gap
+back into a silent pass-through.
+Execution model matches AWS: `StartExecution` accepts and returns while the execution is `RUNNING`, the
+interpreter runs on a goroutine tracked for shutdown, `DescribeExecution`/`GetExecutionHistory` observe it
+progressing, and `StopExecution` really interrupts it (`ABORTED`). `StartSyncExecution` and
+`states:startExecution.sync`/`.sync:2` are the synchronous paths, which is their AWS semantic. This matters
+beyond Step Functions: EventBridge (item 1) and Pipes (item 4) dispatch targets synchronously through the
+root router, so a blocking `StartExecution` would have coupled `PutEvents` latency to workflow duration.
+`OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` (default 15m) is a runaway guard rather than a request timeout,
+so ordinary `Wait` states are unaffected; exceeding it is `States.Timeout`/`TIMED_OUT`. Web UI shipped with
+the behaviour: executions list per state machine, execution detail with the state history, and the loud
+failure reason surfaced.
+Still open, tracked separately: `.waitForTaskToken` (needs `SendTaskSuccess`/`SendTaskFailure`/
+`SendTaskHeartbeat`), activity tasks, distributed Map.
 Definition of done (staged, not all-or-nothing — land Standard/synchronous first):
 - ASL parser for the standard state types: `Pass`, `Task`, `Choice`, `Wait`, `Succeed`, `Fail`, `Parallel`,
   `Map` (inline `ItemsPath` iteration; `ItemProcessor`/distributed map is Wave-4-or-later scope).
@@ -214,9 +233,11 @@ Definition of done (staged, not all-or-nothing — land Standard/synchronous fir
 - Retry/Catch fields on `Task` states honored (this is most of what makes Step Functions worth testing
   locally — failure-handling logic that's otherwise untestable without hitting real AWS and inducing a
   real failure).
-- Execution runs synchronously in-process on `StartExecution` initially (matches the existing single-node,
-  deterministic-clock architecture) — `StartSyncExecution` for Express workflows can reuse the same
-  interpreter directly.
+- Execution runs in-process on `StartExecution` — **shipped asynchronously rather than synchronously as
+  this DoD originally sketched**: the interpreter runs on a tracked goroutine so `StartExecution` returns
+  while the execution is `RUNNING`, matching AWS and keeping workflow duration off the request path for
+  EventBridge/Pipes target dispatch. `StartSyncExecution` (Express) reuses the same interpreter directly and
+  is the synchronous path.
 Dependencies: none hard-blocking, but Task integrations are only as good as the target services — this is
 why the item sits in the same wave as EventBridge fan-out (both need "invoke Lambda/SQS/SNS/DynamoDB from
 inside an event/workflow handler," which is worth building once, shared).
@@ -424,8 +445,11 @@ and the handlers themselves rather than trusted. Findings:
    [pipes/service.go:3-5](../../internal/services/pipes/service.go)'s own doc comment.
 4. **IAM's "no enforcement" claim (STATUS.md line 32) is accurate** — confirmed in
    [iam/handler.go:1952](../../internal/services/iam/handler.go).
-5. **Step Functions' "no execution engine yet" (STATUS.md line 55) is accurate** — confirmed in
-   [stepfunctions/handler.go:224](../../internal/services/stepfunctions/handler.go).
+5. **Step Functions' "no execution engine yet" (STATUS.md line 55) was accurate at audit time** —
+   confirmed in `stepfunctions/handler.go` as it then stood. **Superseded 2026-08-03 by #469**: the ASL
+   interpreter shipped, STATUS.md was moved to the Core table in the same commit, and
+   [internal/services/stepfunctions/interpreter.go](../../internal/services/stepfunctions/interpreter.go)
+   is now the authority.
 6. **A claim this plan initially suspected but disproved**: S3 presigned URLs are *not* a gap.
    Query-string SigV4 auth (`X-Amz-Signature`) is handled generically for every service in
    [internal/middleware/sigv4.go](../../internal/middleware/sigv4.go), not per-service — presigned

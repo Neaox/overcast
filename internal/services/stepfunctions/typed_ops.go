@@ -19,6 +19,24 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"StartExecution": op.NewTyped[startExecutionRequest, startExecutionResponse](
 			"StartExecution", h.startExecutionTyped,
 		),
+		"StartSyncExecution": op.NewTyped[startSyncExecutionRequest, startSyncExecutionResponse](
+			"StartSyncExecution", h.startSyncExecutionTyped,
+		),
+		"DescribeExecution": op.NewTyped[describeExecutionRequest, describeExecutionResponse](
+			"DescribeExecution", h.describeExecutionTyped,
+		),
+		"GetExecutionHistory": op.NewTyped[getExecutionHistoryRequest, getExecutionHistoryResponse](
+			"GetExecutionHistory", h.getExecutionHistoryTyped,
+		),
+		"ListExecutions": op.NewTyped[listExecutionsRequest, listExecutionsResponse](
+			"ListExecutions", h.listExecutionsTyped,
+		),
+		"StopExecution": op.NewTyped[stopExecutionRequest, stopExecutionResponse](
+			"StopExecution", h.stopExecutionTyped,
+		),
+		"DescribeStateMachineForExecution": op.NewTyped[describeStateMachineForExecutionRequest, describeStateMachineForExecutionResponse](
+			"DescribeStateMachineForExecution", h.describeStateMachineForExecutionTyped,
+		),
 		"DeleteStateMachine": op.NewTyped[deleteStateMachineRequest, struct{}](
 			"DeleteStateMachine", h.deleteStateMachineTyped,
 		),
