@@ -56,6 +56,11 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      # The suite pulls images (registry:2, alpine, postgres, redis, …) for the
+      # Docker-backed services. Mirror them so the pulls do not compete for the
+      # shared anonymous Docker Hub limit on GitHub's egress IPs.
+      - uses: ./.github/actions/docker-hub-mirror
+
       - name: Full test suite with coverage
         run: |
           go test -race -count=1 -timeout=1200s -coverprofile=coverage.out ./...
@@ -94,6 +99,8 @@ jobs:
 
       - name: Vet
         run: go vet -tags ${{ matrix.tags }} ./...
+
+      - uses: ./.github/actions/docker-hub-mirror
 
       # No -race: these tags change which routes register, which assets embed,
       # and whether SQLite is compiled in — not concurrency. The untagged
