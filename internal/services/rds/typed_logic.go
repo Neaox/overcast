@@ -218,8 +218,9 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 	arn := protocol.ARN(region, h.cfg.AccountID, "rds", "db:"+id)
 	now := h.clk.Now().UTC().Format(time.RFC3339)
 
+	// Stored canonical, re-minted for whoever reads it — see endpoint.go.
 	endpoint := &Endpoint{
-		Address: id + "." + region + ".rds." + h.cfg.ExternalHostname(),
+		Address: instanceEndpointHostname(id, region, h.externalHostname()),
 		Port:    port,
 	}
 
@@ -249,10 +250,8 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 	}
 
 	if h.dockerReady.Load() {
-		if versions, ok := engineImages[inst.Engine]; ok {
-			if image, ok := versions[inst.EngineVersion]; ok && h.puller != nil {
-				h.puller.Prewarm(image)
-			}
+		if image, _, ok := resolveEngineImage(inst.Engine, inst.EngineVersion); ok && h.puller != nil {
+			h.puller.Prewarm(image)
 		}
 		h.launchDBContainerAsync(ctx, id)
 	}
@@ -282,7 +281,7 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 	return &xmlCreateDBInstanceResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBInstanceResult{
-			DBInstance: toXMLDBInstance(inst),
+			DBInstance: h.toXMLDBInstance(ctx, inst),
 		},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
@@ -301,7 +300,7 @@ func (h *Handler) describeDBInstancesTyped(ctx context.Context, req *describeDBI
 		return &xmlDescribeDBInstancesResponse{
 			Xmlns: rdsXMLNS,
 			Result: xmlDescribeDBInstancesResult{
-				DBInstances: xmlDBInstances{Items: []xmlDBInstance{toXMLDBInstance(inst)}},
+				DBInstances: xmlDBInstances{Items: []xmlDBInstance{h.toXMLDBInstance(ctx, inst)}},
 			},
 			ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 		}, nil
@@ -314,7 +313,7 @@ func (h *Handler) describeDBInstancesTyped(ctx context.Context, req *describeDBI
 
 	items := make([]xmlDBInstance, 0, len(all))
 	for _, inst := range all {
-		items = append(items, toXMLDBInstance(inst))
+		items = append(items, h.toXMLDBInstance(ctx, inst))
 	}
 
 	return &xmlDescribeDBInstancesResponse{
@@ -354,7 +353,7 @@ func (h *Handler) deleteDBInstanceTyped(ctx context.Context, req *deleteDBInstan
 	resp := &xmlDeleteDBInstanceResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlDeleteDBInstanceResult{
-			DBInstance: toXMLDBInstance(inst),
+			DBInstance: h.toXMLDBInstance(ctx, inst),
 		},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}
@@ -455,7 +454,7 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 
 	return &xmlStopDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
-		Result:           xmlStopDBInstanceResult{DBInstance: toXMLDBInstance(inst)},
+		Result:           xmlStopDBInstanceResult{DBInstance: h.toXMLDBInstance(ctx, inst)},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
 }
@@ -487,7 +486,8 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 		if err := h.docker.StartContainer(ctx, inst.DockerContainerID); err != nil {
 			h.log.Warn("failed to start RDS container", zap.String("instance", id), zap.Error(err))
 		}
-		h.scheduleHealthCheck(region, id, inst.Endpoint.Address, inst.Endpoint.Port)
+		healthHost, healthPort := dialTarget(inst)
+		h.scheduleHealthCheck(region, id, healthHost, healthPort)
 	} else {
 		instID2 := id
 		h.scheduler.AfterScoped(region, instID2, "available", 0, func(ctx context.Context) {
@@ -510,7 +510,7 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 
 	return &xmlStartDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
-		Result:           xmlStartDBInstanceResult{DBInstance: toXMLDBInstance(inst)},
+		Result:           xmlStartDBInstanceResult{DBInstance: h.toXMLDBInstance(ctx, inst)},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
 }
@@ -579,7 +579,7 @@ func (h *Handler) modifyDBInstanceTyped(ctx context.Context, req *modifyDBInstan
 
 	return &xmlModifyDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
-		Result:           xmlModifyDBInstanceResult{DBInstance: toXMLDBInstance(inst)},
+		Result:           xmlModifyDBInstanceResult{DBInstance: h.toXMLDBInstance(ctx, inst)},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
 }
@@ -908,7 +908,7 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 	return &xmlCreateDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(ctx, cluster),
 		},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
@@ -927,7 +927,7 @@ func (h *Handler) describeDBClustersTyped(ctx context.Context, req *describeDBCl
 		return &xmlDescribeDBClustersResponse{
 			Xmlns: rdsXMLNS,
 			Result: xmlDescribeDBClustersResult{
-				DBClusters: xmlDBClusters{Items: []xmlDBCluster{toXMLDBCluster(cluster)}},
+				DBClusters: xmlDBClusters{Items: []xmlDBCluster{h.toXMLDBCluster(ctx, cluster)}},
 			},
 			ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 		}, nil
@@ -940,7 +940,7 @@ func (h *Handler) describeDBClustersTyped(ctx context.Context, req *describeDBCl
 
 	items := make([]xmlDBCluster, 0, len(all))
 	for _, c := range all {
-		items = append(items, toXMLDBCluster(c))
+		items = append(items, h.toXMLDBCluster(ctx, c))
 	}
 
 	return &xmlDescribeDBClustersResponse{
@@ -973,7 +973,7 @@ func (h *Handler) deleteDBClusterTyped(ctx context.Context, req *deleteDBCluster
 	resp := &xmlDeleteDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlDeleteDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(ctx, cluster),
 		},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}
@@ -1014,7 +1014,7 @@ func (h *Handler) modifyDBClusterTyped(ctx context.Context, req *modifyDBCluster
 	return &xmlCreateDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(ctx, cluster),
 		},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
@@ -1063,7 +1063,7 @@ func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterRe
 	return &xmlCreateDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(ctx, cluster),
 		},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
@@ -1112,7 +1112,7 @@ func (h *Handler) stopDBClusterTyped(ctx context.Context, req *stopDBClusterReq)
 	return &xmlCreateDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
-			DBCluster: toXMLDBCluster(cluster),
+			DBCluster: h.toXMLDBCluster(ctx, cluster),
 		},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
