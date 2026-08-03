@@ -144,6 +144,7 @@ can be applied mechanically rather than reconstructed from memory.
 
 ### Fixed
 
+
 - **BREAKING** [ecs] `networkConfiguration` is required when the task definition's `networkMode` is `awsvpc`, as on AWS, rather than when `launchType` is `FARGATE`. An awsvpc task definition launched under EC2, or under a `capacityProviderStrategy` with no launch type — the shape CDK emits — was accepted and produced a service that could never place a task
   migration: pass `networkConfiguration` (subnets, plus security groups if any) to RunTask and CreateService for awsvpc task definitions; the same call already fails against real AWS without it
 
@@ -197,6 +198,8 @@ can be applied mechanically rather than reconstructed from memory.
 - [rds/ecs] an ECS task can connect to an RDS instance by its endpoint hostname. The instance's container is attached to the VPC network — and to the ECS network for tasks outside a VPC — advertising that hostname as a DNS alias, which is what RDS already did for the Lambda network. Without the alias the name fell through to Overcast's own address and the task connected to a port nothing was listening on
 
 - [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
+
+- [release] the `Changelog entry` check no longer asks the release PR to write itself a release note. A release-prep PR consumes every fragment into its version section and adds none by construction, but it also carries the new, untagged `VERSION` — the same predicate the check reads to decide which release window a PR is in — so it classified the release PR as "merged, waiting to be tagged" and posted an ask saying the release had already gone out, on the one PR that had not merged. The release PR is now exempt by shape: `VERSION` and `CHANGELOG.md` both changed, nothing touched outside those and `.changelog/`, the version untagged, and a non-empty `## [x.y.z]` section present. Push a code change onto the release branch and the check asks again, in words written for that case — the note belongs in the release section the PR already owns, the one place where editing `CHANGELOG.md` is the answer rather than the thing to avoid
 
 - [s3] `CopyObject` accepts a fully URL-encoded `x-amz-copy-source`, which AWS requires be URL-encoded and decodes. The header was split on `/` before decoding, so a client that encodes the separator too — the AWS SDK for .NET does — was rejected with "Invalid copy source"
 
