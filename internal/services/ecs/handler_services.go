@@ -997,7 +997,7 @@ const (
 // taking them out of load balancer rotation and recording the stop before
 // tearing their containers down.
 func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc *ecsService, tasks []Task, reason string) {
-	stopped := 0
+	stoppedCount := 0
 	for i := range tasks {
 		t := tasks[i]
 		taskID := extractTaskID(t.TaskArn)
@@ -1014,16 +1014,15 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 		// this write: if it wins, a task the scheduler retired on purpose is
 		// reported as one that died on its own — the wrong stop code, and a
 		// failure counted against the deployment.
-		t.LastStatus = "STOPPED"
-		t.DesiredStatus = "STOPPED"
-		t.StoppedReason = reason
-		t.StopCode = stopCodeServiceScheduler
-		stoppedAt := h.clk.Now().Unix()
-		t.StoppedAt = &stoppedAt
-		for j := range t.Containers {
-			t.Containers[j].LastStatus = "STOPPED"
-		}
-		if aerr := h.store.putTask(ctx, &t); aerr != nil {
+		//
+		// The task is re-read under its own lock rather than written back from
+		// the copy the reconcile listed: that copy is older than the cancel
+		// above, so it can be a task whose transition to RUNNING is mid-flight.
+		// See lockTask.
+		stopped, changed, aerr := h.stopTaskRecord(ctx, clusterName, taskID, taskStop{
+			reason: reason, code: stopCodeServiceScheduler,
+		})
+		if aerr != nil {
 			h.log.Warn("ecs: reconcile: failed to persist stopped task",
 				zap.String("cluster", clusterName),
 				zap.String("service", svc.ServiceName),
@@ -1031,10 +1030,13 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 				zap.String("error", aerr.Message))
 			continue
 		}
+		if stopped == nil {
+			continue
+		}
 
 		// Stop Docker containers if available.
 		if h.dockerReady.Load() {
-			for _, c := range t.Containers {
+			for _, c := range stopped.Containers {
 				if c.DockerID == "" {
 					continue
 				}
@@ -1050,10 +1052,14 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 				}
 			}
 		}
-		stopped++
+		// Only what this pass actually retired is reported. A task that had
+		// already stopped on its own is not the scheduler's doing.
+		if changed {
+			stoppedCount++
+		}
 	}
-	if stopped > 0 {
-		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has stopped %d tasks.", svc.ServiceName, stopped))
+	if stoppedCount > 0 {
+		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has stopped %d tasks.", svc.ServiceName, stoppedCount))
 	}
 }
 
