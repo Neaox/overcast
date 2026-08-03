@@ -1,5 +1,7 @@
 import { awsClients } from "../aws-clients"
 import {
+  SimulateCustomPolicyCommand,
+  SimulatePrincipalPolicyCommand,
   ListUsersCommand,
   CreateUserCommand,
   DeleteUserCommand,
@@ -19,7 +21,21 @@ export type {
   Role as IAMRole,
   Policy as IAMPolicy,
   Group as IAMGroup,
+  EvaluationResult as IAMEvaluationResult,
 } from "@aws-sdk/client-iam"
+
+/** One simulation request, as the simulator form collects it. */
+export interface SimulationRequest {
+  /** Principal ARN to simulate. Empty means "simulate the pasted policy alone". */
+  policySourceArn?: string
+  /** Policy documents to evaluate instead of, or alongside, the principal's. */
+  policyInputList?: string[]
+  actionNames: string[]
+  resourceArns?: string[]
+  /** Resource-based policy (e.g. an S3 bucket policy) to evaluate as well. */
+  resourcePolicy?: string
+  contextEntries?: { name: string; value: string }[]
+}
 
 export const iam = {
   listUsers: async () => {
@@ -94,5 +110,44 @@ export const iam = {
 
   deleteGroup: async (groupName: string) => {
     await awsClients.iam().send(new DeleteGroupCommand({ GroupName: groupName }))
+  },
+
+  /**
+   * Runs a policy simulation. SimulatePrincipalPolicy is used when a principal
+   * ARN is given (the principal's own attached, inline and group policies are
+   * evaluated); SimulateCustomPolicy when only pasted documents are.
+   */
+  simulate: async (req: SimulationRequest) => {
+    const shared = {
+      ActionNames: req.actionNames,
+      ResourceArns: req.resourceArns?.length ? req.resourceArns : undefined,
+      ResourcePolicy: req.resourcePolicy || undefined,
+      ContextEntries: req.contextEntries?.length
+        ? req.contextEntries.map((entry) => ({
+            ContextKeyName: entry.name,
+            ContextKeyValues: [entry.value],
+            ContextKeyType: "string" as const,
+          }))
+        : undefined,
+    }
+
+    if (req.policySourceArn) {
+      const res = await awsClients.iam().send(
+        new SimulatePrincipalPolicyCommand({
+          PolicySourceArn: req.policySourceArn,
+          PolicyInputList: req.policyInputList?.length ? req.policyInputList : undefined,
+          ...shared,
+        }),
+      )
+      return res.EvaluationResults ?? []
+    }
+
+    const res = await awsClients.iam().send(
+      new SimulateCustomPolicyCommand({
+        PolicyInputList: req.policyInputList ?? [],
+        ...shared,
+      }),
+    )
+    return res.EvaluationResults ?? []
   },
 }

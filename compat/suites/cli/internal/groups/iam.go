@@ -53,31 +53,41 @@ func IAM() ServiceGroup {
 			"RemoveUserFromGroup": g.RemoveUserFromGroup,
 			"GetGroup":            g.GetGroup,
 			"DeleteGroup":         g.DeleteGroup,
+			// iam-simulate
+			"SimulateCustomPolicyAllowed":         g.SimulateCustomPolicyAllowed,
+			"SimulateCustomPolicyImplicitDeny":    g.SimulateCustomPolicyImplicitDeny,
+			"SimulateCustomPolicyExplicitDeny":    g.SimulateCustomPolicyExplicitDeny,
+			"SimulatePrincipalPolicyAllowed":      g.SimulatePrincipalPolicyAllowed,
+			"SimulatePrincipalPolicyImplicitDeny": g.SimulatePrincipalPolicyImplicitDeny,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"iam-users":    g.setupUsers,
 			"iam-roles":    g.setupRoles,
 			"iam-policies": g.setupPolicies,
 			"iam-groups":   g.setupGroups,
+			"iam-simulate": g.setupSimulate,
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
 			"iam-users":    g.teardownUsers,
 			"iam-roles":    g.teardownRoles,
 			"iam-policies": g.teardownPolicies,
 			"iam-groups":   g.teardownIAMGroups,
+			"iam-simulate": g.teardownSimulate,
 		},
 	}
 }
 
 // One Namer per IAM resource type keeps names deterministic and descriptive.
 var (
-	iamUserNamer    = harness.NewNamer("iam-usr")
-	iamRoleNamer    = harness.NewNamer("iam-rol")
-	iamProfileNamer = harness.NewNamer("iam-prof")
-	iamPolicyNamer  = harness.NewNamer("iam-pol")
-	iamGroupNamer   = harness.NewNamer("iam-grp")
-	iamPolRoleNamer = harness.NewNamer("iam-pr") // separate role for iam-policies group
-	iamGrpUserNamer = harness.NewNamer("iam-gu") // separate user for iam-groups group
+	iamUserNamer      = harness.NewNamer("iam-usr")
+	iamRoleNamer      = harness.NewNamer("iam-rol")
+	iamProfileNamer   = harness.NewNamer("iam-prof")
+	iamPolicyNamer    = harness.NewNamer("iam-pol")
+	iamGroupNamer     = harness.NewNamer("iam-grp")
+	iamPolRoleNamer   = harness.NewNamer("iam-pr") // separate role for iam-policies group
+	iamGrpUserNamer   = harness.NewNamer("iam-gu") // separate user for iam-groups group
+	iamSimUserNamer   = harness.NewNamer("iam-sim-u")
+	iamSimBucketNamer = harness.NewNamer("iam-sim-b") // ARN subject only; no bucket is created
 )
 
 type iamGroup struct{}
@@ -534,5 +544,167 @@ func (g *iamGroup) teardownIAMGroups(_ context.Context, t *harness.TestContext) 
 		"--group-name", iamGroupNamer.Name(t), "--user-name", iamGrpUserNamer.Name(t))
 	awscli.Run(t.Endpoint, t.Region, "iam", "delete-group", "--group-name", iamGroupNamer.Name(t)) //nolint:errcheck
 	awscli.Run(t.Endpoint, t.Region, "iam", "delete-user", "--user-name", iamGrpUserNamer.Name(t)) //nolint:errcheck
+	return nil
+}
+
+// ─── iam-simulate ────────────────────────────────────────────────────────────
+
+// simPolicy is the identity policy the simulate group evaluates: read access to
+// one run-scoped bucket prefix and nothing else.
+func (g *iamGroup) simPolicy(t *harness.TestContext) string {
+	return fmt.Sprintf(
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::%s/*"}]}`,
+		iamSimBucketNamer.Name(t))
+}
+
+func (g *iamGroup) simResource(t *harness.TestContext) string {
+	return fmt.Sprintf("arn:aws:s3:::%s/report.csv", iamSimBucketNamer.Name(t))
+}
+
+func (g *iamGroup) setupSimulate(_ context.Context, t *harness.TestContext) error {
+	if _, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "create-user", "--user-name", iamSimUserNamer.Name(t),
+	); err != nil && !isAlreadyExists(err) {
+		return err
+	}
+	return awscli.Run(t.Endpoint, t.Region,
+		"iam", "put-user-policy",
+		"--user-name", iamSimUserNamer.Name(t),
+		"--policy-name", "sim-allow-read",
+		"--policy-document", g.simPolicy(t),
+	)
+}
+
+func (g *iamGroup) teardownSimulate(_ context.Context, t *harness.TestContext) error {
+	awscli.Run(t.Endpoint, t.Region, //nolint:errcheck
+		"iam", "delete-user-policy",
+		"--user-name", iamSimUserNamer.Name(t),
+		"--policy-name", "sim-allow-read")
+	awscli.Run(t.Endpoint, t.Region, //nolint:errcheck
+		"iam", "delete-user", "--user-name", iamSimUserNamer.Name(t))
+	return nil
+}
+
+// simDecision pulls the decision out of the first evaluation result.
+func simDecision(out map[string]any) (map[string]any, string, error) {
+	results, _ := out["EvaluationResults"].([]any)
+	if len(results) == 0 {
+		return nil, "", fmt.Errorf("simulate: missing EvaluationResults")
+	}
+	first, _ := results[0].(map[string]any)
+	decision, _ := first["EvalDecision"].(string)
+	return first, decision, nil
+}
+
+func (g *iamGroup) SimulateCustomPolicyAllowed(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "simulate-custom-policy",
+		"--policy-input-list", g.simPolicy(t),
+		"--action-names", "s3:GetObject",
+		"--resource-arns", g.simResource(t),
+	)
+	if err != nil {
+		return err
+	}
+	first, decision, err := simDecision(out)
+	if err != nil {
+		return err
+	}
+	if decision != "allowed" {
+		return fmt.Errorf("SimulateCustomPolicy: EvalDecision = %s, want allowed", decision)
+	}
+	if action, _ := first["EvalActionName"].(string); action != "s3:GetObject" {
+		return fmt.Errorf("SimulateCustomPolicy: EvalActionName = %s, want s3:GetObject", action)
+	}
+	return nil
+}
+
+func (g *iamGroup) SimulateCustomPolicyImplicitDeny(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "simulate-custom-policy",
+		"--policy-input-list", g.simPolicy(t),
+		"--action-names", "s3:PutObject",
+		"--resource-arns", g.simResource(t),
+	)
+	if err != nil {
+		return err
+	}
+	_, decision, err := simDecision(out)
+	if err != nil {
+		return err
+	}
+	if decision != "implicitDeny" {
+		return fmt.Errorf("SimulateCustomPolicy: EvalDecision = %s, want implicitDeny", decision)
+	}
+	return nil
+}
+
+func (g *iamGroup) SimulateCustomPolicyExplicitDeny(_ context.Context, t *harness.TestContext) error {
+	doc := `{"Version":"2012-10-17","Statement":[` +
+		`{"Effect":"Allow","Action":"s3:*","Resource":"*"},` +
+		`{"Effect":"Deny","Action":"s3:DeleteObject","Resource":"*"}]}`
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "simulate-custom-policy",
+		"--policy-input-list", doc,
+		"--action-names", "s3:DeleteObject",
+		"--resource-arns", g.simResource(t),
+	)
+	if err != nil {
+		return err
+	}
+	_, decision, err := simDecision(out)
+	if err != nil {
+		return err
+	}
+	if decision != "explicitDeny" {
+		return fmt.Errorf("SimulateCustomPolicy: EvalDecision = %s, want explicitDeny", decision)
+	}
+	return nil
+}
+
+func (g *iamGroup) SimulatePrincipalPolicyAllowed(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "simulate-principal-policy",
+		"--policy-source-arn", fmt.Sprintf("arn:aws:iam::000000000000:user/%s", iamSimUserNamer.Name(t)),
+		"--action-names", "s3:GetObject",
+		"--resource-arns", g.simResource(t),
+	)
+	if err != nil {
+		return err
+	}
+	first, decision, err := simDecision(out)
+	if err != nil {
+		return err
+	}
+	if decision != "allowed" {
+		return fmt.Errorf("SimulatePrincipalPolicy: EvalDecision = %s, want allowed", decision)
+	}
+	matched, _ := first["MatchedStatements"].([]any)
+	for _, m := range matched {
+		stmt, _ := m.(map[string]any)
+		if id, _ := stmt["SourcePolicyId"].(string); id == "sim-allow-read" {
+			return nil
+		}
+	}
+	return fmt.Errorf("SimulatePrincipalPolicy: MatchedStatements missing sim-allow-read")
+}
+
+func (g *iamGroup) SimulatePrincipalPolicyImplicitDeny(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"iam", "simulate-principal-policy",
+		"--policy-source-arn", fmt.Sprintf("arn:aws:iam::000000000000:user/%s", iamSimUserNamer.Name(t)),
+		"--action-names", "s3:DeleteObject",
+		"--resource-arns", g.simResource(t),
+	)
+	if err != nil {
+		return err
+	}
+	_, decision, err := simDecision(out)
+	if err != nil {
+		return err
+	}
+	if decision != "implicitDeny" {
+		return fmt.Errorf("SimulatePrincipalPolicy: EvalDecision = %s, want implicitDeny", decision)
+	}
 	return nil
 }

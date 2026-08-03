@@ -1209,6 +1209,32 @@
       ]
     },
     {
+      "service": "iam",
+      "name": "iam-simulate",
+      "tests": [
+        {
+          "name": "SimulateCustomPolicyAllowed",
+          "op": "SimulateCustomPolicy"
+        },
+        {
+          "name": "SimulateCustomPolicyImplicitDeny",
+          "op": "SimulateCustomPolicy"
+        },
+        {
+          "name": "SimulateCustomPolicyExplicitDeny",
+          "op": "SimulateCustomPolicy"
+        },
+        {
+          "name": "SimulatePrincipalPolicyAllowed",
+          "op": "SimulatePrincipalPolicy"
+        },
+        {
+          "name": "SimulatePrincipalPolicyImplicitDeny",
+          "op": "SimulatePrincipalPolicy"
+        }
+      ]
+    },
+    {
       "service": "sts",
       "name": "sts-identity",
       "tests": [

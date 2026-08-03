@@ -34,6 +34,41 @@ func TestInfoHandlerIncludesDebugFlag(t *testing.T) {
 	}
 }
 
+// TestInfoHandler_reportsIAMEnforcement covers the flag the web UI reads to
+// tell an emulator-issued AccessDenied apart from an application bug. It is
+// off unless the operator turned it on.
+func TestInfoHandler_reportsIAMEnforcement(t *testing.T) {
+	// Given: the default configuration
+	handler := newInfoHandler(&config.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/_/info", nil)
+	rec := httptest.NewRecorder()
+
+	// When: the info endpoint is called
+	handler(rec, req)
+
+	// Then: enforcement reads as off
+	var got infoResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.IAMEnforce {
+		t.Fatal("iam_enforce = true by default, want false")
+	}
+
+	// Given: enforcement switched on
+	handler = newInfoHandler(&config.Config{EnforceIAM: true})
+	rec = httptest.NewRecorder()
+
+	// When/Then: the endpoint says so
+	handler(rec, httptest.NewRequest(http.MethodGet, "/_/info", nil))
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !got.IAMEnforce {
+		t.Fatal("iam_enforce = false with OVERCAST_ENFORCE_IAM set, want true")
+	}
+}
+
 // TestHealthHandler_reportsAutoStateProvenance verifies that /_health's
 // storage.configured field distinguishes "what was configured" from
 // storage.default's "what backend is actually in effect" — the case that

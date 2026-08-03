@@ -41,7 +41,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 | 1 | EventBridge Rules target fan-out (Lambda/SNS/Step Functions/Kinesis/Firehose) | **Comprehensive — done 2026-08-03 (#467)** | Was: `PutEvents`/`PutTargets` only delivered to SQS + scheduled ECS, so the single most common CDK pattern (`rule.addTarget(new targets.LambdaFunction(fn))`) silently no-oped. Now fans out to all six sink types through [internal/eventtarget](../../internal/eventtarget) |
 | 2 | SNS → Lambda delivery — **done 2026-08-03 (#468)** | Comprehensive | `Publish`'s fan-out switch now has a `case "lambda"` that invokes the function with AWS's `Records[].Sns` event; failed deliveries dead-letter via `RedrivePolicy` instead of vanishing ([sns/handler_publish.go](../../internal/services/sns/handler_publish.go)) |
 | 3 | ~~Step Functions execution engine~~ **DONE 2026-08-03 (#469)** | ~~Minimal-stub~~ → Core | The ASL interpreter landed: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real `GetExecutionHistory`. Unsupported ASL fails loudly with `States.Runtime` |
-| 4 | IAM policy evaluation | Core, no enforcement | `SimulatePrincipalPolicy` "Always returns allowed — no enforcement engine" ([iam/handler.go:1952](../../internal/services/iam/handler.go)) — no local signal for the single most common real-AWS failure mode (`AccessDenied`) |
+| 4 | IAM policy evaluation | ~~Core, no enforcement~~ **done 2026-08-03 (#471)** | Simulation now returns real `allowed`/`explicitDeny`/`implicitDeny` decisions from a shared evaluator ([internal/iampolicy](../../internal/iampolicy)); request-time enforcement stays opt-in behind `OVERCAST_ENFORCE_IAM`, default off. Resource policies at request time remain a follow-up — see Wave 2 item 5 |
 | 5 | S3 lifecycle rules | ~~Comprehensive, stub gap~~ **done 2026-08-03** | `Get/Put/DeleteBucketLifecycleConfiguration` were pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets). Shipped in §3 Wave 3 item 9 |
 | 6 | CloudWatch Alarms auto-evaluation ✅ shipped (#473) | Core, complete | The evaluator that existed ignored dimensions, `DatapointsToAlarm` and `TreatMissingData`, fired no actions, and left unevaluable alarm shapes sitting in `INSUFFICIENT_DATA`. Now epoch-aligned M-of-N evaluation with real transitions, actions and history |
 | 7 | Auto Scaling real reconciliation ✅ shipped (#474) | Core, complete for launch-configuration groups | Groups now converge for real: a single reconciler launches and terminates EC2 instances, runs the lifecycle state machine, and executes simple/step policies fired by #6's alarms. Launch templates and target-tracking policies are refused, not faked |
@@ -268,7 +268,8 @@ Streams → SQS path did anything.
 The theme: three already-Comprehensive-or-Core services store limits/policies they never check. This is
 the wave where the §2.1 fidelity-risk veto matters most — every item here ships in report-only/opt-in mode.
 
-**5. IAM policy evaluation** — Core, no enforcement → Core, opt-in enforcement
+**5. IAM policy evaluation** — Core, no enforcement → Core, opt-in enforcement — **landed 2026-08-03 (#471)**,
+with one deliberate carve-out (resource policies at request time, below)
 Score: usage 5, leverage 4 (gates correctness testing across every other service, but doesn't unlock new
 *architectures* the way Step Functions does — hence 4, not 5), fit 4, cost L, dep-ready 5, risk high (§2.1
 shape 1).
@@ -288,6 +289,31 @@ Definition of done:
   IAM identity policies together (the most common real-AWS `AccessDenied` source), Lambda resource
   policies, SQS/SNS resource policies.
 Dependencies: none blocking; this is additive to every other service and doesn't need any of them to change.
+
+**Status, 2026-08-03 (#471).** Shipped:
+- A shared evaluator, [internal/iampolicy](../../internal/iampolicy), implementing the policy grammar
+  (`Effect`, `Action`/`NotAction`, `Resource`/`NotResource` with `*`/`?` wildcards, the common `Condition`
+  operator families including `…IfExists`, policy variables, `Principal`/`NotPrincipal` on resource
+  policies) and AWS's algorithm — explicit deny, then allow, else implicit deny. Documents are parsed and
+  their wildcards compiled once; evaluation itself allocates only when something has to be reported.
+- `SimulatePrincipalPolicy` (was always-allow) and `SimulateCustomPolicy` (new) return real
+  `allowed`/`explicitDeny`/`implicitDeny` with `MatchedStatements`, `MissingContextValues`,
+  `ResourceSpecificResults` and `PermissionsBoundaryDecisionDetail`. `ResourcePolicy` and
+  `PermissionsBoundaryPolicyInputList` are evaluated; `ContextEntries` are honoured.
+- The §2.1 rule held: a construct the evaluator does not implement raises AWS's `PolicyEvaluation` error
+  rather than resolving to an allow or a deny, an unparsable document raises `InvalidInput`, and
+  enforcement stays behind `OVERCAST_ENFORCE_IAM`, **default off** — with it off the evaluator reads
+  nothing from the store at all (asserted by a test).
+- Request-time enforcement, which already existed behind that flag, now runs on the same evaluator, so a
+  simulation describes what enforcement would decide. It remains fail-closed.
+- Web UI: a simulator tab on the IAM page reporting decisions, matched statements and missing context
+  keys, plus a banner making the enforcement flag's state obvious.
+
+**Deliberately not done, tracked separately:** request-time enforcement still consults **identity policies
+only**. Resource-based policies (S3 bucket, Lambda, SQS, SNS) are evaluated by the *simulator* when passed
+as `ResourcePolicy`, but no service hands its stored resource policy to the enforcement middleware yet;
+that is the remaining half of this item's fourth bullet and is a follow-up issue. SCP/session policies and
+the `ForAllValues`/`ForAnyValue` set operators are not implemented and report as unsupported.
 
 **6. API Gateway usage-plan throttle/quota enforcement** — Comprehensive, stub gap → Comprehensive, complete
 **Status: done, 2026-08-03 (#472).**
@@ -570,8 +596,9 @@ and the handlers themselves rather than trusted. Findings:
    `StatusSupported` and effectively Core-depth already, just never added to the hand-written table.
 3. **Pipes' "DDB→SQS only" claim (STATUS.md line 56) is accurate** — confirmed directly in
    [pipes/service.go:3-5](../../internal/services/pipes/service.go)'s own doc comment.
-4. **IAM's "no enforcement" claim (STATUS.md line 32) is accurate** — confirmed in
-   [iam/handler.go:1952](../../internal/services/iam/handler.go).
+4. **IAM's "no enforcement" claim (STATUS.md line 32) was accurate when audited** — confirmed in
+   `iam/handler.go` at the time. Superseded on 2026-08-03 by #471: simulation now evaluates for real and
+   enforcement is opt-in (default off); STATUS.md was updated in the same change.
 5. **Step Functions' "no execution engine yet" (STATUS.md line 55) was accurate at audit time** —
    confirmed in `stepfunctions/handler.go` as it then stood. **Superseded 2026-08-03 by #469**: the ASL
    interpreter shipped, STATUS.md was moved to the Core table in the same commit, and

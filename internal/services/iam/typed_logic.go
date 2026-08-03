@@ -292,9 +292,17 @@ type updateAssumeRolePolicyReq struct {
 type listInstanceProfilesReq struct{}
 
 type simulatePrincipalPolicyReq struct {
-	PolicySourceArn string   `json:"PolicySourceArn"`
-	ActionNames     []string `json:"ActionNames"`
-	ResourceArns    []string `json:"ResourceArns"`
+	PolicySourceArn                    string            `json:"PolicySourceArn"`
+	PolicyInputList                    []string          `json:"PolicyInputList"`
+	PermissionsBoundaryPolicyInputList []string          `json:"PermissionsBoundaryPolicyInputList"`
+	ActionNames                        []string          `json:"ActionNames"`
+	ResourceArns                       []string          `json:"ResourceArns"`
+	ResourcePolicy                     string            `json:"ResourcePolicy"`
+	ResourceOwner                      string            `json:"ResourceOwner"`
+	CallerArn                          string            `json:"CallerArn"`
+	ContextEntries                     []contextEntryReq `json:"ContextEntries"`
+	Marker                             string            `json:"Marker"`
+	MaxItems                           int               `json:"MaxItems"`
 }
 
 type getAccountAuthorizationDetailsReq struct{}
@@ -841,23 +849,13 @@ type listInstanceProfilesResult struct {
 	IsTruncated      bool                               `xml:"IsTruncated"`
 }
 
-// --- Policy Simulation ---
-
-type evalResult struct {
-	EvalActionName   string `xml:"EvalActionName"`
-	EvalDecision     string `xml:"EvalDecision"`
-	EvalResourceName string `xml:"EvalResourceName"`
-}
+// --- Policy Simulation (see simulate.go for the result types and logic) ---
 
 type simulatePrincipalPolicyResp struct {
-	XMLName struct{}                      `xml:"SimulatePrincipalPolicyResponse"`
-	Xmlns   string                        `xml:"xmlns,attr"`
-	Result  simulatePrincipalPolicyResult `xml:"SimulatePrincipalPolicyResult"`
-	Meta    respMeta                      `xml:"ResponseMetadata"`
-}
-type simulatePrincipalPolicyResult struct {
-	EvaluationResults listMembersXML[evalResult] `xml:"EvaluationResults"`
-	IsTruncated       bool                       `xml:"IsTruncated"`
+	XMLName struct{}          `xml:"SimulatePrincipalPolicyResponse"`
+	Xmlns   string            `xml:"xmlns,attr"`
+	Result  simulateResultXML `xml:"SimulatePrincipalPolicyResult"`
+	Meta    respMeta          `xml:"ResponseMetadata"`
 }
 
 // --- GetAccountAuthorizationDetails ---
@@ -1791,29 +1789,6 @@ func (h *Handler) listInstanceProfilesTyped(ctx context.Context, _ *listInstance
 	}
 	return &listInstanceProfilesResp{Xmlns: iamXMLNS, Result: listInstanceProfilesResult{
 		InstanceProfiles: listMembersXML[instanceProfileXML]{Members: xmlProfiles, Tag: "member"}, IsTruncated: false,
-	}, Meta: metaFromCtx(ctx)}, nil
-}
-
-// --- Policy Simulation ---
-
-func (h *Handler) simulatePrincipalPolicyTyped(ctx context.Context, req *simulatePrincipalPolicyReq) (*simulatePrincipalPolicyResp, *protocol.AWSError) {
-	if req.PolicySourceArn == "" {
-		return nil, protocol.ErrMissingParameter("PolicySourceArn")
-	}
-	resource := "*"
-	if len(req.ResourceArns) > 0 {
-		resource = req.ResourceArns[0]
-	}
-	results := make([]evalResult, 0, len(req.ActionNames))
-	for _, a := range req.ActionNames {
-		results = append(results, evalResult{
-			EvalActionName:   a,
-			EvalDecision:     "allowed",
-			EvalResourceName: resource,
-		})
-	}
-	return &simulatePrincipalPolicyResp{Xmlns: iamXMLNS, Result: simulatePrincipalPolicyResult{
-		EvaluationResults: listMembersXML[evalResult]{Members: results, Tag: "member"}, IsTruncated: false,
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 

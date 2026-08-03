@@ -36,6 +36,8 @@ export interface ServerInfo {
   account_id?: string
   version?: string
   debug?: boolean
+  /** True when OVERCAST_ENFORCE_IAM is on and requests are checked against IAM policies. */
+  iam_enforce?: boolean
 }
 
 /**

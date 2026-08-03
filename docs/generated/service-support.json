@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1339,
+  "total_ops": 1340,
   "services": [
     {
       "service": "s3",
@@ -3385,8 +3385,8 @@
     {
       "service": "iam",
       "display_name": "IAM",
-      "total_ops": 61,
-      "implemented_ops": 61,
+      "total_ops": 62,
+      "implemented_ops": 62,
       "operations": [
         {
           "operation": "CreateUser",
@@ -3688,7 +3688,13 @@
           "operation": "SimulatePrincipalPolicy",
           "category": "Policy simulation",
           "status": "✅ Supported",
-          "notes": "Always returns allowed — no enforcement engine"
+          "notes": "Real evaluation of the principal's identity policies (plus an optional ResourcePolicy and permissions boundary): allowed / explicitDeny / implicitDeny with MatchedStatements and MissingContextValues"
+        },
+        {
+          "operation": "SimulateCustomPolicy",
+          "category": "Policy simulation",
+          "status": "✅ Supported",
+          "notes": "Evaluates the supplied PolicyInputList without touching any stored entity"
         },
         {
           "operation": "GetAccountAuthorizationDetails",

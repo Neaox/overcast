@@ -21,10 +21,10 @@ policies, instance profiles) for CDK/IaC compatibility — **credentials are acc
 validated**.
 
 > [!CAUTION]
-> **Emulation tier: Inert** — IAM resources are created and stored, but policies are
-> **never enforced** and permissions are **never checked**. Every API call succeeds
-> regardless of attached policies. `SimulatePrincipalPolicy` always returns `allowed`.
-> Do not use Overcast to test IAM authorization logic.
+> **Policies are not enforced by default.** IAM resources are created and stored, and every
+> API call succeeds regardless of attached policies unless you opt in to enforcement with
+> `OVERCAST_ENFORCE_IAM` (see below). Overcast is not a security boundary: credentials are
+> accepted but never verified, and the evaluator covers a subset of the IAM policy language.
 
 ---
 
@@ -34,6 +34,55 @@ validated**.
   or version history.
 - **Event bus integration.** User, role, policy and group lifecycle events are published to the
   internal event bus for topology/UI updates.
+
+## Policy simulation
+
+`SimulateCustomPolicy` and `SimulatePrincipalPolicy` run a real evaluation of the IAM policy
+language and return AWS's decision vocabulary — `allowed`, `explicitDeny`, `implicitDeny` —
+with `MatchedStatements` naming the policy and statement that decided it, and
+`MissingContextValues` naming condition keys the call did not supply. Simulation reads
+nothing else and changes nothing: it is the "what would happen" view, and it is available
+whether or not enforcement is switched on.
+
+What the evaluator covers:
+
+- `Effect`, `Action`/`NotAction`, `Resource`/`NotResource`, with `*` and `?` wildcards.
+  Actions match case-insensitively, as on AWS; resource ARNs match case-sensitively.
+- Explicit deny wins, then allow, otherwise the default implicit deny.
+- `Condition` operators: the `String*`, `Numeric*`, `Date*`, `Bool`, `IpAddress`/`NotIpAddress`,
+  `Arn*` and `Null` families, including the `…IfExists` suffix.
+- Policy variables (`${aws:username}`, `${aws:userid}`, …) in resources and condition values.
+- Resource-based policies passed as `ResourcePolicy`, including `Principal`/`NotPrincipal`
+  matching. Within the single account Overcast emulates, an allow in either the identity
+  policies or the resource policy is sufficient, and a deny in either is final.
+- `PermissionsBoundaryPolicyInputList`, reported through `PermissionsBoundaryDecisionDetail`.
+
+What it does not cover, and says so rather than guessing: a condition operator or principal
+type it does not implement makes the call fail with AWS's `PolicyEvaluation` error naming the
+construct, instead of resolving to an allow or a deny. Service control policies, session
+policies, and the `ForAllValues`/`ForAnyValue` set operators are not implemented. A policy
+document that cannot be parsed is rejected with `InvalidInput`.
+
+## Request-time enforcement (opt-in)
+
+Set `OVERCAST_ENFORCE_IAM=true` to have every request evaluated against the calling
+principal's policies before it reaches the service handler. **It is off by default, and with
+it off the evaluator reads nothing and decides nothing** — behaviour is exactly as it was.
+
+When it is on:
+
+- The caller is resolved from the SigV4 access key to an IAM user (its inline, attached and
+  group policies) or to a role assumed through STS (its inline and attached policies).
+- A request the policies do not allow is refused with the calling service's own
+  `AccessDenied`-shaped error, in that service's wire format.
+- Enforcement is **fail-closed**: an unsigned request, a policy that cannot be parsed, or a
+  construct the evaluator does not implement all deny. The reason is logged at debug level.
+- Resource-based policies (S3 bucket policies, Lambda/SQS/SNS policies) are **not** consulted
+  at request time yet — only identity policies are. The simulator accepts a resource policy
+  explicitly, which is the way to test one today.
+
+Enforcement decides only what the emulator's own evaluator can see. It is a development aid
+for catching missing permissions early, not a security control.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -55,7 +104,7 @@ validated**.
 | Groups                 | 7            |
 | Group inline policies  | 4            |
 | Group managed policies | 3            |
-| Policy simulation      | 1            |
+| Policy simulation      | 2            |
 | Account details        | 1            |
 
 ---
@@ -193,9 +242,10 @@ validated**.
 
 ### Policy simulation
 
-| Operation                 | Status       | Notes                                          | AWS Docs                                                                                     |
-| ------------------------- | ------------ | ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `SimulatePrincipalPolicy` | ✅ Supported | Always returns allowed — no enforcement engine | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_SimulatePrincipalPolicy.html) |
+| Operation                 | Status       | Notes                                                                                                                                                                                                  | AWS Docs                                                                                     |
+| ------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `SimulatePrincipalPolicy` | ✅ Supported | Real evaluation of the principal's identity policies (plus an optional ResourcePolicy and permissions boundary): allowed / explicitDeny / implicitDeny with MatchedStatements and MissingContextValues | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_SimulatePrincipalPolicy.html) |
+| `SimulateCustomPolicy`    | ✅ Supported | Evaluates the supplied PolicyInputList without touching any stored entity                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_SimulateCustomPolicy.html)    |
 
 ### Account details
 

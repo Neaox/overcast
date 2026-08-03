@@ -8,6 +8,7 @@
  *   iam-users    — user lifecycle
  *   iam-roles    — role lifecycle + assume-role policy
  *   iam-policies — managed and inline policies
+ *   iam-simulate — policy simulation (SimulateCustomPolicy / SimulatePrincipalPolicy)
  */
 
 import {
@@ -43,6 +44,8 @@ import {
   AddUserToGroupCommand,
   RemoveUserFromGroupCommand,
   ListGroupsForUserCommand,
+  SimulateCustomPolicyCommand,
+  SimulatePrincipalPolicyCommand,
   CreateInstanceProfileCommand,
   DeleteInstanceProfileCommand,
   AddRoleToInstanceProfileCommand,
@@ -682,6 +685,190 @@ export function makeIAMGroups(suite: string): TestGroup[] {
         try {
           await iam.send(
             new DeleteGroupCommand({ GroupName: `${ctx.runId}-grp` }),
+          );
+        } catch {}
+      },
+    },
+    // ── iam-simulate ───────────────────────────────────────────────────────
+    {
+      suite,
+      service: "iam",
+      name: "iam-simulate",
+      setup: async (ctx) => {
+        const { iam } = makeClients(ctx);
+        await iam.send(
+          new CreateUserCommand({ UserName: `${ctx.runId}-sim-user` }),
+        );
+        await iam.send(
+          new PutUserPolicyCommand({
+            UserName: `${ctx.runId}-sim-user`,
+            PolicyName: "sim-allow-read",
+            PolicyDocument: JSON.stringify({
+              Version: "2012-10-17",
+              Statement: [
+                {
+                  Effect: "Allow",
+                  Action: "s3:GetObject",
+                  Resource: `arn:aws:s3:::${ctx.runId}-sim/*`,
+                },
+              ],
+            }),
+          }),
+        );
+      },
+      tests: [
+        {
+          name: "SimulateCustomPolicyAllowed",
+          fn: async (ctx) => {
+            const { iam } = makeClients(ctx);
+            const resp = await iam.send(
+              new SimulateCustomPolicyCommand({
+                PolicyInputList: [
+                  JSON.stringify({
+                    Version: "2012-10-17",
+                    Statement: [
+                      {
+                        Effect: "Allow",
+                        Action: "s3:GetObject",
+                        Resource: `arn:aws:s3:::${ctx.runId}-sim/*`,
+                      },
+                    ],
+                  }),
+                ],
+                ActionNames: ["s3:GetObject"],
+                ResourceArns: [`arn:aws:s3:::${ctx.runId}-sim/report.csv`],
+              }),
+            );
+            const result = resp.EvaluationResults?.[0];
+            assert.ok(result, "SimulateCustomPolicy: missing EvaluationResults");
+            assert.strictEqual(
+              result.EvalDecision,
+              "allowed",
+              `SimulateCustomPolicy: expected allowed, got ${result.EvalDecision}`,
+            );
+            assert.strictEqual(result.EvalActionName, "s3:GetObject");
+          },
+        },
+        {
+          name: "SimulateCustomPolicyImplicitDeny",
+          fn: async (ctx) => {
+            const { iam } = makeClients(ctx);
+            const resp = await iam.send(
+              new SimulateCustomPolicyCommand({
+                PolicyInputList: [
+                  JSON.stringify({
+                    Version: "2012-10-17",
+                    Statement: [
+                      {
+                        Effect: "Allow",
+                        Action: "s3:GetObject",
+                        Resource: `arn:aws:s3:::${ctx.runId}-sim/*`,
+                      },
+                    ],
+                  }),
+                ],
+                ActionNames: ["s3:PutObject"],
+                ResourceArns: [`arn:aws:s3:::${ctx.runId}-sim/report.csv`],
+              }),
+            );
+            assert.strictEqual(
+              resp.EvaluationResults?.[0]?.EvalDecision,
+              "implicitDeny",
+              "SimulateCustomPolicy: uncovered action should be implicitDeny",
+            );
+          },
+        },
+        {
+          name: "SimulateCustomPolicyExplicitDeny",
+          fn: async (ctx) => {
+            const { iam } = makeClients(ctx);
+            const resp = await iam.send(
+              new SimulateCustomPolicyCommand({
+                PolicyInputList: [
+                  JSON.stringify({
+                    Version: "2012-10-17",
+                    Statement: [
+                      { Effect: "Allow", Action: "s3:*", Resource: "*" },
+                      {
+                        Effect: "Deny",
+                        Action: "s3:DeleteObject",
+                        Resource: "*",
+                      },
+                    ],
+                  }),
+                ],
+                ActionNames: ["s3:DeleteObject"],
+                ResourceArns: [`arn:aws:s3:::${ctx.runId}-sim/report.csv`],
+              }),
+            );
+            assert.strictEqual(
+              resp.EvaluationResults?.[0]?.EvalDecision,
+              "explicitDeny",
+              "SimulateCustomPolicy: explicit deny should win over allow",
+            );
+          },
+        },
+        {
+          name: "SimulatePrincipalPolicyAllowed",
+          fn: async (ctx) => {
+            const { iam } = makeClients(ctx);
+            const resp = await iam.send(
+              new SimulatePrincipalPolicyCommand({
+                PolicySourceArn: `arn:aws:iam::000000000000:user/${ctx.runId}-sim-user`,
+                ActionNames: ["s3:GetObject"],
+                ResourceArns: [`arn:aws:s3:::${ctx.runId}-sim/report.csv`],
+              }),
+            );
+            const result = resp.EvaluationResults?.[0];
+            assert.ok(
+              result,
+              "SimulatePrincipalPolicy: missing EvaluationResults",
+            );
+            assert.strictEqual(
+              result.EvalDecision,
+              "allowed",
+              `SimulatePrincipalPolicy: expected allowed, got ${result.EvalDecision}`,
+            );
+            assert.ok(
+              result.MatchedStatements?.some(
+                (m) => m.SourcePolicyId === "sim-allow-read",
+              ),
+              "SimulatePrincipalPolicy: MatchedStatements should name the inline policy",
+            );
+          },
+        },
+        {
+          name: "SimulatePrincipalPolicyImplicitDeny",
+          fn: async (ctx) => {
+            const { iam } = makeClients(ctx);
+            const resp = await iam.send(
+              new SimulatePrincipalPolicyCommand({
+                PolicySourceArn: `arn:aws:iam::000000000000:user/${ctx.runId}-sim-user`,
+                ActionNames: ["s3:DeleteObject"],
+                ResourceArns: [`arn:aws:s3:::${ctx.runId}-sim/report.csv`],
+              }),
+            );
+            assert.strictEqual(
+              resp.EvaluationResults?.[0]?.EvalDecision,
+              "implicitDeny",
+              "SimulatePrincipalPolicy: uncovered action should be implicitDeny",
+            );
+          },
+        },
+      ],
+      teardown: async (ctx) => {
+        const { iam } = makeClients(ctx);
+        try {
+          await iam.send(
+            new DeleteUserPolicyCommand({
+              UserName: `${ctx.runId}-sim-user`,
+              PolicyName: "sim-allow-read",
+            }),
+          );
+        } catch {}
+        try {
+          await iam.send(
+            new DeleteUserCommand({ UserName: `${ctx.runId}-sim-user` }),
           );
         } catch {}
       },

@@ -641,6 +641,12 @@
     {
       "suite": "rust-sdk",
       "service": "iam",
+      "group": "iam-simulate",
+      "tests": 5
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "iam",
       "group": "iam-users",
       "tests": 11
     },

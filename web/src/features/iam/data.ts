@@ -1,5 +1,6 @@
 import { queryOptions, mutationOptions } from "@tanstack/react-query"
 import { iam } from "@/services/api/iam"
+import type { SimulationRequest } from "@/services/api/iam"
 import { endpointStore } from "@/services/endpoint-store"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
@@ -78,6 +79,13 @@ export function createGroupMutationOptions() {
   return mutationOptions({
     mutationKey: [...iamKeys.groups(), "create"] as const,
     mutationFn: (groupName: string) => iam.createGroup(groupName),
+  })
+}
+
+export function simulatePolicyMutationOptions() {
+  return mutationOptions({
+    mutationKey: [...iamKeys.all(), "simulate"] as const,
+    mutationFn: (req: SimulationRequest) => iam.simulate(req),
   })
 }
 
