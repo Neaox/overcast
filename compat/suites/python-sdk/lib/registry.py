@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 from .harness import TestCase, TestGroup, TestFn
 
@@ -151,6 +151,61 @@ def ambiguous_test_names(registry: dict) -> set[str]:
     the group-qualified key for an ambiguous name.
     """
     return {name for name, groups in test_name_owners(registry).items() if len(groups) > 1}
+
+
+def merge_impls(sources: Iterable[tuple[str, ImplMap]], suite: str) -> ImplMap:
+    """
+    Flatten the per-module impl maps into the single map the loader resolves
+    against, refusing any key that two sources both register.
+
+    The merge used to be ``all_impls.update(mod.IMPLS)`` — last writer wins, and
+    silently. Two group modules both registering ``lambda-crud:CreateFunction``
+    left one implementation unreachable with nothing said about it, and the run
+    reported a result for whichever one survived. :func:`validate_impls` cannot
+    catch this: by the time it sees the flattened map the discarded
+    implementation is already gone, and the surviving key resolves perfectly
+    well.
+
+    Args:
+        sources: (label, impls) pairs in registration order. The label is the
+                 module the impls came from, so a collision can name both sides.
+        suite:   Suite name for the error heading.
+
+    Raises SystemExit naming every duplicated key.
+    """
+    merged: ImplMap = {}
+    owner: dict[str, str] = {}  # key → the source that registered it first
+
+    problems: list[str] = []
+    for label, impls in sources:
+        for key, fn in impls.items():
+            first = owner.get(key)
+            if first is not None:
+                problems.append(_duplicate_problem(key, first, label))
+                continue
+            owner[key] = label
+            merged[key] = fn
+
+    if not problems:
+        return merged
+    detail = "\n  - ".join(sorted(problems))
+    raise SystemExit(
+        f"[compat:{suite}] {len(problems)} duplicate impl registration(s):\n  - {detail}"
+    )
+
+
+def _duplicate_problem(key: str, first: str, second: str) -> str:
+    """One collision. The two sources are the same when a module registers the
+    key twice."""
+    where = (
+        f"is registered twice by '{first}'"
+        if first == second
+        else f"is registered by both '{first}' and '{second}'"
+    )
+    return (
+        f"impl '{key}' {where}"
+        " — one of the two would be silently discarded; remove or re-key one"
+    )
 
 
 def validate_impls(registry: dict, impls: ImplMap, suite: str) -> None:
