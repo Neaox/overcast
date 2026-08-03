@@ -1,4 +1,5 @@
-// Package autoscaling provides metadata-level emulation of Amazon EC2 Auto Scaling.
+// Package autoscaling emulates Amazon EC2 Auto Scaling, including the
+// reconciliation loop that makes a group's DesiredCapacity mean something.
 //
 // Implemented operations (Query protocol, XML responses):
 //
@@ -11,29 +12,39 @@
 //	  CreateLaunchConfiguration, DescribeLaunchConfigurations, DeleteLaunchConfiguration
 //
 //	Scaling Policies:
-//	  PutScalingPolicy, DescribePolicies, DeletePolicy
+//	  PutScalingPolicy, DescribePolicies, DeletePolicy, ExecutePolicy
 //
 //	Lifecycle Hooks:
-//	  PutLifecycleHook, DescribeLifecycleHooks, DeleteLifecycleHook
+//	  PutLifecycleHook, DescribeLifecycleHooks, DeleteLifecycleHook,
+//	  CompleteLifecycleAction, RecordLifecycleActionHeartbeat
+//
+//	Instances & activities:
+//	  DescribeAutoScalingInstances, DescribeScalingActivities,
+//	  SetInstanceHealth, SetInstanceProtection
 //
 //	Tags:
 //	  CreateOrUpdateTags, DeleteTags, DescribeTags
 //
-//	Instances (metadata-only):
-//	  DescribeAutoScalingInstances
-//
-// All operations are metadata-only: no instances are launched, no scaling
-// actions are executed, and no CloudWatch alarms are evaluated. This is
-// sufficient to unblock CDK/Terraform stacks that reference ASG resources.
+// A group backed by a launch configuration really converges: a single
+// background reconciler launches and terminates EC2 instances through the
+// emulator's own router until the owned instance set matches DesiredCapacity,
+// runs the Pending/InService/Terminating lifecycle state machine, honours
+// lifecycle hooks, and records a scaling activity for every launch and
+// termination. Group shapes it cannot converge — launch templates, mixed
+// instances policies, launch-from-instance — and scaling policy types it
+// cannot execute — target tracking, predictive — are refused with a 501 at the
+// configuring operation rather than stored and silently ignored.
 package autoscaling
 
 import (
-	"fmt"
+	"context"
 	"net/http"
-	"strconv"
-	"time"
+	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/awsapi"
@@ -49,96 +60,83 @@ const serviceName = "autoscaling"
 
 const asXMLNS = "http://autoscaling.amazonaws.com/doc/2011-01-01/"
 
-// ─── Store namespaces ─────────────────────────────────────────────────────────
-
-const (
-	nsGroups     = "autoscaling:groups"
-	nsLaunchCfgs = "autoscaling:launchconfigs"
-	nsPolicies   = "autoscaling:policies"
-	nsHooks      = "autoscaling:hooks"
-	nsGroupTags  = "autoscaling:grouptags"
-)
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-// AutoScalingGroup represents an Auto Scaling group.
-//
-//nolint:revive // AWS names the resource AutoScalingGroup.
-type AutoScalingGroup struct {
-	AutoScalingGroupName    string    `json:"AutoScalingGroupName"`
-	AutoScalingGroupARN     string    `json:"AutoScalingGroupARN"`
-	LaunchConfigurationName string    `json:"LaunchConfigurationName,omitempty"`
-	MinSize                 int       `json:"MinSize"`
-	MaxSize                 int       `json:"MaxSize"`
-	DesiredCapacity         int       `json:"DesiredCapacity"`
-	DefaultCooldown         int       `json:"DefaultCooldown"`
-	AvailabilityZones       []string  `json:"AvailabilityZones"`
-	Status                  string    `json:"Status"`
-	CreatedTime             time.Time `json:"CreatedTime"`
-}
-
-// LaunchConfiguration represents an EC2 Auto Scaling launch configuration.
-type LaunchConfiguration struct {
-	LaunchConfigurationName string    `json:"LaunchConfigurationName"`
-	LaunchConfigurationARN  string    `json:"LaunchConfigurationARN"`
-	ImageId                 string    `json:"ImageId"`
-	InstanceType            string    `json:"InstanceType"`
-	KeyName                 string    `json:"KeyName,omitempty"`
-	SecurityGroups          []string  `json:"SecurityGroups,omitempty"`
-	IamInstanceProfile      string    `json:"IamInstanceProfile,omitempty"`
-	UserData                string    `json:"UserData,omitempty"`
-	CreatedTime             time.Time `json:"CreatedTime"`
-}
-
-// ScalingPolicy represents a scaling policy.
-type ScalingPolicy struct {
-	PolicyARN            string `json:"PolicyARN"`
-	PolicyName           string `json:"PolicyName"`
-	AutoScalingGroupName string `json:"AutoScalingGroupName"`
-	PolicyType           string `json:"PolicyType"`
-	AdjustmentType       string `json:"AdjustmentType"`
-	ScalingAdjustment    int    `json:"ScalingAdjustment"`
-	Cooldown             int    `json:"Cooldown"`
-}
-
-// LifecycleHook represents a lifecycle hook.
-type LifecycleHook struct {
-	LifecycleHookName    string `json:"LifecycleHookName"`
-	AutoScalingGroupName string `json:"AutoScalingGroupName"`
-	LifecycleTransition  string `json:"LifecycleTransition"`
-	DefaultResult        string `json:"DefaultResult"`
-	HeartbeatTimeout     int    `json:"HeartbeatTimeout"`
-}
-
-// GroupTag represents a tag on an Auto Scaling group.
-type GroupTag struct {
-	ResourceId        string `json:"ResourceId"`
-	ResourceType      string `json:"ResourceType"`
-	Key               string `json:"Key"`
-	Value             string `json:"Value"`
-	PropagateAtLaunch bool   `json:"PropagateAtLaunch"`
-}
-
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 // Service implements router.Service and router.QueryDispatcher for Auto Scaling.
 type Service struct {
 	cfg     *config.Config
-	store   state.Store
+	st      *asgStore
 	log     *serviceutil.ServiceLogger
 	clk     clock.Clock
 	handler *Handler
+
+	// router is the emulator's root handler, used to launch and terminate EC2
+	// instances and to publish lifecycle events. Nil until InitRouter is
+	// called, which keeps the service usable in unit tests that wire none.
+	router http.Handler
+
+	// ticker drives the single reconciliation loop. Created in New so a mock
+	// clock has it registered before New returns.
+	ticker *clock.Ticker
+
+	// wake lets a handler ask for a pass now rather than on the next tick.
+	// Buffered to one: a pending wake already covers a second request.
+	wake chan struct{}
+
+	// groupCount caches how many groups exist, so a tick with none costs one
+	// atomic load and no store I/O. -1 means "unknown, re-read next tick".
+	groupCount atomic.Int64
+
+	// mu guards the read-modify-write of a group's own records. It is never
+	// held across an EC2 or EventBridge call.
+	mu sync.Mutex
+
+	stopOnce sync.Once
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
 }
 
 // New returns a configured Auto Scaling Service.
+//
+// It performs no store I/O: the reconciler only registers its ticker here and
+// does not touch the store until its first pass (AGENTS.md § startup budget).
 func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	log := serviceutil.NewServiceLogger(logger, serviceName)
-	return &Service{
-		cfg:     cfg,
-		store:   st,
-		log:     log,
-		clk:     clk,
-		handler: newHandler(cfg, st, log, clk),
+	s := &Service{
+		cfg:    cfg,
+		st:     newASGStore(st),
+		log:    log,
+		clk:    clk,
+		wake:   make(chan struct{}, 1),
+		stopCh: make(chan struct{}),
+	}
+	s.handler = newHandler(s)
+	// -1 = unknown: the first pass learns the real count from the store, after
+	// construction, so a restart with existing groups still reconciles.
+	s.groupCount.Store(-1)
+	s.ticker = s.clk.Ticker(reconcileInterval)
+	s.wg.Add(1)
+	go s.runReconciler()
+	return s
+}
+
+// InitRouter wires the emulator's root handler. Called once from router.New;
+// a Service without it still serves the API, it just has nowhere to launch
+// instances — every launch is then recorded as a Failed scaling activity
+// rather than silently skipped.
+func (s *Service) InitRouter(r http.Handler) { s.router = r }
+
+// Stop drains the reconciliation loop.
+func (s *Service) Stop(ctx context.Context) {
+	s.stopOnce.Do(func() { close(s.stopCh) })
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-ctx.Done():
+	case <-done:
 	}
 }
 
@@ -153,7 +151,8 @@ func (s *Service) OwnsVersion(v string) bool { return v == awsapi.VersionAutoSca
 
 // DispatchQuery satisfies router.QueryDispatcher.
 func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
+	c, opName := codec.FromContext(r.Context())
+	if c != nil && opName != "" {
 		if !serviceutil.AllowProtocolDrift(s.cfg, s.log, opName, c, s.SupportedProtocols()) {
 			c.WriteError(w, r, &protocol.AWSError{
 				Code: "UnsupportedProtocol", Message: "AutoScaling does not support wire protocol " + c.Name() + ".",
@@ -165,32 +164,61 @@ func (s *Service) DispatchQuery(w http.ResponseWriter, r *http.Request) {
 			typed.Invoke(w, r, c)
 			return
 		}
-		// No typed impl for this op — fall through to legacy dispatch below.
 	}
+	// A caller that reached the service without the protocol middleware (an
+	// internal dispatch, a bare unit-test request) still resolves its
+	// operation from the form and runs the same typed implementation — there
+	// is deliberately no second, divergent copy of the handlers.
 	s.handler.dispatch(w, r)
 }
 
-// ─── Package-level helpers ────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-func parseInt(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
-func parseBool(s string) bool {
-	b, _ := strconv.ParseBool(s)
-	return b
-}
-
-// parseIndexedStrings extracts "Param.member.N" values (1-based) from form data.
-func parseIndexedStrings(r *http.Request, prefix string) []string {
-	var result []string
-	for i := 1; ; i++ {
-		v := r.FormValue(fmt.Sprintf("%s.member.%d", prefix, i))
-		if v == "" {
-			break
-		}
-		result = append(result, v)
+func (s *Service) accountID() string {
+	if s.cfg != nil && s.cfg.AccountID != "" {
+		return s.cfg.AccountID
 	}
-	return result
+	return "000000000000"
 }
+
+func (s *Service) region() string {
+	if s.cfg != nil && s.cfg.Region != "" {
+		return s.cfg.Region
+	}
+	return "us-east-1"
+}
+
+func (s *Service) asgARN(name string) string {
+	return "arn:aws:autoscaling:" + s.region() + ":" + s.accountID() +
+		":autoScalingGroup:" + newID() + ":autoScalingGroupName/" + name
+}
+
+func (s *Service) lcARN(name string) string {
+	return "arn:aws:autoscaling:" + s.region() + ":" + s.accountID() +
+		":launchConfiguration:" + newID() + ":launchConfigurationName/" + name
+}
+
+func (s *Service) policyARN(asgName, policyName string) string {
+	return "arn:aws:autoscaling:" + s.region() + ":" + s.accountID() +
+		":scalingPolicy:" + newID() + ":autoScalingGroupName/" + asgName + ":policyName/" + policyName
+}
+
+// parsePolicyARN splits an Auto Scaling scaling-policy ARN back into the group
+// and policy it names. This is what makes an alarm action deliverable: the
+// alarm carries only the ARN.
+func parsePolicyARN(arn string) (group, policy string, ok bool) {
+	idx := strings.Index(arn, ":autoScalingGroupName/")
+	if idx < 0 {
+		return "", "", false
+	}
+	rest := arn[idx+len(":autoScalingGroupName/"):]
+	group, policy, found := strings.Cut(rest, ":policyName/")
+	if !found || group == "" || policy == "" {
+		return "", "", false
+	}
+	return group, policy, true
+}
+
+// newID returns a fresh UUID, the identifier shape Auto Scaling uses for
+// activity ids and the resource segment of its ARNs.
+func newID() string { return uuid.NewString() }

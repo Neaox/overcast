@@ -315,6 +315,57 @@ func (h *autoscalingASGHandler) Create(ctx context.Context, router http.Handler,
 	if v, _ := props["LaunchConfigurationName"].(string); v != "" {
 		params["LaunchConfigurationName"] = v
 	}
+	// Forward the launch source the template actually named. Auto Scaling
+	// refuses launch templates and mixed-instances policies with a 501 that
+	// names the gap (its EC2 emulation has no CreateLaunchTemplate to resolve
+	// them against, issue #474) — dropping the property here instead would
+	// turn that honest refusal into a confusing "no launch source" error, or
+	// worse, a group that provisions and never launches anything.
+	if lt, ok := props["LaunchTemplate"].(map[string]any); ok {
+		if v, _ := lt["LaunchTemplateId"].(string); v != "" {
+			params["LaunchTemplate.LaunchTemplateId"] = v
+		}
+		if v, _ := lt["LaunchTemplateName"].(string); v != "" {
+			params["LaunchTemplate.LaunchTemplateName"] = v
+		}
+		if v, _ := lt["Version"].(string); v != "" {
+			params["LaunchTemplate.Version"] = v
+		}
+	}
+	if mip, ok := props["MixedInstancesPolicy"].(map[string]any); ok {
+		if lt, ok := mip["LaunchTemplate"].(map[string]any); ok {
+			if spec, ok := lt["LaunchTemplateSpecification"].(map[string]any); ok {
+				if v, _ := spec["LaunchTemplateId"].(string); v != "" {
+					params["MixedInstancesPolicy.LaunchTemplate.LaunchTemplateSpecification.LaunchTemplateId"] = v
+				}
+				if v, _ := spec["LaunchTemplateName"].(string); v != "" {
+					params["MixedInstancesPolicy.LaunchTemplate.LaunchTemplateSpecification.LaunchTemplateName"] = v
+				}
+			}
+		}
+	}
+	// Tags with PropagateAtLaunch are applied to every instance the
+	// reconciler launches, so they have to reach the service.
+	if tags, ok := props["Tags"].([]any); ok {
+		idx := 1
+		for _, raw := range tags {
+			tag, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			key, _ := tag["Key"].(string)
+			if key == "" {
+				continue
+			}
+			prefix := fmt.Sprintf("Tags.member.%d.", idx)
+			params[prefix+"Key"] = key
+			params[prefix+"Value"] = fmtPropString(tag, "Value")
+			params[prefix+"ResourceId"] = name
+			params[prefix+"ResourceType"] = "auto-scaling-group"
+			params[prefix+"PropagateAtLaunch"] = fmtPropString(tag, "PropagateAtLaunch")
+			idx++
+		}
+	}
 
 	_, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {

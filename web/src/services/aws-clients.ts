@@ -42,6 +42,7 @@ import { STSClient } from "@aws-sdk/client-sts"
 import { ECRClient } from "@aws-sdk/client-ecr"
 import { EFSClient } from "@aws-sdk/client-efs"
 import { EKSClient } from "@aws-sdk/client-eks"
+import { AutoScalingClient } from "@aws-sdk/client-auto-scaling"
 import { endpointResolver } from "./discovery"
 
 // Emulator accepts any non-empty credentials without validation.
@@ -97,4 +98,5 @@ export const awsClients = {
   ecr: () => new ECRClient(baseConfig()),
   efs: () => new EFSClient(baseConfig()),
   eks: () => new EKSClient(baseConfig()),
+  autoscaling: () => new AutoScalingClient(baseConfig()),
 }

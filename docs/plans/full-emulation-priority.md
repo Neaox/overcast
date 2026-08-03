@@ -44,7 +44,7 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 | 4 | IAM policy evaluation | Core, no enforcement | `SimulatePrincipalPolicy` "Always returns allowed — no enforcement engine" ([iam/handler.go:1952](../../internal/services/iam/handler.go)) — no local signal for the single most common real-AWS failure mode (`AccessDenied`) |
 | 5 | S3 lifecycle rules | ~~Comprehensive, stub gap~~ **done 2026-08-03** | `Get/Put/DeleteBucketLifecycleConfiguration` were pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets). Shipped in §3 Wave 3 item 9 |
 | 6 | CloudWatch Alarms auto-evaluation ✅ shipped (#473) | Core, complete | The evaluator that existed ignored dimensions, `DatapointsToAlarm` and `TreatMissingData`, fired no actions, and left unevaluable alarm shapes sitting in `INSUFFICIENT_DATA`. Now epoch-aligned M-of-N evaluation with real transitions, actions and history |
-| 7 | Auto Scaling real reconciliation | Tier 1 (fully inert — 19/19 ops `StatusInert`) | Desired-capacity CRUD only; no instance launch/terminate loop against the existing EC2 service; pairs with #6 for alarm-driven scaling |
+| 7 | Auto Scaling real reconciliation ✅ shipped (#474) | Core, complete for launch-configuration groups | Groups now converge for real: a single reconciler launches and terminates EC2 instances, runs the lifecycle state machine, and executes simple/step policies fired by #6's alarms. Launch templates and target-tracking policies are refused, not faked |
 | 8 | API Gateway usage-plan throttle/quota enforcement — **done 2026-08-03 (#472)** | Comprehensive, complete | Throttle and quota are now measured per (plan, API key) and readable through `GetUsage`; rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off |
 | 9 | Secrets Manager rotation + resource policies — **done 2026-08-03 (#476)** | Comprehensive | Was: `RotateSecret` "Config only (no Lambda invocation)" and all four resource-policy ops 501 stubs. Now runs AWS's four-step rotation protocol against the configured Lambda, and stores/validates resource policies (nothing evaluates them — #496) |
 | 10 | Pipes: sources/targets beyond DDB→SQS | **Core — done 2026-08-03 (#470)** | Was: hard-coded to "only the DynamoDB Streams → SQS path", with every other combination stored and silently inert. Now runs DynamoDB Streams / Kinesis / SQS sources, an optional Lambda enrichment, and Lambda/SQS/SNS/Step Functions/Kinesis/Firehose/EventBridge-bus targets through [internal/eventtarget](../../internal/eventtarget); anything else is refused at `CreatePipe`/`UpdatePipe` time |
@@ -356,20 +356,42 @@ client wiring in all seven suites, which is its own change rather than a rider o
 **8. Auto Scaling real reconciliation** — Tier 1 (inert, 19/19 ops) → Core
 Score: usage 3, leverage 3, fit 3, cost L, dep-ready 3 (stronger once item 7 lands), risk low (adding
 behavior to a service with zero live behavior today carries no regression risk).
-This is the cleanest "promote a wholly-inert service" candidate in the backlog — all 19 registered
-operations are `StatusInert` today (`internal/capabilities/all.gen.go`), meaning there is no existing
-behavior to preserve compatibility with.
-Definition of done:
-- A reconciliation loop (mirrors the ECS service reconciler already in `internal/services/ecs`): on
-  `CreateAutoScalingGroup`/`UpdateAutoScalingGroup`/`SetDesiredCapacity`, launch/terminate EC2 instances
-  via the existing EC2 service to converge actual instance count on `DesiredCapacity`, respecting
-  `MinSize`/`MaxSize` for the group.
-- `PutScalingPolicy` (target-tracking and step scaling) evaluates against CloudWatch alarm state (item 7)
-  and adjusts desired capacity accordingly.
-- Lifecycle hooks (`PutLifecycleHook`) actually pause instance launch/terminate for the hook's timeout,
-  emitting the EventBridge lifecycle-action event real Auto Scaling emits.
+This was the cleanest "promote a wholly-inert service" candidate in the backlog — all 19 registered
+operations were `StatusInert`, meaning there was no existing behavior to preserve compatibility with.
+
+**Shipped (#474).** The stated current state held: all 19 rows really were inert, and the audit found no
+hidden half-implementation of the kind item 7 turned up. What landed:
+- A single clock-driven reconciler — one loop per Service, never one per group or instance, drained by
+  `Stop` — converges each group's owned instance set on `DesiredCapacity` by calling EC2 `RunInstances` /
+  `TerminateInstances` through the emulator's own router. A pass with no groups costs one atomic load; a
+  handler that changes a group pokes the loop so scaling is prompt rather than tick-bound.
+- The lifecycle state machine (`Pending` → `InService`, `Terminating` → gone), instance health with
+  automatic replacement, scale-in protection, oldest-first scale-in, and AZ/subnet round-robin placement.
+  `DescribeAutoScalingGroups`/`DescribeAutoScalingInstances` report the real set.
+- `DescribeScalingActivities`, with AWS's `StatusCode`, `Progress`, `Description` and `Cause` wording for
+  every launch and termination — including a `Failed` activity carrying EC2's own error when a launch is
+  refused, rather than a silent no-op.
+- `PutScalingPolicy` for `SimpleScaling` and `StepScaling`, `ExecutePolicy`, cooldowns and
+  `MinAdjustmentMagnitude`. A policy ARN in a CloudWatch alarm's actions executes for real through item
+  7's `internal/alarmaction` seam — `Dispatcher.Register("autoscaling", …)` in `router.New`, with no
+  import in either direction. The step interval is chosen from the transition's `StateReasonData`.
+- Lifecycle hooks that really pause: `Pending:Wait`/`Terminating:Wait`, the EventBridge
+  `EC2 Instance-launch Lifecycle Action` event with its `LifecycleActionToken`, `CompleteLifecycleAction`
+  and `RecordLifecycleActionHeartbeat`, and the hook's `DefaultResult` on heartbeat expiry.
+- §2.1 refusals rather than silent storage: `LaunchTemplate`, `MixedInstancesPolicy` and `InstanceId`
+  groups, and `TargetTrackingScaling`/`PredictiveScaling` policies, are `501`s at the configuring
+  operation. A group with no launch source at all is AWS's own `ValidationError`. Launch templates are
+  refused because Overcast's EC2 has no `CreateLaunchTemplate` to resolve them against — tracked as #518,
+  which is the one place this promotion is narrower than the modern CDK default path.
+- Web UI: a real Auto Scaling page — groups with min/desired/max against the actual instance count, the
+  instances and their lifecycle states, scaling policies, lifecycle hooks and recent activities.
+
+Deferred deliberately, tracked separately: compat-suite coverage (#517). No suite has an Auto Scaling SDK
+client today, so the group needs a new SDK dependency and client wiring in all seven suites — the same
+shape as the CloudWatch split (#506), and its own change rather than a rider on this one.
+
 Dependencies: EC2 (Comprehensive already) for instance launch/terminate; CloudWatch Alarms (item 7) for
-alarm-driven policies — desired-capacity-only scaling can ship without it.
+alarm-driven policies — desired-capacity-only scaling could have shipped without it.
 
 ### Wave 3 — Storage & secrets completeness
 
@@ -539,7 +561,8 @@ and the handlers themselves rather than trusted. Findings:
    characterization at all: ACM, Athena, Bedrock, CloudWatch, DynamoDB Streams, Firehose, Glue, OpenSearch,
    AppRegistry, Auto Scaling, Backup, CloudTrail, EKS, ELBv2, MSK, Organizations, Transfer Family. This
    plan independently classified all 16 by reading `internal/capabilities/all.gen.go`: Auto Scaling,
-   Backup, CloudTrail, Transfer Family, and Organizations are wholly `StatusInert` (Tier 1); MSK is
+   Backup, CloudTrail, Transfer Family, and Organizations were wholly `StatusInert` (Tier 1) at the time
+   of the audit — Auto Scaling has since been promoted out of that list by item 8 (#474); MSK is
    Docker-backed (Redpanda) and Core-depth already, comparable to RDS/ElastiCache; EKS has a live
    Docker-backed cluster mode (`internal/services/eks/live_runtime.go`) beyond pure metadata, but full pod-
    scheduling fidelity is XL-cost and low-fit (see §7); the remainder (ACM, Athena, Bedrock, CloudWatch,

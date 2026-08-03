@@ -1,10 +1,16 @@
 package autoscaling
 
+// Typed request/response shapes and the single implementation of every
+// Auto Scaling operation. The Query codec decodes the form into the request
+// struct (json tags) and marshals the response struct (xml tags).
+
 import (
 	"context"
-	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Neaox/overcast/internal/protocol"
@@ -12,23 +18,62 @@ import (
 
 // ── Request types (json tags used by codec.Decode for form mapping) ───
 
+type launchTemplateSpec struct {
+	LaunchTemplateId   string `json:"LaunchTemplateId"`
+	LaunchTemplateName string `json:"LaunchTemplateName"`
+	Version            string `json:"Version"`
+}
+
+func (l launchTemplateSpec) present() bool {
+	return l.LaunchTemplateId != "" || l.LaunchTemplateName != ""
+}
+
+type mixedInstancesLaunchTemplate struct {
+	LaunchTemplateSpecification launchTemplateSpec `json:"LaunchTemplateSpecification"`
+}
+
+type mixedInstancesPolicySpec struct {
+	LaunchTemplate mixedInstancesLaunchTemplate `json:"LaunchTemplate"`
+}
+
+func (m mixedInstancesPolicySpec) present() bool {
+	return m.LaunchTemplate.LaunchTemplateSpecification.present()
+}
+
 type createASGReq struct {
-	AutoScalingGroupName    string   `json:"AutoScalingGroupName"`
-	AvailabilityZones       []string `json:"AvailabilityZones"`
-	LaunchConfigurationName string   `json:"LaunchConfigurationName"`
-	MinSize                 int      `json:"MinSize"`
-	MaxSize                 int      `json:"MaxSize"`
-	DesiredCapacity         int      `json:"DesiredCapacity"`
-	DefaultCooldown         int      `json:"DefaultCooldown"`
+	AutoScalingGroupName             string                   `json:"AutoScalingGroupName"`
+	AvailabilityZones                []string                 `json:"AvailabilityZones"`
+	LaunchConfigurationName          string                   `json:"LaunchConfigurationName"`
+	LaunchTemplate                   launchTemplateSpec       `json:"LaunchTemplate"`
+	MixedInstancesPolicy             mixedInstancesPolicySpec `json:"MixedInstancesPolicy"`
+	InstanceId                       string                   `json:"InstanceId"`
+	MinSize                          int                      `json:"MinSize"`
+	MaxSize                          int                      `json:"MaxSize"`
+	DesiredCapacity                  *int                     `json:"DesiredCapacity"`
+	DefaultCooldown                  *int                     `json:"DefaultCooldown"`
+	VPCZoneIdentifier                string                   `json:"VPCZoneIdentifier"`
+	HealthCheckType                  string                   `json:"HealthCheckType"`
+	HealthCheckGracePeriod           int                      `json:"HealthCheckGracePeriod"`
+	TerminationPolicies              []string                 `json:"TerminationPolicies"`
+	NewInstancesProtectedFromScaleIn bool                     `json:"NewInstancesProtectedFromScaleIn"`
+	Tags                             []asgTagMember           `json:"Tags"`
 }
 
 type updateASGReq struct {
-	AutoScalingGroupName    string `json:"AutoScalingGroupName"`
-	MinSize                 int    `json:"MinSize"`
-	MaxSize                 int    `json:"MaxSize"`
-	DesiredCapacity         int    `json:"DesiredCapacity"`
-	LaunchConfigurationName string `json:"LaunchConfigurationName"`
-	DefaultCooldown         int    `json:"DefaultCooldown"`
+	AutoScalingGroupName             string                   `json:"AutoScalingGroupName"`
+	MinSize                          *int                     `json:"MinSize"`
+	MaxSize                          *int                     `json:"MaxSize"`
+	DesiredCapacity                  *int                     `json:"DesiredCapacity"`
+	LaunchConfigurationName          string                   `json:"LaunchConfigurationName"`
+	LaunchTemplate                   launchTemplateSpec       `json:"LaunchTemplate"`
+	MixedInstancesPolicy             mixedInstancesPolicySpec `json:"MixedInstancesPolicy"`
+	DefaultCooldown                  *int                     `json:"DefaultCooldown"`
+	AvailabilityZones                []string                 `json:"AvailabilityZones"`
+	VPCZoneIdentifier                string                   `json:"VPCZoneIdentifier"`
+	HealthCheckType                  string                   `json:"HealthCheckType"`
+	HealthCheckGracePeriod           *int                     `json:"HealthCheckGracePeriod"`
+	TerminationPolicies              []string                 `json:"TerminationPolicies"`
+	NewInstancesProtectedFromScaleIn *bool                    `json:"NewInstancesProtectedFromScaleIn"`
 }
 
 type describeASGsReq struct {
@@ -37,17 +82,19 @@ type describeASGsReq struct {
 
 type deleteASGReq struct {
 	AutoScalingGroupName string `json:"AutoScalingGroupName"`
+	ForceDelete          bool   `json:"ForceDelete"`
 }
 
 type setDesiredCapacityReq struct {
 	AutoScalingGroupName string `json:"AutoScalingGroupName"`
 	DesiredCapacity      int    `json:"DesiredCapacity"`
+	HonorCooldown        bool   `json:"HonorCooldown"`
 }
 
 type terminateInstanceReq struct {
 	AutoScalingGroupName           string `json:"AutoScalingGroupName"`
 	InstanceId                     string `json:"InstanceId"`
-	ShouldDecrementDesiredCapacity string `json:"ShouldDecrementDesiredCapacity"`
+	ShouldDecrementDesiredCapacity bool   `json:"ShouldDecrementDesiredCapacity"`
 }
 
 type createLaunchConfigReq struct {
@@ -68,13 +115,23 @@ type deleteLaunchConfigReq struct {
 	LaunchConfigurationName string `json:"LaunchConfigurationName"`
 }
 
+type stepAdjustmentMember struct {
+	MetricIntervalLowerBound string `json:"MetricIntervalLowerBound"`
+	MetricIntervalUpperBound string `json:"MetricIntervalUpperBound"`
+	ScalingAdjustment        int    `json:"ScalingAdjustment"`
+}
+
 type putScalingPolicyReq struct {
-	AutoScalingGroupName string `json:"AutoScalingGroupName"`
-	PolicyName           string `json:"PolicyName"`
-	PolicyType           string `json:"PolicyType"`
-	AdjustmentType       string `json:"AdjustmentType"`
-	ScalingAdjustment    int    `json:"ScalingAdjustment"`
-	Cooldown             int    `json:"Cooldown"`
+	AutoScalingGroupName    string                 `json:"AutoScalingGroupName"`
+	PolicyName              string                 `json:"PolicyName"`
+	PolicyType              string                 `json:"PolicyType"`
+	AdjustmentType          string                 `json:"AdjustmentType"`
+	ScalingAdjustment       int                    `json:"ScalingAdjustment"`
+	MinAdjustmentMagnitude  int                    `json:"MinAdjustmentMagnitude"`
+	Cooldown                int                    `json:"Cooldown"`
+	StepAdjustments         []stepAdjustmentMember `json:"StepAdjustments"`
+	MetricAggregationType   string                 `json:"MetricAggregationType"`
+	EstimatedInstanceWarmup int                    `json:"EstimatedInstanceWarmup"`
 }
 
 type describePoliciesReq struct {
@@ -86,12 +143,22 @@ type deletePolicyReq struct {
 	AutoScalingGroupName string `json:"AutoScalingGroupName"`
 }
 
+type executePolicyReq struct {
+	AutoScalingGroupName string  `json:"AutoScalingGroupName"`
+	PolicyName           string  `json:"PolicyName"`
+	HonorCooldown        bool    `json:"HonorCooldown"`
+	MetricValue          float64 `json:"MetricValue"`
+	BreachThreshold      float64 `json:"BreachThreshold"`
+}
+
 type putLifecycleHookReq struct {
-	AutoScalingGroupName string `json:"AutoScalingGroupName"`
-	LifecycleHookName    string `json:"LifecycleHookName"`
-	LifecycleTransition  string `json:"LifecycleTransition"`
-	DefaultResult        string `json:"DefaultResult"`
-	HeartbeatTimeout     int    `json:"HeartbeatTimeout"`
+	AutoScalingGroupName  string `json:"AutoScalingGroupName"`
+	LifecycleHookName     string `json:"LifecycleHookName"`
+	LifecycleTransition   string `json:"LifecycleTransition"`
+	DefaultResult         string `json:"DefaultResult"`
+	HeartbeatTimeout      int    `json:"HeartbeatTimeout"`
+	NotificationTargetARN string `json:"NotificationTargetARN"`
+	RoleARN               string `json:"RoleARN"`
 }
 
 type describeLifecycleHooksReq struct {
@@ -102,6 +169,44 @@ type describeLifecycleHooksReq struct {
 type deleteLifecycleHookReq struct {
 	AutoScalingGroupName string `json:"AutoScalingGroupName"`
 	LifecycleHookName    string `json:"LifecycleHookName"`
+}
+
+type completeLifecycleActionReq struct {
+	AutoScalingGroupName  string `json:"AutoScalingGroupName"`
+	LifecycleHookName     string `json:"LifecycleHookName"`
+	LifecycleActionToken  string `json:"LifecycleActionToken"`
+	InstanceId            string `json:"InstanceId"`
+	LifecycleActionResult string `json:"LifecycleActionResult"`
+}
+
+type recordHeartbeatReq struct {
+	AutoScalingGroupName string `json:"AutoScalingGroupName"`
+	LifecycleHookName    string `json:"LifecycleHookName"`
+	LifecycleActionToken string `json:"LifecycleActionToken"`
+	InstanceId           string `json:"InstanceId"`
+}
+
+type setInstanceHealthReq struct {
+	InstanceId               string `json:"InstanceId"`
+	HealthStatus             string `json:"HealthStatus"`
+	ShouldRespectGracePeriod bool   `json:"ShouldRespectGracePeriod"`
+}
+
+type setInstanceProtectionReq struct {
+	AutoScalingGroupName string   `json:"AutoScalingGroupName"`
+	InstanceIds          []string `json:"InstanceIds"`
+	ProtectedFromScaleIn bool     `json:"ProtectedFromScaleIn"`
+}
+
+type describeInstancesReq struct {
+	InstanceIds []string `json:"InstanceIds"`
+	MaxRecords  int      `json:"MaxRecords"`
+}
+
+type describeActivitiesReq struct {
+	AutoScalingGroupName string   `json:"AutoScalingGroupName"`
+	ActivityIds          []string `json:"ActivityIds"`
+	MaxRecords           int      `json:"MaxRecords"`
 }
 
 type asgTagMember struct {
@@ -135,14 +240,107 @@ type asgResponseMeta struct {
 	RequestId string `xml:"RequestId"`
 }
 
-type asgEmptyResp struct {
-	XMLName struct{}        `xml:""`
+// asgEmptyBody is the payload of every void Auto Scaling response. It is
+// embedded rather than reused directly so each operation carries its own
+// XMLName — AWS names the root element after the operation, and an SDK that
+// checks it must see CreateAutoScalingGroupResponse, not a Go type name.
+type asgEmptyBody struct {
+	Xmlns string          `xml:"xmlns,attr"`
+	Meta  asgResponseMeta `xml:"ResponseMetadata"`
+}
+
+type createASGResp struct {
+	XMLName xml.Name `xml:"CreateAutoScalingGroupResponse"`
+	asgEmptyBody
+}
+
+type updateASGResp struct {
+	XMLName xml.Name `xml:"UpdateAutoScalingGroupResponse"`
+	asgEmptyBody
+}
+
+type deleteASGResp struct {
+	XMLName xml.Name `xml:"DeleteAutoScalingGroupResponse"`
+	asgEmptyBody
+}
+
+type setDesiredCapacityResp struct {
+	XMLName xml.Name `xml:"SetDesiredCapacityResponse"`
+	asgEmptyBody
+}
+
+type createLaunchConfigResp struct {
+	XMLName xml.Name `xml:"CreateLaunchConfigurationResponse"`
+	asgEmptyBody
+}
+
+type deleteLaunchConfigResp struct {
+	XMLName xml.Name `xml:"DeleteLaunchConfigurationResponse"`
+	asgEmptyBody
+}
+
+type deletePolicyResp struct {
+	XMLName xml.Name `xml:"DeletePolicyResponse"`
+	asgEmptyBody
+}
+
+type executePolicyResp struct {
+	XMLName xml.Name `xml:"ExecutePolicyResponse"`
+	asgEmptyBody
+}
+
+type putLifecycleHookResp struct {
+	XMLName xml.Name        `xml:"PutLifecycleHookResponse"`
 	Xmlns   string          `xml:"xmlns,attr"`
+	Result  struct{}        `xml:"PutLifecycleHookResult"`
 	Meta    asgResponseMeta `xml:"ResponseMetadata"`
 }
 
+type deleteLifecycleHookResp struct {
+	XMLName xml.Name        `xml:"DeleteLifecycleHookResponse"`
+	Xmlns   string          `xml:"xmlns,attr"`
+	Result  struct{}        `xml:"DeleteLifecycleHookResult"`
+	Meta    asgResponseMeta `xml:"ResponseMetadata"`
+}
+
+type completeLifecycleActionResp struct {
+	XMLName xml.Name        `xml:"CompleteLifecycleActionResponse"`
+	Xmlns   string          `xml:"xmlns,attr"`
+	Result  struct{}        `xml:"CompleteLifecycleActionResult"`
+	Meta    asgResponseMeta `xml:"ResponseMetadata"`
+}
+
+type recordHeartbeatResp struct {
+	XMLName xml.Name        `xml:"RecordLifecycleActionHeartbeatResponse"`
+	Xmlns   string          `xml:"xmlns,attr"`
+	Result  struct{}        `xml:"RecordLifecycleActionHeartbeatResult"`
+	Meta    asgResponseMeta `xml:"ResponseMetadata"`
+}
+
+type setInstanceHealthResp struct {
+	XMLName xml.Name `xml:"SetInstanceHealthResponse"`
+	asgEmptyBody
+}
+
+type setInstanceProtectionResp struct {
+	XMLName xml.Name        `xml:"SetInstanceProtectionResponse"`
+	Xmlns   string          `xml:"xmlns,attr"`
+	Result  struct{}        `xml:"SetInstanceProtectionResult"`
+	Meta    asgResponseMeta `xml:"ResponseMetadata"`
+}
+
+type createOrUpdateTagsResp struct {
+	XMLName xml.Name `xml:"CreateOrUpdateTagsResponse"`
+	asgEmptyBody
+}
+
+type deleteTagsResp struct {
+	XMLName xml.Name `xml:"DeleteTagsResponse"`
+	asgEmptyBody
+}
+
 type describeASGsResp struct {
-	XMLName struct{}        `xml:"DescribeAutoScalingGroupsResponse"`
+	XMLName xml.Name        `xml:"DescribeAutoScalingGroupsResponse"`
 	Xmlns   string          `xml:"xmlns,attr"`
 	Result  asgGroupsResult `xml:"DescribeAutoScalingGroupsResult"`
 	Meta    asgResponseMeta `xml:"ResponseMetadata"`
@@ -152,28 +350,55 @@ type asgGroupsResult struct {
 	AutoScalingGroups []asgXMLGroup `xml:"AutoScalingGroups>member"`
 }
 
+type asgXMLInstance struct {
+	InstanceId              string `xml:"InstanceId"`
+	InstanceType            string `xml:"InstanceType,omitempty"`
+	AvailabilityZone        string `xml:"AvailabilityZone,omitempty"`
+	LifecycleState          string `xml:"LifecycleState"`
+	HealthStatus            string `xml:"HealthStatus"`
+	LaunchConfigurationName string `xml:"LaunchConfigurationName,omitempty"`
+	ProtectedFromScaleIn    bool   `xml:"ProtectedFromScaleIn"`
+}
+
+// asgXMLGroupInstance is the DescribeAutoScalingInstances shape: the same
+// fields plus the owning group, which the nested form does not repeat.
+type asgXMLGroupInstance struct {
+	InstanceId              string `xml:"InstanceId"`
+	InstanceType            string `xml:"InstanceType,omitempty"`
+	AutoScalingGroupName    string `xml:"AutoScalingGroupName"`
+	AvailabilityZone        string `xml:"AvailabilityZone,omitempty"`
+	LifecycleState          string `xml:"LifecycleState"`
+	HealthStatus            string `xml:"HealthStatus"`
+	LaunchConfigurationName string `xml:"LaunchConfigurationName,omitempty"`
+	ProtectedFromScaleIn    bool   `xml:"ProtectedFromScaleIn"`
+}
+
 type asgXMLGroup struct {
-	AutoScalingGroupName    string   `xml:"AutoScalingGroupName"`
-	AutoScalingGroupARN     string   `xml:"AutoScalingGroupARN"`
-	LaunchConfigurationName string   `xml:"LaunchConfigurationName,omitempty"`
-	MinSize                 int      `xml:"MinSize"`
-	MaxSize                 int      `xml:"MaxSize"`
-	DesiredCapacity         int      `xml:"DesiredCapacity"`
-	DefaultCooldown         int      `xml:"DefaultCooldown"`
-	AvailabilityZones       []string `xml:"AvailabilityZones>member"`
-	Status                  string   `xml:"Status"`
-	CreatedTime             string   `xml:"CreatedTime"`
-	Instances               struct{} `xml:"Instances"`
-	LoadBalancerNames       struct{} `xml:"LoadBalancerNames"`
-	TargetGroupARNs         struct{} `xml:"TargetGroupARNs"`
-	TerminationPolicies     struct{} `xml:"TerminationPolicies"`
-	Tags                    struct{} `xml:"Tags"`
-	SuspendedProcesses      struct{} `xml:"SuspendedProcesses"`
-	EnabledMetrics          struct{} `xml:"EnabledMetrics"`
+	AutoScalingGroupName             string           `xml:"AutoScalingGroupName"`
+	AutoScalingGroupARN              string           `xml:"AutoScalingGroupARN"`
+	LaunchConfigurationName          string           `xml:"LaunchConfigurationName,omitempty"`
+	MinSize                          int              `xml:"MinSize"`
+	MaxSize                          int              `xml:"MaxSize"`
+	DesiredCapacity                  int              `xml:"DesiredCapacity"`
+	DefaultCooldown                  int              `xml:"DefaultCooldown"`
+	AvailabilityZones                []string         `xml:"AvailabilityZones>member"`
+	LoadBalancerNames                struct{}         `xml:"LoadBalancerNames"`
+	TargetGroupARNs                  struct{}         `xml:"TargetGroupARNs"`
+	HealthCheckType                  string           `xml:"HealthCheckType"`
+	HealthCheckGracePeriod           int              `xml:"HealthCheckGracePeriod"`
+	Instances                        []asgXMLInstance `xml:"Instances>member"`
+	CreatedTime                      string           `xml:"CreatedTime"`
+	SuspendedProcesses               struct{}         `xml:"SuspendedProcesses"`
+	VPCZoneIdentifier                string           `xml:"VPCZoneIdentifier,omitempty"`
+	EnabledMetrics                   struct{}         `xml:"EnabledMetrics"`
+	Status                           string           `xml:"Status,omitempty"`
+	Tags                             []asgXMLTag      `xml:"Tags>member"`
+	TerminationPolicies              []string         `xml:"TerminationPolicies>member"`
+	NewInstancesProtectedFromScaleIn bool             `xml:"NewInstancesProtectedFromScaleIn"`
 }
 
 type terminateInstanceResp struct {
-	XMLName struct{}                `xml:"TerminateInstanceInAutoScalingGroupResponse"`
+	XMLName xml.Name                `xml:"TerminateInstanceInAutoScalingGroupResponse"`
 	Xmlns   string                  `xml:"xmlns,attr"`
 	Result  terminateInstanceResult `xml:"TerminateInstanceInAutoScalingGroupResult"`
 	Meta    asgResponseMeta         `xml:"ResponseMetadata"`
@@ -186,13 +411,30 @@ type terminateInstanceResult struct {
 type asgActivityXML struct {
 	ActivityId           string `xml:"ActivityId"`
 	AutoScalingGroupName string `xml:"AutoScalingGroupName"`
+	AutoScalingGroupARN  string `xml:"AutoScalingGroupARN,omitempty"`
 	Description          string `xml:"Description"`
-	StatusCode           string `xml:"StatusCode"`
+	Cause                string `xml:"Cause"`
 	StartTime            string `xml:"StartTime"`
+	EndTime              string `xml:"EndTime,omitempty"`
+	StatusCode           string `xml:"StatusCode"`
+	StatusMessage        string `xml:"StatusMessage,omitempty"`
+	Progress             int    `xml:"Progress"`
+	Details              string `xml:"Details,omitempty"`
+}
+
+type describeActivitiesResp struct {
+	XMLName xml.Name         `xml:"DescribeScalingActivitiesResponse"`
+	Xmlns   string           `xml:"xmlns,attr"`
+	Result  activitiesResult `xml:"DescribeScalingActivitiesResult"`
+	Meta    asgResponseMeta  `xml:"ResponseMetadata"`
+}
+
+type activitiesResult struct {
+	Activities []asgActivityXML `xml:"Activities>member"`
 }
 
 type describeLaunchConfigsResp struct {
-	XMLName struct{}            `xml:"DescribeLaunchConfigurationsResponse"`
+	XMLName xml.Name            `xml:"DescribeLaunchConfigurationsResponse"`
 	Xmlns   string              `xml:"xmlns,attr"`
 	Result  launchConfigsResult `xml:"DescribeLaunchConfigurationsResult"`
 	Meta    asgResponseMeta     `xml:"ResponseMetadata"`
@@ -214,18 +456,19 @@ type asgXMLLaunchConfig struct {
 }
 
 type putScalingPolicyResp struct {
-	XMLName struct{}               `xml:"PutScalingPolicyResponse"`
+	XMLName xml.Name               `xml:"PutScalingPolicyResponse"`
 	Xmlns   string                 `xml:"xmlns,attr"`
 	Result  putScalingPolicyResult `xml:"PutScalingPolicyResult"`
 	Meta    asgResponseMeta        `xml:"ResponseMetadata"`
 }
 
 type putScalingPolicyResult struct {
-	PolicyARN string `xml:"PolicyARN"`
+	PolicyARN string   `xml:"PolicyARN"`
+	Alarms    struct{} `xml:"Alarms"`
 }
 
 type describePoliciesResp struct {
-	XMLName struct{}        `xml:"DescribePoliciesResponse"`
+	XMLName xml.Name        `xml:"DescribePoliciesResponse"`
 	Xmlns   string          `xml:"xmlns,attr"`
 	Result  policiesResult  `xml:"DescribePoliciesResult"`
 	Meta    asgResponseMeta `xml:"ResponseMetadata"`
@@ -235,18 +478,29 @@ type policiesResult struct {
 	ScalingPolicies []asgXMLPolicy `xml:"ScalingPolicies>member"`
 }
 
+type asgXMLStepAdjustment struct {
+	MetricIntervalLowerBound string `xml:"MetricIntervalLowerBound,omitempty"`
+	MetricIntervalUpperBound string `xml:"MetricIntervalUpperBound,omitempty"`
+	ScalingAdjustment        int    `xml:"ScalingAdjustment"`
+}
+
 type asgXMLPolicy struct {
-	PolicyARN            string `xml:"PolicyARN"`
-	PolicyName           string `xml:"PolicyName"`
-	AutoScalingGroupName string `xml:"AutoScalingGroupName"`
-	PolicyType           string `xml:"PolicyType,omitempty"`
-	AdjustmentType       string `xml:"AdjustmentType,omitempty"`
-	ScalingAdjustment    int    `xml:"ScalingAdjustment"`
-	Cooldown             int    `xml:"Cooldown"`
+	PolicyARN               string                 `xml:"PolicyARN"`
+	PolicyName              string                 `xml:"PolicyName"`
+	AutoScalingGroupName    string                 `xml:"AutoScalingGroupName"`
+	PolicyType              string                 `xml:"PolicyType,omitempty"`
+	AdjustmentType          string                 `xml:"AdjustmentType,omitempty"`
+	ScalingAdjustment       int                    `xml:"ScalingAdjustment,omitempty"`
+	MinAdjustmentMagnitude  int                    `xml:"MinAdjustmentMagnitude,omitempty"`
+	Cooldown                int                    `xml:"Cooldown,omitempty"`
+	StepAdjustments         []asgXMLStepAdjustment `xml:"StepAdjustments>member,omitempty"`
+	MetricAggregationType   string                 `xml:"MetricAggregationType,omitempty"`
+	EstimatedInstanceWarmup int                    `xml:"EstimatedInstanceWarmup,omitempty"`
+	Alarms                  struct{}               `xml:"Alarms"`
 }
 
 type describeLifecycleHooksResp struct {
-	XMLName struct{}             `xml:"DescribeLifecycleHooksResponse"`
+	XMLName xml.Name             `xml:"DescribeLifecycleHooksResponse"`
 	Xmlns   string               `xml:"xmlns,attr"`
 	Result  lifecycleHooksResult `xml:"DescribeLifecycleHooksResult"`
 	Meta    asgResponseMeta      `xml:"ResponseMetadata"`
@@ -257,15 +511,18 @@ type lifecycleHooksResult struct {
 }
 
 type asgXMLHook struct {
-	LifecycleHookName    string `xml:"LifecycleHookName"`
-	AutoScalingGroupName string `xml:"AutoScalingGroupName"`
-	LifecycleTransition  string `xml:"LifecycleTransition,omitempty"`
-	DefaultResult        string `xml:"DefaultResult,omitempty"`
-	HeartbeatTimeout     int    `xml:"HeartbeatTimeout"`
+	LifecycleHookName     string `xml:"LifecycleHookName"`
+	AutoScalingGroupName  string `xml:"AutoScalingGroupName"`
+	LifecycleTransition   string `xml:"LifecycleTransition,omitempty"`
+	DefaultResult         string `xml:"DefaultResult,omitempty"`
+	HeartbeatTimeout      int    `xml:"HeartbeatTimeout"`
+	GlobalTimeout         int    `xml:"GlobalTimeout"`
+	NotificationTargetARN string `xml:"NotificationTargetARN,omitempty"`
+	RoleARN               string `xml:"RoleARN,omitempty"`
 }
 
 type describeTagsResp struct {
-	XMLName struct{}        `xml:"DescribeTagsResponse"`
+	XMLName xml.Name        `xml:"DescribeTagsResponse"`
 	Xmlns   string          `xml:"xmlns,attr"`
 	Result  tagsResult      `xml:"DescribeTagsResult"`
 	Meta    asgResponseMeta `xml:"ResponseMetadata"`
@@ -284,128 +541,275 @@ type asgXMLTag struct {
 }
 
 type describeInstancesResp struct {
-	XMLName struct{}        `xml:"DescribeAutoScalingInstancesResponse"`
-	Xmlns   string          `xml:"xmlns,attr"`
-	Result  struct{}        `xml:"DescribeAutoScalingInstancesResult"`
-	Meta    asgResponseMeta `xml:"ResponseMetadata"`
+	XMLName xml.Name          `xml:"DescribeAutoScalingInstancesResponse"`
+	Xmlns   string            `xml:"xmlns,attr"`
+	Result  asgInstanceResult `xml:"DescribeAutoScalingInstancesResult"`
+	Meta    asgResponseMeta   `xml:"ResponseMetadata"`
 }
 
-// ── Typed handler functions ────────────────────────────────────────
-
-func asgErr(code, message string, httpStatus int) *protocol.AWSError {
-	return &protocol.AWSError{Code: code, Message: message, HTTPStatus: httpStatus}
+type asgInstanceResult struct {
+	AutoScalingInstances []asgXMLGroupInstance `xml:"AutoScalingInstances>member"`
 }
+
+// ── Shared helpers ─────────────────────────────────────────────────
 
 func asgMetaFromCtx(ctx context.Context) asgResponseMeta {
 	return asgResponseMeta{RequestId: protocol.RequestIDFromContext(ctx)}
 }
 
-func (h *Handler) createASGTyped(ctx context.Context, req *createASGReq) (*asgEmptyResp, *protocol.AWSError) {
-	if req.AutoScalingGroupName == "" {
-		return nil, asgErr("ValidationError", "AutoScalingGroupName is required", http.StatusBadRequest)
+func (h *Handler) emptyBody(ctx context.Context) asgEmptyBody {
+	return asgEmptyBody{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}
+}
+
+func asgInternalError(what string) *protocol.AWSError {
+	return &protocol.AWSError{Code: "InternalFailure", Message: "failed to persist " + what, HTTPStatus: http.StatusInternalServerError}
+}
+
+func groupNotFound(name string) *protocol.AWSError {
+	return asgValidationError("AutoScalingGroup name not found - AutoScalingGroup %s not found", name)
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(awsTimeLayout)
+}
+
+// ── Auto Scaling groups ────────────────────────────────────────────
+
+// validateGroupInput refuses the group shapes the reconciler cannot converge.
+// A group accepted here is one that can really reach its desired capacity.
+func validateGroupInput(name string, lt launchTemplateSpec, mip mixedInstancesPolicySpec, instanceID, launchConfig string, requireSource bool) *protocol.AWSError {
+	if name == "" {
+		return asgValidationError("AutoScalingGroupName is required")
+	}
+	switch {
+	case mip.present():
+		return asgUnsupported("Overcast does not implement MixedInstancesPolicy: the emulator has no instance-type fleet or spot allocation to distribute over, so the group would report a desired capacity it could not satisfy.")
+	case lt.present():
+		return asgUnsupported("Overcast does not implement launch templates for Auto Scaling: its EC2 emulation has no CreateLaunchTemplate, so there is nothing to resolve ImageId and InstanceType from. Use CreateLaunchConfiguration and LaunchConfigurationName instead.")
+	case instanceID != "":
+		return asgUnsupported("Overcast does not implement creating an Auto Scaling group from an existing instance (InstanceId): the launch parameters cannot be derived from a running instance. Use CreateLaunchConfiguration and LaunchConfigurationName instead.")
+	}
+	if requireSource && launchConfig == "" {
+		return asgValidationError("Valid requests must contain either LaunchTemplate, LaunchConfigurationName, InstanceId or MixedInstancesPolicy parameter.")
+	}
+	return nil
+}
+
+// validateCapacity applies AWS's min/max/desired constraints.
+func validateCapacity(min, max, desired int) *protocol.AWSError {
+	if min < 0 {
+		return asgValidationError("Value '%d' at 'minSize' failed to satisfy constraint: Member must have value greater than or equal to 0", min)
+	}
+	if max < min {
+		return asgValidationError("Min size:%d must be less than or equal to max size:%d", min, max)
+	}
+	if desired < min || desired > max {
+		return asgValidationError("Desired capacity:%d must be between the min size:%d and the max size:%d", desired, min, max)
+	}
+	return nil
+}
+
+func (h *Handler) createASGTyped(ctx context.Context, req *createASGReq) (*createASGResp, *protocol.AWSError) {
+	s := h.svc
+	if aerr := validateGroupInput(req.AutoScalingGroupName, req.LaunchTemplate, req.MixedInstancesPolicy,
+		req.InstanceId, req.LaunchConfigurationName, true); aerr != nil {
+		return nil, aerr
 	}
 
-	desired := req.DesiredCapacity
-	if desired == 0 {
-		desired = req.MinSize
+	desired := req.MinSize
+	if req.DesiredCapacity != nil {
+		desired = *req.DesiredCapacity
+	}
+	if aerr := validateCapacity(req.MinSize, req.MaxSize, desired); aerr != nil {
+		return nil, aerr
+	}
+
+	cooldown := defaultCooldown
+	if req.DefaultCooldown != nil {
+		cooldown = *req.DefaultCooldown
+	}
+	healthCheck := req.HealthCheckType
+	if healthCheck == "" {
+		healthCheck = "EC2"
 	}
 
 	asg := AutoScalingGroup{
-		AutoScalingGroupName:    req.AutoScalingGroupName,
-		AutoScalingGroupARN:     h.asgARN(req.AutoScalingGroupName),
-		LaunchConfigurationName: req.LaunchConfigurationName,
-		MinSize:                 req.MinSize,
-		MaxSize:                 req.MaxSize,
-		DesiredCapacity:         desired,
-		DefaultCooldown:         req.DefaultCooldown,
-		AvailabilityZones:       req.AvailabilityZones,
-		Status:                  "InService",
-		CreatedTime:             h.clk.Now(),
+		AutoScalingGroupName:             req.AutoScalingGroupName,
+		AutoScalingGroupARN:              s.asgARN(req.AutoScalingGroupName),
+		LaunchConfigurationName:          req.LaunchConfigurationName,
+		MinSize:                          req.MinSize,
+		MaxSize:                          req.MaxSize,
+		DesiredCapacity:                  desired,
+		DefaultCooldown:                  cooldown,
+		AvailabilityZones:                req.AvailabilityZones,
+		VPCZoneIdentifier:                req.VPCZoneIdentifier,
+		HealthCheckType:                  healthCheck,
+		HealthCheckGracePeriod:           req.HealthCheckGracePeriod,
+		TerminationPolicies:              req.TerminationPolicies,
+		NewInstancesProtectedFromScaleIn: req.NewInstancesProtectedFromScaleIn,
+		CreatedTime:                      s.clk.Now(),
 	}
 
-	raw, err := json.Marshal(&asg)
-	if err != nil {
-		return nil, asgErr("InternalError", "failed to persist group", http.StatusInternalServerError)
+	s.mu.Lock()
+	if _, exists := s.st.getGroup(ctx, req.AutoScalingGroupName); exists {
+		s.mu.Unlock()
+		return nil, &protocol.AWSError{
+			Code: "AlreadyExists", Message: fmt.Sprintf("AutoScalingGroup by this name already exists - A group with the name %s already exists", req.AutoScalingGroupName),
+			HTTPStatus: http.StatusBadRequest,
+		}
 	}
-	if err := h.store.Set(ctx, nsGroups, req.AutoScalingGroupName, string(raw)); err != nil {
-		return nil, asgErr("InternalError", "failed to persist group", http.StatusInternalServerError)
+	if err := s.st.putGroup(ctx, &asg); err != nil {
+		s.mu.Unlock()
+		return nil, asgInternalError("group")
 	}
+	for _, tm := range req.Tags {
+		resourceID := tm.ResourceId
+		if resourceID == "" {
+			resourceID = req.AutoScalingGroupName
+		}
+		_ = putJSON(ctx, s.st.store, nsGroupTags, resourceID+"/"+tm.Key, &GroupTag{
+			ResourceId: resourceID, ResourceType: "auto-scaling-group", Key: tm.Key,
+			Value: tm.Value, PropagateAtLaunch: tm.PropagateAtLaunch == "true",
+		})
+	}
+	s.mu.Unlock()
 
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	s.invalidateGroupCount()
+	s.poke()
+	return &createASGResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
-func (h *Handler) updateASGTyped(ctx context.Context, req *updateASGReq) (*asgEmptyResp, *protocol.AWSError) {
-	if req.AutoScalingGroupName == "" {
-		return nil, asgErr("ValidationError", "AutoScalingGroupName is required", http.StatusBadRequest)
+func (h *Handler) updateASGTyped(ctx context.Context, req *updateASGReq) (*updateASGResp, *protocol.AWSError) {
+	s := h.svc
+	if aerr := validateGroupInput(req.AutoScalingGroupName, req.LaunchTemplate, req.MixedInstancesPolicy,
+		"", req.LaunchConfigurationName, false); aerr != nil {
+		return nil, aerr
 	}
 
-	raw, found, err := h.store.Get(ctx, nsGroups, req.AutoScalingGroupName)
-	if err != nil || !found {
-		return nil, asgErr("ValidationError", fmt.Sprintf("Auto Scaling group '%s' not found", req.AutoScalingGroupName), http.StatusBadRequest)
-	}
-	var asg AutoScalingGroup
-	if json.Unmarshal([]byte(raw), &asg) != nil {
-		return nil, asgErr("ValidationError", fmt.Sprintf("Auto Scaling group '%s' not found", req.AutoScalingGroupName), http.StatusBadRequest)
+	s.mu.Lock()
+	g, found := s.st.getGroup(ctx, req.AutoScalingGroupName)
+	if !found {
+		s.mu.Unlock()
+		return nil, groupNotFound(req.AutoScalingGroupName)
 	}
 
-	if req.MinSize != 0 {
-		asg.MinSize = req.MinSize
+	before := g.DesiredCapacity
+	if req.MinSize != nil {
+		g.MinSize = *req.MinSize
 	}
-	if req.MaxSize != 0 {
-		asg.MaxSize = req.MaxSize
+	if req.MaxSize != nil {
+		g.MaxSize = *req.MaxSize
 	}
-	if req.DesiredCapacity != 0 {
-		asg.DesiredCapacity = req.DesiredCapacity
+	if req.DesiredCapacity != nil {
+		g.DesiredCapacity = *req.DesiredCapacity
+	} else {
+		// AWS pulls the desired capacity into the new bounds rather than
+		// leaving a group outside its own min/max.
+		g.DesiredCapacity = clampCapacity(g.DesiredCapacity, g.MinSize, g.MaxSize)
 	}
 	if req.LaunchConfigurationName != "" {
-		asg.LaunchConfigurationName = req.LaunchConfigurationName
+		g.LaunchConfigurationName = req.LaunchConfigurationName
 	}
-	if req.DefaultCooldown != 0 {
-		asg.DefaultCooldown = req.DefaultCooldown
+	if req.DefaultCooldown != nil {
+		g.DefaultCooldown = *req.DefaultCooldown
+	}
+	if len(req.AvailabilityZones) > 0 {
+		g.AvailabilityZones = req.AvailabilityZones
+	}
+	if req.VPCZoneIdentifier != "" {
+		g.VPCZoneIdentifier = req.VPCZoneIdentifier
+	}
+	if req.HealthCheckType != "" {
+		g.HealthCheckType = req.HealthCheckType
+	}
+	if req.HealthCheckGracePeriod != nil {
+		g.HealthCheckGracePeriod = *req.HealthCheckGracePeriod
+	}
+	if len(req.TerminationPolicies) > 0 {
+		g.TerminationPolicies = req.TerminationPolicies
+	}
+	if req.NewInstancesProtectedFromScaleIn != nil {
+		g.NewInstancesProtectedFromScaleIn = *req.NewInstancesProtectedFromScaleIn
 	}
 
-	raw2, err := json.Marshal(&asg)
-	if err != nil {
-		return nil, asgErr("InternalError", "failed to persist group", http.StatusInternalServerError)
+	if aerr := validateCapacity(g.MinSize, g.MaxSize, g.DesiredCapacity); aerr != nil {
+		s.mu.Unlock()
+		return nil, aerr
 	}
-	if err := h.store.Set(ctx, nsGroups, req.AutoScalingGroupName, string(raw2)); err != nil {
-		return nil, asgErr("InternalError", "failed to persist group", http.StatusInternalServerError)
+	if err := s.st.putGroup(ctx, g); err != nil {
+		s.mu.Unlock()
+		return nil, asgInternalError("group")
 	}
+	if g.DesiredCapacity != before {
+		now := s.clk.Now().UTC()
+		s.recordActivity(ctx, g, &Activity{
+			Description: fmt.Sprintf("Setting desired capacity to %d.", g.DesiredCapacity),
+			Cause:       causeUserRequest(now, before, g.DesiredCapacity, g.MinSize, g.MaxSize),
+			StartTime:   now, EndTime: now, StatusCode: "Successful", Progress: 100,
+		})
+	}
+	s.mu.Unlock()
 
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	s.poke()
+	return &updateASGResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
 func (h *Handler) describeASGsTyped(ctx context.Context, req *describeASGsReq) (*describeASGsResp, *protocol.AWSError) {
+	s := h.svc
 	filterSet := make(map[string]bool, len(req.AutoScalingGroupNames))
 	for _, n := range req.AutoScalingGroupNames {
 		filterSet[n] = true
 	}
 
-	pairs, scanErr := h.store.Scan(ctx, nsGroups, "")
-	if scanErr != nil {
-		return nil, asgErr("InternalError", "failed to scan groups", http.StatusInternalServerError)
+	groups, err := s.st.listGroups(ctx)
+	if err != nil {
+		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan groups", HTTPStatus: http.StatusInternalServerError}
 	}
 
-	xmlGroups := make([]asgXMLGroup, 0, len(pairs))
-	for _, kv := range pairs {
-		if len(filterSet) > 0 && !filterSet[kv.Key] {
+	xmlGroups := make([]asgXMLGroup, 0, len(groups))
+	for _, g := range groups {
+		if len(filterSet) > 0 && !filterSet[g.AutoScalingGroupName] {
 			continue
 		}
-		var g AutoScalingGroup
-		if json.Unmarshal([]byte(kv.Value), &g) != nil {
-			continue
+		instances, _ := s.st.listInstances(ctx, g.AutoScalingGroupName)
+		xmlInstances := make([]asgXMLInstance, 0, len(instances))
+		for _, inst := range instances {
+			xmlInstances = append(xmlInstances, asgXMLInstance{
+				InstanceId:              inst.InstanceId,
+				InstanceType:            inst.InstanceType,
+				AvailabilityZone:        inst.AvailabilityZone,
+				LifecycleState:          inst.LifecycleState,
+				HealthStatus:            inst.HealthStatus,
+				LaunchConfigurationName: inst.LaunchConfigurationName,
+				ProtectedFromScaleIn:    inst.ProtectedFromScaleIn,
+			})
+		}
+		tags, _ := s.st.listTagsForGroup(ctx, g.AutoScalingGroupName)
+		xmlTags := make([]asgXMLTag, 0, len(tags))
+		for _, t := range tags {
+			xmlTags = append(xmlTags, asgXMLTag(*t))
 		}
 		xmlGroups = append(xmlGroups, asgXMLGroup{
-			AutoScalingGroupName:    g.AutoScalingGroupName,
-			AutoScalingGroupARN:     g.AutoScalingGroupARN,
-			LaunchConfigurationName: g.LaunchConfigurationName,
-			MinSize:                 g.MinSize,
-			MaxSize:                 g.MaxSize,
-			DesiredCapacity:         g.DesiredCapacity,
-			DefaultCooldown:         g.DefaultCooldown,
-			AvailabilityZones:       g.AvailabilityZones,
-			Status:                  g.Status,
-			CreatedTime:             g.CreatedTime.UTC().Format(time.RFC3339),
+			AutoScalingGroupName:             g.AutoScalingGroupName,
+			AutoScalingGroupARN:              g.AutoScalingGroupARN,
+			LaunchConfigurationName:          g.LaunchConfigurationName,
+			MinSize:                          g.MinSize,
+			MaxSize:                          g.MaxSize,
+			DesiredCapacity:                  g.DesiredCapacity,
+			DefaultCooldown:                  g.DefaultCooldown,
+			AvailabilityZones:                g.AvailabilityZones,
+			HealthCheckType:                  g.HealthCheckType,
+			HealthCheckGracePeriod:           g.HealthCheckGracePeriod,
+			Instances:                        xmlInstances,
+			CreatedTime:                      formatTime(g.CreatedTime),
+			VPCZoneIdentifier:                g.VPCZoneIdentifier,
+			Status:                           g.Status,
+			Tags:                             xmlTags,
+			TerminationPolicies:              g.TerminationPolicies,
+			NewInstancesProtectedFromScaleIn: g.NewInstancesProtectedFromScaleIn,
 		})
 	}
 
@@ -416,98 +820,200 @@ func (h *Handler) describeASGsTyped(ctx context.Context, req *describeASGsReq) (
 	}, nil
 }
 
-func (h *Handler) deleteASGTyped(ctx context.Context, req *deleteASGReq) (*asgEmptyResp, *protocol.AWSError) {
+func (h *Handler) deleteASGTyped(ctx context.Context, req *deleteASGReq) (*deleteASGResp, *protocol.AWSError) {
+	s := h.svc
 	if req.AutoScalingGroupName == "" {
-		return nil, asgErr("ValidationError", "AutoScalingGroupName is required", http.StatusBadRequest)
+		return nil, asgValidationError("AutoScalingGroupName is required")
 	}
-	_ = h.store.Delete(ctx, nsGroups, req.AutoScalingGroupName)
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+
+	s.mu.Lock()
+	g, found := s.st.getGroup(ctx, req.AutoScalingGroupName)
+	if !found {
+		s.mu.Unlock()
+		return nil, groupNotFound(req.AutoScalingGroupName)
+	}
+	instances, _ := s.st.listInstances(ctx, req.AutoScalingGroupName)
+	if len(instances) > 0 && !req.ForceDelete {
+		s.mu.Unlock()
+		return nil, &protocol.AWSError{
+			Code:       "ResourceInUse",
+			Message:    "You cannot delete an AutoScalingGroup while there are instances or pending Spot instance request(s) still in the group.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	// Mark the group as deleting so a concurrent reconciler pass stops
+	// launching into it while the instances are being torn down.
+	g.Status = "Delete in progress"
+	g.DesiredCapacity, g.MinSize, g.MaxSize = 0, 0, 0
+	_ = s.st.putGroup(ctx, g)
+	s.mu.Unlock()
+
+	for _, inst := range instances {
+		s.finishTermination(ctx, g, inst)
+	}
+
+	s.mu.Lock()
+	s.st.deleteGroupChildren(ctx, req.AutoScalingGroupName)
+	s.st.deleteGroup(ctx, req.AutoScalingGroupName)
+	s.mu.Unlock()
+
+	s.invalidateGroupCount()
+	return &deleteASGResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
-func (h *Handler) setDesiredCapacityTyped(ctx context.Context, req *setDesiredCapacityReq) (*asgEmptyResp, *protocol.AWSError) {
-	raw, found, err := h.store.Get(ctx, nsGroups, req.AutoScalingGroupName)
-	if err != nil || !found {
-		return nil, asgErr("ValidationError", fmt.Sprintf("Auto Scaling group '%s' not found", req.AutoScalingGroupName), http.StatusBadRequest)
-	}
-	var asg AutoScalingGroup
-	if json.Unmarshal([]byte(raw), &asg) != nil {
-		return nil, asgErr("ValidationError", fmt.Sprintf("Auto Scaling group '%s' not found", req.AutoScalingGroupName), http.StatusBadRequest)
-	}
-	asg.DesiredCapacity = req.DesiredCapacity
+func (h *Handler) setDesiredCapacityTyped(ctx context.Context, req *setDesiredCapacityReq) (*setDesiredCapacityResp, *protocol.AWSError) {
+	s := h.svc
 
-	raw2, err := json.Marshal(&asg)
-	if err != nil {
-		return nil, asgErr("InternalError", "failed to persist group", http.StatusInternalServerError)
+	s.mu.Lock()
+	g, found := s.st.getGroup(ctx, req.AutoScalingGroupName)
+	if !found {
+		s.mu.Unlock()
+		return nil, groupNotFound(req.AutoScalingGroupName)
 	}
-	if err := h.store.Set(ctx, nsGroups, req.AutoScalingGroupName, string(raw2)); err != nil {
-		return nil, asgErr("InternalError", "failed to persist group", http.StatusInternalServerError)
+	// SetDesiredCapacity does not move the group's bounds — unlike
+	// UpdateAutoScalingGroup, a value outside them is an error, with AWS's own
+	// wording.
+	if req.DesiredCapacity > g.MaxSize {
+		s.mu.Unlock()
+		return nil, asgValidationError("New SetDesiredCapacity value %d is above max value %d for the AutoScalingGroup.", req.DesiredCapacity, g.MaxSize)
+	}
+	if req.DesiredCapacity < g.MinSize {
+		s.mu.Unlock()
+		return nil, asgValidationError("New SetDesiredCapacity value %d is below min value %d for the AutoScalingGroup.", req.DesiredCapacity, g.MinSize)
 	}
 
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	now := s.clk.Now().UTC()
+	if req.HonorCooldown && !g.CooldownUntil.IsZero() && now.Before(g.CooldownUntil) {
+		s.mu.Unlock()
+		return nil, &protocol.AWSError{
+			Code:       "ScalingActivityInProgress",
+			Message:    fmt.Sprintf("Cannot set desired capacity for AutoScalingGroup %s: the group is in cooldown.", req.AutoScalingGroupName),
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+
+	before := g.DesiredCapacity
+	g.DesiredCapacity = req.DesiredCapacity
+	if g.DefaultCooldown > 0 {
+		g.CooldownUntil = now.Add(time.Duration(g.DefaultCooldown) * time.Second)
+	}
+	if err := s.st.putGroup(ctx, g); err != nil {
+		s.mu.Unlock()
+		return nil, asgInternalError("group")
+	}
+	if before != g.DesiredCapacity {
+		s.recordActivity(ctx, g, &Activity{
+			Description: fmt.Sprintf("Setting desired capacity to %d.", g.DesiredCapacity),
+			Cause:       causeUserRequest(now, before, g.DesiredCapacity, g.MinSize, g.MaxSize),
+			StartTime:   now, EndTime: now, StatusCode: "Successful", Progress: 100,
+		})
+	}
+	s.mu.Unlock()
+
+	s.poke()
+	return &setDesiredCapacityResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
 func (h *Handler) terminateInstanceTyped(ctx context.Context, req *terminateInstanceReq) (*terminateInstanceResp, *protocol.AWSError) {
+	s := h.svc
+	if req.InstanceId == "" {
+		return nil, asgValidationError("InstanceId is required")
+	}
+
+	s.mu.Lock()
+	inst, found := s.st.findInstance(ctx, req.InstanceId)
+	if !found {
+		s.mu.Unlock()
+		return nil, asgValidationError("Instance Id not found - No managed instance found for instance ID %s", req.InstanceId)
+	}
+	g, ok := s.st.getGroup(ctx, inst.AutoScalingGroupName)
+	if !ok {
+		s.mu.Unlock()
+		return nil, groupNotFound(inst.AutoScalingGroupName)
+	}
+
+	now := s.clk.Now().UTC()
+	cause := fmt.Sprintf("At %s instance %s was taken out of service in response to a user request.", now.Format(awsTimeLayout), req.InstanceId)
+	s.startTerminateActivity(ctx, g, inst, now, cause)
+	activityID := inst.TerminateActivityId
+	s.beginTermination(ctx, inst, now)
+	if req.ShouldDecrementDesiredCapacity && g.DesiredCapacity > g.MinSize {
+		g.DesiredCapacity--
+		_ = s.st.putGroup(ctx, g)
+	}
+	s.mu.Unlock()
+
+	s.poke()
 	return &terminateInstanceResp{
 		Xmlns: asXMLNS,
 		Result: terminateInstanceResult{
 			Activity: asgActivityXML{
-				ActivityId:           "00000000-0000-0000-0000-000000000000",
-				AutoScalingGroupName: req.AutoScalingGroupName,
+				ActivityId:           activityID,
+				AutoScalingGroupName: inst.AutoScalingGroupName,
+				AutoScalingGroupARN:  g.AutoScalingGroupARN,
 				Description:          "Terminating EC2 instance: " + req.InstanceId,
+				Cause:                cause,
 				StatusCode:           "InProgress",
-				StartTime:            h.clk.Now().UTC().Format(time.RFC3339),
+				Progress:             50,
+				StartTime:            now.Format(awsTimeLayout),
 			},
 		},
 		Meta: asgMetaFromCtx(ctx),
 	}, nil
 }
 
-func (h *Handler) createLaunchConfigTyped(ctx context.Context, req *createLaunchConfigReq) (*asgEmptyResp, *protocol.AWSError) {
+// ── Launch configurations ──────────────────────────────────────────
+
+func (h *Handler) createLaunchConfigTyped(ctx context.Context, req *createLaunchConfigReq) (*createLaunchConfigResp, *protocol.AWSError) {
+	s := h.svc
 	if req.LaunchConfigurationName == "" {
-		return nil, asgErr("ValidationError", "LaunchConfigurationName is required", http.StatusBadRequest)
+		return nil, asgValidationError("LaunchConfigurationName is required")
+	}
+	if req.ImageId == "" {
+		return nil, asgValidationError("Valid requests must contain the ImageId parameter.")
+	}
+
+	instanceType := req.InstanceType
+	if instanceType == "" {
+		instanceType = "t3.micro"
 	}
 
 	lc := LaunchConfiguration{
 		LaunchConfigurationName: req.LaunchConfigurationName,
-		LaunchConfigurationARN:  h.lcARN(req.LaunchConfigurationName),
+		LaunchConfigurationARN:  s.lcARN(req.LaunchConfigurationName),
 		ImageId:                 req.ImageId,
-		InstanceType:            req.InstanceType,
+		InstanceType:            instanceType,
 		KeyName:                 req.KeyName,
 		SecurityGroups:          req.SecurityGroups,
 		IamInstanceProfile:      req.IamInstanceProfile,
 		UserData:                req.UserData,
-		CreatedTime:             h.clk.Now(),
+		CreatedTime:             s.clk.Now(),
 	}
-
-	raw, err := json.Marshal(&lc)
-	if err != nil {
-		return nil, asgErr("InternalError", "failed to persist config", http.StatusInternalServerError)
+	if err := putJSON(ctx, s.st.store, nsLaunchCfgs, req.LaunchConfigurationName, &lc); err != nil {
+		return nil, asgInternalError("launch configuration")
 	}
-	if err := h.store.Set(ctx, nsLaunchCfgs, req.LaunchConfigurationName, string(raw)); err != nil {
-		return nil, asgErr("InternalError", "failed to persist config", http.StatusInternalServerError)
-	}
-
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	return &createLaunchConfigResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
 func (h *Handler) describeLaunchConfigsTyped(ctx context.Context, req *describeLaunchConfigsReq) (*describeLaunchConfigsResp, *protocol.AWSError) {
+	s := h.svc
 	filterSet := make(map[string]bool, len(req.LaunchConfigurationNames))
 	for _, n := range req.LaunchConfigurationNames {
 		filterSet[n] = true
 	}
 
-	lcPairs, scanErr := h.store.Scan(ctx, nsLaunchCfgs, "")
-	if scanErr != nil {
-		return nil, asgErr("InternalError", "failed to scan configs", http.StatusInternalServerError)
+	pairs, err := s.st.store.Scan(ctx, nsLaunchCfgs, "")
+	if err != nil {
+		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan launch configurations", HTTPStatus: http.StatusInternalServerError}
 	}
 
-	xmlLCs := make([]asgXMLLaunchConfig, 0, len(lcPairs))
-	for _, kv := range lcPairs {
+	xmlLCs := make([]asgXMLLaunchConfig, 0, len(pairs))
+	for _, kv := range pairs {
 		if len(filterSet) > 0 && !filterSet[kv.Key] {
 			continue
 		}
-		var lc LaunchConfiguration
-		if json.Unmarshal([]byte(kv.Value), &lc) != nil {
+		lc, ok := s.st.getLaunchConfig(ctx, kv.Key)
+		if !ok {
 			continue
 		}
 		xmlLCs = append(xmlLCs, asgXMLLaunchConfig{
@@ -518,7 +1024,7 @@ func (h *Handler) describeLaunchConfigsTyped(ctx context.Context, req *describeL
 			KeyName:                 lc.KeyName,
 			SecurityGroups:          lc.SecurityGroups,
 			IamInstanceProfile:      lc.IamInstanceProfile,
-			CreatedTime:             lc.CreatedTime.UTC().Format(time.RFC3339),
+			CreatedTime:             formatTime(lc.CreatedTime),
 		})
 	}
 
@@ -529,37 +1035,76 @@ func (h *Handler) describeLaunchConfigsTyped(ctx context.Context, req *describeL
 	}, nil
 }
 
-func (h *Handler) deleteLaunchConfigTyped(ctx context.Context, req *deleteLaunchConfigReq) (*asgEmptyResp, *protocol.AWSError) {
+func (h *Handler) deleteLaunchConfigTyped(ctx context.Context, req *deleteLaunchConfigReq) (*deleteLaunchConfigResp, *protocol.AWSError) {
+	s := h.svc
 	if req.LaunchConfigurationName == "" {
-		return nil, asgErr("ValidationError", "LaunchConfigurationName is required", http.StatusBadRequest)
+		return nil, asgValidationError("LaunchConfigurationName is required")
 	}
-	_ = h.store.Delete(ctx, nsLaunchCfgs, req.LaunchConfigurationName)
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	// AWS refuses to delete a launch configuration a group still points at.
+	groups, _ := s.st.listGroups(ctx)
+	for _, g := range groups {
+		if g.LaunchConfigurationName == req.LaunchConfigurationName {
+			return nil, &protocol.AWSError{
+				Code:       "ResourceInUse",
+				Message:    fmt.Sprintf("Cannot delete launch configuration %s because it is attached to AutoScalingGroup %s", req.LaunchConfigurationName, g.AutoScalingGroupName),
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+	}
+	_ = s.st.store.Delete(ctx, nsLaunchCfgs, req.LaunchConfigurationName)
+	return &deleteLaunchConfigResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
+// ── Scaling policies ───────────────────────────────────────────────
+
 func (h *Handler) putScalingPolicyTyped(ctx context.Context, req *putScalingPolicyReq) (*putScalingPolicyResp, *protocol.AWSError) {
+	s := h.svc
 	if req.AutoScalingGroupName == "" || req.PolicyName == "" {
-		return nil, asgErr("ValidationError", "AutoScalingGroupName and PolicyName are required", http.StatusBadRequest)
+		return nil, asgValidationError("AutoScalingGroupName and PolicyName are required")
+	}
+	if _, found := s.st.getGroup(ctx, req.AutoScalingGroupName); !found {
+		return nil, groupNotFound(req.AutoScalingGroupName)
+	}
+	if aerr := validatePolicyInput(req); aerr != nil {
+		return nil, aerr
 	}
 
-	arn := h.policyARN(req.AutoScalingGroupName, req.PolicyName)
+	policyType := req.PolicyType
+	if policyType == "" {
+		policyType = policySimpleScaling
+	}
+	steps := make([]StepAdjustment, 0, len(req.StepAdjustments))
+	for _, sa := range req.StepAdjustments {
+		step := StepAdjustment{ScalingAdjustment: sa.ScalingAdjustment}
+		if v, err := parseOptionalFloat(sa.MetricIntervalLowerBound); err == nil && v != nil {
+			step.MetricIntervalLowerBound = v
+		}
+		if v, err := parseOptionalFloat(sa.MetricIntervalUpperBound); err == nil && v != nil {
+			step.MetricIntervalUpperBound = v
+		}
+		steps = append(steps, step)
+	}
+
+	arn := s.policyARN(req.AutoScalingGroupName, req.PolicyName)
+	if existing, found := s.st.getPolicy(ctx, req.AutoScalingGroupName, req.PolicyName); found {
+		// PutScalingPolicy is an upsert; the ARN is stable across updates.
+		arn = existing.PolicyARN
+	}
 	policy := ScalingPolicy{
-		PolicyARN:            arn,
-		PolicyName:           req.PolicyName,
-		AutoScalingGroupName: req.AutoScalingGroupName,
-		PolicyType:           req.PolicyType,
-		AdjustmentType:       req.AdjustmentType,
-		ScalingAdjustment:    req.ScalingAdjustment,
-		Cooldown:             req.Cooldown,
+		PolicyARN:               arn,
+		PolicyName:              req.PolicyName,
+		AutoScalingGroupName:    req.AutoScalingGroupName,
+		PolicyType:              policyType,
+		AdjustmentType:          req.AdjustmentType,
+		ScalingAdjustment:       req.ScalingAdjustment,
+		MinAdjustmentMagnitude:  req.MinAdjustmentMagnitude,
+		Cooldown:                req.Cooldown,
+		StepAdjustments:         steps,
+		MetricAggregationType:   req.MetricAggregationType,
+		EstimatedInstanceWarmup: req.EstimatedInstanceWarmup,
 	}
-
-	key := req.AutoScalingGroupName + "/" + req.PolicyName
-	raw, err := json.Marshal(&policy)
-	if err != nil {
-		return nil, asgErr("InternalError", "failed to persist policy", http.StatusInternalServerError)
-	}
-	if err := h.store.Set(ctx, nsPolicies, key, string(raw)); err != nil {
-		return nil, asgErr("InternalError", "failed to persist policy", http.StatusInternalServerError)
+	if err := s.st.putPolicy(ctx, &policy); err != nil {
+		return nil, asgInternalError("scaling policy")
 	}
 
 	return &putScalingPolicyResp{
@@ -569,22 +1114,54 @@ func (h *Handler) putScalingPolicyTyped(ctx context.Context, req *putScalingPoli
 	}, nil
 }
 
+func parseOptionalFloat(s string) (*float64, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+func formatOptionalFloat(v *float64) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*v, 'f', -1, 64)
+}
+
 func (h *Handler) describePoliciesTyped(ctx context.Context, req *describePoliciesReq) (*describePoliciesResp, *protocol.AWSError) {
-	policyPairs, scanErr := h.store.Scan(ctx, nsPolicies, "")
-	if scanErr != nil {
-		return nil, asgErr("InternalError", "failed to scan policies", http.StatusInternalServerError)
+	s := h.svc
+	policies, err := s.st.listPolicies(ctx, req.AutoScalingGroupName)
+	if err != nil {
+		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan policies", HTTPStatus: http.StatusInternalServerError}
 	}
 
-	xmlPolicies := make([]asgXMLPolicy, 0, len(policyPairs))
-	for _, kv := range policyPairs {
-		var p ScalingPolicy
-		if json.Unmarshal([]byte(kv.Value), &p) != nil {
-			continue
+	xmlPolicies := make([]asgXMLPolicy, 0, len(policies))
+	for _, p := range policies {
+		steps := make([]asgXMLStepAdjustment, 0, len(p.StepAdjustments))
+		for _, step := range p.StepAdjustments {
+			steps = append(steps, asgXMLStepAdjustment{
+				MetricIntervalLowerBound: formatOptionalFloat(step.MetricIntervalLowerBound),
+				MetricIntervalUpperBound: formatOptionalFloat(step.MetricIntervalUpperBound),
+				ScalingAdjustment:        step.ScalingAdjustment,
+			})
 		}
-		if req.AutoScalingGroupName != "" && p.AutoScalingGroupName != req.AutoScalingGroupName {
-			continue
-		}
-		xmlPolicies = append(xmlPolicies, asgXMLPolicy(p))
+		xmlPolicies = append(xmlPolicies, asgXMLPolicy{
+			PolicyARN:               p.PolicyARN,
+			PolicyName:              p.PolicyName,
+			AutoScalingGroupName:    p.AutoScalingGroupName,
+			PolicyType:              p.PolicyType,
+			AdjustmentType:          p.AdjustmentType,
+			ScalingAdjustment:       p.ScalingAdjustment,
+			MinAdjustmentMagnitude:  p.MinAdjustmentMagnitude,
+			Cooldown:                p.Cooldown,
+			StepAdjustments:         steps,
+			MetricAggregationType:   p.MetricAggregationType,
+			EstimatedInstanceWarmup: p.EstimatedInstanceWarmup,
+		})
 	}
 
 	return &describePoliciesResp{
@@ -594,80 +1171,113 @@ func (h *Handler) describePoliciesTyped(ctx context.Context, req *describePolici
 	}, nil
 }
 
-func (h *Handler) deletePolicyTyped(ctx context.Context, req *deletePolicyReq) (*asgEmptyResp, *protocol.AWSError) {
-	if req.AutoScalingGroupName != "" {
-		_ = h.store.Delete(ctx, nsPolicies, req.AutoScalingGroupName+"/"+req.PolicyName)
-	} else {
-		pairs, _ := h.store.Scan(ctx, nsPolicies, "")
-		for _, kv := range pairs {
-			var p ScalingPolicy
-			if json.Unmarshal([]byte(kv.Value), &p) != nil {
-				continue
-			}
-			if p.PolicyName == req.PolicyName || p.PolicyARN == req.PolicyName {
-				_ = h.store.Delete(ctx, nsPolicies, kv.Key)
-				break
-			}
+func (h *Handler) deletePolicyTyped(ctx context.Context, req *deletePolicyReq) (*deletePolicyResp, *protocol.AWSError) {
+	s := h.svc
+	group, policyName := req.AutoScalingGroupName, req.PolicyName
+	if g, p, ok := parsePolicyARN(req.PolicyName); ok {
+		group, policyName = g, p
+	}
+	if group != "" {
+		_ = s.st.store.Delete(ctx, nsPolicies, policyKey(group, policyName))
+		return &deletePolicyResp{asgEmptyBody: h.emptyBody(ctx)}, nil
+	}
+	policies, _ := s.st.listPolicies(ctx, "")
+	for _, p := range policies {
+		if p.PolicyName == policyName || p.PolicyARN == req.PolicyName {
+			_ = s.st.store.Delete(ctx, nsPolicies, policyKey(p.AutoScalingGroupName, p.PolicyName))
+			break
 		}
 	}
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	return &deletePolicyResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
-func (h *Handler) putLifecycleHookTyped(ctx context.Context, req *putLifecycleHookReq) (*asgEmptyResp, *protocol.AWSError) {
+func (h *Handler) executePolicyTyped(ctx context.Context, req *executePolicyReq) (*executePolicyResp, *protocol.AWSError) {
+	s := h.svc
+	group, policyName := req.AutoScalingGroupName, req.PolicyName
+	if g, p, ok := parsePolicyARN(req.PolicyName); ok {
+		group, policyName = g, p
+	}
+	if group == "" || policyName == "" {
+		return nil, asgValidationError("AutoScalingGroupName and PolicyName are required")
+	}
+	policy, found := s.st.getPolicy(ctx, group, policyName)
+	if !found {
+		return nil, asgValidationError("Scaling policy name not found - Policy %s not found for group %s", policyName, group)
+	}
+	// AWS measures a step-scaling breach relative to the alarm threshold; when
+	// a caller drives ExecutePolicy by hand it supplies both numbers.
+	breach := req.MetricValue - req.BreachThreshold
+	if aerr := s.executePolicy(ctx, policy, breach, "", req.HonorCooldown); aerr != nil {
+		return nil, aerr
+	}
+	return &executePolicyResp{asgEmptyBody: h.emptyBody(ctx)}, nil
+}
+
+// ── Lifecycle hooks ────────────────────────────────────────────────
+
+func (h *Handler) putLifecycleHookTyped(ctx context.Context, req *putLifecycleHookReq) (*putLifecycleHookResp, *protocol.AWSError) {
+	s := h.svc
 	if req.AutoScalingGroupName == "" || req.LifecycleHookName == "" {
-		return nil, asgErr("ValidationError", "AutoScalingGroupName and LifecycleHookName are required", http.StatusBadRequest)
+		return nil, asgValidationError("AutoScalingGroupName and LifecycleHookName are required")
+	}
+	if _, found := s.st.getGroup(ctx, req.AutoScalingGroupName); !found {
+		return nil, groupNotFound(req.AutoScalingGroupName)
+	}
+
+	transition := req.LifecycleTransition
+	existing, hadHook := s.st.hookByName(ctx, req.AutoScalingGroupName, req.LifecycleHookName)
+	if transition == "" && hadHook {
+		transition = existing.LifecycleTransition
+	}
+	if transition != transitionLaunching && transition != transitionTerminating {
+		return nil, asgValidationError("Value '%s' at 'lifecycleTransition' failed to satisfy constraint: Member must satisfy enum value set: [autoscaling:EC2_INSTANCE_LAUNCHING, autoscaling:EC2_INSTANCE_TERMINATING]", req.LifecycleTransition)
+	}
+
+	result := req.DefaultResult
+	if result == "" {
+		result = lifecycleResultAbandon
+	}
+	if result != lifecycleResultContinue && result != lifecycleResultAbandon {
+		return nil, asgValidationError("Value '%s' at 'defaultResult' failed to satisfy constraint: Member must satisfy enum value set: [CONTINUE, ABANDON]", req.DefaultResult)
+	}
+	timeout := req.HeartbeatTimeout
+	if timeout == 0 {
+		timeout = defaultHeartbeatTimeout
 	}
 
 	hook := LifecycleHook{
-		LifecycleHookName:    req.LifecycleHookName,
-		AutoScalingGroupName: req.AutoScalingGroupName,
-		LifecycleTransition:  req.LifecycleTransition,
-		DefaultResult:        req.DefaultResult,
-		HeartbeatTimeout:     req.HeartbeatTimeout,
+		LifecycleHookName:     req.LifecycleHookName,
+		AutoScalingGroupName:  req.AutoScalingGroupName,
+		LifecycleTransition:   transition,
+		DefaultResult:         result,
+		HeartbeatTimeout:      timeout,
+		GlobalTimeout:         timeout * 100,
+		NotificationTargetARN: req.NotificationTargetARN,
+		RoleARN:               req.RoleARN,
 	}
-	if hook.DefaultResult == "" {
-		hook.DefaultResult = "ABANDON"
+	if err := putJSON(ctx, s.st.store, nsHooks, req.AutoScalingGroupName+"/"+req.LifecycleHookName, &hook); err != nil {
+		return nil, asgInternalError("lifecycle hook")
 	}
-
-	key := req.AutoScalingGroupName + "/" + req.LifecycleHookName
-	raw, err := json.Marshal(&hook)
-	if err != nil {
-		return nil, asgErr("InternalError", "failed to persist hook", http.StatusInternalServerError)
-	}
-	if err := h.store.Set(ctx, nsHooks, key, string(raw)); err != nil {
-		return nil, asgErr("InternalError", "failed to persist hook", http.StatusInternalServerError)
-	}
-
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	return &putLifecycleHookResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
 }
 
 func (h *Handler) describeLifecycleHooksTyped(ctx context.Context, req *describeLifecycleHooksReq) (*describeLifecycleHooksResp, *protocol.AWSError) {
+	s := h.svc
 	filterSet := make(map[string]bool, len(req.LifecycleHookNames))
 	for _, n := range req.LifecycleHookNames {
 		filterSet[n] = true
 	}
-
-	var prefix string
-	if req.AutoScalingGroupName != "" {
-		prefix = req.AutoScalingGroupName + "/"
+	hooks, err := s.st.listHooks(ctx, req.AutoScalingGroupName)
+	if err != nil {
+		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan lifecycle hooks", HTTPStatus: http.StatusInternalServerError}
 	}
-	hookPairs, scanErr := h.store.Scan(ctx, nsHooks, prefix)
-	if scanErr != nil {
-		return nil, asgErr("InternalError", "failed to scan hooks", http.StatusInternalServerError)
-	}
-
-	xmlHooks := make([]asgXMLHook, 0, len(hookPairs))
-	for _, kv := range hookPairs {
-		var hk LifecycleHook
-		if json.Unmarshal([]byte(kv.Value), &hk) != nil {
-			continue
-		}
+	xmlHooks := make([]asgXMLHook, 0, len(hooks))
+	for _, hk := range hooks {
 		if len(filterSet) > 0 && !filterSet[hk.LifecycleHookName] {
 			continue
 		}
-		xmlHooks = append(xmlHooks, asgXMLHook(hk))
+		xmlHooks = append(xmlHooks, asgXMLHook(*hk))
 	}
-
 	return &describeLifecycleHooksResp{
 		Xmlns:  asXMLNS,
 		Result: lifecycleHooksResult{LifecycleHooks: xmlHooks},
@@ -675,13 +1285,228 @@ func (h *Handler) describeLifecycleHooksTyped(ctx context.Context, req *describe
 	}, nil
 }
 
-func (h *Handler) deleteLifecycleHookTyped(ctx context.Context, req *deleteLifecycleHookReq) (*asgEmptyResp, *protocol.AWSError) {
-	key := req.AutoScalingGroupName + "/" + req.LifecycleHookName
-	_ = h.store.Delete(ctx, nsHooks, key)
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+func (h *Handler) deleteLifecycleHookTyped(ctx context.Context, req *deleteLifecycleHookReq) (*deleteLifecycleHookResp, *protocol.AWSError) {
+	s := h.svc
+	_ = s.st.store.Delete(ctx, nsHooks, req.AutoScalingGroupName+"/"+req.LifecycleHookName)
+	// Any instance parked on that hook is released, rather than left waiting
+	// for a heartbeat that can no longer arrive. AWS completes an outstanding
+	// action with ABANDON for a launching instance and CONTINUE for a
+	// terminating one — not with the hook's own DefaultResult — so a deleted
+	// hook never strands an instance mid-transition.
+	s.mu.Lock()
+	instances, _ := s.st.listInstances(ctx, req.AutoScalingGroupName)
+	for _, inst := range instances {
+		if inst.PendingHookName != req.LifecycleHookName || !inst.waiting() {
+			continue
+		}
+		if inst.LifecycleState == lifecyclePendingWait {
+			inst.HookDefaultResult = lifecycleResultAbandon
+		} else {
+			inst.HookDefaultResult = lifecycleResultContinue
+		}
+		inst.HookDeadline = s.clk.Now().UTC()
+		_ = s.st.putInstance(ctx, inst)
+	}
+	s.mu.Unlock()
+	s.poke()
+	return &deleteLifecycleHookResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
 }
 
-func (h *Handler) createOrUpdateTagsTyped(ctx context.Context, req *createOrUpdateTagsReq) (*asgEmptyResp, *protocol.AWSError) {
+func (h *Handler) completeLifecycleActionTyped(ctx context.Context, req *completeLifecycleActionReq) (*completeLifecycleActionResp, *protocol.AWSError) {
+	s := h.svc
+	if req.AutoScalingGroupName == "" || req.LifecycleHookName == "" {
+		return nil, asgValidationError("AutoScalingGroupName and LifecycleHookName are required")
+	}
+	if req.LifecycleActionResult != lifecycleResultContinue && req.LifecycleActionResult != lifecycleResultAbandon {
+		return nil, asgValidationError("Value '%s' at 'lifecycleActionResult' failed to satisfy constraint: Member must satisfy enum value set: [CONTINUE, ABANDON]", req.LifecycleActionResult)
+	}
+
+	s.mu.Lock()
+	inst, aerr := s.pendingActionInstance(ctx, req.AutoScalingGroupName, req.LifecycleHookName, req.InstanceId, req.LifecycleActionToken)
+	if aerr != nil {
+		s.mu.Unlock()
+		return nil, aerr
+	}
+	// Completing a lifecycle action is exactly "the heartbeat window is over
+	// now, with this result" — the reconciler already knows how to act on
+	// that, so there is one code path for both.
+	inst.HookDefaultResult = req.LifecycleActionResult
+	inst.HookDeadline = s.clk.Now().UTC()
+	_ = s.st.putInstance(ctx, inst)
+	s.mu.Unlock()
+
+	s.poke()
+	return &completeLifecycleActionResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+}
+
+func (h *Handler) recordHeartbeatTyped(ctx context.Context, req *recordHeartbeatReq) (*recordHeartbeatResp, *protocol.AWSError) {
+	s := h.svc
+	s.mu.Lock()
+	inst, aerr := s.pendingActionInstance(ctx, req.AutoScalingGroupName, req.LifecycleHookName, req.InstanceId, req.LifecycleActionToken)
+	if aerr != nil {
+		s.mu.Unlock()
+		return nil, aerr
+	}
+	hook, found := s.st.hookByName(ctx, req.AutoScalingGroupName, req.LifecycleHookName)
+	timeout := defaultHeartbeatTimeout
+	if found && hook.HeartbeatTimeout > 0 {
+		timeout = hook.HeartbeatTimeout
+	}
+	inst.HookDeadline = s.clk.Now().UTC().Add(time.Duration(timeout) * time.Second)
+	_ = s.st.putInstance(ctx, inst)
+	s.mu.Unlock()
+	return &recordHeartbeatResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+}
+
+// pendingActionInstance resolves the instance a lifecycle-action call names,
+// by instance id or by the token the lifecycle event carried. Callers hold
+// s.mu.
+func (s *Service) pendingActionInstance(ctx context.Context, group, hookName, instanceID, token string) (*ASGInstance, *protocol.AWSError) {
+	instances, err := s.st.listInstances(ctx, group)
+	if err != nil {
+		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan instances", HTTPStatus: http.StatusInternalServerError}
+	}
+	for _, inst := range instances {
+		if !inst.waiting() || inst.PendingHookName != hookName {
+			continue
+		}
+		if instanceID != "" && inst.InstanceId != instanceID {
+			continue
+		}
+		if token != "" && inst.LifecycleActionToken != token {
+			continue
+		}
+		return inst, nil
+	}
+	return nil, asgValidationError("No active Lifecycle Action found with instance ID %s", instanceID)
+}
+
+// ── Instances ──────────────────────────────────────────────────────
+
+func (h *Handler) describeInstancesTyped(ctx context.Context, req *describeInstancesReq) (*describeInstancesResp, *protocol.AWSError) {
+	s := h.svc
+	filterSet := make(map[string]bool, len(req.InstanceIds))
+	for _, id := range req.InstanceIds {
+		filterSet[id] = true
+	}
+	instances, err := s.st.listInstances(ctx, "")
+	if err != nil {
+		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan instances", HTTPStatus: http.StatusInternalServerError}
+	}
+	out := make([]asgXMLGroupInstance, 0, len(instances))
+	for _, inst := range instances {
+		if len(filterSet) > 0 && !filterSet[inst.InstanceId] {
+			continue
+		}
+		out = append(out, asgXMLGroupInstance{
+			InstanceId:              inst.InstanceId,
+			InstanceType:            inst.InstanceType,
+			AutoScalingGroupName:    inst.AutoScalingGroupName,
+			AvailabilityZone:        inst.AvailabilityZone,
+			LifecycleState:          inst.LifecycleState,
+			HealthStatus:            inst.HealthStatus,
+			LaunchConfigurationName: inst.LaunchConfigurationName,
+			ProtectedFromScaleIn:    inst.ProtectedFromScaleIn,
+		})
+	}
+	return &describeInstancesResp{
+		Xmlns:  asXMLNS,
+		Result: asgInstanceResult{AutoScalingInstances: out},
+		Meta:   asgMetaFromCtx(ctx),
+	}, nil
+}
+
+func (h *Handler) setInstanceHealthTyped(ctx context.Context, req *setInstanceHealthReq) (*setInstanceHealthResp, *protocol.AWSError) {
+	s := h.svc
+	if req.HealthStatus != healthStatusHealthy && req.HealthStatus != healthStatusUnhealthy {
+		return nil, asgValidationError("Value '%s' at 'healthStatus' failed to satisfy constraint: Member must satisfy enum value set: [Healthy, Unhealthy]", req.HealthStatus)
+	}
+	s.mu.Lock()
+	inst, found := s.st.findInstance(ctx, req.InstanceId)
+	if !found {
+		s.mu.Unlock()
+		return nil, asgValidationError("Instance Id not found - No managed instance found for instance ID %s", req.InstanceId)
+	}
+	inst.HealthStatus = req.HealthStatus
+	_ = s.st.putInstance(ctx, inst)
+	s.mu.Unlock()
+	s.poke()
+	return &setInstanceHealthResp{asgEmptyBody: h.emptyBody(ctx)}, nil
+}
+
+func (h *Handler) setInstanceProtectionTyped(ctx context.Context, req *setInstanceProtectionReq) (*setInstanceProtectionResp, *protocol.AWSError) {
+	s := h.svc
+	if req.AutoScalingGroupName == "" {
+		return nil, asgValidationError("AutoScalingGroupName is required")
+	}
+	if len(req.InstanceIds) == 0 {
+		return nil, asgValidationError("InstanceIds is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// The instance must belong to the named group: AWS scopes this call to one
+	// group, so an id from a different group is not found rather than silently
+	// protected.
+	for _, id := range req.InstanceIds {
+		inst, ok := s.st.getInstance(ctx, req.AutoScalingGroupName, id)
+		if !ok {
+			return nil, asgValidationError("Instance Id not found - No managed instance found for instance ID %s", id)
+		}
+		inst.ProtectedFromScaleIn = req.ProtectedFromScaleIn
+		_ = s.st.putInstance(ctx, inst)
+	}
+	return &setInstanceProtectionResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+}
+
+// ── Scaling activities ─────────────────────────────────────────────
+
+func (h *Handler) describeActivitiesTyped(ctx context.Context, req *describeActivitiesReq) (*describeActivitiesResp, *protocol.AWSError) {
+	s := h.svc
+	filterSet := make(map[string]bool, len(req.ActivityIds))
+	for _, id := range req.ActivityIds {
+		filterSet[id] = true
+	}
+	activities, err := s.st.listActivities(ctx, req.AutoScalingGroupName)
+	if err != nil {
+		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan scaling activities", HTTPStatus: http.StatusInternalServerError}
+	}
+	limit := req.MaxRecords
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	out := make([]asgActivityXML, 0, len(activities))
+	for _, a := range activities {
+		if len(filterSet) > 0 && !filterSet[a.ActivityId] {
+			continue
+		}
+		out = append(out, asgActivityXML{
+			ActivityId:           a.ActivityId,
+			AutoScalingGroupName: a.AutoScalingGroupName,
+			AutoScalingGroupARN:  a.AutoScalingGroupARN,
+			Description:          a.Description,
+			Cause:                a.Cause,
+			StartTime:            formatTime(a.StartTime),
+			EndTime:              formatTime(a.EndTime),
+			StatusCode:           a.StatusCode,
+			StatusMessage:        a.StatusMessage,
+			Progress:             a.Progress,
+			Details:              a.Details,
+		})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return &describeActivitiesResp{
+		Xmlns:  asXMLNS,
+		Result: activitiesResult{Activities: out},
+		Meta:   asgMetaFromCtx(ctx),
+	}, nil
+}
+
+// ── Tags ───────────────────────────────────────────────────────────
+
+func (h *Handler) createOrUpdateTagsTyped(ctx context.Context, req *createOrUpdateTagsReq) (*createOrUpdateTagsResp, *protocol.AWSError) {
+	s := h.svc
 	for _, tm := range req.Tags {
 		if tm.ResourceId == "" {
 			continue
@@ -693,64 +1518,43 @@ func (h *Handler) createOrUpdateTagsTyped(ctx context.Context, req *createOrUpda
 			Value:             tm.Value,
 			PropagateAtLaunch: tm.PropagateAtLaunch == "true",
 		}
-		storeKey := tm.ResourceId + "/" + tm.Key
-		raw, err := json.Marshal(&tag)
-		if err != nil {
-			return nil, asgErr("InternalError", "failed to persist tag", http.StatusInternalServerError)
-		}
-		if err := h.store.Set(ctx, nsGroupTags, storeKey, string(raw)); err != nil {
-			return nil, asgErr("InternalError", "failed to persist tag", http.StatusInternalServerError)
+		if err := putJSON(ctx, s.st.store, nsGroupTags, tm.ResourceId+"/"+tm.Key, &tag); err != nil {
+			return nil, asgInternalError("tag")
 		}
 	}
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	return &createOrUpdateTagsResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
-func (h *Handler) deleteTagsTyped(ctx context.Context, req *deleteTagsReq) (*asgEmptyResp, *protocol.AWSError) {
+func (h *Handler) deleteTagsTyped(ctx context.Context, req *deleteTagsReq) (*deleteTagsResp, *protocol.AWSError) {
+	s := h.svc
 	for _, tm := range req.Tags {
 		if tm.ResourceId == "" {
 			continue
 		}
-		storeKey := tm.ResourceId + "/" + tm.Key
-		_ = h.store.Delete(ctx, nsGroupTags, storeKey)
+		_ = s.st.store.Delete(ctx, nsGroupTags, tm.ResourceId+"/"+tm.Key)
 	}
-	return &asgEmptyResp{Xmlns: asXMLNS, Meta: asgMetaFromCtx(ctx)}, nil
+	return &deleteTagsResp{asgEmptyBody: h.emptyBody(ctx)}, nil
 }
 
 func (h *Handler) describeTagsTyped(ctx context.Context, req *describeTagsReq) (*describeTagsResp, *protocol.AWSError) {
+	s := h.svc
 	var resourceFilter string
 	for _, f := range req.Filters {
 		if f.Name == "auto-scaling-group" && len(f.Values) > 0 {
 			resourceFilter = f.Values[0]
 		}
 	}
-
-	tagPairs, scanErr := h.store.Scan(ctx, nsGroupTags, "")
-	if scanErr != nil {
-		return nil, asgErr("InternalError", "failed to scan tags", http.StatusInternalServerError)
+	tags, err := s.st.listTagsForGroup(ctx, resourceFilter)
+	if err != nil {
+		return nil, &protocol.AWSError{Code: "InternalFailure", Message: "failed to scan tags", HTTPStatus: http.StatusInternalServerError}
 	}
-
-	xmlTags := make([]asgXMLTag, 0, len(tagPairs))
-	for _, kv := range tagPairs {
-		var t GroupTag
-		if json.Unmarshal([]byte(kv.Value), &t) != nil {
-			continue
-		}
-		if resourceFilter != "" && t.ResourceId != resourceFilter {
-			continue
-		}
-		xmlTags = append(xmlTags, asgXMLTag(t))
+	xmlTags := make([]asgXMLTag, 0, len(tags))
+	for _, t := range tags {
+		xmlTags = append(xmlTags, asgXMLTag(*t))
 	}
-
 	return &describeTagsResp{
 		Xmlns:  asXMLNS,
 		Result: tagsResult{Tags: xmlTags},
 		Meta:   asgMetaFromCtx(ctx),
-	}, nil
-}
-
-func (h *Handler) describeInstancesTyped(ctx context.Context, _ *struct{}) (*describeInstancesResp, *protocol.AWSError) {
-	return &describeInstancesResp{
-		Xmlns: asXMLNS,
-		Meta:  asgMetaFromCtx(ctx),
 	}, nil
 }

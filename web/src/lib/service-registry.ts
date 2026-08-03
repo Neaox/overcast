@@ -43,6 +43,7 @@ import {
   Fingerprint,
   Network,
   HardDrive,
+  Gauge,
   type LucideIcon,
 } from "lucide-react"
 
@@ -325,6 +326,21 @@ export const SERVICES = {
     dashboardDescription:
       "Kubernetes clusters — inspect control-plane metadata and cluster status.",
     docKey: "eks",
+  },
+  autoscaling: {
+    label: "Auto Scaling",
+    icon: Gauge,
+    color: "text-sky-300",
+    bg: "bg-sky-300/10",
+    border: "border-sky-300/30",
+    hex: "#7dd3fc",
+    letter: "AS",
+    to: "/autoscaling",
+    category: "compute",
+    description: "EC2 capacity that converges",
+    dashboardDescription:
+      "Auto Scaling groups — desired capacity, the instances actually running, policies and lifecycle hooks.",
+    docKey: "autoscaling",
   },
   stepfunctions: {
     label: "Step Functions",
