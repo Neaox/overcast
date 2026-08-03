@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Neaox/overcast-compat-cli/internal/awscli"
@@ -22,9 +23,13 @@ func S3() ServiceGroup {
 			"ListObjectsV2":          g.ListObjectsV2,
 			"PutObjectMultipleKeys":  g.PutObjectMultipleKeys,
 			"ListObjectsV2Delimiter": g.ListObjectsV2Delimiter,
-			"DeleteObject":           g.DeleteObject,
-			"DeleteObjects":          g.DeleteObjects,
-			"DeleteBucket":           g.DeleteBucket,
+
+			"PutObjectFormContentType": g.PutObjectFormContentType,
+			"PutObjectPlusInKey":       g.PutObjectPlusInKey,
+
+			"DeleteObject":  g.DeleteObject,
+			"DeleteObjects": g.DeleteObjects,
+			"DeleteBucket":  g.DeleteBucket,
 			// s3-copy
 			"CreateSourceBucket": g.CreateSourceBucket,
 			"PutSourceObject":    g.PutSourceObject,
@@ -207,6 +212,140 @@ func (g *s3Group) ListObjectsV2Delimiter(_ context.Context, t *harness.TestConte
 		return fmt.Errorf("s3 ListObjectsV2Delimiter: expected CommonPrefixes or Contents, got none")
 	}
 	return nil
+}
+
+// getObjectBody downloads a key to a temp file and returns its contents. The
+// CLI writes GetObject output to a path rather than stdout, so reading a body
+// back needs a file the test then cleans up.
+func (g *s3Group) getObjectBody(t *harness.TestContext, key string) ([]byte, error) {
+	f, err := os.CreateTemp("", "s3-body-*")
+	if err != nil {
+		return nil, err
+	}
+	path := f.Name()
+	f.Close()             //nolint:errcheck
+	defer os.Remove(path) //nolint:errcheck
+
+	if err := awscli.Run(t.Endpoint, t.Region,
+		"s3api", "get-object",
+		"--bucket", g.bucket(t),
+		"--key", key,
+		path,
+	); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+}
+
+// PutObjectFormContentType writes an object whose Content-Type is the one a bare
+// HTTP client sends when none is set. Content-Type is metadata on AWS, not a
+// parsing instruction, but an emulator that sniffs it to spot AWS Query traffic
+// can consume the body before the S3 handler sees it — silently storing zero
+// bytes. The CLI picks a sensible type on its own, so only an explicit
+// --content-type reaches the case.
+func (g *s3Group) PutObjectFormContentType(_ context.Context, t *harness.TestContext) error {
+	const key = "form-content-type"
+	const body = "hello-body-check"
+
+	if err := awscli.RunWithStdin(t.Endpoint, t.Region, body,
+		"s3api", "put-object",
+		"--bucket", g.bucket(t),
+		"--key", key,
+		"--content-type", "application/x-www-form-urlencoded",
+		"--body", "/dev/stdin",
+	); err != nil {
+		return err
+	}
+
+	stored, err := g.getObjectBody(t, key)
+	if err != nil {
+		return fmt.Errorf("s3 PutObjectFormContentType: get-object failed: %w", err)
+	}
+	if string(stored) != body {
+		return fmt.Errorf("s3 PutObjectFormContentType: expected body %q, got %q", body, string(stored))
+	}
+
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"s3api", "head-object",
+		"--bucket", g.bucket(t),
+		"--key", key,
+	)
+	if err != nil {
+		return fmt.Errorf("s3 PutObjectFormContentType: head-object failed: %w", err)
+	}
+	if ct, _ := out["ContentType"].(string); ct != "application/x-www-form-urlencoded" {
+		return fmt.Errorf("s3 PutObjectFormContentType: expected ContentType %q, got %q",
+			"application/x-www-form-urlencoded", ct)
+	}
+	// Leave the group bucket as it was found: DeleteBucket below deletes this
+	// shared bucket and needs it empty by then.
+	return g.deleteCrudKey(t, key)
+}
+
+// deleteCrudKey removes a key a test added to the shared s3-crud bucket, so
+// the group's later DeleteBucket still sees an empty bucket.
+func (g *s3Group) deleteCrudKey(t *harness.TestContext, key string) error {
+	if err := awscli.Run(t.Endpoint, t.Region,
+		"s3api", "delete-object",
+		"--bucket", g.bucket(t),
+		"--key", key,
+	); err != nil {
+		return fmt.Errorf("s3 cleanup: delete-object %q: %w", key, err)
+	}
+	return nil
+}
+
+// PutObjectPlusInKey writes an object whose key contains "+". The CLI
+// percent-encodes it as %2B in the request path — unlike a space or a
+// multi-byte character, whose encodings survive a round trip through a server's
+// URL canonicalisation — so a server that reads the raw path without decoding
+// stores the literal three characters "%2B" as part of the key.
+func (g *s3Group) PutObjectPlusInKey(_ context.Context, t *harness.TestContext) error {
+	const key = "plusonly/a+b.txt"
+	const body = "plus-body"
+
+	if err := awscli.RunWithStdin(t.Endpoint, t.Region, body,
+		"s3api", "put-object",
+		"--bucket", g.bucket(t),
+		"--key", key,
+		"--body", "/dev/stdin",
+	); err != nil {
+		return err
+	}
+
+	stored, err := g.getObjectBody(t, key)
+	if err != nil {
+		return fmt.Errorf("s3 PutObjectPlusInKey: get-object failed: %w", err)
+	}
+	if string(stored) != body {
+		return fmt.Errorf("s3 PutObjectPlusInKey: expected body %q, got %q", body, string(stored))
+	}
+
+	out, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"s3api", "list-objects-v2",
+		"--bucket", g.bucket(t),
+		"--prefix", "plusonly/",
+	)
+	if err != nil {
+		return fmt.Errorf("s3 PutObjectPlusInKey: list-objects-v2 failed: %w", err)
+	}
+	contents, _ := out["Contents"].([]any)
+	keys := make([]string, 0, len(contents))
+	found := false
+	for _, entry := range contents {
+		obj, _ := entry.(map[string]any)
+		k, _ := obj["Key"].(string)
+		keys = append(keys, k)
+		if k == key {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("s3 PutObjectPlusInKey: expected key %q in list-objects-v2, got %v", key, keys)
+	}
+	// Leave the group bucket as it was found: DeleteBucket below deletes this
+	// shared bucket and needs it empty by then.
+	return g.deleteCrudKey(t, key)
 }
 
 func (g *s3Group) DeleteObject(_ context.Context, t *harness.TestContext) error {

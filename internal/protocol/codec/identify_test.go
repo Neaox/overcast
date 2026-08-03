@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -87,8 +88,54 @@ func TestIdentifyQuery_BodyOnlyAction(t *testing.T) {
 	}
 }
 
+func TestIdentifyQuery_PUTBodyIsNotConsumed(t *testing.T) {
+	// A PUT is never an AWS Query request. It reaches this identifier only
+	// because application/x-www-form-urlencoded is what a bare HTTP client
+	// sends when no content type is set — `curl --data-binary` does exactly
+	// this — so the body belongs to whichever REST service the router picks,
+	// most often an S3 PutObject. Reading it here stored zero-byte objects.
+	body := "hello-body-check"
+	r := req("PUT", "/my-bucket/k1", body, map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	})
+
+	if _, op, _ := (identifyQuery{}).Claim(r); op != "" {
+		t.Fatalf("op = %q, want \"\" — a PUT carries no Query Action", op)
+	}
+
+	got, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("body after Claim = %q, want %q", got, body)
+	}
+}
+
+func TestIdentifyQuery_POSTBodyIsReadableAfterClaim(t *testing.T) {
+	// The POST branch does read the body, so it must put it back: the router
+	// only learns whether a form-encoded POST belongs to a Query service after
+	// this identifier has already run.
+	body := "Action=ListTopics&Version=2010-03-31"
+	r := req("POST", "/", body, map[string]string{
+		"Content-Type": "application/x-www-form-urlencoded",
+	})
+
+	if _, op, _ := (identifyQuery{}).Claim(r); op != "ListTopics" {
+		t.Fatalf("op = %q, want ListTopics", op)
+	}
+
+	got, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("body after Claim = %q, want %q", got, body)
+	}
+}
+
 func TestIdentifyQuery_FieldsStillDecodableAfterClaim(t *testing.T) {
-	// Claim reads the body via r.FormValue (r.ParseForm), which caches
+	// Claim reads the body via protocol.ParseFormPreservingBody, which caches
 	// the parsed values on r.Form rather than draining r.Body for good.
 	// The codec's own Decode pass runs afterwards and must still see
 	// every field — not just Action.

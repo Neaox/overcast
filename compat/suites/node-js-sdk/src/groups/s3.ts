@@ -180,6 +180,88 @@ export function makeS3Groups(suite: string): TestGroup[] {
           },
         },
         {
+          // Content-Type is metadata on AWS, not a parsing instruction. An
+          // emulator that sniffs it to spot AWS Query traffic can consume the
+          // body before the S3 handler sees it and silently store zero bytes.
+          // Every SDK picks a sensible default type, so only application code
+          // that sets this one explicitly reaches the case.
+          name: "PutObjectFormContentType",
+          op: "PutObject",
+          fn: async (ctx) => {
+            const { s3 } = makeClients(ctx);
+            const bucket = `${ctx.runId}-s3-crud`;
+            const body = "hello-body-check";
+            await s3.send(
+              new PutObjectCommand({
+                Bucket: bucket,
+                Key: "form-content-type",
+                Body: body,
+                ContentType: "application/x-www-form-urlencoded",
+              }),
+            );
+            const resp = await s3.send(
+              new GetObjectCommand({
+                Bucket: bucket,
+                Key: "form-content-type",
+              }),
+            );
+            assert.strictEqual(
+              await resp.Body?.transformToString(),
+              body,
+              "PutObjectFormContentType: stored body does not match what was sent",
+            );
+            assert.strictEqual(
+              resp.ContentType,
+              "application/x-www-form-urlencoded",
+              "PutObjectFormContentType: ContentType was not preserved",
+            );
+            // Leave the group bucket as it was found — DeleteBucket below
+            // deletes this shared bucket and needs it empty by then.
+            await s3.send(
+              new DeleteObjectCommand({
+                Bucket: bucket,
+                Key: "form-content-type",
+              }),
+            );
+          },
+        },
+        {
+          // SDKs percent-encode "+" as %2B in the request path — unlike a space
+          // or a multi-byte character, whose encodings survive a round trip
+          // through a server's URL canonicalisation — so a server that reads
+          // the raw path without decoding stores the literal "%2B" in the key.
+          name: "PutObjectPlusInKey",
+          op: "PutObject",
+          fn: async (ctx) => {
+            const { s3 } = makeClients(ctx);
+            const bucket = `${ctx.runId}-s3-crud`;
+            const key = "plusonly/a+b.txt";
+            const body = "plus-body";
+            await s3.send(
+              new PutObjectCommand({ Bucket: bucket, Key: key, Body: body }),
+            );
+            const resp = await s3.send(
+              new GetObjectCommand({ Bucket: bucket, Key: key }),
+            );
+            assert.strictEqual(
+              await resp.Body?.transformToString(),
+              body,
+              `PutObjectPlusInKey: could not read back ${key}`,
+            );
+            const listed = await s3.send(
+              new ListObjectsV2Command({ Bucket: bucket, Prefix: "plusonly/" }),
+            );
+            const keys = (listed.Contents ?? []).map((o) => o.Key);
+            assert.ok(
+              keys.includes(key),
+              `PutObjectPlusInKey: expected ${key} in ListObjectsV2, got ${JSON.stringify(keys)}`,
+            );
+            // Leave the group bucket as it was found — DeleteBucket below
+            // deletes this shared bucket and needs it empty by then.
+            await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+          },
+        },
+        {
           name: "DeleteObject",
           fn: async (ctx) => {
             const { s3 } = makeClients(ctx);

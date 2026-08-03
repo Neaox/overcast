@@ -106,6 +106,103 @@ func (h *Handler) loadBalancerDNSName(name, lbID, region string) string {
 	return fmt.Sprintf("%s-%s.%s.elb.%s", name, lbID[:8], region, host)
 }
 
+// lbARNTypeSegment is the abbreviation AWS puts in a load balancer's ARN. The
+// ARN never carries the full type name the API takes and returns: an
+// application load balancer is "app", not "application", and code that parses
+// an ARN — CDK's Arn.split, IAM resource patterns, the console's own links —
+// is written against the abbreviation.
+func lbARNTypeSegment(lbType string) string {
+	switch lbType {
+	case "network":
+		return "net"
+	case "gateway":
+		return "gwy"
+	default:
+		return "app"
+	}
+}
+
+// loadBalancerARN builds a load balancer's ARN:
+// arn:aws:elasticloadbalancing:{region}:{account}:loadbalancer/{app|net|gwy}/{name}/{id}
+func loadBalancerARN(region, account, lbType, name, lbID string) string {
+	return fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:loadbalancer/%s/%s/%s",
+		region, account, lbARNTypeSegment(lbType), name, lbID)
+}
+
+// listenerARN builds a listener's ARN from the load balancer it belongs to:
+// arn:aws:elasticloadbalancing:{region}:{account}:listener/{app}/{name}/{lb-id}/{listener-id}
+//
+// The load balancer's own name and id are what make the ARN identify a listener
+// on *that* load balancer. Minting it with a literal "listener" in their place
+// produced ARNs that told a reader nothing and could not be traced back.
+func listenerARN(lbArn, listenerID string) string {
+	// A load balancer ARN ends "loadbalancer/{type}/{name}/{id}"; everything
+	// after that marker is exactly the suffix a listener ARN repeats.
+	const marker = ":loadbalancer/"
+	i := strings.Index(lbArn, marker)
+	if i < 0 {
+		return lbArn + "/" + listenerID
+	}
+	return lbArn[:i] + ":listener/" + lbArn[i+len(marker):] + "/" + listenerID
+}
+
+// identifierFilter is the set of identifiers a Describe call named. ELBv2's
+// Describe operations each accept more than one way to name a resource —
+// LoadBalancerArns or Names, TargetGroupArns or Names — and ignoring them makes
+// "describe the one I asked for" return the whole account, so a caller reading
+// the first result gets an unrelated resource and every downstream ARN is
+// wrong. An empty filter matches everything, as an unfiltered Describe does.
+type identifierFilter map[string]bool
+
+func newIdentifierFilter(lists ...[]string) identifierFilter {
+	f := identifierFilter{}
+	for _, list := range lists {
+		for _, v := range list {
+			if v != "" {
+				f[v] = true
+			}
+		}
+	}
+	return f
+}
+
+// matches reports whether any of a resource's identifiers was asked for.
+func (f identifierFilter) matches(identifiers ...string) bool {
+	if len(f) == 0 {
+		return true
+	}
+	for _, id := range identifiers {
+		if f[id] {
+			return true
+		}
+	}
+	return false
+}
+
+// selectLBs narrows load balancers to those named by ARN or by name.
+func selectLBs(lbs []*LoadBalancer, arns, names []string) []*LoadBalancer {
+	f := newIdentifierFilter(arns, names)
+	out := lbs[:0]
+	for _, lb := range lbs {
+		if f.matches(lb.LoadBalancerArn, lb.LoadBalancerName) {
+			out = append(out, lb)
+		}
+	}
+	return out
+}
+
+// selectTGs narrows target groups to those named by ARN or by name.
+func selectTGs(tgs []*TargetGroup, arns, names []string) []*TargetGroup {
+	f := newIdentifierFilter(arns, names)
+	out := tgs[:0]
+	for _, tg := range tgs {
+		if f.matches(tg.TargetGroupArn, tg.TargetGroupName) {
+			out = append(out, tg)
+		}
+	}
+	return out
+}
+
 func lbKey(region, arn string) string {
 	return serviceutil.RegionKey(region, arn)
 }
@@ -413,8 +510,7 @@ func (h *Handler) CreateLoadBalancer(w http.ResponseWriter, r *http.Request) {
 	account := h.accountID()
 
 	lbID := uuid.NewString()
-	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:loadbalancer/%s/%s/%s",
-		region, account, lbType, name, lbID[:8])
+	arn := loadBalancerARN(region, account, lbType, name, lbID[:8])
 	dnsName := h.loadBalancerDNSName(name, lbID, region)
 
 	lb := &LoadBalancer{
@@ -448,20 +544,7 @@ func (h *Handler) DescribeLoadBalancers(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
-	arns := collectMemberParams(r, "LoadBalancerArns")
-	if len(arns) > 0 {
-		arnSet := make(map[string]bool, len(arns))
-		for _, a := range arns {
-			arnSet[a] = true
-		}
-		filtered := lbs[:0]
-		for _, lb := range lbs {
-			if arnSet[lb.LoadBalancerArn] {
-				filtered = append(filtered, lb)
-			}
-		}
-		lbs = filtered
-	}
+	lbs = selectLBs(lbs, collectMemberParams(r, "LoadBalancerArns"), collectMemberParams(r, "Names"))
 	sort.Slice(lbs, func(i, j int) bool { return lbs[i].LoadBalancerName < lbs[j].LoadBalancerName })
 
 	xmlLBs := make([]xmlLB, 0, len(lbs))
@@ -549,6 +632,7 @@ func (h *Handler) DescribeTargetGroups(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
+	tgs = selectTGs(tgs, collectMemberParams(r, "TargetGroupArns"), collectMemberParams(r, "Names"))
 	sort.Slice(tgs, func(i, j int) bool { return tgs[i].TargetGroupName < tgs[j].TargetGroupName })
 
 	xmlTGs := make([]xmlTG, 0, len(tgs))
@@ -596,7 +680,6 @@ func (h *Handler) CreateListener(w http.ResponseWriter, r *http.Request) {
 	proto := r.FormValue("Protocol")
 	port := formInt(r, "Port", 80)
 	region := h.region(r.Context())
-	account := h.accountID()
 
 	if _, found, err := h.getLB(r.Context(), region, lbArn); err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
@@ -607,11 +690,9 @@ func (h *Handler) CreateListener(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lID := uuid.NewString()
-	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:listener/app/listener/%s",
-		region, account, lID[:12])
 
 	l := &Listener{
-		ListenerArn:     arn,
+		ListenerArn:     listenerARN(lbArn, lID[:12]),
 		LoadBalancerArn: lbArn,
 		Protocol:        proto,
 		Port:            port,
@@ -640,9 +721,13 @@ func (h *Handler) DescribeListeners(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
+	f := newIdentifierFilter(collectMemberParams(r, "ListenerArns"))
 
 	xmlLs := make([]xmlListener, 0, len(listeners))
 	for _, l := range listeners {
+		if !f.matches(l.ListenerArn) {
+			continue
+		}
 		xmlLs = append(xmlLs, toListenerXML(l))
 	}
 	resp := &xmlDescribeListenersResponse{

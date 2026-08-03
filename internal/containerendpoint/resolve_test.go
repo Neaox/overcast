@@ -36,9 +36,7 @@ func (f *fakeNetworkClient) InspectContainer(_ context.Context, _ string) (*dock
 // with the given IP.
 func inspectOnNetwork(network, ip string) *docker.ContainerInspect {
 	ci := &docker.ContainerInspect{}
-	ci.NetworkSettings.Networks = map[string]struct {
-		IPAddress string `json:"IPAddress"`
-	}{network: {IPAddress: ip}}
+	ci.NetworkSettings.Networks = map[string]docker.ContainerNetwork{network: {IPAddress: ip}}
 	return ci
 }
 

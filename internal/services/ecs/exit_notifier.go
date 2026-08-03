@@ -51,6 +51,17 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 		}
 	}
 
+	// A task the scheduler or the caller already stopped keeps the stop code and
+	// reason it was given: its container exiting is the *consequence* of that
+	// decision, not a task dying on its own. Recording the exit code is all
+	// that is left to do — rewriting it to EssentialContainerExited would lose
+	// why it stopped, count a deliberate scale-in as a deployment failure, and
+	// schedule a replacement for a task nothing is missing.
+	if task.LastStatus == "STOPPED" {
+		h.store.putTask(ctx, task) //nolint:errcheck
+		return
+	}
+
 	// Check if all containers are stopped.
 	allStopped := true
 	for _, c := range task.Containers {
@@ -75,7 +86,11 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 
 	h.store.putTask(ctx, task) //nolint:errcheck
 
-	if allStopped && h.bus != nil {
+	if !allStopped {
+		return
+	}
+
+	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.ECSTaskStopped,
 			Payload: events.ResourcePayload{Name: taskID},
@@ -85,13 +100,23 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	// A service keeps its desired count: a task whose containers exited is
 	// replaced. Without this a service drains to zero the first time a task
 	// finishes and stays there, which is not what ECS does with one.
-	if allStopped {
-		if serviceName, ok := serviceNameFromGroup(task.Group); ok {
-			// Out of the load balancer's rotation first, then replaced.
-			if svc, aerr := h.store.getService(ctx, parts[0], serviceName); aerr == nil && svc != nil {
-				h.deregisterTaskTargets(ctx, svc, task)
-			}
-			h.scheduleServiceReplacement(ctx, region, parts[0], serviceName)
+	serviceName, ok := serviceNameFromGroup(task.Group)
+	if !ok {
+		return
+	}
+	if svc, aerr := h.store.getService(ctx, parts[0], serviceName); aerr == nil && svc != nil {
+		// Out of the load balancer's rotation first, then replaced.
+		h.deregisterTaskTargets(ctx, svc, task)
+		// The deployment counts it as a failed task, which is what makes a
+		// crash loop visible: failedTasks climbs, the deployment stops
+		// reporting a steady state it is not in, and a circuit breaker trips.
+		h.recordTaskStopFailure(svc, task)
+		if aerr := h.store.putService(ctx, parts[0], svc); aerr != nil {
+			h.log.Warn("ecs: failed to persist service after a task stopped",
+				zap.String("cluster", parts[0]),
+				zap.String("service", serviceName),
+				zap.String("error", aerr.Message))
 		}
 	}
+	h.scheduleServiceReplacement(ctx, region, parts[0], serviceName)
 }

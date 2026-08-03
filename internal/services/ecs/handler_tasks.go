@@ -78,15 +78,10 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 		platformVersion = "LATEST"
 	}
 
-	var placement awsvpcPlacement
-	if req.NetworkConfiguration != nil {
-		var placementErr *protocol.AWSError
-		placement.subnetID, _, placement.networkID, placement.subnetResolved, placementErr =
-			h.resolveAwsvpcPlacement(r.Context(), req.NetworkConfiguration, "awsvpc tasks")
-		if placementErr != nil {
-			protocol.WriteJSONError(w, r, placementErr)
-			return
-		}
+	placement, placementErr := h.resolveAwsvpcPlacement(r.Context(), req.NetworkConfiguration, "awsvpc tasks")
+	if placementErr != nil {
+		protocol.WriteJSONError(w, r, placementErr)
+		return
 	}
 
 	tasks := make([]Task, 0, req.Count)
@@ -123,7 +118,7 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 // startTaskContainers creates and starts Docker containers for all container
 // definitions in a task. On success, task containers are updated with DockerIDs
 // and a scheduler transition to RUNNING is queued.
-func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID, awsvpcNetworkID string) error {
+func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement) error {
 	// Ensure the ECS network exists.
 	if _, err := h.docker.CreateNetwork(ctx, h.cfg.ECSNetwork); err != nil {
 		return fmt.Errorf("ecs: create network %s: %w", h.cfg.ECSNetwork, err)
@@ -245,10 +240,14 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			_ = h.docker.RemoveContainerForce(dockerID)
 			return fmt.Errorf("ecs: start container %s: %w", cd.Name, err)
 		}
-		if awsvpcNetworkID != "" {
-			if err := h.docker.ConnectNetwork(ctx, awsvpcNetworkID, dockerID); err != nil {
+		if placement.networkID != "" {
+			// Only the first container carries the task's ENI address. AWS gives
+			// every container in an awsvpc task one shared network namespace and
+			// so one address; Docker gives each container its own, and the task
+			// reports a single privateIPv4Address either way.
+			if err := h.attachTaskENI(ctx, task, placement, dockerID, i == 0); err != nil {
 				_ = h.docker.RemoveContainerForce(dockerID)
-				return fmt.Errorf("ecs: connect container %s to VPC network %s: %w", cd.Name, awsvpcNetworkID, err)
+				return fmt.Errorf("ecs: connect container %s to VPC network %s: %w", cd.Name, placement.networkID, err)
 			}
 		}
 
@@ -430,6 +429,13 @@ func (h *Handler) scheduleRunningTransition(region, clusterName, taskID string) 
 		for i := range got.Containers {
 			got.Containers[i].LastStatus = "RUNNING"
 		}
+		// A running awsvpc task's ENI is ATTACHED, not still ATTACHING — that
+		// is the status callers wait on before treating the address as usable.
+		for i := range got.Attachments {
+			if got.Attachments[i].Type == "ElasticNetworkInterface" && got.Attachments[i].Status == "ATTACHING" {
+				got.Attachments[i].Status = "ATTACHED"
+			}
+		}
 		h.store.putTask(ctx, got) //nolint:errcheck
 		if h.bus != nil {
 			h.bus.Publish(ctx, events.Event{Type: events.ECSTaskStarted, Payload: events.ResourcePayload{Name: capturedTaskID}})
@@ -474,6 +480,37 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 	// Cancel any pending scheduler transition.
 	h.scheduler.CancelScoped(h.store.region(r.Context()), taskID, "pending")
 
+	// A task a service owns leaves that service's target groups before it is
+	// torn down, and the service then replaces it — its desired count has not
+	// changed just because one task was stopped by hand. Both used to fall out
+	// of the container's die event; they belong here now that the exit notifier
+	// leaves a task the caller already stopped alone.
+	serviceName, ownedByService := serviceNameFromGroup(task.Group)
+	if ownedByService {
+		if svc, aerr := h.store.getService(r.Context(), clusterName, serviceName); aerr == nil && svc != nil {
+			h.deregisterTaskTargets(r.Context(), svc, task)
+		}
+	}
+
+	// Record the stop before touching the containers: killing them raises a
+	// Docker die event whose handler races this write, and a caller-initiated
+	// stop that loses the race is reported as a task that died on its own.
+	task.LastStatus = "STOPPED"
+	task.DesiredStatus = "STOPPED"
+	task.StoppedReason = req.Reason
+	task.StopCode = "UserInitiated"
+	stoppedAt := h.clk.Now().Unix()
+	task.StoppedAt = &stoppedAt
+	task.StoppingAt = &stoppedAt
+	for i := range task.Containers {
+		task.Containers[i].LastStatus = "STOPPED"
+	}
+
+	if aerr := h.store.putTask(r.Context(), task); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
 	// Stop Docker containers if Docker is available.
 	if h.dockerReady.Load() {
 		for _, c := range task.Containers {
@@ -491,23 +528,10 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
-	task.LastStatus = "STOPPED"
-	task.DesiredStatus = "STOPPED"
-	task.StoppedReason = req.Reason
-	task.StopCode = "UserInitiated"
-	stoppedAt := h.clk.Now().Unix()
-	task.StoppedAt = &stoppedAt
-	task.StoppingAt = &stoppedAt
-	for i := range task.Containers {
-		task.Containers[i].LastStatus = "STOPPED"
-	}
-
-	if aerr := h.store.putTask(r.Context(), task); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
 	h.publish(r, events.ECSTaskStopped, events.ResourcePayload{Name: taskID})
+	if ownedByService {
+		h.scheduleServiceReplacement(r.Context(), h.store.region(r.Context()), clusterName, serviceName)
+	}
 
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"task": task}, "application/x-amz-json-1.1")
 }
