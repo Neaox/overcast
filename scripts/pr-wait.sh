@@ -50,6 +50,29 @@ MAX_LOG_LINES=${PR_WAIT_MAX_LOG_LINES:-40}
 # not dispatched anything yet, and `gh pr checks` reports "no checks".
 APPEAR_TIMEOUT=${PR_WAIT_APPEAR_TIMEOUT:-180}
 
+# summarize_log reads a `gh pr checks` (or --watch) log and prints
+#   passed=<count of distinct checks that passed>
+# followed by one line per distinct failing check. Split out from the main flow
+# so scripts/pr-wait_test.py can exercise it without a network or a PR: this
+# parsing has been wrong three separate ways (counting redraws, deduping on
+# whole lines that differ only by elapsed time, and double-reporting a check
+# listed under two workflow events).
+summarize_log() {
+    _log=$1
+    _tab=$(printf '\t')
+    # Watch mode redraws the WHOLE table on every refresh, so the log holds one
+    # line per check per refresh, and gh lists a check once per triggering
+    # workflow event. Dedupe on the check name (field 1) — the elapsed-time
+    # column differs between redraws, so deduping whole lines does not.
+    echo "passed=$(grep "${_tab}pass${_tab}" "$_log" | cut -f1 | sort -u | grep -c . || true)"
+    grep -E "${_tab}(fail|cancel)${_tab}" "$_log" | awk -F"${_tab}" '!seen[$1]++' || true
+}
+
+if [ "${1:-}" = "--summarize-log" ]; then
+    summarize_log "$2"
+    exit 0
+fi
+
 pr="${1:-}"
 
 # shellcheck disable=SC2086 # $pr is deliberately unquoted: empty = current branch
@@ -108,11 +131,14 @@ gh pr checks "$number" --watch --fail-fast >"$log" 2>&1
 status=$?
 set -e
 
-tab=$(printf '\t')
-passed=$(grep -c "${tab}pass${tab}" "$log" || true)
-# gh lists a check once per triggering workflow event, so the same failure can
-# appear two or three times. Dedupe, or the detail below is printed twice.
-failing=$(grep -E "${tab}(fail|cancel)${tab}" "$log" | sort -u || true)
+# First line is "passed=<n>", the rest are the distinct failing checks.
+# Deliberately not ${summary%%...} parameter expansion: command substitution
+# strips trailing newlines, so $(printf '\n') is the empty string and the
+# pattern silently becomes "*", which eats the whole value.
+summary=$(summarize_log "$log")
+passed=$(printf '%s\n' "$summary" | head -n 1)
+passed=${passed#passed=}
+failing=$(printf '%s\n' "$summary" | tail -n +2)
 
 if [ -n "$failing" ]; then
     echo "pr-wait: PR #$number — FAILING checks:" >&2
