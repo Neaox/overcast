@@ -13,7 +13,7 @@ func init() {
 		capabilities.Capability{Service: "efs", Operation: "DeleteFileSystem", Category: "File systems", Status: capabilities.StatusSupported, Notes: "Rejects deletion while mount targets exist (FileSystemInUse); cascades access points, tags, and policy"},
 		capabilities.Capability{Service: "efs", Operation: "UpdateFileSystemProtection", Category: "File systems", Status: capabilities.StatusSupported, Notes: "Stores ReplicationOverwriteProtection"},
 		// Mount targets
-		capabilities.Capability{Service: "efs", Operation: "CreateMountTarget", Category: "Mount targets", Status: capabilities.StatusSupported, Notes: "Metadata only — no NFS data plane. One mount target per AZ/subnet enforced; AZ and IP are synthesized deterministically from the subnet ID"},
+		capabilities.Capability{Service: "efs", Operation: "CreateMountTarget", Category: "Mount targets", Status: capabilities.StatusSupported, Notes: "Serves a real NFSv4 export with OVERCAST_EFS_NFS=true, metadata only otherwise. One mount target per AZ/subnet enforced; AZ and IP are synthesized deterministically from the subnet ID"},
 		capabilities.Capability{Service: "efs", Operation: "DescribeMountTargets", Category: "Mount targets", Status: capabilities.StatusSupported, Notes: "Lookup by FileSystemId, MountTargetId, or AccessPointId; Marker/MaxItems pagination"},
 		capabilities.Capability{Service: "efs", Operation: "DeleteMountTarget", Category: "Mount targets", Status: capabilities.StatusSupported, Notes: "Lifecycle deleting → removed"},
 		capabilities.Capability{Service: "efs", Operation: "DescribeMountTargetSecurityGroups", Category: "Mount targets", Status: capabilities.StatusSupported},

@@ -84,8 +84,11 @@ mountable NFSv4 export. `CreateMountTarget` starts one NFS-Ganesha container
 named `overcast-efs-nfs-<MountTargetId>` that exports the file system's volume
 and publishes container port 2049 on a free host port at or above
 `EFS_NFS_PORT_BASE`; `DeleteMountTarget` removes it. Ganesha runs entirely in
-userspace — no `--privileged`, no added capabilities, no kernel modules — so
-the export works on Linux, macOS and Windows Docker hosts alike.
+userspace — no `--privileged` and no kernel modules — so the export works on
+Linux, macOS and Windows Docker hosts alike. The container is granted exactly
+one Linux capability, `CAP_DAC_READ_SEARCH`: Ganesha's VFS backend resolves NFS
+file handles with `open_by_handle_at()`, which the kernel gates on it. Without
+it the export accepts one mount and then serves nothing.
 
 It is opt-in because most testing does not need it: Lambda and ECS already
 share bytes through the volume, and an export costs a container and a port per
@@ -93,8 +96,11 @@ mount target.
 
 The mount target stays `creating` until the export answers an NFSv4 call, then
 becomes `available` — so a successful `DescribeMountTargets` means the export
-is genuinely serving. If the export never comes up, the mount target becomes
-`available` anyway and a warning is logged, rather than stranding the resource.
+is genuinely serving. An export that never answers settles the mount target in
+`error` instead, with a warning naming the container whose logs say why. The
+resource is never stranded in `creating`, and it never reports `available`
+without a data plane behind it. (With `OVERCAST_EFS_NFS` off there is no export
+to fail: mount targets go straight to `available`, as before.)
 
 Where to mount from:
 
@@ -105,12 +111,24 @@ Where to mount from:
 
 Pseudo-paths follow the file system's access points: `/` is the volume root,
 and `/<AccessPointId>` is that access point's root directory, squashed onto
-its `PosixUser` when it declares one. Exports are fixed when the mount target
-starts, so an access point created afterwards needs the mount target recreated
-before it gets a pseudo-path.
+its `PosixUser` when it declares one. Two consequences worth knowing:
+
+- **An empty directory named after each access point appears in the file
+  system root.** Ganesha grafts a pseudo-path onto a name that already exists
+  in the exported volume, so the export container creates one anchor directory
+  per access point before it starts. Mounting `/<AccessPointId>` shows the
+  access point's root directory, never the anchor — the anchor is only visible
+  to something listing the volume root.
+- **Exports are fixed when the mount target starts.** Ganesha reloads exports
+  only on restart, and churning a live NFS server on every `CreateAccessPoint`
+  would break clients holding open files. An access point created after the
+  mount target therefore has no pseudo-path: delete and recreate the mount
+  target to pick it up. Its data is reachable in the meantime at the
+  equivalent path under the root export (an access point rooted at `/app/data`
+  is `/app/data` below `/`), just without the `PosixUser` squash.
 
 Mounting the export requires `CAP_SYS_ADMIN` on the *client*, which is the
-client's business — the server side needs no privileges.
+client's business — the server side needs only the one capability above.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -161,13 +179,13 @@ subnet, POSIX identity, …) trigger replacement here too.
 
 ### Mount targets
 
-| Operation                           | Status       | Notes                                                                                                                                      | AWS Docs                                                                                     |
-| ----------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `CreateMountTarget`                 | ✅ Supported | Metadata only — no NFS data plane. One mount target per AZ/subnet enforced; AZ and IP are synthesized deterministically from the subnet ID | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_CreateMountTarget.html)                 |
-| `DescribeMountTargets`              | ✅ Supported | Lookup by FileSystemId, MountTargetId, or AccessPointId; Marker/MaxItems pagination                                                        | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_DescribeMountTargets.html)              |
-| `DeleteMountTarget`                 | ✅ Supported | Lifecycle deleting → removed                                                                                                               | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_DeleteMountTarget.html)                 |
-| `DescribeMountTargetSecurityGroups` | ✅ Supported |                                                                                                                                            | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_DescribeMountTargetSecurityGroups.html) |
-| `ModifyMountTargetSecurityGroups`   | ✅ Supported | Enforces the 5-security-group limit; groups are stored, not validated against EC2                                                          | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_ModifyMountTargetSecurityGroups.html)   |
+| Operation                           | Status       | Notes                                                                                                                                                                                   | AWS Docs                                                                                     |
+| ----------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `CreateMountTarget`                 | ✅ Supported | Serves a real NFSv4 export with OVERCAST_EFS_NFS=true, metadata only otherwise. One mount target per AZ/subnet enforced; AZ and IP are synthesized deterministically from the subnet ID | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_CreateMountTarget.html)                 |
+| `DescribeMountTargets`              | ✅ Supported | Lookup by FileSystemId, MountTargetId, or AccessPointId; Marker/MaxItems pagination                                                                                                     | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_DescribeMountTargets.html)              |
+| `DeleteMountTarget`                 | ✅ Supported | Lifecycle deleting → removed                                                                                                                                                            | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_DeleteMountTarget.html)                 |
+| `DescribeMountTargetSecurityGroups` | ✅ Supported |                                                                                                                                                                                         | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_DescribeMountTargetSecurityGroups.html) |
+| `ModifyMountTargetSecurityGroups`   | ✅ Supported | Enforces the 5-security-group limit; groups are stored, not validated against EC2                                                                                                       | [docs](https://docs.aws.amazon.com/efs/latest/ug/API_ModifyMountTargetSecurityGroups.html)   |
 
 ### Access points
 
