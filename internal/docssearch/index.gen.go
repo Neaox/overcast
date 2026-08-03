@@ -442,11 +442,7 @@ var postings = map[string][]Posting{
 	"answered":                        {{Doc: 42, Score: 1}, {Doc: 48, Score: 1}},
 	"answering":                       {{Doc: 51, Score: 1}},
 	"answers":                         {{Doc: 4, Score: 1}, {Doc: 32, Score: 1}, {Doc: 51, Score: 1}},
-<<<<<<< HEAD
-	"any":                             {{Doc: 9, Score: 10}, {Doc: 4, Score: 4}, {Doc: 39, Score: 4}, {Doc: 1, Score: 3}, {Doc: 29, Score: 3}, {Doc: 42, Score: 3}, {Doc: 61, Score: 3}, {Doc: 15, Score: 2}, {Doc: 18, Score: 2}, {Doc: 31, Score: 2}, {Doc: 54, Score: 2}, {Doc: 0, Score: 1}, {Doc: 6, Score: 1}, {Doc: 8, Score: 1}, {Doc: 21, Score: 1}, {Doc: 24, Score: 1}, {Doc: 26, Score: 1}, {Doc: 33, Score: 1}, {Doc: 36, Score: 1}, {Doc: 49, Score: 1}},
-=======
-	"any":                             {{Doc: 9, Score: 10}, {Doc: 4, Score: 4}, {Doc: 1, Score: 3}, {Doc: 29, Score: 3}, {Doc: 39, Score: 3}, {Doc: 42, Score: 3}, {Doc: 61, Score: 3}, {Doc: 15, Score: 2}, {Doc: 18, Score: 2}, {Doc: 31, Score: 2}, {Doc: 54, Score: 2}, {Doc: 0, Score: 1}, {Doc: 6, Score: 1}, {Doc: 8, Score: 1}, {Doc: 21, Score: 1}, {Doc: 24, Score: 1}, {Doc: 26, Score: 1}, {Doc: 33, Score: 1}, {Doc: 36, Score: 1}, {Doc: 49, Score: 1}, {Doc: 57, Score: 1}},
->>>>>>> origin/main
+	"any":                             {{Doc: 9, Score: 10}, {Doc: 4, Score: 4}, {Doc: 39, Score: 4}, {Doc: 1, Score: 3}, {Doc: 29, Score: 3}, {Doc: 42, Score: 3}, {Doc: 61, Score: 3}, {Doc: 15, Score: 2}, {Doc: 18, Score: 2}, {Doc: 31, Score: 2}, {Doc: 54, Score: 2}, {Doc: 0, Score: 1}, {Doc: 6, Score: 1}, {Doc: 8, Score: 1}, {Doc: 21, Score: 1}, {Doc: 24, Score: 1}, {Doc: 26, Score: 1}, {Doc: 33, Score: 1}, {Doc: 36, Score: 1}, {Doc: 49, Score: 1}, {Doc: 57, Score: 1}},
 	"anyone":                          {{Doc: 4, Score: 1}},
 	"anything":                        {{Doc: 49, Score: 6}, {Doc: 6, Score: 2}, {Doc: 4, Score: 1}, {Doc: 12, Score: 1}, {Doc: 29, Score: 1}, {Doc: 48, Score: 1}, {Doc: 57, Score: 1}, {Doc: 61, Score: 1}},
 	"anything-but":                    {{Doc: 36, Score: 2}},
@@ -629,11 +625,7 @@ var postings = map[string][]Posting{
 	"avoids":                             {{Doc: 9, Score: 1}},
 	"await":                              {{Doc: 9, Score: 4}},
 	"away":                               {{Doc: 29, Score: 1}, {Doc: 42, Score: 1}},
-<<<<<<< HEAD
-	"aws":                                {{Doc: 9, Score: 106}, {Doc: 42, Score: 62}, {Doc: 13, Score: 36}, {Doc: 14, Score: 35}, {Doc: 18, Score: 35}, {Doc: 11, Score: 34}, {Doc: 38, Score: 34}, {Doc: 53, Score: 34}, {Doc: 19, Score: 33}, {Doc: 59, Score: 33}, {Doc: 60, Score: 33}, {Doc: 16, Score: 30}, {Doc: 6, Score: 28}, {Doc: 23, Score: 28}, {Doc: 45, Score: 28}, {Doc: 1, Score: 27}, {Doc: 36, Score: 27}, {Doc: 39, Score: 27}, {Doc: 51, Score: 27}, {Doc: 29, Score: 21}, {Doc: 57, Score: 20}, {Doc: 12, Score: 19}, {Doc: 15, Score: 17}, {Doc: 21, Score: 17}, {Doc: 27, Score: 17}, {Doc: 30, Score: 17}, {Doc: 31, Score: 16}, {Doc: 32, Score: 16}, {Doc: 55, Score: 16}, {Doc: 56, Score: 16}, {Doc: 5, Score: 15}, {Doc: 26, Score: 15}, {Doc: 3, Score: 13}, {Doc: 24, Score: 13}, {Doc: 41, Score: 13}, {Doc: 47, Score: 13}, {Doc: 58, Score: 13}, {Doc: 22, Score: 12}, {Doc: 48, Score: 12}, {Doc: 0, Score: 11}, {Doc: 54, Score: 11}, {Doc: 25, Score: 10}, {Doc: 49, Score: 10}, {Doc: 4, Score: 8}, {Doc: 46, Score: 8}, {Doc: 52, Score: 8}, {Doc: 28, Score: 7}, {Doc: 34, Score: 7}, {Doc: 40, Score: 7}, {Doc: 33, Score: 6}, {Doc: 35, Score: 6}, {Doc: 2, Score: 5}, {Doc: 43, Score: 5}, {Doc: 50, Score: 4}, {Doc: 8, Score: 3}, {Doc: 17, Score: 3}, {Doc: 37, Score: 3}, {Doc: 44, Score: 3}, {Doc: 20, Score: 2}, {Doc: 10, Score: 1}},
-=======
-	"aws":                                {{Doc: 9, Score: 106}, {Doc: 42, Score: 62}, {Doc: 13, Score: 36}, {Doc: 14, Score: 35}, {Doc: 18, Score: 35}, {Doc: 11, Score: 34}, {Doc: 38, Score: 34}, {Doc: 53, Score: 34}, {Doc: 19, Score: 33}, {Doc: 59, Score: 33}, {Doc: 60, Score: 33}, {Doc: 16, Score: 30}, {Doc: 6, Score: 28}, {Doc: 23, Score: 28}, {Doc: 45, Score: 28}, {Doc: 1, Score: 27}, {Doc: 36, Score: 27}, {Doc: 51, Score: 27}, {Doc: 39, Score: 25}, {Doc: 57, Score: 23}, {Doc: 29, Score: 21}, {Doc: 12, Score: 19}, {Doc: 15, Score: 17}, {Doc: 21, Score: 17}, {Doc: 27, Score: 17}, {Doc: 30, Score: 17}, {Doc: 31, Score: 16}, {Doc: 32, Score: 16}, {Doc: 55, Score: 16}, {Doc: 56, Score: 16}, {Doc: 5, Score: 15}, {Doc: 26, Score: 15}, {Doc: 3, Score: 13}, {Doc: 24, Score: 13}, {Doc: 41, Score: 13}, {Doc: 47, Score: 13}, {Doc: 58, Score: 13}, {Doc: 22, Score: 12}, {Doc: 48, Score: 12}, {Doc: 0, Score: 11}, {Doc: 54, Score: 11}, {Doc: 25, Score: 10}, {Doc: 49, Score: 10}, {Doc: 4, Score: 8}, {Doc: 46, Score: 8}, {Doc: 52, Score: 8}, {Doc: 28, Score: 7}, {Doc: 34, Score: 7}, {Doc: 40, Score: 7}, {Doc: 33, Score: 6}, {Doc: 35, Score: 6}, {Doc: 2, Score: 5}, {Doc: 43, Score: 5}, {Doc: 50, Score: 4}, {Doc: 8, Score: 3}, {Doc: 17, Score: 3}, {Doc: 37, Score: 3}, {Doc: 44, Score: 3}, {Doc: 20, Score: 2}, {Doc: 10, Score: 1}},
->>>>>>> origin/main
+	"aws":                                {{Doc: 9, Score: 106}, {Doc: 42, Score: 62}, {Doc: 13, Score: 36}, {Doc: 14, Score: 35}, {Doc: 18, Score: 35}, {Doc: 11, Score: 34}, {Doc: 38, Score: 34}, {Doc: 53, Score: 34}, {Doc: 19, Score: 33}, {Doc: 59, Score: 33}, {Doc: 60, Score: 33}, {Doc: 16, Score: 30}, {Doc: 6, Score: 28}, {Doc: 23, Score: 28}, {Doc: 45, Score: 28}, {Doc: 1, Score: 27}, {Doc: 36, Score: 27}, {Doc: 39, Score: 27}, {Doc: 51, Score: 27}, {Doc: 57, Score: 23}, {Doc: 29, Score: 21}, {Doc: 12, Score: 19}, {Doc: 15, Score: 17}, {Doc: 21, Score: 17}, {Doc: 27, Score: 17}, {Doc: 30, Score: 17}, {Doc: 31, Score: 16}, {Doc: 32, Score: 16}, {Doc: 55, Score: 16}, {Doc: 56, Score: 16}, {Doc: 5, Score: 15}, {Doc: 26, Score: 15}, {Doc: 3, Score: 13}, {Doc: 24, Score: 13}, {Doc: 41, Score: 13}, {Doc: 47, Score: 13}, {Doc: 58, Score: 13}, {Doc: 22, Score: 12}, {Doc: 48, Score: 12}, {Doc: 0, Score: 11}, {Doc: 54, Score: 11}, {Doc: 25, Score: 10}, {Doc: 49, Score: 10}, {Doc: 4, Score: 8}, {Doc: 46, Score: 8}, {Doc: 52, Score: 8}, {Doc: 28, Score: 7}, {Doc: 34, Score: 7}, {Doc: 40, Score: 7}, {Doc: 33, Score: 6}, {Doc: 35, Score: 6}, {Doc: 2, Score: 5}, {Doc: 43, Score: 5}, {Doc: 50, Score: 4}, {Doc: 8, Score: 3}, {Doc: 17, Score: 3}, {Doc: 37, Score: 3}, {Doc: 44, Score: 3}, {Doc: 20, Score: 2}, {Doc: 10, Score: 1}},
 	"aws-apigateway":                     {{Doc: 0, Score: 2}},
 	"aws-apigatewayv":                    {{Doc: 0, Score: 2}},
 	"aws-appconfig":                      {{Doc: 0, Score: 2}},
@@ -984,11 +976,7 @@ var postings = map[string][]Posting{
 	"cards":                                {{Doc: 0, Score: 1}},
 	"care":                                 {{Doc: 29, Score: 2}},
 	"carried":                              {{Doc: 1, Score: 1}, {Doc: 5, Score: 1}, {Doc: 6, Score: 1}},
-<<<<<<< HEAD
-	"carries":                              {{Doc: 6, Score: 10}, {Doc: 12, Score: 2}, {Doc: 31, Score: 2}, {Doc: 0, Score: 1}, {Doc: 4, Score: 1}, {Doc: 16, Score: 1}, {Doc: 29, Score: 1}, {Doc: 39, Score: 1}, {Doc: 42, Score: 1}},
-=======
-	"carries":                              {{Doc: 6, Score: 10}, {Doc: 12, Score: 2}, {Doc: 31, Score: 2}, {Doc: 0, Score: 1}, {Doc: 4, Score: 1}, {Doc: 16, Score: 1}, {Doc: 29, Score: 1}, {Doc: 42, Score: 1}, {Doc: 57, Score: 1}},
->>>>>>> origin/main
+	"carries":                              {{Doc: 6, Score: 10}, {Doc: 12, Score: 2}, {Doc: 31, Score: 2}, {Doc: 0, Score: 1}, {Doc: 4, Score: 1}, {Doc: 16, Score: 1}, {Doc: 29, Score: 1}, {Doc: 39, Score: 1}, {Doc: 42, Score: 1}, {Doc: 57, Score: 1}},
 	"carry":                                {{Doc: 16, Score: 2}, {Doc: 6, Score: 1}, {Doc: 12, Score: 1}},
 	"carrying":                             {{Doc: 31, Score: 3}, {Doc: 18, Score: 1}, {Doc: 25, Score: 1}, {Doc: 36, Score: 1}, {Doc: 49, Score: 1}, {Doc: 51, Score: 1}, {Doc: 57, Score: 1}},
 	"carves":                               {{Doc: 29, Score: 1}},
@@ -1113,12 +1101,8 @@ var postings = map[string][]Posting{
 	"close":                                {{Doc: 8, Score: 2}, {Doc: 18, Score: 1}},
 	"closed":                               {{Doc: 25, Score: 1}},
 	"closes":                               {{Doc: 40, Score: 2}},
-<<<<<<< HEAD
 	"closing":                              {{Doc: 39, Score: 1}},
-	"cloud":                                {{Doc: 22, Score: 68}, {Doc: 25, Score: 49}, {Doc: 23, Score: 42}, {Doc: 29, Score: 28}, {Doc: 21, Score: 27}, {Doc: 24, Score: 24}, {Doc: 0, Score: 16}, {Doc: 15, Score: 14}, {Doc: 1, Score: 10}, {Doc: 4, Score: 8}, {Doc: 6, Score: 8}, {Doc: 5, Score: 6}, {Doc: 32, Score: 6}, {Doc: 42, Score: 6}, {Doc: 18, Score: 5}, {Doc: 10, Score: 4}, {Doc: 16, Score: 4}, {Doc: 31, Score: 4}, {Doc: 3, Score: 2}, {Doc: 49, Score: 2}, {Doc: 12, Score: 1}, {Doc: 34, Score: 1}, {Doc: 46, Score: 1}, {Doc: 51, Score: 1}, {Doc: 57, Score: 1}},
-=======
 	"cloud":                                {{Doc: 22, Score: 68}, {Doc: 25, Score: 49}, {Doc: 23, Score: 42}, {Doc: 29, Score: 28}, {Doc: 21, Score: 27}, {Doc: 24, Score: 24}, {Doc: 0, Score: 16}, {Doc: 15, Score: 14}, {Doc: 1, Score: 10}, {Doc: 4, Score: 8}, {Doc: 6, Score: 8}, {Doc: 5, Score: 6}, {Doc: 32, Score: 6}, {Doc: 42, Score: 6}, {Doc: 18, Score: 5}, {Doc: 10, Score: 4}, {Doc: 16, Score: 4}, {Doc: 31, Score: 4}, {Doc: 3, Score: 2}, {Doc: 49, Score: 2}, {Doc: 57, Score: 2}, {Doc: 12, Score: 1}, {Doc: 34, Score: 1}, {Doc: 46, Score: 1}, {Doc: 51, Score: 1}},
->>>>>>> origin/main
 	"cloudformation":                       {{Doc: 21, Score: 8}, {Doc: 7, Score: 6}, {Doc: 0, Score: 3}, {Doc: 1, Score: 2}, {Doc: 9, Score: 1}},
 	"cloudfront":                           {{Doc: 6, Score: 14}, {Doc: 22, Score: 12}, {Doc: 0, Score: 3}, {Doc: 9, Score: 2}, {Doc: 49, Score: 2}},
 	"cloudtrail":                           {{Doc: 23, Score: 8}, {Doc: 7, Score: 6}, {Doc: 0, Score: 3}},
@@ -1621,11 +1605,7 @@ var postings = map[string][]Posting{
 	"dns":                                  {{Doc: 6, Score: 28}, {Doc: 16, Score: 11}, {Doc: 29, Score: 7}, {Doc: 1, Score: 6}, {Doc: 48, Score: 6}, {Doc: 4, Score: 4}, {Doc: 0, Score: 3}, {Doc: 31, Score: 2}, {Doc: 35, Score: 2}, {Doc: 42, Score: 2}, {Doc: 9, Score: 1}, {Doc: 11, Score: 1}, {Doc: 21, Score: 1}},
 	"dns-based":                            {{Doc: 29, Score: 1}},
 	"dnsmasq":                              {{Doc: 6, Score: 2}},
-<<<<<<< HEAD
-	"do":                                   {{Doc: 3, Score: 15}, {Doc: 29, Score: 8}, {Doc: 4, Score: 3}, {Doc: 0, Score: 2}, {Doc: 6, Score: 2}, {Doc: 33, Score: 2}, {Doc: 39, Score: 2}, {Doc: 42, Score: 2}, {Doc: 46, Score: 2}, {Doc: 1, Score: 1}, {Doc: 8, Score: 1}, {Doc: 9, Score: 1}, {Doc: 21, Score: 1}, {Doc: 51, Score: 1}},
-=======
-	"do":                                   {{Doc: 3, Score: 15}, {Doc: 29, Score: 8}, {Doc: 4, Score: 3}, {Doc: 0, Score: 2}, {Doc: 6, Score: 2}, {Doc: 33, Score: 2}, {Doc: 42, Score: 2}, {Doc: 46, Score: 2}, {Doc: 1, Score: 1}, {Doc: 8, Score: 1}, {Doc: 9, Score: 1}, {Doc: 21, Score: 1}, {Doc: 39, Score: 1}, {Doc: 51, Score: 1}, {Doc: 57, Score: 1}},
->>>>>>> origin/main
+	"do":                                   {{Doc: 3, Score: 15}, {Doc: 29, Score: 8}, {Doc: 4, Score: 3}, {Doc: 0, Score: 2}, {Doc: 6, Score: 2}, {Doc: 33, Score: 2}, {Doc: 39, Score: 2}, {Doc: 42, Score: 2}, {Doc: 46, Score: 2}, {Doc: 1, Score: 1}, {Doc: 8, Score: 1}, {Doc: 9, Score: 1}, {Doc: 21, Score: 1}, {Doc: 51, Score: 1}, {Doc: 57, Score: 1}},
 	"doc":                                  {{Doc: 0, Score: 2}},
 	"docker":                               {{Doc: 29, Score: 57}, {Doc: 8, Score: 25}, {Doc: 42, Score: 24}, {Doc: 0, Score: 17}, {Doc: 6, Score: 14}, {Doc: 47, Score: 12}, {Doc: 31, Score: 11}, {Doc: 1, Score: 10}, {Doc: 4, Score: 10}, {Doc: 32, Score: 10}, {Doc: 61, Score: 9}, {Doc: 30, Score: 8}, {Doc: 43, Score: 6}, {Doc: 5, Score: 5}, {Doc: 34, Score: 5}, {Doc: 21, Score: 1}, {Doc: 54, Score: 1}},
 	"docker-assigned":                      {{Doc: 29, Score: 1}},
@@ -1783,11 +1763,7 @@ var postings = map[string][]Posting{
 	"encrypt":                              {{Doc: 7, Score: 6}, {Doc: 41, Score: 4}},
 	"encrypted":                            {{Doc: 41, Score: 2}},
 	"encryption":                           {{Doc: 22, Score: 42}, {Doc: 49, Score: 10}, {Doc: 32, Score: 1}, {Doc: 33, Score: 1}, {Doc: 56, Score: 1}},
-<<<<<<< HEAD
-	"end":                                  {{Doc: 18, Score: 2}, {Doc: 39, Score: 2}, {Doc: 8, Score: 1}},
-=======
-	"end":                                  {{Doc: 18, Score: 2}, {Doc: 8, Score: 1}, {Doc: 57, Score: 1}},
->>>>>>> origin/main
+	"end":                                  {{Doc: 18, Score: 2}, {Doc: 39, Score: 2}, {Doc: 8, Score: 1}, {Doc: 57, Score: 1}},
 	"end-to-end":                           {{Doc: 0, Score: 1}},
 	"enddate":                              {{Doc: 4, Score: 1}},
 	"endpoint":                             {{Doc: 16, Score: 35}, {Doc: 51, Score: 32}, {Doc: 56, Score: 32}, {Doc: 58, Score: 32}, {Doc: 21, Score: 27}, {Doc: 36, Score: 26}, {Doc: 46, Score: 26}, {Doc: 57, Score: 26}, {Doc: 9, Score: 22}, {Doc: 55, Score: 22}, {Doc: 4, Score: 18}, {Doc: 5, Score: 16}, {Doc: 6, Score: 15}, {Doc: 0, Score: 11}, {Doc: 42, Score: 11}, {Doc: 26, Score: 10}, {Doc: 31, Score: 10}, {Doc: 12, Score: 6}, {Doc: 54, Score: 6}, {Doc: 24, Score: 5}, {Doc: 28, Score: 5}, {Doc: 29, Score: 5}, {Doc: 40, Score: 5}, {Doc: 7, Score: 4}, {Doc: 10, Score: 4}, {Doc: 1, Score: 2}, {Doc: 8, Score: 2}, {Doc: 30, Score: 2}, {Doc: 3, Score: 1}, {Doc: 22, Score: 1}, {Doc: 33, Score: 1}, {Doc: 43, Score: 1}, {Doc: 45, Score: 1}, {Doc: 48, Score: 1}},
@@ -2857,17 +2833,10 @@ var postings = map[string][]Posting{
 	"marks":                               {{Doc: 26, Score: 4}, {Doc: 18, Score: 1}, {Doc: 29, Score: 1}, {Doc: 31, Score: 1}},
 	"masked":                              {{Doc: 56, Score: 2}},
 	"master":                              {{Doc: 21, Score: 1}, {Doc: 45, Score: 1}},
-<<<<<<< HEAD
-	"match":                               {{Doc: 39, Score: 3}, {Doc: 6, Score: 2}, {Doc: 15, Score: 2}, {Doc: 48, Score: 2}, {Doc: 57, Score: 2}, {Doc: 4, Score: 1}, {Doc: 29, Score: 1}},
+	"match":                               {{Doc: 39, Score: 3}, {Doc: 57, Score: 3}, {Doc: 6, Score: 2}, {Doc: 15, Score: 2}, {Doc: 48, Score: 2}, {Doc: 4, Score: 1}, {Doc: 29, Score: 1}},
 	"matched":                             {{Doc: 39, Score: 5}, {Doc: 6, Score: 1}, {Doc: 22, Score: 1}, {Doc: 36, Score: 1}},
-	"matches":                             {{Doc: 18, Score: 5}, {Doc: 16, Score: 2}, {Doc: 29, Score: 2}, {Doc: 42, Score: 2}, {Doc: 0, Score: 1}, {Doc: 1, Score: 1}, {Doc: 14, Score: 1}, {Doc: 21, Score: 1}, {Doc: 31, Score: 1}, {Doc: 36, Score: 1}},
-	"matching":                            {{Doc: 22, Score: 4}, {Doc: 54, Score: 4}, {Doc: 42, Score: 3}, {Doc: 12, Score: 2}, {Doc: 18, Score: 2}, {Doc: 36, Score: 2}, {Doc: 0, Score: 1}, {Doc: 6, Score: 1}, {Doc: 16, Score: 1}, {Doc: 24, Score: 1}, {Doc: 29, Score: 1}, {Doc: 39, Score: 1}, {Doc: 57, Score: 1}},
-=======
-	"match":                               {{Doc: 57, Score: 3}, {Doc: 6, Score: 2}, {Doc: 15, Score: 2}, {Doc: 39, Score: 2}, {Doc: 48, Score: 2}, {Doc: 4, Score: 1}, {Doc: 29, Score: 1}},
-	"matched":                             {{Doc: 39, Score: 3}, {Doc: 6, Score: 1}, {Doc: 22, Score: 1}, {Doc: 36, Score: 1}},
 	"matches":                             {{Doc: 18, Score: 5}, {Doc: 16, Score: 2}, {Doc: 29, Score: 2}, {Doc: 42, Score: 2}, {Doc: 0, Score: 1}, {Doc: 1, Score: 1}, {Doc: 14, Score: 1}, {Doc: 21, Score: 1}, {Doc: 31, Score: 1}, {Doc: 36, Score: 1}, {Doc: 57, Score: 1}},
 	"matching":                            {{Doc: 22, Score: 4}, {Doc: 54, Score: 4}, {Doc: 42, Score: 3}, {Doc: 12, Score: 2}, {Doc: 18, Score: 2}, {Doc: 36, Score: 2}, {Doc: 57, Score: 2}, {Doc: 0, Score: 1}, {Doc: 6, Score: 1}, {Doc: 16, Score: 1}, {Doc: 24, Score: 1}, {Doc: 29, Score: 1}, {Doc: 39, Score: 1}},
->>>>>>> origin/main
 	"material":                            {{Doc: 4, Score: 2}, {Doc: 29, Score: 1}},
 	"materially":                          {{Doc: 8, Score: 1}, {Doc: 29, Score: 1}},
 	"math":                                {{Doc: 57, Score: 2}, {Doc: 16, Score: 1}, {Doc: 25, Score: 1}},
@@ -3114,11 +3083,7 @@ var postings = map[string][]Posting{
 	"normalize":                             {{Doc: 16, Score: 1}},
 	"normalized":                            {{Doc: 42, Score: 1}},
 	"normally":                              {{Doc: 0, Score: 1}, {Doc: 3, Score: 1}, {Doc: 9, Score: 1}, {Doc: 12, Score: 1}, {Doc: 42, Score: 1}},
-<<<<<<< HEAD
-	"not":                                   {{Doc: 26, Score: 34}, {Doc: 3, Score: 32}, {Doc: 42, Score: 31}, {Doc: 39, Score: 22}, {Doc: 25, Score: 21}, {Doc: 29, Score: 21}, {Doc: 47, Score: 20}, {Doc: 5, Score: 19}, {Doc: 8, Score: 19}, {Doc: 0, Score: 16}, {Doc: 18, Score: 16}, {Doc: 6, Score: 14}, {Doc: 4, Score: 13}, {Doc: 58, Score: 13}, {Doc: 12, Score: 11}, {Doc: 51, Score: 10}, {Doc: 35, Score: 9}, {Doc: 32, Score: 7}, {Doc: 54, Score: 7}, {Doc: 1, Score: 6}, {Doc: 57, Score: 6}, {Doc: 46, Score: 5}, {Doc: 48, Score: 5}, {Doc: 10, Score: 4}, {Doc: 55, Score: 4}, {Doc: 61, Score: 4}, {Doc: 9, Score: 3}, {Doc: 21, Score: 3}, {Doc: 22, Score: 3}, {Doc: 33, Score: 3}, {Doc: 36, Score: 3}, {Doc: 38, Score: 3}, {Doc: 43, Score: 3}, {Doc: 52, Score: 3}, {Doc: 53, Score: 3}, {Doc: 60, Score: 3}, {Doc: 11, Score: 2}, {Doc: 13, Score: 2}, {Doc: 16, Score: 2}, {Doc: 17, Score: 2}, {Doc: 20, Score: 2}, {Doc: 27, Score: 2}, {Doc: 30, Score: 2}, {Doc: 31, Score: 2}, {Doc: 37, Score: 2}, {Doc: 44, Score: 2}, {Doc: 15, Score: 1}, {Doc: 45, Score: 1}},
-=======
-	"not":                                   {{Doc: 26, Score: 34}, {Doc: 3, Score: 32}, {Doc: 42, Score: 31}, {Doc: 25, Score: 21}, {Doc: 29, Score: 21}, {Doc: 39, Score: 20}, {Doc: 47, Score: 20}, {Doc: 5, Score: 19}, {Doc: 8, Score: 19}, {Doc: 0, Score: 16}, {Doc: 18, Score: 16}, {Doc: 6, Score: 14}, {Doc: 4, Score: 13}, {Doc: 58, Score: 13}, {Doc: 12, Score: 11}, {Doc: 51, Score: 10}, {Doc: 35, Score: 9}, {Doc: 57, Score: 9}, {Doc: 32, Score: 7}, {Doc: 54, Score: 7}, {Doc: 1, Score: 6}, {Doc: 46, Score: 5}, {Doc: 48, Score: 5}, {Doc: 10, Score: 4}, {Doc: 55, Score: 4}, {Doc: 61, Score: 4}, {Doc: 9, Score: 3}, {Doc: 21, Score: 3}, {Doc: 22, Score: 3}, {Doc: 33, Score: 3}, {Doc: 36, Score: 3}, {Doc: 38, Score: 3}, {Doc: 43, Score: 3}, {Doc: 52, Score: 3}, {Doc: 53, Score: 3}, {Doc: 60, Score: 3}, {Doc: 11, Score: 2}, {Doc: 13, Score: 2}, {Doc: 16, Score: 2}, {Doc: 17, Score: 2}, {Doc: 20, Score: 2}, {Doc: 27, Score: 2}, {Doc: 30, Score: 2}, {Doc: 31, Score: 2}, {Doc: 37, Score: 2}, {Doc: 44, Score: 2}, {Doc: 15, Score: 1}, {Doc: 45, Score: 1}},
->>>>>>> origin/main
+	"not":                                   {{Doc: 26, Score: 34}, {Doc: 3, Score: 32}, {Doc: 42, Score: 31}, {Doc: 39, Score: 22}, {Doc: 25, Score: 21}, {Doc: 29, Score: 21}, {Doc: 47, Score: 20}, {Doc: 5, Score: 19}, {Doc: 8, Score: 19}, {Doc: 0, Score: 16}, {Doc: 18, Score: 16}, {Doc: 6, Score: 14}, {Doc: 4, Score: 13}, {Doc: 58, Score: 13}, {Doc: 12, Score: 11}, {Doc: 51, Score: 10}, {Doc: 35, Score: 9}, {Doc: 57, Score: 9}, {Doc: 32, Score: 7}, {Doc: 54, Score: 7}, {Doc: 1, Score: 6}, {Doc: 46, Score: 5}, {Doc: 48, Score: 5}, {Doc: 10, Score: 4}, {Doc: 55, Score: 4}, {Doc: 61, Score: 4}, {Doc: 9, Score: 3}, {Doc: 21, Score: 3}, {Doc: 22, Score: 3}, {Doc: 33, Score: 3}, {Doc: 36, Score: 3}, {Doc: 38, Score: 3}, {Doc: 43, Score: 3}, {Doc: 52, Score: 3}, {Doc: 53, Score: 3}, {Doc: 60, Score: 3}, {Doc: 11, Score: 2}, {Doc: 13, Score: 2}, {Doc: 16, Score: 2}, {Doc: 17, Score: 2}, {Doc: 20, Score: 2}, {Doc: 27, Score: 2}, {Doc: 30, Score: 2}, {Doc: 31, Score: 2}, {Doc: 37, Score: 2}, {Doc: 44, Score: 2}, {Doc: 15, Score: 1}, {Doc: 45, Score: 1}},
 	"not-yet-flushed":                       {{Doc: 24, Score: 1}},
 	"note":                                  {{Doc: 0, Score: 1}, {Doc: 1, Score: 1}, {Doc: 5, Score: 1}, {Doc: 34, Score: 1}, {Doc: 42, Score: 1}, {Doc: 52, Score: 1}, {Doc: 57, Score: 1}},
 	"notes":                                 {{Doc: 22, Score: 31}, {Doc: 16, Score: 23}, {Doc: 39, Score: 22}, {Doc: 26, Score: 18}, {Doc: 21, Score: 16}, {Doc: 32, Score: 15}, {Doc: 36, Score: 14}, {Doc: 48, Score: 13}, {Doc: 33, Score: 12}, {Doc: 51, Score: 12}, {Doc: 46, Score: 11}, {Doc: 56, Score: 11}, {Doc: 13, Score: 10}, {Doc: 50, Score: 9}, {Doc: 58, Score: 9}, {Doc: 11, Score: 8}, {Doc: 17, Score: 8}, {Doc: 37, Score: 8}, {Doc: 38, Score: 8}, {Doc: 42, Score: 8}, {Doc: 44, Score: 8}, {Doc: 49, Score: 8}, {Doc: 53, Score: 8}, {Doc: 57, Score: 8}, {Doc: 12, Score: 7}, {Doc: 19, Score: 7}, {Doc: 20, Score: 7}, {Doc: 23, Score: 7}, {Doc: 25, Score: 7}, {Doc: 35, Score: 7}, {Doc: 41, Score: 7}, {Doc: 45, Score: 7}, {Doc: 52, Score: 7}, {Doc: 59, Score: 7}, {Doc: 60, Score: 7}, {Doc: 9, Score: 6}, {Doc: 15, Score: 6}, {Doc: 24, Score: 6}, {Doc: 47, Score: 6}, {Doc: 27, Score: 5}, {Doc: 30, Score: 5}, {Doc: 54, Score: 5}, {Doc: 43, Score: 4}, {Doc: 55, Score: 4}, {Doc: 5, Score: 3}, {Doc: 6, Score: 2}, {Doc: 14, Score: 2}, {Doc: 29, Score: 2}, {Doc: 0, Score: 1}, {Doc: 8, Score: 1}, {Doc: 10, Score: 1}, {Doc: 18, Score: 1}, {Doc: 28, Score: 1}, {Doc: 31, Score: 1}, {Doc: 34, Score: 1}, {Doc: 40, Score: 1}},
@@ -3342,11 +3307,7 @@ var postings = map[string][]Posting{
 	"overwrite":                        {{Doc: 21, Score: 2}, {Doc: 32, Score: 1}, {Doc: 56, Score: 1}},
 	"overwrites":                       {{Doc: 56, Score: 1}},
 	"overwritten":                      {{Doc: 26, Score: 1}},
-<<<<<<< HEAD
-	"own":                              {{Doc: 4, Score: 7}, {Doc: 42, Score: 7}, {Doc: 31, Score: 5}, {Doc: 0, Score: 4}, {Doc: 6, Score: 4}, {Doc: 39, Score: 3}, {Doc: 16, Score: 2}, {Doc: 18, Score: 2}, {Doc: 25, Score: 2}, {Doc: 57, Score: 2}, {Doc: 5, Score: 1}, {Doc: 9, Score: 1}, {Doc: 29, Score: 1}, {Doc: 51, Score: 1}},
-=======
-	"own":                              {{Doc: 4, Score: 7}, {Doc: 42, Score: 7}, {Doc: 31, Score: 5}, {Doc: 0, Score: 4}, {Doc: 6, Score: 4}, {Doc: 57, Score: 3}, {Doc: 16, Score: 2}, {Doc: 18, Score: 2}, {Doc: 25, Score: 2}, {Doc: 39, Score: 2}, {Doc: 5, Score: 1}, {Doc: 9, Score: 1}, {Doc: 29, Score: 1}, {Doc: 51, Score: 1}},
->>>>>>> origin/main
+	"own":                              {{Doc: 4, Score: 7}, {Doc: 42, Score: 7}, {Doc: 31, Score: 5}, {Doc: 0, Score: 4}, {Doc: 6, Score: 4}, {Doc: 39, Score: 3}, {Doc: 57, Score: 3}, {Doc: 16, Score: 2}, {Doc: 18, Score: 2}, {Doc: 25, Score: 2}, {Doc: 5, Score: 1}, {Doc: 9, Score: 1}, {Doc: 29, Score: 1}, {Doc: 51, Score: 1}},
 	"owned":                            {{Doc: 18, Score: 1}, {Doc: 29, Score: 1}},
 	"owner":                            {{Doc: 29, Score: 2}, {Doc: 8, Score: 1}, {Doc: 54, Score: 1}},
 	"ownership":                        {{Doc: 32, Score: 1}, {Doc: 35, Score: 1}},
@@ -3764,11 +3725,7 @@ var postings = map[string][]Posting{
 	"reads":                            {{Doc: 61, Score: 4}, {Doc: 0, Score: 3}, {Doc: 31, Score: 2}, {Doc: 39, Score: 2}, {Doc: 4, Score: 1}, {Doc: 9, Score: 1}, {Doc: 14, Score: 1}, {Doc: 24, Score: 1}},
 	"ready":                            {{Doc: 42, Score: 5}, {Doc: 5, Score: 2}, {Doc: 33, Score: 2}},
 	"readyz":                           {{Doc: 33, Score: 2}},
-<<<<<<< HEAD
-	"real":                             {{Doc: 1, Score: 19}, {Doc: 29, Score: 18}, {Doc: 42, Score: 10}, {Doc: 25, Score: 8}, {Doc: 31, Score: 8}, {Doc: 6, Score: 7}, {Doc: 18, Score: 6}, {Doc: 35, Score: 6}, {Doc: 9, Score: 5}, {Doc: 32, Score: 5}, {Doc: 3, Score: 4}, {Doc: 16, Score: 3}, {Doc: 21, Score: 3}, {Doc: 39, Score: 3}, {Doc: 48, Score: 3}, {Doc: 57, Score: 3}, {Doc: 0, Score: 2}, {Doc: 8, Score: 2}, {Doc: 12, Score: 2}, {Doc: 22, Score: 2}, {Doc: 26, Score: 2}, {Doc: 54, Score: 2}, {Doc: 4, Score: 1}, {Doc: 15, Score: 1}, {Doc: 24, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 34, Score: 1}, {Doc: 36, Score: 1}, {Doc: 43, Score: 1}, {Doc: 47, Score: 1}, {Doc: 49, Score: 1}, {Doc: 52, Score: 1}, {Doc: 56, Score: 1}, {Doc: 59, Score: 1}, {Doc: 61, Score: 1}},
-=======
-	"real":                             {{Doc: 1, Score: 19}, {Doc: 29, Score: 18}, {Doc: 42, Score: 10}, {Doc: 25, Score: 8}, {Doc: 31, Score: 8}, {Doc: 6, Score: 7}, {Doc: 18, Score: 6}, {Doc: 35, Score: 6}, {Doc: 9, Score: 5}, {Doc: 32, Score: 5}, {Doc: 3, Score: 4}, {Doc: 57, Score: 4}, {Doc: 16, Score: 3}, {Doc: 21, Score: 3}, {Doc: 48, Score: 3}, {Doc: 0, Score: 2}, {Doc: 8, Score: 2}, {Doc: 12, Score: 2}, {Doc: 22, Score: 2}, {Doc: 26, Score: 2}, {Doc: 39, Score: 2}, {Doc: 54, Score: 2}, {Doc: 4, Score: 1}, {Doc: 15, Score: 1}, {Doc: 24, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 34, Score: 1}, {Doc: 36, Score: 1}, {Doc: 43, Score: 1}, {Doc: 47, Score: 1}, {Doc: 49, Score: 1}, {Doc: 52, Score: 1}, {Doc: 56, Score: 1}, {Doc: 59, Score: 1}, {Doc: 61, Score: 1}},
->>>>>>> origin/main
+	"real":                             {{Doc: 1, Score: 19}, {Doc: 29, Score: 18}, {Doc: 42, Score: 10}, {Doc: 25, Score: 8}, {Doc: 31, Score: 8}, {Doc: 6, Score: 7}, {Doc: 18, Score: 6}, {Doc: 35, Score: 6}, {Doc: 9, Score: 5}, {Doc: 32, Score: 5}, {Doc: 3, Score: 4}, {Doc: 57, Score: 4}, {Doc: 16, Score: 3}, {Doc: 21, Score: 3}, {Doc: 39, Score: 3}, {Doc: 48, Score: 3}, {Doc: 0, Score: 2}, {Doc: 8, Score: 2}, {Doc: 12, Score: 2}, {Doc: 22, Score: 2}, {Doc: 26, Score: 2}, {Doc: 54, Score: 2}, {Doc: 4, Score: 1}, {Doc: 15, Score: 1}, {Doc: 24, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 34, Score: 1}, {Doc: 36, Score: 1}, {Doc: 43, Score: 1}, {Doc: 47, Score: 1}, {Doc: 49, Score: 1}, {Doc: 52, Score: 1}, {Doc: 56, Score: 1}, {Doc: 59, Score: 1}, {Doc: 61, Score: 1}},
 	"real-aws":                         {{Doc: 6, Score: 1}},
 	"real-time":                        {{Doc: 16, Score: 4}, {Doc: 0, Score: 3}, {Doc: 27, Score: 1}},
 	"really":                           {{Doc: 18, Score: 7}, {Doc: 31, Score: 2}, {Doc: 57, Score: 2}, {Doc: 42, Score: 1}},
@@ -3914,13 +3871,8 @@ var postings = map[string][]Posting{
 	"replication":                      {{Doc: 32, Score: 15}, {Doc: 7, Score: 13}, {Doc: 34, Score: 13}, {Doc: 51, Score: 3}, {Doc: 30, Score: 2}},
 	"reply":                            {{Doc: 26, Score: 2}},
 	"repo":                             {{Doc: 7, Score: 5}},
-<<<<<<< HEAD
 	"report":                           {{Doc: 42, Score: 3}, {Doc: 0, Score: 1}, {Doc: 4, Score: 1}, {Doc: 6, Score: 1}, {Doc: 8, Score: 1}, {Doc: 12, Score: 1}, {Doc: 18, Score: 1}, {Doc: 32, Score: 1}, {Doc: 39, Score: 1}},
-	"reported":                         {{Doc: 31, Score: 3}, {Doc: 8, Score: 2}, {Doc: 42, Score: 2}, {Doc: 0, Score: 1}, {Doc: 12, Score: 1}, {Doc: 26, Score: 1}, {Doc: 39, Score: 1}, {Doc: 51, Score: 1}, {Doc: 54, Score: 1}},
-=======
-	"report":                           {{Doc: 42, Score: 3}, {Doc: 0, Score: 1}, {Doc: 4, Score: 1}, {Doc: 6, Score: 1}, {Doc: 8, Score: 1}, {Doc: 12, Score: 1}, {Doc: 18, Score: 1}, {Doc: 32, Score: 1}},
 	"reported":                         {{Doc: 31, Score: 3}, {Doc: 8, Score: 2}, {Doc: 42, Score: 2}, {Doc: 0, Score: 1}, {Doc: 12, Score: 1}, {Doc: 26, Score: 1}, {Doc: 39, Score: 1}, {Doc: 51, Score: 1}, {Doc: 54, Score: 1}, {Doc: 57, Score: 1}},
->>>>>>> origin/main
 	"reporting":                        {{Doc: 46, Score: 1}, {Doc: 51, Score: 1}},
 	"reports":                          {{Doc: 42, Score: 5}, {Doc: 16, Score: 3}, {Doc: 4, Score: 2}, {Doc: 18, Score: 2}, {Doc: 51, Score: 2}, {Doc: 25, Score: 1}, {Doc: 29, Score: 1}, {Doc: 30, Score: 1}, {Doc: 48, Score: 1}, {Doc: 61, Score: 1}},
 	"repos":                            {{Doc: 30, Score: 1}},
@@ -4413,11 +4365,7 @@ var postings = map[string][]Posting{
 	"stale":                       {{Doc: 3, Score: 2}, {Doc: 4, Score: 1}, {Doc: 24, Score: 1}},
 	"standalone":                  {{Doc: 15, Score: 1}},
 	"standard":                    {{Doc: 42, Score: 2}, {Doc: 57, Score: 2}, {Doc: 15, Score: 1}, {Doc: 26, Score: 1}, {Doc: 55, Score: 1}},
-<<<<<<< HEAD
-	"start":                       {{Doc: 7, Score: 27}, {Doc: 1, Score: 20}, {Doc: 31, Score: 20}, {Doc: 4, Score: 14}, {Doc: 8, Score: 11}, {Doc: 10, Score: 10}, {Doc: 57, Score: 10}, {Doc: 42, Score: 9}, {Doc: 16, Score: 8}, {Doc: 0, Score: 7}, {Doc: 24, Score: 6}, {Doc: 27, Score: 5}, {Doc: 14, Score: 4}, {Doc: 47, Score: 4}, {Doc: 56, Score: 3}, {Doc: 61, Score: 3}, {Doc: 5, Score: 2}, {Doc: 17, Score: 2}, {Doc: 21, Score: 2}, {Doc: 23, Score: 2}, {Doc: 26, Score: 2}, {Doc: 29, Score: 2}, {Doc: 34, Score: 2}, {Doc: 36, Score: 2}, {Doc: 39, Score: 2}, {Doc: 55, Score: 2}, {Doc: 9, Score: 1}, {Doc: 33, Score: 1}},
-=======
-	"start":                       {{Doc: 7, Score: 27}, {Doc: 1, Score: 20}, {Doc: 31, Score: 20}, {Doc: 4, Score: 14}, {Doc: 8, Score: 11}, {Doc: 57, Score: 11}, {Doc: 10, Score: 10}, {Doc: 42, Score: 9}, {Doc: 16, Score: 8}, {Doc: 0, Score: 7}, {Doc: 24, Score: 6}, {Doc: 27, Score: 5}, {Doc: 14, Score: 4}, {Doc: 47, Score: 4}, {Doc: 56, Score: 3}, {Doc: 61, Score: 3}, {Doc: 5, Score: 2}, {Doc: 17, Score: 2}, {Doc: 21, Score: 2}, {Doc: 23, Score: 2}, {Doc: 26, Score: 2}, {Doc: 29, Score: 2}, {Doc: 34, Score: 2}, {Doc: 36, Score: 2}, {Doc: 55, Score: 2}, {Doc: 9, Score: 1}, {Doc: 33, Score: 1}},
->>>>>>> origin/main
+	"start":                       {{Doc: 7, Score: 27}, {Doc: 1, Score: 20}, {Doc: 31, Score: 20}, {Doc: 4, Score: 14}, {Doc: 8, Score: 11}, {Doc: 57, Score: 11}, {Doc: 10, Score: 10}, {Doc: 42, Score: 9}, {Doc: 16, Score: 8}, {Doc: 0, Score: 7}, {Doc: 24, Score: 6}, {Doc: 27, Score: 5}, {Doc: 14, Score: 4}, {Doc: 47, Score: 4}, {Doc: 56, Score: 3}, {Doc: 61, Score: 3}, {Doc: 5, Score: 2}, {Doc: 17, Score: 2}, {Doc: 21, Score: 2}, {Doc: 23, Score: 2}, {Doc: 26, Score: 2}, {Doc: 29, Score: 2}, {Doc: 34, Score: 2}, {Doc: 36, Score: 2}, {Doc: 39, Score: 2}, {Doc: 55, Score: 2}, {Doc: 9, Score: 1}, {Doc: 33, Score: 1}},
 	"start-after":                 {{Doc: 49, Score: 1}},
 	"start/end/report":            {{Doc: 42, Score: 1}},
 	"start/session":               {{Doc: 24, Score: 1}},
@@ -4433,15 +4381,9 @@ var postings = map[string][]Posting{
 	"state-by-state":              {{Doc: 57, Score: 1}},
 	"state-transition":            {{Doc: 57, Score: 1}},
 	"stateless":                   {{Doc: 0, Score: 1}},
-<<<<<<< HEAD
 	"statement":                   {{Doc: 27, Score: 4}, {Doc: 39, Score: 2}, {Doc: 51, Score: 2}},
 	"statements":                  {{Doc: 39, Score: 6}},
-	"states":                      {{Doc: 57, Score: 25}, {Doc: 29, Score: 7}, {Doc: 32, Score: 3}, {Doc: 0, Score: 2}},
-=======
-	"statement":                   {{Doc: 27, Score: 4}, {Doc: 51, Score: 2}, {Doc: 39, Score: 1}},
-	"statements":                  {{Doc: 39, Score: 3}},
 	"states":                      {{Doc: 57, Score: 37}, {Doc: 29, Score: 7}, {Doc: 32, Score: 3}, {Doc: 0, Score: 2}},
->>>>>>> origin/main
 	"states:start":                {{Doc: 57, Score: 6}},
 	"static":                      {{Doc: 9, Score: 3}, {Doc: 3, Score: 1}, {Doc: 6, Score: 1}, {Doc: 34, Score: 1}, {Doc: 47, Score: 1}},
 	"statistic":                   {{Doc: 25, Score: 6}},
@@ -4667,11 +4609,7 @@ var postings = map[string][]Posting{
 	"there":                       {{Doc: 6, Score: 6}, {Doc: 18, Score: 4}, {Doc: 0, Score: 3}, {Doc: 29, Score: 3}, {Doc: 42, Score: 3}, {Doc: 61, Score: 3}, {Doc: 3, Score: 2}, {Doc: 31, Score: 2}, {Doc: 32, Score: 2}, {Doc: 57, Score: 2}, {Doc: 1, Score: 1}, {Doc: 5, Score: 1}, {Doc: 8, Score: 1}, {Doc: 12, Score: 1}, {Doc: 25, Score: 1}, {Doc: 39, Score: 1}, {Doc: 48, Score: 1}, {Doc: 52, Score: 1}},
 	"therefore":                   {{Doc: 6, Score: 1}, {Doc: 8, Score: 1}, {Doc: 31, Score: 1}, {Doc: 55, Score: 1}},
 	"these":                       {{Doc: 8, Score: 4}, {Doc: 1, Score: 3}, {Doc: 42, Score: 2}, {Doc: 0, Score: 1}, {Doc: 3, Score: 1}, {Doc: 4, Score: 1}, {Doc: 5, Score: 1}, {Doc: 9, Score: 1}, {Doc: 16, Score: 1}, {Doc: 21, Score: 1}, {Doc: 47, Score: 1}, {Doc: 55, Score: 1}, {Doc: 61, Score: 1}},
-<<<<<<< HEAD
-	"they":                        {{Doc: 42, Score: 7}, {Doc: 0, Score: 4}, {Doc: 29, Score: 4}, {Doc: 1, Score: 2}, {Doc: 3, Score: 2}, {Doc: 4, Score: 2}, {Doc: 6, Score: 2}, {Doc: 39, Score: 2}, {Doc: 5, Score: 1}, {Doc: 14, Score: 1}, {Doc: 18, Score: 1}, {Doc: 26, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 46, Score: 1}, {Doc: 55, Score: 1}, {Doc: 58, Score: 1}},
-=======
-	"they":                        {{Doc: 42, Score: 7}, {Doc: 0, Score: 4}, {Doc: 29, Score: 4}, {Doc: 1, Score: 2}, {Doc: 3, Score: 2}, {Doc: 4, Score: 2}, {Doc: 6, Score: 2}, {Doc: 5, Score: 1}, {Doc: 14, Score: 1}, {Doc: 18, Score: 1}, {Doc: 26, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 46, Score: 1}, {Doc: 55, Score: 1}, {Doc: 57, Score: 1}, {Doc: 58, Score: 1}},
->>>>>>> origin/main
+	"they":                        {{Doc: 42, Score: 7}, {Doc: 0, Score: 4}, {Doc: 29, Score: 4}, {Doc: 1, Score: 2}, {Doc: 3, Score: 2}, {Doc: 4, Score: 2}, {Doc: 6, Score: 2}, {Doc: 39, Score: 2}, {Doc: 5, Score: 1}, {Doc: 14, Score: 1}, {Doc: 18, Score: 1}, {Doc: 26, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 46, Score: 1}, {Doc: 55, Score: 1}, {Doc: 57, Score: 1}, {Doc: 58, Score: 1}},
 	"thin":                        {{Doc: 5, Score: 1}},
 	"thing":                       {{Doc: 0, Score: 1}, {Doc: 6, Score: 1}},
 	"things":                      {{Doc: 6, Score: 1}, {Doc: 42, Score: 1}},
@@ -5061,21 +4999,12 @@ var postings = map[string][]Posting{
 	"were":                                  {{Doc: 42, Score: 2}, {Doc: 1, Score: 1}, {Doc: 5, Score: 1}, {Doc: 6, Score: 1}},
 	"what":                                  {{Doc: 4, Score: 22}, {Doc: 6, Score: 18}, {Doc: 61, Score: 15}, {Doc: 25, Score: 12}, {Doc: 0, Score: 9}, {Doc: 57, Score: 7}, {Doc: 3, Score: 6}, {Doc: 29, Score: 6}, {Doc: 39, Score: 6}, {Doc: 1, Score: 5}, {Doc: 5, Score: 5}, {Doc: 8, Score: 5}, {Doc: 16, Score: 2}, {Doc: 42, Score: 2}, {Doc: 9, Score: 1}, {Doc: 31, Score: 1}, {Doc: 51, Score: 1}, {Doc: 55, Score: 1}},
 	"whatever":                              {{Doc: 12, Score: 2}, {Doc: 6, Score: 1}},
-<<<<<<< HEAD
-	"when":                                  {{Doc: 42, Score: 24}, {Doc: 29, Score: 19}, {Doc: 31, Score: 18}, {Doc: 0, Score: 17}, {Doc: 8, Score: 12}, {Doc: 21, Score: 7}, {Doc: 61, Score: 6}, {Doc: 4, Score: 5}, {Doc: 5, Score: 5}, {Doc: 6, Score: 4}, {Doc: 14, Score: 4}, {Doc: 32, Score: 4}, {Doc: 47, Score: 4}, {Doc: 26, Score: 3}, {Doc: 30, Score: 3}, {Doc: 43, Score: 3}, {Doc: 1, Score: 2}, {Doc: 3, Score: 2}, {Doc: 9, Score: 2}, {Doc: 12, Score: 2}, {Doc: 16, Score: 2}, {Doc: 18, Score: 2}, {Doc: 34, Score: 2}, {Doc: 39, Score: 2}, {Doc: 49, Score: 2}, {Doc: 50, Score: 2}, {Doc: 56, Score: 2}, {Doc: 15, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 54, Score: 1}},
-=======
-	"when":                                  {{Doc: 42, Score: 24}, {Doc: 29, Score: 19}, {Doc: 31, Score: 18}, {Doc: 0, Score: 17}, {Doc: 8, Score: 12}, {Doc: 21, Score: 7}, {Doc: 61, Score: 6}, {Doc: 4, Score: 5}, {Doc: 5, Score: 5}, {Doc: 6, Score: 4}, {Doc: 14, Score: 4}, {Doc: 32, Score: 4}, {Doc: 47, Score: 4}, {Doc: 26, Score: 3}, {Doc: 30, Score: 3}, {Doc: 43, Score: 3}, {Doc: 1, Score: 2}, {Doc: 3, Score: 2}, {Doc: 9, Score: 2}, {Doc: 12, Score: 2}, {Doc: 16, Score: 2}, {Doc: 18, Score: 2}, {Doc: 34, Score: 2}, {Doc: 49, Score: 2}, {Doc: 50, Score: 2}, {Doc: 56, Score: 2}, {Doc: 15, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 39, Score: 1}, {Doc: 54, Score: 1}, {Doc: 57, Score: 1}},
->>>>>>> origin/main
+	"when":                                  {{Doc: 42, Score: 24}, {Doc: 29, Score: 19}, {Doc: 31, Score: 18}, {Doc: 0, Score: 17}, {Doc: 8, Score: 12}, {Doc: 21, Score: 7}, {Doc: 61, Score: 6}, {Doc: 4, Score: 5}, {Doc: 5, Score: 5}, {Doc: 6, Score: 4}, {Doc: 14, Score: 4}, {Doc: 32, Score: 4}, {Doc: 47, Score: 4}, {Doc: 26, Score: 3}, {Doc: 30, Score: 3}, {Doc: 43, Score: 3}, {Doc: 1, Score: 2}, {Doc: 3, Score: 2}, {Doc: 9, Score: 2}, {Doc: 12, Score: 2}, {Doc: 16, Score: 2}, {Doc: 18, Score: 2}, {Doc: 34, Score: 2}, {Doc: 39, Score: 2}, {Doc: 49, Score: 2}, {Doc: 50, Score: 2}, {Doc: 56, Score: 2}, {Doc: 15, Score: 1}, {Doc: 27, Score: 1}, {Doc: 33, Score: 1}, {Doc: 54, Score: 1}, {Doc: 57, Score: 1}},
 	"whenever":                              {{Doc: 31, Score: 2}, {Doc: 0, Score: 1}, {Doc: 4, Score: 1}, {Doc: 16, Score: 1}, {Doc: 55, Score: 1}, {Doc: 61, Score: 1}},
 	"where":                                 {{Doc: 8, Score: 7}, {Doc: 42, Score: 5}, {Doc: 29, Score: 4}, {Doc: 0, Score: 3}, {Doc: 6, Score: 2}, {Doc: 1, Score: 1}, {Doc: 4, Score: 1}, {Doc: 5, Score: 1}, {Doc: 31, Score: 1}, {Doc: 32, Score: 1}, {Doc: 36, Score: 1}, {Doc: 46, Score: 1}, {Doc: 55, Score: 1}, {Doc: 57, Score: 1}, {Doc: 61, Score: 1}},
 	"wherever":                              {{Doc: 6, Score: 1}},
-<<<<<<< HEAD
-	"whether":                               {{Doc: 61, Score: 3}, {Doc: 0, Score: 1}, {Doc: 8, Score: 1}, {Doc: 29, Score: 1}, {Doc: 39, Score: 1}, {Doc: 42, Score: 1}, {Doc: 54, Score: 1}},
-	"which":                                 {{Doc: 6, Score: 11}, {Doc: 42, Score: 9}, {Doc: 0, Score: 7}, {Doc: 31, Score: 7}, {Doc: 4, Score: 6}, {Doc: 8, Score: 3}, {Doc: 39, Score: 3}, {Doc: 51, Score: 3}, {Doc: 1, Score: 2}, {Doc: 5, Score: 2}, {Doc: 18, Score: 2}, {Doc: 25, Score: 2}, {Doc: 57, Score: 2}, {Doc: 61, Score: 2}, {Doc: 12, Score: 1}, {Doc: 24, Score: 1}, {Doc: 29, Score: 1}, {Doc: 32, Score: 1}, {Doc: 36, Score: 1}, {Doc: 45, Score: 1}, {Doc: 55, Score: 1}},
-=======
 	"whether":                               {{Doc: 61, Score: 3}, {Doc: 0, Score: 1}, {Doc: 8, Score: 1}, {Doc: 29, Score: 1}, {Doc: 39, Score: 1}, {Doc: 42, Score: 1}, {Doc: 54, Score: 1}, {Doc: 57, Score: 1}},
-	"which":                                 {{Doc: 6, Score: 11}, {Doc: 42, Score: 9}, {Doc: 0, Score: 7}, {Doc: 31, Score: 7}, {Doc: 4, Score: 6}, {Doc: 57, Score: 4}, {Doc: 8, Score: 3}, {Doc: 51, Score: 3}, {Doc: 1, Score: 2}, {Doc: 5, Score: 2}, {Doc: 18, Score: 2}, {Doc: 25, Score: 2}, {Doc: 61, Score: 2}, {Doc: 12, Score: 1}, {Doc: 24, Score: 1}, {Doc: 29, Score: 1}, {Doc: 32, Score: 1}, {Doc: 36, Score: 1}, {Doc: 39, Score: 1}, {Doc: 45, Score: 1}, {Doc: 55, Score: 1}},
->>>>>>> origin/main
+	"which":                                 {{Doc: 6, Score: 11}, {Doc: 42, Score: 9}, {Doc: 0, Score: 7}, {Doc: 31, Score: 7}, {Doc: 4, Score: 6}, {Doc: 57, Score: 4}, {Doc: 8, Score: 3}, {Doc: 39, Score: 3}, {Doc: 51, Score: 3}, {Doc: 1, Score: 2}, {Doc: 5, Score: 2}, {Doc: 18, Score: 2}, {Doc: 25, Score: 2}, {Doc: 61, Score: 2}, {Doc: 12, Score: 1}, {Doc: 24, Score: 1}, {Doc: 29, Score: 1}, {Doc: 32, Score: 1}, {Doc: 36, Score: 1}, {Doc: 45, Score: 1}, {Doc: 55, Score: 1}},
 	"whichever":                             {{Doc: 6, Score: 1}, {Doc: 8, Score: 1}, {Doc: 31, Score: 1}},
 	"while":                                 {{Doc: 42, Score: 4}, {Doc: 0, Score: 2}, {Doc: 4, Score: 2}, {Doc: 8, Score: 2}, {Doc: 18, Score: 2}, {Doc: 32, Score: 2}, {Doc: 57, Score: 2}, {Doc: 3, Score: 1}, {Doc: 48, Score: 1}},
 	"who":                                   {{Doc: 6, Score: 6}, {Doc: 29, Score: 2}, {Doc: 4, Score: 1}},
@@ -5121,11 +5050,7 @@ var postings = map[string][]Posting{
 	"works":                                 {{Doc: 4, Score: 10}, {Doc: 6, Score: 10}, {Doc: 1, Score: 9}, {Doc: 9, Score: 3}, {Doc: 42, Score: 3}, {Doc: 0, Score: 2}, {Doc: 32, Score: 2}, {Doc: 5, Score: 1}, {Doc: 12, Score: 1}, {Doc: 18, Score: 1}, {Doc: 29, Score: 1}, {Doc: 31, Score: 1}, {Doc: 51, Score: 1}},
 	"worse":                                 {{Doc: 4, Score: 1}, {Doc: 16, Score: 1}, {Doc: 51, Score: 1}},
 	"worth":                                 {{Doc: 8, Score: 2}, {Doc: 6, Score: 1}, {Doc: 61, Score: 1}},
-<<<<<<< HEAD
-	"would":                                 {{Doc: 9, Score: 5}, {Doc: 0, Score: 2}, {Doc: 4, Score: 2}, {Doc: 6, Score: 2}, {Doc: 31, Score: 2}, {Doc: 39, Score: 2}, {Doc: 5, Score: 1}, {Doc: 29, Score: 1}, {Doc: 42, Score: 1}, {Doc: 46, Score: 1}, {Doc: 51, Score: 1}, {Doc: 57, Score: 1}},
-=======
-	"would":                                 {{Doc: 9, Score: 5}, {Doc: 0, Score: 2}, {Doc: 4, Score: 2}, {Doc: 6, Score: 2}, {Doc: 31, Score: 2}, {Doc: 57, Score: 2}, {Doc: 5, Score: 1}, {Doc: 29, Score: 1}, {Doc: 39, Score: 1}, {Doc: 42, Score: 1}, {Doc: 46, Score: 1}, {Doc: 51, Score: 1}},
->>>>>>> origin/main
+	"would":                                 {{Doc: 9, Score: 5}, {Doc: 0, Score: 2}, {Doc: 4, Score: 2}, {Doc: 6, Score: 2}, {Doc: 31, Score: 2}, {Doc: 39, Score: 2}, {Doc: 57, Score: 2}, {Doc: 5, Score: 1}, {Doc: 29, Score: 1}, {Doc: 42, Score: 1}, {Doc: 46, Score: 1}, {Doc: 51, Score: 1}},
 	"wouldn":                                {{Doc: 5, Score: 1}},
 	"wrangling":                             {{Doc: 0, Score: 1}},
 	"wrapped":                               {{Doc: 42, Score: 1}},
