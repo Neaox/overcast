@@ -30,15 +30,21 @@ type Scheduler struct {
 	clk     clock.Clock
 	mu      sync.Mutex
 	pending map[string]cancelEntry
-	wg      sync.WaitGroup
+	// inflight holds the completion channels of callbacks that have fired but
+	// not finished. A callback leaves pending before it runs fn, so without
+	// this a settle that arrives mid-callback would find nothing to wait for
+	// and return while the transition was still working.
+	inflight map[chan struct{}]struct{}
+	wg       sync.WaitGroup
 }
 
 // NewScheduler creates a Scheduler using the given clock.
 // Production: clock.New(). Tests: clock.NewMock() for instant time skips.
 func NewScheduler(clk clock.Clock) *Scheduler {
 	return &Scheduler{
-		clk:     clk,
-		pending: make(map[string]cancelEntry),
+		clk:      clk,
+		pending:  make(map[string]cancelEntry),
+		inflight: make(map[chan struct{}]struct{}),
 	}
 }
 
@@ -76,10 +82,19 @@ func (s *Scheduler) After(key string, delay time.Duration, fn func()) {
 	done := make(chan struct{})
 	timer := s.clk.AfterFunc(delay, func() {
 		defer s.wg.Done()
-		defer close(done)
+		// Move from pending to inflight in one step, so a settle running
+		// alongside this sees the transition in exactly one of them and never
+		// in neither.
 		s.mu.Lock()
 		delete(s.pending, key)
+		s.inflight[done] = struct{}{}
 		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			delete(s.inflight, done)
+			s.mu.Unlock()
+			close(done)
+		}()
 		fn()
 	})
 
@@ -130,28 +145,35 @@ func (s *Scheduler) AdvanceAndSettle(mock *clock.Mock, d time.Duration) {
 	}
 }
 
-// Settle blocks until every transition pending when it was called has run to
-// completion or been cancelled. It cancels nothing — on a real clock it waits
-// the delays out — so a test can let the real transitions happen and then read
-// what they produced, rather than polling until they show up.
+// Settle blocks until every transition outstanding when it was called has run
+// to completion or been cancelled. It cancels nothing — on a real clock it
+// waits the delays out — so a test can let the real transitions happen and then
+// read what they produced, rather than polling until they show up.
 //
-// Only transitions still pending when Settle is called are waited for; one that
-// has already fired is no longer pending and is not waited for. Call it before
-// the delays elapse, which for a test that has just made the request that
-// scheduled them is where it naturally goes.
+// Outstanding covers both the transitions still pending and the callbacks that
+// have already fired and are still running, so a test whose setup ran long
+// enough for some of its transitions to come due does not silently get a
+// partial wait. Transitions scheduled after the call are not waited for.
 func (s *Scheduler) Settle() {
 	for _, done := range s.dueBy(time.Time{}) {
 		<-done
 	}
 }
 
-// dueBy returns the completion channels of the pending transitions due at or
-// before target. A zero target means every pending transition.
+// dueBy returns the completion channels of the transitions due at or before
+// target. A zero target means every pending transition.
+//
+// Everything in flight is included whatever the target: a callback only reaches
+// inflight by coming due, so it is due by definition, and it is no longer in
+// pending to be found there.
 func (s *Scheduler) dueBy(target time.Time) []chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	due := make([]chan struct{}, 0, len(s.pending))
+	due := make([]chan struct{}, 0, len(s.pending)+len(s.inflight))
+	for done := range s.inflight {
+		due = append(due, done)
+	}
 	for _, entry := range s.pending {
 		if target.IsZero() || !entry.deadline.After(target) {
 			due = append(due, entry.done)

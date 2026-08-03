@@ -220,6 +220,30 @@ func TestScheduler_Settle_realClock(t *testing.T) {
 	}
 }
 
+func TestScheduler_Settle_callbackAlreadyRunning(t *testing.T) {
+	// Given a transition that has already fired and is still in its callback —
+	// so it has left the pending map, which is where a settle looks
+	s := NewScheduler(clock.New())
+
+	started := make(chan struct{})
+	var finished atomic.Bool
+	s.After("inflight", time.Millisecond, func() {
+		close(started)
+		time.Sleep(100 * time.Millisecond)
+		finished.Store(true)
+	})
+	<-started
+
+	// When we settle
+	s.Settle()
+
+	// Then it waited for the callback in flight rather than finding nothing
+	// pending and returning straight away
+	if !finished.Load() {
+		t.Fatal("Settle returned while a fired callback was still running")
+	}
+}
+
 func TestScheduler_Settle_transitionCancelled(t *testing.T) {
 	// Given a waiter on a transition that is never going to come due
 	mock := clock.NewMock()
