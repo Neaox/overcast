@@ -221,6 +221,11 @@ jobs:
       - name: Make binaries executable
         run: chmod +x bin/overcast bin/compat
 
+      # Must precede the Lambda runtime pre-pull below and every suite image:
+      # this restarts the Docker daemon, so anything already running would be
+      # torn down with it.
+      - uses: ./.github/actions/docker-hub-mirror
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         if: contains(fromJson('["go-sdk", "cli"]'), matrix.suite)
         with:

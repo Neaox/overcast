@@ -30,6 +30,8 @@ type Handler struct {
 	esm           *esmStore
 	esmDelivery   *esmDeliveryManager
 	asyncWg       sync.WaitGroup // tracks in-flight async invocations
+	asyncMu       sync.Mutex     // guards asyncClosed against a racing asyncWg.Add
+	asyncClosed   bool           // set by StopAsync; startAsync accepts nothing after it
 	vpcResolverMu sync.RWMutex
 	vpcResolver   VPCNetworkResolver
 
@@ -120,7 +122,18 @@ func (h *Handler) accountID() string {
 
 // StopAsync waits for all in-flight async invocations to complete, with a
 // timeout provided by ctx. This prevents goroutine leaks on shutdown.
+//
+// It also closes the async path: startAsync refuses events from here on. That
+// matters because Lambda is not the last service to stop — S3, Scheduler and
+// the event bus all shut down after it, and any of them can still raise an
+// event. Without the gate such an event would start a goroutine on a WaitGroup
+// nobody is waiting on any more, against a pool and tracker this function is
+// about to tear down.
 func (h *Handler) StopAsync(ctx context.Context) {
+	h.asyncMu.Lock()
+	h.asyncClosed = true
+	h.asyncMu.Unlock()
+
 	done := make(chan struct{})
 	go func() {
 		h.asyncWg.Wait()

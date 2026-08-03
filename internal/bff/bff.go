@@ -158,6 +158,8 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Delete("/api/inbox/messages", handleMailDeleteAll)
 	r.Delete("/api/inbox/messages/{id}", handleMailDeleteOne)
 	r.Get("/api/rds/instances/{id}/logs", handleRDSLogs)
+	r.Get("/api/eventbridge/deliveries", handleEventBridgeDeliveries)
+	r.Get("/api/eventbridge/rule-targets", handleEventBridgeRuleTargets)
 
 	// ── SSE proxy ─────────────────────────────────────────────────────────
 	r.Get("/api/events", handleEvents)
@@ -1190,6 +1192,48 @@ func handleECSClusterTasks(w http.ResponseWriter, r *http.Request) {
 	cluster := chi.URLParam(r, "cluster")
 	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_ecs/clusters/%s/tasks",
 		ep, url.PathEscape(cluster)))
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
+// ── EventBridge ────────────────────────────────────────────────────────────
+
+// handleEventBridgeDeliveries proxies the console's per-target delivery
+// outcome feed, so the bus view can say why an event did or did not reach a
+// target.
+func handleEventBridgeDeliveries(w http.ResponseWriter, r *http.Request) {
+	proxyEventBridgeConsole(w, r, "/_overcast/eventbridge/deliveries", "bus", "rule", "limit")
+}
+
+// handleEventBridgeRuleTargets proxies each rule's targets with their resolved
+// target type.
+func handleEventBridgeRuleTargets(w http.ResponseWriter, r *http.Request) {
+	proxyEventBridgeConsole(w, r, "/_overcast/eventbridge/rule-targets", "bus")
+}
+
+// proxyEventBridgeConsole forwards a console GET to the emulator, passing
+// through only the named query parameters and the caller's region.
+func proxyEventBridgeConsole(w http.ResponseWriter, r *http.Request, path string, params ...string) {
+	ep := resolveEndpoint(r)
+	query := url.Values{}
+	for _, name := range params {
+		if v := r.URL.Query().Get(name); v != "" {
+			query.Set(name, v)
+		}
+	}
+	u := ep + path
+	if encoded := query.Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+	resp, err := doGetWithRegion(r.Context(), u, r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
 		return

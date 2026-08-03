@@ -27,9 +27,9 @@ const volumeOpTimeout = 30 * time.Second
 func volumeName(fsID string) string { return volumeNamePrefix + fsID }
 
 // SetDocker wires the Docker client used for live-mode volumes. Called by the
-// router once the Docker probe succeeds; kicks off asynchronous volume
-// reconciliation so file systems persisted before a restart regain their
-// volumes and orphaned volumes are removed.
+// router once the Docker probe succeeds; kicks off asynchronous reconciliation
+// so file systems persisted before a restart regain their volumes, mount
+// targets re-adopt or restart their NFS exports, and orphans are swept.
 func (s *Service) SetDocker(dc *docker.Client) {
 	s.docker = dc
 	if dc != nil {
@@ -41,6 +41,9 @@ func (s *Service) SetDocker(dc *docker.Client) {
 			ctx, cancel := context.WithTimeout(context.Background(), volumeOpTimeout)
 			defer cancel()
 			s.reconcileVolumes(ctx)
+			// Containers second: an export needs its file system's volume to
+			// exist before it can be started.
+			s.reconcileExports(ctx)
 		}()
 	}
 }

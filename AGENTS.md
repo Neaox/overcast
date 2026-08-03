@@ -154,12 +154,42 @@ The full checklists are in CONTRIBUTING.md:
 
 A `git push` from Claude Code runs [scripts/verify-changed.sh](./scripts/verify-changed.sh) first (wired as a `PreToolUse` hook in [.claude/settings.json](./.claude/settings.json)) and blocks the push if it fails. It scopes to what the branch changed: golangci-lint when any `.go` file changed, `pnpm run typecheck` and `pnpm run lint` when `web/` changed. It takes a couple of minutes and it is a backstop, not a substitute for running the checks yourself — it deliberately does not run the test suite, and it stays out of the way (exit 0, with a warning) when a toolchain is unavailable. Run it directly any time: `bash scripts/verify-changed.sh`.
 
+### Self-review the diff before committing or pushing
+
+Green checks prove the code compiles and passes tests. They say nothing about whether the diff is the change you meant to make. **Read your own diff end to end before every commit, and read the whole branch diff before every push.**
+
+```sh
+git diff                    # unstaged
+git diff --staged           # exactly what the commit will contain
+git status --short          # untracked files you may have forgotten or never meant to add
+git diff main...HEAD        # the whole branch, as the reviewer will see it
+git diff --stat main...HEAD # scan for files you did not expect to have touched
+```
+
+Read it as the reviewer, not as the author: judge each hunk on whether it earns its place in *this* change, not on whether you remember writing it. If you cannot say why a hunk is there, it does not belong — revert it or split it out.
+
+**This matters most in long sessions.** The longer a session runs, the more the branch diverges from anything you still hold in context: approaches tried and abandoned, debugging aids added under pressure, a helper written twice because the first one was forgotten, a file edited early against assumptions that later changed. None of it fails a build. All of it lands in the PR unless you look. Do a full self-review pass before the first commit of a long session even if you have been careful throughout — after several hours of churn your memory of the branch is a summary, and the diff is the fact.
+
+Check for, at minimum:
+
+- **Debug leftovers** — stray `fmt.Println`/`log.Printf`, `console.log`, commented-out code, `t.Skip`, hardcoded endpoints or credentials, temporary fixtures, scratch files, capture harnesses under `web/public/`, a `-run TestOne` narrowing left in a Makefile target.
+- **Dead ends** — code from an approach you abandoned, now unreferenced. Helpers with no callers, config fields nothing reads, a test for behaviour that no longer exists. `go vet` and golangci-lint catch some of this; they do not catch an exported function nobody calls.
+- **Accidental duplication** — a helper you wrote in service A that already existed in `serviceutil`, or that you wrote twice under two names in the same branch. Long sessions are where this happens.
+- **Churn that nets to nothing** — files that appear in the diff only as reordered imports, reflowed comments, or a change made then substantially undone. Revert them; they cost the reviewer attention and prove nothing.
+- **Unrelated edits** — changes to files outside the task, and other agents'/the user's uncommitted work swept in by `git add .`. Stage explicit paths. See the [`commit` skill § Staging Discipline](./.agents/skills/commit/SKILL.md).
+- **Stale comments and docs** — a comment describing what the code did two iterations ago is worse than no comment. Same for a plan doc under `docs/plans/` that must be accurate as of this commit, a service doc's *both* tables, and STATUS.md.
+- **Completeness against your own claims** — every `state.Store` change in both implementations, every new resource type registered in `provisioner.go`, the changelog fragment under `.changelog/`, the test that was supposed to fail first. Re-read the task and the [Before finishing](#before-finishing) list against the diff, not against your recollection.
+- **Commit coherence** — if the branch has grown several unrelated reasons, split it into commits that each stand alone rather than pushing one commit that does four things.
+
+For a substantial or long-running branch, run the [`code-review` skill](./.agents/skills/code-review/SKILL.md) over the diff before pushing — it applies the full AWS-parity, regression-risk, and maintainability checklists that a quick read-through will not. Delegating the read to a sub-agent is a good use of one: it reviews the diff without the anchoring bias of having written it. Fix what it finds before the push, not in a follow-up commit.
+
 ---
 
 ## Common mistakes
 
 Agents most often trip on these — check before finishing:
 
+- **Committing without reading the diff** — green checks do not tell you the diff is the change you meant to make. See [Self-review the diff](#self-review-the-diff-before-committing-or-pushing)
 - **Creating non-AWS endpoints or custom response fields** — the AWS SDK must work unmodified
 - **Changing wire formats without tests** — request/response shapes are the compatibility contract
 - **Forgetting `make docs`** after capability changes — generated tables will drift
@@ -323,6 +353,7 @@ Agents must **not** start their own test instances of Overcast on port **4566** 
 - **Never leave the workspace in a broken state.** After every change, check the workspace problem list (compiler errors, type errors, lint errors) - via the `get_errors` tool, and fix any problems you introduced before considering the task done. You are not finished while problems you caused remain open.
   - **`go build ./...` is necessary but not sufficient.** It only catches compile errors. Also run `go vet ./...` to catch lint/static-analysis warnings (unused params, unused funcs, unnecessary nil checks, etc.) that appear in the VS Code Problems panel but don't fail compilation. Fix every warning you introduced.
   - **Sub-agents must do this too.** A sub-agent invoked by a parent agent is held to the same standard. Before returning a result, run `go build ./...` (for Go changes) and/or `pnpm run typecheck` in `web/` (for TypeScript changes — not `tsc --noEmit`, which typechecks nothing) and fix every error you caused. If a linter or vet warning is introduced (e.g. `go vet ./...` reports a new issue), fix it. Do not offload verification to the parent — own it.
+- **Never commit or push a diff you have not read.** Read `git diff --staged` before every commit and `git diff main...HEAD` before every push, and remove anything that does not belong. This is not optional on long sessions — it matters most there. See [Self-review the diff](#self-review-the-diff-before-committing-or-pushing).
 - Never implement a handler or fix a bug without a failing/reproducing test first
 - Never return bare `404` for unimplemented operations — always `501`
 - Never call `os.Getenv` in service code — use `*config.Config`

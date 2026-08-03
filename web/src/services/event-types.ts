@@ -48,6 +48,8 @@ export const EventType = {
     SMSDelivered: "sns:SMSDelivered",
     WebhookDelivered: "sns:WebhookDelivered",
     PushDelivered: "sns:PushDelivered",
+    LambdaDelivered: "sns:LambdaDelivered",
+    DeliveryFailed: "sns:DeliveryFailed",
     TopicCreated: "sns:TopicCreated",
     TopicDeleted: "sns:TopicDeleted",
     SubscriptionCreated: "sns:SubscriptionCreated",
@@ -170,6 +172,8 @@ export const EventType = {
     RestApiCreated: "apigateway:RestApiCreated",
     RestApiDeleted: "apigateway:RestApiDeleted",
     Deployed: "apigateway:Deployed",
+    /** A request reached its usage plan's throttle or quota limit. */
+    Throttled: "apigateway:Throttled",
   },
 
   // ── AppSync ─────────────────────────────────────────────────────────────

@@ -1,34 +1,54 @@
 package stepfunctions
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/google/uuid"
+	"sync"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // Handler holds Step Functions handler dependencies.
 type Handler struct {
-	cfg     *config.Config
-	store   *Store
-	log     *serviceutil.ServiceLogger
-	clk     clock.Clock
-	bus     *events.Bus
+	cfg   *config.Config
+	store *Store
+	log   *serviceutil.ServiceLogger
+	clk   clock.Clock
+	bus   *events.Bus
+	// router is Overcast's own root handler. Task states dispatch through it
+	// so a workflow step runs exactly the handler an SDK call would, rather
+	// than a second, divergent code path. Nil until InitRouter is called, and
+	// a Task state then fails loudly rather than pretending to succeed.
+	router  http.Handler
 	ops     map[string]http.HandlerFunc
 	typedOp map[string]op.Operation
+
+	// Executions run on their own goroutines so StartExecution can accept and
+	// return while the execution is still RUNNING, as AWS does. runs tracks
+	// the live ones (for DescribeExecution, GetExecutionHistory and
+	// StopExecution), wg lets shutdown drain them, and shutdownCancel unwinds
+	// an execution parked in a Wait so it cannot hold shutdown open.
+	runs           map[string]*executionRun
+	runsMu         sync.Mutex
+	wg             sync.WaitGroup
+	shutdown       context.Context
+	shutdownCancel context.CancelFunc
 }
 
 func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
-	h := &Handler{cfg: cfg, store: store, log: log, clk: clk}
+	h := &Handler{cfg: cfg, store: store, log: log, clk: clk, runs: map[string]*executionRun{}}
+	// Parent of every execution context. Creating it does no I/O, so this is
+	// safe in a constructor called from router.New.
+	h.shutdown, h.shutdownCancel = context.WithCancel(context.Background())
 	h.initOps()
 	return h
 }
@@ -36,14 +56,43 @@ func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger
 // initOps registers every known StepFunctions operation to its handler.
 // Adding a new operation: add an entry here, implement in handler.go.
 func (h *Handler) initOps() {
+	h.typedOp = h.typedOps()
 	h.ops = map[string]http.HandlerFunc{
 		"CreateStateMachine":   h.CreateStateMachine,
 		"DescribeStateMachine": h.DescribeStateMachine,
 		"ListStateMachines":    h.ListStateMachines,
 		"StartExecution":       h.StartExecution,
 		"DeleteStateMachine":   h.DeleteStateMachine,
+		// The execution plane has a single, typed implementation. These entries
+		// route the legacy X-Amz-Target path to it rather than duplicating the
+		// logic in a second handler that could drift.
+		"StartSyncExecution":               h.typedJSONHandler("StartSyncExecution"),
+		"DescribeExecution":                h.typedJSONHandler("DescribeExecution"),
+		"GetExecutionHistory":              h.typedJSONHandler("GetExecutionHistory"),
+		"ListExecutions":                   h.typedJSONHandler("ListExecutions"),
+		"StopExecution":                    h.typedJSONHandler("StopExecution"),
+		"DescribeStateMachineForExecution": h.typedJSONHandler("DescribeStateMachineForExecution"),
 	}
-	h.typedOp = h.typedOps()
+}
+
+// typedJSONHandler adapts a typed operation to the legacy http.HandlerFunc
+// dispatch table, so a caller arriving on the X-Amz-Target path reaches exactly
+// the implementation the codec path uses.
+func (h *Handler) typedJSONHandler(name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		operation, ok := h.typedOp[name]
+		if !ok {
+			protocol.NotImplementedJSON(w, r)
+			return
+		}
+		// Step Functions' own wire protocol is AWS JSON 1.0; prefer whatever
+		// the router already resolved for this request.
+		wire := codec.JSON10
+		if resolved, resolvedOp := codec.FromContext(r.Context()); resolved != nil && resolvedOp == name {
+			wire = resolved
+		}
+		operation.Invoke(w, r, wire)
+	}
 }
 
 // publish emits an event if the bus is wired.
@@ -69,6 +118,13 @@ func (h *Handler) CreateStateMachine(w http.ResponseWriter, r *http.Request) {
 			Message:    "Value null at 'name' failed to satisfy constraint",
 			HTTPStatus: http.StatusBadRequest,
 		})
+		return
+	}
+	// AWS validates the ASL before it looks at anything else, so a malformed
+	// definition is InvalidDefinition rather than a state machine that
+	// provisions and then cannot run.
+	if aerr := validateDefinitionForCreate(req.Definition); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -198,43 +254,15 @@ func (h *Handler) StartExecution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	smName := extractSMName(req.StateMachineArn)
-	sm, err := h.store.GetStateMachine(r.Context(), smName)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	exec, aerr := h.startExecution(r.Context(), req.StateMachineArn, req.Name, req.Input, 0, executionAsync)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if sm == nil {
-		protocol.WriteJSONError(w, r, errSMNotFound(req.StateMachineArn))
-		return
-	}
-
-	execName := req.Name
-	if execName == "" {
-		execName = uuid.NewString()
-	}
-
-	now := h.clk.Now()
-	execArn := protocol.ARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, "states", "execution:"+smName+":"+execName)
-	exec := &Execution{
-		ExecutionArn:    execArn,
-		StateMachineArn: req.StateMachineArn,
-		Name:            execName,
-		Input:           req.Input,
-		Status:          "SUCCEEDED",
-		StartDate:       now,
-	}
-
-	if err := h.store.PutExecution(r.Context(), exec); err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
-		return
-	}
-
-	h.publish(r, events.SFNExecutionStarted, events.ResourcePayload{Name: execName})
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"executionArn": execArn,
-		"startDate":    float64(now.UnixMilli()) / 1000.0,
+		"executionArn": exec.ExecutionArn,
+		"startDate":    epochSeconds(exec.StartDate),
 	})
 }
 
@@ -274,6 +302,22 @@ func extractSMName(arn string) string {
 		return arn[i+1:]
 	}
 	return arn
+}
+
+// validateDefinitionForCreate rejects a definition that is not valid Amazon
+// States Language, the way AWS's CreateStateMachine does. Definitions that are
+// valid ASL but use features Overcast cannot interpret are accepted here — so
+// CDK and CloudFormation deploys keep working — and fail the execution loudly
+// when they actually run.
+func validateDefinitionForCreate(definition string) *protocol.AWSError {
+	if _, err := parseDefinition(definition); err != nil {
+		return &protocol.AWSError{
+			Code:       "InvalidDefinition",
+			Message:    fmt.Sprintf("Invalid State Machine Definition: '%s'", err.Error()),
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return nil
 }
 
 func errSMNotFound(arn string) *protocol.AWSError {

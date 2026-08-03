@@ -350,6 +350,16 @@ func WithEnforceIAM(enabled bool) Option {
 	}
 }
 
+// WithEnforceAPIGatewayThrottle enables opt-in rejection of API Gateway
+// requests that exceed their usage plan's throttle or quota limits. Usage is
+// measured either way; this only decides whether an over-limit request is
+// answered 429 instead of being served.
+func WithEnforceAPIGatewayThrottle(enabled bool) Option {
+	return func(so *serverOptions) {
+		so.cfg.EnforceAPIGatewayThrottle = enabled
+	}
+}
+
 // WithEC2VPCStrategy sets the VPC network strategy used by the EC2 service.
 // Valid values: "shared" (default), "strict", "remapped". See
 // docs/plans/ec2-vpc-network-strategies.md for details.
@@ -392,6 +402,10 @@ func defaultTestConfig() *config.Config {
 		SMTPPort:             0,     // random when mock is enabled
 		SMTPFrom:             "overcast@localhost",
 		SMTPInboxMax:         500,
+		// Step Functions runaway-execution guard. Executions run on their own
+		// goroutines, so this bounds the run, not the request. Kept short so a
+		// non-terminating definition fails a test fast rather than hanging.
+		StepFunctionsExecutionTimeout: 10 * time.Second,
 	}
 }
 

@@ -1730,6 +1730,30 @@
     },
     {
       "service": "eventbridge",
+      "name": "eventbridge-target-fanout",
+      "tests": [
+        {
+          "name": "PutFanoutTargets",
+          "op": "PutTargets"
+        },
+        {
+          "name": "PutEventsToQueueTarget",
+          "op": "PutEvents",
+          "depends": [
+            "PutFanoutTargets"
+          ]
+        },
+        {
+          "name": "PutEventsWithInputTransformer",
+          "op": "PutEvents",
+          "depends": [
+            "PutFanoutTargets"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "eventbridge",
       "name": "eventbridge-events",
       "tests": [
         {
@@ -2636,6 +2660,46 @@
       ]
     },
     {
+      "service": "apigateway",
+      "name": "apigateway-usage-plans",
+      "tests": [
+        {
+          "name": "CreateUsagePlanWithLimits",
+          "op": "CreateUsagePlan"
+        },
+        {
+          "name": "GetUsagePlan",
+          "depends": [
+            "CreateUsagePlanWithLimits"
+          ]
+        },
+        {
+          "name": "CreateApiKey",
+          "depends": [
+            "CreateUsagePlanWithLimits"
+          ]
+        },
+        {
+          "name": "CreateUsagePlanKey",
+          "depends": [
+            "CreateApiKey"
+          ]
+        },
+        {
+          "name": "GetUsage",
+          "depends": [
+            "CreateUsagePlanKey"
+          ]
+        },
+        {
+          "name": "DeleteUsagePlan",
+          "depends": [
+            "GetUsage"
+          ]
+        }
+      ]
+    },
+    {
       "service": "cloudfront",
       "name": "cloudfront-oac",
       "tests": [
@@ -3087,6 +3151,39 @@
       ]
     },
     {
+      "service": "stepfunctions",
+      "name": "sfn-executions",
+      "tests": [
+        {
+          "name": "StartExecution"
+        },
+        {
+          "name": "DescribeExecution",
+          "depends": [
+            "StartExecution"
+          ]
+        },
+        {
+          "name": "GetExecutionHistory",
+          "depends": [
+            "StartExecution"
+          ]
+        },
+        {
+          "name": "ListExecutions",
+          "depends": [
+            "StartExecution"
+          ]
+        },
+        {
+          "name": "StopExecution",
+          "depends": [
+            "StartExecution"
+          ]
+        }
+      ]
+    },
+    {
       "service": "waf",
       "name": "waf-webacls",
       "tests": [
@@ -3143,6 +3240,39 @@
           "name": "DeleteProtection",
           "depends": [
             "DescribeProtection"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "efs",
+      "name": "efs-mount-targets",
+      "tests": [
+        {
+          "name": "CreateMountTarget"
+        },
+        {
+          "name": "DescribeMountTargets",
+          "depends": [
+            "CreateMountTarget"
+          ]
+        },
+        {
+          "name": "DescribeMountTargetSecurityGroups",
+          "depends": [
+            "CreateMountTarget"
+          ]
+        },
+        {
+          "name": "ModifyMountTargetSecurityGroups",
+          "depends": [
+            "CreateMountTarget"
+          ]
+        },
+        {
+          "name": "DeleteMountTarget",
+          "depends": [
+            "DescribeMountTargets"
           ]
         }
       ]

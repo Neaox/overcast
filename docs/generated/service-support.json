@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1318,
+  "total_ops": 1327,
   "services": [
     {
       "service": "s3",
@@ -803,8 +803,8 @@
     {
       "service": "apigateway",
       "display_name": "API Gateway",
-      "total_ops": 105,
-      "implemented_ops": 103,
+      "total_ops": 106,
+      "implemented_ops": 104,
       "operations": [
         {
           "operation": "CreateRestApi",
@@ -1057,7 +1057,7 @@
           "operation": "CreateUsagePlan",
           "category": "REST API v1 other",
           "status": "✅ Supported",
-          "notes": "throttle and quota stored (not enforced)"
+          "notes": "throttle (token bucket) and quota measured per API key; rejection needs OVERCAST_ENFORCE_APIGATEWAY_THROTTLE"
         },
         {
           "operation": "GetUsagePlan",
@@ -1088,6 +1088,12 @@
           "operation": "DeleteUsagePlanKey",
           "category": "REST API v1 other",
           "status": "✅ Supported"
+        },
+        {
+          "operation": "GetUsage",
+          "category": "REST API v1 other",
+          "status": "✅ Supported",
+          "notes": "daily `[used, remaining]` log per API key; counts are in-memory and reset on restart"
         },
         {
           "operation": "CreateDomainName",
@@ -3211,8 +3217,8 @@
     {
       "service": "sns",
       "display_name": "SNS",
-      "total_ops": 24,
-      "implemented_ops": 16,
+      "total_ops": 26,
+      "implemented_ops": 18,
       "operations": [
         {
           "operation": "CreateTopic",
@@ -3277,13 +3283,13 @@
           "operation": "SetSubscriptionAttributes",
           "category": "Subscriptions",
           "status": "✅ Supported",
-          "notes": "Stores any attribute; FilterPolicy used for message filtering"
+          "notes": "Stores any attribute; FilterPolicy drives message filtering, RedrivePolicy the subscription dead-letter queue"
         },
         {
           "operation": "Publish",
           "category": "Publishing",
           "status": "✅ Supported",
-          "notes": "Async fan-out to `sqs`, `email`, `email-json`, and `sms` subscribers"
+          "notes": "Async fan-out to `sqs`, `lambda`, `email`, `email-json`, `http`, `https`, and `sms` subscribers"
         },
         {
           "operation": "PublishBatch",
@@ -3297,6 +3303,22 @@
           "status": "✅ Supported",
           "notes": "String/Number attribute value matching via FilterPolicy on SetSubscriptionAttributes",
           "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/sns-message-filtering.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "Lambda subscription delivery",
+          "category": "Publishing",
+          "status": "✅ Supported",
+          "notes": "Publish invokes the subscribed function asynchronously with the AWS `Records[].Sns` event; RawMessageDelivery does not apply to `lambda`, matching AWS",
+          "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/sns-lambda-as-subscriber.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "Subscription dead-letter queue (RedrivePolicy)",
+          "category": "Publishing",
+          "status": "✅ Supported",
+          "notes": "A delivery that fails is redirected to the SQS queue named by the subscription's RedrivePolicy",
+          "docs_url": "[docs](https://docs.aws.amazon.com/sns/latest/dg/sns-dead-letter-queues.html)",
           "doc_only": true
         },
         {
@@ -4466,13 +4488,13 @@
           "operation": "PutTargets",
           "category": "Targets",
           "status": "✅ Supported",
-          "notes": "Adds targets; supports SQS delivery and scheduled ECS task targets"
+          "notes": "Adds Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and ECS targets; rejects other target types at add time"
         },
         {
           "operation": "ListTargetsByRule",
           "category": "Targets",
           "status": "✅ Supported",
-          "notes": "Lists targets including ECS target parameters"
+          "notes": "Lists targets including input transformers and ECS/Kinesis/SQS target parameters"
         },
         {
           "operation": "RemoveTargets",
@@ -4484,7 +4506,7 @@
           "operation": "PutEvents",
           "category": "Events",
           "status": "✅ Supported",
-          "notes": "Accepts events and delivers matching rules to SQS targets"
+          "notes": "Delivers matching rules to Lambda, SQS, SNS, Step Functions, Kinesis and Firehose targets, applying InputPath/InputTransformer and RetryPolicy/DLQ"
         },
         {
           "operation": "TagResource",
@@ -6452,14 +6474,14 @@
     {
       "service": "stepfunctions",
       "display_name": "Step Functions",
-      "total_ops": 5,
-      "implemented_ops": 5,
+      "total_ops": 11,
+      "implemented_ops": 11,
       "operations": [
         {
           "operation": "CreateStateMachine",
           "category": "State machines",
           "status": "✅ Supported",
-          "notes": "Idempotent — returns existing if name+def match"
+          "notes": "Validates the ASL; idempotent — returns existing if name+def match"
         },
         {
           "operation": "DescribeStateMachine",
@@ -6477,10 +6499,45 @@
           "status": "✅ Supported"
         },
         {
+          "operation": "DescribeStateMachineForExecution",
+          "category": "State machines",
+          "status": "✅ Supported"
+        },
+        {
           "operation": "StartExecution",
           "category": "Executions",
           "status": "✅ Supported",
-          "notes": "Records execution; immediately marks SUCCEEDED"
+          "notes": "Interprets the ASL; returns while the execution is RUNNING, as AWS does"
+        },
+        {
+          "operation": "StartSyncExecution",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "EXPRESS only — same interpreter, run to completion before returning"
+        },
+        {
+          "operation": "DescribeExecution",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "Real status, output, error and cause"
+        },
+        {
+          "operation": "ListExecutions",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "statusFilter and maxResults honoured; no pagination token"
+        },
+        {
+          "operation": "GetExecutionHistory",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "Real state-transition events in AWS's vocabulary; readable while RUNNING"
+        },
+        {
+          "operation": "StopExecution",
+          "category": "Executions",
+          "status": "✅ Supported",
+          "notes": "Interrupts a running execution; it reaches ABORTED asynchronously"
         }
       ]
     },

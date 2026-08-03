@@ -29,12 +29,13 @@ func TestScheduledRuleDelivery_nonDefaultRegion(t *testing.T) {
 	// Fake root router capturing the internal dispatch of target delivery.
 	var mu sync.Mutex
 	var deliveredRegions []string
-	s.router = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.InitRouter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		deliveredRegions = append(deliveredRegions, r.Header.Get("X-Overcast-Region"))
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
-	})
+	}))
+	t.Cleanup(func() { s.Stop(context.Background()) })
 
 	// Seed a scheduled rule + SQS target under eu-west-1, due immediately.
 	ctx := context.Background()

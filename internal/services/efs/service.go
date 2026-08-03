@@ -61,6 +61,16 @@ type Service struct {
 	// ("volume/subpath" → struct{}) so repeat mounts skip the helper run.
 	materialized sync.Map
 
+	// nfsMu serializes host-port reservations for mount-target NFS exports;
+	// nfsWg tracks in-flight export starts so Stop waits for them. See
+	// live_nfs.go.
+	nfsMu sync.Mutex
+	nfsWg sync.WaitGroup
+	// skipNFSReadiness short-circuits the NFSv4 readiness probe. Tests that
+	// drive a fake Docker daemon have no socket to probe; production never
+	// sets it.
+	skipNFSReadiness bool
+
 	// subnetZones resolves a subnet's availability zone against EC2. Nil until
 	// wired, and it returns empty for a subnet EC2 does not know, in which case
 	// the zone is derived from the subnet ID instead.
@@ -115,9 +125,19 @@ func (s *Service) TargetPrefix() string { return targetPrefix }
 func (s *Service) PathPrefixes() []string { return []string{apiPrefix} }
 
 // Stop satisfies router.Stopper: cancels pending lifecycle transitions and
-// waits for in-flight callbacks.
+// waits for in-flight callbacks, including NFS export starts.
 func (s *Service) Stop(ctx context.Context) {
 	s.scheduler.Stop(ctx)
+
+	done := make(chan struct{})
+	go func() {
+		s.nfsWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 // Dispatch handles typed-protocol requests (X-Amz-Target JSON, Smithy RPCv2).

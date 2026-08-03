@@ -904,11 +904,9 @@ func TestRunTask_withDocker_startsContainer(t *testing.T) {
 	// Instead, we just verify Docker availability and basic container lifecycle.
 	ctx := context.Background()
 
-	// Ensure we can pull alpine
-	err := dc.PullImage(ctx, "alpine:latest")
-	if err != nil {
-		t.Fatalf("failed to pull alpine:latest: %v", err)
-	}
+	// Ensure we can pull alpine. An unreachable registry is environmental and
+	// skips; a registry that answers and refuses still fails.
+	helpers.PullOrSkip(t, dc, "alpine:latest")
 
 	// Create a test container directly to verify Docker works, since
 	// test server doesn't expose SetDocker.
@@ -959,10 +957,8 @@ func TestStopTask_withDocker_stopsContainer(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Pull image first.
-	if err := dc.PullImage(ctx, "alpine:latest"); err != nil {
-		t.Fatalf("failed to pull alpine:latest: %v", err)
-	}
+	// Pull image first. See PullOrSkip on why an unreachable registry skips.
+	helpers.PullOrSkip(t, dc, "alpine:latest")
 
 	// Create and start a long-running container.
 	containerName := fmt.Sprintf("overcast-ecs-stop-test-%d", time.Now().UnixNano())

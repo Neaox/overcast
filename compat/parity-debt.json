@@ -16,6 +16,12 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "tests": 6
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "appsync",
       "group": "appsync-api-keys",
       "tests": 4
@@ -196,6 +202,12 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "tests": 5
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "tests": 3
@@ -241,6 +253,12 @@
       "service": "eventbridge",
       "group": "eventbridge-rules",
       "tests": 9
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "tests": 3
     },
     {
       "suite": "dotnet-sdk",
@@ -311,6 +329,12 @@
     {
       "suite": "dotnet-sdk",
       "service": "stepfunctions",
+      "group": "sfn-executions",
+      "tests": 5
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "stepfunctions",
       "group": "sfn-statemachines",
       "tests": 5
     },
@@ -337,6 +361,12 @@
       "service": "apigateway",
       "group": "apigateway-rest",
       "tests": 3
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "apigateway",
+      "group": "apigateway-usage-plans",
+      "tests": 6
     },
     {
       "suite": "rust-sdk",
@@ -520,6 +550,12 @@
     },
     {
       "suite": "rust-sdk",
+      "service": "efs",
+      "group": "efs-mount-targets",
+      "tests": 5
+    },
+    {
+      "suite": "rust-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "tests": 3
@@ -565,6 +601,12 @@
       "service": "eventbridge",
       "group": "eventbridge-rules",
       "tests": 9
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eventbridge",
+      "group": "eventbridge-target-fanout",
+      "tests": 3
     },
     {
       "suite": "rust-sdk",
@@ -655,6 +697,12 @@
       "service": "ses",
       "group": "ses-templates",
       "tests": 6
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "stepfunctions",
+      "group": "sfn-executions",
+      "tests": 5
     },
     {
       "suite": "rust-sdk",

@@ -245,15 +245,17 @@ type UsagePlanStage struct {
 	Stage string `json:"stage"`
 }
 
-// ThrottleSettings defines rate limiting parameters.
-// TODO(priority:P3): enforce throttle limits at request time.
+// ThrottleSettings defines rate limiting parameters. Applied at request time
+// as a token bucket per (usage plan, API key): RateLimit is the per-second
+// refill, BurstLimit the bucket capacity. See usage.go.
 type ThrottleSettings struct {
 	BurstLimit int     `json:"burstLimit,omitempty"`
 	RateLimit  float64 `json:"rateLimit,omitempty"`
 }
 
-// QuotaSettings defines usage quota parameters.
-// TODO(priority:P3): enforce quota limits at request time.
+// QuotaSettings defines usage quota parameters. Consumption is counted per
+// calendar-aligned period at request time and reported by GetUsage; see
+// usage.go.
 type QuotaSettings struct {
 	Limit  int    `json:"limit,omitempty"`
 	Offset int    `json:"offset,omitempty"`

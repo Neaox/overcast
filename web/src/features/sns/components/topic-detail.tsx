@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Trash2, RefreshCw, Link, Send } from "lucide-react"
+import { Trash2, RefreshCw, Link, Send, CheckCircle2, XCircle } from "lucide-react"
 import {
   snsTopicsQueryOptions,
   snsSubscriptionsQueryOptions,
@@ -44,12 +44,65 @@ import { RawStateLink } from "@/features/debug/raw-state-link"
 import { useToast } from "@/components/ui/toast"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { PublishMessageDialog } from "@/features/sns/components/publish-dialog"
-import type { SNSSubscription } from "@/types"
+import type { SNSSubscription, StreamEvent } from "@/types"
 import { sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
 interface Props {
   topicName: string
+}
+
+/** Live delivery outcome for one subscription, derived from the event stream. */
+interface DeliveryState {
+  status: "delivered" | "failed"
+  at: string
+  /** Why the delivery failed. Only set when status is "failed". */
+  reason?: string
+}
+
+/**
+ * Event types that mean "SNS handed the message to this subscriber". One per
+ * protocol, because each delivery path reports its own event.
+ *
+ * Handed over, not processed: `sqs` means enqueued and `lambda` means the
+ * function accepted the event, the same way an `InvocationType=Event` invoke
+ * returns 202 before the handler runs. What the subscriber then did with it is
+ * that service's to report.
+ */
+const DELIVERED_EVENT_TYPES: readonly string[] = [
+  EventType.sns.Notification,
+  EventType.sns.LambdaDelivered,
+  EventType.sns.EmailDelivered,
+  EventType.sns.SMSDelivered,
+  EventType.sns.WebhookDelivered,
+  EventType.sns.PushDelivered,
+]
+
+/**
+ * Reduce the event stream to the latest delivery outcome per subscription ARN.
+ *
+ * Every SNS delivery payload carries `subscriptionArn`, so a subscription that
+ * a publish never reached simply has no entry — which is the point: before this
+ * existed, a `lambda` subscription that silently dropped every message looked
+ * exactly like one that worked.
+ */
+function deliveryStateBySubscription(events: StreamEvent[]): Record<string, DeliveryState> {
+  const byArn: Record<string, DeliveryState> = {}
+  for (const event of events) {
+    const payload = event.payload as Record<string, unknown> | undefined
+    const arn = payload?.subscriptionArn as string | undefined
+    if (!arn) continue
+    if (DELIVERED_EVENT_TYPES.includes(event.type)) {
+      byArn[arn] = { status: "delivered", at: event.time }
+    } else if (event.type === EventType.sns.DeliveryFailed) {
+      byArn[arn] = {
+        status: "failed",
+        at: event.time,
+        reason: payload?.reason as string | undefined,
+      }
+    }
+  }
+  return byArn
 }
 
 export function TopicDetail({ topicName }: Props) {
@@ -81,6 +134,9 @@ export function TopicDetail({ topicName }: Props) {
     const p = e.payload as Record<string, unknown> | undefined
     return p?.topicName === topicName || (p?.name as string | undefined)?.includes(topicName)
   })
+
+  // Per-subscription delivery indicators, from the same stream.
+  const deliveryState = useMemo(() => deliveryStateBySubscription(topicEvents), [topicEvents])
 
   useEffect(() => {
     if (!lastEvent) return
@@ -216,6 +272,7 @@ export function TopicDetail({ topicName }: Props) {
                 <TableRow>
                   <TableHead>Protocol</TableHead>
                   <TableHead>Endpoint</TableHead>
+                  <TableHead>Last delivery</TableHead>
                   <TableHead>ARN</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
@@ -228,6 +285,9 @@ export function TopicDetail({ topicName }: Props) {
                     </TableCell>
                     <TableCell>
                       <ArnLink arn={sub.Endpoint ?? ""} />
+                    </TableCell>
+                    <TableCell>
+                      <DeliveryIndicator state={deliveryState[sub.SubscriptionArn ?? ""]} />
                     </TableCell>
                     <TableCell className="text-fg-muted">
                       <ArnLink arn={sub.SubscriptionArn ?? ""} className="text-fg-muted" />
@@ -291,6 +351,7 @@ export function TopicDetail({ topicName }: Props) {
                       >
                         <optgroup label="Implemented">
                           <option value="sqs">sqs — SQS queue</option>
+                          <option value="lambda">lambda — invokes the function</option>
                           <option value="sms">sms — captured in Inbox</option>
                           <option value="email">email — captured in Inbox</option>
                           <option value="email-json">email-json — captured in Inbox</option>
@@ -298,9 +359,6 @@ export function TopicDetail({ topicName }: Props) {
                           <option value="https">https — requires reachable URL</option>
                         </optgroup>
                         <optgroup label="Not yet implemented">
-                          <option value="lambda" disabled>
-                            lambda
-                          </option>
                           <option value="application" disabled>
                             application (mobile push)
                           </option>
@@ -392,5 +450,45 @@ export function TopicDetail({ topicName }: Props) {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+/**
+ * Shows whether the most recent publish actually reached this subscription.
+ *
+ * The state comes from the live event stream, so it covers this session only —
+ * "No deliveries yet" means nothing has been observed since the page loaded,
+ * not that the subscription has never worked.
+ *
+ * "Accepted" rather than "Delivered": what SNS reports is the hand-off, and for
+ * every protocol the subscriber's own processing happens after it. For `lambda`
+ * that gap is real work — the function may still be cold-starting, and if the
+ * handler then throws, nothing here changes. The Lambda page is where the
+ * invocation's outcome lives.
+ */
+function DeliveryIndicator({ state }: { state?: DeliveryState }) {
+  if (!state) {
+    return <span className="text-xs text-fg-muted">No deliveries yet</span>
+  }
+  const when = new Date(state.at).toLocaleTimeString()
+  if (state.status === "failed") {
+    return (
+      <span
+        className="flex items-center gap-1.5 text-xs text-red-500"
+        title={state.reason ?? "Delivery failed"}
+      >
+        <XCircle className="h-3.5 w-3.5" aria-hidden />
+        Failed at {when}
+      </span>
+    )
+  }
+  return (
+    <span
+      className="flex items-center gap-1.5 text-xs text-green-500"
+      title="SNS handed the message to this subscriber. Whether the subscriber finished processing it is reported on that resource's own page."
+    >
+      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+      Accepted at {when}
+    </span>
   )
 }

@@ -18,12 +18,12 @@
 | SQS         | 21  | Queue + message CRUD, batches, purge, attributes, visibility, DLQ, FIFO, long polling                            |
 | DynamoDB    | 19  | Table/item CRUD, Scan, Query, Streams, TTL, batch ops, transactions                                              |
 | Lambda      | 48  | Function CRUD, Invoke (Docker), versions, aliases, layers, event source mappings, function URLs (Host-routed invoke) |
-| API Gateway | 105 | REST v1 + HTTP v2: full CRUD, stages, deployments, Lambda/MOCK/HTTP proxy execution, authorizers, API keys       |
+| API Gateway | 106 | REST v1 + HTTP v2: full CRUD, stages, deployments, Lambda/MOCK/HTTP proxy execution, authorizers, API keys       |
 | AppSync     | 82  | Full CRUD, GraphQL execution (NONE/HTTP/Lambda/DynamoDB), CloudFormation/CDK provisioning, merged APIs, Events API, channel namespaces |
 | CloudFront  | 89  | Distribution CRUD, invalidations, OAC/OAI, cache policies, CloudFront Functions, key groups, field-level encrypt |
 | Cognito     | 67  | User Pools + Clients, Users, Auth flows, TOTP MFA, Groups, RS256 JWT + JWKS endpoint                             |
 | EC2 / VPC   | 72  | Instances, VPCs, subnets, security groups, key pairs, route tables, IGWs, VPC peering                            |
-| SNS         | 24  | Topics, subscriptions (SQS/email), Publish/PublishBatch, FilterPolicy message filtering                          |
+| SNS         | 26  | Topics, subscriptions (SQS/email), Publish/PublishBatch, FilterPolicy message filtering                          |
 
 ### Core operations — basic CRUD + common features
 
@@ -47,12 +47,12 @@
 | SES             | 42  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
 | STS             | 11  | GetCallerIdentity, AssumeRole, GetSessionToken, temp credentials                                                                                                                                           |
 | Route 53        | 25  | Hosted zones (default NS/SOA, delegation sets), validated change batches, DNS-order pagination, tags, health checks — inert (no DNS served)                                                                |
+| Step Functions  | 11  | State machine CRUD plus a real ASL interpreter: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real GetExecutionHistory. Executions run synchronously; unsupported ASL fails loudly |
 
 ### Minimal / Stub
 
 | Service        | Ops | Highlights                                                      |
 | -------------- | --- | --------------------------------------------------------------- |
-| Step Functions | 5   | State machine CRUD, StartExecution; **no execution engine yet** |
 | Pipes          | 5   | CreatePipe, DescribePipe, DeletePipe, ListPipes; DDB→SQS only   |
 | WAF v2         | 4   | Web ACL CRUD only                                               |
 | Shield         | 5   | Stub — all ops return 501; satisfies CDK/CF discovery calls     |
@@ -69,12 +69,12 @@
 | SQS             | 21  |
 | DynamoDB        | 19  |
 | Lambda          | 48  |
-| API Gateway     | 105 |
+| API Gateway     | 106 |
 | AppSync         | 82  |
 | CloudFront      | 89  |
 | Cognito         | 67  |
 | EC2 / VPC       | 72  |
-| SNS             | 24  |
+| SNS             | 26  |
 | IAM             | 61  |
 | ECS             | 48  |
 | ECR             | 20  |
@@ -94,7 +94,7 @@
 | SES             | 42  |
 | STS             | 11  |
 | Route 53        | 25  |
-| Step Functions  | 5   |
+| Step Functions  | 11  |
 | Pipes           | 5   |
 | WAF v2          | 4   |
 | Shield          | 5   |
@@ -132,7 +132,7 @@
 Tracked in [GitHub Issues](https://github.com/Neaox/overcast/issues).
 `// TODO(priority:Pn):` comments in code are auto-converted to issues.
 
-- Step Functions execution engine (currently no-op)
+- Step Functions `.waitForTaskToken`, activity tasks and distributed Map (the ASL interpreter landed; these are what it still refuses)
 - API Gateway advanced features (throttle/quota enforcement, cache settings)
 - Lambda `ImageConfig` overrides for container image functions
 - Topology graph enhancements (`internal/router/topology.go`)

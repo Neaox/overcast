@@ -35,6 +35,21 @@ completes to subscribers, matching the behaviour of real SNS.
   E.164 format (e.g. `+12125551234`).
 - Mobile push (`application` protocol) and Kinesis Firehose (`firehose` protocol)
   are not supported and return `400 InvalidParameter` on `Subscribe`.
+- `lambda` subscriptions invoke the function asynchronously with AWS's SNS event —
+  `Records[0].EventSource` is `aws:sns` and the notification sits under
+  `Records[0].Sns`. As on AWS, `RawMessageDelivery` has no effect on a `lambda`
+  subscription: the function always receives the full event.
+- Delivery to `lambda` means Lambda *accepted* the event, exactly as an
+  `InvocationType=Event` invoke returns `202` before the handler runs. A function
+  that is throttled — including one reserved to zero concurrency — is retried
+  inside Lambda and is not a delivery failure, matching AWS. Whether the handler
+  then succeeded is reported against the function, not the subscription.
+- A delivery that fails is not silently discarded. It is logged, published on the
+  event stream as `sns:DeliveryFailed`, and — when the subscription's
+  `RedrivePolicy` names a `deadLetterTargetArn` — written to that SQS queue. For
+  `lambda` that covers a function that does not exist, one that is not in an
+  invokable state, a missing layer version, and a runtime the emulator cannot
+  execute.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -44,7 +59,7 @@ completes to subscribers, matching the behaviour of real SNS.
 | ----------------------------------- | ------------ | -------------- |
 | Topics                              | 5            |                |
 | Subscriptions                       | 7            |                |
-| Publishing                          | 3            |                |
+| Publishing                          | 5            |                |
 | Platform applications (mobile push) |              | 5              |
 | SMS                                 | 1            | 3              |
 
@@ -72,15 +87,17 @@ completes to subscribers, matching the behaviour of real SNS.
 | `ListSubscriptions`         | ✅ Supported |                                                                                                                     | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListSubscriptions.html)         |
 | `ListSubscriptionsByTopic`  | ✅ Supported |                                                                                                                     | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListSubscriptionsByTopic.html)  |
 | `GetSubscriptionAttributes` | ✅ Supported | Returns SubscriptionArn, TopicArn, Protocol, Endpoint, Owner + custom attributes                                    | [docs](https://docs.aws.amazon.com/sns/latest/api/API_GetSubscriptionAttributes.html) |
-| `SetSubscriptionAttributes` | ✅ Supported | Stores any attribute; FilterPolicy used for message filtering                                                       | [docs](https://docs.aws.amazon.com/sns/latest/api/API_SetSubscriptionAttributes.html) |
+| `SetSubscriptionAttributes` | ✅ Supported | Stores any attribute; FilterPolicy drives message filtering, RedrivePolicy the subscription dead-letter queue       | [docs](https://docs.aws.amazon.com/sns/latest/api/API_SetSubscriptionAttributes.html) |
 
 ### Publishing
 
-| Operation                                        | Status       | Notes                                                                                | AWS Docs                                                                     |
-| ------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `Publish`                                        | ✅ Supported | Async fan-out to `sqs`, `email`, `email-json`, and `sms` subscribers                 | [docs](https://docs.aws.amazon.com/sns/latest/api/API_Publish.html)          |
-| `PublishBatch`                                   | ✅ Supported | Up to 10 messages                                                                    | [docs](https://docs.aws.amazon.com/sns/latest/api/API_PublishBatch.html)     |
-| `Message filtering (subscription filter policy)` | ✅ Supported | String/Number attribute value matching via FilterPolicy on SetSubscriptionAttributes | [docs](https://docs.aws.amazon.com/sns/latest/dg/sns-message-filtering.html) |
+| Operation                                        | Status       | Notes                                                                                                                                                  | AWS Docs                                                                        |
+| ------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `Publish`                                        | ✅ Supported | Async fan-out to `sqs`, `lambda`, `email`, `email-json`, `http`, `https`, and `sms` subscribers                                                        | [docs](https://docs.aws.amazon.com/sns/latest/api/API_Publish.html)             |
+| `PublishBatch`                                   | ✅ Supported | Up to 10 messages                                                                                                                                      | [docs](https://docs.aws.amazon.com/sns/latest/api/API_PublishBatch.html)        |
+| `Message filtering (subscription filter policy)` | ✅ Supported | String/Number attribute value matching via FilterPolicy on SetSubscriptionAttributes                                                                   | [docs](https://docs.aws.amazon.com/sns/latest/dg/sns-message-filtering.html)    |
+| `Lambda subscription delivery`                   | ✅ Supported | Publish invokes the subscribed function asynchronously with the AWS `Records[].Sns` event; RawMessageDelivery does not apply to `lambda`, matching AWS | [docs](https://docs.aws.amazon.com/sns/latest/dg/sns-lambda-as-subscriber.html) |
+| `Subscription dead-letter queue (RedrivePolicy)` | ✅ Supported | A delivery that fails is redirected to the SQS queue named by the subscription's RedrivePolicy                                                         | [docs](https://docs.aws.amazon.com/sns/latest/dg/sns-dead-letter-queues.html)   |
 
 ### Platform applications (mobile push)
 

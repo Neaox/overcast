@@ -58,6 +58,7 @@ from groups import (
     stepfunctions,
     waf,
     shield,
+    efs,
 )
 
 SUITE = "python-sdk"
@@ -103,6 +104,7 @@ _modules = [
     stepfunctions,
     waf,
     shield,
+    efs,
 ]
 
 all_impls: dict = {}

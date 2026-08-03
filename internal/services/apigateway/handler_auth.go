@@ -14,8 +14,23 @@ package apigateway
 // integrations (e.g. Lambda invoker) in this package.
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/Neaox/overcast/internal/events"
+)
+
+// API Gateway error-type header values for the two 429 gateway responses.
+// Both are HTTP 429, but they are distinct conditions: a throttle clears on
+// its own within a second, an exhausted quota does not clear until the period
+// rolls over.
+const (
+	throttledErrorType     = "TooManyRequestsException"
+	quotaExceededErrorType = "LimitExceededException"
 )
 
 // checkRestCognitoAuthorizer enforces the COGNITO_USER_POOLS authorizer for a
@@ -146,7 +161,105 @@ func (h *Handler) checkAPIKey(w http.ResponseWriter, r *http.Request, apiID, sta
 		return false
 	}
 
-	return true
+	return h.checkUsageLimits(w, r, plan, key, apiID, stageName)
+}
+
+// checkUsageLimits measures the request against its usage plan's throttle and
+// quota limits and, only when enforcement is switched on, rejects it with the
+// matching API Gateway gateway response.
+//
+// It adds no store reads: the plan and key were already resolved by the API
+// key check that calls it, and all accounting is in memory.
+func (h *Handler) checkUsageLimits(
+	w http.ResponseWriter, r *http.Request,
+	plan *UsagePlan, key *APIKey, apiID, stageName string,
+) bool {
+	enforce := h.enforceThrottle()
+	now := h.clk.Now()
+	d := h.usage.record(usageKey{planID: plan.ID, keyID: key.ID}, plan, now, enforce)
+	if d.Reason == reasonNone {
+		return true
+	}
+
+	h.reportThrottle(r, now, plan, key, apiID, stageName, d, enforce)
+	if !enforce {
+		// Report-only: the limit is recorded and published, but the request
+		// is served exactly as it would be with no usage plan attached.
+		return true
+	}
+
+	switch d.Reason {
+	case reasonQuota:
+		writeThrottleError(w, quotaExceededErrorType, "Limit Exceeded")
+	case reasonThrottle:
+		writeThrottleError(w, throttledErrorType, "Too Many Requests")
+	case reasonNone:
+		// Unreachable: reasonNone returned above. Serve the request rather
+		// than inventing a rejection if that ever stops holding.
+		return true
+	}
+	return false
+}
+
+// reportThrottle records a limit breach on the log and the event bus so that a
+// 429 (or a would-be 429) is distinguishable from an application error. The
+// notification is coalesced to one per (plan, key) per second; the cumulative
+// counters in the payload stay exact.
+func (h *Handler) reportThrottle(
+	r *http.Request, now time.Time,
+	plan *UsagePlan, key *APIKey, apiID, stageName string,
+	d usageDecision, enforced bool,
+) {
+	if !h.usage.shouldReport(usageKey{planID: plan.ID, keyID: key.ID}, now) {
+		return
+	}
+
+	h.log.Warn("usage plan limit reached",
+		zap.String("reason", string(d.Reason)),
+		zap.Bool("enforced", enforced),
+		zap.String("usage_plan_id", plan.ID),
+		zap.String("api_key_id", key.ID),
+		zap.String("api_id", apiID),
+		zap.String("stage", stageName),
+		zap.Int64("used", d.Used),
+		zap.Int64("remaining", d.Remaining),
+	)
+
+	if h.bus == nil {
+		return
+	}
+	h.bus.Publish(r.Context(), events.Event{
+		Type:   events.APIGatewayThrottled,
+		Time:   now,
+		Source: serviceName,
+		Payload: events.APIGatewayThrottlePayload{
+			UsagePlanID:   plan.ID,
+			UsagePlanName: plan.Name,
+			APIKeyID:      key.ID,
+			APIKeyName:    key.Name,
+			APIID:         apiID,
+			Stage:         stageName,
+			Reason:        string(d.Reason),
+			Enforced:      enforced,
+			Used:          d.Used,
+			Remaining:     d.Remaining,
+			Throttles:     d.Throttles,
+			QuotaRejects:  d.QuotaRejects,
+		},
+	})
+}
+
+// writeThrottleError writes API Gateway's 429 gateway response. AWS sends the
+// exception name in x-amzn-ErrorType and the human message in a JSON body with
+// a single `message` field — the same envelope as the 403 responses above.
+func writeThrottleError(w http.ResponseWriter, errorType, message string) {
+	w.Header().Set("x-amzn-ErrorType", errorType)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	body, _ := json.Marshal(struct {
+		Message string `json:"message"`
+	}{Message: message})
+	_, _ = w.Write(body)
 }
 
 // extractIdentitySourceToken extracts the bearer token from the request using

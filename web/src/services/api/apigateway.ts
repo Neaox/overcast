@@ -33,6 +33,7 @@ import {
   CreateUsagePlanKeyCommand,
   GetUsagePlanKeysCommand,
   DeleteUsagePlanKeyCommand,
+  GetUsageCommand,
   type EndpointType,
   type IntegrationType as RestIntegrationType,
   type AuthorizerType as RestAuthorizerType,
@@ -98,6 +99,19 @@ export interface UsagePlan {
   name: string
   description?: string
   apiStages?: { apiId: string; stage: string }[]
+  /** Token bucket: rateLimit is the refill per second, burstLimit the capacity. */
+  throttle?: { rateLimit?: number; burstLimit?: number }
+  quota?: { limit?: number; offset?: number; period?: string }
+}
+
+/**
+ * One API key's usage over the requested window — a daily `[used, remaining]`
+ * log in date order. `remaining` is -1 when the plan configures no quota, and
+ * can go negative when a limit was exceeded but not enforced.
+ */
+export interface UsageByKey {
+  keyId: string
+  days: { used: number; remaining: number }[]
 }
 
 export interface UsagePlanKey {
@@ -569,6 +583,12 @@ export const apigateway = {
       apiStages: (p.apiStages ?? [])
         .filter((s) => s.apiId && s.stage)
         .map((s) => ({ apiId: s.apiId as string, stage: s.stage as string })),
+      throttle: p.throttle
+        ? { rateLimit: p.throttle.rateLimit, burstLimit: p.throttle.burstLimit }
+        : undefined,
+      quota: p.quota
+        ? { limit: p.quota.limit, offset: p.quota.offset, period: p.quota.period }
+        : undefined,
     }))
   },
 
@@ -617,6 +637,22 @@ export const apigateway = {
     await awsClients
       .apigateway()
       .send(new DeleteUsagePlanKeyCommand({ usagePlanId: planId, keyId }))
+  },
+
+  /**
+   * Reads a usage plan's [used, remaining] counters for the given inclusive
+   * date range (YYYY-MM-DD). Overcast measures these on every request that
+   * presents an API key, whether or not throttle enforcement is switched on.
+   */
+  getUsage: async (planId: string, startDate: string, endDate: string): Promise<UsageByKey[]> => {
+    const res = await awsClients
+      .apigateway()
+      .send(new GetUsageCommand({ usagePlanId: planId, startDate, endDate }))
+    return Object.entries(res.items ?? {}).map(([keyId, days]) => ({
+      keyId,
+      // Each daily entry is AWS's [used, remaining] pair.
+      days: days.map((pair) => ({ used: pair[0], remaining: pair[1] })),
+    }))
   },
 
   // ─── HTTP v2 Authorizers ────────────────────────────────────────────────

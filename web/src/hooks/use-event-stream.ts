@@ -437,6 +437,9 @@ function getEventQueryMap(): Record<string, QueryKey[] | undefined> {
     [EventType.apigateway.HttpApiCreated]: [apigwKeys.httpApis(), topologyKey],
     [EventType.apigateway.HttpApiDeleted]: [apigwKeys.httpApis(), topologyKey],
     [EventType.apigateway.Deployed]: [apigwKeys.all()],
+    // Reaching a limit moves the per-key usage counters the Usage Plans page
+    // reads back, which hang off the plan key rather than the plan list.
+    [EventType.apigateway.Throttled]: [apigwKeys.all()],
 
     // ── AppSync ───────────────────────────────────────────────────────────
     [EventType.appsync.ApiCreated]: [appsyncKeys.apis(), topologyKey],

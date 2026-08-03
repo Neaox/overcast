@@ -6,6 +6,11 @@ import (
 	"github.com/Neaox/overcast/internal/protocol/op"
 )
 
+// TestTypedOps_matchLegacyOperationRegistry checks the two dispatch tables
+// describe the same operation set, so CBOR and JSON callers always reach the
+// same behaviour — and so cmd/capgen, which reads the legacy map, sees every
+// operation the service serves. Execution-plane operations satisfy this through
+// typedJSONHandler rather than a second implementation.
 func TestTypedOps_matchLegacyOperationRegistry(t *testing.T) {
 	h := &Handler{}
 	h.initOps()

@@ -38,14 +38,14 @@ concentrated in exactly five services that are Tier 1 end-to-end — see §5.3.
 
 | # | Item | Current tier | One-line why |
 |---|------|---------------|---------------|
-| 1 | EventBridge Rules target fan-out (Lambda/SNS/Step Functions/Kinesis/Firehose) | Core, delivery gap | `PutEvents`/`PutTargets` only deliver to SQS + scheduled ECS today ([eventbridge/service.go](../../internal/services/eventbridge/service.go)) — the single most common CDK pattern (`rule.addTarget(new targets.LambdaFunction(fn))`) silently no-ops |
-| 2 | SNS → Lambda delivery | Comprehensive, silent gap | `Subscribe` accepts protocol `lambda` but `Publish`'s fan-out switch has no `case "lambda"` ([sns/handler_publish.go:260-383](../../internal/services/sns/handler_publish.go)) — subscriptions that AWS would deliver are silently dropped |
-| 3 | Step Functions execution engine | Minimal-stub | `StartExecution` records the call and immediately marks it `SUCCEEDED` ([stepfunctions/handler.go:224](../../internal/services/stepfunctions/handler.go)) — zero of the ASL is interpreted; blocks every workflow-shaped local architecture |
+| 1 | EventBridge Rules target fan-out (Lambda/SNS/Step Functions/Kinesis/Firehose) | **Comprehensive — done 2026-08-03 (#467)** | Was: `PutEvents`/`PutTargets` only delivered to SQS + scheduled ECS, so the single most common CDK pattern (`rule.addTarget(new targets.LambdaFunction(fn))`) silently no-oped. Now fans out to all six sink types through [internal/eventtarget](../../internal/eventtarget) |
+| 2 | SNS → Lambda delivery — **done 2026-08-03 (#468)** | Comprehensive | `Publish`'s fan-out switch now has a `case "lambda"` that invokes the function with AWS's `Records[].Sns` event; failed deliveries dead-letter via `RedrivePolicy` instead of vanishing ([sns/handler_publish.go](../../internal/services/sns/handler_publish.go)) |
+| 3 | ~~Step Functions execution engine~~ **DONE 2026-08-03 (#469)** | ~~Minimal-stub~~ → Core | The ASL interpreter landed: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real `GetExecutionHistory`. Unsupported ASL fails loudly with `States.Runtime` |
 | 4 | IAM policy evaluation | Core, no enforcement | `SimulatePrincipalPolicy` "Always returns allowed — no enforcement engine" ([iam/handler.go:1952](../../internal/services/iam/handler.go)) — no local signal for the single most common real-AWS failure mode (`AccessDenied`) |
 | 5 | S3 lifecycle rules | Comprehensive, stub gap | `Get/Put/DeleteBucketLifecycleConfiguration` are pure 501s ([s3 capability rows](../../internal/capabilities/all.gen.go)) despite being a default CDK bucket option (`autoDeleteObjects`, log/backup buckets) |
 | 6 | CloudWatch Alarms auto-evaluation | Core, manual-only | `SetAlarmState` is documented "Manually sets the state" — no loop evaluates `PutMetricData` against a `PutMetricAlarm` threshold; alarms never fire on their own |
 | 7 | Auto Scaling real reconciliation | Tier 1 (fully inert — 19/19 ops `StatusInert`) | Desired-capacity CRUD only; no instance launch/terminate loop against the existing EC2 service; pairs with #6 for alarm-driven scaling |
-| 8 | API Gateway usage-plan throttle/quota enforcement | Comprehensive, stub gap | Stored but never enforced — `store.go:250` carries a literal `// TODO(priority:P3): enforce throttle limits at request time` |
+| 8 | API Gateway usage-plan throttle/quota enforcement — **done 2026-08-03 (#472)** | Comprehensive, complete | Throttle and quota are now measured per (plan, API key) and readable through `GetUsage`; rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off |
 | 9 | Secrets Manager rotation + resource policies | Core (14/21 ops Supported) | `RotateSecret` is "Config only (no Lambda invocation)" and all four resource-policy ops are 501 stubs — rotation is the headline Secrets Manager feature |
 | 10 | Pipes: sources/targets beyond DDB→SQS | Minimal-stub | Hard-coded to "only the DynamoDB Streams → SQS path" ([pipes/service.go:3-5](../../internal/services/pipes/service.go)); sequenced after #1 because it needs the same target-delivery code EventBridge Rules needs |
 
@@ -107,7 +107,8 @@ Two shapes of "worse than inert" recur across this backlog and are called out wh
    responses it didn't get before, for reasons that may not even match what real AWS would decide (the
    evaluator is necessarily a subset of AWS's). DoD for all three: ship policy/limit *evaluation and
    reporting* first (what would happen), gate actual enforcement behind an explicit opt-in flag, default
-   OFF.
+   OFF. This rule is absolute and outranks any per-item argument that a narrower activation condition
+   makes a flag unnecessary — see §3 item 6, where that argument was made and rejected.
 2. **Partial protocol behavior that looks complete.** A Step Functions engine that handles `Task`/`Pass`/
    `Choice` but silently no-ops on `Map`/`Parallel`/`.sync` integrations is worse than today's honest
    immediate-`SUCCEEDED` stub, because it invites an application to depend on control flow that doesn't
@@ -126,9 +127,16 @@ is applied — shown here as the pre-inversion S/M/L/XL and risk label for reada
 The theme: Overcast can create every resource in an event-driven or workflow architecture, but roughly a
 third of the *wiring* between them is a no-op. This wave is "make what's already provisioned actually run."
 
-**1. EventBridge Rules target fan-out** — Core → Comprehensive
+**1. EventBridge Rules target fan-out** — Core → Comprehensive — **done 2026-08-03 (#467)**
 Score: usage 5, leverage 5, fit 5, cost M, dep-ready 5, risk low → **highest in the backlog**.
-Current state: `PutTargets`/`PutEvents` deliver to SQS targets and scheduled ECS task targets only
+Status: shipped. `PutEvents` now fans matched events out to Lambda, SNS, Step Functions, Kinesis and
+Firehose as well as SQS; `PutTargets` validates every target synchronously and rejects one it cannot
+deliver to (§2.1); `InputPath`/`InputTransformer` apply before delivery; `RetryPolicy`/`DeadLetterConfig`
+are honoured. The reusable dispatch seam is [internal/eventtarget](../../internal/eventtarget) —
+`Classify` for ARN → target type and `Dispatcher.Deliver` for the sinks, which item 4 (Pipes) reuses
+rather than rebuilding. Delivery outcomes are surfaced on the web console's bus view.
+Historical current state (for the reasoning below): `PutTargets`/`PutEvents` delivered to SQS targets
+and scheduled ECS task targets only
 ([eventbridge/capabilities_dev.go](../../internal/services/eventbridge/capabilities_dev.go) notes on
 `PutEvents`: "delivers matching rules to SQS targets"). Real EventBridge has ~20 target types; the ones
 that matter for a local dev loop are Lambda, SNS, Step Functions, Kinesis, and Firehose — all Tier-2 or
@@ -151,25 +159,67 @@ Definition of done:
 Dependencies: none blocking — Lambda, SNS, SQS are all Comprehensive; Step Functions execution (this same
 wave, item 3) should land first or concurrently so the Step-Functions target type has somewhere real to go.
 
-**2. SNS → Lambda delivery** — bug-fix sized, ships independently and first
+**2. SNS → Lambda delivery** — **done, 2026-08-03** (issue #468)
 Score: usage 4, leverage 3, fit 5, cost S, dep-ready 5, risk low.
-This is not a new tier, it's closing a hole in an already-Comprehensive service: `Subscribe` documents and
-accepts protocol `lambda` but `Publish`'s delivery switch
-([sns/handler_publish.go:260-383](../../internal/services/sns/handler_publish.go)) has no case for it, so
-messages are silently dropped rather than erroring — the worst possible failure mode (§2.1 shape 2, even
-though this isn't new work, the existing behavior already violates the principle). Fix: add a `case
-"lambda"` that does an async `Invoke` against the subscribed function, matching the SNS event payload shape
-Lambda expects (`Records[].Sns`). Cheap, ships as a standalone patch, doesn't need to wait for Wave 1 item 1.
+This was not a new tier, it was closing a hole in an already-Comprehensive service: `Subscribe` documented
+and accepted protocol `lambda` but `Publish`'s delivery switch had no case for it, so messages were
+silently dropped rather than erroring — the worst possible failure mode (§2.1 shape 2, even though this
+wasn't new work, the existing behavior already violated the principle).
+Shipped in [sns/handler_publish.go](../../internal/services/sns/handler_publish.go):
+- `case "lambda"` invokes the subscribed function asynchronously via the new
+  `events.FunctionEventInvoker`, which reports the outcome real Lambda's `InvocationType=Event` call
+  reports synchronously (missing function, non-invokable state).
+  Amended 2026-08-03: `InvokeEvent` originally ran the function inline on the caller's goroutine and
+  returned a throttle to it, so SNS spawned a goroutine of its own to keep a cold start off the fan-out
+  path, and a reserved-concurrency throttle dead-lettered a notification AWS would have retried. It is now
+  a true accept — it validates, records the invocation, and hands execution to the same
+  `acquireForAsync` + `asyncWg` + `invokeAsync` machinery the HTTP `InvocationType=Event` path uses — so
+  the throttle is retried internally, the cold start is off the caller's goroutine without SNS spawning
+  anything, and the two async-invoke paths are one implementation.
+- The payload is AWS's SNS event byte-for-byte, including the `SigningCertUrl`/`UnsubscribeUrl` spelling
+  that differs from the SQS/HTTP notification envelope, a `null` `Subject` when none was published, and
+  `MessageAttributes` as `{Type, Value}` pairs. `RawMessageDelivery` is deliberately not applied — AWS
+  does not support it for `lambda`.
+- A failed delivery is logged, published as `sns:DeliveryFailed`, and redirected to the subscription's
+  `RedrivePolicy` dead-letter queue. This applies to every protocol in the switch, not just `lambda`.
+- The switch grew a `default` that reports an undeliverable protocol the same way, so §2.1 shape 2 cannot
+  recur here silently.
+- Notification `Timestamp` now uses AWS's millisecond form (`2012-04-25T21:49:25.719Z`) instead of
+  RFC3339Nano, for every protocol.
+Web UI: the topic detail view shows each subscription's live delivery state, and `lambda` moved out of the
+subscribe dialog's "Not yet implemented" group.
+Not covered: no compat group was added — no operation changed (`Publish`/`Subscribe` are already covered by
+`sns-publish`/`sns-subscriptions`), and a black-box SNS→Lambda assertion needs Docker, so the group could
+only ever record `skip` in CI while costing an implementation in every uniform suite.
 
-**3. Step Functions execution engine** — Minimal-stub → Core
+**3. Step Functions execution engine** — Minimal-stub → Core — **DONE 2026-08-03 (#469)**
 Score: usage 4, leverage 5, fit 4, cost XL, dep-ready 4, risk medium (see §2.1 shape 2) → **second-highest
 by leverage, held back only by cost**.
-Current state: `CreateStateMachine`/`DescribeStateMachine`/`ListStateMachines`/`DeleteStateMachine` are
-real CRUD; `StartExecution` records an execution row and sets it `SUCCEEDED` immediately
-([stepfunctions/handler.go:224](../../internal/services/stepfunctions/handler.go),
-[typed_logic.go:179](../../internal/services/stepfunctions/typed_logic.go)) — no ASL is parsed or run, so
-`DescribeExecution`, `GetExecutionHistory`, and any test asserting on execution output are all fiction
-today.
+Current state (as shipped): a real Amazon States Language interpreter runs inside `StartExecution`. All
+eight state types are interpreted, with `Retry`/`Catch`, the full Choice operator set, the `$$` context
+object, the input/output pipeline (`InputPath`/`Parameters`/`ResultSelector`/`ResultPath`/`OutputPath`), and
+optimized Task integrations for Lambda (function ARN and `lambda:invoke`), `sqs:sendMessage`,
+`sns:publish`, `dynamodb:putItem`/`getItem`/`updateItem`, and `states:startExecution` (+ `.sync`/`.sync:2`).
+`DescribeExecution`, `GetExecutionHistory`, `ListExecutions`, `StopExecution`,
+`DescribeStateMachineForExecution` and `StartSyncExecution` all report what really ran. Task states
+dispatch through Overcast's own router, so a workflow step runs the same handler an SDK call would.
+Per §2.1, everything **not** interpreted — `.waitForTaskToken`, activity tasks, `aws-sdk:` integrations,
+distributed Map / `ItemReader` / `ItemBatcher` / `ResultWriter`, JSONata, unsupported intrinsics, JSONPath
+wildcards — fails the execution with `States.Runtime` and a cause naming the feature. `States.Runtime` is
+neither retriable nor catchable (matching AWS), so a `Catch` on `States.ALL` cannot turn an Overcast gap
+back into a silent pass-through.
+Execution model matches AWS: `StartExecution` accepts and returns while the execution is `RUNNING`, the
+interpreter runs on a goroutine tracked for shutdown, `DescribeExecution`/`GetExecutionHistory` observe it
+progressing, and `StopExecution` really interrupts it (`ABORTED`). `StartSyncExecution` and
+`states:startExecution.sync`/`.sync:2` are the synchronous paths, which is their AWS semantic. This matters
+beyond Step Functions: EventBridge (item 1) and Pipes (item 4) dispatch targets synchronously through the
+root router, so a blocking `StartExecution` would have coupled `PutEvents` latency to workflow duration.
+`OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` (default 15m) is a runaway guard rather than a request timeout,
+so ordinary `Wait` states are unaffected; exceeding it is `States.Timeout`/`TIMED_OUT`. Web UI shipped with
+the behaviour: executions list per state machine, execution detail with the state history, and the loud
+failure reason surfaced.
+Still open, tracked separately: `.waitForTaskToken` (needs `SendTaskSuccess`/`SendTaskFailure`/
+`SendTaskHeartbeat`), activity tasks, distributed Map.
 Definition of done (staged, not all-or-nothing — land Standard/synchronous first):
 - ASL parser for the standard state types: `Pass`, `Task`, `Choice`, `Wait`, `Succeed`, `Fail`, `Parallel`,
   `Map` (inline `ItemsPath` iteration; `ItemProcessor`/distributed map is Wave-4-or-later scope).
@@ -184,17 +234,22 @@ Definition of done (staged, not all-or-nothing — land Standard/synchronous fir
 - Retry/Catch fields on `Task` states honored (this is most of what makes Step Functions worth testing
   locally — failure-handling logic that's otherwise untestable without hitting real AWS and inducing a
   real failure).
-- Execution runs synchronously in-process on `StartExecution` initially (matches the existing single-node,
-  deterministic-clock architecture) — `StartSyncExecution` for Express workflows can reuse the same
-  interpreter directly.
+- Execution runs in-process on `StartExecution` — **shipped asynchronously rather than synchronously as
+  this DoD originally sketched**: the interpreter runs on a tracked goroutine so `StartExecution` returns
+  while the execution is `RUNNING`, matching AWS and keeping workflow duration off the request path for
+  EventBridge/Pipes target dispatch. `StartSyncExecution` (Express) reuses the same interpreter directly and
+  is the synchronous path.
 Dependencies: none hard-blocking, but Task integrations are only as good as the target services — this is
 why the item sits in the same wave as EventBridge fan-out (both need "invoke Lambda/SQS/SNS/DynamoDB from
 inside an event/workflow handler," which is worth building once, shared).
 
 **4. Pipes: sources/targets beyond DynamoDB Streams→SQS** — Minimal-stub → Core
-Score: usage 2, leverage 3, fit 4, cost M, dep-ready 3 (waits on item 1), risk low. Sequenced last in this
-wave specifically because it shares the target-dispatch code Wave 1 item 1 builds for EventBridge Rules —
-building it twice is the wrong order. Definition of done: Kinesis stream and SQS queue as additional
+Score: usage 2, leverage 3, fit 4, cost M, dep-ready 3 (**unblocked as of 2026-08-03**), risk low.
+Sequenced last in this wave specifically because it shares the target-dispatch code Wave 1 item 1 builds
+for EventBridge Rules — building it twice is the wrong order. That code now exists as
+[internal/eventtarget](../../internal/eventtarget): `Classify` resolves an ARN to a target type,
+`Dispatcher.Deliver` reaches the Lambda/SQS/SNS/Step Functions/Kinesis/Firehose sinks, and
+`InputTransformer`/`SelectPath` cover the input shaping Pipes needs too. Definition of done: Kinesis stream and SQS queue as additional
 sources; Lambda, Step Functions, and EventBridge bus as additional targets; enrichment step (optional
 Lambda invoke between source and target).
 
@@ -225,13 +280,33 @@ Definition of done:
 Dependencies: none blocking; this is additive to every other service and doesn't need any of them to change.
 
 **6. API Gateway usage-plan throttle/quota enforcement** — Comprehensive, stub gap → Comprehensive, complete
+**Status: done, 2026-08-03 (#472).**
 Score: usage 3, leverage 2, fit 3, cost S, dep-ready 5, risk medium (§2.1 shape 1, smaller blast radius than
 IAM since it's scoped to API Gateway only).
-Definition of done: `store.go`'s `ThrottleSettings`/quota are read at request time in
-`ExecuteRestAPI`/`ExecuteV2API`; over-limit requests get AWS's `429 TooManyRequestsException`; default
-behavior unchanged unless a usage plan with a throttle/quota is actually attached to the calling API key
-(i.e., this is opt-in by construction — no flag needed, since the enforcement only activates on resources
-the user explicitly configured a limit for).
+Definition of done: `store.go`'s `ThrottleSettings`/quota are read at request time in `ExecuteRestAPI`;
+over-limit requests get AWS's `429`; default behavior unchanged unless the operator opts in.
+What shipped ([internal/services/apigateway/usage.go](../../internal/services/apigateway/usage.go)):
+- A per-(usage plan, API key) token bucket (`rateLimit` refill, `burstLimit` capacity) and a
+  calendar-aligned quota window (`DAY`/`WEEK`/`MONTH`, `offset` applied to the first period only), both
+  driven by the injected `clock.Clock` and held in memory — the request path takes no extra store read.
+  The hook is inside the existing API-key check, which had already resolved the key and the plan.
+- Measurement always runs and is observable: `GetUsage` (a new operation) returns AWS's daily
+  `[used, remaining]` log per key, a limit publishes an `apigateway:Throttled` bus event, and the web UI's
+  Usage Plans page shows the configured rate/burst/quota, today's per-key usage, and a live feed of limits
+  being reached.
+- **Rejection is behind `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE`, default off**, per §2.1 shape 1. The
+  original DoD argued no flag was needed because enforcement only activates on explicitly-configured
+  plans; that argument was rejected on review, because a CDK stack that already declares a throttle would
+  have started receiving `429`s it never used to. The by-construction narrowing was kept *as well*: a plan
+  with neither a throttle nor a quota never rejects anything even with the flag on.
+- Enforced rejections use the two distinct API Gateway gateway responses: `THROTTLED` →
+  `TooManyRequestsException` / `Too Many Requests`, `QUOTA_EXCEEDED` → `LimitExceededException` /
+  `Limit Exceeded`. A rejected request consumes neither quota nor a token, as on AWS.
+- `ExecuteV2API` is deliberately untouched: HTTP APIs have no API-key or usage-plan concept on real AWS,
+  so there is nothing to read there and inventing it would be a divergence.
+Known gaps, recorded rather than hidden: usage counters are in-memory and reset on restart (real AWS keeps
+them for the whole quota period), and stage- and method-level throttle overrides inside a usage plan are
+not evaluated — only the plan-level `throttle`.
 
 **7. CloudWatch Alarms auto-evaluation** — Core, manual-only → Core, complete
 Score: usage 3, leverage 3 (mostly valuable as a dependency for item 8), fit 4, cost M, dep-ready 4, risk
@@ -391,8 +466,11 @@ and the handlers themselves rather than trusted. Findings:
    [pipes/service.go:3-5](../../internal/services/pipes/service.go)'s own doc comment.
 4. **IAM's "no enforcement" claim (STATUS.md line 32) is accurate** — confirmed in
    [iam/handler.go:1952](../../internal/services/iam/handler.go).
-5. **Step Functions' "no execution engine yet" (STATUS.md line 55) is accurate** — confirmed in
-   [stepfunctions/handler.go:224](../../internal/services/stepfunctions/handler.go).
+5. **Step Functions' "no execution engine yet" (STATUS.md line 55) was accurate at audit time** —
+   confirmed in `stepfunctions/handler.go` as it then stood. **Superseded 2026-08-03 by #469**: the ASL
+   interpreter shipped, STATUS.md was moved to the Core table in the same commit, and
+   [internal/services/stepfunctions/interpreter.go](../../internal/services/stepfunctions/interpreter.go)
+   is now the authority.
 6. **A claim this plan initially suspected but disproved**: S3 presigned URLs are *not* a gap.
    Query-string SigV4 auth (`X-Amz-Signature`) is handled generically for every service in
    [internal/middleware/sigv4.go](../../internal/middleware/sigv4.go), not per-service — presigned

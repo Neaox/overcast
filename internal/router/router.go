@@ -499,8 +499,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	rdsSvc.SetVPCResolver(ec2Svc)
 	// SNS: wire lifecycle/publish events for topology / UI.
 	snsSvc.InitBus(bus)
-	// SNS → SQS: wire enqueuer for Publish fan-out.
+	// SNS → SQS: wire enqueuer for Publish fan-out (and subscription DLQs).
 	snsSvc.InitSQSDelivery(sqsSvc.Enqueuer())
+	// SNS → Lambda: wire the invoker for lambda-protocol subscriptions.
+	snsSvc.InitLambdaDelivery(lambdaSvc.Invoker())
 	// SNS/SES → email: wire SMTP mailer. The mock capture server (if enabled) is
 	// started as a background goroutine; its lifecycle is tied to the process.
 	mailStore := smtp.NewMailStore(cfg.SMTPInboxMax)
@@ -615,8 +617,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// EventBridge: wire bus for bus/rule lifecycle events.
 	ebSvc.InitBus(bus)
 	ebSvc.InitRouter(r)
-	// Step Functions: wire bus for state machine/execution lifecycle events.
+	// Step Functions: wire bus for state machine/execution lifecycle events,
+	// plus the root router so Task states reach Lambda/SQS/SNS/DynamoDB
+	// through the same handlers an SDK call would.
 	sfnSvc.InitBus(bus)
+	sfnSvc.InitRouter(r)
 	// AppSync: wire bus for API lifecycle events.
 	appsyncSvc.InitBus(bus)
 	appsyncSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
@@ -669,10 +674,15 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		dockerServices["eks"] = docker.ServiceConfig{Name: "eks", Socket: cfg.EKSDockerSocket, Network: cfg.EKSNetwork}
 		dockerSetters["eks"] = eksSvc.SetDocker
 	}
-	// EFS live mode manages named volumes only — empty Network skips static
+	// EFS live mode manages named volumes; without the opt-in NFS data plane
+	// it starts no long-lived containers, so an empty Network skips static
 	// network creation in the Supervisor probe.
 	if cfg.EFSMode == config.EFSModeLive && cfg.EFSDockerSocket != "" {
-		dockerServices["efs"] = docker.ServiceConfig{Name: "efs", Socket: cfg.EFSDockerSocket, Network: ""}
+		efsNetwork := ""
+		if cfg.EFSNFSExport {
+			efsNetwork = cfg.EFSNetwork
+		}
+		dockerServices["efs"] = docker.ServiceConfig{Name: "efs", Socket: cfg.EFSDockerSocket, Network: efsNetwork}
 		dockerSetters["efs"] = efsSvc.SetDocker
 	}
 	if len(dockerServices) > 0 {

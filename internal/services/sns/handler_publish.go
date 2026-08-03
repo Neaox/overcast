@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -39,6 +38,96 @@ type snsNotificationEnvelope struct {
 	Signature        string `json:"Signature"`
 	SigningCertURL   string `json:"SigningCertURL"`
 	UnsubscribeURL   string `json:"UnsubscribeURL"`
+}
+
+// snsTimestampFormat is the notification timestamp form real SNS emits:
+// RFC3339 with millisecond precision and a literal Z (e.g.
+// "2012-04-25T21:49:25.719Z"). The trailing Z is a literal because every
+// timestamp is formatted from a UTC time.
+const snsTimestampFormat = "2006-01-02T15:04:05.000Z"
+
+// messageAttribute is one SNS message attribute as subscribers see it. The
+// field names and casing are AWS's: this is exactly the shape that appears
+// under `Sns.MessageAttributes` in the event delivered to a Lambda function.
+type messageAttribute struct {
+	Type  string `json:"Type"`
+	Value string `json:"Value"`
+}
+
+// ---- SNS → Lambda event shape ----------------------------------------------
+//
+// The event delivered to a lambda-protocol subscriber is AWS's SNS event, not
+// the notification envelope SQS and HTTP subscribers receive. The two differ in
+// more than nesting: the Lambda event spells the two URL fields "SigningCertUrl"
+// and "UnsubscribeUrl", where the envelope spells them "SigningCertURL" and
+// "UnsubscribeURL". Handlers written against aws-lambda-go's events.SNSEvent
+// (or any of the other SDKs' equivalents) depend on that casing, so it is
+// reproduced exactly rather than unified with the envelope above.
+//
+// RawMessageDelivery does not apply here. AWS supports it for SQS, HTTP/S,
+// Firehose and platform-application endpoints only; a Lambda subscriber always
+// receives the full Records[].Sns event.
+
+type snsLambdaEvent struct {
+	Records []snsLambdaEventRecord `json:"Records"`
+}
+
+type snsLambdaEventRecord struct {
+	EventVersion         string          `json:"EventVersion"`
+	EventSubscriptionArn string          `json:"EventSubscriptionArn"`
+	EventSource          string          `json:"EventSource"`
+	SNS                  snsLambdaEntity `json:"Sns"`
+}
+
+type snsLambdaEntity struct {
+	Type      string `json:"Type"`
+	MessageId string `json:"MessageId"`
+	TopicArn  string `json:"TopicArn"`
+	// Subject is a pointer so that a message published without one serialises
+	// as JSON null, which is what AWS sends.
+	Subject           *string                     `json:"Subject"`
+	Message           string                      `json:"Message"`
+	Timestamp         string                      `json:"Timestamp"`
+	SignatureVersion  string                      `json:"SignatureVersion"`
+	Signature         string                      `json:"Signature"`
+	SigningCertURL    string                      `json:"SigningCertUrl"`
+	UnsubscribeURL    string                      `json:"UnsubscribeUrl"`
+	MessageAttributes map[string]messageAttribute `json:"MessageAttributes"`
+}
+
+// buildLambdaEvent renders the AWS SNS event for one subscription. env is the
+// per-subscription notification envelope (UnsubscribeURL already filled in).
+func buildLambdaEvent(env snsNotificationEnvelope, subARN string, msgAttrs map[string]messageAttribute) ([]byte, error) {
+	var subject *string
+	if env.Subject != "" {
+		s := env.Subject
+		subject = &s
+	}
+	// AWS always sends the key, as an empty object when there are no attributes.
+	attrs := msgAttrs
+	if attrs == nil {
+		attrs = map[string]messageAttribute{}
+	}
+	return json.Marshal(snsLambdaEvent{
+		Records: []snsLambdaEventRecord{{
+			EventVersion:         "1.0",
+			EventSubscriptionArn: subARN,
+			EventSource:          "aws:sns",
+			SNS: snsLambdaEntity{
+				Type:              env.Type,
+				MessageId:         env.MessageId,
+				TopicArn:          env.TopicArn,
+				Subject:           subject,
+				Message:           env.Message,
+				Timestamp:         env.Timestamp,
+				SignatureVersion:  env.SignatureVersion,
+				Signature:         env.Signature,
+				SigningCertURL:    env.SigningCertURL,
+				UnsubscribeURL:    env.UnsubscribeURL,
+				MessageAttributes: attrs,
+			},
+		}},
+	})
 }
 
 // ---- XML response types ----------------------------------------------------
@@ -83,7 +172,7 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 		TopicArn:         topic.ARN,
 		Subject:          subject,
 		Message:          message,
-		Timestamp:        h.clk.Now().UTC().Format(time.RFC3339Nano),
+		Timestamp:        h.clk.Now().UTC().Format(snsTimestampFormat),
 		SignatureVersion: "1",
 		Signature:        "EXAMPLE",
 		SigningCertURL:   "EXAMPLE",
@@ -187,7 +276,7 @@ func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 			TopicArn:         topic.ARN,
 			Subject:          subject,
 			Message:          message,
-			Timestamp:        h.clk.Now().UTC().Format(time.RFC3339Nano),
+			Timestamp:        h.clk.Now().UTC().Format(snsTimestampFormat),
 			SignatureVersion: "1",
 			Signature:        "EXAMPLE",
 			SigningCertURL:   "EXAMPLE",
@@ -236,13 +325,21 @@ func (h *Handler) unsubscribeURL(subARN string) string {
 // fanOut delivers a single SNS notification to all active subscribers of a topic.
 // env is the base notification envelope; UnsubscribeURL is filled per-subscription.
 // msgAttrs is the map of message attributes from the Publish call (may be nil).
-// It handles sqs, email, email-json, sms, http/https, and application protocols
-// and respects FilterPolicy.
-func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMessage string, env snsNotificationEnvelope, subs []*Subscription, msgAttrs map[string]string) {
+// It handles sqs, lambda, email, email-json, sms, http/https, and application
+// protocols and respects FilterPolicy. A protocol with no delivery
+// implementation is reported through failDelivery rather than dropped.
+func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMessage string, env snsNotificationEnvelope, subs []*Subscription, msgAttrs map[string]messageAttribute) {
+	// Filter-policy matching works on plain string values. Derive them at most
+	// once per publish rather than once per subscription, and only when some
+	// subscription actually carries a policy.
+	var filterValues map[string]string
 	for _, sub := range subs {
 		// Apply FilterPolicy if set.
 		if fp, ok := sub.Attributes["FilterPolicy"]; ok && fp != "" {
-			if !messageMatchesFilterPolicy(fp, msgAttrs) {
+			if filterValues == nil {
+				filterValues = filterPolicyValues(msgAttrs)
+			}
+			if !messageMatchesFilterPolicy(fp, filterValues) {
 				continue
 			}
 		}
@@ -256,14 +353,20 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 			continue
 		}
 		jsonBody := string(jsonBytes)
+		d := delivery{
+			sub:       sub,
+			envelope:  subEnv,
+			jsonBody:  jsonBody,
+			msgID:     msgID,
+			topicName: topicName,
+		}
 		switch strings.ToLower(sub.Protocol) {
 		case "sqs":
 			if h.enqueuer == nil || sub.QueueName == "" {
 				continue
 			}
 			if err := h.enqueuer.EnqueueRaw(ctx, sub.QueueName, jsonBody); err != nil {
-				h.log.Error("SNS fan-out: failed to deliver to SQS queue",
-					zap.String("queue", sub.QueueName), zap.Error(err))
+				h.failDelivery(ctx, d, "SQS enqueue failed: "+err.Error())
 				continue
 			}
 			if h.bus != nil {
@@ -272,12 +375,16 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 					Time:   h.clk.Now(),
 					Source: "sns",
 					Payload: events.SNSNotificationPayload{
-						TopicName: topicName,
-						QueueName: sub.QueueName,
-						MessageID: msgID,
+						TopicName:       topicName,
+						QueueName:       sub.QueueName,
+						MessageID:       msgID,
+						SubscriptionARN: sub.SubscriptionARN,
 					},
 				})
 			}
+
+		case "lambda":
+			h.deliverToLambda(ctx, d, msgAttrs)
 
 		case "email", "email-json":
 			if h.mailer == nil {
@@ -298,8 +405,7 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 				"X-Overcast-Group-Topic": topicName,
 			})
 			if err := h.mailer.SendRaw(context.Background(), from, to, raw); err != nil {
-				h.log.Error("SNS fan-out: failed to deliver email",
-					zap.String("to", sub.Endpoint), zap.Error(err))
+				h.failDelivery(ctx, d, "email delivery failed: "+err.Error())
 				continue
 			}
 			if h.bus != nil {
@@ -308,10 +414,11 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 					Time:   h.clk.Now(),
 					Source: "sns",
 					Payload: events.SNSEmailPayload{
-						TopicName: topicName,
-						To:        to,
-						Subject:   subject,
-						MessageID: msgID,
+						TopicName:       topicName,
+						To:              to,
+						Subject:         subject,
+						MessageID:       msgID,
+						SubscriptionARN: sub.SubscriptionARN,
 					},
 				})
 			}
@@ -321,8 +428,7 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 			}
 			// SNS sms-protocol endpoint is the destination phone number.
 			if err := h.smsSender.SendSMS("sns", h.cfg.SMTPFrom, sub.Endpoint, plainMessage, msgID, topicName); err != nil {
-				h.log.Error("SNS fan-out: failed to capture SMS",
-					zap.String("to", sub.Endpoint), zap.Error(err))
+				h.failDelivery(ctx, d, "SMS capture failed: "+err.Error())
 				continue
 			}
 			if h.bus != nil {
@@ -331,9 +437,10 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 					Time:   h.clk.Now(),
 					Source: "sns",
 					Payload: events.SNSSMSPayload{
-						TopicName: topicName,
-						To:        sub.Endpoint,
-						MessageID: msgID,
+						TopicName:       topicName,
+						To:              sub.Endpoint,
+						MessageID:       msgID,
+						SubscriptionARN: sub.SubscriptionARN,
 					},
 				})
 			}
@@ -343,8 +450,7 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 				continue
 			}
 			if err := h.outbound.CaptureWebhook("sns", sub.Endpoint, jsonBody, msgID, topicName); err != nil {
-				h.log.Error("SNS fan-out: failed to capture webhook delivery",
-					zap.String("endpoint", sub.Endpoint), zap.Error(err))
+				h.failDelivery(ctx, d, "webhook capture failed: "+err.Error())
 				continue
 			}
 			if h.bus != nil {
@@ -353,9 +459,10 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 					Time:   h.clk.Now(),
 					Source: "sns",
 					Payload: events.SNSWebhookPayload{
-						TopicName: topicName,
-						Endpoint:  sub.Endpoint,
-						MessageID: msgID,
+						TopicName:       topicName,
+						Endpoint:        sub.Endpoint,
+						MessageID:       msgID,
+						SubscriptionARN: sub.SubscriptionARN,
 					},
 				})
 			}
@@ -365,8 +472,7 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 				continue
 			}
 			if err := h.outbound.CapturePush("sns", sub.Endpoint, jsonBody, msgID, topicName); err != nil {
-				h.log.Error("SNS fan-out: failed to capture push delivery",
-					zap.String("endpoint", sub.Endpoint), zap.Error(err))
+				h.failDelivery(ctx, d, "push capture failed: "+err.Error())
 				continue
 			}
 			if h.bus != nil {
@@ -375,19 +481,172 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 					Time:   h.clk.Now(),
 					Source: "sns",
 					Payload: events.SNSPushPayload{
-						TopicName: topicName,
-						Endpoint:  sub.Endpoint,
-						MessageID: msgID,
+						TopicName:       topicName,
+						Endpoint:        sub.Endpoint,
+						MessageID:       msgID,
+						SubscriptionARN: sub.SubscriptionARN,
 					},
 				})
 			}
+
+		default:
+			// Every protocol Subscribe accepts has a case above. Anything that
+			// reaches here is a subscription this build cannot deliver to, and
+			// it must say so — a notification that disappears without a trace is
+			// the failure mode the fidelity rule exists to prevent.
+			h.failDelivery(ctx, d, "no delivery implementation for protocol "+sub.Protocol)
 		}
 	}
 }
 
-// setEnqueuer injects an SQS message enqueuer for SNS→SQS delivery.
+// delivery is everything one subscription's delivery attempt — and any report
+// of its failure — needs. Assembled once per subscription in fanOut so the
+// delivery helpers do not each take the same five arguments.
+type delivery struct {
+	sub *Subscription
+	// envelope is the notification for this subscription, with its own
+	// UnsubscribeURL already filled in.
+	envelope snsNotificationEnvelope
+	// jsonBody is the marshalled envelope: what SQS/HTTP subscribers receive,
+	// and what goes to the dead-letter queue if delivery fails.
+	jsonBody  string
+	msgID     string
+	topicName string
+}
+
+// deliverToLambda hands one notification to a lambda-protocol subscriber.
+//
+// The invoke runs inline. InvokeEvent is an accept, not an execution: it
+// validates the function and queues the event on Lambda's own async machinery,
+// which is where the cold start is paid and where the shutdown drain waits for
+// it. This used to spawn a goroutine because the call ran the function to
+// completion on whichever goroutine made it; it no longer does, and spawning
+// one now would only add a hop — and would move the accept off the fan-out
+// WaitGroup, so a publish could return before its own subscriptions had been
+// accepted.
+func (h *Handler) deliverToLambda(ctx context.Context, d delivery, msgAttrs map[string]messageAttribute) {
+	if h.invoker == nil {
+		h.failDelivery(ctx, d, "Lambda delivery is not available on this server")
+		return
+	}
+	if d.sub.Endpoint == "" {
+		h.failDelivery(ctx, d, "subscription has no function ARN")
+		return
+	}
+	payload, err := buildLambdaEvent(d.envelope, d.sub.SubscriptionARN, msgAttrs)
+	if err != nil {
+		h.failDelivery(ctx, d, "building the Lambda event failed: "+err.Error())
+		return
+	}
+
+	// A returned error means Lambda never took the event, so it is still SNS's
+	// to dead-letter. A throttle is not one of those — Lambda retries it
+	// internally, exactly as it does for an HTTP Event invoke.
+	if err := h.invoker.InvokeEvent(ctx, d.sub.Endpoint, payload); err != nil {
+		h.failDelivery(ctx, d, "Lambda invoke failed: "+err.Error())
+		return
+	}
+	if h.bus != nil {
+		h.bus.Publish(ctx, events.Event{
+			Type:   events.SNSLambdaDelivered,
+			Time:   h.clk.Now(),
+			Source: "sns",
+			Payload: events.SNSLambdaPayload{
+				TopicName:       d.topicName,
+				FunctionName:    functionNameFromARN(d.sub.Endpoint),
+				MessageID:       d.msgID,
+				SubscriptionARN: d.sub.SubscriptionARN,
+			},
+		})
+	}
+}
+
+// failDelivery records a notification that did not reach its subscriber. It
+// logs the failure, redirects the message to the subscription's dead-letter
+// queue when its RedrivePolicy names one (as real SNS does), and publishes the
+// failure on the event bus so the web UI can show it against the subscription.
+//
+// Without a RedrivePolicy the message is genuinely lost — that is AWS's
+// behaviour too — but it is lost loudly.
+func (h *Handler) failDelivery(ctx context.Context, d delivery, reason string) {
+	dlq := deadLetterQueueName(d.sub.Attributes)
+	if dlq != "" && h.enqueuer != nil {
+		if err := h.enqueuer.EnqueueRaw(ctx, dlq, d.jsonBody); err != nil {
+			h.log.Error("SNS fan-out: failed to dead-letter an undelivered notification",
+				zap.String("subscription", d.sub.SubscriptionARN),
+				zap.String("dead_letter_queue", dlq),
+				zap.Error(err))
+			dlq = ""
+		}
+	} else {
+		dlq = ""
+	}
+
+	h.log.Error("SNS fan-out: delivery failed",
+		zap.String("subscription", d.sub.SubscriptionARN),
+		zap.String("protocol", d.sub.Protocol),
+		zap.String("endpoint", d.sub.Endpoint),
+		zap.String("message_id", d.msgID),
+		zap.String("reason", reason),
+		zap.String("dead_letter_queue", dlq))
+
+	if h.bus != nil {
+		h.bus.Publish(ctx, events.Event{
+			Type:   events.SNSDeliveryFailed,
+			Time:   h.clk.Now(),
+			Source: "sns",
+			Payload: events.SNSDeliveryFailurePayload{
+				TopicName:       d.topicName,
+				SubscriptionARN: d.sub.SubscriptionARN,
+				Protocol:        d.sub.Protocol,
+				Endpoint:        d.sub.Endpoint,
+				MessageID:       d.msgID,
+				Reason:          reason,
+				DeadLetterQueue: dlq,
+			},
+		})
+	}
+}
+
+// deadLetterQueueName returns the SQS queue named by a subscription's
+// RedrivePolicy attribute, or "" when there is none. AWS's shape is
+// {"deadLetterTargetArn":"arn:aws:sqs:…"}.
+func deadLetterQueueName(attrs map[string]string) string {
+	raw, ok := attrs["RedrivePolicy"]
+	if !ok || raw == "" {
+		return ""
+	}
+	var policy struct {
+		DeadLetterTargetARN string `json:"deadLetterTargetArn"`
+	}
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		return ""
+	}
+	return queueNameFromARN(policy.DeadLetterTargetARN)
+}
+
+// functionNameFromARN extracts the function name from a Lambda ARN, tolerating
+// a bare name. ARN format: arn:aws:lambda:<region>:<account>:function:<name>.
+func functionNameFromARN(arn string) string {
+	if !strings.HasPrefix(arn, "arn:") {
+		return arn
+	}
+	parts := strings.Split(arn, ":")
+	if len(parts) >= 7 && parts[5] == "function" {
+		return parts[6]
+	}
+	return arn
+}
+
+// setEnqueuer injects an SQS message enqueuer for SNS→SQS delivery, and for
+// moving undeliverable notifications to a subscription's dead-letter queue.
 func (h *Handler) setEnqueuer(eq events.MessageEnqueuer) {
 	h.enqueuer = eq
+}
+
+// setLambdaInvoker injects the Lambda invoker for SNS→Lambda delivery.
+func (h *Handler) setLambdaInvoker(inv events.FunctionEventInvoker) {
+	h.invoker = inv
 }
 
 // setMailer injects the SMTP mailer for SNS→email delivery.
@@ -412,10 +671,15 @@ func (h *Handler) setBus(b *events.Bus) {
 }
 
 // parseMessageAttributes parses MessageAttributes from an SNS Query-protocol form.
-// Form encoding: MessageAttributes.entry.N.Name / .Value.DataType / .Value.StringValue
-// Returns a map of attribute name → string value (only String and Number types).
-func parseMessageAttributes(r *http.Request) map[string]string {
-	attrs := make(map[string]string)
+// Form encoding: MessageAttributes.entry.N.Name / .Value.DataType /
+// .Value.StringValue (or .Value.BinaryValue for Binary types).
+//
+// All declared types are kept, including Binary, because subscribers see them:
+// the Lambda event's MessageAttributes map carries every attribute AWS was
+// given. Filter-policy matching narrows this down separately — see
+// filterPolicyValues.
+func parseMessageAttributes(r *http.Request) map[string]messageAttribute {
+	attrs := make(map[string]messageAttribute)
 	for n := 1; n <= 10; n++ {
 		prefix := fmt.Sprintf("MessageAttributes.entry.%d.", n)
 		name := r.FormValue(prefix + "Name")
@@ -423,12 +687,27 @@ func parseMessageAttributes(r *http.Request) map[string]string {
 			break
 		}
 		dt := r.FormValue(prefix + "Value.DataType")
-		sv := r.FormValue(prefix + "Value.StringValue")
-		if strings.HasPrefix(dt, "String") || strings.HasPrefix(dt, "Number") {
-			attrs[name] = sv
+		value := r.FormValue(prefix + "Value.StringValue")
+		if strings.HasPrefix(dt, "Binary") {
+			value = r.FormValue(prefix + "Value.BinaryValue")
 		}
+		attrs[name] = messageAttribute{Type: dt, Value: value}
 	}
 	return attrs
+}
+
+// filterPolicyValues reduces parsed message attributes to the name → value map
+// subscription filter policies are evaluated against. Only String and Number
+// attributes participate, matching AWS: a filter policy cannot match on a
+// Binary attribute. The returned map is never nil, so callers can cache it.
+func filterPolicyValues(attrs map[string]messageAttribute) map[string]string {
+	out := make(map[string]string, len(attrs))
+	for name, attr := range attrs {
+		if strings.HasPrefix(attr.Type, "String") || strings.HasPrefix(attr.Type, "Number") {
+			out[name] = attr.Value
+		}
+	}
+	return out
 }
 
 // messageMatchesFilterPolicy checks whether the published message attributes satisfy

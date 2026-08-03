@@ -100,12 +100,12 @@ For a shorter overview, start with the [service reference index](./services/READ
 | SQS              | [sqs.md](./services/sqs.md)                         | 21  | Comprehensive / broad support |
 | DynamoDB         | [dynamodb.md](./services/dynamodb.md)               | 19  | Comprehensive / broad support |
 | Lambda           | [lambda.md](./services/lambda.md)                   | 48  | Comprehensive / broad support |
-| API Gateway      | [apigateway.md](./services/apigateway.md)           | 105 | Comprehensive / broad support |
+| API Gateway      | [apigateway.md](./services/apigateway.md)           | 106 | Comprehensive / broad support |
 | AppSync          | [appsync.md](./services/appsync.md)                 | 82  | Comprehensive / broad support |
 | CloudFront       | [cloudfront.md](./services/cloudfront.md)           | 89  | Comprehensive / broad support |
 | Cognito          | [cognito.md](./services/cognito.md)                 | 67  | Comprehensive / broad support |
 | EC2 / VPC        | [ec2.md](./services/ec2.md)                         | 72  | Comprehensive / broad support |
-| SNS              | [sns.md](./services/sns.md)                         | 24  | Comprehensive / broad support |
+| SNS              | [sns.md](./services/sns.md)                         | 26  | Comprehensive / broad support |
 | IAM              | [iam.md](./services/iam.md)                         | 61  | Core CRUD + common workflows  |
 | ECS              | [ecs.md](./services/ecs.md)                         | 48  | Core CRUD + common workflows  |
 | ECR              | [ecr.md](./services/ecr.md)                         | 20  | Core CRUD + common workflows  |
@@ -125,7 +125,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | SES              | [ses.md](./services/ses.md)                         | 42  | Core CRUD + common workflows  |
 | STS              | [sts.md](./services/sts.md)                         | 11  | Core CRUD + common workflows  |
 | Route 53         | [route53.md](./services/route53.md)                 | 25  | Core CRUD + common workflows  |
-| Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 5   | Minimal / targeted support    |
+| Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 11  | Minimal / targeted support    |
 | Pipes            | [pipes.md](./services/pipes.md)                     | 5   | Minimal / targeted support    |
 | WAF v2           | [waf.md](./services/waf.md)                         | 4   | Minimal / targeted support    |
 | Shield           | [shield.md](./services/shield.md)                   | 5   | Minimal / targeted support    |
@@ -182,7 +182,9 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below      |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_debug/*` endpoints                                                         |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
+| `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests that exceed their usage plan's throttle or quota with AWS's `429`. Off by default: the limits are measured and reported (`GetUsage`, `apigateway:Throttled` events) but never rejected — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
 | `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
+| `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` | `15m`        | Runaway guard on one Step Functions execution. Executions run off the request path, so this never bounds `StartExecution` itself; a state machine's own `TimeoutSeconds` can lower it but not raise it. Exceeding it ends the execution `TIMED_OUT` with `States.Timeout` |
 | `OVERCAST_TLS`                   | —                      | `auto` = serve API **and** web UI over HTTPS with a certificate minted from the local overcast CA (unlocks browser HTTP/2) — see [HTTPS and HTTP/2](./https.md) |
 | `OVERCAST_TLS_CERT`              | —                      | Path to your own TLS certificate (enables HTTPS for API and web UI; mutually exclusive with `OVERCAST_TLS=auto`) |
 | `OVERCAST_TLS_KEY`               | —                      | Path to the matching TLS private key                                                 |
