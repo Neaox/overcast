@@ -1,0 +1,32 @@
+# Keeps the shipped image's base-image digests current.
+#
+# The Dockerfile pins its bases by digest so a release is reproducible and so
+# CI can pull through a registry mirror without that changing what ships. A
+# digest pin that nobody advances is worse than no pin at all — it silently
+# freezes out base-image security updates — so the pin and this file belong
+# together.
+#
+# Dependabot rather than Renovate: Renovate's `pinDigests` can introduce a pin,
+# which is the one thing already done by hand here, and it needs a GitHub App
+# installed on the org. Dependabot is native, needs no install, and maintaining
+# existing pins is all that is left to do.
+#
+# Scoped to the root Dockerfile deliberately. It is the only one whose output
+# users pull; the compat suites' Dockerfiles are test harnesses, and pinning
+# them would trade a stream of review for reproducibility nobody consumes.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(docker)"
+    labels:
+      - dependencies
+    groups:
+      # One PR for all three bases rather than three: they are bumped for the
+      # same reason and reviewed the same way, and a single PR is one CI run.
+      base-images:
+        patterns:
+          - "*"
