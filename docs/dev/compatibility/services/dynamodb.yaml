@@ -2,7 +2,7 @@ service: dynamodb
 status: not_started
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-16
+last_updated: 2026-08-04
 protocols: [aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/dynamodb]
 integration_tests: [tests/integration/dynamodb]
@@ -26,6 +26,11 @@ findings:
           - tests/integration/dynamodb/dynamodb_test.go::TestScan_scannedCountWithFilter
           - tests/integration/dynamodb/dynamodb_test.go::TestScan_scannedCountWithLimitAndFilter
       fixed_in: 0.0.1-alpha.7
+    - scenario: DeleteTable deletes the table's stream records, so a table recreated under the same name gets an empty stream instead of replaying the deleted table's changes from TRIM_HORIZON. Stream records are keyed by table name and were never deleted; DescribeStream correctly reported a new stream ARN and label for the recreated table, which made the inherited history harder to spot.
+      evidence:
+        aws_docs: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Streams.html
+        tests:
+          - tests/integration/dynamodb/streams_test.go::TestStream_recreatedTableStartsWithAnEmptyStream
   remaining_gaps:
     - Review expression edge cases, pagination semantics, and GSI/LSI behavior.
     - Review CBOR coverage against SDK expectations.
