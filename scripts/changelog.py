@@ -499,10 +499,23 @@ def section_bounds(changelog: str, version: str) -> tuple[int, int]:
     return head.end(), head.end() + (following.start() if following else len(rest))
 
 
+def category_heading(body: str, name: str) -> re.Match[str] | None:
+    """Locate a '### <name>' heading inside a release section's body.
+
+    `[ \\t]*` rather than `\\s*`: under re.M a trailing `\\s*$` matches across
+    the line ending, and greedily, so it swallows the blank line after the
+    heading as well. `fold_entries` measures from `.end()`, so that put its
+    rejoining "\\n\\n" after newlines that were already there and added one
+    more — every fold, compounding, because release-prep folds on each push to
+    main while a release PR is open.
+    """
+    return re.search(rf"^### {re.escape(name)}[ \t]*$", body, flags=re.M)
+
+
 def insert_category(body: str, name: str, block: str) -> str:
     """Add a '### name' heading in Keep a Changelog order, with its bullets."""
     for later in SECTIONS[SECTIONS.index(name) + 1 :]:
-        heading = re.search(rf"^### {re.escape(later)}\s*$", body, flags=re.M)
+        heading = category_heading(body, later)
         if heading is not None:
             return (
                 body[: heading.start()].rstrip("\n")
@@ -578,7 +591,7 @@ def fold_entries(changelog: str, version: str, entries: list[Entry]) -> str:
         if not picked:
             continue
         bullets = ["\n".join(render_bullet(entry)) for entry in picked]
-        heading = re.search(rf"^### {re.escape(name)}\s*$", body, flags=re.M)
+        heading = category_heading(body, name)
         if heading is None:
             body = insert_category(body, name, "\n\n".join(bullets))
             continue
