@@ -63,6 +63,12 @@ type aslState struct {
 	Next    string `json:"Next"`
 	End     bool   `json:"End"`
 
+	// QueryLanguage may be set per state as well as on the whole definition,
+	// and a JSONata state inside a JSONPath state machine is legal ASL. It is
+	// read so that such a state fails loudly at run time instead of having its
+	// JSONata-only fields quietly dropped — see unsupportedStateFields.
+	QueryLanguage string `json:"QueryLanguage"`
+
 	// Input/output processing. aslPath distinguishes "absent" from an explicit
 	// JSON null, which has its own meaning for all three paths.
 	InputPath      aslPath         `json:"InputPath"`
@@ -74,7 +80,11 @@ type aslState struct {
 	// Pass
 	Result json.RawMessage `json:"Result"`
 
-	// Task
+	// Task. HeartbeatSeconds is deliberately unread: it only governs activity
+	// tasks and `.waitForTaskToken`, both of which already fail loudly, so
+	// there is no execution it could change. Credentials is likewise unread —
+	// Overcast has a single account, so assuming a cross-account role is a
+	// no-op rather than a behaviour that could silently differ.
 	Resource           string          `json:"Resource"`
 	TimeoutSeconds     int             `json:"TimeoutSeconds"`
 	TimeoutSecondsPath string          `json:"TimeoutSecondsPath"`
@@ -112,9 +122,10 @@ type aslState struct {
 	ItemBatcher    json.RawMessage `json:"ItemBatcher"`
 	ResultWriter   json.RawMessage `json:"ResultWriter"`
 
-	// JSONata query language fields. Present only in JSONata state machines,
-	// which Overcast does not interpret; their presence is caught by the
-	// QueryLanguage check rather than read here.
+	// Output is JSONata-only and Assign (variables) is valid in both query
+	// languages. Overcast evaluates neither, so both are read purely to fail
+	// the execution loudly — dropping an Output and answering with the state's
+	// input is a wrong result, which is worse than no result.
 	Assign json.RawMessage `json:"Assign"`
 	Output json.RawMessage `json:"Output"`
 }
@@ -153,11 +164,16 @@ func (r aslRetrier) backoffRate() float64 {
 	return *r.BackoffRate
 }
 
-// aslCatcher is a Catch entry on a Task/Parallel/Map state.
+// aslCatcher is a Catch entry on a Task/Parallel/Map state. Assign and Output
+// carry the same meaning here as on a state and are read for the same reason:
+// a catcher Overcast cannot honour must fail loudly rather than route on with
+// the wrong data.
 type aslCatcher struct {
-	ErrorEquals []string `json:"ErrorEquals"`
-	Next        string   `json:"Next"`
-	ResultPath  aslPath  `json:"ResultPath"`
+	ErrorEquals []string        `json:"ErrorEquals"`
+	Next        string          `json:"Next"`
+	ResultPath  aslPath         `json:"ResultPath"`
+	Assign      json.RawMessage `json:"Assign"`
+	Output      json.RawMessage `json:"Output"`
 }
 
 // aslPath is an optional reference-path field. ASL gives "absent" and an

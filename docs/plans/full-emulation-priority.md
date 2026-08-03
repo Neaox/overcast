@@ -218,8 +218,23 @@ root router, so a blocking `StartExecution` would have coupled `PutEvents` laten
 so ordinary `Wait` states are unaffected; exceeding it is `States.Timeout`/`TIMED_OUT`. Web UI shipped with
 the behaviour: executions list per state machine, execution detail with the state history, and the loud
 failure reason surfaced.
+Follow-up (0.0.1-alpha.29) closed three gaps found while verifying those claims against a running
+emulator. `States.TaskFailed` was compared as a literal error name, so it matched nothing and every
+`Retry`/`Catch` written the normal way silently did nothing — AWS documents it as a wildcard over any
+error name except `States.Runtime`, and it is now one, alongside `States.ALL`. `QueryLanguage: JSONata`
+set on an **individual state** bypassed the definition-level check: it was accepted, ignored, and its
+`Output` dropped, so the execution answered `SUCCEEDED` with the wrong data — the §2.1 shape-2 failure
+this item exists to prevent. That, a bare `Output`, and `Assign`/variables now fail the execution with
+`States.Runtime` at run time (not at `CreateStateMachine`, so CDK/CloudFormation deploys of JSONata
+definitions still provision, matching how top-level JSONata already behaved). A `Task`'s own
+`TimeoutSeconds`/`TimeoutSecondsPath` was recorded into the history event but never enforced; it is now a
+real deadline on the attempt, raising a catchable `States.Timeout`. Only the execution budget ends a run
+`TIMED_OUT` — an uncaught task timeout is `FAILED` with `error: States.Timeout`, as on AWS.
 Still open, tracked separately: `.waitForTaskToken` (needs `SendTaskSuccess`/`SendTaskFailure`/
-`SendTaskHeartbeat`), activity tasks, distributed Map.
+`SendTaskHeartbeat`), activity tasks, distributed Map, and JSONata itself (refused, not interpreted).
+Also unfixed: an unsupported or malformed intrinsic fails the execution with `States.ParameterPathFailure`
+rather than the `States.Runtime`/`States.IntrinsicFailure` the paragraph above and AWS respectively call
+for. It fails loudly either way, so it is a wrong-error-name gap rather than a silent pass-through.
 Definition of done (staged, not all-or-nothing — land Standard/synchronous first):
 - ASL parser for the standard state types: `Pass`, `Task`, `Choice`, `Wait`, `Succeed`, `Fail`, `Parallel`,
   `Map` (inline `ItemsPath` iteration; `ItemProcessor`/distributed map is Wave-4-or-later scope).
