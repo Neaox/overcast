@@ -125,6 +125,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | SES              | [ses.md](./services/ses.md)                         | 42  | Core CRUD + common workflows  |
 | STS              | [sts.md](./services/sts.md)                         | 11  | Core CRUD + common workflows  |
 | Route 53         | [route53.md](./services/route53.md)                 | 25  | Core CRUD + common workflows  |
+| Auto Scaling     | [autoscaling.md](./services/autoscaling.md)         | 25  | Core CRUD + common workflows  |
 | Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 11  | Minimal / targeted support    |
 | Pipes            | [pipes.md](./services/pipes.md)                     | 5   | Minimal / targeted support    |
 | WAF v2           | [waf.md](./services/waf.md)                         | 4   | Minimal / targeted support    |
@@ -138,7 +139,6 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Glue             | [glue.md](./services/glue.md)                       | 8   | Minimal / targeted support    |
 | OpenSearch       | [opensearch.md](./services/opensearch.md)           | 8   | Minimal / targeted support    |
 | AppRegistry      | [appregistry.md](./services/appregistry.md)         | 21  | IaC/discovery-oriented stub   |
-| Auto Scaling     | [autoscaling.md](./services/autoscaling.md)         | 19  | IaC/discovery-oriented stub   |
 | Backup           | [backup.md](./services/backup.md)                   | 9   | IaC/discovery-oriented stub   |
 | CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 9   | IaC/discovery-oriented stub   |
 | EKS              | [eks.md](./services/eks.md)                         | 52  | IaC/discovery-oriented stub   |
@@ -265,6 +265,7 @@ above.
 | `ses`             | SES              | `aws-ses`                                          |
 | `sts`             | STS              | — (used by the CDK CLI itself)                     |
 | `route53`         | Route 53         | `aws-route53`, `aws-route53-targets`               |
+| `autoscaling`     | Auto Scaling     | `aws-autoscaling`, `aws-applicationautoscaling`    |
 | `stepfunctions`   | Step Functions   | `aws-stepfunctions`, `aws-stepfunctions-tasks`     |
 | `pipes`           | Pipes            | `aws-pipes`                                        |
 | `waf`             | WAF v2           | `aws-wafv2`                                        |
@@ -278,7 +279,6 @@ above.
 | `glue`            | Glue             | `aws-glue`                                         |
 | `opensearch`      | OpenSearch       | `aws-opensearchservice`                            |
 | `appregistry`     | AppRegistry      | `aws-servicecatalogappregistry`                    |
-| `autoscaling`     | Auto Scaling     | `aws-autoscaling`, `aws-applicationautoscaling`    |
 | `backup`          | Backup           | `aws-backup`                                       |
 | `cloudtrail`      | CloudTrail       | `aws-cloudtrail`                                   |
 | `eks`             | EKS              | `aws-eks`                                          |

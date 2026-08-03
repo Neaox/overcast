@@ -868,19 +868,6 @@ export const CATALOG: CatalogEntry[] = [
     tier: "unsupported",
     goalTier: "stub",
   },
-  {
-    id: "autoscaling",
-    label: "Auto Scaling",
-    category: "management",
-    description:
-      "Service for automatically adjusting EC2 capacity based on demand, using scaling policies and scheduled actions.",
-    awsDocsUrl: "https://docs.aws.amazon.com/autoscaling/ec2/userguide/",
-    reason:
-      "Auto Scaling requires live metrics and EC2 fleet management. EC2 itself is partially emulated but auto-scaling is complex.",
-    tier: "unsupported",
-    goalTier: "unsupported",
-  },
-
   // ── Security & Identity (unsupported) ──────────────────────────────────
   {
     id: "cloudhsm",

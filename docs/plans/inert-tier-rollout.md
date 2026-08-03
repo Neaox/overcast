@@ -93,11 +93,15 @@ declares **1,318 capability rows across 50 services**:
 1,116 `StatusSupported`, 154 `StatusUnsupported`, 48 `StatusInert`,
 **zero** `StatusWIP` and **zero** `StatusPartial`.
 
-The 48 `StatusInert` rows are five services that are *already entirely Tier 1*:
-`autoscaling` (19), `transfer` (10), `backup` (9), `cloudtrail` (9),
-`organizations` (1). These, not Route 53, are the closest existing analogues to
-what this plan mass-produces — Route 53 is a *supported* service that happens not
-to serve DNS.
+The `StatusInert` rows are services that are *already entirely Tier 1*:
+`transfer` (10), `backup` (9), `cloudtrail` (9), `organizations` (1). These, not
+Route 53, are the closest existing analogues to what this plan mass-produces —
+Route 53 is a *supported* service that happens not to serve DNS.
+
+`autoscaling` was the fifth, and the largest, at 19 inert rows. It left the
+inert list on 2026-08-03 (#474): its groups now really converge, so its 25 rows
+are `StatusSupported`. The counts above are the pre-promotion figures and are
+kept as the baseline this plan was budgeted from.
 
 Services carrying `StatusUnsupported` rows — i.e. the **inert-backfill** targets
 inside already-implemented services (§7):
@@ -171,7 +175,7 @@ Line counts, verified:
 | backup | 9 | 862 | JSON 1.1 | fully `StatusInert` |
 | transfer | 10 | 920 | JSON 1.1 | fully `StatusInert` |
 | cloudtrail | 9 | 1,044 | JSON 1.1 | fully `StatusInert` |
-| autoscaling | 19 | 1,922 | Query | fully `StatusInert` |
+| autoscaling | 19 | 1,922 | Query | was fully `StatusInert`; promoted out of the inert tier by #474 |
 | **route53** | 25 | **2,373** | REST-XML | "inert done well", by hand |
 
 That is **~90–100 lines per operation**, consistently, across protocol families.

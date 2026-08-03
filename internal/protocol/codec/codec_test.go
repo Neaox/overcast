@@ -228,6 +228,43 @@ func TestQueryXML_NamedMemberFormDoesNotSwallowNestedStructs(t *testing.T) {
 	}
 }
 
+// TestQueryXML_DecodeDeeplyNestedStructs pins that a struct nested more than
+// two levels deep decodes. The recursion strips the prefix from the full key
+// set, so the prefix handed down has to be the whole path — passing only the
+// current segment left every third level looking for keys that do not exist.
+// Auto Scaling's MixedInstancesPolicy is the shape that found this.
+func TestQueryXML_DecodeDeeplyNestedStructs(t *testing.T) {
+	// Given: a four-segment Query key
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(
+		"MixedInstancesPolicy.LaunchTemplate.LaunchTemplateSpecification.LaunchTemplateName=my-template"+
+			"&MixedInstancesPolicy.InstancesDistribution.OnDemandBaseCapacity=2"))
+	var in struct {
+		MixedInstancesPolicy struct {
+			LaunchTemplate struct {
+				LaunchTemplateSpecification struct {
+					LaunchTemplateName string `json:"LaunchTemplateName"`
+				} `json:"LaunchTemplateSpecification"`
+			} `json:"LaunchTemplate"`
+			InstancesDistribution struct {
+				OnDemandBaseCapacity int `json:"OnDemandBaseCapacity"`
+			} `json:"InstancesDistribution"`
+		} `json:"MixedInstancesPolicy"`
+	}
+
+	// When: it is decoded
+	if aerr := QueryXML.Decode(r, &in); aerr != nil {
+		t.Fatalf("unexpected error: %v", aerr)
+	}
+
+	// Then: the innermost fields are populated
+	if got := in.MixedInstancesPolicy.LaunchTemplate.LaunchTemplateSpecification.LaunchTemplateName; got != "my-template" {
+		t.Errorf("LaunchTemplateName = %q, want my-template", got)
+	}
+	if got := in.MixedInstancesPolicy.InstancesDistribution.OnDemandBaseCapacity; got != 2 {
+		t.Errorf("OnDemandBaseCapacity = %d, want 2", got)
+	}
+}
+
 type queryResp struct {
 	XMLName any    `xml:"ListQueuesResponse"`
 	Result  string `xml:"ListQueuesResult"`

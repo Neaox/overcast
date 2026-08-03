@@ -134,7 +134,14 @@ func (h *Handler) RunInstances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := h.clk.Now().UTC().Format(time.RFC3339)
-	az := h.cfg.Region + "a"
+	// Real EC2 places the instance in the requested zone; without this the
+	// first zone in the region was hardcoded, so a caller spreading capacity
+	// across zones (Auto Scaling does) got every instance in one of them and
+	// no way to tell.
+	az := r.FormValue("Placement.AvailabilityZone")
+	if az == "" {
+		az = h.cfg.Region + "a"
+	}
 	resolvedVpcID := ""
 	if subnetID != "" {
 		if sub, aerr := h.store.getSubnet(r.Context(), subnetID); aerr == nil {

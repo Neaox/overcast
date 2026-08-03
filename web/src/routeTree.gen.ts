@@ -45,6 +45,7 @@ import { Route as CognitoIndexRouteImport } from './routes/cognito/index'
 import { Route as CloudwatchIndexRouteImport } from './routes/cloudwatch/index'
 import { Route as CloudfrontIndexRouteImport } from './routes/cloudfront/index'
 import { Route as CloudformationIndexRouteImport } from './routes/cloudformation/index'
+import { Route as AutoscalingIndexRouteImport } from './routes/autoscaling/index'
 import { Route as AppsyncIndexRouteImport } from './routes/appsync/index'
 import { Route as ApplicationsIndexRouteImport } from './routes/applications/index'
 import { Route as ApigatewayIndexRouteImport } from './routes/apigateway/index'
@@ -274,6 +275,11 @@ const CloudfrontIndexRoute = CloudfrontIndexRouteImport.update({
 const CloudformationIndexRoute = CloudformationIndexRouteImport.update({
   id: '/cloudformation/',
   path: '/cloudformation/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutoscalingIndexRoute = AutoscalingIndexRouteImport.update({
+  id: '/autoscaling/',
+  path: '/autoscaling/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppsyncIndexRoute = AppsyncIndexRouteImport.update({
@@ -579,6 +585,7 @@ export interface FileRoutesByFullPath {
   '/apigateway/': typeof ApigatewayIndexRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/appsync/': typeof AppsyncIndexRoute
+  '/autoscaling/': typeof AutoscalingIndexRoute
   '/cloudformation/': typeof CloudformationIndexRoute
   '/cloudfront/': typeof CloudfrontIndexRoute
   '/cloudwatch/': typeof CloudwatchIndexRoute
@@ -663,6 +670,7 @@ export interface FileRoutesByTo {
   '/apigateway': typeof ApigatewayIndexRoute
   '/applications': typeof ApplicationsIndexRoute
   '/appsync': typeof AppsyncIndexRoute
+  '/autoscaling': typeof AutoscalingIndexRoute
   '/cloudformation': typeof CloudformationIndexRoute
   '/cloudfront': typeof CloudfrontIndexRoute
   '/cloudwatch': typeof CloudwatchIndexRoute
@@ -752,6 +760,7 @@ export interface FileRoutesById {
   '/apigateway/': typeof ApigatewayIndexRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/appsync/': typeof AppsyncIndexRoute
+  '/autoscaling/': typeof AutoscalingIndexRoute
   '/cloudformation/': typeof CloudformationIndexRoute
   '/cloudfront/': typeof CloudfrontIndexRoute
   '/cloudwatch/': typeof CloudwatchIndexRoute
@@ -842,6 +851,7 @@ export interface FileRouteTypes {
     | '/apigateway/'
     | '/applications/'
     | '/appsync/'
+    | '/autoscaling/'
     | '/cloudformation/'
     | '/cloudfront/'
     | '/cloudwatch/'
@@ -926,6 +936,7 @@ export interface FileRouteTypes {
     | '/apigateway'
     | '/applications'
     | '/appsync'
+    | '/autoscaling'
     | '/cloudformation'
     | '/cloudfront'
     | '/cloudwatch'
@@ -1014,6 +1025,7 @@ export interface FileRouteTypes {
     | '/apigateway/'
     | '/applications/'
     | '/appsync/'
+    | '/autoscaling/'
     | '/cloudformation/'
     | '/cloudfront/'
     | '/cloudwatch/'
@@ -1103,6 +1115,7 @@ export interface RootRouteChildren {
   ApigatewayIndexRoute: typeof ApigatewayIndexRoute
   ApplicationsIndexRoute: typeof ApplicationsIndexRoute
   AppsyncIndexRoute: typeof AppsyncIndexRoute
+  AutoscalingIndexRoute: typeof AutoscalingIndexRoute
   CloudformationIndexRoute: typeof CloudformationIndexRoute
   CloudfrontIndexRoute: typeof CloudfrontIndexRoute
   CloudwatchIndexRoute: typeof CloudwatchIndexRoute
@@ -1394,6 +1407,13 @@ declare module '@tanstack/react-router' {
       path: '/cloudformation'
       fullPath: '/cloudformation/'
       preLoaderRoute: typeof CloudformationIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/autoscaling/': {
+      id: '/autoscaling/'
+      path: '/autoscaling'
+      fullPath: '/autoscaling/'
+      preLoaderRoute: typeof AutoscalingIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/appsync/': {
@@ -1859,6 +1879,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApigatewayIndexRoute: ApigatewayIndexRoute,
   ApplicationsIndexRoute: ApplicationsIndexRoute,
   AppsyncIndexRoute: AppsyncIndexRoute,
+  AutoscalingIndexRoute: AutoscalingIndexRoute,
   CloudformationIndexRoute: CloudformationIndexRoute,
   CloudfrontIndexRoute: CloudfrontIndexRoute,
   CloudwatchIndexRoute: CloudwatchIndexRoute,

@@ -631,6 +631,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// case inside the CloudWatch package.
 	alarmActions := alarmaction.NewDispatcher(r, cfg.Region, bus, logger)
 	cloudwatchSvc.InitAlarmActions(alarmActions)
+	// Auto Scaling: claim those scalingPolicy action ARNs, so an alarm naming
+	// a scaling policy actually executes it (#474). The reconciler launches
+	// and terminates EC2 instances through the root router for the same
+	// reason alarm actions go through it — the call takes exactly the path an
+	// SDK client's RunInstances would, so a missing AMI is EC2's own error
+	// rather than a silent no-op.
+	alarmActions.Register("autoscaling", autoScalingSvc.HandleAlarmAction)
+	autoScalingSvc.InitRouter(r)
 	// Step Functions: wire bus for state machine/execution lifecycle events,
 	// plus the root router so Task states reach Lambda/SQS/SNS/DynamoDB
 	// through the same handlers an SDK call would.

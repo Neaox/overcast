@@ -1545,10 +1545,10 @@ var statusTableOrder = []string{
 	"cognito", "ec2", "sns",
 	"iam", "ecs", "ecr", "kms", "kinesis", "eventbridge", "scheduler",
 	"cloudformation", "rds", "elasticache", "efs", "appconfig", "appconfigdata",
-	"secretsmanager", "ssm", "cloudwatch-logs", "ses", "sts", "route53",
+	"secretsmanager", "ssm", "cloudwatch-logs", "ses", "sts", "route53", "autoscaling",
 	"stepfunctions", "pipes", "waf", "shield", "acm", "athena", "bedrock",
 	"cloudwatch", "dynamodbstreams", "firehose", "glue", "opensearch",
-	"appregistry", "autoscaling", "backup", "cloudtrail", "eks", "elbv2", "msk",
+	"appregistry", "backup", "cloudtrail", "eks", "elbv2", "msk",
 	"organizations", "transfer",
 }
 
@@ -1582,6 +1582,7 @@ var serviceIndexTiers = map[string]string{
 	"ses":             "Core CRUD + common workflows",
 	"sts":             "Core CRUD + common workflows",
 	"route53":         "Core CRUD + common workflows",
+	"autoscaling":     "Core CRUD + common workflows",
 	"stepfunctions":   "Minimal / targeted support",
 	"pipes":           "Minimal / targeted support",
 	"waf":             "Minimal / targeted support",
@@ -1595,7 +1596,6 @@ var serviceIndexTiers = map[string]string{
 	"glue":            "Minimal / targeted support",
 	"opensearch":      "Minimal / targeted support",
 	"appregistry":     "IaC/discovery-oriented stub",
-	"autoscaling":     "IaC/discovery-oriented stub",
 	"backup":          "IaC/discovery-oriented stub",
 	"cloudtrail":      "IaC/discovery-oriented stub",
 	"eks":             "IaC/discovery-oriented stub",

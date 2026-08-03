@@ -57,6 +57,12 @@ var ServiceTiers = map[string]EmulationTier{
 	// integrations, Retry/Catch, and a real execution history. What it cannot
 	// interpret fails the execution loudly rather than passing through.
 	"stepfunctions": TierPartial,
+	// autoscaling groups really converge: the reconciler launches and
+	// terminates EC2 instances, runs the lifecycle state machine, and
+	// executes simple and step scaling policies. Launch templates, mixed
+	// instances policies and target-tracking policies are refused, not
+	// emulated — see docs/services/autoscaling.md.
+	"autoscaling": TierPartial,
 
 	// Inert — full CRUD, resources stored, but no enforcement / side-effects
 	"iam":         TierInert,
@@ -85,7 +91,6 @@ var ServiceTiers = map[string]EmulationTier{
 	"msk":         TierPartial,
 	"route53":     TierInert,
 	"elbv2":       TierInert,
-	"autoscaling": TierInert,
 	"cloudtrail":  TierInert,
 	"backup":      TierInert,
 	"transfer":    TierInert,

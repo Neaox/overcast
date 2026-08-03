@@ -94,6 +94,7 @@
 | SES             | 42  |
 | STS             | 11  |
 | Route 53        | 25  |
+| Auto Scaling    | 25  |
 | Step Functions  | 11  |
 | Pipes           | 5   |
 | WAF v2          | 4   |
@@ -107,7 +108,6 @@
 | Glue            | 8   |
 | OpenSearch      | 8   |
 | AppRegistry     | 21  |
-| Auto Scaling    | 19  |
 | Backup          | 9   |
 | CloudTrail      | 9   |
 | EKS             | 52  |

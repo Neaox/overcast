@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1333,
+  "total_ops": 1339,
   "services": [
     {
       "service": "s3",
@@ -6477,6 +6477,133 @@
       ]
     },
     {
+      "service": "autoscaling",
+      "display_name": "Auto Scaling",
+      "total_ops": 25,
+      "implemented_ops": 25,
+      "operations": [
+        {
+          "operation": "CreateAutoScalingGroup",
+          "status": "✅ Supported",
+          "notes": "Reconciles: launches EC2 instances to DesiredCapacity. LaunchTemplate, MixedInstancesPolicy and InstanceId are refused with 501 — Overcast's EC2 has no launch templates"
+        },
+        {
+          "operation": "UpdateAutoScalingGroup",
+          "status": "✅ Supported",
+          "notes": "Min/max/desired changes re-converge the group; desired outside min/max is AWS's ValidationError"
+        },
+        {
+          "operation": "DescribeAutoScalingGroups",
+          "status": "✅ Supported",
+          "notes": "Reports the real converged instance set with LifecycleState, HealthStatus, AvailabilityZone and ProtectedFromScaleIn"
+        },
+        {
+          "operation": "DeleteAutoScalingGroup",
+          "status": "✅ Supported",
+          "notes": "ResourceInUse while instances remain unless ForceDelete; ForceDelete terminates them"
+        },
+        {
+          "operation": "SetDesiredCapacity",
+          "status": "✅ Supported",
+          "notes": "Launches or terminates instances to converge; out-of-range values return AWS's ValidationError"
+        },
+        {
+          "operation": "TerminateInstanceInAutoScalingGroup",
+          "status": "✅ Supported",
+          "notes": "Terminates the EC2 instance and records the scaling activity; honours ShouldDecrementDesiredCapacity"
+        },
+        {
+          "operation": "CreateLaunchConfiguration",
+          "status": "✅ Supported",
+          "notes": "ImageId/InstanceType/SecurityGroups drive RunInstances at launch time"
+        },
+        {
+          "operation": "DescribeLaunchConfigurations",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DeleteLaunchConfiguration",
+          "status": "✅ Supported",
+          "notes": "ResourceInUse while a group still references it"
+        },
+        {
+          "operation": "PutScalingPolicy",
+          "status": "✅ Supported",
+          "notes": "SimpleScaling and StepScaling execute for real; TargetTrackingScaling and PredictiveScaling are refused with 501"
+        },
+        {
+          "operation": "DescribePolicies",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DeletePolicy",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ExecutePolicy",
+          "status": "✅ Supported",
+          "notes": "Applies the policy's adjustment to DesiredCapacity, honouring cooldown and MinAdjustmentMagnitude"
+        },
+        {
+          "operation": "PutLifecycleHook",
+          "status": "✅ Supported",
+          "notes": "Really pauses launch/terminate in Pending:Wait / Terminating:Wait and emits the EventBridge lifecycle-action event"
+        },
+        {
+          "operation": "DescribeLifecycleHooks",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DeleteLifecycleHook",
+          "status": "✅ Supported",
+          "notes": "Releases any instance parked on the hook"
+        },
+        {
+          "operation": "CompleteLifecycleAction",
+          "status": "✅ Supported",
+          "notes": "CONTINUE moves the instance on; ABANDON terminates it"
+        },
+        {
+          "operation": "RecordLifecycleActionHeartbeat",
+          "status": "✅ Supported",
+          "notes": "Extends the hook's heartbeat window"
+        },
+        {
+          "operation": "CreateOrUpdateTags",
+          "status": "✅ Supported",
+          "notes": "PropagateAtLaunch tags are applied to launched EC2 instances"
+        },
+        {
+          "operation": "DeleteTags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DescribeTags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DescribeAutoScalingInstances",
+          "status": "✅ Supported",
+          "notes": "Reports the real instance set the reconciler owns"
+        },
+        {
+          "operation": "DescribeScalingActivities",
+          "status": "✅ Supported",
+          "notes": "One activity per launch and termination, with AWS's StatusCode and Cause wording"
+        },
+        {
+          "operation": "SetInstanceHealth",
+          "status": "✅ Supported",
+          "notes": "Unhealthy instances are terminated and replaced by the reconciler"
+        },
+        {
+          "operation": "SetInstanceProtection",
+          "status": "✅ Supported",
+          "notes": "Protected instances are excluded from scale-in"
+        }
+      ]
+    },
+    {
       "service": "stepfunctions",
       "display_name": "Step Functions",
       "total_ops": 11,
@@ -7204,90 +7331,6 @@
           "status": "✅ Supported",
           "notes": "Physical ID is `\u003cappId\u003e/\u003cresourceType\u003e/\u003cresource\u003e`.",
           "doc_only": true
-        }
-      ]
-    },
-    {
-      "service": "autoscaling",
-      "display_name": "Auto Scaling",
-      "total_ops": 19,
-      "implemented_ops": 19,
-      "operations": [
-        {
-          "operation": "CreateAutoScalingGroup",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "UpdateAutoScalingGroup",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribeAutoScalingGroups",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeleteAutoScalingGroup",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "SetDesiredCapacity",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "TerminateInstanceInAutoScalingGroup",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "CreateLaunchConfiguration",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribeLaunchConfigurations",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeleteLaunchConfiguration",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "PutScalingPolicy",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribePolicies",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeletePolicy",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "PutLifecycleHook",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribeLifecycleHooks",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeleteLifecycleHook",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "CreateOrUpdateTags",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DeleteTags",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribeTags",
-          "status": "🧊 Inert"
-        },
-        {
-          "operation": "DescribeAutoScalingInstances",
-          "status": "🧊 Inert"
         }
       ]
     },

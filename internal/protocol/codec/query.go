@@ -214,8 +214,22 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 				continue
 			}
 		} else {
-			// Nested struct: Foo.Bar=value
-			if err := decodeStruct(values, field, parts[0]); err != nil {
+			// Nested struct: Foo.Bar=value.
+			//
+			// The recursion re-reads the *full* value set and strips the
+			// prefix itself, so the prefix handed down has to be the whole
+			// path from the root — not just this level's segment. Passing
+			// only parts[0] made every struct nested more than two deep
+			// (Auto Scaling's
+			// MixedInstancesPolicy.LaunchTemplate.LaunchTemplateSpecification.LaunchTemplateName,
+			// for one) decode as absent, because the third level looked for a
+			// key beginning "LaunchTemplate." in keys that all began
+			// "MixedInstancesPolicy.".
+			nested := parts[0]
+			if prefix != "" {
+				nested = prefix + "." + parts[0]
+			}
+			if err := decodeStruct(values, field, nested); err != nil {
 				continue
 			}
 		}
