@@ -106,7 +106,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Cognito          | [cognito.md](./services/cognito.md)                 | 67  | Comprehensive / broad support |
 | EC2 / VPC        | [ec2.md](./services/ec2.md)                         | 72  | Comprehensive / broad support |
 | SNS              | [sns.md](./services/sns.md)                         | 26  | Comprehensive / broad support |
-| IAM              | [iam.md](./services/iam.md)                         | 61  | Core CRUD + common workflows  |
+| IAM              | [iam.md](./services/iam.md)                         | 62  | Core CRUD + common workflows  |
 | ECS              | [ecs.md](./services/ecs.md)                         | 48  | Core CRUD + common workflows  |
 | ECR              | [ecr.md](./services/ecr.md)                         | 20  | Core CRUD + common workflows  |
 | KMS              | [kms.md](./services/kms.md)                         | 32  | Core CRUD + common workflows  |
@@ -182,6 +182,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below      |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_debug/*` endpoints                                                         |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
+| `OVERCAST_ENFORCE_IAM`           | `false`                | Evaluate the calling principal's IAM policies before each request and return AWS-shaped `AccessDenied` when they do not allow it. **Off by default**; with it off nothing is evaluated and no policy is read. See [iam.md § Request-time enforcement](./services/iam.md#request-time-enforcement-opt-in) |
 | `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests that exceed their usage plan's throttle or quota with AWS's `429`. Off by default: the limits are measured and reported (`GetUsage`, `apigateway:Throttled` events) but never rejected — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
 | `OVERCAST_CFN_SYNC_WAIT_MS`      | `1000`                 | Milliseconds CloudFormation waits for fast stack provisioning before returning (`0` disables) |
 | `OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT` | `15m`        | Runaway guard on one Step Functions execution. Executions run off the request path, so this never bounds `StartExecution` itself; a state machine's own `TimeoutSeconds` can lower it but not raise it. Exceeding it ends the execution `TIMED_OUT` with `States.Timeout` |

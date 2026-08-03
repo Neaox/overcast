@@ -80,7 +80,8 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "DetachGroupPolicy", Category: "Group managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListAttachedGroupPolicies", Category: "Group managed policies", Status: capabilities.StatusSupported},
 		// Policy simulation
-		capabilities.Capability{Service: "iam", Operation: "SimulatePrincipalPolicy", Category: "Policy simulation", Status: capabilities.StatusSupported, Notes: "Always returns allowed — no enforcement engine"},
+		capabilities.Capability{Service: "iam", Operation: "SimulatePrincipalPolicy", Category: "Policy simulation", Status: capabilities.StatusSupported, Notes: "Real evaluation of the principal's identity policies (plus an optional ResourcePolicy and permissions boundary): allowed / explicitDeny / implicitDeny with MatchedStatements and MissingContextValues"},
+		capabilities.Capability{Service: "iam", Operation: "SimulateCustomPolicy", Category: "Policy simulation", Status: capabilities.StatusSupported, Notes: "Evaluates the supplied PolicyInputList without touching any stored entity"},
 		// Account details
 		capabilities.Capability{Service: "iam", Operation: "GetAccountAuthorizationDetails", Category: "Account details", Status: capabilities.StatusSupported, Notes: "Returns all users, groups, roles, and managed policies in one call"},
 	)

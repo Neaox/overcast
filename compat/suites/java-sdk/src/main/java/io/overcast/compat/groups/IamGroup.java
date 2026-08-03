@@ -13,7 +13,7 @@ import java.util.Map;
 /**
  * IAM compatibility test group.
  *
- * <p>Groups: iam-users, iam-roles, iam-policies, iam-groups.
+ * <p>Groups: iam-users, iam-roles, iam-policies, iam-groups, iam-simulate.
  */
 public final class IamGroup implements ServiceGroup {
 
@@ -84,7 +84,12 @@ public final class IamGroup implements ServiceGroup {
                 Map.entry("AddUserToGroup",         this::addUserToGroup),
                 Map.entry("ListGroupsForUser",      this::listGroupsForUser),
                 Map.entry("RemoveUserFromGroup",    this::removeUserFromGroup),
-                Map.entry("DeleteGroup",            this::deleteGroup)
+                Map.entry("DeleteGroup",            this::deleteGroup),
+                Map.entry("SimulateCustomPolicyAllowed",         this::simulateCustomPolicyAllowed),
+                Map.entry("SimulateCustomPolicyImplicitDeny",    this::simulateCustomPolicyImplicitDeny),
+                Map.entry("SimulateCustomPolicyExplicitDeny",    this::simulateCustomPolicyExplicitDeny),
+                Map.entry("SimulatePrincipalPolicyAllowed",      this::simulatePrincipalPolicyAllowed),
+                Map.entry("SimulatePrincipalPolicyImplicitDeny", this::simulatePrincipalPolicyImplicitDeny)
         );
     }
 
@@ -94,7 +99,8 @@ public final class IamGroup implements ServiceGroup {
                 Map.entry("iam-users",    this::setupUsers),
                 Map.entry("iam-roles",    this::setupRoles),
                 Map.entry("iam-policies", this::setupPolicies),
-                Map.entry("iam-groups",   this::setupIamGroups)
+                Map.entry("iam-groups",   this::setupIamGroups),
+                Map.entry("iam-simulate", this::setupSimulate)
         );
     }
 
@@ -104,7 +110,8 @@ public final class IamGroup implements ServiceGroup {
                 Map.entry("iam-users",    this::teardownUsers),
                 Map.entry("iam-roles",    this::teardownRoles),
                 Map.entry("iam-policies", this::teardownPolicies),
-                Map.entry("iam-groups",   this::teardownIamGroups)
+                Map.entry("iam-groups",   this::teardownIamGroups),
+                Map.entry("iam-simulate", this::teardownSimulate)
         );
     }
 
@@ -419,4 +426,115 @@ public final class IamGroup implements ServiceGroup {
         iam().deleteGroup(r -> r.groupName(grp));
         ctx.set("iamGroupName", null);
     }
+
+    // ── iam-simulate ──────────────────────────────────────────────────────────
+
+    /** The identity policy the simulate group evaluates: read one run-scoped prefix, nothing else. */
+    private String simPolicy(TestContext ctx) {
+        return """
+                {
+                  "Version": "2012-10-17",
+                  "Statement": [{
+                    "Effect": "Allow",
+                    "Action": "s3:GetObject",
+                    "Resource": "arn:aws:s3:::compat-sim-%s/*"
+                  }]
+                }
+                """.formatted(ctx.runId());
+    }
+
+    private String simResource(TestContext ctx) {
+        return "arn:aws:s3:::compat-sim-" + ctx.runId() + "/report.csv";
+    }
+
+    private void setupSimulate(TestContext ctx) {
+        String name = "compat-sim-user-" + ctx.runId();
+        iam().createUser(r -> r.userName(name));
+        iam().putUserPolicy(r -> r.userName(name)
+                .policyName("sim-allow-read")
+                .policyDocument(simPolicy(ctx)));
+        ctx.set("iamSimUser", name);
+    }
+
+    private void teardownSimulate(TestContext ctx) {
+        String name = ctx.getString("iamSimUser");
+        if (name == null) return;
+        try { iam().deleteUserPolicy(r -> r.userName(name).policyName("sim-allow-read")); } catch (Exception ignored) {}
+        try { iam().deleteUser(r -> r.userName(name)); } catch (Exception ignored) {}
+    }
+
+    private void simulateCustomPolicyAllowed(TestContext ctx) throws Exception {
+        var resp = iam().simulateCustomPolicy(r -> r
+                .policyInputList(simPolicy(ctx))
+                .actionNames("s3:GetObject")
+                .resourceArns(simResource(ctx)));
+        Assertions.assertTrue(!resp.evaluationResults().isEmpty(),
+                "SimulateCustomPolicy: no evaluation results");
+        var result = resp.evaluationResults().get(0);
+        Assertions.assertEquals("allowed", result.evalDecisionAsString(),
+                "SimulateCustomPolicy: wrong decision");
+        Assertions.assertEquals("s3:GetObject", result.evalActionName(),
+                "SimulateCustomPolicy: wrong evalActionName");
+    }
+
+    private void simulateCustomPolicyImplicitDeny(TestContext ctx) throws Exception {
+        var resp = iam().simulateCustomPolicy(r -> r
+                .policyInputList(simPolicy(ctx))
+                .actionNames("s3:PutObject")
+                .resourceArns(simResource(ctx)));
+        Assertions.assertTrue(!resp.evaluationResults().isEmpty(),
+                "SimulateCustomPolicy: no evaluation results");
+        Assertions.assertEquals("implicitDeny", resp.evaluationResults().get(0).evalDecisionAsString(),
+                "SimulateCustomPolicy: uncovered action should be implicitDeny");
+    }
+
+    private void simulateCustomPolicyExplicitDeny(TestContext ctx) throws Exception {
+        String doc = """
+                {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {"Effect": "Allow", "Action": "s3:*", "Resource": "*"},
+                    {"Effect": "Deny", "Action": "s3:DeleteObject", "Resource": "*"}
+                  ]
+                }
+                """;
+        var resp = iam().simulateCustomPolicy(r -> r
+                .policyInputList(doc)
+                .actionNames("s3:DeleteObject")
+                .resourceArns(simResource(ctx)));
+        Assertions.assertTrue(!resp.evaluationResults().isEmpty(),
+                "SimulateCustomPolicy: no evaluation results");
+        Assertions.assertEquals("explicitDeny", resp.evaluationResults().get(0).evalDecisionAsString(),
+                "SimulateCustomPolicy: explicit deny should win");
+    }
+
+    private void simulatePrincipalPolicyAllowed(TestContext ctx) throws Exception {
+        String arn = "arn:aws:iam::000000000000:user/" + ctx.getString("iamSimUser");
+        var resp = iam().simulatePrincipalPolicy(r -> r
+                .policySourceArn(arn)
+                .actionNames("s3:GetObject")
+                .resourceArns(simResource(ctx)));
+        Assertions.assertTrue(!resp.evaluationResults().isEmpty(),
+                "SimulatePrincipalPolicy: no evaluation results");
+        var result = resp.evaluationResults().get(0);
+        Assertions.assertEquals("allowed", result.evalDecisionAsString(),
+                "SimulatePrincipalPolicy: wrong decision");
+        boolean matched = result.matchedStatements().stream()
+                .anyMatch(s -> "sim-allow-read".equals(s.sourcePolicyId()));
+        Assertions.assertTrue(matched,
+                "SimulatePrincipalPolicy: matchedStatements missing sim-allow-read");
+    }
+
+    private void simulatePrincipalPolicyImplicitDeny(TestContext ctx) throws Exception {
+        String arn = "arn:aws:iam::000000000000:user/" + ctx.getString("iamSimUser");
+        var resp = iam().simulatePrincipalPolicy(r -> r
+                .policySourceArn(arn)
+                .actionNames("s3:DeleteObject")
+                .resourceArns(simResource(ctx)));
+        Assertions.assertTrue(!resp.evaluationResults().isEmpty(),
+                "SimulatePrincipalPolicy: no evaluation results");
+        Assertions.assertEquals("implicitDeny", resp.evaluationResults().get(0).evalDecisionAsString(),
+                "SimulatePrincipalPolicy: uncovered action should be implicitDeny");
+    }
+
 }

@@ -2094,17 +2094,24 @@ func TestUpdateAssumeRolePolicy_notFound(t *testing.T) {
 
 // ─── SimulatePrincipalPolicy ─────────────────────────────────────────────────
 
-func TestSimulatePrincipalPolicy_alwaysAllowed(t *testing.T) {
+func TestSimulatePrincipalPolicy_userWithAllowPolicy(t *testing.T) {
 	srv := helpers.NewTestServer(t)
+	createUser(t, srv, "alice")
+	resp := iamCall(t, srv, "PutUserPolicy", url.Values{
+		"UserName":       {"alice"},
+		"PolicyName":     {"allow-read"},
+		"PolicyDocument": {`{"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`},
+	})
+	resp.Body.Close()
 
-	resp := iamCall(t, srv, "SimulatePrincipalPolicy", url.Values{
+	resp = iamCall(t, srv, "SimulatePrincipalPolicy", url.Values{
 		"PolicySourceArn":      {"arn:aws:iam::000000000000:user/alice"},
 		"ActionNames.member.1": {"s3:GetObject"},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	body := helpers.ReadBody(t, resp)
-	if !strings.Contains(body, "allowed") {
+	if !strings.Contains(body, "<EvalDecision>allowed</EvalDecision>") {
 		t.Errorf("expected allowed decision, got: %s", body)
 	}
 	if !strings.Contains(body, "s3:GetObject") {
@@ -2114,6 +2121,7 @@ func TestSimulatePrincipalPolicy_alwaysAllowed(t *testing.T) {
 
 func TestSimulatePrincipalPolicy_multipleActions(t *testing.T) {
 	srv := helpers.NewTestServer(t)
+	createRole(t, srv, "my-role")
 
 	resp := iamCall(t, srv, "SimulatePrincipalPolicy", url.Values{
 		"PolicySourceArn":      {"arn:aws:iam::000000000000:role/my-role"},

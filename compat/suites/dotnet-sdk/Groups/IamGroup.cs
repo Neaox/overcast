@@ -47,6 +47,12 @@ public sealed class IamGroup(AwsClients clients) : IServiceGroup
         ["RemoveUserFromGroup"] = RemoveUserFromGroupAsync,
         ["GetGroup"] = GetGroupAsync,
         ["DeleteGroup"] = DeleteGroupAsync,
+        // iam-simulate
+        ["SimulateCustomPolicyAllowed"] = SimulateCustomPolicyAllowedAsync,
+        ["SimulateCustomPolicyImplicitDeny"] = SimulateCustomPolicyImplicitDenyAsync,
+        ["SimulateCustomPolicyExplicitDeny"] = SimulateCustomPolicyExplicitDenyAsync,
+        ["SimulatePrincipalPolicyAllowed"] = SimulatePrincipalPolicyAllowedAsync,
+        ["SimulatePrincipalPolicyImplicitDeny"] = SimulatePrincipalPolicyImplicitDenyAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Setups() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
@@ -55,6 +61,7 @@ public sealed class IamGroup(AwsClients clients) : IServiceGroup
         ["iam-roles"] = SetupRolesAsync,
         ["iam-policies"] = SetupPoliciesAsync,
         ["iam-groups"] = SetupGroupsAsync,
+        ["iam-simulate"] = SetupSimulateAsync,
     };
 
     public IReadOnlyDictionary<string, SetupFn> Teardowns() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
@@ -63,6 +70,7 @@ public sealed class IamGroup(AwsClients clients) : IServiceGroup
         ["iam-roles"] = TeardownRolesAsync,
         ["iam-policies"] = TeardownPoliciesAsync,
         ["iam-groups"] = TeardownGroupsAsync,
+        ["iam-simulate"] = TeardownSimulateAsync,
     };
 
     // ── iam-users ──
@@ -537,4 +545,105 @@ public sealed class IamGroup(AwsClients clients) : IServiceGroup
     {
         return context.GetString(key) ?? throw new InvalidOperationException($"{key} not set");
     }
+
+    // ── iam-simulate ──
+
+    // SimPolicy is the identity policy the simulate group evaluates: read one
+    // run-scoped prefix, nothing else.
+    private static string SimPolicy(TestContext context) =>
+        $@"{{""Version"":""2012-10-17"",""Statement"":[{{""Effect"":""Allow"",""Action"":""s3:GetObject"",""Resource"":""arn:aws:s3:::{context.RunId}-sim/*""}}]}}";
+
+    private static string SimResource(TestContext context) =>
+        $"arn:aws:s3:::{context.RunId}-sim/report.csv";
+
+    private async Task SetupSimulateAsync(TestContext context)
+    {
+        var name = $"{context.RunId}-iam-sim-user";
+        await clients.IAM().CreateUserAsync(new CreateUserRequest { UserName = name });
+        await clients.IAM().PutUserPolicyAsync(new PutUserPolicyRequest
+        {
+            UserName = name,
+            PolicyName = "sim-allow-read",
+            PolicyDocument = SimPolicy(context),
+        });
+        context.Set("IamSimUserName", name);
+    }
+
+    private async Task TeardownSimulateAsync(TestContext context)
+    {
+        var name = context.GetString("IamSimUserName");
+        if (string.IsNullOrEmpty(name)) return;
+        try { await clients.IAM().DeleteUserPolicyAsync(new DeleteUserPolicyRequest { UserName = name, PolicyName = "sim-allow-read" }); } catch { }
+        try { await clients.IAM().DeleteUserAsync(new DeleteUserRequest { UserName = name }); } catch { }
+    }
+
+    private async Task SimulateCustomPolicyAllowedAsync(TestContext context)
+    {
+        var response = await clients.IAM().SimulateCustomPolicyAsync(new SimulateCustomPolicyRequest
+        {
+            PolicyInputList = [SimPolicy(context)],
+            ActionNames = ["s3:GetObject"],
+            ResourceArns = [SimResource(context)],
+        });
+        Assertions.True(response.EvaluationResults.Count > 0, "SimulateCustomPolicy: no EvaluationResults");
+        Assertions.Equal("allowed", response.EvaluationResults[0].EvalDecision.Value, "SimulateCustomPolicy: EvalDecision");
+        Assertions.Equal("s3:GetObject", response.EvaluationResults[0].EvalActionName, "SimulateCustomPolicy: EvalActionName");
+    }
+
+    private async Task SimulateCustomPolicyImplicitDenyAsync(TestContext context)
+    {
+        var response = await clients.IAM().SimulateCustomPolicyAsync(new SimulateCustomPolicyRequest
+        {
+            PolicyInputList = [SimPolicy(context)],
+            ActionNames = ["s3:PutObject"],
+            ResourceArns = [SimResource(context)],
+        });
+        Assertions.True(response.EvaluationResults.Count > 0, "SimulateCustomPolicy: no EvaluationResults");
+        Assertions.Equal("implicitDeny", response.EvaluationResults[0].EvalDecision.Value, "SimulateCustomPolicy: EvalDecision");
+    }
+
+    private async Task SimulateCustomPolicyExplicitDenyAsync(TestContext context)
+    {
+        const string doc = @"{""Version"":""2012-10-17"",""Statement"":[" +
+            @"{""Effect"":""Allow"",""Action"":""s3:*"",""Resource"":""*""}," +
+            @"{""Effect"":""Deny"",""Action"":""s3:DeleteObject"",""Resource"":""*""}]}";
+        var response = await clients.IAM().SimulateCustomPolicyAsync(new SimulateCustomPolicyRequest
+        {
+            PolicyInputList = [doc],
+            ActionNames = ["s3:DeleteObject"],
+            ResourceArns = [SimResource(context)],
+        });
+        Assertions.True(response.EvaluationResults.Count > 0, "SimulateCustomPolicy: no EvaluationResults");
+        Assertions.Equal("explicitDeny", response.EvaluationResults[0].EvalDecision.Value, "SimulateCustomPolicy: EvalDecision");
+    }
+
+    private async Task SimulatePrincipalPolicyAllowedAsync(TestContext context)
+    {
+        var userName = RequireString(context, "IamSimUserName");
+        var response = await clients.IAM().SimulatePrincipalPolicyAsync(new SimulatePrincipalPolicyRequest
+        {
+            PolicySourceArn = $"arn:aws:iam::000000000000:user/{userName}",
+            ActionNames = ["s3:GetObject"],
+            ResourceArns = [SimResource(context)],
+        });
+        Assertions.True(response.EvaluationResults.Count > 0, "SimulatePrincipalPolicy: no EvaluationResults");
+        Assertions.Equal("allowed", response.EvaluationResults[0].EvalDecision.Value, "SimulatePrincipalPolicy: EvalDecision");
+        Assertions.True(
+            response.EvaluationResults[0].MatchedStatements.Any(s => s.SourcePolicyId == "sim-allow-read"),
+            "SimulatePrincipalPolicy: MatchedStatements missing sim-allow-read");
+    }
+
+    private async Task SimulatePrincipalPolicyImplicitDenyAsync(TestContext context)
+    {
+        var userName = RequireString(context, "IamSimUserName");
+        var response = await clients.IAM().SimulatePrincipalPolicyAsync(new SimulatePrincipalPolicyRequest
+        {
+            PolicySourceArn = $"arn:aws:iam::000000000000:user/{userName}",
+            ActionNames = ["s3:DeleteObject"],
+            ResourceArns = [SimResource(context)],
+        });
+        Assertions.True(response.EvaluationResults.Count > 0, "SimulatePrincipalPolicy: no EvaluationResults");
+        Assertions.Equal("implicitDeny", response.EvaluationResults[0].EvalDecision.Value, "SimulatePrincipalPolicy: EvalDecision");
+    }
+
 }

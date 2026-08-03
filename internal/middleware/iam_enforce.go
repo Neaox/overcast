@@ -9,54 +9,105 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/iampolicy"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/state"
 )
 
+// iamEnforceCacheEntry is one principal's compiled policy set. Compiling is
+// the expensive half of an evaluation (JSON parse plus wildcard compilation),
+// so it happens once per principal and is reused until an IAM mutation calls
+// InvalidateIAMEnforceCache. A principal with no policies — and an access key
+// that resolves to no principal at all — is cached too, so a denied request
+// does not rescan the IAM namespaces on every retry.
 type iamEnforceCacheEntry struct {
-	statements   []iamPolicyStatement
+	statements   []iampolicy.Statement
 	principalCtx map[string]string
+	// compileErr is set when the principal's policies could not be parsed.
+	// Enforcement fails closed on it rather than evaluating a partial set.
+	compileErr error
 }
 
-var (
-	iamEnforceInvalidatorMu sync.Mutex
-	iamEnforceInvalidators  []func()
-)
+// iamEnforceGeneration is bumped by every IAM mutation. Each middleware
+// instance stamps its cache with the generation it was built at and discards
+// the cache when the two diverge, which is how a policy change reaches an
+// already-warm cache.
+//
+// A counter rather than a registry of invalidation callbacks: a registry has to
+// be added to when a router is built and removed from when one goes away, and
+// the removal half is easy to forget — a test binary builds hundreds of routers
+// and would accumulate one live callback (and its cache) per router, with every
+// IAM mutation walking all of them. A generation is O(1) to invalidate however
+// many routers exist, needs no registration or teardown, and lets a dead
+// router's cache be collected with the router.
+var iamEnforceGeneration atomic.Uint64
 
+// InvalidateIAMEnforceCache marks every compiled-policy cache stale. Called by
+// the IAM service after any operation that changes what a principal is allowed
+// to do.
 func InvalidateIAMEnforceCache() {
-	iamEnforceInvalidatorMu.Lock()
-	invalidators := make([]func(), len(iamEnforceInvalidators))
-	copy(invalidators, iamEnforceInvalidators)
-	iamEnforceInvalidatorMu.Unlock()
-	for _, fn := range invalidators {
-		fn()
-	}
+	iamEnforceGeneration.Add(1)
 }
 
-func registerIAMEnforceInvalidator(fn func()) {
-	iamEnforceInvalidatorMu.Lock()
-	iamEnforceInvalidators = append(iamEnforceInvalidators, fn)
-	iamEnforceInvalidatorMu.Unlock()
+// iamEnforceCache holds one middleware instance's compiled policies, valid only
+// for the generation it was built at.
+type iamEnforceCache struct {
+	mu         sync.RWMutex
+	generation uint64
+	entries    map[string]*iamEnforceCacheEntry
+}
+
+// load returns the cached entry for accessKeyID, and the generation the caller
+// must still be on for a later store to be accepted. A cache built before the
+// last invalidation is dropped here rather than consulted.
+func (c *iamEnforceCache) load(accessKeyID string) (*iamEnforceCacheEntry, uint64) {
+	generation := iamEnforceGeneration.Load()
+
+	c.mu.RLock()
+	if c.generation == generation {
+		entry := c.entries[accessKeyID]
+		c.mu.RUnlock()
+		return entry, generation
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	if c.generation != generation {
+		c.entries = nil
+		c.generation = generation
+	}
+	c.mu.Unlock()
+	return nil, generation
+}
+
+// store records an entry compiled at generation, and drops it if an IAM
+// mutation landed while it was being compiled — the entry may already describe
+// policies that no longer exist, and recompiling on the next request is
+// cheaper than reasoning about which half is stale.
+func (c *iamEnforceCache) store(generation uint64, accessKeyID string, entry *iamEnforceCacheEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if iamEnforceGeneration.Load() != generation {
+		return
+	}
+	if c.generation != generation || c.entries == nil {
+		c.entries = make(map[string]*iamEnforceCacheEntry)
+		c.generation = generation
+	}
+	c.entries[accessKeyID] = entry
 }
 
 // IAMEnforce enforces opt-in IAM authorization.
 func IAMEnforce(enabled bool, st state.Store, logger *zap.Logger) func(http.Handler) http.Handler {
-	var cacheMu sync.RWMutex
-	var cache map[string]*iamEnforceCacheEntry
-	invalidate := func() {
-		cacheMu.Lock()
-		cache = nil
-		cacheMu.Unlock()
-	}
-	registerIAMEnforceInvalidator(invalidate)
+	cache := &iamEnforceCache{}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -89,11 +140,17 @@ func IAMEnforce(enabled bool, st state.Store, logger *zap.Logger) func(http.Hand
 			}
 
 			resource := requestIAMResource(r)
-			decision := evaluateIAMDecision(r, st, parts.AccessKey, action, resource, &cacheMu, &cache)
-			if decision != iamDecisionAllow {
-				reason := "policy did not allow action"
-				if decision == iamDecisionDeny {
-					reason = "explicit deny policy matched"
+			result := evaluateIAMDecision(r, st, parts.AccessKey, action, resource, cache)
+			if reason, denied := iamDenialReason(result); denied {
+				// A deny the evaluator could not reason about is a gap in
+				// Overcast, not a decision the user asked for: say so at warn
+				// level rather than burying it in debug output.
+				if logger != nil && (result.compileErr != nil || len(result.Unsupported) > 0) {
+					logger.Warn("iam enforcement denied a request it could not evaluate",
+						zap.String("service", detectService(r)),
+						zap.String("action", action),
+						zap.String("reason", reason),
+					)
 				}
 				denyIAMRequest(w, r, logger, reason)
 				return
@@ -113,13 +170,33 @@ const (
 	defaultIAMAccountID  = "000000000000"
 )
 
-type iamDecision int
-
-const (
-	iamDecisionNoMatch iamDecision = iota
-	iamDecisionAllow
-	iamDecisionDeny
-)
+// iamDenialReason maps an evaluation onto the enforcement decision, and
+// explains it for the debug log. Enforcement is deliberately fail-closed: a
+// policy construct the evaluator does not implement denies rather than
+// silently granting access it cannot reason about (the simulator surfaces the
+// same information as AWS's PolicyEvaluation error).
+func iamDenialReason(result iamEnforceResult) (string, bool) {
+	if result.compileErr != nil {
+		return "principal policy could not be parsed: " + result.compileErr.Error(), true
+	}
+	if len(result.Unsupported) > 0 {
+		return "policy uses a construct the evaluator does not implement: " + strings.Join(result.Unsupported, "; "), true
+	}
+	switch result.Decision {
+	case iampolicy.DecisionAllowed:
+		return "", false
+	case iampolicy.DecisionExplicitDeny:
+		return "explicit deny policy matched", true
+	case iampolicy.DecisionImplicitDeny:
+		fallthrough
+	default:
+		reason := "policy did not allow action"
+		if len(result.MissingContextKeys) > 0 {
+			reason += " (missing condition context keys: " + strings.Join(result.MissingContextKeys, ", ") + ")"
+		}
+		return reason, true
+	}
+}
 
 type iamUserRecord struct {
 	UserName   string `json:"UserName"`
@@ -162,19 +239,6 @@ type iamRoleRecord struct {
 
 type iamManagedPolicyRecord struct {
 	Document string `json:"Document"`
-}
-
-type iamPolicyDocument struct {
-	Statement []iamPolicyStatement
-}
-
-type iamPolicyStatement struct {
-	Effect      string
-	Action      []string
-	NotAction   []string
-	Resource    []string
-	NotResource []string
-	Condition   map[string]map[string][]string // operator → key → values
 }
 
 func denyIAMRequest(w http.ResponseWriter, r *http.Request, logger *zap.Logger, reason string) {
@@ -1035,160 +1099,46 @@ func parseSQSQueueURL(queueURL string) (string, string) {
 	return "", ""
 }
 
-func evaluateIAMDecision(r *http.Request, st state.Store, accessKeyID, action, resource string, cacheMu *sync.RWMutex, cache *map[string]*iamEnforceCacheEntry) iamDecision {
-	reqCtx := buildIAMRequestContext(r)
+// iamEnforceResult is an evaluation plus whatever stopped it being one.
+type iamEnforceResult struct {
+	iampolicy.Result
+	compileErr error
+}
 
-	cached := loadIAMEnforceCacheEntry(accessKeyID, cacheMu, cache)
+func evaluateIAMDecision(r *http.Request, st state.Store, accessKeyID, action, resource string, cache *iamEnforceCache) iamEnforceResult {
+	cached, generation := cache.load(accessKeyID)
 	if cached == nil {
 		docs, principalCtx := collectPrincipalPolicyDocumentsAndContext(r.Context(), st, accessKeyID)
-		if len(docs) == 0 {
-			return iamDecisionNoMatch
-		}
-		statements := compilePolicyStatements(docs)
+		statements, err := iampolicy.Compile(docs)
 		cached = &iamEnforceCacheEntry{
 			statements:   statements,
 			principalCtx: principalCtx,
+			compileErr:   err,
 		}
-		storeIAMEnforceCacheEntry(accessKeyID, cached, cacheMu, cache)
+		cache.store(generation, accessKeyID, cached)
+	}
+	if cached.compileErr != nil {
+		return iamEnforceResult{compileErr: cached.compileErr}
 	}
 
+	reqCtx := buildIAMRequestContext(r)
 	for k, v := range cached.principalCtx {
 		reqCtx[k] = v
 	}
-	decision := iamDecisionNoMatch
-	for _, stmt := range cached.statements {
-		if !statementMatchesAction(action, stmt) || !statementMatchesResource(resource, stmt, reqCtx) {
-			continue
-		}
-		condMet, unknownOp := evaluateConditions(stmt.Condition, reqCtx)
-		if unknownOp {
-			return iamDecisionDeny
-		}
-		if !condMet {
-			continue
-		}
-		if strings.EqualFold(stmt.Effect, "Deny") {
-			return iamDecisionDeny
-		}
-		if strings.EqualFold(stmt.Effect, "Allow") {
-			decision = iamDecisionAllow
-		}
-	}
 
-	return decision
+	return iamEnforceResult{Result: iampolicy.Evaluate(iampolicy.Input{
+		Request: iampolicy.Request{
+			Action:           action,
+			Resource:         resource,
+			Context:          reqCtx,
+			PrincipalARN:     cached.principalCtx["aws:principalarn"],
+			PrincipalAccount: cached.principalCtx["aws:principalaccount"],
+		},
+		Identity: cached.statements,
+	})}
 }
 
-func loadIAMEnforceCacheEntry(accessKeyID string, mu *sync.RWMutex, cache *map[string]*iamEnforceCacheEntry) *iamEnforceCacheEntry {
-	mu.RLock()
-	defer mu.RUnlock()
-	if *cache == nil {
-		return nil
-	}
-	return (*cache)[accessKeyID]
-}
-
-func storeIAMEnforceCacheEntry(accessKeyID string, entry *iamEnforceCacheEntry, mu *sync.RWMutex, cache *map[string]*iamEnforceCacheEntry) {
-	mu.Lock()
-	defer mu.Unlock()
-	if *cache == nil {
-		*cache = make(map[string]*iamEnforceCacheEntry)
-	}
-	(*cache)[accessKeyID] = entry
-}
-
-func compilePolicyStatements(docs []string) []iamPolicyStatement {
-	out := make([]iamPolicyStatement, 0)
-	for _, raw := range docs {
-		doc, ok := parseIAMPolicyDocument(raw)
-		if !ok {
-			continue
-		}
-		out = append(out, doc.Statement...)
-	}
-	return out
-}
-
-func statementMatchesAction(action string, stmt iamPolicyStatement) bool {
-	hasAction := len(stmt.Action) > 0
-	hasNotAction := len(stmt.NotAction) > 0
-	if hasAction && hasNotAction {
-		return false
-	}
-	if hasAction {
-		return matchesAnyPattern(action, stmt.Action)
-	}
-	if hasNotAction {
-		return !matchesAnyPattern(action, stmt.NotAction)
-	}
-	return false
-}
-
-func statementMatchesResource(resource string, stmt iamPolicyStatement, reqCtx map[string]string) bool {
-	hasResource := len(stmt.Resource) > 0
-	hasNotResource := len(stmt.NotResource) > 0
-	if hasResource && hasNotResource {
-		return false
-	}
-	if hasResource {
-		expanded := expandPolicyVariablesList(stmt.Resource, reqCtx)
-		return matchesAnyPattern(resource, expanded)
-	}
-	if hasNotResource {
-		expanded := expandPolicyVariablesList(stmt.NotResource, reqCtx)
-		return !matchesAnyPattern(resource, expanded)
-	}
-	return false
-}
-
-// expandPolicyVariablesList returns a new slice with IAM policy variables
-// (e.g. ${aws:username}) substituted from reqCtx in every element.
-func expandPolicyVariablesList(patterns []string, reqCtx map[string]string) []string {
-	out := make([]string, len(patterns))
-	for i, p := range patterns {
-		out[i] = expandPolicyVariables(p, reqCtx)
-	}
-	return out
-}
-
-// expandPolicyVariables replaces ${varname} tokens in s with corresponding
-// values from reqCtx (case-insensitive key lookup). Unknown variables are
-// left unexpanded so they will not match any real ARN segment.
-func expandPolicyVariables(s string, reqCtx map[string]string) string {
-	if !strings.Contains(s, "${") {
-		return s
-	}
-	var buf strings.Builder
-	buf.Grow(len(s))
-	for i := 0; i < len(s); {
-		start := strings.Index(s[i:], "${")
-		if start == -1 {
-			buf.WriteString(s[i:])
-			break
-		}
-		buf.WriteString(s[i : i+start])
-		i += start + 2 // skip "${"
-		end := strings.Index(s[i:], "}")
-		if end == -1 {
-			// Unclosed variable reference — emit literally.
-			buf.WriteString("${")
-			continue
-		}
-		rawName := s[i : i+end]
-		varName := strings.ToLower(rawName)
-		i += end + 1 // skip past "}"
-		if val, ok := reqCtx[varName]; ok {
-			buf.WriteString(val)
-		} else {
-			// Unknown variable — leave unexpanded so it won't match any ARN.
-			buf.WriteString("${")
-			buf.WriteString(rawName)
-			buf.WriteByte('}')
-		}
-	}
-	return buf.String()
-}
-
-func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Store, accessKeyID string) ([]string, map[string]string) {
+func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Store, accessKeyID string) ([]iampolicy.SourcedDocument, map[string]string) {
 	users, err := st.Scan(ctx, iamUsersNamespace, "")
 	if err != nil {
 		return nil, nil
@@ -1206,8 +1156,8 @@ func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Sto
 			user.UserName = kv.Key
 		}
 
-		docs := make([]string, 0, len(user.InlinePolicies)+len(user.AttachedPolicies))
-		docs = appendInlineAndAttachedPolicyDocs(ctx, st, docs, user.InlinePolicies, user.AttachedPolicies)
+		docs := make([]iampolicy.SourcedDocument, 0, len(user.InlinePolicies)+len(user.AttachedPolicies))
+		docs = appendInlineAndAttachedPolicyDocs(ctx, st, docs, iampolicy.SourceTypeUser, user.InlinePolicies, user.AttachedPolicies)
 		docs = appendGroupPolicyDocuments(ctx, st, docs, user.UserName)
 
 		principalArn := strings.TrimSpace(user.Arn)
@@ -1238,7 +1188,7 @@ func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Sto
 	return appendRoleSessionPolicyDocumentsWithContext(ctx, st, accessKeyID)
 }
 
-func appendGroupPolicyDocuments(ctx context.Context, st state.Store, docs []string, userName string) []string {
+func appendGroupPolicyDocuments(ctx context.Context, st state.Store, docs []iampolicy.SourcedDocument, userName string) []iampolicy.SourcedDocument {
 	if strings.TrimSpace(userName) == "" {
 		return docs
 	}
@@ -1256,7 +1206,7 @@ func appendGroupPolicyDocuments(ctx context.Context, st state.Store, docs []stri
 		if !groupHasMember(group, userName) {
 			continue
 		}
-		docs = appendInlineAndAttachedPolicyDocs(ctx, st, docs, group.InlinePolicies, group.AttachedPolicies)
+		docs = appendInlineAndAttachedPolicyDocs(ctx, st, docs, iampolicy.SourceTypeGroup, group.InlinePolicies, group.AttachedPolicies)
 	}
 
 	return docs
@@ -1275,7 +1225,7 @@ func groupHasMember(group iamGroupRecord, userName string) bool {
 // STS AssumeRole to its originating role, then appends that role's inline and
 // attached managed policy documents.  Returns nil when the key is not found in
 // iam:sessions.
-func appendRoleSessionPolicyDocumentsWithContext(ctx context.Context, st state.Store, accessKeyID string) ([]string, map[string]string) {
+func appendRoleSessionPolicyDocumentsWithContext(ctx context.Context, st state.Store, accessKeyID string) ([]iampolicy.SourcedDocument, map[string]string) {
 	sessionRaw, found, err := st.Get(ctx, iamSessionsNamespace, accessKeyID)
 	if err != nil || !found {
 		return nil, nil
@@ -1307,8 +1257,8 @@ func appendRoleSessionPolicyDocumentsWithContext(ctx context.Context, st state.S
 		return nil, nil
 	}
 
-	docs := make([]string, 0, len(role.InlinePolicies)+len(role.AttachedPolicies))
-	docs = appendInlineAndAttachedPolicyDocs(ctx, st, docs, role.InlinePolicies, role.AttachedPolicies)
+	docs := make([]iampolicy.SourcedDocument, 0, len(role.InlinePolicies)+len(role.AttachedPolicies))
+	docs = appendInlineAndAttachedPolicyDocs(ctx, st, docs, iampolicy.SourceTypeRole, role.InlinePolicies, role.AttachedPolicies)
 
 	principalArn := strings.TrimSpace(session.RoleArn)
 	if principalArn == "" {
@@ -1344,14 +1294,18 @@ func accountFromARN(arn string) string {
 func appendInlineAndAttachedPolicyDocs(
 	ctx context.Context,
 	st state.Store,
-	docs []string,
+	docs []iampolicy.SourcedDocument,
+	inlineSourceType string,
 	inline map[string]string,
 	attached []struct {
 		PolicyArn string `json:"PolicyArn"`
 	},
-) []string {
-	for _, doc := range inline {
-		docs = append(docs, doc)
+) []iampolicy.SourcedDocument {
+	for name, doc := range inline {
+		docs = append(docs, iampolicy.SourcedDocument{
+			Source:   iampolicy.SourceRef{ID: name, Type: inlineSourceType},
+			Document: doc,
+		})
 	}
 	for _, policy := range attached {
 		if strings.TrimSpace(policy.PolicyArn) == "" {
@@ -1366,7 +1320,10 @@ func appendInlineAndAttachedPolicyDocs(
 			continue
 		}
 		if strings.TrimSpace(managed.Document) != "" {
-			docs = append(docs, managed.Document)
+			docs = append(docs, iampolicy.SourcedDocument{
+				Source:   iampolicy.SourceRef{ID: policy.PolicyArn, Type: iampolicy.SourceTypeIAMPolicy},
+				Document: managed.Document,
+			})
 		}
 	}
 	return docs
@@ -1379,137 +1336,6 @@ func userHasAccessKey(user iamUserRecord, accessKeyID string) bool {
 		}
 	}
 	return false
-}
-
-func parseIAMPolicyDocument(raw string) (iamPolicyDocument, bool) {
-	type wireStatement struct {
-		Effect      string                     `json:"Effect"`
-		Action      json.RawMessage            `json:"Action"`
-		NotAction   json.RawMessage            `json:"NotAction"`
-		Resource    json.RawMessage            `json:"Resource"`
-		NotResource json.RawMessage            `json:"NotResource"`
-		Condition   map[string]json.RawMessage `json:"Condition"`
-	}
-	type wireDocument struct {
-		Statement json.RawMessage `json:"Statement"`
-	}
-
-	var wd wireDocument
-	if err := json.Unmarshal([]byte(raw), &wd); err != nil {
-		return iamPolicyDocument{}, false
-	}
-
-	var statements []wireStatement
-	if err := json.Unmarshal(wd.Statement, &statements); err != nil {
-		var single wireStatement
-		if err2 := json.Unmarshal(wd.Statement, &single); err2 != nil {
-			return iamPolicyDocument{}, false
-		}
-		statements = []wireStatement{single}
-	}
-
-	out := iamPolicyDocument{Statement: make([]iamPolicyStatement, 0, len(statements))}
-	for _, ws := range statements {
-		actions, okA := parseStringOrStringArray(ws.Action)
-		notActions, okNA := parseStringOrStringArray(ws.NotAction)
-		resources, okR := parseStringOrStringArray(ws.Resource)
-		notResources, okNR := parseStringOrStringArray(ws.NotResource)
-
-		if okA && okNA {
-			continue
-		}
-		if okR && okNR {
-			continue
-		}
-		if (!okA && !okNA) || (!okR && !okNR) {
-			continue
-		}
-		cond := parseConditionBlock(ws.Condition)
-		out.Statement = append(out.Statement, iamPolicyStatement{
-			Effect:      ws.Effect,
-			Action:      actions,
-			NotAction:   notActions,
-			Resource:    resources,
-			NotResource: notResources,
-			Condition:   cond,
-		})
-	}
-
-	return out, len(out.Statement) > 0
-}
-
-func parseStringOrStringArray(raw json.RawMessage) ([]string, bool) {
-	if len(raw) == 0 {
-		return nil, false
-	}
-	var single string
-	if err := json.Unmarshal(raw, &single); err == nil {
-		if strings.TrimSpace(single) == "" {
-			return nil, false
-		}
-		return []string{single}, true
-	}
-	var arr []string
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		return nil, false
-	}
-	out := make([]string, 0, len(arr))
-	for _, v := range arr {
-		if strings.TrimSpace(v) != "" {
-			out = append(out, v)
-		}
-	}
-	return out, len(out) > 0
-}
-
-func matchesAnyPattern(value string, patterns []string) bool {
-	if len(patterns) == 0 {
-		return false
-	}
-	for _, p := range patterns {
-		if p == "*" {
-			return true
-		}
-		if ok, err := path.Match(p, value); err == nil && ok {
-			return true
-		}
-		if wildcardMatch(p, value) {
-			return true
-		}
-	}
-	return false
-}
-
-func wildcardMatch(pattern, value string) bool {
-	if pattern == value {
-		return true
-	}
-	if !strings.Contains(pattern, "*") {
-		return false
-	}
-
-	parts := strings.Split(pattern, "*")
-	idx := 0
-	for i, part := range parts {
-		if part == "" {
-			continue
-		}
-		pos := strings.Index(value[idx:], part)
-		if pos < 0 {
-			return false
-		}
-		if i == 0 && idx == 0 && pos != 0 {
-			return false
-		}
-		idx += pos + len(part)
-	}
-
-	last := parts[len(parts)-1]
-	if last != "" && !strings.HasSuffix(value, last) {
-		return false
-	}
-
-	return true
 }
 
 func shouldBypassIAM(r *http.Request) bool {
@@ -1565,38 +1391,6 @@ func writeIAMAccessDenied(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ─── Condition evaluation ─────────────────────────────────────────────────────
-
-// parseConditionBlock converts the wire-format Condition map (operator →
-// {key: string|[]string}) into the canonical form used by evaluateConditions.
-func parseConditionBlock(raw map[string]json.RawMessage) map[string]map[string][]string {
-	if len(raw) == 0 {
-		return nil
-	}
-	out := make(map[string]map[string][]string, len(raw))
-	for op, keyRaw := range raw {
-		var pairs map[string]json.RawMessage
-		if err := json.Unmarshal(keyRaw, &pairs); err != nil {
-			continue
-		}
-		keyMap := make(map[string][]string, len(pairs))
-		for k, vRaw := range pairs {
-			vals, ok := parseStringOrStringArray(vRaw)
-			if !ok {
-				continue
-			}
-			keyMap[k] = vals
-		}
-		if len(keyMap) > 0 {
-			out[op] = keyMap
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 // buildIAMRequestContext constructs the set of IAM condition context keys that
 // are derivable from the HTTP request alone (no store access needed).
 // Supported keys: aws:RequestedRegion, aws:SourceIp, aws:CurrentTime.
@@ -1634,304 +1428,4 @@ func buildIAMRequestContext(r *http.Request) map[string]string {
 	}
 
 	return ctx
-}
-
-// evaluateConditions evaluates all condition blocks against reqCtx.
-// All operator blocks must be satisfied (AND across operators).
-// Within an operator, all key→values pairs must be satisfied (AND across keys;
-// OR across the values for each key).
-//
-// Returns (conditionMet, unknownOperator).
-// unknownOperator=true signals the caller to deny (fail-closed per plan doc).
-func evaluateConditions(cond map[string]map[string][]string, reqCtx map[string]string) (bool, bool) {
-	if len(cond) == 0 {
-		return true, false
-	}
-	for operator, keyValues := range cond {
-		for key, values := range keyValues {
-			// Normalise key to lowercase for case-insensitive comparison.
-			// Expand policy variables in each policy value before comparison.
-			expandedValues := expandPolicyVariablesList(values, reqCtx)
-			ctxVal, ok := reqCtx[strings.ToLower(key)]
-			effectiveOperator := operator
-			if strings.HasSuffix(operator, "IfExists") {
-				effectiveOperator = strings.TrimSuffix(operator, "IfExists")
-				if !ok {
-					// IfExists: missing context keys satisfy the condition.
-					continue
-				}
-			}
-
-			if effectiveOperator == "Null" {
-				matched, known := applyNullCondition(ok, expandedValues)
-				if !known {
-					return false, true
-				}
-				if !matched {
-					return false, false
-				}
-				continue
-			}
-
-			if !ok {
-				// Context key is not available: condition is unsatisfied.
-				return false, false
-			}
-			matched, known := applyConditionOperator(effectiveOperator, ctxVal, expandedValues)
-			if !known {
-				return false, true
-			}
-			if !matched {
-				return false, false
-			}
-		}
-	}
-	return true, false
-}
-
-// applyConditionOperator tests a single condition key value against the
-// provided set of policy values using the given operator.
-// Returns (matched, knownOperator).
-func applyConditionOperator(operator, ctxVal string, policyVals []string) (bool, bool) {
-	switch operator {
-	case "StringEquals":
-		for _, v := range policyVals {
-			if ctxVal == v {
-				return true, true
-			}
-		}
-		return false, true
-
-	case "StringNotEquals":
-		for _, v := range policyVals {
-			if ctxVal == v {
-				return false, true
-			}
-		}
-		return true, true
-
-	case "StringEqualsIgnoreCase":
-		for _, v := range policyVals {
-			if strings.EqualFold(ctxVal, v) {
-				return true, true
-			}
-		}
-		return false, true
-
-	case "StringNotEqualsIgnoreCase":
-		for _, v := range policyVals {
-			if strings.EqualFold(ctxVal, v) {
-				return false, true
-			}
-		}
-		return true, true
-
-	case "StringLike":
-		for _, v := range policyVals {
-			if wildcardMatch(v, ctxVal) {
-				return true, true
-			}
-		}
-		return false, true
-
-	case "StringNotLike":
-		for _, v := range policyVals {
-			if wildcardMatch(v, ctxVal) {
-				return false, true
-			}
-		}
-		return true, true
-
-	case "ArnEquals", "ArnLike":
-		for _, v := range policyVals {
-			if wildcardMatch(v, ctxVal) {
-				return true, true
-			}
-		}
-		return false, true
-
-	case "ArnNotEquals", "ArnNotLike":
-		for _, v := range policyVals {
-			if wildcardMatch(v, ctxVal) {
-				return false, true
-			}
-		}
-		return true, true
-
-	case "Bool":
-		for _, v := range policyVals {
-			if strings.EqualFold(ctxVal, v) {
-				return true, true
-			}
-		}
-		return false, true
-
-	case "IpAddress":
-		for _, v := range policyVals {
-			if ipMatchesCIDR(ctxVal, v) {
-				return true, true
-			}
-		}
-		return false, true
-
-	case "NotIpAddress":
-		for _, v := range policyVals {
-			if ipMatchesCIDR(ctxVal, v) {
-				return false, true
-			}
-		}
-		return true, true
-
-	case "NumericEquals", "NumericNotEquals", "NumericLessThan", "NumericLessThanEquals", "NumericGreaterThan", "NumericGreaterThanEquals":
-		ctxNum, err := strconv.ParseFloat(ctxVal, 64)
-		if err != nil {
-			return false, true
-		}
-		switch operator {
-		case "NumericNotEquals":
-			for _, v := range policyVals {
-				pv, err := strconv.ParseFloat(v, 64)
-				if err != nil {
-					continue
-				}
-				if ctxNum == pv {
-					return false, true
-				}
-			}
-			return true, true
-		default:
-			for _, v := range policyVals {
-				pv, err := strconv.ParseFloat(v, 64)
-				if err != nil {
-					continue
-				}
-				if numericCompareMatches(operator, ctxNum, pv) {
-					return true, true
-				}
-			}
-			return false, true
-		}
-
-	case "DateEquals", "DateNotEquals", "DateLessThan", "DateLessThanEquals", "DateGreaterThan", "DateGreaterThanEquals":
-		ctxTime, ok := parseIAMTime(ctxVal)
-		if !ok {
-			return false, true
-		}
-		switch operator {
-		case "DateNotEquals":
-			for _, v := range policyVals {
-				policyTime, ok := parseIAMTime(v)
-				if !ok {
-					continue
-				}
-				if ctxTime.Equal(policyTime) {
-					return false, true
-				}
-			}
-			return true, true
-		default:
-			for _, v := range policyVals {
-				policyTime, ok := parseIAMTime(v)
-				if !ok {
-					continue
-				}
-				if dateCompareMatches(operator, ctxTime, policyTime) {
-					return true, true
-				}
-			}
-			return false, true
-		}
-
-	default:
-		return false, false // unknown operator — caller must deny
-	}
-}
-
-func parseIAMTime(raw string) (time.Time, bool) {
-	ts := strings.TrimSpace(raw)
-	if ts == "" {
-		return time.Time{}, false
-	}
-	t, err := time.Parse(time.RFC3339, ts)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return t.UTC(), true
-}
-
-func dateCompareMatches(operator string, left, right time.Time) bool {
-	switch operator {
-	case "DateEquals", "DateNotEquals":
-		return left.Equal(right)
-	case "DateLessThan":
-		return left.Before(right)
-	case "DateLessThanEquals":
-		return left.Before(right) || left.Equal(right)
-	case "DateGreaterThan":
-		return left.After(right)
-	case "DateGreaterThanEquals":
-		return left.After(right) || left.Equal(right)
-	default:
-		return false
-	}
-}
-
-func numericCompareMatches(operator string, left, right float64) bool {
-	switch operator {
-	case "NumericEquals":
-		return left == right
-	case "NumericLessThan":
-		return left < right
-	case "NumericLessThanEquals":
-		return left <= right
-	case "NumericGreaterThan":
-		return left > right
-	case "NumericGreaterThanEquals":
-		return left >= right
-	default:
-		return false
-	}
-}
-
-func applyNullCondition(keyPresent bool, policyVals []string) (bool, bool) {
-	for _, v := range policyVals {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "true":
-			if !keyPresent {
-				return true, true
-			}
-		case "false":
-			if keyPresent {
-				return true, true
-			}
-		default:
-			// Ignore unsupported literal values in a mixed array.
-		}
-	}
-
-	// If all values are unsupported, treat as not matched but known.
-	return false, true
-}
-
-// ipMatchesCIDR reports whether ipStr is contained within cidrOrIP.
-// cidrOrIP may be a CIDR block (e.g. "10.0.0.0/8") or a plain IP address.
-func ipMatchesCIDR(ipStr, cidrOrIP string) bool {
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	// Try CIDR first.
-	if strings.Contains(cidrOrIP, "/") {
-		_, ipNet, err := net.ParseCIDR(cidrOrIP)
-		if err != nil {
-			return false
-		}
-		return ipNet.Contains(ip)
-	}
-	// Plain IP equality.
-	peer := net.ParseIP(cidrOrIP)
-	if peer == nil {
-		return false
-	}
-	return ip.Equal(peer)
 }

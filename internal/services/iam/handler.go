@@ -16,6 +16,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -152,7 +153,8 @@ func (h *Handler) initOps() {
 		// List instance profiles
 		"ListInstanceProfiles": h.ListInstanceProfiles,
 		// Policy simulation
-		"SimulatePrincipalPolicy": h.SimulatePrincipalPolicy,
+		"SimulatePrincipalPolicy": h.typedHandler("SimulatePrincipalPolicy"),
+		"SimulateCustomPolicy":    h.typedHandler("SimulateCustomPolicy"),
 		// Account-wide authorization details
 		"GetAccountAuthorizationDetails": h.GetAccountAuthorizationDetails,
 	}
@@ -162,6 +164,24 @@ func (h *Handler) initOps() {
 func (h *Handler) ownsAction(action string) bool {
 	_, ok := h.ops[action]
 	return ok
+}
+
+// typedHandler adapts a typed operation to the legacy dispatch table, for
+// operations that have no separate legacy implementation. IAM speaks the Query
+// protocol and nothing else, so the codec is fixed.
+func (h *Handler) typedHandler(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		typed, ok := h.typedOp[action]
+		if !ok {
+			protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
+				Code:       "InvalidAction",
+				Message:    "The action " + action + " is not valid for IAM.",
+				HTTPStatus: http.StatusBadRequest,
+			})
+			return
+		}
+		typed.Invoke(w, r, codec.QueryXML)
+	}
 }
 
 // publish emits a lifecycle event on the bus if wired.
@@ -1944,50 +1964,6 @@ func randBase64(n int) string {
 	b := make([]byte, n)
 	rand.Read(b) //nolint:errcheck
 	return base64.StdEncoding.EncodeToString(b)
-}
-
-// ─── SimulatePrincipalPolicy ─────────────────────────────────────────────────
-
-// SimulatePrincipalPolicy simulates whether a principal can perform a set of
-// actions. Since Overcast does not enforce IAM policies, every action is
-// returned as "allowed".
-func (h *Handler) SimulatePrincipalPolicy(w http.ResponseWriter, r *http.Request) {
-	if r.FormValue("PolicySourceArn") == "" {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("PolicySourceArn"))
-		return
-	}
-	var actions []string
-	for i := 1; ; i++ {
-		a := r.FormValue(fmt.Sprintf("ActionNames.member.%d", i))
-		if a == "" {
-			break
-		}
-		actions = append(actions, a)
-	}
-	resource := r.FormValue("ResourceArns.member.1")
-	if resource == "" {
-		resource = "*"
-	}
-	type evalResult struct {
-		EvalActionName   string `xml:"EvalActionName"`
-		EvalDecision     string `xml:"EvalDecision"`
-		EvalResourceName string `xml:"EvalResourceName"`
-	}
-	results := make([]evalResult, 0, len(actions))
-	for _, a := range actions {
-		results = append(results, evalResult{
-			EvalActionName:   a,
-			EvalDecision:     "allowed",
-			EvalResourceName: resource,
-		})
-	}
-	writeIAMXML(w, r, "SimulatePrincipalPolicyResponse", "SimulatePrincipalPolicyResult", struct {
-		EvaluationResults listMembersXML[evalResult] `xml:"EvaluationResults"`
-		IsTruncated       bool                       `xml:"IsTruncated"`
-	}{
-		EvaluationResults: listMembersXML[evalResult]{Members: results, Tag: "member"},
-		IsTruncated:       false,
-	})
 }
 
 // ─── GetAccountAuthorizationDetails ──────────────────────────────────────────

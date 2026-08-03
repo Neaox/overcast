@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -533,5 +534,53 @@ func BenchmarkCodec_RESTXML_Encode_SmallStruct(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		w := httptest.NewRecorder()
 		RESTXML.WriteResponse(w, r, http.StatusOK, out)
+	}
+}
+
+// TestQueryXML_DecodeRequest_nestedListInsideListMember covers IAM's
+// ContextEntries shape: a list whose members carry a list of their own
+// (ContextEntries.member.N.ContextKeyValues.member.M). Decoding a member key
+// at a time used to keep only the last nested value.
+func TestQueryXML_DecodeRequest_nestedListInsideListMember(t *testing.T) {
+	// Given: a Query body with two context entries, one carrying two values
+	type contextEntry struct {
+		ContextKeyName   string   `json:"ContextKeyName"`
+		ContextKeyValues []string `json:"ContextKeyValues"`
+		ContextKeyType   string   `json:"ContextKeyType"`
+	}
+	type request struct {
+		ContextEntries []contextEntry `json:"ContextEntries"`
+	}
+	form := url.Values{
+		"ContextEntries.member.1.ContextKeyName":            {"aws:RequestedRegion"},
+		"ContextEntries.member.1.ContextKeyType":            {"string"},
+		"ContextEntries.member.1.ContextKeyValues.member.1": {"eu-west-1"},
+		"ContextEntries.member.1.ContextKeyValues.member.2": {"us-east-1"},
+		"ContextEntries.member.2.ContextKeyName":            {"aws:SourceIp"},
+		"ContextEntries.member.2.ContextKeyValues.member.1": {"10.0.0.1"},
+	}
+
+	// When: it is decoded
+	var got request
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if aerr := QueryXML.Decode(req, &got); aerr != nil {
+		t.Fatalf("DecodeRequest: %v", aerr)
+	}
+
+	// Then: both entries and every nested value survive
+	if len(got.ContextEntries) != 2 {
+		t.Fatalf("ContextEntries = %#v, want 2", got.ContextEntries)
+	}
+	first := got.ContextEntries[0]
+	if first.ContextKeyName != "aws:RequestedRegion" || first.ContextKeyType != "string" {
+		t.Fatalf("first entry = %#v, want the region key", first)
+	}
+	if len(first.ContextKeyValues) != 2 ||
+		first.ContextKeyValues[0] != "eu-west-1" || first.ContextKeyValues[1] != "us-east-1" {
+		t.Fatalf("first entry values = %#v, want both values in order", first.ContextKeyValues)
+	}
+	if len(got.ContextEntries[1].ContextKeyValues) != 1 {
+		t.Fatalf("second entry values = %#v, want one", got.ContextEntries[1].ContextKeyValues)
 	}
 }

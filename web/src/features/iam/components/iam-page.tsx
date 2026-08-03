@@ -31,8 +31,8 @@ import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
-import { InertBanner } from "@/components/inert-banner"
 import { CreateResourceDialog } from "@/components/create-resource-dialog"
+import { PolicySimulator, EnforcementNotice } from "./policy-simulator"
 import { cn } from "@/lib/utils"
 
 export function IAMPage() {
@@ -54,13 +54,14 @@ export function IAMPage() {
           />
         }
       />
-      <InertBanner serviceName="IAM" />
+      <EnforcementNotice />
       <Tabs selectedKey={tab} onSelectionChange={setTab}>
         <TabList>
           <Tab id="users">Users</Tab>
           <Tab id="roles">Roles</Tab>
           <Tab id="policies">Policies</Tab>
           <Tab id="groups">Groups</Tab>
+          <Tab id="simulator">Simulator</Tab>
         </TabList>
         <TabPanel id="users">
           <UsersTab />
@@ -73,6 +74,9 @@ export function IAMPage() {
         </TabPanel>
         <TabPanel id="groups">
           <GroupsTab />
+        </TabPanel>
+        <TabPanel id="simulator">
+          <PolicySimulator />
         </TabPanel>
       </Tabs>
     </div>

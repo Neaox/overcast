@@ -87,6 +87,7 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"ListInstanceProfiles": op.NewTyped("ListInstanceProfiles", h.listInstanceProfilesTyped),
 		// Policy simulation
 		"SimulatePrincipalPolicy": op.NewTyped("SimulatePrincipalPolicy", h.simulatePrincipalPolicyTyped),
+		"SimulateCustomPolicy":    op.NewTyped("SimulateCustomPolicy", h.simulateCustomPolicyTyped),
 		// Account-wide authorization details
 		"GetAccountAuthorizationDetails": op.NewTyped("GetAccountAuthorizationDetails", h.getAccountAuthorizationDetailsTyped),
 	}

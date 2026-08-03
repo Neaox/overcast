@@ -691,372 +691,120 @@ func seedIAMRoleWithPolicies(t *testing.T, st state.Store, roleName string, inli
 	}
 }
 
-// ─── Condition evaluation unit tests ─────────────────────────────────────────
+// ─── Cost of the off path ────────────────────────────────────────────────────
 
-func TestEvaluateConditions_noCondition_alwaysMet(t *testing.T) {
-	met, unknown := evaluateConditions(nil, map[string]string{})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
+// countingStore counts reads so a test can assert the evaluator does not touch
+// the store at all.
+type countingStore struct {
+	state.Store
+	reads int
+}
+
+func (c *countingStore) Get(ctx context.Context, namespace, key string) (string, bool, error) {
+	c.reads++
+	return c.Store.Get(ctx, namespace, key)
+}
+
+func (c *countingStore) Scan(ctx context.Context, namespace, prefix string) ([]state.KV, error) {
+	c.reads++
+	return c.Store.Scan(ctx, namespace, prefix)
+}
+
+func TestIAMEnforce_disabled_readsNothingFromTheStore(t *testing.T) {
+	// Given: enforcement off (the default) over a store that counts reads
+	st := &countingStore{Store: state.NewMemoryStore()}
+	h := IAMEnforce(false, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	// When: a signed request goes through
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"QueueName":"demo"}`))
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
+	req.Header.Set("Authorization",
+		"AWS4-HMAC-SHA256 Credential=test/20260101/us-east-1/sqs/aws4_request, SignedHeaders=host, Signature=deadbeef")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Then: the request is served and the evaluator cost nothing
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if st.reads != 0 {
+		t.Fatalf("store reads = %d, want 0 when enforcement is off", st.reads)
 	}
 }
 
-func TestEvaluateConditions_stringEquals_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringEquals": {"aws:requestedregion": {"us-east-1"}},
+func TestIAMEnforce_enabled_compilesPrincipalPoliciesOncePerPrincipal(t *testing.T) {
+	// Given: a user with a policy, and enforcement on
+	st := &countingStore{Store: state.NewMemoryStore()}
+	seedIAMUserWithPolicies(t, st, "AKIATEST", []string{`{"Statement":[{"Effect":"Allow","Action":"sqs:*","Resource":"*"}]}`}, nil)
+	h := IAMEnforce(true, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	InvalidateIAMEnforceCache()
+
+	send := func() {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"QueueName":"demo"}`))
+		req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+		req.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
+		req.Header.Set("Authorization",
+			"AWS4-HMAC-SHA256 Credential=AKIATEST/20260423/us-east-1/sqs/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
+		req.Header.Set("X-Amz-Date", "20260423T000000Z")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+		}
 	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "us-east-1"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
+
+	// When: the same principal makes two requests
+	send()
+	afterFirst := st.reads
+	send()
+
+	// Then: the second is served from the compiled cache, with no further reads
+	if afterFirst == 0 {
+		t.Fatal("expected the first request to read the principal's policies")
+	}
+	if st.reads != afterFirst {
+		t.Fatalf("store reads = %d after the second request, want %d — the compiled policy cache was not used",
+			st.reads, afterFirst)
 	}
 }
 
-func TestEvaluateConditions_stringEquals_noMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringEquals": {"aws:requestedregion": {"us-east-1"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "eu-west-1"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
+func TestIAMEnforce_enabled_policyChangeReachesAWarmCache(t *testing.T) {
+	// Given: a principal whose compiled policies are already cached by a
+	// running middleware instance
+	st := state.NewMemoryStore()
+	seedIAMUserWithPolicies(t, st, "AKIAWARM", []string{`{"Statement":[{"Effect":"Allow","Action":"sqs:*","Resource":"*"}]}`}, nil)
+	h := IAMEnforce(true, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	InvalidateIAMEnforceCache()
 
-func TestEvaluateConditions_stringEquals_multiValueOR(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringEquals": {"aws:requestedregion": {"us-east-1", "eu-west-1"}},
+	send := func() int {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"QueueName":"demo"}`))
+		req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+		req.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
+		req.Header.Set("Authorization",
+			"AWS4-HMAC-SHA256 Credential=AKIAWARM/20260423/us-east-1/sqs/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
+		req.Header.Set("X-Amz-Date", "20260423T000000Z")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
 	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "eu-west-1"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
+	if code := send(); code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d before the policy changed", code, http.StatusNoContent)
 	}
-}
 
-func TestEvaluateConditions_stringNotEquals_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringNotEquals": {"aws:requestedregion": {"us-east-1"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "eu-west-1"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
+	// When: the policy is replaced with one that does not allow the action,
+	// and the IAM service reports the mutation
+	seedIAMUserWithPolicies(t, st, "AKIAWARM", []string{`{"Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`}, nil)
+	InvalidateIAMEnforceCache()
 
-func TestEvaluateConditions_stringLike_wildcardMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringLike": {"aws:requestedregion": {"us-*"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "us-east-1"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_stringLike_noMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringLike": {"aws:requestedregion": {"us-*"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "eu-west-1"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_arnLike_wildcardMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"ArnLike": {"aws:requestedregion": {"arn:aws:s3:::my-bucket*"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "arn:aws:s3:::my-bucket-prod"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_boolEquals_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"Bool": {"aws:requestedregion": {"true"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "true"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_ipAddress_exactMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"IpAddress": {"aws:sourceip": {"192.168.1.1"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:sourceip": "192.168.1.1"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_ipAddress_cidrMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"IpAddress": {"aws:sourceip": {"10.0.0.0/8"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:sourceip": "10.1.2.3"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_ipAddress_cidrNoMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"IpAddress": {"aws:sourceip": {"10.0.0.0/8"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:sourceip": "192.168.1.1"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_unknownOperator_signalsUnknown(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"SomeUnknownOp": {"aws:requestedregion": {"us-east-1"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "us-east-1"})
-	if met || !unknown {
-		t.Fatalf("expected (false, true), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_missingContextKey_notMet(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringEquals": {"aws:principalarn": {"arn:aws:iam::123:user/admin"}},
-	}
-	// aws:principalarn is not in the context
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "us-east-1"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_dateLessThan_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"DateLessThan": {"aws:currenttime": {"2026-04-24T00:00:00Z"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:currenttime": "2026-04-23T00:00:00Z"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_dateGreaterThan_noMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"DateGreaterThan": {"aws:currenttime": {"2026-04-24T00:00:00Z"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:currenttime": "2026-04-23T00:00:00Z"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_dateNotEquals_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"DateNotEquals": {"aws:currenttime": {"2026-04-24T00:00:00Z", "2026-04-25T00:00:00Z"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:currenttime": "2026-04-23T00:00:00Z"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_null_true_matchesMissingKey(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"Null": {"aws:principalarn": {"true"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "us-east-1"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_null_false_matchesPresentKey(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"Null": {"aws:principalarn": {"false"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:principalarn": "arn:aws:iam::123456789012:user/test"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_null_false_failsMissingKey(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"Null": {"aws:principalarn": {"false"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "us-east-1"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_stringEqualsIfExists_missingKey_met(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringEqualsIfExists": {"aws:principaltag/team": {"platform"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "us-east-1"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_stringEqualsIfExists_presentKeyMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringEqualsIfExists": {"aws:requestedregion": {"us-east-1"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "us-east-1"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_stringEqualsIfExists_presentKeyNoMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"StringEqualsIfExists": {"aws:requestedregion": {"us-east-1"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedregion": "eu-west-1"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-// ─── Numeric condition operator unit tests ────────────────────────────────────
-
-func TestEvaluateConditions_numericEquals_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"NumericEquals": {"aws:requestedcontentlength": {"100"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedcontentlength": "100"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_numericEquals_noMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"NumericEquals": {"aws:requestedcontentlength": {"100"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedcontentlength": "99"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_numericLessThan_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"NumericLessThan": {"aws:requestedcontentlength": {"1000"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedcontentlength": "50"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_numericLessThan_noMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"NumericLessThan": {"aws:requestedcontentlength": {"1000"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedcontentlength": "5000"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_numericGreaterThan_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"NumericGreaterThan": {"aws:requestedcontentlength": {"10"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedcontentlength": "42"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_numericNotEquals_match(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"NumericNotEquals": {"aws:requestedcontentlength": {"0"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedcontentlength": "512"})
-	if !met || unknown {
-		t.Fatalf("expected (true, false), got (%v, %v)", met, unknown)
-	}
-}
-
-func TestEvaluateConditions_numericNotEquals_noMatch(t *testing.T) {
-	cond := map[string]map[string][]string{
-		"NumericNotEquals": {"aws:requestedcontentlength": {"512"}},
-	}
-	met, unknown := evaluateConditions(cond, map[string]string{"aws:requestedcontentlength": "512"})
-	if met || unknown {
-		t.Fatalf("expected (false, false), got (%v, %v)", met, unknown)
-	}
-}
-
-// ─── Policy variable expansion unit tests ─────────────────────────────────────
-
-func TestExpandPolicyVariables_substitutesUsername(t *testing.T) {
-	reqCtx := map[string]string{"aws:username": "alice"}
-	got := expandPolicyVariables("arn:aws:s3:::home/${aws:username}/*", reqCtx)
-	want := "arn:aws:s3:::home/alice/*"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestExpandPolicyVariables_substitutesUserid(t *testing.T) {
-	reqCtx := map[string]string{"aws:userid": "AIDAEXAMPLE"}
-	got := expandPolicyVariables("arn:aws:iam::000000000000:user/${aws:userid}", reqCtx)
-	want := "arn:aws:iam::000000000000:user/AIDAEXAMPLE"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestExpandPolicyVariables_unknownVariableLeftLiteral(t *testing.T) {
-	reqCtx := map[string]string{}
-	got := expandPolicyVariables("arn:aws:s3:::home/${aws:unknown}/*", reqCtx)
-	want := "arn:aws:s3:::home/${aws:unknown}/*"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestExpandPolicyVariables_noVariables(t *testing.T) {
-	reqCtx := map[string]string{"aws:username": "alice"}
-	got := expandPolicyVariables("arn:aws:s3:::my-bucket/*", reqCtx)
-	want := "arn:aws:s3:::my-bucket/*"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestExpandPolicyVariables_caseInsensitiveVariable(t *testing.T) {
-	reqCtx := map[string]string{"aws:username": "bob"}
-	// Variable name in different case — should still resolve.
-	got := expandPolicyVariables("arn:aws:s3:::home/${AWS:Username}/*", reqCtx)
-	want := "arn:aws:s3:::home/bob/*"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestStatementMatchesResource_expandsUsernameVariable(t *testing.T) {
-	stmt := iamPolicyStatement{
-		Resource: []string{"arn:aws:s3:::home/${aws:username}/*"},
-	}
-	reqCtx := map[string]string{"aws:username": "carol"}
-	if !statementMatchesResource("arn:aws:s3:::home/carol/file.txt", stmt, reqCtx) {
-		t.Fatal("expected resource to match after variable expansion")
-	}
-}
-
-func TestStatementMatchesResource_expandsUsername_noMatch(t *testing.T) {
-	stmt := iamPolicyStatement{
-		Resource: []string{"arn:aws:s3:::home/${aws:username}/*"},
-	}
-	reqCtx := map[string]string{"aws:username": "carol"}
-	if statementMatchesResource("arn:aws:s3:::home/mallory/file.txt", stmt, reqCtx) {
-		t.Fatal("expected resource to NOT match after variable expansion")
+	// Then: the warm cache is discarded and the new policy decides
+	if code := send(); code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d — the cache survived an invalidation", code, http.StatusForbidden)
 	}
 }

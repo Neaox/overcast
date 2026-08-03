@@ -50,18 +50,26 @@ func IAM(c *clients.Clients) ServiceGroup {
 			"RemoveUserFromGroup":      g.RemoveUserFromGroup,
 			"GetGroup":                 g.GetGroup,
 			"DeleteGroup":              g.DeleteGroup,
+
+			"SimulateCustomPolicyAllowed":         g.SimulateCustomPolicyAllowed,
+			"SimulateCustomPolicyImplicitDeny":    g.SimulateCustomPolicyImplicitDeny,
+			"SimulateCustomPolicyExplicitDeny":    g.SimulateCustomPolicyExplicitDeny,
+			"SimulatePrincipalPolicyAllowed":      g.SimulatePrincipalPolicyAllowed,
+			"SimulatePrincipalPolicyImplicitDeny": g.SimulatePrincipalPolicyImplicitDeny,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"iam-users":    g.setupUsers,
 			"iam-roles":    g.setupRoles,
 			"iam-policies": g.setupPolicies,
 			"iam-groups":   g.setupGroups,
+			"iam-simulate": g.setupSimulate,
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
 			"iam-users":    g.teardownUsers,
 			"iam-roles":    g.teardownRoles,
 			"iam-policies": g.teardownPolicies,
 			"iam-groups":   g.teardownGroups,
+			"iam-simulate": g.teardownSimulate,
 		},
 	}
 }
@@ -585,4 +593,162 @@ func (g *iamGroup) DeleteGroup(ctx context.Context, t *harness.TestContext) erro
 	g.cl().CreateGroup(ctx, &iam.CreateGroupInput{GroupName: aws.String(name)}) //nolint:errcheck
 	_, err := g.cl().DeleteGroup(ctx, &iam.DeleteGroupInput{GroupName: aws.String(name)})
 	return err
+}
+
+// ── iam-simulate ───────────────────────────────────────────────────────────────
+
+// iamSimPolicy is the identity policy the simulate group evaluates: read access
+// to one run-scoped bucket prefix and nothing else.
+func iamSimPolicy(runID string) string {
+	doc := map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{
+				"Effect":   "Allow",
+				"Action":   "s3:GetObject",
+				"Resource": fmt.Sprintf("arn:aws:s3:::oc-sim-%s/*", runID),
+			},
+		},
+	}
+	b, _ := json.Marshal(doc)
+	return string(b)
+}
+
+func (g *iamGroup) setupSimulate(ctx context.Context, t *harness.TestContext) error {
+	name := fmt.Sprintf("oc-sim-user-%s", t.RunID)
+	if _, err := g.cl().CreateUser(ctx, &iam.CreateUserInput{UserName: aws.String(name)}); err != nil {
+		return err
+	}
+	if _, err := g.cl().PutUserPolicy(ctx, &iam.PutUserPolicyInput{
+		UserName:       aws.String(name),
+		PolicyName:     aws.String("sim-allow-read"),
+		PolicyDocument: aws.String(iamSimPolicy(t.RunID)),
+	}); err != nil {
+		return err
+	}
+	t.Set("iam_sim_user", name)
+	return nil
+}
+
+func (g *iamGroup) teardownSimulate(ctx context.Context, t *harness.TestContext) error {
+	name := t.GetString("iam_sim_user")
+	if name == "" {
+		return nil
+	}
+	g.cl().DeleteUserPolicy(ctx, &iam.DeleteUserPolicyInput{ //nolint:errcheck
+		UserName: aws.String(name), PolicyName: aws.String("sim-allow-read"),
+	})
+	g.cl().DeleteUser(ctx, &iam.DeleteUserInput{UserName: aws.String(name)}) //nolint:errcheck
+	return nil
+}
+
+func (g *iamGroup) simResource(t *harness.TestContext) string {
+	return fmt.Sprintf("arn:aws:s3:::oc-sim-%s/report.csv", t.RunID)
+}
+
+func (g *iamGroup) SimulateCustomPolicyAllowed(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().SimulateCustomPolicy(ctx, &iam.SimulateCustomPolicyInput{
+		PolicyInputList: []string{iamSimPolicy(t.RunID)},
+		ActionNames:     []string{"s3:GetObject"},
+		ResourceArns:    []string{g.simResource(t)},
+	})
+	if err != nil {
+		return err
+	}
+	if len(resp.EvaluationResults) == 0 {
+		return fmt.Errorf("SimulateCustomPolicy: missing EvaluationResults")
+	}
+	if got := string(resp.EvaluationResults[0].EvalDecision); got != "allowed" {
+		return fmt.Errorf("SimulateCustomPolicy: EvalDecision = %s, want allowed", got)
+	}
+	if got := aws.ToString(resp.EvaluationResults[0].EvalActionName); got != "s3:GetObject" {
+		return fmt.Errorf("SimulateCustomPolicy: EvalActionName = %s, want s3:GetObject", got)
+	}
+	return nil
+}
+
+func (g *iamGroup) SimulateCustomPolicyImplicitDeny(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().SimulateCustomPolicy(ctx, &iam.SimulateCustomPolicyInput{
+		PolicyInputList: []string{iamSimPolicy(t.RunID)},
+		ActionNames:     []string{"s3:PutObject"},
+		ResourceArns:    []string{g.simResource(t)},
+	})
+	if err != nil {
+		return err
+	}
+	if len(resp.EvaluationResults) == 0 {
+		return fmt.Errorf("SimulateCustomPolicy: missing EvaluationResults")
+	}
+	if got := string(resp.EvaluationResults[0].EvalDecision); got != "implicitDeny" {
+		return fmt.Errorf("SimulateCustomPolicy: EvalDecision = %s, want implicitDeny", got)
+	}
+	return nil
+}
+
+func (g *iamGroup) SimulateCustomPolicyExplicitDeny(ctx context.Context, t *harness.TestContext) error {
+	doc := map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{"Effect": "Allow", "Action": "s3:*", "Resource": "*"},
+			{"Effect": "Deny", "Action": "s3:DeleteObject", "Resource": "*"},
+		},
+	}
+	raw, _ := json.Marshal(doc)
+	resp, err := g.cl().SimulateCustomPolicy(ctx, &iam.SimulateCustomPolicyInput{
+		PolicyInputList: []string{string(raw)},
+		ActionNames:     []string{"s3:DeleteObject"},
+		ResourceArns:    []string{g.simResource(t)},
+	})
+	if err != nil {
+		return err
+	}
+	if len(resp.EvaluationResults) == 0 {
+		return fmt.Errorf("SimulateCustomPolicy: missing EvaluationResults")
+	}
+	if got := string(resp.EvaluationResults[0].EvalDecision); got != "explicitDeny" {
+		return fmt.Errorf("SimulateCustomPolicy: EvalDecision = %s, want explicitDeny", got)
+	}
+	return nil
+}
+
+func (g *iamGroup) SimulatePrincipalPolicyAllowed(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().SimulatePrincipalPolicy(ctx, &iam.SimulatePrincipalPolicyInput{
+		PolicySourceArn: aws.String(fmt.Sprintf("arn:aws:iam::000000000000:user/%s", t.GetString("iam_sim_user"))),
+		ActionNames:     []string{"s3:GetObject"},
+		ResourceArns:    []string{g.simResource(t)},
+	})
+	if err != nil {
+		return err
+	}
+	if len(resp.EvaluationResults) == 0 {
+		return fmt.Errorf("SimulatePrincipalPolicy: missing EvaluationResults")
+	}
+	result := resp.EvaluationResults[0]
+	if got := string(result.EvalDecision); got != "allowed" {
+		return fmt.Errorf("SimulatePrincipalPolicy: EvalDecision = %s, want allowed", got)
+	}
+	for _, m := range result.MatchedStatements {
+		if aws.ToString(m.SourcePolicyId) == "sim-allow-read" {
+			return nil
+		}
+	}
+	return fmt.Errorf("SimulatePrincipalPolicy: MatchedStatements missing sim-allow-read")
+}
+
+func (g *iamGroup) SimulatePrincipalPolicyImplicitDeny(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.cl().SimulatePrincipalPolicy(ctx, &iam.SimulatePrincipalPolicyInput{
+		PolicySourceArn: aws.String(fmt.Sprintf("arn:aws:iam::000000000000:user/%s", t.GetString("iam_sim_user"))),
+		ActionNames:     []string{"s3:DeleteObject"},
+		ResourceArns:    []string{g.simResource(t)},
+	})
+	if err != nil {
+		return err
+	}
+	if len(resp.EvaluationResults) == 0 {
+		return fmt.Errorf("SimulatePrincipalPolicy: missing EvaluationResults")
+	}
+	if got := string(resp.EvaluationResults[0].EvalDecision); got != "implicitDeny" {
+		return fmt.Errorf("SimulatePrincipalPolicy: EvalDecision = %s, want implicitDeny", got)
+	}
+	return nil
 }

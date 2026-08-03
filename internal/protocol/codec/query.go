@@ -2,6 +2,7 @@ package codec
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -255,17 +256,32 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 		if maxIdx < 0 {
 			continue
 		}
-		slice := reflect.MakeSlice(field.Type(), maxIdx+1, maxIdx+1)
+		// Each wire key arrives as its own member entry — a struct member's
+		// fields, and any list nested inside it, are collected one key at a
+		// time — so merge by index before decoding. Decoding key by key
+		// rebuilds a nested slice on every key and keeps only the last one.
+		merged := make(map[int]url.Values, len(members))
 		for _, m := range members {
 			if m.idx < 0 || m.idx > maxIdx {
 				continue
 			}
-			elem := slice.Index(m.idx)
+			mv := merged[m.idx]
+			if mv == nil {
+				mv = url.Values{}
+				merged[m.idx] = mv
+			}
+			for k, vs := range m.values {
+				mv[k] = append(mv[k], vs...)
+			}
+		}
+		slice := reflect.MakeSlice(field.Type(), maxIdx+1, maxIdx+1)
+		for idx, mv := range merged {
+			elem := slice.Index(idx)
 			elemType := field.Type().Elem()
 			if elemType.Kind() == reflect.Ptr {
 				elem.Set(reflect.New(elemType.Elem()))
 			}
-			if err := decodeItem(elem, m.values); err != nil {
+			if err := decodeItem(elem, mv); err != nil {
 				continue
 			}
 		}
@@ -325,6 +341,18 @@ func decodeItem(rv reflect.Value, values url.Values) error {
 		rv = rv.Elem()
 	}
 	if rv.Kind() == reflect.Struct {
+		// A member's own keys may themselves be structured — IAM's
+		// ContextEntries.member.N.ContextKeyValues.member.M is a list inside a
+		// list member — so hand anything with remaining structure back to the
+		// struct decoder rather than dropping it.
+		for key := range values {
+			if strings.Contains(key, ".") {
+				if aerr := decodeStruct(values, rv, ""); aerr != nil {
+					return errors.New(aerr.Message)
+				}
+				return nil
+			}
+		}
 		rt := rv.Type()
 		for i := range rt.NumField() {
 			tag := rt.Field(i).Tag.Get("json")

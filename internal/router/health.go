@@ -94,6 +94,10 @@ type infoResponse struct {
 	AccountID string `json:"account_id"`
 	Version   string `json:"version"`
 	Debug     bool   `json:"debug"`
+	// IAMEnforce reports whether opt-in request-time IAM enforcement is on
+	// (OVERCAST_ENFORCE_IAM). The web UI shows it beside simulation results so
+	// an AccessDenied can be told apart from an application bug.
+	IAMEnforce bool `json:"iam_enforce"`
 }
 
 // newInfoHandler returns a handler for GET /_/info.
@@ -102,10 +106,11 @@ func newInfoHandler(cfg *config.Config) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(&infoResponse{
-			Region:    cfg.Region,
-			AccountID: cfg.AccountID,
-			Version:   cfg.Version,
-			Debug:     cfg.Debug,
+			Region:     cfg.Region,
+			AccountID:  cfg.AccountID,
+			Version:    cfg.Version,
+			Debug:      cfg.Debug,
+			IAMEnforce: cfg.EnforceIAM,
 		})
 	}
 }

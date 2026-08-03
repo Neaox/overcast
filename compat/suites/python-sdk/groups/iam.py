@@ -470,6 +470,125 @@ def DeleteGroup(ctx: TestContext) -> None:
     iam.delete_group(GroupName=name)
 
 
+# -- iam-simulate --------------------------------------------------------------
+
+def _sim_policy(ctx: TestContext) -> str:
+    return json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Action": "s3:GetObject",
+            "Resource": f"arn:aws:s3:::{ctx.run_id}-sim/*",
+        }],
+    })
+
+
+def setup_iam_simulate(ctx: TestContext) -> None:
+    iam = _iam(ctx)
+    name = f"{ctx.run_id}-sim-user"
+    iam.create_user(UserName=name)
+    iam.put_user_policy(
+        UserName=name, PolicyName="sim-allow-read", PolicyDocument=_sim_policy(ctx),
+    )
+    ctx["iam_sim_user"] = name
+
+
+def teardown_iam_simulate(ctx: TestContext) -> None:
+    iam = _iam(ctx)
+    name = ctx.get("iam_sim_user")
+    if not name:
+        return
+    try:
+        iam.delete_user_policy(UserName=name, PolicyName="sim-allow-read")
+    except Exception:
+        pass
+    try:
+        iam.delete_user(UserName=name)
+    except Exception:
+        pass
+
+
+def _decision(resp) -> str:
+    results = resp.get("EvaluationResults", [])
+    if not results:
+        raise AssertionError("simulate: missing EvaluationResults")
+    return results[0].get("EvalDecision", "")
+
+
+def SimulateCustomPolicyAllowed(ctx: TestContext) -> None:
+    iam = _iam(ctx)
+    resp = iam.simulate_custom_policy(
+        PolicyInputList=[_sim_policy(ctx)],
+        ActionNames=["s3:GetObject"],
+        ResourceArns=[f"arn:aws:s3:::{ctx.run_id}-sim/report.csv"],
+    )
+    decision = _decision(resp)
+    if decision != "allowed":
+        raise AssertionError(f"SimulateCustomPolicy: expected allowed, got {decision!r}")
+    if resp["EvaluationResults"][0].get("EvalActionName") != "s3:GetObject":
+        raise AssertionError("SimulateCustomPolicy: wrong EvalActionName")
+
+
+def SimulateCustomPolicyImplicitDeny(ctx: TestContext) -> None:
+    iam = _iam(ctx)
+    resp = iam.simulate_custom_policy(
+        PolicyInputList=[_sim_policy(ctx)],
+        ActionNames=["s3:PutObject"],
+        ResourceArns=[f"arn:aws:s3:::{ctx.run_id}-sim/report.csv"],
+    )
+    decision = _decision(resp)
+    if decision != "implicitDeny":
+        raise AssertionError(f"SimulateCustomPolicy: expected implicitDeny, got {decision!r}")
+
+
+def SimulateCustomPolicyExplicitDeny(ctx: TestContext) -> None:
+    iam = _iam(ctx)
+    doc = json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [
+            {"Effect": "Allow", "Action": "s3:*", "Resource": "*"},
+            {"Effect": "Deny", "Action": "s3:DeleteObject", "Resource": "*"},
+        ],
+    })
+    resp = iam.simulate_custom_policy(
+        PolicyInputList=[doc],
+        ActionNames=["s3:DeleteObject"],
+        ResourceArns=[f"arn:aws:s3:::{ctx.run_id}-sim/report.csv"],
+    )
+    decision = _decision(resp)
+    if decision != "explicitDeny":
+        raise AssertionError(f"SimulateCustomPolicy: expected explicitDeny, got {decision!r}")
+
+
+def SimulatePrincipalPolicyAllowed(ctx: TestContext) -> None:
+    iam = _iam(ctx)
+    name = ctx["iam_sim_user"]
+    resp = iam.simulate_principal_policy(
+        PolicySourceArn=f"arn:aws:iam::000000000000:user/{name}",
+        ActionNames=["s3:GetObject"],
+        ResourceArns=[f"arn:aws:s3:::{ctx.run_id}-sim/report.csv"],
+    )
+    decision = _decision(resp)
+    if decision != "allowed":
+        raise AssertionError(f"SimulatePrincipalPolicy: expected allowed, got {decision!r}")
+    matched = resp["EvaluationResults"][0].get("MatchedStatements", [])
+    if not any(m.get("SourcePolicyId") == "sim-allow-read" for m in matched):
+        raise AssertionError("SimulatePrincipalPolicy: MatchedStatements missing sim-allow-read")
+
+
+def SimulatePrincipalPolicyImplicitDeny(ctx: TestContext) -> None:
+    iam = _iam(ctx)
+    name = ctx["iam_sim_user"]
+    resp = iam.simulate_principal_policy(
+        PolicySourceArn=f"arn:aws:iam::000000000000:user/{name}",
+        ActionNames=["s3:DeleteObject"],
+        ResourceArns=[f"arn:aws:s3:::{ctx.run_id}-sim/report.csv"],
+    )
+    decision = _decision(resp)
+    if decision != "implicitDeny":
+        raise AssertionError(f"SimulatePrincipalPolicy: expected implicitDeny, got {decision!r}")
+
+
 # ── ImplMap ───────────────────────────────────────────────────────────────────
 
 IMPLS = {
@@ -508,6 +627,11 @@ IMPLS = {
     "RemoveUserFromGroup": RemoveUserFromGroup,
     "GetGroup": GetGroup,
     "DeleteGroup": DeleteGroup,
+    "SimulateCustomPolicyAllowed": SimulateCustomPolicyAllowed,
+    "SimulateCustomPolicyImplicitDeny": SimulateCustomPolicyImplicitDeny,
+    "SimulateCustomPolicyExplicitDeny": SimulateCustomPolicyExplicitDeny,
+    "SimulatePrincipalPolicyAllowed": SimulatePrincipalPolicyAllowed,
+    "SimulatePrincipalPolicyImplicitDeny": SimulatePrincipalPolicyImplicitDeny,
 }
 
 SETUP = {
@@ -515,6 +639,7 @@ SETUP = {
     "iam-roles": setup_iam_roles,
     "iam-policies": setup_iam_policies,
     "iam-groups": setup_iam_groups,
+    "iam-simulate": setup_iam_simulate,
 }
 
 TEARDOWN = {
@@ -522,4 +647,5 @@ TEARDOWN = {
     "iam-roles": teardown_iam_roles,
     "iam-policies": teardown_iam_policies,
     "iam-groups": teardown_iam_groups,
+    "iam-simulate": teardown_iam_simulate,
 }
