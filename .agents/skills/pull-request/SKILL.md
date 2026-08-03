@@ -366,6 +366,70 @@ When creating a PR with `gh pr create`, use a heredoc for the body so markdown s
 
 ---
 
+## After Opening — Waiting on CI
+
+Enable auto-merge as a separate step right after opening, then **wait with one
+command**:
+
+```sh
+gh pr merge <n> --squash --auto
+scripts/pr-wait.sh <n>            # or scripts\pr-wait.ps1 <n>
+```
+
+`scripts/pr-wait.sh` wraps `gh pr checks --watch --fail-fast` and exits
+0 / 1 / 2 / 8 (passed / failed / no checks will run / still pending). Run it in
+the **background** — in Claude Code, the `Bash` tool with
+`run_in_background: true` — so its single completion notification is the only
+thing the conversation gets.
+
+It does three things a bare `--watch` does not:
+
+- **Returns at the first failure** rather than waiting out the rest of a doomed
+  run, so investigation starts minutes earlier.
+- **Fetches the failure detail.** For each failing job it prints the failure
+  annotations and the tail of the failing step, capped
+  (`PR_WAIT_MAX_JOBS`/`MAX_ANNOTATIONS`/`MAX_LOG_LINES`). The annotations are
+  usually the whole answer — a compat gate, for instance, names the exact
+  `suite/group/test` that regressed — so you diagnose from the notification
+  instead of making three more calls to find out what broke.
+- **Survives a re-run.** Push a fix and run it again: it waits on the new head's
+  checks. If the head moves while it is watching it exits 8 and tells you the
+  result is stale, rather than reporting a verdict for a commit you have already
+  replaced.
+
+It also waits for checks to *appear* before watching, since a freshly pushed
+branch reports none for the first few seconds, and re-reads `mergeStateStatus`
+at the end.
+
+**Do not hand-roll a poll loop.** The recurring anti-pattern is a `while` loop
+over `gh pr checks --json` on a `sleep` interval, wired to a per-iteration
+notifier. It costs a request per interval, fires whether or not anything
+changed, and turns "tell me when CI is done" into a running commentary — dozens
+of "N passed, no failures" messages that change no decision. `gh pr checks`
+already has `--watch`; there is nothing to reimplement. If you find yourself
+writing `sleep` next to `gh pr checks`, stop and use the script.
+
+Corollaries that have each cost a recovery:
+
+- **Never pipe an exit-code-bearing gh command into another** (`gh ... --watch | tail`).
+  The pipeline reports the *last* command's status, which is how
+  [#410](https://github.com/Neaox/overcast/pull/410) merged over a failing compat
+  check. `pr-wait.sh` redirects to a file for exactly this reason.
+- **Green checks are not `CLEAN`.** `gh pr merge` proceeds on `UNSTABLE` (a
+  failing *non-required* check) and only stops on `BLOCKED`. Read
+  `mergeStateStatus`, which `pr-wait.sh` prints.
+- **No checks at all means `CONFLICTING`, not queued** — GitHub dispatches no
+  workflows on a conflicting PR. `pr-wait.sh` detects this and exits 2 rather
+  than watching nothing until it times out.
+- **A compat-gate failure is a stop signal even when the tests look unrelated.**
+  Investigate, re-run the *full* workflow, and use the `flaky.json` quarantine
+  process rather than merging past it.
+
+While waiting, report only what changes a decision: a failure, or the final
+result. Silence is the correct output for "still running".
+
+---
+
 ## PR Title
 
 Prefer a clear outcome-oriented title:
