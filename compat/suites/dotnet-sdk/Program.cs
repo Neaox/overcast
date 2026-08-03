@@ -55,6 +55,15 @@ try
 {
     allGroups = RegistryLoader.BuildGroups(suite, impls, setups, teardowns, capabilities);
 }
+catch (InvalidOperationException ex)
+{
+    // Unusable impl registrations - see RegistryLoader.ValidateImpls. Aborting
+    // is the point: binding a test to another group's implementation would
+    // report a result for a test that never ran.
+    Console.Error.WriteLine(ex.Message);
+    Environment.Exit(1);
+    return;
+}
 catch (Exception ex)
 {
     Console.Error.WriteLine($"[dotnet-sdk] failed to load registry: {ex.Message}");
