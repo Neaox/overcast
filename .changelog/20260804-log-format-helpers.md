@@ -1,1 +1,0 @@
-~ [web] log timestamps read the same everywhere: an event with no timestamp shows a dash rather than a 1970 clock time in the map's stream peek, and a debug row carries the same faint tint in every viewer

@@ -144,6 +144,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [secretsmanager] `GetRandomPassword` honours `RequireEachIncludedType`, which AWS defaults to true: a generated password now holds at least one character of every type the exclusions left available, rather than whatever the draw happened to produce
 
+- [web] log timestamps read the same everywhere: an event with no timestamp shows a dash rather than a 1970 clock time in the map's stream peek, and a debug row carries the same faint tint in every viewer
+
 ### Fixed
 
 - **BREAKING** [ecs] `networkConfiguration` is required when the task definition's `networkMode` is `awsvpc`, as on AWS, rather than when `launchType` is `FARGATE`. An awsvpc task definition launched under EC2, or under a `capacityProviderStrategy` with no launch type — the shape CDK emits — was accepted and produced a service that could never place a task
