@@ -17,6 +17,12 @@
             "command": "bash scripts/verify-changed.sh",
             "timeout": 900,
             "statusMessage": "Verifying changed code before push (golangci-lint / pnpm typecheck)"
+          },
+          {
+            "type": "command",
+            "command": "bash scripts/hooks/pr-checks-poll-loop-warning.sh",
+            "timeout": 10,
+            "statusMessage": "Checking for a hand-rolled CI poll loop"
           }
         ]
       }

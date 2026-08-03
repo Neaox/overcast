@@ -314,6 +314,40 @@ When you need to understand an unfamiliar part of the codebase (e.g. "how does t
 
 ---
 
+## Waiting on CI — `scripts/pr-wait.sh`, never a poll loop
+
+After opening a PR, enable auto-merge and then wait with **one** command:
+
+```sh
+gh pr merge <n> --squash --auto
+scripts/pr-wait.sh <n>            # or scripts\pr-wait.ps1 <n>
+```
+
+It wraps `gh pr checks --watch --fail-fast` and exits 0/1/2/8 — passed / failed
+/ no checks will run / still pending. Run it in the background so you get
+exactly one notification. Three things it does for you:
+
+- **Returns at the first failure**, rather than waiting out the rest of a
+  doomed run.
+- **Brings the evidence.** On failure it fetches each failing job's annotations
+  and the tail of its failing step, so the first thing you read is the error
+  itself, not a URL to go and fetch. Output is capped so a pathological failure
+  cannot bury the conversation.
+- **Is re-runnable.** After you push a fix, run it again and it waits on the new
+  head's run. If the head moves mid-watch it says so and exits 8, because the
+  result it just collected is stale.
+
+Do **not** write a `while` loop over `gh pr checks --json` on a `sleep`
+interval. It costs a request per tick, fires whether or not anything changed,
+and produces a play-by-play of "N passed" messages that change no decision.
+`gh pr checks` already has `--watch`. If you are typing `sleep` next to
+`gh pr checks`, use the script instead.
+
+Never pipe an exit-code-bearing `gh` command into another — the pipeline reports
+the last command's status, which is how [#410](https://github.com/Neaox/overcast/pull/410)
+merged over a failing compat check. Full rationale and the surrounding
+corollaries are in the [`pull-request` skill § After Opening](./.agents/skills/pull-request/SKILL.md#after-opening--waiting-on-ci).
+
 ## Merging — no `--admin`, ever
 
 Merge with plain `gh pr merge --squash` (or `--rebase`). The main ruleset now
