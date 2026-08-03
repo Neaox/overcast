@@ -198,6 +198,17 @@ type EndpointSettings struct {
 	// Empty settings are enough to attach to a network. Aliases are advertised by
 	// Docker's embedded DNS to containers on the same user-defined network.
 	Aliases []string `json:"Aliases,omitempty"`
+	// IPAMConfig pins the address the container gets on this network. Left nil,
+	// Docker's own IPAM picks one.
+	IPAMConfig *EndpointIPAMConfig `json:"IPAMConfig,omitempty"`
+}
+
+// EndpointIPAMConfig requests a specific address on a network. Docker rejects
+// the connect outright when the address is outside the network's subnet or
+// already taken, so callers that cannot guarantee either must be prepared to
+// retry without it.
+type EndpointIPAMConfig struct {
+	IPv4Address string `json:"IPv4Address,omitempty"`
 }
 
 // EndpointAliases returns unique, non-IP hostnames suitable for Docker DNS aliases.
@@ -258,13 +269,19 @@ type ContainerInspect struct {
 		Binds []string `json:"Binds"`
 	} `json:"HostConfig"`
 	NetworkSettings struct {
-		Networks map[string]struct {
-			IPAddress string `json:"IPAddress"`
-		} `json:"Networks"`
+		// Networks is keyed by network *name*; ContainerNetwork.NetworkID is
+		// the only way to match an entry against a network known by ID.
+		Networks map[string]ContainerNetwork `json:"Networks"`
 		// Ports maps "containerPort/proto" → list of host bindings.
 		// e.g. "3306/tcp" → [{"HostIp":"0.0.0.0","HostPort":"33060"}]
 		Ports map[string][]PortBinding `json:"Ports"`
 	} `json:"NetworkSettings"`
+}
+
+// ContainerNetwork is one entry of a container's NetworkSettings.Networks.
+type ContainerNetwork struct {
+	NetworkID string `json:"NetworkID"`
+	IPAddress string `json:"IPAddress"`
 }
 
 // HasOvercastLabels reports whether the container was created by Overcast with
@@ -1129,6 +1146,16 @@ func (d *Client) ConnectNetwork(ctx context.Context, networkID, containerID stri
 
 // ConnectNetworkWithAliases attaches a container to a network with optional DNS aliases.
 func (d *Client) ConnectNetworkWithAliases(ctx context.Context, networkID, containerID string, aliases []string) error {
+	var cfg *EndpointSettings
+	if len(aliases) > 0 {
+		cfg = &EndpointSettings{Aliases: aliases}
+	}
+	return d.ConnectNetworkWithConfig(ctx, networkID, containerID, cfg)
+}
+
+// ConnectNetworkWithConfig attaches a container to a network with an explicit
+// endpoint configuration — aliases, a pinned address, or both.
+func (d *Client) ConnectNetworkWithConfig(ctx context.Context, networkID, containerID string, cfg *EndpointSettings) error {
 	if err := d.acquireOp(ctx); err != nil {
 		return fmt.Errorf("connect network %s: %w", networkID, err)
 	}
@@ -1137,10 +1164,7 @@ func (d *Client) ConnectNetworkWithAliases(ctx context.Context, networkID, conta
 	body := struct {
 		Container      string            `json:"Container"`
 		EndpointConfig *EndpointSettings `json:"EndpointConfig,omitempty"`
-	}{Container: containerID}
-	if len(aliases) > 0 {
-		body.EndpointConfig = &EndpointSettings{Aliases: aliases}
-	}
+	}{Container: containerID, EndpointConfig: cfg}
 	return d.doJSON(ctx, http.MethodPost, "/v1.45/networks/"+networkID+"/connect", &body, nil)
 }
 

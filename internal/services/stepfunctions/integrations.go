@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Task resource integrations.
@@ -115,21 +116,65 @@ func (in *interpreter) runTask(ctx context.Context, name string, state *aslState
 		return nil, newStateError(errRuntime, "%s", encErr.Error())
 	}
 
-	var timeout *int64
-	if state.TimeoutSeconds > 0 {
-		seconds := int64(state.TimeoutSeconds)
-		timeout = &seconds
+	timeout, serr := taskTimeout(state, effective, ctxObj)
+	if serr != nil {
+		return nil, serr
 	}
 	in.recordTaskScheduled(integration, state.Resource, payloadJSON, timeout)
 	in.recordTaskStarted(integration)
 
-	result, serr := in.dispatchTask(ctx, integration, payload)
+	// The Task's own budget, on top of the execution's. Deriving a context is
+	// what makes it real rather than decorative: every integration dispatches
+	// through the router with this context, so an over-running Lambda invoke
+	// or a `.sync` child execution is actually interrupted. The deadline is
+	// wall-clock for the same reason the execution budget in runExecution is —
+	// a context has no clock to inject.
+	taskCtx := ctx
+	if timeout != nil {
+		var cancel context.CancelFunc
+		taskCtx, cancel = context.WithTimeout(ctx, time.Duration(*timeout)*time.Second)
+		defer cancel()
+	}
+
+	result, serr := in.dispatchTask(taskCtx, integration, payload)
 	if serr != nil {
+		// Whatever the interrupted integration reported, a failure after the
+		// Task's own deadline is States.Timeout — the error name AWS raises,
+		// which Retry/Catch can match and which recordTaskFailed turns into a
+		// TaskTimedOut event. The parent context is checked first so an
+		// execution-budget unwind or a StopExecution is not relabelled.
+		if timeout != nil && ctx.Err() == nil && taskCtx.Err() != nil {
+			serr = newStateError(errTimeout, "the Task state %q exceeded its TimeoutSeconds of %d", name, *timeout)
+		}
 		in.recordTaskFailed(integration, serr)
 		return nil, serr
 	}
 	in.recordTaskSucceeded(integration, result)
 	return result, nil
+}
+
+// taskTimeout resolves a Task state's per-attempt budget from TimeoutSeconds
+// or TimeoutSecondsPath, in seconds. nil means the state declared none, which
+// on AWS leaves only the execution's own timeout — Overcast reads it as the
+// same thing rather than inventing a default.
+func taskTimeout(state *aslState, effective any, ctxObj map[string]any) (*int64, *stateError) {
+	if state.TimeoutSecondsPath != "" {
+		value, err := selectPath(effective, ctxObj, state.TimeoutSecondsPath)
+		if err != nil {
+			return nil, newStateError(errRuntime, "%s", err.Error())
+		}
+		seconds, ok := toNumber(value)
+		if !ok || seconds <= 0 {
+			return nil, newStateError(errRuntime, "TimeoutSecondsPath %q did not resolve to a positive number", state.TimeoutSecondsPath)
+		}
+		resolved := int64(seconds)
+		return &resolved, nil
+	}
+	if state.TimeoutSeconds > 0 {
+		seconds := int64(state.TimeoutSeconds)
+		return &seconds, nil
+	}
+	return nil, nil
 }
 
 // dispatchTask routes a Task to the integration that runs it.

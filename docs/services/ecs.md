@@ -127,6 +127,13 @@ The URL is reachable on Overcast's own port rather than on the listener's — th
 DNS name resolves to Overcast, which serves every host-routed endpoint on one
 listener. CDK's `ServiceURL` output carries that port already.
 
+For a Docker-backed awsvpc task the ENI address is the address the container
+really holds on its VPC's Docker network, not one allocated alongside it, and
+Overcast joins that network itself — otherwise the address it registers is one
+it cannot dial, and forwarding fails with a gateway error or a timeout. Both
+only apply when Overcast is itself containerised; running it on the host leaves
+reaching a VPC bridge to the host's own routing.
+
 ## Container logs
 
 A container definition using the `awslogs` log driver has its output shipped to
