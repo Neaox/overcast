@@ -637,8 +637,15 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	lambdaSvc.AddTriggerSource(apigwSvc)
 	lambdaSvc.AddTriggerSource(appsyncSvc)
 	apigwSvc.InitCognitoValidator(cognitoSvc)
-	// DynamoDB Streams → SQS via Pipes: subscribe to stream events and enqueue.
-	pipesSvc.InitDelivery(bus, sqsSvc.Enqueuer())
+	// EventBridge Pipes: subscribe to DynamoDB stream events, wire the polled
+	// sources (SQS, Kinesis) and the Lambda enrichment, and hand the service the
+	// root router so a target is reached the same way an SDK call would reach it.
+	pipesSvc.InitDelivery(bus, pipes.Sources{
+		Messages: sqsSvc.Receiver(),
+		Streams:  kinesisSvc.StreamReceiver(),
+		Enricher: lambdaSvc.SyncInvoker(),
+	})
+	pipesSvc.InitRouter(r)
 	ti := scheduler.TargetInvoker{}
 	ti.Lambda = lambdaSvc.Invoker()
 	ti.SQS = sqsSvc.Enqueuer()

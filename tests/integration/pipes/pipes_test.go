@@ -17,12 +17,14 @@ import (
 
 // ---- Helpers ----------------------------------------------------------------
 
-// pipesPost sends a POST /v1/pipes/{name} request.
+// createPipe sends a POST /v1/pipes/{name} request. RoleArn is supplied
+// because AWS makes it a required member of CreatePipe.
 func createPipe(t *testing.T, srv *helpers.TestServer, name, sourceARN, targetARN string) *http.Response {
 	t.Helper()
 	b, _ := json.Marshal(map[string]any{
-		"Source": sourceARN,
-		"Target": targetARN,
+		"Source":  sourceARN,
+		"Target":  targetARN,
+		"RoleArn": "arn:aws:iam::000000000000:role/pipe-role",
 	})
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/pipes/"+name, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -187,18 +189,17 @@ func TestCreatePipe_success(t *testing.T) {
 	resp := createPipe(t, srv, "orders-to-sqs", streamARN, queueARN)
 	defer resp.Body.Close()
 
-	// Then: 201 Created is returned with the pipe in CREATING state
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	// Then: AWS's 200 response is returned, carrying only the six members
+	// CreatePipe answers with, and the pipe is CREATING.
+	helpers.AssertStatus(t, resp, http.StatusOK)
 
 	var p struct {
-		Name         string `json:"Name"`
-		Arn          string `json:"Arn"`
-		SourceArn    string `json:"Source"`
-		TargetArn    string `json:"Target"`
-		SourceName   string `json:"SourceName"`
-		TargetName   string `json:"TargetName"`
-		CurrentState string `json:"CurrentState"`
-		DesiredState string `json:"DesiredState"`
+		Name         string  `json:"Name"`
+		Arn          string  `json:"Arn"`
+		CurrentState string  `json:"CurrentState"`
+		DesiredState string  `json:"DesiredState"`
+		CreationTime float64 `json:"CreationTime"`
+		SourceArn    string  `json:"Source"`
 	}
 	helpers.DecodeJSON(t, resp, &p)
 
@@ -208,23 +209,33 @@ func TestCreatePipe_success(t *testing.T) {
 	if !strings.Contains(p.Arn, "pipe/orders-to-sqs") {
 		t.Errorf("Arn: got %q, want it to contain pipe/orders-to-sqs", p.Arn)
 	}
-	if p.SourceArn != streamARN {
-		t.Errorf("SourceArn: got %q, want %q", p.SourceArn, streamARN)
-	}
-	if p.TargetArn != queueARN {
-		t.Errorf("TargetArn: got %q, want %q", p.TargetArn, queueARN)
-	}
-	if p.SourceName != "orders" {
-		t.Errorf("SourceName: got %q, want %q", p.SourceName, "orders")
-	}
-	if p.TargetName != "order-events" {
-		t.Errorf("TargetName: got %q, want %q", p.TargetName, "order-events")
+	if p.SourceArn != "" {
+		t.Errorf("Source: got %q, want CreatePipe not to echo the source — AWS's response has six members", p.SourceArn)
 	}
 	if p.CurrentState != "CREATING" {
 		t.Errorf("CurrentState: got %q, want CREATING immediately after create", p.CurrentState)
 	}
 	if p.DesiredState != "RUNNING" {
 		t.Errorf("DesiredState: got %q, want RUNNING", p.DesiredState)
+	}
+
+	// And: DescribePipe returns the full configuration.
+	desc := describePipe(t, srv, "orders-to-sqs")
+	defer desc.Body.Close()
+	var full struct {
+		SourceArn string `json:"Source"`
+		TargetArn string `json:"Target"`
+		RoleArn   string `json:"RoleArn"`
+	}
+	helpers.DecodeJSON(t, desc, &full)
+	if full.SourceArn != streamARN {
+		t.Errorf("Source: got %q, want %q", full.SourceArn, streamARN)
+	}
+	if full.TargetArn != queueARN {
+		t.Errorf("Target: got %q, want %q", full.TargetArn, queueARN)
+	}
+	if full.RoleArn == "" {
+		t.Error("RoleArn: got empty, want the role the pipe was created with")
 	}
 }
 

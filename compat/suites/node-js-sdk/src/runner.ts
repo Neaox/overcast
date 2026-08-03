@@ -47,6 +47,7 @@ import { makeKMSGroups } from "./groups/kms.js";
 import { makeSSMGroups } from "./groups/ssm.js";
 import { makeKinesisGroups } from "./groups/kinesis.js";
 import { makeEventBridgeGroups } from "./groups/eventbridge.js";
+import { makePipesGroups } from "./groups/pipes.js";
 import { makeCloudFormationGroups } from "./groups/cloudformation.js";
 import { makeEC2Groups } from "./groups/ec2.js";
 import { makeECSGroups } from "./groups/ecs.js";
@@ -112,6 +113,7 @@ const existingGroups: TestGroup[] = [
   ...makeSSMGroups(SUITE),
   ...makeKinesisGroups(SUITE),
   ...makeEventBridgeGroups(SUITE),
+  ...makePipesGroups(SUITE),
   ...makeCloudFormationGroups(SUITE),
   ...makeEC2Groups(SUITE),
   ...makeECSGroups(SUITE),

@@ -6551,19 +6551,19 @@
           "operation": "CreatePipe",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Creates with async state machine (CREATING→RUNNING)"
+          "notes": "Validates source/enrichment/target wiring up front; async state machine (CREATING→RUNNING)"
         },
         {
           "operation": "DescribePipe",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Returns pipe details and current state"
+          "notes": "Returns the full pipe configuration and current state"
         },
         {
           "operation": "UpdatePipe",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Updates DesiredState and Description"
+          "notes": "Updates DesiredState, description, role and parameter blocks (UPDATING→previous state)"
         },
         {
           "operation": "DeletePipe",
@@ -6575,7 +6575,7 @@
           "operation": "ListPipes",
           "category": "Pipes",
           "status": "✅ Supported",
-          "notes": "Lists all pipes"
+          "notes": "Lists all pipes as PipeSummary"
         }
       ]
     },

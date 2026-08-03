@@ -21,6 +21,7 @@ import { KMSClient } from "@aws-sdk/client-kms"
 import { SSMClient } from "@aws-sdk/client-ssm"
 import { KinesisClient } from "@aws-sdk/client-kinesis"
 import { EventBridgeClient } from "@aws-sdk/client-eventbridge"
+import { PipesClient } from "@aws-sdk/client-pipes"
 import { CloudFormationClient } from "@aws-sdk/client-cloudformation"
 import { EC2Client } from "@aws-sdk/client-ec2"
 import { ECSClient } from "@aws-sdk/client-ecs"
@@ -72,6 +73,7 @@ export interface Clients {
   ssm: SSMClient
   kinesis: KinesisClient
   eventbridge: EventBridgeClient
+  pipes: PipesClient
   cloudformation: CloudFormationClient
   ec2: EC2Client
   ecs: ECSClient
@@ -112,6 +114,7 @@ export function makeClients(ctx: Pick<TestContext, "endpoint" | "region">): Clie
     ssm: new SSMClient(cfg),
     kinesis: new KinesisClient(cfg),
     eventbridge: new EventBridgeClient(cfg),
+    pipes: new PipesClient(cfg),
     cloudformation: new CloudFormationClient(cfg),
     ec2: new EC2Client(cfg),
     ecs: new ECSClient(cfg),

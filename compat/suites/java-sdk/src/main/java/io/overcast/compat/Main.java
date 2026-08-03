@@ -71,6 +71,7 @@ public final class Main {
                 new CloudFrontGroup(clients),
                 new RdsGroup(clients),
                 new StepFunctionsGroup(clients),
+                new PipesGroup(clients),
                 new WafGroup(clients),
                 new ShieldGroup(clients),
                 new ElastiCacheGroup(clients),

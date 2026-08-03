@@ -1,50 +1,58 @@
 // Package pipes emulates the AWS EventBridge Pipes service.
 //
-// EventBridge Pipes connect a source (e.g. a DynamoDB stream) to a target
-// (e.g. an SQS queue) with optional filtering and enrichment. In overcast,
-// only the DynamoDB Streams → SQS path is implemented.
+// A pipe connects a source to a target, with an optional enrichment step in
+// between. What Overcast runs:
+//
+//	sources     DynamoDB Streams (via the internal event bus), Kinesis streams
+//	            and SQS queues (polled on the injected clock)
+//	enrichment  a Lambda function, invoked synchronously; its return value
+//	            replaces the batch, and an empty response drops it
+//	targets     Lambda, SQS, SNS, Step Functions, Kinesis, Firehose and
+//	            EventBridge event buses, through internal/eventtarget — the
+//	            dispatch seam built for EventBridge rule targets (#467)
+//
+// Anything else is refused at CreatePipe/UpdatePipe time with a
+// ValidationException naming the field, never stored and silently ignored
+// (docs/plans/full-emulation-priority.md §2.1). See wiring.go.
 //
 // REST API (follows the real AWS EventBridge Pipes path prefix):
 //
 //	POST   /v1/pipes/{name}   — CreatePipe
 //	GET    /v1/pipes/{name}   — DescribePipe
 //	DELETE /v1/pipes/{name}   — DeletePipe
-//	PATCH  /v1/pipes/{name}   — UpdatePipe (501)
+//	PATCH  /v1/pipes/{name}   — UpdatePipe
 //	GET    /v1/pipes          — ListPipes
 //
 // State machine:
 //
-//	CreatePipe  → CREATING → (timer) → RUNNING
-//	DeletePipe  → DELETING → (timer) → (removed from store)
-//
-// Delivery: on every DynamoDBStream* bus event, each RUNNING pipe whose source
-// table matches the event table enqueues one SQS message per record with the
-// standard EventBridge Pipes / Lambda ESM DynamoDB event format.
+//	CreatePipe            → CREATING → (timer) → RUNNING
+//	UpdatePipe (config)   → UPDATING → (timer) → previous state
+//	UpdatePipe (state)    → STARTING/STOPPING → (timer) → RUNNING/STOPPED
+//	DeletePipe            → DELETING → (timer) → (removed from store)
 package pipes
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
 
-// stateTransitionDelay is how long after CreatePipe / DeletePipe before the
-// state machine advances. Short enough to be invisible in real usage;
-// observable in tests via srv.Clock.Add(stateTransitionDelay).
+// stateTransitionDelay is how long after CreatePipe / UpdatePipe / DeletePipe
+// before the state machine advances. Short enough to be invisible in real
+// usage; observable in tests via srv.Clock.Add(stateTransitionDelay).
 const stateTransitionDelay = 50 * time.Millisecond
 
 const serviceName = "pipes"
@@ -52,19 +60,17 @@ const serviceName = "pipes"
 // Service implements router.Service for EventBridge Pipes.
 type Service struct {
 	cfg     *config.Config
-	store   state.Store
-	log     *serviceutil.ServiceLogger
 	handler *Handler
 }
 
 // New returns a configured Pipes Service.
+//
+// It allocates only — no store reads, no network, nothing that would put work
+// on the router's construction path (docs/dev/performance.md § Startup budget).
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock) *Service {
-	log := serviceutil.NewServiceLogger(logger, serviceName)
 	return &Service{
 		cfg:     cfg,
-		store:   store,
-		log:     log,
-		handler: newHandler(cfg, store, log, clk),
+		handler: newHandler(cfg, store, serviceutil.NewServiceLogger(logger, serviceName), clk),
 	}
 }
 
@@ -74,7 +80,8 @@ func (s *Service) Name() string { return serviceName }
 // TargetPrefix returns "" — pipes uses REST routing, not X-Amz-Target dispatch.
 func (s *Service) TargetPrefix() string { return "" }
 
-// RegisterRoutes mounts the Pipes REST API under /v1/pipes.
+// RegisterRoutes mounts the Pipes REST API under /v1/pipes, plus the web
+// console's read-only wiring and delivery feeds.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Route("/v1/pipes", func(r chi.Router) {
 		r.Get("/", s.handler.ListPipes)
@@ -83,54 +90,118 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Delete("/{name}", s.handler.DeletePipe)
 		r.Patch("/{name}", s.handler.UpdatePipe)
 	})
+	s.handler.registerAdminRoutes(r)
 }
 
-// InitDelivery wires the event bus and SQS enqueuer for stream delivery.
-// Must be called after both the DynamoDB service and SQS service are running.
-// Safe to call multiple times (idempotent — each call adds a new subscriber,
-// so call exactly once from the router).
-func (s *Service) InitDelivery(bus *events.Bus, enqueuer events.MessageEnqueuer) {
-	s.handler.enqueuer = enqueuer
+// Sources wires the services a pipe reads from. Every member is optional: a
+// nil one disables that source type rather than failing a pipe that does not
+// use it.
+type Sources struct {
+	// Messages receives and acknowledges SQS queue sources.
+	Messages events.MessageReceiver
+	// Streams reads Kinesis stream sources.
+	Streams events.StreamRecordReceiver
+	// Enricher invokes a Lambda enrichment synchronously.
+	Enricher events.FunctionSyncInvoker
+}
+
+// InitDelivery wires the event bus and the source services, and starts the
+// source-polling loop.
+//
+// Must be called after the services a pipe can read from are constructed. Call
+// it exactly once from the router: each call adds a new bus subscriber.
+func (s *Service) InitDelivery(bus *events.Bus, sources Sources) {
 	s.handler.bus = bus
+	s.handler.messages = sources.Messages
+	s.handler.streams = sources.Streams
+	s.handler.enricher = sources.Enricher
 	bus.Subscribe(events.DynamoDBStreamInsert, s.handler.deliverStreamEvent)
 	bus.Subscribe(events.DynamoDBStreamModify, s.handler.deliverStreamEvent)
 	bus.Subscribe(events.DynamoDBStreamRemove, s.handler.deliverStreamEvent)
+	s.handler.startPolling()
 }
+
+// InitRouter wires the root router so a pipe can reach its target through the
+// same path an SDK call would take.
+func (s *Service) InitRouter(router http.Handler) {
+	s.handler.targets = eventtarget.NewDispatcher(router, s.cfg.Region)
+}
+
+// Stop drains the source-polling loop. It satisfies router.Stopper.
+func (s *Service) Stop(ctx context.Context) { s.handler.stopPolling(ctx) }
 
 // ---- Handler ----------------------------------------------------------------
 
 // Handler holds Pipes handler dependencies.
 type Handler struct {
-	cfg      *config.Config
-	store    *pipesStore
-	log      *serviceutil.ServiceLogger
-	clk      clock.Clock
-	enqueuer events.MessageEnqueuer // injected by InitDelivery
-	bus      *events.Bus            // injected by InitDelivery; nil until then
+	cfg   *config.Config
+	store *pipesStore
+	log   *serviceutil.ServiceLogger
+	clk   clock.Clock
+
+	bus *events.Bus // injected by InitDelivery; nil until then
+
+	// Source-side dependencies, injected by InitDelivery.
+	messages events.MessageReceiver
+	streams  events.StreamRecordReceiver
+	enricher events.FunctionSyncInvoker
+
+	// targets dispatches a batch to whatever the target ARN names. Built from
+	// the root router in InitRouter; nil until then.
+	targets *eventtarget.Dispatcher
+
+	// deliveries is the console's recent execution-outcome feed.
+	deliveries *deliveryLog
+	// cursors holds each Kinesis source's per-shard read position.
+	cursors *cursors
+
+	pollOnce sync.Once
+	stopOnce sync.Once
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
 }
 
 func newHandler(cfg *config.Config, st state.Store, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
-	return &Handler{cfg: cfg, store: newPipesStore(st, cfg.Region), log: log, clk: clk}
+	return &Handler{
+		cfg:        cfg,
+		store:      newPipesStore(st, cfg.Region),
+		log:        log,
+		clk:        clk,
+		deliveries: newDeliveryLog(),
+		cursors:    newCursors(),
+		stopCh:     make(chan struct{}),
+	}
 }
 
-// ---- Request / response types -----------------------------------------------
+// dispatcher returns the target dispatcher, or nil before InitRouter has run.
+func (h *Handler) dispatcher() *eventtarget.Dispatcher { return h.targets }
 
+// ---- Request types -----------------------------------------------------------
+
+// createPipeRequest is AWS's CreatePipe body. Name comes from the path.
 type createPipeRequest struct {
-	// Source and Target match the real AWS Pipes API wire format.
-	Source string `json:"Source"`
-	Target string `json:"Target"`
+	Description          string                `json:"Description"`
+	DesiredState         PipeState             `json:"DesiredState"`
+	RoleArn              string                `json:"RoleArn"`
+	Source               string                `json:"Source"`
+	SourceParameters     *SourceParameters     `json:"SourceParameters"`
+	Enrichment           string                `json:"Enrichment"`
+	EnrichmentParameters *EnrichmentParameters `json:"EnrichmentParameters"`
+	Target               string                `json:"Target"`
+	TargetParameters     *TargetParameters     `json:"TargetParameters"`
+	Tags                 map[string]string     `json:"Tags"`
 }
 
+// updatePipeRequest is AWS's UpdatePipe body. Source and Target are absent by
+// design: AWS does not allow either to be changed after creation.
 type updatePipeRequest struct {
-	// DesiredState optionally changes the desired lifecycle state (RUNNING or STOPPED).
-	DesiredState PipeState `json:"DesiredState,omitempty"`
-	// Description is an optional free-text description.
-	Description *string `json:"Description,omitempty"`
-}
-
-type listPipesResponse struct {
-	Pipes     []*Pipe `json:"Pipes"`
-	NextToken string  `json:"NextToken,omitempty"`
+	Description          *string               `json:"Description,omitempty"`
+	DesiredState         PipeState             `json:"DesiredState,omitempty"`
+	RoleArn              string                `json:"RoleArn,omitempty"`
+	SourceParameters     *SourceParameters     `json:"SourceParameters,omitempty"`
+	Enrichment           *string               `json:"Enrichment,omitempty"`
+	EnrichmentParameters *EnrichmentParameters `json:"EnrichmentParameters,omitempty"`
+	TargetParameters     *TargetParameters     `json:"TargetParameters,omitempty"`
 }
 
 // ---- Handlers ---------------------------------------------------------------
@@ -160,17 +231,32 @@ func (h *Handler) CreatePipe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := h.clk.Now()
+	desired := PipeStateRunning
+	if req.DesiredState == PipeStateStopped {
+		desired = PipeStateStopped
+	}
 	p := &Pipe{
-		Name:             name,
-		Arn:              h.pipeARN(ctx, name),
-		SourceArn:        req.Source,
-		TargetArn:        req.Target,
-		SourceName:       tableNameFromStreamARN(req.Source),
-		TargetName:       queueNameFromARN(req.Target),
-		CurrentState:     PipeStateCreating,
-		DesiredState:     PipeStateRunning,
-		CreationTime:     float64(now.Unix()),
-		LastModifiedTime: float64(now.Unix()),
+		Name:                 name,
+		Arn:                  h.pipeARN(ctx, name),
+		Description:          req.Description,
+		RoleArn:              req.RoleArn,
+		SourceArn:            req.Source,
+		SourceParameters:     req.SourceParameters,
+		Enrichment:           req.Enrichment,
+		EnrichmentParameters: req.EnrichmentParameters,
+		TargetArn:            req.Target,
+		TargetParameters:     req.TargetParameters,
+		Tags:                 req.Tags,
+		CurrentState:         PipeStateCreating,
+		DesiredState:         desired,
+		CreationTime:         float64(now.Unix()),
+		LastModifiedTime:     float64(now.Unix()),
+	}
+
+	// Everything this emulator cannot run is refused here rather than stored.
+	if aerr := validatePipe(p); aerr != nil {
+		writeError(w, r, aerr)
+		return
 	}
 
 	if aerr := h.store.putPipe(ctx, p); aerr != nil {
@@ -178,14 +264,16 @@ func (h *Handler) CreatePipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("pipe created", zap.String("pipe", name), zap.String("source", req.Source), zap.String("target", req.Target))
+	h.log.Info("pipe created",
+		zap.String("pipe", name),
+		zap.String("source", req.Source),
+		zap.String("enrichment", req.Enrichment),
+		zap.String("target", req.Target))
 
-	// Advance state CREATING → RUNNING asynchronously.
-	h.scheduleStateTransition(h.store.region(ctx), name, PipeStateRunning)
+	// Advance state CREATING → the desired state asynchronously.
+	h.scheduleTransition(h.store.region(ctx), name, desired, PipeStateCreating)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(p)
+	protocol.WriteJSON(w, r, http.StatusOK, p.mutationResponse())
 }
 
 // DescribePipe implements GET /v1/pipes/{name}.
@@ -196,8 +284,7 @@ func (h *Handler) DescribePipe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, aerr)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(p)
+	protocol.WriteJSON(w, r, http.StatusOK, p)
 }
 
 // DeletePipe implements DELETE /v1/pipes/{name}.
@@ -225,13 +312,15 @@ func (h *Handler) DeletePipe(w http.ResponseWriter, r *http.Request) {
 	// Remove from store asynchronously after the transition delay.
 	h.scheduleDeletion(h.store.region(ctx), name)
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(p)
+	protocol.WriteJSON(w, r, http.StatusOK, p.mutationResponse())
 }
 
 // UpdatePipe implements PATCH /v1/pipes/{name}.
-// Allows updating DesiredState (RUNNING or STOPPED) and Description.
-// The pipe transitions asynchronously when DesiredState changes.
+//
+// AWS allows the desired state, the description, the role and every parameter
+// block to change; Source and Target are immutable and are not part of the
+// request. A configuration change goes through UPDATING, and a desired-state
+// change through STARTING or STOPPING.
 func (h *Handler) UpdatePipe(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	ctx := r.Context()
@@ -252,44 +341,74 @@ func (h *Handler) UpdatePipe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, &protocol.AWSError{
 			Code:       "ConflictException",
 			Message:    "Pipe is being deleted and cannot be updated.",
-			HTTPStatus: 409,
+			HTTPStatus: http.StatusConflict,
 		})
 		return
 	}
 
 	now := h.clk.Now()
 	changed := false
+	reconfigured := false
 
 	if req.Description != nil {
 		p.Description = *req.Description
 		changed = true
 	}
+	if req.RoleArn != "" {
+		p.RoleArn = req.RoleArn
+		changed, reconfigured = true, true
+	}
+	if req.Enrichment != nil {
+		p.Enrichment = *req.Enrichment
+		changed, reconfigured = true, true
+	}
+	if req.EnrichmentParameters != nil {
+		p.EnrichmentParameters = req.EnrichmentParameters
+		changed, reconfigured = true, true
+	}
+	if req.SourceParameters != nil {
+		p.SourceParameters = req.SourceParameters
+		changed, reconfigured = true, true
+	}
+	if req.TargetParameters != nil {
+		p.TargetParameters = req.TargetParameters
+		changed, reconfigured = true, true
+	}
 
+	// Validate the pipe as it would be after the update, so a change that makes
+	// it undeliverable is refused rather than stored (§2.1).
+	if reconfigured {
+		if aerr := validatePipe(p); aerr != nil {
+			writeError(w, r, aerr)
+			return
+		}
+	}
+
+	nextState := p.CurrentState
 	if req.DesiredState != "" && req.DesiredState != p.DesiredState {
-		switch req.DesiredState { //nolint:exhaustive // only RUNNING/STOPPED are valid transitions
+		switch req.DesiredState { //nolint:exhaustive // only RUNNING/STOPPED are valid desired states
 		case PipeStateRunning, PipeStateStopped:
-			// valid transitions
 		default:
-			writeError(w, r, &protocol.AWSError{
-				Code:       "ValidationException",
-				Message:    "DesiredState must be RUNNING or STOPPED.",
-				HTTPStatus: 400,
-			})
+			writeError(w, r, validationError("DesiredState", "DesiredState must be RUNNING or STOPPED."))
 			return
 		}
 		p.DesiredState = req.DesiredState
 		changed = true
-		// Choose the transient state based on the target.
+		// Transient state chosen by where the pipe is heading.
 		if req.DesiredState == PipeStateRunning {
 			p.CurrentState = PipeStateStarting
 		} else {
 			p.CurrentState = PipeStateStopping
 		}
+		nextState = p.DesiredState
+	} else if reconfigured {
+		// A configuration-only change goes through UPDATING and lands back
+		// where it was, matching AWS's PipeState machine.
+		p.CurrentState = PipeStateUpdating
 	}
 
 	if !changed {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(p)
+		protocol.WriteJSON(w, r, http.StatusOK, p.mutationResponse())
 		return
 	}
 
@@ -302,11 +421,11 @@ func (h *Handler) UpdatePipe(w http.ResponseWriter, r *http.Request) {
 	h.log.Info("pipe updated", zap.String("pipe", name),
 		zap.String("desiredState", string(p.DesiredState)))
 
-	// Advance to the desired state asynchronously.
-	h.scheduleUpdateTransition(h.store.region(ctx), name, p.DesiredState)
+	if p.CurrentState == PipeStateStarting || p.CurrentState == PipeStateStopping || p.CurrentState == PipeStateUpdating {
+		h.scheduleTransition(h.store.region(ctx), name, nextState, p.CurrentState)
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(p)
+	protocol.WriteJSON(w, r, http.StatusOK, p.mutationResponse())
 }
 
 // ListPipes implements GET /v1/pipes.
@@ -316,85 +435,45 @@ func (h *Handler) ListPipes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, aerr)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(listPipesResponse{Pipes: pipes})
+	summaries := make([]map[string]any, 0, len(pipes))
+	for _, p := range pipes {
+		summaries = append(summaries, p.summary())
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Pipes": summaries})
 }
 
 // ---- State machine ----------------------------------------------------------
 
-// scheduleStateTransition advances the named pipe to nextState after the
-// configured delay. Uses the injected clock so tests can control timing.
-func (h *Handler) scheduleStateTransition(region, name string, nextState PipeState) {
+// scheduleTransition advances the named pipe to nextState after the configured
+// delay, but only if it is still in the transient state it was left in. Uses
+// the injected clock so tests can control timing.
+func (h *Handler) scheduleTransition(region, name string, nextState, from PipeState) {
 	timer := h.clk.Timer(stateTransitionDelay)
 	go func() {
 		defer timer.Stop()
-		<-timer.C
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+		select {
+		case <-h.stopCh:
+			return
+		case <-timer.C:
+		}
+		ctx := regionContext(context.Background(), region)
 		p, aerr := h.store.getPipe(ctx, name)
 		if aerr != nil {
-			return // pipe was deleted before transition fired
+			return // pipe was deleted before the transition fired
 		}
-		// Only advance if the pipe hasn't been deleted / stopped externally.
-		if p.CurrentState != PipeStateCreating {
+		// Only advance if nothing else moved the pipe in the meantime.
+		if p.CurrentState != from {
 			return
 		}
 		oldState := p.CurrentState
 		p.CurrentState = nextState
 		p.LastModifiedTime = float64(h.clk.Now().Unix())
 		if aerr := h.store.putPipe(ctx, p); aerr != nil {
-			h.log.Error("pipe state transition failed", zap.String("pipe", name), zap.String("state", string(nextState)))
+			h.log.Error("pipe state transition failed",
+				zap.String("pipe", name), zap.String("state", string(nextState)))
 			return
 		}
-		if h.bus != nil {
-			h.bus.Publish(ctx, events.Event{
-				Type:   events.PipesStateChanged,
-				Time:   h.clk.Now(),
-				Source: "pipes",
-				Payload: events.PipesStateChangedPayload{
-					PipeName: name,
-					OldState: string(oldState),
-					NewState: string(nextState),
-				},
-			})
-		}
-	}()
-}
-
-// scheduleUpdateTransition advances a pipe to its desired state after UpdatePipe.
-// Uses STARTING/STOPPING transient states matching the real AWS Pipes state machine.
-func (h *Handler) scheduleUpdateTransition(region, name string, desiredState PipeState) {
-	timer := h.clk.Timer(stateTransitionDelay)
-	go func() {
-		defer timer.Stop()
-		<-timer.C
-		ctx := middleware.ContextWithRegion(context.Background(), region)
-		p, aerr := h.store.getPipe(ctx, name)
-		if aerr != nil {
-			return
-		}
-		// Only advance if still in the transient state.
-		if p.CurrentState != PipeStateStarting && p.CurrentState != PipeStateStopping {
-			return
-		}
-		oldState := p.CurrentState
-		p.CurrentState = desiredState
-		p.LastModifiedTime = float64(h.clk.Now().Unix())
-		if aerr := h.store.putPipe(ctx, p); aerr != nil {
-			h.log.Error("pipe update transition failed", zap.String("pipe", name))
-			return
-		}
-		if h.bus != nil {
-			h.bus.Publish(ctx, events.Event{
-				Type:   events.PipesStateChanged,
-				Time:   h.clk.Now(),
-				Source: "pipes",
-				Payload: events.PipesStateChangedPayload{
-					PipeName: name,
-					OldState: string(oldState),
-					NewState: string(desiredState),
-				},
-			})
-		}
+		h.publishStateChange(ctx, name, string(oldState), string(nextState))
 	}()
 }
 
@@ -403,36 +482,47 @@ func (h *Handler) scheduleDeletion(region, name string) {
 	timer := h.clk.Timer(stateTransitionDelay)
 	go func() {
 		defer timer.Stop()
-		<-timer.C
-		ctx := middleware.ContextWithRegion(context.Background(), region)
+		select {
+		case <-h.stopCh:
+			return
+		case <-timer.C:
+		}
+		ctx := regionContext(context.Background(), region)
 		if aerr := h.store.deletePipe(ctx, name); aerr != nil {
 			h.log.Error("pipe deletion failed", zap.String("pipe", name))
 			return
 		}
-		if h.bus != nil {
-			h.bus.Publish(ctx, events.Event{
-				Type:   events.PipesStateChanged,
-				Time:   h.clk.Now(),
-				Source: "pipes",
-				Payload: events.PipesStateChangedPayload{
-					PipeName: name,
-					OldState: string(PipeStateDeleting),
-					NewState: "DELETED",
-				},
-			})
-		}
+		h.publishStateChange(ctx, name, string(PipeStateDeleting), "DELETED")
 	}()
+}
+
+// publishStateChange emits the bus event the console's activity feed reads.
+func (h *Handler) publishStateChange(ctx context.Context, name, oldState, newState string) {
+	if h.bus == nil {
+		return
+	}
+	h.bus.Publish(ctx, events.Event{
+		Type:   events.PipesStateChanged,
+		Time:   h.clk.Now(),
+		Source: serviceName,
+		Payload: events.PipesStateChangedPayload{
+			PipeName: name,
+			OldState: oldState,
+			NewState: newState,
+		},
+	})
 }
 
 // ---- Event delivery ---------------------------------------------------------
 
-// deliverStreamEvent is called by the event bus for every DynamoDBStream* event.
-// It finds all RUNNING pipes whose source table matches, then enqueues one SQS
-// message per event onto the target queue.
+// deliverStreamEvent is called by the event bus for every DynamoDBStream*
+// event. Every RUNNING pipe whose source stream names the same table executes
+// once for the record.
+//
+// The bus delivers one record at a time, so a DynamoDB-sourced pipe always runs
+// a batch of one — BatchSize and MaximumBatchingWindowInSeconds have nothing to
+// buffer. The batch is still an array, as AWS's always is.
 func (h *Handler) deliverStreamEvent(ctx context.Context, evt events.Event) {
-	if h.enqueuer == nil {
-		return
-	}
 	payload, ok := evt.Payload.(events.DynamoDBStreamPayload)
 	if !ok {
 		return
@@ -440,7 +530,7 @@ func (h *Handler) deliverStreamEvent(ctx context.Context, evt events.Event) {
 
 	pipes, aerr := h.store.listAllPipes(ctx)
 	if aerr != nil {
-		h.log.Error("delivery: list pipes failed", zap.Error(fmt.Errorf("%s", aerr.Message)))
+		h.log.Error("pipes: delivery: list pipes failed", zap.String("error", aerr.Message))
 		return
 	}
 
@@ -448,114 +538,20 @@ func (h *Handler) deliverStreamEvent(ctx context.Context, evt events.Event) {
 		if p.CurrentState != PipeStateRunning {
 			continue
 		}
-		// Match source: pipe SourceArn must reference the same table.
 		if tableNameFromStreamARN(p.SourceArn) != payload.Table {
 			continue
 		}
-
-		body := buildSQSMessageBody(p.SourceArn, evt, payload)
-		queueName := queueNameFromARN(p.TargetArn)
-		msgID := uuid.New().String()
-		if err := h.enqueuer.EnqueueRaw(ctx, queueName, body); err != nil {
-			h.log.Error("delivery: enqueue failed",
-				zap.String("pipe", p.Name),
-				zap.String("queue", queueName),
-				zap.Error(err),
-			)
-			continue
-		}
-		if h.bus != nil {
-			h.bus.Publish(ctx, events.Event{
-				Type:   events.PipesDelivered,
-				Time:   h.clk.Now(),
-				Source: "pipes",
-				Payload: events.PipesDeliveryPayload{
-					PipeName:    p.Name,
-					SourceTable: tableNameFromStreamARN(p.SourceArn),
-					TargetQueue: queueName,
-					EventName:   payload.EventName,
-					MessageID:   msgID,
-				},
-			})
-		}
+		record := dynamoDBStreamRecord(p.SourceArn, payload)
+		//nolint:errcheck // execute records the outcome; a stream record has
+		// nowhere to be redelivered from.
+		_ = h.execute(ctx, p, []map[string]any{record})
 	}
-}
-
-// buildSQSMessageBody formats a DynamoDB stream event as the standard
-// EventBridge Pipes / Lambda ESM DynamoDB record JSON.
-func buildSQSMessageBody(sourceARN string, evt events.Event, payload events.DynamoDBStreamPayload) string {
-	type dynamoDBRecord struct {
-		ApproximateCreationDateTime float64 `json:"ApproximateCreationDateTime"`
-		Keys                        any     `json:"Keys,omitempty"`
-		NewImage                    any     `json:"NewImage,omitempty"`
-		OldImage                    any     `json:"OldImage,omitempty"`
-		SequenceNumber              string  `json:"SequenceNumber"`
-		StreamViewType              string  `json:"StreamViewType"`
-	}
-
-	type record struct {
-		EventID        string         `json:"eventID"`
-		EventVersion   string         `json:"eventVersion"`
-		EventSource    string         `json:"eventSource"`
-		EventSourceARN string         `json:"eventSourceARN"`
-		AwsRegion      string         `json:"awsRegion"`
-		EventName      string         `json:"eventName"`
-		DynamoDB       dynamoDBRecord `json:"dynamodb"`
-	}
-
-	// Derive region from the source ARN (arn:aws:dynamodb:REGION:...).
-	region := "us-east-1"
-	parts := splitARN(sourceARN)
-	if len(parts) >= 4 {
-		region = parts[3]
-	}
-
-	// SequenceNumber zero-padded to 21 digits, matching real DynamoDB Streams format.
-	seqNum := fmt.Sprintf("%021d", payload.SequenceNumber)
-
-	r := record{
-		EventID:        seqNum,
-		EventVersion:   "1.1",
-		EventSource:    "aws:dynamodb",
-		EventSourceARN: sourceARN,
-		AwsRegion:      region,
-		EventName:      payload.EventName,
-		DynamoDB: dynamoDBRecord{
-			ApproximateCreationDateTime: float64(payload.CreatedAt) / 1000.0,
-			Keys:                        payload.Keys,
-			NewImage:                    payload.NewImage,
-			OldImage:                    payload.OldImage,
-			SequenceNumber:              seqNum,
-			StreamViewType:              "NEW_AND_OLD_IMAGES",
-		},
-	}
-
-	b, _ := json.Marshal(r)
-	return string(b)
-}
-
-// splitARN splits an ARN string on ":" for region extraction.
-func splitARN(arn string) []string {
-	result := make([]string, 0, 6)
-	start := 0
-	for i, c := range arn {
-		if c == ':' {
-			result = append(result, arn[start:i])
-			start = i + 1
-			if len(result) == 5 {
-				break
-			}
-		}
-	}
-	if start < len(arn) {
-		result = append(result, arn[start:])
-	}
-	return result
 }
 
 // pipeARN builds the ARN for a pipe.
 func (h *Handler) pipeARN(ctx context.Context, name string) string {
-	return fmt.Sprintf("arn:aws:pipes:%s:%s:pipe/%s", middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, name)
+	return "arn:aws:pipes:" + middleware.RegionFromContext(ctx, h.cfg.Region) +
+		":" + h.cfg.AccountID + ":pipe/" + name
 }
 
 // writeError writes a JSON error response for the Pipes REST API.

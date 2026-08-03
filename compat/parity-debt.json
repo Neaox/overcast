@@ -262,6 +262,12 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "kinesis",
       "group": "kinesis-records",
       "tests": 4
@@ -607,6 +613,12 @@
       "service": "eventbridge",
       "group": "eventbridge-target-fanout",
       "tests": 3
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "pipes",
+      "group": "pipes-wiring",
+      "tests": 7
     },
     {
       "suite": "rust-sdk",

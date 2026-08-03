@@ -40,6 +40,7 @@ func All() []ServiceGroup {
 		CloudFront(),
 		RDS(),
 		StepFunctions(),
+		Pipes(),
 		WAF(),
 		Shield(),
 		ElastiCache(),

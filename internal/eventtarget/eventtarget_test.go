@@ -20,6 +20,7 @@ func TestClassify(t *testing.T) {
 		"arn:aws:kinesis:us-east-1:000000000000:stream/s":                     KindKinesis,
 		"arn:aws:firehose:us-east-1:000000000000:deliverystream/d":            KindFirehose,
 		"arn:aws:ecs:us-east-1:000000000000:cluster/c":                        KindECS,
+		"arn:aws:events:us-east-1:000000000000:event-bus/orders":              KindEventBus,
 		"arn:aws-us-gov:lambda:us-gov-west-1:000000000000:function:partition": KindLambda,
 	}
 	for arn, want := range supported {
@@ -183,6 +184,120 @@ func TestDeliver_perKindWireShape(t *testing.T) {
 		}
 		if !strings.Contains(c.body, `"Record":{"Data":`) || !strings.Contains(c.body, `"DeliveryStreamName":"dd"`) {
 			t.Fatalf("body = %q", c.body)
+		}
+	})
+}
+
+// The EventBridge event-bus sink is what EventBridge Pipes (#470) needs on top
+// of the sinks issue #467 built, and real EventBridge supports a bus as a rule
+// target too, so it lives here rather than inside the pipes package.
+func TestDeliver_eventBusPutsAnEvent(t *testing.T) {
+	d, c := newCaptureDispatcher(http.StatusOK)
+
+	err := d.Deliver(context.Background(), Request{
+		ARN:        "arn:aws:events:us-east-1:000000000000:event-bus/orders",
+		Payload:    []byte(`{"orderId":"o-1"}`),
+		Source:     "com.example.pipe",
+		DetailType: "OrderPlaced",
+		Resources:  []string{"arn:aws:pipes:us-east-1:000000000000:pipe/p"},
+	})
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if c.target != "AWSEvents.PutEvents" {
+		t.Fatalf("X-Amz-Target = %q, want AWSEvents.PutEvents", c.target)
+	}
+	for _, want := range []string{
+		`"EventBusName":"orders"`,
+		`"Source":"com.example.pipe"`,
+		`"DetailType":"OrderPlaced"`,
+		`"Detail":"{\"orderId\":\"o-1\"}"`,
+		`"Resources":["arn:aws:pipes:us-east-1:000000000000:pipe/p"]`,
+	} {
+		if !strings.Contains(c.body, want) {
+			t.Fatalf("body = %q, want it to contain %s", c.body, want)
+		}
+	}
+	if got := DisplayName(KindEventBus); got != "EventBridge event bus" {
+		t.Fatalf("DisplayName(events) = %q", got)
+	}
+}
+
+// A bus target whose own rules target another bus can cycle. Real AWS tolerates
+// that because delivery is asynchronous; delivering in-process would recurse
+// until the stack blew, so the hop budget turns a cycle into a reported error.
+func TestDeliver_eventBusStopsAtTheHopLimit(t *testing.T) {
+	var d *Dispatcher
+	hops := 0
+	d = NewDispatcher(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hops++
+		if hops > 50 {
+			t.Fatal("bus delivery recursed past any sane budget")
+		}
+		// Re-enter the dispatcher the way a rule on the target bus would.
+		if err := d.Deliver(r.Context(), Request{
+			ARN:     "arn:aws:events:us-east-1:000000000000:event-bus/b",
+			Payload: []byte("{}"),
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}), "us-east-1")
+
+	err := d.Deliver(context.Background(), Request{
+		ARN:     "arn:aws:events:us-east-1:000000000000:event-bus/a",
+		Payload: []byte("{}"),
+	})
+	if err == nil {
+		t.Fatal("expected the hop budget to refuse an unbounded bus cycle")
+	}
+	if !strings.Contains(err.Error(), "hop") {
+		t.Fatalf("err = %v, want it to name the hop budget", err)
+	}
+}
+
+// Pipes invokes a Lambda target synchronously (AWS's REQUEST_RESPONSE default),
+// so a handled function error has to reach the caller as a delivery failure —
+// the invoke itself answers 200 and reports the error in a header.
+func TestDeliver_lambdaInvocationType(t *testing.T) {
+	t.Run("request-response reports a function error", func(t *testing.T) {
+		var gotType string
+		d := NewDispatcher(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotType = r.Header.Get("X-Amz-Invocation-Type")
+			w.Header().Set("X-Amz-Function-Error", "Unhandled")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"errorMessage":"boom"}`))
+		}), "us-east-1")
+
+		err := d.Deliver(context.Background(), Request{
+			ARN:            "arn:aws:lambda:us-east-1:000000000000:function:fn",
+			Payload:        []byte("{}"),
+			InvocationType: InvocationRequestResponse,
+		})
+		if gotType != "RequestResponse" {
+			t.Fatalf("X-Amz-Invocation-Type = %q, want RequestResponse", gotType)
+		}
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("err = %v, want the function error", err)
+		}
+	})
+
+	t.Run("the default stays asynchronous for EventBridge", func(t *testing.T) {
+		var gotType string
+		d := NewDispatcher(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotType = r.Header.Get("X-Amz-Invocation-Type")
+			w.WriteHeader(http.StatusAccepted)
+		}), "us-east-1")
+
+		if err := d.Deliver(context.Background(), Request{
+			ARN:     "arn:aws:lambda:us-east-1:000000000000:function:fn",
+			Payload: []byte("{}"),
+		}); err != nil {
+			t.Fatalf("Deliver: %v", err)
+		}
+		if gotType != "Event" {
+			t.Fatalf("X-Amz-Invocation-Type = %q, want Event", gotType)
 		}
 	})
 }

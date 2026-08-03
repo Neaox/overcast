@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
@@ -6,12 +6,19 @@ import { GitBranch, Trash2, ArrowRight, Check, AlertCircle } from "lucide-react"
 import { SERVICES } from "@/lib/service-registry"
 import {
   pipeListQueryOptions,
+  pipeWiringQueryOptions,
   pipeKeys,
   createPipeMutationOptions,
   deletePipeMutationOptions,
 } from "@/features/pipes/data"
+import type { PipeWiring } from "@/services/api/pipes"
 import { dynamoTablesQueryOptions } from "@/features/dynamodb/data"
 import { sqsQueuesQueryOptions } from "@/features/sqs/data"
+import { kinesisStreamsQueryOptions } from "@/features/kinesis/data"
+import { lambdaFunctionsQueryOptions } from "@/features/lambda/data"
+import { snsTopicsQueryOptions } from "@/features/sns/data"
+import { sfnStateMachinesQueryOptions } from "@/features/stepfunctions/data"
+import { ebBusesQueryOptions } from "@/features/eventbridge/data"
 import { useLocation, useNavigate } from "@tanstack/react-router"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -51,85 +58,85 @@ import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 
-// ─── Service type definitions ─────────────────────────────────────────────────
+// ─── Candidate resources ──────────────────────────────────────────────────────
+//
+// Every leg of a pipe is an ARN, so the dialog offers one list of candidate
+// resources per leg rather than a service selector plus a per-service picker.
+// The emulator refuses a combination it cannot run, so the lists here mirror
+// what internal/services/pipes/wiring.go accepts — see docs/services/pipes.md.
 
-interface ServiceDef {
-  id: string
+interface Candidate {
+  arn: string
   label: string
-  icon: React.ElementType
-  color: string
-  bgColor: string
+  service: keyof typeof SERVICES
+  /** Set when the resource exists but cannot be used, e.g. streams disabled. */
+  disabledReason?: string
 }
 
-const SOURCE_SERVICES: ServiceDef[] = [
-  {
-    id: "dynamodb-streams",
-    label: "DynamoDB Streams",
-    icon: SERVICES.dynamodb.icon,
-    color: SERVICES.dynamodb.color,
-    bgColor: SERVICES.dynamodb.bg,
-  },
-]
-
-const TARGET_SERVICES: ServiceDef[] = [
-  {
-    id: "sqs",
-    label: "SQS Queue",
-    icon: SERVICES.sqs.icon,
-    color: SERVICES.sqs.color,
-    bgColor: SERVICES.sqs.bg,
-  },
-]
-
-// ─── ServiceTypeSelector ──────────────────────────────────────────────────────
-
-function ServiceTypeSelector({
-  services,
-  selected,
-  onSelect,
-}: {
-  services: ServiceDef[]
-  selected: string
-  onSelect: (id: string) => void
-}) {
+function candidateRow(c: Candidate, selected: boolean, disabledReason?: string) {
+  const Icon = SERVICES[c.service].icon
   return (
-    <div className="flex flex-wrap gap-2">
-      {services.map((svc) => {
-        const Icon = svc.icon
-        const isSelected = svc.id === selected
-        return (
-          <button
-            key={svc.id}
-            type="button"
-            onClick={() => onSelect(svc.id)}
-            className={cn(
-              "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-all",
-              isSelected
-                ? "border-accent bg-accent/10 text-fg shadow-sm"
-                : "border-border bg-bg text-fg-muted hover:border-border-muted hover:text-fg",
-            )}
-          >
-            <span className={cn("flex h-5 w-5 items-center justify-center rounded", svc.bgColor)}>
-              <Icon className={cn("h-3 w-3", svc.color)} />
-            </span>
-            {svc.label}
-            {isSelected && <Check className="h-3.5 w-3.5 text-accent" />}
-          </button>
-        )
-      })}
-    </div>
+    <span className="flex flex-col gap-0.5">
+      <span className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2">
+          <Icon className={cn("h-3.5 w-3.5 shrink-0", SERVICES[c.service].color)} />
+          <span>{c.label}</span>
+        </span>
+        {selected && !disabledReason && <Check className="h-3 w-3 text-accent" />}
+      </span>
+      {disabledReason && <span className="pl-5 text-xs text-fg-muted">{disabledReason}</span>}
+    </span>
   )
 }
 
-// ─── ARN display helpers ──────────────────────────────────────────────────────
-
-function arnToDisplayLabel(arn: string, tables: DynamoTable[], queues: SQSQueue[]): string {
-  if (!arn) return ""
-  const t = tables.find((t) => t.latestStreamArn === arn || t.tableArn === arn)
-  if (t) return t.tableName
-  const q = queues.find((q) => q.arn === arn)
-  if (q) return q.name
-  return arn
+/** A combobox over candidate ARNs, with free-text entry for anything else. */
+function ArnPicker({
+  candidates,
+  value,
+  loading,
+  placeholder,
+  onChange,
+  onBlur,
+}: {
+  candidates: Candidate[]
+  value: string
+  loading: boolean
+  placeholder: string
+  onChange: (v: string) => void
+  onBlur: () => void
+}) {
+  const label = candidates.find((c) => c.arn === value)?.label ?? value
+  return (
+    <Combobox
+      value={label}
+      onChange={(v) => {
+        onChange(v)
+        onBlur()
+      }}
+      items={candidates}
+      filterFn={(c, q) =>
+        c.label.toLowerCase().includes(q.toLowerCase()) || c.arn.toLowerCase().includes(q.toLowerCase())
+      }
+      getItemValue={(c) => c.arn}
+      isItemDisabled={(c) => c.disabledReason}
+      renderItem={(c, { selected, disabledReason }) => candidateRow(c, selected, disabledReason)}
+      allowCustom
+      renderCustomFooter={(query, select) => (
+        <div className="border-t border-border px-3 py-2">
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1.5 text-left text-sm text-fg-muted hover:bg-bg-muted"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => select(query)}
+          >
+            Use <span className="font-mono text-fg">{query}</span> as ARN
+          </button>
+        </div>
+      )}
+      placeholder={loading ? "Loading resources…" : placeholder}
+      popoverWidth="w-full"
+    />
+  )
 }
 
 // ─── CreatePipeDialog ─────────────────────────────────────────────────────────
@@ -148,8 +155,9 @@ const pipeSchema = z.object({
     .string()
     .min(1, "Name is required")
     .regex(/^[a-zA-Z0-9_-]+$/, "Only letters, numbers, hyphens, and underscores"),
-  sourceArn: z.string().min(1, "Select a source table"),
-  targetArn: z.string().min(1, "Select a target queue"),
+  sourceArn: z.string().min(1, "Select a source"),
+  targetArn: z.string().min(1, "Select a target"),
+  enrichmentArn: z.string(),
 })
 
 export function CreatePipeDialog({
@@ -158,23 +166,91 @@ export function CreatePipeDialog({
   onCreated,
   initialSourceArn,
 }: CreatePipeDialogProps) {
-  // sourceService / targetService are UI-only selectors — not part of the submitted value
-  const [sourceService, setSourceService] = useState("dynamodb-streams")
-  const [targetService, setTargetService] = useState("sqs")
-
   const { data: tables = [], isLoading: tablesLoading } = useQuery({
     ...dynamoTablesQueryOptions(),
     enabled: open,
   })
-
   const { data: queues = [], isLoading: queuesLoading } = useQuery({
     ...sqsQueuesQueryOptions(),
     enabled: open,
   })
+  const { data: streams = [], isLoading: streamsLoading } = useQuery({
+    ...kinesisStreamsQueryOptions(),
+    enabled: open,
+  })
+  const { data: functions = [], isLoading: functionsLoading } = useQuery({
+    ...lambdaFunctionsQueryOptions(),
+    enabled: open,
+  })
+  const { data: topics = [] } = useQuery({ ...snsTopicsQueryOptions(), enabled: open })
+  const { data: stateMachines = [] } = useQuery({
+    ...sfnStateMachinesQueryOptions(),
+    enabled: open,
+  })
+  const { data: buses = [] } = useQuery({ ...ebBusesQueryOptions(), enabled: open })
+
+  const resourcesLoading =
+    tablesLoading || queuesLoading || streamsLoading || functionsLoading
+
+  // Candidate lists mirror what the emulator accepts for each leg.
+  const sourceCandidates: Candidate[] = useMemo(
+    () => [
+      ...tables.map((t: DynamoTable) => ({
+        arn: t.latestStreamArn ?? t.tableArn,
+        label: t.tableName,
+        service: "dynamodb" as const,
+        disabledReason:
+          !t.streamSpecification?.streamEnabled || !t.latestStreamArn
+            ? "Streams not enabled — enable DynamoDB Streams on this table first"
+            : undefined,
+      })),
+      ...streams.map((s) => ({ arn: s.arn, label: s.name, service: "kinesis" as const })),
+      ...queues.map((q: SQSQueue) => ({ arn: q.arn, label: q.name, service: "sqs" as const })),
+    ],
+    [tables, streams, queues],
+  )
+
+  const targetCandidates: Candidate[] = useMemo(
+    () => [
+      ...queues.map((q: SQSQueue) => ({ arn: q.arn, label: q.name, service: "sqs" as const })),
+      ...functions.map((f) => ({
+        arn: f.FunctionArn ?? "",
+        label: f.FunctionName ?? "",
+        service: "lambda" as const,
+      })),
+      ...stateMachines.map((sm) => ({
+        arn: sm.stateMachineArn ?? "",
+        label: sm.name ?? "",
+        service: "stepfunctions" as const,
+      })),
+      ...topics.map((t) => ({
+        arn: t.TopicArn ?? "",
+        label: (t.TopicArn ?? "").split(":").pop() ?? "",
+        service: "sns" as const,
+      })),
+      ...streams.map((s) => ({ arn: s.arn, label: s.name, service: "kinesis" as const })),
+      ...buses.map((b) => ({
+        arn: b.Arn ?? "",
+        label: b.Name ?? "",
+        service: "eventbridge" as const,
+      })),
+    ],
+    [queues, functions, stateMachines, topics, streams, buses],
+  )
+
+  const enrichmentCandidates: Candidate[] = useMemo(
+    () =>
+      functions.map((f) => ({
+        arn: f.FunctionArn ?? "",
+        label: f.FunctionName ?? "",
+        service: "lambda" as const,
+      })),
+    [functions],
+  )
 
   const createMut = useResourceMutation({
     options: createPipeMutationOptions(),
-    invalidateKeys: [pipeKeys.list()],
+    invalidateKeys: [pipeKeys.list(), pipeKeys.wiring()],
     successDescription: ({ name: n }) => n,
     errorTitle: "Create failed",
     onSuccess: (_, { name: n }) => {
@@ -189,9 +265,15 @@ export function CreatePipeDialog({
       name: "",
       sourceArn: initialSourceArn ?? "",
       targetArn: "",
+      enrichmentArn: "",
     },
     onSubmit: ({ value }) => {
-      createMut.mutate({ name: value.name, sourceArn: value.sourceArn, targetArn: value.targetArn })
+      createMut.mutate({
+        name: value.name,
+        sourceArn: value.sourceArn,
+        targetArn: value.targetArn,
+        enrichmentArn: value.enrichmentArn,
+      })
     },
   })
 
@@ -205,11 +287,7 @@ export function CreatePipeDialog({
 
   function handleClose() {
     onClose()
-    setTimeout(() => {
-      form.reset()
-      setSourceService("dynamodb-streams")
-      setTargetService("sqs")
-    }, 150)
+    setTimeout(() => form.reset(), 150)
   }
 
   return (
@@ -250,94 +328,63 @@ export function CreatePipeDialog({
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
             <p className={cn(fieldLabel, "text-fg-muted")}>Source</p>
 
-            <FormField label="Service">
-              <ServiceTypeSelector
-                services={SOURCE_SERVICES}
-                selected={sourceService}
-                onSelect={(id) => {
-                  setSourceService(id)
-                  form.setFieldValue("sourceArn", "")
-                }}
-              />
-            </FormField>
+            <form.Field name="sourceArn" validators={{ onChange: pipeSchema.shape.sourceArn }}>
+              {(field) => (
+                <FormField
+                  label="Resource"
+                  required
+                  hint="A DynamoDB stream, a Kinesis stream or an SQS queue. Search by name or paste an ARN."
+                  error={field.state.meta.isTouched ? field.state.meta.errors[0]?.message : undefined}
+                >
+                  {sourceCandidates.length === 0 && !resourcesLoading ? (
+                    <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-fg-muted">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-warning" />
+                      No sources found. Create a DynamoDB table with streams enabled, a Kinesis
+                      stream or an SQS queue first.
+                    </div>
+                  ) : (
+                    <ArnPicker
+                      candidates={sourceCandidates}
+                      value={field.state.value}
+                      loading={resourcesLoading}
+                      placeholder="Search sources or paste ARN…"
+                      onChange={field.handleChange}
+                      onBlur={field.handleBlur}
+                    />
+                  )}
+                </FormField>
+              )}
+            </form.Field>
+          </div>
 
-            {sourceService === "dynamodb-streams" && (
-              <form.Field name="sourceArn" validators={{ onChange: pipeSchema.shape.sourceArn }}>
-                {(field) => (
-                  <FormField
-                    label="Table"
-                    required
-                    hint={
-                      tables.length === 0
-                        ? undefined
-                        : "Search by name or paste a stream ARN directly."
-                    }
-                    error={
-                      field.state.meta.isTouched ? field.state.meta.errors[0]?.message : undefined
-                    }
-                  >
-                    {tables.length === 0 && !tablesLoading ? (
-                      <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-fg-muted">
-                        <AlertCircle className="h-4 w-4 shrink-0 text-warning" />
-                        No DynamoDB tables found. Create a table with streaming enabled first.
-                      </div>
-                    ) : (
-                      <Combobox
-                        value={arnToDisplayLabel(field.state.value, tables, queues)}
-                        onChange={(v) => {
-                          field.handleChange(v)
-                          field.handleBlur()
-                        }}
-                        items={tables}
-                        filterFn={(t, q) =>
-                          t.tableName.toLowerCase().includes(q.toLowerCase()) ||
-                          (t.latestStreamArn ?? "").toLowerCase().includes(q.toLowerCase())
-                        }
-                        getItemValue={(t) => t.latestStreamArn ?? t.tableArn}
-                        isItemDisabled={(t) =>
-                          !t.streamSpecification?.streamEnabled || !t.latestStreamArn
-                            ? "Streams not enabled — enable DynamoDB Streams on this table first"
-                            : undefined
-                        }
-                        renderItem={(t, { selected, disabled, disabledReason }) => (
-                          <span className="flex flex-col gap-0.5">
-                            <span className="flex items-center justify-between gap-2">
-                              <span className="flex items-center gap-2">
-                                <SERVICES.dynamodb.icon
-                                  className={cn("h-3.5 w-3.5 shrink-0", SERVICES.dynamodb.color)}
-                                />
-                                <span>{t.tableName}</span>
-                              </span>
-                              {selected && !disabled && <Check className="h-3 w-3 text-accent" />}
-                            </span>
-                            {disabled && disabledReason && (
-                              <span className="pl-5 text-xs text-fg-muted">{disabledReason}</span>
-                            )}
-                          </span>
-                        )}
-                        allowCustom
-                        renderCustomFooter={(query, select) => (
-                          <div className="border-t border-border px-3 py-2">
-                            <button
-                              type="button"
-                              className="w-full rounded px-2 py-1.5 text-left text-sm text-fg-muted hover:bg-bg-muted"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => select(query)}
-                            >
-                              Use <span className="font-mono text-fg">{query}</span> as ARN
-                            </button>
-                          </div>
-                        )}
-                        placeholder={
-                          tablesLoading ? "Loading tables…" : "Search tables or paste ARN…"
-                        }
-                        popoverWidth="w-full"
-                      />
-                    )}
-                  </FormField>
-                )}
-              </form.Field>
-            )}
+          {/* Flow arrow */}
+          <div className="flex items-center gap-2 text-fg-subtle">
+            <div className="h-px flex-1 bg-border" />
+            <ArrowRight className="h-4 w-4" />
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          {/* Enrichment (optional) */}
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
+            <p className={cn(fieldLabel, "text-fg-muted")}>Enrichment (optional)</p>
+
+            <form.Field name="enrichmentArn">
+              {(field) => (
+                <FormField
+                  label="Lambda function"
+                  hint="Invoked between source and target; its return value replaces the batch."
+                >
+                  <ArnPicker
+                    candidates={enrichmentCandidates}
+                    value={field.state.value}
+                    loading={functionsLoading}
+                    placeholder="None — skip enrichment"
+                    onChange={field.handleChange}
+                    onBlur={field.handleBlur}
+                  />
+                </FormField>
+              )}
+            </form.Field>
           </div>
 
           {/* Flow arrow */}
@@ -351,73 +398,25 @@ export function CreatePipeDialog({
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-subtle p-4">
             <p className={cn(fieldLabel, "text-fg-muted")}>Target</p>
 
-            <FormField label="Service">
-              <ServiceTypeSelector
-                services={TARGET_SERVICES}
-                selected={targetService}
-                onSelect={(id) => {
-                  setTargetService(id)
-                  form.setFieldValue("targetArn", "")
-                }}
-              />
-            </FormField>
-
-            {targetService === "sqs" && (
-              <form.Field name="targetArn" validators={{ onChange: pipeSchema.shape.targetArn }}>
-                {(field) => (
-                  <FormField
-                    label="Queue"
-                    required
-                    hint="Search by name or paste a queue ARN directly."
-                    error={
-                      field.state.meta.isTouched ? field.state.meta.errors[0]?.message : undefined
-                    }
-                  >
-                    <Combobox
-                      value={arnToDisplayLabel(field.state.value, tables, queues)}
-                      onChange={(v) => {
-                        field.handleChange(v)
-                        field.handleBlur()
-                      }}
-                      items={queues}
-                      filterFn={(q, query) =>
-                        q.name.toLowerCase().includes(query.toLowerCase()) ||
-                        q.arn.toLowerCase().includes(query.toLowerCase())
-                      }
-                      getItemValue={(q) => q.arn}
-                      renderItem={(q, { selected }) => (
-                        <span className="flex items-center justify-between gap-2">
-                          <span className="flex items-center gap-2">
-                            <SERVICES.sqs.icon
-                              className={cn("h-3.5 w-3.5 shrink-0", SERVICES.sqs.color)}
-                            />
-                            <span>{q.name}</span>
-                          </span>
-                          {selected && <Check className="h-3 w-3 text-accent" />}
-                        </span>
-                      )}
-                      allowCustom
-                      renderCustomFooter={(query, select) => (
-                        <div className="border-t border-border px-3 py-2">
-                          <button
-                            type="button"
-                            className="w-full rounded px-2 py-1.5 text-left text-sm text-fg-muted hover:bg-bg-muted"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => select(query)}
-                          >
-                            Use <span className="font-mono text-fg">{query}</span> as ARN
-                          </button>
-                        </div>
-                      )}
-                      placeholder={
-                        queuesLoading ? "Loading queues…" : "Search queues or paste ARN…"
-                      }
-                      popoverWidth="w-full"
-                    />
-                  </FormField>
-                )}
-              </form.Field>
-            )}
+            <form.Field name="targetArn" validators={{ onChange: pipeSchema.shape.targetArn }}>
+              {(field) => (
+                <FormField
+                  label="Resource"
+                  required
+                  hint="Lambda, SQS, SNS, Step Functions, Kinesis, Firehose or an EventBridge bus."
+                  error={field.state.meta.isTouched ? field.state.meta.errors[0]?.message : undefined}
+                >
+                  <ArnPicker
+                    candidates={targetCandidates}
+                    value={field.state.value}
+                    loading={resourcesLoading}
+                    placeholder="Search targets or paste ARN…"
+                    onChange={field.handleChange}
+                    onBlur={field.handleBlur}
+                  />
+                </FormField>
+              )}
+            </form.Field>
           </div>
 
           <DialogFooter>
@@ -513,9 +512,19 @@ export function PipeList() {
     error,
   } = useQuery(pipeListQueryOptions())
 
+  // The wiring feed is what stops an unsupported combination being presented as
+  // if it were running: a pipe stored by an older build can read RUNNING while
+  // nothing at all flows through it.
+  const { data: wiring = [], refetch: refetchWiring } = useQuery(pipeWiringQueryOptions())
+  const wiringByName = useMemo(() => {
+    const map = new Map<string, PipeWiring>()
+    for (const w of wiring) map.set(w.Name, w)
+    return map
+  }, [wiring])
+
   const deleteMut = useResourceMutation({
     options: deletePipeMutationOptions(),
-    invalidateKeys: [pipeKeys.list()],
+    invalidateKeys: [pipeKeys.list(), pipeKeys.wiring()],
     successTitle: "Pipe deleted",
     successDescription: (name) => name,
     errorTitle: "Delete failed",
@@ -535,7 +544,13 @@ export function PipeList() {
             onOpen={openDocs}
             onClose={closeDocs}
           />
-          <RefreshAction isFetching={isFetching} onClick={() => refetch()} />
+          <RefreshAction
+            isFetching={isFetching}
+            onClick={() => {
+              void refetch()
+              void refetchWiring()
+            }}
+          />
           <CreateAction onClick={openCreate}>Create pipe</CreateAction>
         </>
       }
@@ -550,7 +565,7 @@ export function PipeList() {
               <EmptyState
                 icon={<GitBranch className="h-10 w-10" />}
                 title="No pipes yet"
-                description="Create a pipe to route DynamoDB stream events to an SQS queue."
+                description="Create a pipe to route DynamoDB, Kinesis or SQS records to a target."
                 action={<CreateAction onClick={openCreate}>Create pipe</CreateAction>}
               />
             }
@@ -568,37 +583,67 @@ export function PipeList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pipes.map((p) => (
-                <TableRow key={p.Name}>
-                  <TableCell>
-                    <ResourceName icon={GitBranch} name={p.Name} />
-                  </TableCell>
-                  <TableCell>
-                    <span className="flex items-center gap-1.5 font-mono text-xs">
-                      <span className="text-fg">{p.Source}</span>
-                      <ArrowRight className="h-3 w-3 text-fg-muted" />
-                      <span className="text-fg">{p.Target}</span>
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={stateVariant(p.CurrentState ?? "")}>{p.CurrentState}</Badge>
-                  </TableCell>
-                  <TableCell className="text-fg-muted">
-                    {p.CreationTime?.toLocaleString()}
-                  </TableCell>
-                  <TableCell>
-                    <RowActions>
-                      <RowAction
-                        label={`Delete ${p.Name ?? "pipe"}`}
-                        tone="danger"
-                        onClick={() => setDeleteTarget(p.Name)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </RowAction>
-                    </RowActions>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {pipes.map((p) => {
+                const w = wiringByName.get(p.Name ?? "")
+                return (
+                  <TableRow
+                    key={p.Name}
+                    onClick={() =>
+                      navigate({ to: "/pipes/$pipeName", params: { pipeName: p.Name ?? "" } })
+                    }
+                  >
+                    <TableCell>
+                      <ResourceName icon={GitBranch} name={p.Name} />
+                    </TableCell>
+                    <TableCell>
+                      <span className="flex items-center gap-1.5 font-mono text-xs">
+                        <span className="text-fg" title={p.Source}>
+                          {w?.SourceType ?? p.Source}
+                        </span>
+                        {w?.Enrichment ? (
+                          <>
+                            <ArrowRight className="h-3 w-3 text-fg-muted" />
+                            <span className="text-fg" title={w.Enrichment}>
+                              {w.EnrichmentType}
+                            </span>
+                          </>
+                        ) : null}
+                        <ArrowRight className="h-3 w-3 text-fg-muted" />
+                        <span className="text-fg" title={p.Target}>
+                          {w?.TargetType ?? p.Target}
+                        </span>
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {/*
+                        A pipe the emulator cannot run must not read RUNNING —
+                        that is the failure this view exists to make visible.
+                      */}
+                      {w && !w.Wired ? (
+                        <Badge variant="danger" title={w.Reason}>
+                          not wired
+                        </Badge>
+                      ) : (
+                        <Badge variant={stateVariant(p.CurrentState ?? "")}>{p.CurrentState}</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-fg-muted">
+                      {p.CreationTime?.toLocaleString()}
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <RowActions>
+                        <RowAction
+                          label={`Delete ${p.Name ?? "pipe"}`}
+                          tone="danger"
+                          onClick={() => setDeleteTarget(p.Name)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </RowAction>
+                      </RowActions>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         )}
@@ -610,7 +655,7 @@ export function PipeList() {
         onClose={closeCreate}
         initialSourceArn={initialSourceArn}
         onCreated={(name) => {
-          void qc.invalidateQueries({ queryKey: pipeKeys.list() })
+          void qc.invalidateQueries({ queryKey: pipeKeys.all() })
           toast({ title: "Pipe created", description: name, variant: "success" })
         }}
       />

@@ -9,6 +9,7 @@ package eventtarget
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -120,6 +121,79 @@ func (it InputTransformer) Render(doc any, reserved map[string]string) ([]byte, 
 		out = strings.ReplaceAll(out, "<"+name+">", value)
 	}
 	return []byte(out), nil
+}
+
+// PathTemplate is an EventBridge Pipes `InputTemplate`.
+//
+// Pipes writes JSON paths inline — `<$.body.orderId>` — rather than naming
+// them through an InputPathsMap the way rule targets do, and adds a set of
+// `aws.pipes.*` reserved variables. The path syntax is the same subset
+// SelectPath implements, which is why this sits beside InputTransformer.
+//
+// A template may be free text, a bare path, or JSON with paths embedded in it;
+// Pipes applies it to each record of a batch individually, not to the array.
+type PathTemplate string
+
+// placeholder matches one <...> substitution in a PathTemplate, together with
+// any quotes the template already wrapped it in.
+var placeholder = regexp.MustCompile(`"?<([^<>"]+)>"?`)
+
+// Render substitutes every placeholder in the template against one record.
+//
+// A placeholder beginning `$.` (or exactly `$`) selects from doc; anything else
+// is looked up in reserved, which supplies the `aws.pipes.*` variables. A
+// string value is substituted as a quoted JSON string unless the template
+// already supplied the quotes, so `<$.id>` and `"<$.id>"` both render valid
+// JSON — AWS accepts either. Objects, arrays and numbers substitute as JSON
+// without quotes. A path that selects nothing substitutes an empty string,
+// matching AWS's "that variable isn't created" behaviour.
+//
+// The result is returned verbatim: AWS does not require a rendered template to
+// be JSON, and a target that needs JSON is responsible for a template that
+// produces it.
+func (t PathTemplate) Render(doc any, reserved map[string]any) ([]byte, error) {
+	if strings.TrimSpace(string(t)) == "" {
+		return nil, fmt.Errorf("InputTemplate must not be empty")
+	}
+	var renderErr error
+	out := placeholder.ReplaceAllStringFunc(string(t), func(match string) string {
+		quoted := strings.HasPrefix(match, `"`) && strings.HasSuffix(match, `"`)
+		name := strings.TrimSuffix(strings.TrimPrefix(strings.Trim(match, `"`), "<"), ">")
+
+		value, ok := templateLookup(doc, reserved, name)
+		if !ok {
+			// An absent path creates no variable. In a quoted position that
+			// still has to leave valid JSON behind, hence the empty string.
+			if quoted {
+				return `""`
+			}
+			return ""
+		}
+		// Marshalling supplies the quotes for a string and omits them for an
+		// object, array or number, which is exactly AWS's substitution rule —
+		// and it is why quotes the template already wrote are consumed by the
+		// match rather than kept.
+		raw, err := json.Marshal(value)
+		if err != nil {
+			renderErr = err
+			return ""
+		}
+		return string(raw)
+	})
+	if renderErr != nil {
+		return nil, renderErr
+	}
+	return []byte(out), nil
+}
+
+// templateLookup resolves one placeholder name to its value: a JSON path
+// against the record, or a reserved pipe variable.
+func templateLookup(doc any, reserved map[string]any, name string) (any, bool) {
+	if strings.HasPrefix(name, "$") {
+		return SelectPath(doc, name)
+	}
+	v, ok := reserved[name]
+	return v, ok
 }
 
 // templateValue renders one selected node for substitution into a template.
