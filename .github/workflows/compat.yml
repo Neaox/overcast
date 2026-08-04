@@ -285,11 +285,20 @@ jobs:
           docker pull --quiet public.ecr.aws/lambda/nodejs:20 || true
           docker pull --quiet public.ecr.aws/lambda/python:3.12 || true
 
+      # OVERCAST_RDS_MODE=mock keeps RDS metadata-only here. `available` now
+      # means the engine answered, which is honest but costs a real MySQL first
+      # boot — image pull plus data-directory initialisation — per instance,
+      # across eight suites, on a shared runner. The python suite timed out
+      # waiting and the java suite reported the timeout as a bogus precondition
+      # error. This leaves the RDS container path with no automated coverage at
+      # all — issue #614 covers both getting compat back to live mode and the
+      # Go-side integration test that should have been guarding it regardless.
       - name: Start Overcast
         run: |
           OVERCAST_PORT=4566 \
           OVERCAST_STATE=memory \
           OVERCAST_LOG_LEVEL=warn \
+          OVERCAST_RDS_MODE=mock \
             ./bin/overcast serve &
           echo "OVERCAST_PID=$!" >> "$GITHUB_ENV"
 

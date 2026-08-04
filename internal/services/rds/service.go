@@ -56,7 +56,17 @@ func (s *Service) InitBus(bus *events.Bus) {
 
 // SetDocker wires the Docker client for RDS container management and starts
 // the DockGC background remove loop.
+//
+// Mock mode declines the client rather than filtering its use at each call
+// site: everything downstream already keys off dockerReady, so leaving it
+// unset is the one change that makes every path metadata-only at once. The
+// router normally does not even probe Docker for RDS in mock mode; this guard
+// makes the mode hold whoever calls.
 func (s *Service) SetDocker(dc *docker.Client) {
+	if !s.containersEnabled() {
+		s.log.Info("RDS is in mock mode — no engine containers will be started, and nothing will listen on a DB instance endpoint")
+		return
+	}
 	s.handler.docker = dc
 	s.handler.puller = docker.NewImagePuller(dc)
 	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.RDSKeepContainers)
@@ -66,6 +76,13 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	// blanket sweep stranded it. See GC.SweepExcept.
 	s.handler.gc.SweepExcept(serviceName, s.handler.instanceOwnsContainer)
 	s.handler.dockerReady.Store(true)
+}
+
+// containersEnabled reports whether this service may run engine containers.
+// Only an explicit mock opts out, so a zero-value config — which plenty of
+// tests build directly — keeps the live default.
+func (s *Service) containersEnabled() bool {
+	return s.handler.cfg == nil || s.handler.cfg.RDSMode != config.RDSModeMock
 }
 
 // SetVPCResolver wires the EC2 VPC resolver for DB subnet group launches.

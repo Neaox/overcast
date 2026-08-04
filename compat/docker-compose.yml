@@ -27,6 +27,9 @@
 #                                   the overcast container — see the group_add
 #                                   comment on the compat service.
 #   OVERCAST_LOG_LEVEL=info         Overcast log verbosity (default: warn).
+#   OVERCAST_RDS_MODE=live          Run real database engine containers. The
+#                                   default here is mock — see the overcast
+#                                   service below and issue #614.
 #   OVERCAST_COMPAT_FORMAT=json     Go runner output format: pretty|json
 #                                   (default: pretty).
 #   OVERCAST_COMPAT_SUITE=go-sdk    Optional comma-separated suite filter.
@@ -40,14 +43,20 @@ services:
     ports:
       - "4566" # internal only — compat service reaches it via the network
     volumes:
-      # Lambda, ECS, RDS, ElastiCache and MSK run real containers. Without the
+      # Lambda, ECS, ElastiCache and MSK run real containers. Without the
       # host daemon those services are metadata-only and every invocation
       # returns a stub, so the suites measure the stub rather than Overcast.
+      # RDS could too, but is held at mock here — see OVERCAST_RDS_MODE below.
       - ${COMPAT_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     environment:
       OVERCAST_PORT: "4566"
       OVERCAST_STATE: memory
       OVERCAST_LOG_LEVEL: ${OVERCAST_LOG_LEVEL:-warn}
+      # RDS stays metadata-only for the same reason CI does: `available` means
+      # the engine answered, and a real MySQL first boot per instance is more
+      # than the compat run can absorb. Override to `live` to exercise the
+      # container path locally. Issue #614 tracks getting compat back to live.
+      OVERCAST_RDS_MODE: ${OVERCAST_RDS_MODE:-mock}
       # The suites reach this container as "overcast", and the CDK asset
       # publisher addresses S3 buckets virtual-hosted ("{bucket}.overcast").
       # Registering the compose hostname as a virtual-host base is what lets
