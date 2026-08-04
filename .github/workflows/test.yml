@@ -28,6 +28,64 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Does this pull request need the expensive jobs at all?
+  #
+  # Nine jobs below are in the branch ruleset's required set, and a required
+  # check that never reports leaves the pull request waiting on it forever. So
+  # this cannot be a `paths-ignore:` on the workflow, and it cannot be a twin
+  # "skip" workflow either — GitHub skips on paths-ignore only when *every*
+  # changed file matches but runs on `paths` when *any* one does, so a pull
+  # request touching a doc and a handler satisfies both and two runs report
+  # under the same check name.
+  #
+  # Instead every job keeps its name and still runs; only the expensive steps
+  # are conditional. A prose-only pull request gets the same green checks in
+  # seconds. scripts/ci-scope.py holds the rule and scripts/ci_scope_test.py
+  # pins it — including that anything unrecognised counts as code.
+  # Every other job now waits on this one, so it is kept to a shallow checkout
+  # and one API call. Diffing locally would mean `fetch-depth: 0` — a full
+  # history clone — to gain nothing the API does not already know.
+  changes:
+    name: Changed-path scope
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # --paginate so a pull request over 100 files is classified on all of
+          # them; a truncated list could read as prose-only. On anything that is
+          # not a pull request the script answers true before reading stdin.
+          #
+          # `|| true` is load-bearing. Every other job needs this one, so a
+          # failure here skips them all and none of the required checks
+          # reports — which blocks the pull request outright rather than
+          # failing it. A GitHub API blip must not be able to do that, and the
+          # runner's default shell is `bash -e -o pipefail`, so without this
+          # the pipeline would take a transient error straight to a hard block.
+          # An empty list means "could not tell", which ci-scope.py answers
+          # with code=true: run everything.
+          files=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' || true)
+          fi
+          printf '%s\n' "$files" | python3 scripts/ci-scope.py >> "$GITHUB_OUTPUT"
+      - name: What was decided
+        env:
+          CODE: ${{ steps.scope.outputs.code }}
+        run: |
+          if [ "$CODE" = "true" ]; then
+            echo "Code changed — running the full suite."
+          else
+            echo "Prose only — the Go, SPA and image jobs have nothing to exercise."
+          fi
+
   # No `needs: web`. An untagged Go build embeds `all:web/dist`, and the
   # committed `web/dist/.gitkeep` is what keeps that pattern resolving without
   # a built SPA — a binary without one serves the API normally and answers 503
@@ -42,20 +100,25 @@ jobs:
   # web/dist/index.html and fail loudly without one.
   vet:
     name: Vet
+    needs: changes
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: needs.changes.outputs.code == 'true'
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
         run: go mod download
 
       - name: Vet
+        if: needs.changes.outputs.code == 'true'
         run: go vet ./...
 
   # The longest job in the workflow, and it used to start 187 s late waiting on
@@ -63,31 +126,38 @@ jobs:
   # so this is where dropping the dependency is worth the most.
   coverage:
     name: Full test suite with coverage
+    needs: changes
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: needs.changes.outputs.code == 'true'
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
         run: go mod download
 
       # The suite pulls images (registry:2, alpine, postgres, redis, …) for the
       # Docker-backed services. Mirror them so the pulls do not compete for the
       # shared anonymous Docker Hub limit on GitHub's egress IPs.
       - uses: ./.github/actions/docker-hub-mirror
+        if: needs.changes.outputs.code == 'true'
 
       - name: Full test suite with coverage
+        if: needs.changes.outputs.code == 'true'
         run: |
           go test -race -count=1 -timeout=1200s -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
   build-tags:
     name: Test suite (-tags ${{ matrix.tags }})
+    needs: changes
     runs-on: ubuntu-latest
 
     # Deliberately no `needs: web` and no download-artifact: dropping the
@@ -108,54 +178,69 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: needs.changes.outputs.code == 'true'
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
         run: go mod download
 
       - name: Vet
+        if: needs.changes.outputs.code == 'true'
         run: go vet -tags ${{ matrix.tags }} ./...
 
       - uses: ./.github/actions/docker-hub-mirror
+        if: needs.changes.outputs.code == 'true'
 
       # No -race: these tags change which routes register, which assets embed,
       # and whether SQLite is compiled in — not concurrency. The untagged
       # coverage job owns race coverage, and dropping it here roughly halves
       # the runtime.
       - name: Test suite
+        if: needs.changes.outputs.code == 'true'
         run: go test -count=1 -timeout=1200s -tags ${{ matrix.tags }} ./...
 
   sqs-protocol-dispatch:
     name: SQS integration tests (protocol dispatch)
+    needs: changes
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: needs.changes.outputs.code == 'true'
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
         run: go mod download
 
       - name: Vet
+        if: needs.changes.outputs.code == 'true'
         run: go vet ./...
 
       - name: SQS integration tests (protocol dispatch)
+        if: needs.changes.outputs.code == 'true'
         run: OVERCAST_PROTOCOL_DISPATCH=1 go test -race -count=1 -timeout=300s ./tests/integration/sqs/...
 
   lint:
     name: Lint
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: needs.changes.outputs.code == 'true'
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: needs.changes.outputs.code == 'true'
         with:
           go-version-file: go.mod
           cache: true
@@ -163,6 +248,7 @@ jobs:
       # `go run`, so CI and local runs cannot drift onto different versions.
       # The pin lives in the Makefile (GOLANGCI_LINT_VERSION).
       - name: Run Go lint
+        if: needs.changes.outputs.code == 'true'
         run: make lint-go
 
   actionlint:
@@ -240,48 +326,68 @@ jobs:
       - name: Validate generated operation ownership
         run: make aws-models-check
 
+  # Gated like the Go jobs, with one extra consequence: this job produces the
+  # web-dist artifact, so anything downstream of it has to be gated on the same
+  # output or it will wait for an upload that is not coming. cross-build is the
+  # only such consumer.
   web:
     name: Web UI
+    needs: [changes, release-gate]
     runs-on: ubuntu-latest
+    # Same two reasons to run as `docker`: a release candidate needs the SPA
+    # built whatever the changed paths say, because cross-build consumes this
+    # job's artifact.
+    env:
+      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true' }}
     defaults:
       run:
         working-directory: web
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: env.RUN_BUILD == 'true'
       # No setup-go: the docs index is committed, so the SPA build no longer
       # shells out to the Go generator. This job is Node-only.
       # pnpm/action-setup must precede setup-node: `cache: pnpm` resolves the
       # store path by running pnpm, so pnpm has to be on PATH by then.
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        if: env.RUN_BUILD == 'true'
         with:
           package_json_file: web/package.json
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: env.RUN_BUILD == 'true'
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+        if: env.RUN_BUILD == 'true'
       - name: Lint
+        if: env.RUN_BUILD == 'true'
         run: pnpm run lint
       # Not `tsc --noEmit`: that resolves web/tsconfig.json, a
       # solution-style config with "files": [] and only project references, so
       # it compiles zero files and always passes. `pnpm run typecheck` runs
       # tsconfig.app.json and tsconfig.node.json explicitly.
       - name: Type check
+        if: env.RUN_BUILD == 'true'
         run: pnpm run typecheck
       # Runs before the build so a test failure is attributable to this step
       # rather than surfacing (or not) somewhere inside the build.
       - name: Unit tests
+        if: env.RUN_BUILD == 'true'
         run: pnpm run test
       # `pnpm run build` re-runs typecheck. That duplication is deliberate: the
       # dedicated step above gives an attributable failure, and invoking the
       # published script keeps CI from drifting from what contributors run
       # locally.
       - name: Build SPA
+        if: env.RUN_BUILD == 'true'
         run: VITE_BUNDLED=true pnpm run build
       - name: Build BFF server
+        if: env.RUN_BUILD == 'true'
         run: pnpm run build:server
       - name: Upload web assets
+        if: env.RUN_BUILD == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: web-dist
@@ -354,9 +460,16 @@ jobs:
   # release.yml, so the PR check builds exactly what a release would ship.
   # On a release-candidate build the binaries are also uploaded as artifacts;
   # on every other PR this stays a pure build check.
+  # A job-level `if:` here rather than the step-level gate the others use: this
+  # calls a reusable workflow, where steps are not ours to condition. That is
+  # safe precisely because Cross-build is not a required check — skipping it
+  # reports nothing, which for a required check would block the pull request
+  # forever. It also has to be gated: it consumes web-dist, which a gated-off
+  # `web` job does not upload.
   cross-build:
     name: Cross-build
-    needs: [web, release-gate]
+    needs: [changes, web, release-gate]
+    if: needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true'
     uses: ./.github/workflows/build-binaries.yml
     with:
       version: ci
@@ -365,8 +478,18 @@ jobs:
 
   docker:
     name: Docker build (${{ matrix.image }})
-    needs: release-gate
+    needs: [changes, release-gate]
     runs-on: ubuntu-latest
+    # One condition, named once, because this job has two reasons to build and
+    # six later steps that assume a checkout happened.
+    #
+    # A release candidate must be built and published whatever the paths say:
+    # release-candidate-check reads the *checked-out* VERSION, so during a
+    # release window `rc` is true on any pull request, not only the one that
+    # changed VERSION. Gating on paths alone would leave those steps running
+    # against an empty workspace.
+    env:
+      RUN_BUILD: ${{ needs.changes.outputs.code == 'true' || needs.release-gate.outputs.rc == 'true' }}
     # contents: read restates the default that adding a job-level block would
     # otherwise drop; packages: write is exercised only on same-repo release
     # PRs, where the freshly built image is pushed as a release candidate.
@@ -385,12 +508,15 @@ jobs:
             target: slim
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: env.RUN_BUILD == 'true'
       # The test jobs already pull through the mirror; this one did not, and it
       # is the job that pulls the most — every base layer of a two-stage build,
       # twice over the matrix. It builds with the classic builder, so the
       # daemon-level mirror this configures is the one that applies.
       - uses: ./.github/actions/docker-hub-mirror
+        if: env.RUN_BUILD == 'true'
       - name: Build image
+        if: env.RUN_BUILD == 'true'
         env:
           TAG: ${{ matrix.tag }}
           TARGET: ${{ matrix.target }}
@@ -401,7 +527,7 @@ jobs:
           fi
           docker build "${args[@]}" .
       - name: Smoke test (slim)
-        if: matrix.image == 'slim'
+        if: env.RUN_BUILD == 'true' && matrix.image == 'slim'
         run: |
           docker run -d --name oc-smoke -p 4566:4566 ${{ matrix.tag }}
           sleep 2
