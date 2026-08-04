@@ -61,7 +61,10 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.puller = docker.NewImagePuller(dc)
 	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.RDSKeepContainers)
 	s.handler.gc.StartRemoveLoop(context.Background())
-	s.handler.gc.Sweep(serviceName) // clean up orphaned containers from previous runs
+	// Sweep only what no instance still claims. A stopped DB instance keeps its
+	// container across restarts so StartDBInstance has something to start; a
+	// blanket sweep stranded it. See GC.SweepExcept.
+	s.handler.gc.SweepExcept(serviceName, s.handler.instanceOwnsContainer)
 	s.handler.dockerReady.Store(true)
 }
 

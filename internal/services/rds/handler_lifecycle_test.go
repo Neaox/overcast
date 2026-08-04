@@ -41,7 +41,25 @@ type lifecycleDaemon struct {
 	autoRemove bool // what the create request asked for
 	exists     bool // whether the daemon still has the container
 	running    bool
-	starts     int // successful start requests
+	starts     int  // successful start requests
+	creates    int  // create-container requests
+	failCreate bool // reject creates, so a rebuild cannot succeed
+}
+
+// drop makes the daemon forget the container, as a startup sweep, a
+// `docker prune`, or a user tidying up by hand would.
+func (d *lifecycleDaemon) drop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.exists = false
+	d.running = false
+}
+
+// refuseCreates makes rebuilding the container impossible.
+func (d *lifecycleDaemon) refuseCreates() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.failCreate = true
 }
 
 func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
@@ -85,11 +103,20 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 				t.Errorf("decode create container request: %v", err)
 			}
 			d.mu.Lock()
+			d.creates++
+			refuse := d.failCreate
 			if req.HostConfig != nil {
 				d.autoRemove = req.HostConfig.AutoRemove
 			}
-			d.exists = true
+			if !refuse {
+				d.exists = true
+			}
 			d.mu.Unlock()
+			if refuse {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"message":"no space left on device"}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"Id":"` + cid + `"}`))
 
 		case strings.HasSuffix(p, "/containers/"+cid+"/start"):
@@ -225,6 +252,9 @@ func TestStopStartDBInstance_containerSurvivesTheStop(t *testing.T) {
 	if _, aerr := h.startDBInstanceTyped(ctx, &startDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
 		t.Fatalf("StartDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
+	// StartDBInstance answers before the container is up — AWS returns
+	// "starting" and settles asynchronously — so wait for that work to land.
+	h.dockerWg.Wait()
 
 	// Then: the daemon really did restart the same container.
 	_, exists, starts := d.state()
@@ -233,6 +263,105 @@ func TestStopStartDBInstance_containerSurvivesTheStop(t *testing.T) {
 	}
 	if starts < 2 {
 		t.Errorf("container was started %d time(s); want a second start from StartDBInstance", starts)
+	}
+}
+
+// waitForStatus polls until the instance reaches want, and reports what it saw
+// instead if it does not.
+func waitForStatus(t *testing.T, h *Handler, id, want string) *DBInstance {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var last string
+	for {
+		inst, aerr := h.store.getDBInstance(context.Background(), id)
+		if aerr == nil {
+			if inst.DBInstanceStatus == want {
+				return inst
+			}
+			last = inst.DBInstanceStatus
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("instance %s never reached %q; last status %q", id, want, last)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Containers go missing — a startup sweep, a `docker prune`, a user tidying up.
+// The instance record is what says the database should exist, so a start
+// rebuilds it rather than reporting a start that started nothing.
+func TestStartDBInstance_rebuildsAContainerDockerNoLongerHas(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "lifecycle-rebuild"
+
+	createRunningInstance(t, h, id)
+	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	waitForStatus(t, h, id, "stopped")
+
+	// Given: the container is gone behind Overcast's back.
+	d.drop()
+	createsBefore := func() int { _, _, _ = d.state(); d.mu.Lock(); defer d.mu.Unlock(); return d.creates }()
+
+	// When: the instance is started.
+	if _, aerr := h.startDBInstanceTyped(ctx, &startDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StartDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	h.dockerWg.Wait()
+
+	// Then: a container was built to replace it, and the instance is not left
+	// claiming a container that does not exist.
+	d.mu.Lock()
+	createsAfter := d.creates
+	exists := d.exists
+	d.mu.Unlock()
+	if createsAfter <= createsBefore {
+		t.Error("no container was created to replace the missing one")
+	}
+	if !exists {
+		t.Error("instance still has no container after being started")
+	}
+	inst, _ := h.store.getDBInstance(ctx, id)
+	if inst.DBInstanceStatus == "failed" {
+		t.Errorf("instance failed despite the container being rebuildable: %s", inst.StatusReason)
+	}
+}
+
+// When the container genuinely cannot be started, the instance must say so.
+// Reporting "available" for a database with nothing behind it is the specific
+// dishonesty this replaces: the only way to discover it was to try to connect.
+func TestStartDBInstance_reportsFailedWhenTheContainerCannotBeStarted(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "lifecycle-unstartable"
+
+	createRunningInstance(t, h, id)
+	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	waitForStatus(t, h, id, "stopped")
+
+	// Given: the container is gone and cannot be rebuilt.
+	d.drop()
+	d.refuseCreates()
+
+	// When: the instance is started.
+	if _, aerr := h.startDBInstanceTyped(ctx, &startDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StartDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+
+	// Then: it reports AWS's "failed", with a reason worth reading — not
+	// "available", and not stuck in "starting" forever either.
+	inst := waitForStatus(t, h, id, "failed")
+	if inst.StatusReason == "" {
+		t.Error("instance failed with no reason recorded")
+	}
+	if !strings.Contains(inst.StatusReason, "could not be started") {
+		t.Errorf("StatusReason = %q, want it to say the container could not be started", inst.StatusReason)
 	}
 }
 
