@@ -179,9 +179,19 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [cloudformation/secretsmanager] `AWS::SecretsManager::Secret` generates a value for `GenerateSecretString` instead of dropping the property. The secret was created with an `AWSCURRENT` version holding nothing, so it listed and described normally while every `GetSecretValue` answered `ResourceNotFoundException` naming that version — a value-less staged version is indistinguishable from an in-flight rotation. `SecretStringTemplate` and `GenerateStringKey` place the password inside the template's JSON object, which is the shape `new Secret(..., { generateSecretString })` synthesises, and the generation settings are honoured by dispatching to the service's own `GetRandomPassword`. As on AWS the value is generated once, at create; specifying both `SecretString` and `GenerateSecretString` now fails the resource rather than silently preferring one
 
+- [cloudformation] a resource's resolved properties are persisted, so an update can tell which of them changed — every replacement guard, patch diff and custom-resource `OldResourceProperties` compared against nothing before
+
+- [cloudformation/rds] changing a DB instance's `MasterUsername` or `DBName` replaces the instance, as AWS documents, instead of reporting success and leaving it alone
+
+- [cloudformation] dynamic references are compared as written, so rotating a secret behind an unchanged template no longer reads as a changed property
+
+- [cloudformation] stack outputs leave dynamic references literal, as CloudFormation does, rather than publishing the resolved secret through DescribeStacks
+
 - [cloudwatch] Query-protocol errors use AWS's `ErrorResponse` envelope, so SDKs read the error code instead of a generic failure
 
 - [docker] image handling no longer defeats itself. Pulling an image ran `docker image prune` afterwards, and since "dangling" means untagged, an image pulled by digest (`repo@sha256:…`) has no tag — the prune deleted the image the pull had just fetched, the pull reported success, and the next container create failed with `No such image`; the prune was also daemon-wide, deleting the user's own untagged images on every pull. A digest or tag is now sent to Docker in the `tag` parameter rather than folded into `fromImage`, which is what the Engine API expects. And a container starts from an image the daemon already holds even when the registry pull fails — an unreachable or rate-limiting registry, or Docker Desktop's containerd image store returning a stale-lease 404, no longer stops a local image being used, which is the whole point of having pulled it
+
+- [docker] `IsNotFound` recognises the 404s reported by every client helper, not only the JSON ones
 
 - [dynamodb] secondary-index reads use the index. LSI queries read only the queried partition instead of scanning the whole table and honour the sparse-index rule, so an item without the index sort key is no longer returned; a parallel Scan of a global secondary index reads the index rather than the base table, returning only the index's projected attributes and only items the index actually contains
 
@@ -226,6 +236,10 @@ can be applied mechanically rather than reconstructed from memory.
 - [rds] stopping a DB instance keeps its container, so `StartDBInstance` can bring the same instance back
 
 - [rds/docker] a Docker error on the container logs endpoint is reported as an error, instead of being de-framed into corrupted-looking log output
+
+- [rds] a DB instance whose container cannot be started reports `failed` with the reason, instead of `available` with nothing behind it
+
+- [rds] starting an instance rebuilds a container Docker no longer has, and the startup sweep keeps containers a stopped instance still owns
 
 - [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
 
