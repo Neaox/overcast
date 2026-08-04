@@ -83,35 +83,64 @@ func runScannerWait(t *testing.T, mock *clock.Mock, ci *containerInstance, mark 
 	t.Helper()
 
 	start := mock.Now()
+	delivered := deliverAt < 0
+	advanceUntilDone(t, mock, 0, func() { ci.waitForScannerIdle(mark) }, func() {
+		if !delivered && mock.Now().Sub(start) >= deliverAt {
+			deliverLine(ci, line)
+			delivered = true
+		}
+	})
+	return mock.Now().Sub(start)
+}
+
+// advanceUntilDone runs fn on its own goroutine and walks mock time forward a
+// millisecond at a time until it returns, calling onTick (if any) before each
+// step. Anything parked on a mock timer only makes progress here, which is what
+// keeps these tests free of real sleeps — and what stops the code under test
+// racing ahead of a delivery the test has not made yet.
+//
+// minAdvance keeps the clock walking after fn returns, up to that much mock
+// time in total. That is what lets a test schedule something for a moment fn
+// may well have finished before: Docker hands a line over when it hands it
+// over, whether or not the code under test is still waiting for it, and a test
+// that stops the clock the instant fn returns can only ever model the orderings
+// where it was.
+func advanceUntilDone(t *testing.T, mock *clock.Mock, minAdvance time.Duration, fn func(), onTick func()) {
+	t.Helper()
+
+	start := mock.Now()
+
 	started := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		close(started)
-		ci.waitForScannerIdle(mark)
+		fn()
 	}()
 	<-started
 	// Let the goroutine reach its blocking select and register its timers
-	// against the frozen clock. Nothing can happen while it does: the wait has
-	// no wall-clock path out, so this sleep bounds goroutine start-up only.
+	// against the frozen clock. Nothing can happen while it does: the waits here
+	// have no wall-clock path out, so this sleep bounds goroutine start-up only.
 	time.Sleep(50 * time.Millisecond)
 
-	delivered := deliverAt < 0
+	finished := false
 	giveUp := time.After(30 * time.Second)
 	for {
 		select {
 		case <-done:
-			return mock.Now().Sub(start)
+			finished = true
 		case <-giveUp:
-			t.Fatal("waitForScannerIdle never returned")
-			return 0
+			t.Fatal("the wait under test never returned")
+			return
 		default:
-			if !delivered && mock.Now().Sub(start) >= deliverAt {
-				deliverLine(ci, line)
-				delivered = true
-			}
-			mock.Add(time.Millisecond)
 		}
+		if finished && mock.Now().Sub(start) >= minAdvance {
+			return
+		}
+		if onTick != nil {
+			onTick()
+		}
+		mock.Add(time.Millisecond)
 	}
 }
 
@@ -207,6 +236,56 @@ func TestWaitForScannerIdle_partialLineIsNotIdle(t *testing.T) {
 	}
 	if elapsed < 15*time.Millisecond {
 		t.Errorf("wait returned after %v, before the line was assembled at 15ms", elapsed)
+	}
+}
+
+// TestBeginTail_dropsThePreviousInvocationsStragglerOutput pins the boundary
+// that keeps one request's output out of another's tail.
+//
+// When the wait gives up before this invocation's output arrives, that output
+// is still coming, and it is still *this* invocation's. Whatever lands next
+// therefore belongs to an invocation that has already answered — so the next
+// tail must not inherit it. A tail short by a line is a state AWS documents
+// (LogResult is "the last 4 KB of the execution log"); a tail carrying another
+// request's line is a state AWS cannot produce, and it is the one that misleads
+// whoever reads it.
+func TestBeginTail_dropsThePreviousInvocationsStragglerOutput(t *testing.T) {
+	// Given: an invocation whose output never arrived before its wait expired.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newTailWaitInstance(mock)
+	mark := ci.beginTail()
+	runScannerWait(t, mock, ci, mark, -1, "")
+
+	// When: the next invocation opens its tail, and Docker hands the previous
+	// one's output over 5 ms into that — after it answered its caller, and after
+	// the point a tail that did not settle the account would already have reset
+	// the buffer and started collecting into it.
+	straggled := false
+	start := mock.Now()
+	advanceUntilDone(t, mock, 15*time.Millisecond, func() {
+		ci.discardUnclaimedOutput()
+		mark = ci.beginTail()
+	}, func() {
+		if !straggled && mock.Now().Sub(start) >= 5*time.Millisecond {
+			deliverLine(ci, "hello from the invocation that already returned")
+			straggled = true
+		}
+	})
+
+	// Then: it starts clean, rather than opening with a line it never wrote.
+	if got := tailContents(ci); got != "" {
+		t.Errorf("new invocation inherited the previous one's output: %q", got)
+	}
+
+	// And: its own output still reaches it — the boundary drops stragglers, not
+	// everything that follows one.
+	elapsed := runScannerWait(t, mock, ci, mark, 5*time.Millisecond, "hello from the next invocation")
+	if !strings.Contains(tailContents(ci), "hello from the next invocation") {
+		t.Errorf("tail is missing this invocation's own output: %q", tailContents(ci))
+	}
+	if elapsed < 5*time.Millisecond {
+		t.Errorf("wait returned after %v, before this invocation's output arrived", elapsed)
 	}
 }
 
