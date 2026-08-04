@@ -39,8 +39,13 @@ bytes, and (opt-in) host/container clients can mount the file system over NFS.
 
 ## Design
 
-Mirrors the EKS live-mode pattern: `OVERCAST_EFS_MODE=mock` (default,
-today's behaviour) vs `OVERCAST_EFS_MODE=live`.
+Mirrors the EKS live-mode pattern in shape: `OVERCAST_EFS_MODE=mock` vs
+`OVERCAST_EFS_MODE=live`. It does **not** mirror EKS's default — live is the
+default for EFS, because it creates a volume only for a file system someone
+created and creates nothing at all when Docker is unreachable, where EKS live
+mode runs a k3s container per cluster. Live mode shipped opt-in and became the
+default once the data plane was complete; the only reason to set `mock` is to
+keep EFS away from Docker deliberately.
 
 ### 1. Named Docker volume per file system (foundation) — ✅ implemented
 

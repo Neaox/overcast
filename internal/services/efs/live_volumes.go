@@ -12,11 +12,12 @@ import (
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
-// Live mode (OVERCAST_EFS_MODE=live) backs each file system with a named
-// Docker volume so emulated compute can share real file data. Volume
-// operations are best-effort: the control plane never fails because Docker is
-// slow or absent — a file system without its volume is exactly what mock mode
-// provides, and reconciliation heals the gap once Docker returns.
+// Live mode (the default; OVERCAST_EFS_MODE=mock opts out) backs each file
+// system with a named Docker volume so emulated compute can share real file
+// data. Volume operations are best-effort: the control plane never fails
+// because Docker is slow or absent — a file system without its volume is
+// exactly what mock mode provides, and reconciliation heals the gap once
+// Docker returns. That degradation is what makes live safe as a default.
 
 // volumeNamePrefix names live-mode volumes "overcast-efs-<FileSystemId>".
 const volumeNamePrefix = "overcast-efs-"

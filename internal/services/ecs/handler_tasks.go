@@ -411,7 +411,7 @@ func (h *Handler) efsMountSkipReason() (msg, hint string) {
 	switch {
 	case h.cfg != nil && h.cfg.EFSMode != config.EFSModeLive:
 		return "ecs: EFS mount skipped — EFS is in mock mode, so file systems have no storage behind them",
-			"the EFS control plane is fully emulated in mock mode (file systems, mount targets, access points, tags) — only the data plane is absent. Set OVERCAST_EFS_MODE=live to back each file system with a Docker volume that tasks can actually read and write."
+			"the EFS control plane is fully emulated in mock mode (file systems, mount targets, access points, tags) — only the data plane is absent. Live mode is the default and backs each file system with a Docker volume tasks can actually read and write; drop OVERCAST_EFS_MODE=mock from this instance's environment to get it."
 	case !h.dockerReady.Load():
 		return "ecs: EFS mount skipped — no container runtime, so there is no volume to mount",
 			"EFS live mode backs file systems with Docker volumes; start Overcast with a Docker socket available."

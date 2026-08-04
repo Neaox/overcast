@@ -52,10 +52,14 @@ type EFSMode string
 
 const (
 	// EFSModeMock keeps EFS metadata-only: file systems have no backing storage.
+	// An explicit opt-out — the default is live.
 	EFSModeMock EFSMode = "mock"
 
 	// EFSModeLive backs each file system with a named Docker volume so
-	// emulated compute (Lambda, ECS) can share real file data.
+	// emulated compute (Lambda, ECS) can share real file data. The default,
+	// because it costs nothing where it cannot be used: volume operations run
+	// only while a Docker daemon is reachable, and without one live mode
+	// behaves exactly like mock.
 	EFSModeLive EFSMode = "live"
 )
 
@@ -207,8 +211,10 @@ type Config struct {
 	// enables the live k3s-backed control plane path (`live`).
 	EKSMode EKSMode
 
-	// EFSMode controls whether the EFS service stays metadata-only (`mock`) or
-	// backs each file system with a named Docker volume (`live`).
+	// EFSMode controls whether the EFS service backs each file system with a
+	// named Docker volume (`live`, the default) or stays metadata-only
+	// (`mock`). Live mode needs no Docker to be safe: it falls back to
+	// metadata-only whenever a daemon is unreachable.
 	EFSMode EFSMode
 
 	// SigV4Validate enables SigV4 signature verification.
@@ -874,7 +880,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_DEFAULT_REGION             us-east-1
 //	OVERCAST_ACCOUNT_ID                000000000000
 //	OVERCAST_EKS_MODE                  mock    (mock | live)
-//	OVERCAST_EFS_MODE                  mock    (mock | live)
+//	OVERCAST_EFS_MODE                  live    (mock | live; live is inert without Docker)
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
 //	OVERCAST_ENFORCE_APIGATEWAY_THROTTLE false
@@ -1103,8 +1109,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: OVERCAST_EKS_MODE %q is invalid (expected mock or live)", rawEKSMode)
 	}
 
-	// EFS mode
-	rawEFSMode := strings.ToLower(strings.TrimSpace(envOr("OVERCAST_EFS_MODE", string(EFSModeMock))))
+	// EFS mode. Live by default, unlike EKS: EKS live mode runs a k3s
+	// container per cluster whether or not anything needs one, while EFS live
+	// mode only creates a volume for a file system someone asked for, and
+	// creates nothing at all when Docker is out of reach.
+	rawEFSMode := strings.ToLower(strings.TrimSpace(envOr("OVERCAST_EFS_MODE", string(EFSModeLive))))
 	cfg.EFSMode = EFSMode(rawEFSMode)
 	if cfg.EFSMode != EFSModeMock && cfg.EFSMode != EFSModeLive {
 		return nil, fmt.Errorf("config: OVERCAST_EFS_MODE %q is invalid (expected mock or live)", rawEFSMode)
