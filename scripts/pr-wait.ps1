@@ -50,16 +50,42 @@ function Invoke-GhCapture($ghArgs) {
     return $out
 }
 
+# Get-MergeVerdict turns the two merge fields into the decision the guard below
+# acts on: "conflicting", "unknown" (GitHub has not computed it yet), or "ok".
+# Kept in step with merge_verdict() in the sh twin, where scripts/pr-wait_test.py
+# exercises the same table.
+#
+# The field names are a trap, and this guard was dead for exactly that reason.
+# CONFLICTING is a value of `mergeable` (MERGEABLE / CONFLICTING / UNKNOWN). It
+# is NOT a member of the MergeStateStatus enum -- BEHIND, BLOCKED, CLEAN, DIRTY,
+# DRAFT, HAS_HOOKS, UNKNOWN, UNSTABLE -- which spells a conflict DIRTY. Testing
+# mergeStateStatus for CONFLICTING tested a value it can never hold, so it never
+# fired: on 2026-08-04 PR #395 was genuinely conflicting, printed "merge state:
+# DIRTY", and went on to --watch a PR that dispatches no workflows at all.
+#
+# Both fields are tested. `mergeable` is the one that actually means this; DIRTY
+# is the same fact from the other side, and either arriving first is enough.
+function Get-MergeVerdict($mergeable, $mergeStateStatus) {
+    if ($mergeable -eq "CONFLICTING" -or $mergeStateStatus -eq "DIRTY") { return "conflicting" }
+    if ($mergeable -eq "UNKNOWN" -or $mergeStateStatus -eq "UNKNOWN") { return "unknown" }
+    return "ok"
+}
+
 $maxJobs        = if ($env:PR_WAIT_MAX_JOBS) { [int]$env:PR_WAIT_MAX_JOBS } else { 3 }
 $maxAnnotations = if ($env:PR_WAIT_MAX_ANNOTATIONS) { [int]$env:PR_WAIT_MAX_ANNOTATIONS } else { 20 }
 $maxLogLines    = if ($env:PR_WAIT_MAX_LOG_LINES) { [int]$env:PR_WAIT_MAX_LOG_LINES } else { 40 }
 $appearTimeout  = if ($env:PR_WAIT_APPEAR_TIMEOUT) { [int]$env:PR_WAIT_APPEAR_TIMEOUT } else { 180 }
+# GitHub computes mergeability asynchronously and reports UNKNOWN until it has;
+# asking is what schedules the computation. Look again a couple of times before
+# concluding nothing.
+$mergeTries     = if ($env:PR_WAIT_MERGEABILITY_TRIES) { [int]$env:PR_WAIT_MERGEABILITY_TRIES } else { 3 }
+$mergeInterval  = if ($env:PR_WAIT_MERGEABILITY_INTERVAL) { [int]$env:PR_WAIT_MERGEABILITY_INTERVAL } else { 2 }
 
 $pr = if ($args.Count -gt 0) { $args[0] } else { $null }
 
 $viewArgs = @("pr", "view")
 if ($pr) { $viewArgs += $pr }
-$viewArgs += @("--json", "number,state,mergeStateStatus,headRefOid")
+$viewArgs += @("--json", "number,state,mergeable,mergeStateStatus,headRefOid")
 
 $stateJson = & gh @viewArgs
 if ($LASTEXITCODE -ne 0 -or -not $stateJson) {
@@ -68,6 +94,8 @@ if ($LASTEXITCODE -ne 0 -or -not $stateJson) {
 }
 $view = $stateJson | ConvertFrom-Json
 $headSha = $view.headRefOid
+$mergeable = $view.mergeable
+$mergeState = $view.mergeStateStatus
 
 if ($view.state -ne "OPEN") {
     Write-Output "pr-wait: PR #$($view.number) is $($view.state) -- nothing to wait for."
@@ -76,7 +104,20 @@ if ($view.state -ne "OPEN") {
 
 # A conflicting PR dispatches no workflows at all, so --watch would sit there
 # until it timed out. See AGENTS.md, "Stacked pull requests".
-if ($view.mergeStateStatus -eq "CONFLICTING") {
+$verdict = Get-MergeVerdict $mergeable $mergeState
+$tries = 0
+while ($verdict -eq "unknown" -and $tries -lt $mergeTries) {
+    Start-Sleep -Seconds $mergeInterval
+    $tries++
+    $recheckJson = Invoke-GhCapture @("pr", "view", "$($view.number)", "--json", "mergeable,mergeStateStatus")
+    if (-not $recheckJson) { break }
+    $recheck = $recheckJson | ConvertFrom-Json
+    $mergeable = $recheck.mergeable
+    $mergeState = $recheck.mergeStateStatus
+    $verdict = Get-MergeVerdict $mergeable $mergeState
+}
+
+if ($verdict -eq "conflicting") {
     Write-Stderr "pr-wait: PR #$($view.number) is CONFLICTING -- GitHub dispatches no checks on it. Rebase or merge main, then run this again."
     exit 2
 }
@@ -87,7 +128,9 @@ $repo = Invoke-GhCapture @("repo", "view", "--json", "nameWithOwner", "--jq", ".
 $log = New-TemporaryFile
 
 try {
-    Write-Output "pr-wait: PR #$($view.number) at $($headSha.Substring(0,7)) (merge state: $($view.mergeStateStatus)) -- waiting for checks to settle..."
+    # Both merge fields, because printing only mergeStateStatus is what let a
+    # CONFLICTING PR read as a merely-DIRTY one for as long as it did.
+    Write-Output "pr-wait: PR #$($view.number) at $($headSha.Substring(0,7)) (mergeable: $mergeable, merge state: $mergeState) -- waiting for checks to settle..."
 
     # Wait for checks to exist: a push GitHub has not picked up yet reports none,
     # and calling --watch on nothing just burns the timeout.
