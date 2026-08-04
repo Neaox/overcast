@@ -1,9 +1,9 @@
 # CI streamlining — where the time goes, and what is safe to cut
 
-Status: A, B, C and F are implemented; D was investigated and declined; E is
-half done. See [Outcome](#outcome) for what is left. The measurements below
-are from before any of it landed, and are kept as the baseline the changes
-were argued from.
+Status: A, B, C, E and F are implemented; D was investigated and declined. One
+repository-settings change is left — see [Outcome](#outcome). The measurements
+below are from before any of it landed, and are kept as the baseline the
+changes were argued from.
 
 The question this answers: CI is slow enough to be felt on every PR, on `main`,
 and on a release. What can be made faster without buying the speed with
@@ -253,13 +253,30 @@ is deliberately short — editing a published doc also regenerates
 `internal/docssearch/index.gen.go` and `web/src/docs-index.gen.ts`, which are
 not matched, so a docs change that touches the index still runs the suites.
 
-**`test.yml` is not filtered and must not be** without a skip-shim, because
-nine of its jobs are required. The shim is a second workflow declaring jobs
-with byte-identical names that runs on the inverse filter and exits 0. It is
-mechanical, but it is a name-matching contract with the ruleset: rename a job
-in one place and PRs block. If it is built, the list above is the contract.
+**`test.yml` is gated rather than filtered**, and the difference is the whole
+design. A `paths-ignore:` would stop those nine required checks reporting at
+all. The obvious repair — a twin workflow declaring the same job names on the
+inverse filter — is broken for the mixed case: GitHub skips on `paths-ignore`
+only when *every* changed file matches but runs on `paths` when *any* one does,
+so a pull request touching a doc and a handler satisfies both and two runs
+report under one check name.
 
-*Remaining:* the `test.yml` shim, worth ~42 runner-minutes on a docs-only PR.
+So there is no shim. A `changes` job classifies the diff
+(`scripts/ci-scope.py`, pinned by `scripts/ci_scope_test.py`), every job keeps
+its name and still runs, and only the expensive *steps* are conditional. A
+prose-only pull request gets the same green checks in seconds.
+
+Two consequences that are easy to miss and are commented in place:
+
+- **`web` produces the `web-dist` artifact**, so anything downstream has to be
+  gated on the same output or it waits for an upload that is not coming.
+  `cross-build` is the only such consumer.
+- **A release candidate must build whatever the paths say.**
+  `release-candidate-check.sh` reads the *checked-out* `VERSION`, so during a
+  release window `rc` is true on any pull request, not only the one that
+  changed `VERSION`. `web`, `docker` and `cross-build` therefore gate on
+  `code || rc`, which also keeps the existing release-candidate steps — whose
+  conditions assume a checkout happened — correct.
 
 ### Also worth fixing: a required-set gap
 
@@ -313,20 +330,25 @@ critical path. Removing it buys nothing worth the argument.
 | **B** mirror + frontend digest pin | done |
 | **C** SPA off the critical path | done, ~187 s saved, and simpler than proposed |
 | **D** consolidate `cross-build` | **declined** — would become the new critical path |
-| **E** path-filter heavy workflows | compat done; `test.yml` needs a shim first |
+| **E** path-filter heavy workflows | done — compat filtered, `test.yml` gated |
 | **F** local tag-matrix gate | done |
 
 CI wall clock drops from roughly 9 minutes to roughly 6 on the critical path,
-a force-push no longer costs a duplicate of both workflows, a docs-only PR
-skips compat entirely, and the two recurring false reds have had their causes
-removed rather than their symptoms re-run.
+a force-push no longer costs a duplicate of both workflows, a prose-only pull
+request skips ~56 runner-minutes across both workflows while reporting the same
+green checks, and the two recurring false reds have had their causes removed
+rather than their symptoms re-run.
 
-Two things are left, and neither is code:
+One thing is left, and it is not code:
 
-1. **The `test.yml` skip-shim**, worth ~42 runner-minutes on a docs-only PR.
-   The required-check list it has to match is above.
-2. **Add `Test suite (-tags slim,dev)` to the required set.** It is the only
-   job that compiles tag-gated code and it is currently advisory.
+**Add `Test suite (-tags slim,dev)` to the required set.** It is the only job
+that compiles tag-gated code, and it is currently advisory — a change can go
+red in it and still be mergeable. That is a repository-settings change.
+
+Note that it interacts with the gate above: it becomes a thirteenth required
+name, and like the other twelve it reports because its job always runs. The
+gate was built that way for exactly this reason — adding a required check needs
+no corresponding change here.
 
 The estimate this document opened with — 56 → 40 runner-minutes — was built on
 D landing. Without it the figure is closer to 56 → 50 on a code PR, and near
