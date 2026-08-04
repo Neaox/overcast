@@ -299,6 +299,9 @@ type Handler struct {
 	puller      *docker.ImagePuller
 	gc          *docker.GC
 	dockerWg    sync.WaitGroup
+
+	// One writer at a time per record — see locks.go.
+	clusterLocks serviceutil.RecordLocks
 }
 
 func newHandler(cfg *config.Config, store *mskStore, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {

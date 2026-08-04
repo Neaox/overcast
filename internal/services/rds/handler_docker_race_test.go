@@ -26,6 +26,66 @@ type fakeDockerDaemon struct {
 	containerID string
 	started     chan struct{} // closed when the first start request arrives
 	release     func()        // unblocks the first start request (idempotent)
+
+	// Inspect gate, off unless holdInspect is called: the health check
+	// inspects the container between reading the instance record and dialling
+	// the engine, so blocking the inspect holds that window open for a test.
+	inspectMu       sync.Mutex
+	inspectHeld     chan struct{} // closed when an inspect arrives while held
+	inspectReleased chan struct{} // closed to let held inspects through
+}
+
+// holdInspect blocks the next container inspect until releaseInspect.
+func (fd *fakeDockerDaemon) holdInspect() {
+	fd.inspectMu.Lock()
+	defer fd.inspectMu.Unlock()
+	fd.inspectHeld = make(chan struct{})
+	fd.inspectReleased = make(chan struct{})
+}
+
+// waitInspect blocks until a held inspect has arrived.
+func (fd *fakeDockerDaemon) waitInspect(t *testing.T) {
+	t.Helper()
+	fd.inspectMu.Lock()
+	held := fd.inspectHeld
+	fd.inspectMu.Unlock()
+	select {
+	case <-held:
+	case <-time.After(10 * time.Second):
+		t.Fatal("container inspect never reached the fake Docker daemon")
+	}
+}
+
+// releaseInspect lets the held inspect return.
+func (fd *fakeDockerDaemon) releaseInspect() {
+	fd.inspectMu.Lock()
+	defer fd.inspectMu.Unlock()
+	if fd.inspectReleased != nil {
+		select {
+		case <-fd.inspectReleased:
+		default:
+			close(fd.inspectReleased)
+		}
+	}
+}
+
+// gateInspect is called by the inspect route: it reports the arrival and waits
+// for the release, or returns straight away when no gate is set.
+func (fd *fakeDockerDaemon) gateInspect() {
+	fd.inspectMu.Lock()
+	held, released := fd.inspectHeld, fd.inspectReleased
+	if held != nil {
+		select {
+		case <-held:
+		default:
+			close(held)
+		}
+		fd.inspectHeld = nil
+	}
+	fd.inspectMu.Unlock()
+	if released != nil {
+		<-released
+	}
 }
 
 func newFakeDockerDaemon(t *testing.T) *fakeDockerDaemon {
@@ -35,6 +95,9 @@ func newFakeDockerDaemon(t *testing.T) *fakeDockerDaemon {
 	releaseCh := make(chan struct{})
 	var startMu sync.Mutex
 	startCount := 0
+
+	// Built before the server so the routes can close over it.
+	fd := &fakeDockerDaemon{containerID: containerID, started: started}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
@@ -70,8 +133,10 @@ func newFakeDockerDaemon(t *testing.T) *fakeDockerDaemon {
 		case strings.HasSuffix(p, "/containers/"+containerID+"/stop"):
 			w.WriteHeader(http.StatusNoContent)
 
-		// Inspect by ID (setContainerEndpoint when running inside Docker).
+		// Inspect by ID (setContainerEndpoint when running inside Docker, and
+		// the health check's container-state look).
 		case strings.HasSuffix(p, "/containers/"+containerID+"/json"):
+			fd.gateInspect()
 			w.Write([]byte(`{"Id":"` + containerID + `",` + //nolint:errcheck
 				`"State":{"Status":"running","Running":true},` +
 				`"NetworkSettings":{"Networks":{"overcast_rds":{"IPAddress":"127.0.0.1"}},"Ports":{}}}`))
@@ -83,12 +148,8 @@ func newFakeDockerDaemon(t *testing.T) *fakeDockerDaemon {
 	}))
 
 	var once sync.Once
-	fd := &fakeDockerDaemon{
-		srv:         srv,
-		containerID: containerID,
-		started:     started,
-		release:     func() { once.Do(func() { close(releaseCh) }) },
-	}
+	fd.srv = srv
+	fd.release = func() { once.Do(func() { close(releaseCh) }) }
 	// Cleanups run LIFO: srv.Close must run after release, or Close hangs on
 	// the blocked start request.
 	t.Cleanup(srv.Close)

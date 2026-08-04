@@ -9,6 +9,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
@@ -35,8 +36,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		ctx := middleware.ContextWithRegion(h.bgCtx, region)
 		switch rg.Status {
 		case "available", "starting":
-			rg.Status = "stopped"
-			h.store.putReplicationGroup(ctx, rg) //nolint:errcheck
+			h.transitionReplicationGroup(ctx, rgID, "stopped", rg.Status)
 			h.log.Info("replication group container stopped",
 				zap.String("rg", rgID), zap.String("action", p.Action))
 		}
@@ -50,8 +50,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		ctx := middleware.ContextWithRegion(h.bgCtx, region)
 		switch cache.Status {
 		case "available", "starting":
-			cache.Status = "stopped"
-			h.store.putServerlessCache(ctx, cache) //nolint:errcheck
+			h.transitionServerlessCache(ctx, name, "stopped", cache.Status)
 			h.log.Info("serverless cache container stopped",
 				zap.String("cache", name), zap.String("action", p.Action))
 		}
@@ -65,8 +64,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	ctx := middleware.ContextWithRegion(h.bgCtx, region)
 	switch cluster.CacheClusterStatus {
 	case "available", "starting":
-		cluster.CacheClusterStatus = "stopped"
-		h.store.putCacheCluster(ctx, cluster) //nolint:errcheck
+		h.transitionCacheCluster(ctx, p.ResourceID, "stopped", cluster.CacheClusterStatus)
 		h.log.Info("cache cluster container stopped",
 			zap.String("cluster", p.ResourceID), zap.String("action", p.Action))
 	}
@@ -142,14 +140,21 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			switch {
 			case c == nil:
 				if cluster.CacheClusterStatus == "available" || cluster.CacheClusterStatus == "starting" || cluster.CacheClusterStatus == "creating" {
-					cluster.CacheClusterStatus = "stopped"
-					h.store.putCacheCluster(rctx, cluster) //nolint:errcheck
+					h.transitionCacheCluster(rctx, cluster.CacheClusterId, "stopped", cluster.CacheClusterStatus)
 					h.log.Info("reconcile: container missing — marked stopped",
 						zap.String("cluster", cluster.CacheClusterId))
 				}
 			case c.State == "running":
+				// The Docker inspect stays outside the record's lock; only the
+				// endpoint it decides is written back, onto a fresh read.
 				h.setContainerEndpoint(rctx, cluster)
-				h.store.putCacheCluster(rctx, cluster) //nolint:errcheck
+				if _, aerr := h.mutateCacheCluster(rctx, cluster.CacheClusterId, func(stored *CacheCluster) *protocol.AWSError {
+					stored.ConfigurationEndpoint = cluster.ConfigurationEndpoint
+					return nil
+				}); aerr != nil {
+					h.log.Warn("reconcile: persist cluster endpoint",
+						zap.String("cluster", cluster.CacheClusterId), zap.String("error", aerr.Message))
+				}
 				if cluster.CacheClusterStatus == "creating" || cluster.CacheClusterStatus == "starting" || cluster.CacheClusterStatus == "stopped" || cluster.CacheClusterStatus == "available" {
 					h.scheduleHealthCheck(rc.Region, cluster.CacheClusterId, cluster.ConfigurationEndpoint.Address, cluster.ConfigurationEndpoint.Port)
 					h.log.Info("reconcile: container running — scheduling health check",
@@ -157,8 +162,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 				}
 			default:
 				if cluster.CacheClusterStatus == "available" || cluster.CacheClusterStatus == "starting" {
-					cluster.CacheClusterStatus = "stopped"
-					h.store.putCacheCluster(rctx, cluster) //nolint:errcheck
+					h.transitionCacheCluster(rctx, cluster.CacheClusterId, "stopped", cluster.CacheClusterStatus)
 					h.log.Info("reconcile: container not running — marked stopped",
 						zap.String("cluster", cluster.CacheClusterId),
 						zap.String("containerState", c.State))
@@ -183,14 +187,19 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			switch {
 			case c == nil:
 				if rg.Status == "available" || rg.Status == "starting" || rg.Status == "creating" {
-					rg.Status = "stopped"
-					h.store.putReplicationGroup(rctx, rg) //nolint:errcheck
+					h.transitionReplicationGroup(rctx, rg.ReplicationGroupId, "stopped", rg.Status)
 					h.log.Info("reconcile: RG container missing — marked stopped",
 						zap.String("rg", rg.ReplicationGroupId))
 				}
 			case c.State == "running":
 				h.setReplicationGroupEndpoint(rctx, rg)
-				h.store.putReplicationGroup(rctx, rg) //nolint:errcheck
+				if _, aerr := h.mutateReplicationGroup(rctx, rg.ReplicationGroupId, func(stored *ReplicationGroup) *protocol.AWSError {
+					stored.ConfigurationEndpoint = rg.ConfigurationEndpoint
+					return nil
+				}); aerr != nil {
+					h.log.Warn("reconcile: persist RG endpoint",
+						zap.String("rg", rg.ReplicationGroupId), zap.String("error", aerr.Message))
+				}
 				if rg.Status == "creating" || rg.Status == "starting" || rg.Status == "stopped" || rg.Status == "available" {
 					h.scheduleReplicationGroupHealthCheck(rr.Region, rg.ReplicationGroupId, rg.ConfigurationEndpoint.Address, rg.ConfigurationEndpoint.Port)
 					h.log.Info("reconcile: RG container running — scheduling health check",
@@ -198,8 +207,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 				}
 			default:
 				if rg.Status == "available" || rg.Status == "starting" {
-					rg.Status = "stopped"
-					h.store.putReplicationGroup(rctx, rg) //nolint:errcheck
+					h.transitionReplicationGroup(rctx, rg.ReplicationGroupId, "stopped", rg.Status)
 					h.log.Info("reconcile: RG container not running — marked stopped",
 						zap.String("rg", rg.ReplicationGroupId),
 						zap.String("containerState", c.State))
@@ -224,14 +232,20 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		switch {
 		case c == nil:
 			if cache.Status == "available" || cache.Status == "starting" || cache.Status == "creating" {
-				cache.Status = "stopped"
-				h.store.putServerlessCache(rctx, cache) //nolint:errcheck
+				h.transitionServerlessCache(rctx, cache.ServerlessCacheName, "stopped", cache.Status)
 				h.log.Info("reconcile: serverless cache container missing — marked stopped",
 					zap.String("cache", cache.ServerlessCacheName))
 			}
 		case c.State == "running":
 			h.setServerlessEndpoint(rctx, cache)
-			h.store.putServerlessCache(rctx, cache) //nolint:errcheck
+			if _, aerr := h.mutateServerlessCache(rctx, cache.ServerlessCacheName, func(stored *ServerlessCache) *protocol.AWSError {
+				stored.Endpoint = cache.Endpoint
+				stored.ReaderEndpoint = cache.ReaderEndpoint
+				return nil
+			}); aerr != nil {
+				h.log.Warn("reconcile: persist serverless cache endpoint",
+					zap.String("cache", cache.ServerlessCacheName), zap.String("error", aerr.Message))
+			}
 			if cache.Status == "creating" || cache.Status == "starting" || cache.Status == "stopped" || cache.Status == "available" {
 				h.scheduleServerlessHealthCheck(rs.Region, cache.ServerlessCacheName, cache.Endpoint.Address, cache.Endpoint.Port)
 				h.log.Info("reconcile: serverless cache container running — scheduling health check",
@@ -239,8 +253,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			}
 		default:
 			if cache.Status == "available" || cache.Status == "starting" {
-				cache.Status = "stopped"
-				h.store.putServerlessCache(rctx, cache) //nolint:errcheck
+				h.transitionServerlessCache(rctx, cache.ServerlessCacheName, "stopped", cache.Status)
 				h.log.Info("reconcile: serverless cache container not running — marked stopped",
 					zap.String("cache", cache.ServerlessCacheName),
 					zap.String("containerState", c.State))

@@ -265,16 +265,7 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 
 	instID := id
 	h.scheduler.AfterScoped(region, instID, "available", 0, func(ctx context.Context) {
-		got, aerr := h.store.getDBInstance(ctx, instID)
-		if aerr != nil {
-			return
-		}
-		if got.DBInstanceStatus == "creating" {
-			got.DBInstanceStatus = "available"
-			if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
-				h.log.Warn("RDS: persist available instance", zap.String("instance", instID), zap.String("error", aerr.Message))
-			}
-		}
+		h.transitionInstance(ctx, instID, "creating", "available")
 	})
 
 	if h.bus != nil {
@@ -341,16 +332,15 @@ func (h *Handler) deleteDBInstanceTyped(ctx context.Context, req *deleteDBInstan
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
 	}
 
-	inst, aerr := h.store.getDBInstance(ctx, id)
+	var containerID string
+	var hostPort int
+	inst, aerr := h.mutateInstance(ctx, id, func(inst *DBInstance) *protocol.AWSError {
+		containerID = inst.DockerContainerID
+		hostPort = inst.HostPort
+		inst.DBInstanceStatus = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-
-	containerID := inst.DockerContainerID
-	hostPort := inst.HostPort
-
-	inst.DBInstanceStatus = "deleting"
-	if aerr := h.store.putDBInstance(ctx, inst); aerr != nil {
 		return nil, aerr
 	}
 
@@ -420,17 +410,14 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
 	}
 
-	inst, aerr := h.store.getDBInstance(ctx, id)
+	inst, aerr := h.mutateInstance(ctx, id, func(inst *DBInstance) *protocol.AWSError {
+		if inst.DBInstanceStatus != "available" {
+			return errInvalidDBInstanceState(id, "must be available to stop")
+		}
+		inst.DBInstanceStatus = "stopping"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-
-	if inst.DBInstanceStatus != "available" {
-		return nil, errInvalidDBInstanceState(id, "must be available to stop")
-	}
-
-	inst.DBInstanceStatus = "stopping"
-	if aerr := h.store.putDBInstance(ctx, inst); aerr != nil {
 		return nil, aerr
 	}
 
@@ -445,16 +432,7 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 	instID := id
 	region := h.store.region(ctx)
 	h.scheduler.AfterScoped(region, instID, "stopped", 0, func(ctx context.Context) {
-		got, aerr := h.store.getDBInstance(ctx, instID)
-		if aerr != nil {
-			return
-		}
-		if got.DBInstanceStatus == "stopping" {
-			got.DBInstanceStatus = "stopped"
-			if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
-				h.log.Warn("RDS: persist stopped instance", zap.String("instance", instID), zap.String("error", aerr.Message))
-			}
-		}
+		h.transitionInstance(ctx, instID, "stopping", "stopped")
 	})
 
 	if h.bus != nil {
@@ -478,17 +456,14 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
 	}
 
-	inst, aerr := h.store.getDBInstance(ctx, id)
+	inst, aerr := h.mutateInstance(ctx, id, func(inst *DBInstance) *protocol.AWSError {
+		if inst.DBInstanceStatus != "stopped" {
+			return errInvalidDBInstanceState(id, "must be stopped to start")
+		}
+		inst.DBInstanceStatus = "starting"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-
-	if inst.DBInstanceStatus != "stopped" {
-		return nil, errInvalidDBInstanceState(id, "must be stopped to start")
-	}
-
-	inst.DBInstanceStatus = "starting"
-	if aerr := h.store.putDBInstance(ctx, inst); aerr != nil {
 		return nil, aerr
 	}
 
@@ -502,16 +477,7 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 	} else {
 		instID2 := id
 		h.scheduler.AfterScoped(region, instID2, "available", 0, func(ctx context.Context) {
-			got, aerr := h.store.getDBInstance(ctx, instID2)
-			if aerr != nil {
-				return
-			}
-			if got.DBInstanceStatus == "starting" {
-				got.DBInstanceStatus = "available"
-				if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
-					h.log.Warn("RDS: persist started instance", zap.String("instance", instID2), zap.String("error", aerr.Message))
-				}
-			}
+			h.transitionInstance(ctx, instID2, "starting", "available")
 		})
 	}
 
@@ -536,64 +502,66 @@ func (h *Handler) modifyDBInstanceTyped(ctx context.Context, req *modifyDBInstan
 		return nil, errInvalidParameterValue("DBInstanceIdentifier is required")
 	}
 
-	inst, aerr := h.store.getDBInstance(ctx, id)
-	if aerr != nil {
-		return nil, aerr
-	}
-
 	// The password goes first, and nothing else is applied unless it lands: a
 	// modification that half-succeeded is harder to reason about than one that
 	// was refused outright, and the caller can retry either way.
-	if req.MasterUserPassword != "" && req.MasterUserPassword != inst.MasterUserPassword {
-		if aerr := h.changeMasterPassword(ctx, inst, req.MasterUserPassword); aerr != nil {
+	//
+	// It runs against the engine in the container, which is far too slow to
+	// hold a record lock across, so it happens here on a snapshot — the record
+	// it reads only decides whether the password is really changing and how to
+	// reach the container. The new value is written with everything else below.
+	if req.MasterUserPassword != "" {
+		current, aerr := h.store.getDBInstance(ctx, id)
+		if aerr != nil {
 			return nil, aerr
 		}
-		inst.MasterUserPassword = req.MasterUserPassword
-	}
-
-	if req.DBInstanceClass != "" {
-		inst.DBInstanceClass = req.DBInstanceClass
-	}
-	if req.AllocatedStorage != 0 {
-		inst.AllocatedStorage = req.AllocatedStorage
-	}
-	if req.EngineVersion != "" {
-		if req.EngineVersion != inst.EngineVersion {
-			h.log.Warn("EngineVersion change requested — restart would be needed in production",
-				zap.String("instance", id), zap.String("from", inst.EngineVersion), zap.String("to", req.EngineVersion))
+		if req.MasterUserPassword != current.MasterUserPassword {
+			if aerr := h.changeMasterPassword(ctx, current, req.MasterUserPassword); aerr != nil {
+				return nil, aerr
+			}
 		}
-		inst.EngineVersion = req.EngineVersion
-	}
-	if req.MultiAZ != nil {
-		inst.MultiAZ = *req.MultiAZ
-	}
-	if req.StorageType != "" {
-		inst.StorageType = req.StorageType
 	}
 
-	prevStatus := inst.DBInstanceStatus
-	inst.DBInstanceStatus = "modifying"
-	if aerr := h.store.putDBInstance(ctx, inst); aerr != nil {
+	var settledStatus string
+	inst, aerr := h.mutateInstance(ctx, id, func(inst *DBInstance) *protocol.AWSError {
+		if req.MasterUserPassword != "" {
+			inst.MasterUserPassword = req.MasterUserPassword
+		}
+		if req.DBInstanceClass != "" {
+			inst.DBInstanceClass = req.DBInstanceClass
+		}
+		if req.AllocatedStorage != 0 {
+			inst.AllocatedStorage = req.AllocatedStorage
+		}
+		if req.EngineVersion != "" {
+			if req.EngineVersion != inst.EngineVersion {
+				h.log.Warn("EngineVersion change requested — restart would be needed in production",
+					zap.String("instance", id), zap.String("from", inst.EngineVersion), zap.String("to", req.EngineVersion))
+			}
+			inst.EngineVersion = req.EngineVersion
+		}
+		if req.MultiAZ != nil {
+			inst.MultiAZ = *req.MultiAZ
+		}
+		if req.StorageType != "" {
+			inst.StorageType = req.StorageType
+		}
+
+		settledStatus = inst.DBInstanceStatus
+		if settledStatus == "" {
+			settledStatus = "available"
+		}
+		inst.DBInstanceStatus = "modifying"
+		return nil
+	})
+	if aerr != nil {
 		return nil, aerr
 	}
 
 	instID := id
 	region := h.store.region(ctx)
 	h.scheduler.AfterScoped(region, instID, "modified", 500*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getDBInstance(ctx, instID)
-		if aerr != nil {
-			return
-		}
-		if got.DBInstanceStatus == "modifying" {
-			if prevStatus == "available" || prevStatus == "" {
-				got.DBInstanceStatus = "available"
-			} else {
-				got.DBInstanceStatus = prevStatus
-			}
-			if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
-				h.log.Warn("RDS: persist modified instance", zap.String("instance", instID), zap.String("error", aerr.Message))
-			}
-		}
+		h.transitionInstance(ctx, instID, "modifying", settledStatus)
 	})
 
 	if h.bus != nil {
@@ -916,16 +884,7 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 
 	clID := id
 	h.scheduler.AfterScoped(region, clID, "available", 500*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getDBCluster(ctx, clID)
-		if aerr != nil {
-			return
-		}
-		if got.Status == "creating" {
-			got.Status = "available"
-			if aerr := h.store.putDBCluster(ctx, got); aerr != nil {
-				h.log.Warn("RDS: persist available cluster", zap.String("cluster", clID), zap.String("error", aerr.Message))
-			}
-		}
+		h.transitionCluster(ctx, clID, "creating", "available")
 	})
 
 	return &xmlCreateDBClusterResponse{
@@ -983,13 +942,11 @@ func (h *Handler) deleteDBClusterTyped(ctx context.Context, req *deleteDBCluster
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
 	}
 
-	cluster, aerr := h.store.getDBCluster(ctx, id)
+	cluster, aerr := h.mutateCluster(ctx, id, func(cluster *DBCluster) *protocol.AWSError {
+		cluster.Status = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-
-	cluster.Status = "deleting"
-	if aerr := h.store.putDBCluster(ctx, cluster); aerr != nil {
 		return nil, aerr
 	}
 
@@ -1021,16 +978,13 @@ func (h *Handler) modifyDBClusterTyped(ctx context.Context, req *modifyDBCluster
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
 	}
 
-	cluster, aerr := h.store.getDBCluster(ctx, id)
+	cluster, aerr := h.mutateCluster(ctx, id, func(cluster *DBCluster) *protocol.AWSError {
+		if req.EngineVersion != "" {
+			cluster.EngineVersion = req.EngineVersion
+		}
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-
-	if req.EngineVersion != "" {
-		cluster.EngineVersion = req.EngineVersion
-	}
-
-	if aerr := h.store.putDBCluster(ctx, cluster); aerr != nil {
 		return nil, aerr
 	}
 
@@ -1051,36 +1005,24 @@ func (h *Handler) startDBClusterTyped(ctx context.Context, req *startDBClusterRe
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
 	}
 
-	cluster, aerr := h.store.getDBCluster(ctx, id)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	if cluster.Status != "stopped" {
-		return nil, &protocol.AWSError{
-			Code: "InvalidDBClusterStateFault", Message: "Cluster " + id + " is not in a stopped state.",
-			HTTPStatus: http.StatusBadRequest,
+	cluster, aerr := h.mutateCluster(ctx, id, func(cluster *DBCluster) *protocol.AWSError {
+		if cluster.Status != "stopped" {
+			return &protocol.AWSError{
+				Code: "InvalidDBClusterStateFault", Message: "Cluster " + id + " is not in a stopped state.",
+				HTTPStatus: http.StatusBadRequest,
+			}
 		}
-	}
-
-	cluster.Status = "starting"
-	if aerr := h.store.putDBCluster(ctx, cluster); aerr != nil {
+		cluster.Status = "starting"
+		return nil
+	})
+	if aerr != nil {
 		return nil, aerr
 	}
 
 	clID := id
 	region := h.store.region(ctx)
 	h.scheduler.AfterScoped(region, clID, "start", 500*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getDBCluster(ctx, clID)
-		if aerr != nil {
-			return
-		}
-		if got.Status == "starting" {
-			got.Status = "available"
-			if aerr := h.store.putDBCluster(ctx, got); aerr != nil {
-				h.log.Warn("RDS: persist started cluster", zap.String("cluster", clID), zap.String("error", aerr.Message))
-			}
-		}
+		h.transitionCluster(ctx, clID, "starting", "available")
 	})
 
 	return &xmlCreateDBClusterResponse{
@@ -1100,36 +1042,24 @@ func (h *Handler) stopDBClusterTyped(ctx context.Context, req *stopDBClusterReq)
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
 	}
 
-	cluster, aerr := h.store.getDBCluster(ctx, id)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	if cluster.Status != "available" {
-		return nil, &protocol.AWSError{
-			Code: "InvalidDBClusterStateFault", Message: "Cluster " + id + " is not in an available state.",
-			HTTPStatus: http.StatusBadRequest,
+	cluster, aerr := h.mutateCluster(ctx, id, func(cluster *DBCluster) *protocol.AWSError {
+		if cluster.Status != "available" {
+			return &protocol.AWSError{
+				Code: "InvalidDBClusterStateFault", Message: "Cluster " + id + " is not in an available state.",
+				HTTPStatus: http.StatusBadRequest,
+			}
 		}
-	}
-
-	cluster.Status = "stopping"
-	if aerr := h.store.putDBCluster(ctx, cluster); aerr != nil {
+		cluster.Status = "stopping"
+		return nil
+	})
+	if aerr != nil {
 		return nil, aerr
 	}
 
 	clID := id
 	region := h.store.region(ctx)
 	h.scheduler.AfterScoped(region, clID, "stop", 500*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getDBCluster(ctx, clID)
-		if aerr != nil {
-			return
-		}
-		if got.Status == "stopping" {
-			got.Status = "stopped"
-			if aerr := h.store.putDBCluster(ctx, got); aerr != nil {
-				h.log.Warn("RDS: persist stopped cluster", zap.String("cluster", clID), zap.String("error", aerr.Message))
-			}
-		}
+		h.transitionCluster(ctx, clID, "stopping", "stopped")
 	})
 
 	return &xmlCreateDBClusterResponse{

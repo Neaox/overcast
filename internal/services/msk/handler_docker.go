@@ -14,6 +14,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
@@ -146,14 +147,16 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 // goroutine is the only party holding the ID, so it owns the teardown.
 // Same race as RDS (#412) and ElastiCache (#459).
 func (h *Handler) setClusterEndpoint(ctx context.Context, clusterARN, containerID string, hostPort int) {
-	got, aerr := h.store.getCluster(ctx, clusterARN)
-	if aerr != nil || got == nil || got.State == "DELETING" {
+	if _, aerr := h.mutateCluster(ctx, clusterARN, func(stored *Cluster) *protocol.AWSError {
+		if stored.State == "DELETING" {
+			return errClusterMovedOn
+		}
+		stored.DockerContainerID = containerID
+		stored.HostPort = hostPort
+		return nil
+	}); aerr != nil {
 		h.teardownOrphanedContainer(ctx, clusterARN, containerID, hostPort)
-		return
 	}
-	got.DockerContainerID = containerID
-	got.HostPort = hostPort
-	h.store.putCluster(ctx, got) //nolint:errcheck
 }
 
 // teardownOrphanedContainer removes a container whose cluster record was
@@ -226,28 +229,14 @@ func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(addr, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			got, aerr := h.store.getCluster(ctx, clusterARN)
-			if aerr != nil {
-				return
-			}
-			if got.State == "CREATING" || got.State == "STARTING" {
-				got.State = "ACTIVE"
-				h.store.putCluster(ctx, got) //nolint:errcheck
-			}
+			h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING", "STARTING")
 			return
 		}
 		if attempt < maxRetries {
 			h.scheduler.AfterScoped(region, clusterARN, "health", 2*time.Second, check)
 		} else {
 			h.log.Warn("MSK health check timed out", zap.String("cluster", clusterARN), zap.Int("attempts", attempt))
-			got, aerr := h.store.getCluster(ctx, clusterARN)
-			if aerr != nil {
-				return
-			}
-			if got.State == "CREATING" || got.State == "STARTING" {
-				got.State = "ACTIVE"
-				h.store.putCluster(ctx, got) //nolint:errcheck
-			}
+			h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING", "STARTING")
 		}
 	}
 	h.scheduler.AfterScoped(region, clusterARN, "health", 1*time.Second, check)
@@ -268,8 +257,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	}
 	switch cluster.State {
 	case "ACTIVE", "STARTING", "CREATING":
-		cluster.State = "FAILED"
-		h.store.putCluster(ctx, cluster) //nolint:errcheck
+		h.transitionCluster(ctx, p.ResourceID, "FAILED", cluster.State)
 		h.log.Info("MSK cluster container stopped",
 			zap.String("cluster", p.ResourceID), zap.String("action", p.Action))
 	}
@@ -321,8 +309,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		switch {
 		case c == nil:
 			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" {
-				cluster.State = "FAILED"
-				h.store.putCluster(rctx, cluster) //nolint:errcheck
+				h.transitionCluster(rctx, cluster.ClusterArn, "FAILED", cluster.State)
 				h.log.Info("reconcile: MSK container missing — marked FAILED",
 					zap.String("cluster", cluster.ClusterArn))
 			}
@@ -335,8 +322,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			}
 		default:
 			if cluster.State == "ACTIVE" || cluster.State == "STARTING" {
-				cluster.State = "FAILED"
-				h.store.putCluster(rctx, cluster) //nolint:errcheck
+				h.transitionCluster(rctx, cluster.ClusterArn, "FAILED", cluster.State)
 				h.log.Info("reconcile: MSK container not running — marked FAILED",
 					zap.String("cluster", cluster.ClusterArn),
 					zap.String("containerState", c.State))

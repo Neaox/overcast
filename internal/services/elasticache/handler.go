@@ -45,6 +45,11 @@ type Handler struct {
 	// callbacks can abandon Docker/store work once shutdown begins.
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
+
+	// One writer at a time per record — see locks.go.
+	clusterLocks    serviceutil.RecordLocks
+	rgLocks         serviceutil.RecordLocks
+	serverlessLocks serviceutil.RecordLocks
 }
 
 func newHandler(cfg *config.Config, store *cacheStore, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
@@ -297,9 +302,26 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 				h.clusterFallbackAvailable(region, clusterID)
 				return
 			}
-			if aerr := h.store.putCacheCluster(bgCtx, got); aerr != nil {
-				h.log.Warn("ElastiCache: persist post-start cluster",
-					zap.String("cluster", clusterID), zap.String("error", aerr.Message))
+			// The start took real time; the cluster may have been deleted
+			// meanwhile. Delete could not stop this container — its ID was not
+			// persisted yet — so the start goroutine owns the teardown. Merge
+			// the container fields into a fresh read rather than persisting the
+			// pre-start snapshot, which would put the cluster back to
+			// "creating" and leave the delete undone. Same as the typed path.
+			if _, aerr := h.mutateCacheCluster(bgCtx, clusterID, func(stored *CacheCluster) *protocol.AWSError {
+				if stored.CacheClusterStatus == "deleting" {
+					return errRecordMovedOn
+				}
+				stored.DockerContainerID = got.DockerContainerID
+				stored.HostPort = got.HostPort
+				stored.ConfigurationEndpoint = got.ConfigurationEndpoint
+				return nil
+			}); aerr != nil {
+				if aerr != errRecordMovedOn {
+					h.log.Warn("ElastiCache: persist post-start cluster",
+						zap.String("cluster", clusterID), zap.String("error", aerr.Message))
+				}
+				h.teardownOrphanedContainer(bgCtx, "cache cluster", clusterID, got.DockerContainerID, got.HostPort)
 				return
 			}
 			h.scheduleHealthCheck(region, clusterID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
@@ -308,14 +330,7 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 		// No Docker — use the metadata-only transition so the cluster becomes
 		// "available" immediately (0 delay runs synchronously on a real clock).
 		h.scheduler.AfterScoped(h.store.region(r.Context()), clusterID, "available", 0, func(ctx context.Context) {
-			got, aerr := h.store.getCacheCluster(ctx, clusterID)
-			if aerr != nil {
-				return
-			}
-			if got.CacheClusterStatus == "creating" {
-				got.CacheClusterStatus = "available"
-				h.store.putCacheCluster(ctx, got) //nolint:errcheck
-			}
+			h.transitionCacheCluster(ctx, clusterID, "available", "creating")
 		})
 	}
 
@@ -374,17 +389,15 @@ func (h *Handler) DeleteCacheCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster, aerr := h.store.getCacheCluster(r.Context(), id)
+	var containerID string
+	var hostPort int
+	cluster, aerr := h.mutateCacheCluster(r.Context(), id, func(cluster *CacheCluster) *protocol.AWSError {
+		containerID = cluster.DockerContainerID
+		hostPort = cluster.HostPort
+		cluster.CacheClusterStatus = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	containerID := cluster.DockerContainerID
-	hostPort := cluster.HostPort
-
-	cluster.CacheClusterStatus = "deleting"
-	if aerr := h.store.putCacheCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -722,28 +735,14 @@ func (h *Handler) scheduleHealthCheck(region, clusterID, host string, port int) 
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			got, aerr := h.store.getCacheCluster(ctx, clusterID)
-			if aerr != nil {
-				return
-			}
-			if got.CacheClusterStatus == "creating" || got.CacheClusterStatus == "starting" {
-				got.CacheClusterStatus = "available"
-				h.store.putCacheCluster(ctx, got) //nolint:errcheck
-			}
+			h.transitionCacheCluster(ctx, clusterID, "available", "creating", "starting")
 			return
 		}
 		if attempt < maxRetries {
 			h.scheduler.AfterScoped(region, clusterID, "health", 2*time.Second, check)
 		} else {
 			h.log.Warn("ElastiCache health check timed out", zap.String("cluster", clusterID), zap.Int("attempts", attempt))
-			got, aerr := h.store.getCacheCluster(ctx, clusterID)
-			if aerr != nil {
-				return
-			}
-			if got.CacheClusterStatus == "creating" || got.CacheClusterStatus == "starting" {
-				got.CacheClusterStatus = "available"
-				h.store.putCacheCluster(ctx, got) //nolint:errcheck
-			}
+			h.transitionCacheCluster(ctx, clusterID, "available", "creating", "starting")
 		}
 	}
 	h.scheduler.AfterScoped(region, clusterID, "health", 1*time.Second, check)
@@ -776,28 +775,14 @@ func (h *Handler) teardownOrphanedContainer(ctx context.Context, kind, id, conta
 
 func (h *Handler) clusterFallbackAvailable(region, clusterID string) {
 	ctx := middleware.ContextWithRegion(context.Background(), region)
-	got, aerr := h.store.getCacheCluster(ctx, clusterID)
-	if aerr != nil {
-		return
-	}
-	if got.CacheClusterStatus == "creating" || got.CacheClusterStatus == "starting" {
-		got.CacheClusterStatus = "available"
-		h.store.putCacheCluster(ctx, got) //nolint:errcheck
-	}
+	h.transitionCacheCluster(ctx, clusterID, "available", "creating", "starting")
 }
 
 // rgFallbackAvailable sets a replication group to "available" if it is still
 // in "creating" or "starting". Used when Docker start fails.
 func (h *Handler) rgFallbackAvailable(region, rgID string) {
 	ctx := middleware.ContextWithRegion(context.Background(), region)
-	got, aerr := h.store.getReplicationGroup(ctx, rgID)
-	if aerr != nil {
-		return
-	}
-	if got.Status == "creating" || got.Status == "starting" {
-		got.Status = "available"
-		h.store.putReplicationGroup(ctx, got) //nolint:errcheck
-	}
+	h.transitionReplicationGroup(ctx, rgID, "available", "creating", "starting")
 }
 
 // startReplicationGroupContainer creates (or reuses) and starts a single Docker
@@ -981,28 +966,14 @@ func (h *Handler) scheduleReplicationGroupHealthCheck(region, rgID, host string,
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			got, aerr := h.store.getReplicationGroup(ctx, rgID)
-			if aerr != nil {
-				return
-			}
-			if got.Status == "creating" || got.Status == "starting" {
-				got.Status = "available"
-				h.store.putReplicationGroup(ctx, got) //nolint:errcheck
-			}
+			h.transitionReplicationGroup(ctx, rgID, "available", "creating", "starting")
 			return
 		}
 		if attempt < maxRetries {
 			h.scheduler.AfterScoped(region, rgID, "rg-health", 2*time.Second, check)
 		} else {
 			h.log.Warn("ElastiCache RG health check timed out", zap.String("rg", rgID), zap.Int("attempts", attempt))
-			got, aerr := h.store.getReplicationGroup(ctx, rgID)
-			if aerr != nil {
-				return
-			}
-			if got.Status == "creating" || got.Status == "starting" {
-				got.Status = "available"
-				h.store.putReplicationGroup(ctx, got) //nolint:errcheck
-			}
+			h.transitionReplicationGroup(ctx, rgID, "available", "creating", "starting")
 		}
 	}
 	h.scheduler.AfterScoped(region, rgID, "rg-health", 1*time.Second, check)
