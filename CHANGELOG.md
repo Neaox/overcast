@@ -227,6 +227,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [lambda] deleting a function while an invocation was still running no longer leaks its execution environment — the in-flight instance was released back into the warm pool for a function that no longer existed, leaving a container nothing would reclaim; it is now destroyed on release, and a function recreated with the same name pools normally again
 
+- [lambda] an invoke with `LogType: Tail` waits for the handler's output to reach the tail buffer rather than for Docker to hand over bytes, so `X-Amz-Log-Result` carries the function's own log lines instead of just `START`/`END`/`REPORT` — and the missing line no longer surfaces against the *next* invocation, whose request ID it was never written under
+
 - [msk] deleting a cluster while its Redpanda container was still starting no longer leaks the container — the delete stopped the container ID on the record, which is empty until the start completes, so the start goroutine now tears down its own container when the cluster went away
 
 - [pipes] a DynamoDB-sourced pipe is no longer cancelled part-way through delivery when the write that triggered it answers its client
