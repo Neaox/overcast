@@ -1,4 +1,4 @@
-# docker-go.ps1 — run Go toolchain commands in a Docker container, for
+# docker-go.ps1 -- run Go toolchain commands in a Docker container, for
 # development on Windows without a host Go install and outside the
 # devcontainer. PowerShell twin of scripts/docker-go.sh; see that script's
 # header comment for behavior details (caches, bind-mount performance, git
@@ -23,7 +23,7 @@ if ($args.Count -eq 0) {
     exit 2
 }
 
-# GOFLAGS=-buildvcs=false: see docker-go.sh's comment — git inside the
+# GOFLAGS=-buildvcs=false: see docker-go.sh's comment -- git inside the
 # container refuses the bind-mounted repo ("dubious ownership"), which
 # fails VCS stamping during `go build` of main packages.
 $dockerArgs = @(

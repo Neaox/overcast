@@ -1,4 +1,4 @@
-# run-test-instance.ps1 — PowerShell twin of run-test-instance.sh: start a
+# run-test-instance.ps1 -- PowerShell twin of run-test-instance.sh: start a
 # throwaway Overcast instance on FREE ports, never on the user-reserved
 # defaults (4566 API / 4567 web UI). See the .sh header for the full contract.
 #
