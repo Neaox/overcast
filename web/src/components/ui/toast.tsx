@@ -1,9 +1,11 @@
 import * as React from "react"
 import * as ToastPrimitive from "@radix-ui/react-toast"
+import { onlineManager } from "@tanstack/react-query"
 import { Check, CircleAlert, X } from "lucide-react"
 import { cva } from "class-variance-authority"
 import { OvercastLoader } from "@/components/brand/overcast-loader"
 import { createId } from "@/lib/id"
+import { readsAsNetworkFailure } from "@/lib/network-error"
 import { cn } from "@/lib/utils"
 
 /**
@@ -231,6 +233,42 @@ const ToastContext = React.createContext<ToastContextValue | null>(null)
  */
 const ToastDockContext = React.createContext<HTMLElement | null>(null)
 
+/**
+ * A failure toast that says only "the request never landed", raised while the
+ * connection toast is already on screen saying exactly that.
+ *
+ * A drop is one event, but every query and mutation in flight when it happens
+ * fails separately — so unguarded, the shell stacks a column of identical
+ * `Failed to fetch` cards on top of the reconnecting card that already
+ * explains all of them, and buries it. Suppressing them costs the user
+ * nothing: the connection toast names the host, counts down to the next
+ * attempt, says how stale the view is and offers a retry, which is strictly
+ * more than any of the cards it was buried under.
+ *
+ * Only `danger` toasts whose copy reads as a *transport* failure are dropped.
+ * A 4xx carrying a real AWS error, a validation message, or anything the
+ * emulator actually answered still surfaces, because the connection is not why
+ * it failed. So does every non-failure toast — including the "Reconnected"
+ * announcement, which is raised at the moment the flag flips back.
+ *
+ * ## Why here, and why `onlineManager`
+ *
+ * This is the one function every toast in the app passes through, which is the
+ * point: the alternative is the same check at forty-odd `onError` call sites,
+ * where the next one added would forget it.
+ *
+ * `onlineManager` is the app's single offline flag — `ConnectionStatusProvider`
+ * pushes the SSE stream's state into it (see use-connection-status), and the
+ * browser's own online/offline events feed it too. Reading the flag rather
+ * than the React context is also what makes the gate possible here at all:
+ * this provider is mounted above the router, where that context does not
+ * reach.
+ */
+function isOfflineNoise(item: ToastOptions): boolean {
+  if (item.variant !== "danger" || onlineManager.isOnline()) return false
+  return readsAsNetworkFailure(item.title) || readsAsNetworkFailure(item.description ?? "")
+}
+
 export function ToastContextProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastItem[]>([])
   const [dockFooter, setDockFooter] = React.useState<HTMLElement | null>(null)
@@ -239,7 +277,9 @@ export function ToastContextProvider({ children }: { children: React.ReactNode }
   // dependency arrays), and a pending toast is resolved long after it was shown.
   const toast = React.useCallback((item: ToastOptions) => {
     const id = createId()
-    setToasts((prev) => [...prev, { ...item, id }])
+    // Suppressed toasts still get an id, so a caller that later resolves or
+    // dismisses one no-ops rather than having to know it was dropped.
+    if (!isOfflineNoise(item)) setToasts((prev) => [...prev, { ...item, id }])
     return id
   }, [])
 
