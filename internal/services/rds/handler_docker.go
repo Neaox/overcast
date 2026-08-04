@@ -69,6 +69,27 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 	}
 }
 
+// instanceOwnsContainer reports whether a DB instance record still claims this
+// container's resource ID, in any region. It is the startup sweep's veto: a
+// container an instance still owns is not litter, however long it has been
+// stopped.
+func (h *Handler) instanceOwnsContainer(resourceID string) bool {
+	if resourceID == "" {
+		return false
+	}
+	_, _, found, err := serviceutil.FindRegioned[DBInstance](
+		context.Background(), h.store.store, nsDBInstances, resourceID, h.store.defaultRegion)
+	if err != nil {
+		// Unknown ownership: keep the container. Removing one that is still
+		// owned strands an instance; keeping an orphan costs disk until the
+		// next sweep.
+		h.log.Warn("RDS: could not determine container ownership for the startup sweep — keeping it",
+			zap.String("resource", resourceID), zap.Error(err))
+		return true
+	}
+	return found
+}
+
 // reconcileContainers is called once at startup after Docker becomes available.
 // It compares the live container state against stored RDS instances and corrects
 // any status drift (e.g. containers that exited while Overcast was not running).

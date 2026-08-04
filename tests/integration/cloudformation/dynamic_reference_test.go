@@ -12,6 +12,8 @@ package cloudformation_test
 // characters.
 
 import (
+	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"net/http"
 	"net/url"
@@ -117,14 +119,82 @@ func TestCreateStack_resolvesDynamicReferencesIntoResourceProperties(t *testing.
 		t.Errorf("DBName = %q, want %q", dbName, "newowners")
 	}
 
-	// Outputs resolve too — a stack output feeds other stacks and the console.
+	// Outputs are the one place a reference is deliberately left alone. Real
+	// CloudFormation returns the literal reference string from an output rather
+	// than the secret behind it, and DescribeStacks redacts nothing — so
+	// resolving here would publish the secret to everyone who can describe the
+	// stack.
+	const userRef = "{{resolve:secretsmanager:dynref-db-secret:SecretString:username}}"
 	outputs := describeStackOutputs(t, srv, "dynref-stack")
-	if got := outputs["ResolvedUser"]; got != "appuser" {
-		t.Errorf("ResolvedUser output = %q, want %q", got, "appuser")
+	if got := outputs["ResolvedUser"]; got != userRef {
+		t.Errorf("ResolvedUser output = %q, want the reference left literal (%q)", got, userRef)
 	}
-	if got := outputs["ResolvedDBName"]; got != "newowners" {
-		t.Errorf("ResolvedDBName output = %q, want %q", got, "newowners")
+	if outputs["ResolvedUser"] == "appuser" {
+		t.Error("a stack output resolved a Secrets Manager reference — DescribeStacks would publish the secret")
 	}
+}
+
+// Rotating a secret must not, on its own, make CloudFormation think a resource
+// changed. AWS compares the literal reference string: "Updating only the secret
+// value in Secrets Manager doesn't automatically cause CloudFormation to
+// retrieve the new value." Hashing the resolved value instead would make a
+// rotation look like a property change — and since a MasterUsername change
+// forces replacement, that would rebuild the database behind the user's back.
+func TestUpdateStack_rotatingASecretDoesNotReplaceTheResource(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	const stackName = "dynref-rotation-stack"
+
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{dynamicRefTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	before, _ := rdsDescribeInstance(t, srv, "dynref-db")
+	if before != "appuser" {
+		t.Fatalf("MasterUsername = %q, want %q before rotation", before, "appuser")
+	}
+
+	// Rotate the secret behind the reference, leaving the template untouched.
+	putSecret(t, srv, "dynref-db-secret", `{"username":"rotateduser","password":"a-new-password"}`)
+
+	ur := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{dynamicRefTemplate},
+	})
+	defer ur.Body.Close()
+	helpers.AssertStatus(t, ur, http.StatusOK)
+	waitForStackStatusIn(t, srv, stackName, "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE", "UPDATE_FAILED")
+
+	// The instance is the one that was there before, untouched.
+	after, _ := rdsDescribeInstance(t, srv, "dynref-db")
+	if after != "appuser" {
+		t.Errorf("MasterUsername = %q after rotating the secret; want it left at %q — "+
+			"a rotation with an unchanged template must not re-provision the resource", after, "appuser")
+	}
+}
+
+// putSecret overwrites a secret's value through the Secrets Manager API.
+func putSecret(t *testing.T, srv *helpers.TestServer, secretID, value string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"SecretId": secretID, "SecretString": value})
+	if err != nil {
+		t.Fatalf("marshal PutSecretValue body: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build PutSecretValue request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "secretsmanager.PutSecretValue")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PutSecretValue: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 const unresolvableRefTemplate = `{

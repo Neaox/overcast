@@ -642,8 +642,20 @@ func IsConflict(err error) bool {
 }
 
 // IsNotFound reports whether an error is a Docker 404 Not Found response.
+//
+// Helpers in this package report a status two ways: doJSON and the by-name
+// inspect build "…: 404: {body}", while every helper that drives doRequest
+// itself builds "…: status 404". Matching only the first form meant this
+// answered "no" for a 404 from StartContainer, StopContainer, ContainerLogs and
+// the rest — so a start against a container Docker had already removed looked
+// like an ordinary failure rather than the recoverable "it is gone, rebuild it"
+// that it is.
 func IsNotFound(err error) bool {
-	return err != nil && strings.Contains(err.Error(), ": 404:")
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, ": 404:") || strings.Contains(msg, ": status 404")
 }
 
 // ListContainers returns all containers (running and stopped) that carry

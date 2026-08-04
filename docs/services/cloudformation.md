@@ -62,7 +62,31 @@ what the equivalent `GetSecretValue` or `GetParameter` call would return.
 Resolution happens after the intrinsic functions, so a reference built by
 `Fn::Sub` or `Fn::Join` is resolved once the surrounding value is complete. A
 resolved value is never rescanned — secret content that happens to contain
-`{{resolve:` is data, not a reference.
+`{{resolve:` is data, not a reference. (AWS documents no behaviour either way
+for that last case; resolving once is a deliberate choice, not a verified
+match.)
+
+**A reference is compared as written, never as resolved.** Change detection and
+the stored resource properties both keep the literal `{{resolve:...}}` text, so:
+
+- Rotating a secret behind an unchanged template does not make the resource look
+  changed. This matches AWS — *"Updating only the secret value in Secrets
+  Manager doesn't automatically cause CloudFormation to retrieve the new
+  value"* — and to push a new value you must change the resource in the
+  template, exactly as on AWS.
+- A resolved secret is never written to Overcast's state. Only the service the
+  property belongs to ever sees it, which is the one exposure AWS also allows:
+  *"the secret value may show up in the service whose resource it's being used
+  in"*.
+
+**Outputs leave references literal.** A `{{resolve:...}}` in an `Outputs` value
+comes back as the reference text, not the value — matching CloudFormation, and
+avoiding publishing a secret through `DescribeStacks`, which *"doesn't redact or
+obfuscate any information you include in the Outputs section"*.
+
+**A reference creates no dependency.** Only `Ref`, `Fn::GetAtt` and `Fn::Sub`
+order resources. A resource reading a secret created by the same template needs
+an explicit `DependsOn`, as it does on AWS.
 
 **A reference that cannot be resolved fails the resource** with
 `CREATE_FAILED`/`UPDATE_FAILED` and a reason naming the reference, and the stack
@@ -73,12 +97,16 @@ treats as data — an RDS instance whose master username is a 150-character
 reference, for instance, is accepted by the API and then rejected by the
 database engine.
 
-Two divergences from AWS:
+Divergences from AWS:
 
 - An explicit SSM parameter version is accepted but resolves to the current
   value; Overcast's `GetParameter` has no version selector. A warning is logged.
 - `{{resolve:s3:...}}` is not supported and fails the resource rather than
   resolving to something wrong.
+- `ssm-secure` is accepted in any resource property. AWS restricts it to an
+  enumerated list (`AWS::RDS::DBInstance.MasterUserPassword`,
+  `AWS::IAM::User.LoginProfile.Password` and a handful of others); Overcast does
+  not enforce that list yet.
 
 ---
 

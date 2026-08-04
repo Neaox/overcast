@@ -270,13 +270,19 @@ func TestExpandDynamicRefs_leavesOrdinaryStringsAlone(t *testing.T) {
 	}
 }
 
-// resolveAllProperties is the seam the provisioner actually calls; prove the
-// expansion happens there rather than only in the helper under test.
-func TestResolveAllProperties_expandsDynamicReferencesAfterIntrinsics(t *testing.T) {
-	ctx := stubRefCtx(map[string]string{"{{resolve:secretsmanager:db-creds:SecretString:username}}": "appuser"})
+// The two forms of a resource's properties, and why they differ.
+//
+// resolveAllProperties resolves intrinsics and stops: what it returns is what
+// gets hashed and stored, and it must still carry the literal reference so a
+// rotated secret does not read as a changed property. Expansion is the separate
+// step, and it resolves a reference that Fn::Sub assembled — which is the point
+// of expanding after the intrinsics rather than inside them.
+func TestResolveAllProperties_leavesDynamicReferencesForTheSeparateExpansionPass(t *testing.T) {
+	const ref = "{{resolve:secretsmanager:db-creds:SecretString:username}}"
+	ctx := stubRefCtx(map[string]string{ref: "appuser"})
 	ctx.Params = map[string]string{"SecretName": "db-creds"}
 
-	props := resolveAllProperties(map[string]any{
+	recorded := resolveAllProperties(map[string]any{
 		"MasterUsername": map[string]any{
 			"Fn::Sub": "{{resolve:secretsmanager:${SecretName}:SecretString:username}}",
 		},
@@ -285,7 +291,22 @@ func TestResolveAllProperties_expandsDynamicReferencesAfterIntrinsics(t *testing
 	if err := ctx.takeDynamicRefErr(); err != nil {
 		t.Fatalf("unexpected resolution failure: %v", err)
 	}
-	if props["MasterUsername"] != "appuser" {
-		t.Errorf("MasterUsername = %v, want the reference resolved after Fn::Sub built it", props["MasterUsername"])
+	// Fn::Sub has been applied; the reference has not been resolved.
+	if recorded["MasterUsername"] != ref {
+		t.Errorf("recorded MasterUsername = %v, want the assembled reference left literal (%q)",
+			recorded["MasterUsername"], ref)
+	}
+
+	expanded, _ := expandDynamicRefs(recorded, ctx).(map[string]any)
+	if err := ctx.takeDynamicRefErr(); err != nil {
+		t.Fatalf("unexpected expansion failure: %v", err)
+	}
+	if expanded["MasterUsername"] != "appuser" {
+		t.Errorf("expanded MasterUsername = %v, want the secret value", expanded["MasterUsername"])
+	}
+	// Expansion must not have written through to the recorded form — that is
+	// what keeps the resolved secret out of the store.
+	if recorded["MasterUsername"] != ref {
+		t.Error("expansion mutated the recorded properties, so the resolved secret would be persisted")
 	}
 }
