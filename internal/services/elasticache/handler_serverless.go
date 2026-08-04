@@ -191,20 +191,33 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 				h.serverlessFallbackAvailable(region, cacheName)
 				return
 			}
-			if aerr := h.store.putServerlessCache(bgCtx, got); aerr != nil {
-				h.log.Warn("ElastiCache: persist post-start serverless cache",
-					zap.String("cache", cacheName), zap.String("error", aerr.Message))
+			// The start took real time; the cache may have been deleted
+			// meanwhile, and the delete could not stop this container — its ID
+			// was not persisted yet — so the start goroutine owns the teardown.
+			// Merge the container fields into a fresh read rather than
+			// persisting the pre-start snapshot.
+			if _, aerr := h.mutateServerlessCache(bgCtx, cacheName, func(stored *ServerlessCache) *protocol.AWSError {
+				if stored.Status == "deleting" {
+					return errRecordMovedOn
+				}
+				stored.DockerContainerID = got.DockerContainerID
+				stored.HostPort = got.HostPort
+				stored.Endpoint = got.Endpoint
+				stored.ReaderEndpoint = got.ReaderEndpoint
+				return nil
+			}); aerr != nil {
+				if aerr != errRecordMovedOn {
+					h.log.Warn("ElastiCache: persist post-start serverless cache",
+						zap.String("cache", cacheName), zap.String("error", aerr.Message))
+				}
+				h.teardownOrphanedContainer(bgCtx, "serverless cache", cacheName, got.DockerContainerID, got.HostPort)
 				return
 			}
 			h.scheduleServerlessHealthCheck(region, cacheName, got.Endpoint.Address, got.Endpoint.Port)
 		}(name)
 	} else {
 		h.scheduler.AfterScoped(h.store.region(r.Context()), name, "serverless-available", 0, func(ctx context.Context) {
-			got, aerr := h.store.getServerlessCache(ctx, name)
-			if aerr == nil && got.Status == "creating" {
-				got.Status = "available"
-				h.store.putServerlessCache(ctx, got) //nolint:errcheck
-			}
+			h.transitionServerlessCache(ctx, name, "available", "creating")
 		})
 	}
 
@@ -322,11 +335,7 @@ func (h *Handler) ModifyServerlessCache(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.scheduler.AfterScoped(h.store.region(r.Context()), name, "serverless-available", 0, func(ctx context.Context) {
-		got, aerr := h.store.getServerlessCache(ctx, name)
-		if aerr == nil && got.Status == "modifying" {
-			got.Status = "available"
-			h.store.putServerlessCache(ctx, got) //nolint:errcheck
-		}
+		h.transitionServerlessCache(ctx, name, "available", "modifying")
 	})
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlModifyServerlessCacheResponse{
 		Xmlns:            cacheXMLNS,
@@ -341,16 +350,15 @@ func (h *Handler) DeleteServerlessCache(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ServerlessCacheName is required"))
 		return
 	}
-	cache, aerr := h.store.getServerlessCache(r.Context(), name)
+	var containerID string
+	var hostPort int
+	cache, aerr := h.mutateServerlessCache(r.Context(), name, func(cache *ServerlessCache) *protocol.AWSError {
+		containerID = cache.DockerContainerID
+		hostPort = cache.HostPort
+		cache.Status = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	containerID := cache.DockerContainerID
-	hostPort := cache.HostPort
-	cache.Status = "deleting"
-	if aerr := h.store.putServerlessCache(r.Context(), cache); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -512,11 +520,7 @@ func (h *Handler) scheduleServerlessHealthCheck(region, name, host string, port 
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			got, aerr := h.store.getServerlessCache(ctx, name)
-			if aerr == nil && (got.Status == "creating" || got.Status == "starting") {
-				got.Status = "available"
-				h.store.putServerlessCache(ctx, got) //nolint:errcheck
-			}
+			h.transitionServerlessCache(ctx, name, "available", "creating", "starting")
 			return
 		}
 		if attempt < maxRetries {
@@ -531,11 +535,7 @@ func (h *Handler) scheduleServerlessHealthCheck(region, name, host string, port 
 
 func (h *Handler) serverlessFallbackAvailable(region, name string) {
 	ctx := middleware.ContextWithRegion(context.Background(), region)
-	got, aerr := h.store.getServerlessCache(ctx, name)
-	if aerr == nil && (got.Status == "creating" || got.Status == "starting") {
-		got.Status = "available"
-		h.store.putServerlessCache(ctx, got) //nolint:errcheck
-	}
+	h.transitionServerlessCache(ctx, name, "available", "creating", "starting")
 }
 
 func toXMLServerlessCache(c *ServerlessCache) xmlServerlessCache {

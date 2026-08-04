@@ -182,9 +182,25 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 				h.rgFallbackAvailable(region, rgID)
 				return
 			}
-			if aerr := h.store.putReplicationGroup(bgCtx, got); aerr != nil {
-				h.log.Warn("ElastiCache: persist post-start replication group",
-					zap.String("rg", rgID), zap.String("error", aerr.Message))
+			// The start took real time; the group may have been deleted
+			// meanwhile, and the delete could not stop this container — its ID
+			// was not persisted yet — so the start goroutine owns the teardown.
+			// Merge the container fields into a fresh read rather than
+			// persisting the pre-start snapshot. Same as the typed path.
+			if _, aerr := h.mutateReplicationGroup(bgCtx, rgID, func(stored *ReplicationGroup) *protocol.AWSError {
+				if stored.Status == "deleting" {
+					return errRecordMovedOn
+				}
+				stored.DockerContainerID = got.DockerContainerID
+				stored.HostPort = got.HostPort
+				stored.ConfigurationEndpoint = got.ConfigurationEndpoint
+				return nil
+			}); aerr != nil {
+				if aerr != errRecordMovedOn {
+					h.log.Warn("ElastiCache: persist post-start replication group",
+						zap.String("rg", rgID), zap.String("error", aerr.Message))
+				}
+				h.teardownOrphanedContainer(bgCtx, "replication group", rgID, got.DockerContainerID, got.HostPort)
 				return
 			}
 			h.scheduleReplicationGroupHealthCheck(region, rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
@@ -192,14 +208,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 	} else {
 		// No Docker — metadata-only transition (0 delay = synchronous on real clock).
 		h.scheduler.AfterScoped(h.store.region(r.Context()), rgID, "rg-available", 0, func(ctx context.Context) {
-			got, aerr := h.store.getReplicationGroup(ctx, rgID)
-			if aerr != nil {
-				return
-			}
-			if got.Status == "creating" {
-				got.Status = "available"
-				h.store.putReplicationGroup(ctx, got) //nolint:errcheck
-			}
+			h.transitionReplicationGroup(ctx, rgID, "available", "creating")
 		})
 	}
 
@@ -258,17 +267,15 @@ func (h *Handler) DeleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rg, aerr := h.store.getReplicationGroup(r.Context(), id)
+	var containerID string
+	var hostPort int
+	rg, aerr := h.mutateReplicationGroup(r.Context(), id, func(rg *ReplicationGroup) *protocol.AWSError {
+		containerID = rg.DockerContainerID
+		hostPort = rg.HostPort
+		rg.Status = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	containerID := rg.DockerContainerID
-	hostPort := rg.HostPort
-
-	rg.Status = "deleting"
-	if aerr := h.store.putReplicationGroup(r.Context(), rg); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -345,14 +352,7 @@ func (h *Handler) ModifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 
 	// Schedule transition back to available.
 	h.scheduler.AfterScoped(h.store.region(r.Context()), id, "rg-available", 0, func(ctx context.Context) {
-		got, aerr := h.store.getReplicationGroup(ctx, id)
-		if aerr != nil {
-			return
-		}
-		if got.Status == "modifying" {
-			got.Status = "available"
-			h.store.putReplicationGroup(ctx, got) //nolint:errcheck
-		}
+		h.transitionReplicationGroup(ctx, id, "available", "modifying")
 	})
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlModifyReplicationGroupResponse{

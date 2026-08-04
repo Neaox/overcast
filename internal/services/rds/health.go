@@ -42,6 +42,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 const (
@@ -72,23 +73,37 @@ func awaitingStartup(status string) bool {
 // rather than writing a caller's snapshot is what keeps a slow failure from
 // resurrecting an instance that was stopped or deleted while it waited.
 func (h *Handler) failInstance(ctx context.Context, instanceID, reason string) {
-	got, aerr := h.store.getDBInstance(ctx, instanceID)
-	if aerr != nil {
-		return
-	}
-	if !awaitingStartup(got.DBInstanceStatus) {
-		return
-	}
-	priorStatus := got.DBInstanceStatus
 	// Take the engine's own output before anything removes the container. It
 	// is the only place the actual cause is written down — "exited with code
 	// 1" says nothing, and the line above it usually says everything.
-	h.captureContainerLogs(ctx, got)
-	got.DBInstanceStatus = "failed"
-	got.StatusReason = reason
-	if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
-		h.log.Warn("RDS: persist failed instance",
-			zap.String("instance", instanceID), zap.String("error", aerr.Message))
+	//
+	// Reading it is a Docker call, so it happens outside the record's lock, on
+	// a snapshot; only the two fields it fills in travel into the write below.
+	snapshot, aerr := h.store.getDBInstance(ctx, instanceID)
+	if aerr != nil {
+		return
+	}
+	if !awaitingStartup(snapshot.DBInstanceStatus) {
+		return
+	}
+	h.captureContainerLogs(ctx, snapshot)
+
+	priorStatus := ""
+	if _, aerr := h.mutateInstance(ctx, instanceID, func(inst *DBInstance) *protocol.AWSError {
+		if !awaitingStartup(inst.DBInstanceStatus) {
+			return errInstanceMovedOn
+		}
+		priorStatus = inst.DBInstanceStatus
+		inst.DBInstanceStatus = "failed"
+		inst.StatusReason = reason
+		inst.LastLogs = snapshot.LastLogs
+		inst.LastLogsAt = snapshot.LastLogsAt
+		return nil
+	}); aerr != nil {
+		if aerr != errInstanceMovedOn {
+			h.log.Warn("RDS: persist failed instance",
+				zap.String("instance", instanceID), zap.String("error", aerr.Message))
+		}
 		return
 	}
 	h.recordInstanceFailureEvent(ctx, instanceID, priorStatus, reason)
@@ -98,14 +113,32 @@ func (h *Handler) failInstance(ctx context.Context, instanceID, reason string) {
 
 // markAvailable moves an instance that has answered a connection to
 // "available", clearing any earlier failure reason.
+//
+// inst is the snapshot the caller was holding while it dialled, and is used for
+// nothing but the identifier: the record is re-read inside the lock and only
+// the status is written. Persisting the snapshot instead is what silently
+// reverted every edit an API call made while the dial was in flight — a
+// ModifyDBInstance's new instance class, most visibly. Same discipline as
+// failInstance, for the same reason.
 func (h *Handler) markAvailable(ctx context.Context, inst *DBInstance) {
-	inst.DBInstanceStatus = "available"
-	inst.StatusReason = ""
-	if aerr := h.store.putDBInstance(ctx, inst); aerr != nil {
+	instanceID := inst.DBInstanceIdentifier
+	if _, aerr := h.mutateInstance(ctx, instanceID, func(got *DBInstance) *protocol.AWSError {
+		if !awaitingStartup(got.DBInstanceStatus) {
+			return errInstanceMovedOn
+		}
+		got.DBInstanceStatus = "available"
+		got.StatusReason = ""
+		return nil
+	}); aerr != nil && aerr != errInstanceMovedOn {
 		h.log.Warn("RDS: persist available instance",
-			zap.String("instance", inst.DBInstanceIdentifier), zap.String("error", aerr.Message))
+			zap.String("instance", instanceID), zap.String("error", aerr.Message))
 	}
 }
+
+// errInstanceMovedOn abandons a mutation whose guard no longer holds — the
+// instance was stopped, deleted or modified while the caller was away. It is
+// never returned to a caller: every use pairs with a check for it.
+var errInstanceMovedOn = &protocol.AWSError{Code: "InstanceMovedOn"}
 
 // containerFailureReason reports why the instance's container will not answer,
 // or "" while it is still a candidate. A transient Docker error is not an
@@ -230,23 +263,24 @@ func (h *Handler) startInstanceContainerAsync(ctx context.Context, instanceID st
 			return
 		}
 
-		fresh, aerr := h.store.getDBInstance(bgCtx, instanceID)
-		if aerr != nil || fresh == nil {
-			return
-		}
-		if !awaitingStartup(fresh.DBInstanceStatus) {
-			// Stopped or deleted mid-start; leave the transition alone. The
-			// container is brought back down by whoever made that transition.
-			return
-		}
-		fresh.DockerContainerID = got.DockerContainerID
-		fresh.HostPort = got.HostPort
-		fresh.Endpoint = got.Endpoint
-		fresh.DialAddress = got.DialAddress
-		fresh.DialPort = got.DialPort
-		if aerr := h.store.putDBInstance(bgCtx, fresh); aerr != nil {
-			h.log.Warn("RDS: persist started instance",
-				zap.String("instance", instanceID), zap.String("error", aerr.Message))
+		fresh, aerr := h.mutateInstance(bgCtx, instanceID, func(inst *DBInstance) *protocol.AWSError {
+			if !awaitingStartup(inst.DBInstanceStatus) {
+				// Stopped or deleted mid-start; leave the transition alone. The
+				// container is brought back down by whoever made that transition.
+				return errInstanceMovedOn
+			}
+			inst.DockerContainerID = got.DockerContainerID
+			inst.HostPort = got.HostPort
+			inst.Endpoint = got.Endpoint
+			inst.DialAddress = got.DialAddress
+			inst.DialPort = got.DialPort
+			return nil
+		})
+		if aerr != nil {
+			if aerr != errInstanceMovedOn {
+				h.log.Warn("RDS: persist started instance",
+					zap.String("instance", instanceID), zap.String("error", aerr.Message))
+			}
 			return
 		}
 

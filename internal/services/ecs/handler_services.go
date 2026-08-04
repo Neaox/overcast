@@ -208,31 +208,56 @@ func (h *Handler) CreateService(w http.ResponseWriter, r *http.Request) {
 
 // UpdateService handles AmazonEC2ContainerServiceV20141113.UpdateService.
 func (h *Handler) UpdateService(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Cluster              string                `json:"cluster"`
-		Service              string                `json:"service"`
-		TaskDefinition       string                `json:"taskDefinition"`
-		DesiredCount         *int                  `json:"desiredCount"`
-		NetworkConfiguration *NetworkConfiguration `json:"networkConfiguration"`
-		PlatformVersion      string                `json:"platformVersion"`
-	}
+	var req updateServiceRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 
-	if req.Cluster == "" {
-		req.Cluster = "default"
-	}
-
-	clusterName := extractClusterName(req.Cluster)
-	serviceName := extractServiceName(req.Service)
-
-	svc, aerr := h.store.getService(r.Context(), clusterName, serviceName)
+	svc, aerr := h.updateServiceRecord(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
+	h.publish(r, events.ECSServiceUpdated, events.ResourcePayload{Name: extractServiceName(req.Service)})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
+}
+
+// updateServiceRecord applies an UpdateService to the stored service and then
+// drives the service to what it now describes, returning the record as it
+// stands afterwards. Both wire paths come through here, so an update means the
+// same thing whichever protocol asked for it.
+func (h *Handler) updateServiceRecord(ctx context.Context, req *updateServiceRequest) (*ecsService, *protocol.AWSError) {
+	if req.Cluster == "" {
+		req.Cluster = "default"
+	}
+	clusterName := extractClusterName(req.Cluster)
+	serviceName := extractServiceName(req.Service)
+
+	edited, aerr := h.mutateService(ctx, clusterName, serviceName, func(svc *ecsService) *protocol.AWSError {
+		return h.applyServiceUpdate(ctx, serviceName, svc, req)
+	})
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	// Reconcile: adjust task count. Outside the lock — reconcile takes it.
+	h.reconcile(ctx, clusterName, serviceName)
+
+	// Re-read with updated counts.
+	if svc, _ := h.store.getService(ctx, clusterName, serviceName); svc != nil {
+		return svc, nil
+	}
+	return edited, nil
+}
+
+// applyServiceUpdate edits a service record to match an UpdateService request:
+// its desired count, its task definition — which starts a new deployment and
+// demotes the one it replaces — its networking, and its platform version.
+//
+// It only edits. Placing and retiring tasks is the reconcile the caller runs
+// once the record is written and the lock is released.
+func (h *Handler) applyServiceUpdate(ctx context.Context, serviceName string, svc *ecsService, req *updateServiceRequest) *protocol.AWSError {
 	now := h.clk.Now().Unix()
 
 	// Update desired count.
@@ -251,14 +276,14 @@ func (h *Handler) UpdateService(w http.ResponseWriter, r *http.Request) {
 	if req.TaskDefinition != "" {
 		family, revision, hasRevision := parseTaskDefRef(req.TaskDefinition)
 		var td *TaskDefinition
+		var aerr *protocol.AWSError
 		if hasRevision {
-			td, aerr = h.store.getTaskDefinition(r.Context(), family, revision)
+			td, aerr = h.store.getTaskDefinition(ctx, family, revision)
 		} else {
-			td, aerr = h.store.getLatestTaskDefinition(r.Context(), family)
+			td, aerr = h.store.getLatestTaskDefinition(ctx, family)
 		}
 		if aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
-			return
+			return aerr
 		}
 
 		if td.TaskDefinitionArn != svc.TaskDefinition {
@@ -275,9 +300,8 @@ func (h *Handler) UpdateService(w http.ResponseWriter, r *http.Request) {
 				newNetCfg = svc.NetworkConfiguration
 			}
 			// Re-validate with any updated NetworkConfiguration during deployment creation.
-			if _, placementErr := h.resolveAwsvpcPlacement(r.Context(), newNetCfg, "awsvpc services"); placementErr != nil {
-				protocol.WriteJSONError(w, r, placementErr)
-				return
+			if _, placementErr := h.resolveAwsvpcPlacement(ctx, newNetCfg, "awsvpc services"); placementErr != nil {
+				return placementErr
 			}
 			newPlatformVersion := req.PlatformVersion
 			if newPlatformVersion == "" {
@@ -316,19 +340,7 @@ func (h *Handler) UpdateService(w http.ResponseWriter, r *http.Request) {
 		svc.PlatformVersion = req.PlatformVersion
 	}
 
-	if aerr := h.store.putService(r.Context(), clusterName, svc); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Reconcile: adjust task count.
-	h.reconcile(r.Context(), clusterName, serviceName)
-
-	// Re-read with updated counts.
-	svc, _ = h.store.getService(r.Context(), clusterName, serviceName)
-
-	h.publish(r, events.ECSServiceUpdated, events.ResourcePayload{Name: serviceName})
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
+	return nil
 }
 
 // DeleteService handles AmazonEC2ContainerServiceV20141113.DeleteService.
@@ -346,38 +358,50 @@ func (h *Handler) DeleteService(w http.ResponseWriter, r *http.Request) {
 		req.Cluster = "default"
 	}
 
-	clusterName := extractClusterName(req.Cluster)
-	serviceName := extractServiceName(req.Service)
-
-	svc, aerr := h.store.getService(r.Context(), clusterName, serviceName)
+	svc, aerr := h.drainServiceRecord(r.Context(), req.Cluster, req.Service)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
-	svc.Status = "DRAINING"
-	svc.DesiredCount = 0
-	for i := range svc.Deployments {
-		if svc.Deployments[i].Status == "PRIMARY" {
-			svc.Deployments[i].DesiredCount = 0
-			svc.Deployments[i].UpdatedAt = h.clk.Now().Unix()
+	h.publish(r, events.ECSServiceDeleted, events.ResourcePayload{Name: extractServiceName(req.Service)})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
+}
+
+// drainServiceRecord puts a service into DRAINING at a desired count of zero
+// and reconciles it, which is what stops its tasks. Both wire paths come
+// through here.
+func (h *Handler) drainServiceRecord(ctx context.Context, cluster, service string) (*ecsService, *protocol.AWSError) {
+	if cluster == "" {
+		cluster = "default"
+	}
+	clusterName := extractClusterName(cluster)
+	serviceName := extractServiceName(service)
+
+	edited, aerr := h.mutateService(ctx, clusterName, serviceName, func(svc *ecsService) *protocol.AWSError {
+		svc.Status = "DRAINING"
+		svc.DesiredCount = 0
+		for i := range svc.Deployments {
+			if svc.Deployments[i].Status == "PRIMARY" {
+				svc.Deployments[i].DesiredCount = 0
+				svc.Deployments[i].UpdatedAt = h.clk.Now().Unix()
+			}
 		}
+		h.addServiceEvent(svc, fmt.Sprintf("(service %s) is draining.", serviceName))
+		return nil
+	})
+	if aerr != nil {
+		return nil, aerr
 	}
-	h.addServiceEvent(svc, fmt.Sprintf("(service %s) is draining.", serviceName))
 
-	if aerr := h.store.putService(r.Context(), clusterName, svc); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	// Reconcile: stop all tasks.
-	h.reconcile(r.Context(), clusterName, serviceName)
+	// Reconcile: stop all tasks. Outside the lock — reconcile takes it.
+	h.reconcile(ctx, clusterName, serviceName)
 
 	// Re-read with updated counts.
-	svc, _ = h.store.getService(r.Context(), clusterName, serviceName)
-
-	h.publish(r, events.ECSServiceDeleted, events.ResourcePayload{Name: serviceName})
-	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"service": svc}, "application/x-amz-json-1.1")
+	if svc, _ := h.store.getService(ctx, clusterName, serviceName); svc != nil {
+		return svc, nil
+	}
+	return edited, nil
 }
 
 // DescribeServices handles AmazonEC2ContainerServiceV20141113.DescribeServices.
@@ -544,6 +568,39 @@ func (h *Handler) lockService(ctx context.Context, clusterName, serviceName stri
 	h.serviceLocksMu.Unlock()
 	mu.Lock()
 	return mu.Unlock
+}
+
+// mutateService applies edit to a service's stored record under lockService,
+// returning the record it wrote. The read, the edit and the write are one step,
+// so a writer that read the record earlier — a reconcile on a scheduler
+// goroutine, the Docker exit notifier — cannot land its own copy in between and
+// discard the edit.
+//
+// An API call is as much a writer as they are, and the edit it loses that way
+// is the caller's instruction. A scale-down overwritten by a reconcile that was
+// already running leaves the service stored at the count it had, so the
+// reconcile the caller then runs sees nothing to retire and the surplus tasks
+// keep running — a scale-down that returned 200 and did nothing. Only the
+// stored record shows it: DescribeServices recounts from the tasks on its own
+// copy, so the service reports whatever it is actually running.
+//
+// edit returning an error leaves the record untouched. The lock is released
+// before the caller reconciles, because reconcile takes it itself — lock
+// ordering here is one service lock at a time, then task locks beneath it.
+func (h *Handler) mutateService(ctx context.Context, clusterName, serviceName string, edit func(svc *ecsService) *protocol.AWSError) (*ecsService, *protocol.AWSError) {
+	defer h.lockService(ctx, clusterName, serviceName)()
+
+	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if aerr := edit(svc); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
+		return nil, aerr
+	}
+	return svc, nil
 }
 
 // deploymentCounts is one deployment's share of a service's tasks. settled is

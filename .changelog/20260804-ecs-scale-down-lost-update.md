@@ -1,0 +1,1 @@
+* [ecs] `UpdateService` and `DeleteService` write the service record under the same lock the scheduler reconciles it with, so a scale-down that lands while a task is coming up is no longer overwritten by that task's reconcile — the surplus tasks were left running and the call still returned 200

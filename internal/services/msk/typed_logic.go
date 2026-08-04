@@ -80,14 +80,7 @@ func (s *Service) createClusterTyped(ctx context.Context, req *createClusterRequ
 		}()
 	} else {
 		s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(bgCtx context.Context) {
-			got, aerr := s.handler.store.getCluster(bgCtx, clusterARNCopy)
-			if aerr != nil {
-				return
-			}
-			if got.State == "CREATING" {
-				got.State = "ACTIVE"
-				s.handler.store.putCluster(bgCtx, got) //nolint:errcheck
-			}
+			s.handler.transitionCluster(bgCtx, clusterARNCopy, "ACTIVE", "CREATING")
 		})
 	}
 
@@ -152,13 +145,11 @@ type deleteClusterResponse struct {
 }
 
 func (s *Service) deleteClusterTyped(ctx context.Context, req *deleteClusterRequest) (*deleteClusterResponse, *protocol.AWSError) {
-	cluster, aerr := s.handler.store.getCluster(ctx, req.ClusterArn)
+	cluster, aerr := s.handler.mutateCluster(ctx, req.ClusterArn, func(cluster *Cluster) *protocol.AWSError {
+		cluster.State = "DELETING"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-
-	cluster.State = "DELETING"
-	if aerr := s.handler.store.putCluster(ctx, cluster); aerr != nil {
 		return nil, aerr
 	}
 
@@ -511,14 +502,7 @@ func (s *Service) createClusterV2Typed(ctx context.Context, req *createClusterV2
 			}()
 		} else {
 			s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(bgCtx context.Context) {
-				got, aerr := s.handler.store.getCluster(bgCtx, clusterARNCopy)
-				if aerr != nil {
-					return
-				}
-				if got.State == "CREATING" {
-					got.State = "ACTIVE"
-					s.handler.store.putCluster(bgCtx, got) //nolint:errcheck
-				}
+				s.handler.transitionCluster(bgCtx, clusterARNCopy, "ACTIVE", "CREATING")
 			})
 		}
 	}
@@ -637,10 +621,13 @@ func (s *Service) updateClusterConfigurationTyped(ctx context.Context, req *upda
 	opID := uuid.NewString()
 	opArn := fmt.Sprintf("arn:aws:kafka:%s:%s:cluster-operation/%s", region, s.handler.cfg.AccountID, opID)
 
-	cluster.CurrentVersion = opID
-	if aerr := s.handler.store.putCluster(ctx, cluster); aerr != nil {
+	if _, aerr := s.handler.mutateCluster(ctx, cluster.ClusterArn, func(stored *Cluster) *protocol.AWSError {
+		stored.CurrentVersion = opID
+		return nil
+	}); aerr != nil {
 		return nil, aerr
 	}
+	cluster.CurrentVersion = opID
 
 	return &updateClusterConfigurationResponse{
 		ClusterArn:          req.ClusterArn,
