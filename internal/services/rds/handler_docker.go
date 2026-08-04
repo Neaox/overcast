@@ -39,6 +39,10 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 
 	switch inst.DBInstanceStatus {
 	case "available", "starting":
+		// Read the container's output while the container still exists. A
+		// database that dies on its own leaves its explanation here, and
+		// Docker discards it with the container.
+		h.captureContainerLogs(ctx, inst)
 		inst.DBInstanceStatus = "stopped"
 		h.store.putDBInstance(ctx, inst) //nolint:errcheck
 		h.log.Info("instance container stopped",
@@ -146,6 +150,9 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 
 		default: // exited, dead, paused, etc.
 			if inst.DBInstanceStatus == "available" || inst.DBInstanceStatus == "starting" {
+				// The container outlived Overcast and died meanwhile; its logs
+				// are still there to be read, and only until it is removed.
+				h.captureContainerLogs(rctx, inst)
 				inst.DBInstanceStatus = "stopped"
 				h.store.putDBInstance(rctx, inst) //nolint:errcheck
 				h.log.Info("reconcile: container not running — marked stopped",

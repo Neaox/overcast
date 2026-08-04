@@ -16,7 +16,24 @@ export function endpointHeaders(endpoint: EmulatorEndpoint): Record<string, stri
   }
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export interface ApiFetchOptions {
+  /**
+   * Status codes to decode as data instead of throwing.
+   *
+   * A few emulator endpoints answer a non-2xx status whose body is still the
+   * answer the caller wanted — RDS's logs endpoint 404s a DB instance with no
+   * logs and describes the instance in the same breath, and that description
+   * is the whole reason the caller asked. Listing the status here keeps the
+   * default (any non-2xx is an error) intact everywhere else.
+   */
+  acceptStatuses?: number[]
+}
+
+export async function apiFetch<T>(
+  path: string,
+  init?: RequestInit,
+  opts?: ApiFetchOptions,
+): Promise<T> {
   const endpoint = endpointResolver.get()
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -27,7 +44,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     },
   })
 
-  if (!res.ok) {
+  if (!res.ok && !opts?.acceptStatuses?.includes(res.status)) {
     const body = (await res.json().catch(() => ({ error: res.statusText }))) as {
       error?: string
       message?: string
