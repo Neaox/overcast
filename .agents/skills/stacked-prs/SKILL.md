@@ -131,7 +131,7 @@ in this order — `capgen` imports `internal/docssearch`, so it cannot compile
 while that file still holds conflict markers:
 
 ```sh
-./scripts/docker-go.sh run ./scripts/docs-index.go --write-index --write-go-index
+./scripts/docker-go.sh run ./scripts/docs-index.go --write-nav --write-search-index
 ./scripts/docker-go.sh run -tags dev ./cmd/capgen --generate
 ./scripts/docker-go.sh run -tags dev ./cmd/capgen --write-docs
 ```

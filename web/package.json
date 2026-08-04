@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.30.1",
   "scripts": {
     "dev": "vite",
-    "docs:index": "cd .. && go run ./scripts/docs-index.go --write-index --write-go-index",
+    "docs:index": "cd .. && go run ./scripts/docs-index.go --write-nav --write-search-index",
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "build": "pnpm run typecheck && vite build",
     "build:server": "esbuild api/src/server.ts --bundle --platform=node --format=esm --minify --outfile=dist-server/server.mjs",

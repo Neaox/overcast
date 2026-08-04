@@ -48,7 +48,7 @@ RUN corepack enable pnpm
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
-# src/docs-index.gen.ts is committed, so it arrives with this COPY — no Go
+# src/docs-nav.gen.ts is committed, so it arrives with this COPY — no Go
 # toolchain or preliminary generation stage is needed to build the SPA.
 COPY web/ .
 RUN VITE_BUNDLED=true pnpm run build

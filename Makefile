@@ -225,12 +225,12 @@ aws-models-check:
 
 ## docs-index: regenerate the committed docs search/navigation index (run after editing docs/, then commit)
 docs-index:
-	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
+	$(GO) run ./scripts/docs-index.go --write-nav --write-search-index
 
 ## docs: regenerate sentinel-bracketed capability tables in docs/services/*.md
 docs: generate-caps
 	$(GO) run -tags dev ./cmd/capgen --write-docs
-	$(GO) run ./scripts/docs-index.go --write-index --write-go-index
+	$(GO) run ./scripts/docs-index.go --write-nav --write-search-index
 
 ## docs-check: verify docs capability tables, all.gen.go, and STATUS.md are up to date, and every doc has frontmatter (CI gate)
 docs-check: check-caps

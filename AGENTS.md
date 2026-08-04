@@ -228,8 +228,8 @@ These generated sources are **committed** and must be regenerated through their 
 | File | Regenerate with |
 | --- | --- |
 | `internal/capabilities/all.gen.go` | `make generate-caps` |
-| `internal/docssearch/index.gen.go` | `make docs-index` |
-| `web/src/docs-index.gen.ts` | `make docs-index` |
+| `internal/docssearch/index.gen.jsonl` | `make docs-index` |
+| `web/src/docs-nav.gen.ts` | `make docs-index` |
 | `internal/awsapi/manifest.gen.go` | `make generate-aws-operations` |
 
 - **After editing a published doc under `docs/`, run `make docs-index` and commit the result.** CI fails otherwise: `make docs-check` compares both files against what `docs/` would produce.
