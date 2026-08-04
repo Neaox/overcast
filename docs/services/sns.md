@@ -50,6 +50,16 @@ completes to subscribers, matching the behaviour of real SNS.
   `lambda` that covers a function that does not exist, one that is not in an
   invokable state, a missing layer version, and a runtime the emulator cannot
   execute.
+- CloudFormation applies `AWS::SNS::Topic` attributes through SNS on both create
+  and update, and applies standalone `AWS::SNS::Subscription` attributes through
+  SNS after subscribing. The topic's inline `Subscription` list creates the
+  listed SNS subscriptions during creation. Updating that list or removing a
+  previously configured SNS attribute fails the stack update rather than leaving
+  stale SNS configuration. Topic `Tags` fail the stack because SNS `TagResource`
+  is not implemented. Cross-region `AWS::SNS::Subscription` `Region` is not
+  implemented and fails the stack rather than being ignored. FIFO topic
+  attributes round-trip, but FIFO publish semantics remain unsupported (tracked
+  in #183).
 
 <!-- BEGIN overcast:capabilities -->
 

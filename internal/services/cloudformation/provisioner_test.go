@@ -221,6 +221,44 @@ func TestTopoSortImplicitDeps(t *testing.T) {
 	})
 }
 
+func TestSNSTopicTagParams(t *testing.T) {
+	params, err := snsTopicTagParams("arn:aws:sns:us-east-1:000000000000:topic", []any{
+		map[string]any{"Key": "environment", "Value": "test"},
+		map[string]any{"Key": "owner"},
+	})
+	if err != nil {
+		t.Fatalf("snsTopicTagParams() error = %v", err)
+	}
+	want := map[string]string{
+		"Action":              "TagResource",
+		"ResourceArn":         "arn:aws:sns:us-east-1:000000000000:topic",
+		"Version":             "2010-03-31",
+		"Tags.member.1.Key":   "environment",
+		"Tags.member.1.Value": "test",
+		"Tags.member.2.Key":   "owner",
+	}
+	if !reflect.DeepEqual(params, want) {
+		t.Errorf("snsTopicTagParams() = %#v, want %#v", params, want)
+	}
+}
+
+func TestSNSSubscriptionRequestRegion(t *testing.T) {
+	t.Run("uses the stack region when omitted or equal", func(t *testing.T) {
+		for _, props := range []map[string]any{{}, {"Region": "us-east-1"}} {
+			got, err := snsSubscriptionRequestRegion(props, "us-east-1")
+			if err != nil || got != "us-east-1" {
+				t.Errorf("snsSubscriptionRequestRegion(%#v) = %q, %v; want us-east-1, nil", props, got, err)
+			}
+		}
+	})
+
+	t.Run("rejects cross-region subscriptions until supported", func(t *testing.T) {
+		if _, err := snsSubscriptionRequestRegion(map[string]any{"Region": "us-west-2"}, "us-east-1"); err == nil {
+			t.Error("snsSubscriptionRequestRegion() error = nil, want cross-region limitation")
+		}
+	})
+}
+
 func TestAppSyncGraphQLApiBody_cloudFormationTags(t *testing.T) {
 	// Given: GraphQL API properties with CloudFormation-style tag entries
 	props := map[string]any{
