@@ -10,6 +10,23 @@ permissions:
   contents: read
   checks: write
 
+# One run per pull request; a force-push supersedes the run it replaces.
+#
+# Revising a PR is normally a force-push — an amend or a rebase — and without
+# this the superseded run continues to completion, spending a full CI cycle on
+# a commit nobody is waiting for and leaving a verdict against a head that no
+# longer exists. scripts/pr-wait.sh already has to defend against reading one:
+# its exit 8 means the head moved mid-watch, so the result it collected is
+# stale.
+#
+# Cancellation is deliberately limited to pull requests. A cancelled push to
+# main leaves the branch with no verdict at all, and a cancelled release run is
+# worse — so the group falls back to the ref, and cancel-in-progress is false
+# for everything that is not a PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   vet:
     name: Vet
@@ -376,6 +393,11 @@ jobs:
             target: slim
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # The test jobs already pull through the mirror; this one did not, and it
+      # is the job that pulls the most — every base layer of a two-stage build,
+      # twice over the matrix. It builds with the classic builder, so the
+      # daemon-level mirror this configures is the one that applies.
+      - uses: ./.github/actions/docker-hub-mirror
       - name: Build image
         env:
           TAG: ${{ matrix.tag }}

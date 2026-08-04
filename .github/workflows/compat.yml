@@ -22,6 +22,14 @@ on:
         required: false
         default: ""
 
+# One run per pull request — see the same block in test.yml for why, and why
+# cancellation stops at pull requests. It matters more here: a run is nine
+# suite jobs against live Overcast instances, and the baseline promotion on
+# main reads the result of a completed run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   prepare-matrix:
     name: Prepare suite matrix
