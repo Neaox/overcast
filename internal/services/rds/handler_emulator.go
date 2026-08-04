@@ -18,7 +18,6 @@ package rds
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -85,7 +84,7 @@ func (h *Handler) GetInstanceLogs(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			liveErr = err
 		} else {
-			out.Logs = string(stripRDSDockerLogHeaders(raw))
+			out.Logs = string(docker.DemuxStream(raw))
 			out.LogSource = "container"
 		}
 	}
@@ -156,7 +155,7 @@ func (h *Handler) captureContainerLogs(ctx context.Context, inst *DBInstance) {
 			zap.String("instance", inst.DBInstanceIdentifier), zap.Error(err))
 		return
 	}
-	logs := strings.TrimSpace(string(stripRDSDockerLogHeaders(raw)))
+	logs := strings.TrimSpace(string(docker.DemuxStream(raw)))
 	if logs == "" {
 		return
 	}
@@ -182,22 +181,4 @@ func writeRDSEmulatorError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
-}
-
-// stripRDSDockerLogHeaders removes the 8-byte Docker multiplex frame headers
-// from raw container log output, returning only the payload bytes.
-func stripRDSDockerLogHeaders(raw []byte) []byte {
-	out := make([]byte, 0, len(raw))
-	for len(raw) >= 8 {
-		size := binary.BigEndian.Uint32(raw[4:8])
-		raw = raw[8:]
-		if uint32(len(raw)) < size {
-			// Truncated frame — take what's left.
-			out = append(out, raw...)
-			break
-		}
-		out = append(out, raw[:size]...)
-		raw = raw[size:]
-	}
-	return out
 }

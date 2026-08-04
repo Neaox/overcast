@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,14 +27,12 @@ func makeDockerFrame(payload []byte) []byte {
 	return append(hdr, payload...)
 }
 
-func makeDockerFrameStderr(payload []byte) []byte {
-	hdr := make([]byte, 8)
-	hdr[0] = 2 // stderr
-	binary.BigEndian.PutUint32(hdr[4:8], uint32(len(payload)))
-	return append(hdr, payload...)
-}
+// The frame-level behaviour of the demux reader itself — TTY passthrough,
+// zero-length frames, truncated headers, stderr frames — is covered in
+// internal/docker. What is tested here is what Lambda builds on top of it:
+// timestamped lines, reassembled across frames, parsed back into events.
 
-func TestDockerLogStripper_basic(t *testing.T) {
+func TestLambdaLogLines_timestampPerFrame(t *testing.T) {
 	// Simulate a Docker log stream with multiplex frames containing
 	// timestamped log lines (timestamps=true).
 
@@ -45,7 +42,7 @@ func TestDockerLogStripper_basic(t *testing.T) {
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:46.123456789Z line two\n")))
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:47.123456789Z line three\n")))
 
-	stripped := &dockerLogStripper{r: &buf}
+	stripped := docker.NewDemuxReader(&buf)
 	scanner := bufio.NewScanner(stripped)
 
 	var got []string
@@ -82,14 +79,14 @@ func TestDockerLogStripper_basic(t *testing.T) {
 	}
 }
 
-func TestDockerLogStripper_linesSpanFrames(t *testing.T) {
+func TestLambdaLogLines_lineSpansFrames(t *testing.T) {
 	// A log line split across two Docker frames (e.g., partial write).
 	// After stripping, the scanner should reassemble the line.
 	var buf bytes.Buffer
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:45.123456789Z partial")))
 	buf.Write(makeDockerFrame([]byte(" line\n")))
 
-	stripped := &dockerLogStripper{r: &buf}
+	stripped := docker.NewDemuxReader(&buf)
 	scanner := bufio.NewScanner(stripped)
 
 	var got []string
@@ -117,12 +114,12 @@ func TestDockerLogStripper_linesSpanFrames(t *testing.T) {
 	}
 }
 
-func TestDockerLogStripper_multipleLinesInOneFrame(t *testing.T) {
+func TestLambdaLogLines_multipleLinesInOneFrame(t *testing.T) {
 	// Docker sends one frame with multiple log lines.
 	var buf bytes.Buffer
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:45.123456789Z line1\nline2\n")))
 
-	stripped := &dockerLogStripper{r: &buf}
+	stripped := docker.NewDemuxReader(&buf)
 	scanner := bufio.NewScanner(stripped)
 
 	var got []string
@@ -153,93 +150,6 @@ func TestDockerLogStripper_multipleLinesInOneFrame(t *testing.T) {
 	}
 	if msg2 != "line2" {
 		t.Errorf("second line: got %q, want 'line2'", msg2)
-	}
-}
-
-func TestDockerLogStripper_zeroLengthFrame(t *testing.T) {
-	// Zero-length frames should be skipped silently.
-	var buf bytes.Buffer
-	buf.Write(makeDockerFrame([]byte{}))                                         // zero-length
-	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:45.123456789Z hello\n"))) // real data
-
-	stripped := &dockerLogStripper{r: &buf}
-	scanner := bufio.NewScanner(stripped)
-
-	var got []string
-	for scanner.Scan() {
-		got = append(got, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scanner error: %v", err)
-	}
-
-	if len(got) != 1 {
-		t.Fatalf("expected 1 line, got %d: %v", len(got), got)
-	}
-	_, msg := parseDockerTimestamp(got[0])
-	if msg != "hello" {
-		t.Errorf("got %q, want 'hello'", msg)
-	}
-}
-
-func TestDockerLogStripper_emptyStream(t *testing.T) {
-	// Empty stream: no frames. Scanner should return nothing.
-	var buf bytes.Buffer
-	stripped := &dockerLogStripper{r: &buf}
-	scanner := bufio.NewScanner(stripped)
-
-	var got []string
-	for scanner.Scan() {
-		got = append(got, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scanner error: %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("expected 0 lines, got %d: %v", len(got), got)
-	}
-}
-
-func TestDockerLogStripper_eofMidHeader(t *testing.T) {
-	// EOF in the middle of a frame header: scanner should error.
-	buf := bytes.NewBuffer([]byte{0x01, 0x00, 0x00, 0x00}) // incomplete header (4 of 8 bytes)
-	stripped := &dockerLogStripper{r: buf}
-	scanner := bufio.NewScanner(stripped)
-
-	for scanner.Scan() {
-		// Drain scanner until it reports the expected malformed-frame error.
-	}
-	if scanner.Err() == nil {
-		t.Error("expected scanner error for incomplete header, got nil")
-	}
-	// The error should be io.ErrUnexpectedEOF or io.EOF.
-	err := scanner.Err()
-	if err != io.ErrUnexpectedEOF && err != io.EOF {
-		t.Errorf("expected io.ErrUnexpectedEOF or io.EOF, got %v", err)
-	}
-}
-
-func TestDockerLogStripper_stderrFrames(t *testing.T) {
-	// Frames from stderr should also be processed (stream type 2).
-	var buf bytes.Buffer
-	buf.Write(makeDockerFrameStderr([]byte("2024-01-15T10:30:45.123456789Z stderr line\n")))
-
-	stripped := &dockerLogStripper{r: &buf}
-	scanner := bufio.NewScanner(stripped)
-
-	var got []string
-	for scanner.Scan() {
-		got = append(got, scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scanner error: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 line, got %d: %v", len(got), got)
-	}
-	_, msg := parseDockerTimestamp(got[0])
-	if msg != "stderr line" {
-		t.Errorf("got %q, want 'stderr line'", msg)
 	}
 }
 
@@ -311,36 +221,14 @@ func TestParseDockerTimestamp(t *testing.T) {
 	}
 }
 
-func TestMakeDockerFrame(t *testing.T) {
-	// Verify the frame format.
-	payload := []byte("hello")
-	frame := makeDockerFrame(payload)
-	if len(frame) != 8+len(payload) {
-		t.Fatalf("frame length = %d, want %d", len(frame), 8+len(payload))
-	}
-	if frame[0] != 1 {
-		t.Errorf("stream type = %d, want 1 (stdout)", frame[0])
-	}
-	if frame[1] != 0 || frame[2] != 0 || frame[3] != 0 {
-		t.Errorf("padding bytes not zero: %v", frame[1:4])
-	}
-	size := binary.BigEndian.Uint32(frame[4:8])
-	if size != uint32(len(payload)) {
-		t.Errorf("payload size = %d, want %d", size, len(payload))
-	}
-	if !bytes.Equal(frame[8:], payload) {
-		t.Errorf("payload = %q, want %q", frame[8:], payload)
-	}
-}
-
-func TestDockerLogStripper_largePayload(t *testing.T) {
+func TestLambdaLogLines_largePayload(t *testing.T) {
 	// Large payload spanning multiple reads.
 	payload := strings.Repeat("x", 100*1024) // 100KB
 	var buf bytes.Buffer
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:45.123456789Z " + payload + "\n")))
 
-	stripped := &dockerLogStripper{r: &buf}
-	// Use a small buffer to force multiple reads within dockerLogStripper.
+	stripped := docker.NewDemuxReader(&buf)
+	// Use a small buffer to force multiple reads within the demux reader.
 	scanner := bufio.NewScanner(stripped)
 	scanner.Buffer(make([]byte, 16*1024), 128*1024) // 64KB initial, 128KB max
 

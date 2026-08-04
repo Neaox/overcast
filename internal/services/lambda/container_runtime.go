@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1842,40 +1841,6 @@ func (ci *containerInstance) Close() error {
 	return nil
 }
 
-// dockerLogStripper is an io.Reader that strips the 8-byte Docker multiplexed
-// log frame headers, returning only the payload bytes. This lets a bufio.Scanner
-// assemble complete log lines transparently across frame boundaries, which is
-// required for any multi-byte log format — particularly JSON emitted by AWS
-// Lambda Powertools Logger, where one log record is a single JSON object on one
-// line that may exceed a single Docker frame payload.
-//
-// Docker log framing (non-TTY containers):
-//
-//	[1 byte stream-type][3 bytes padding][4 bytes big-endian payload size][payload]
-type dockerLogStripper struct {
-	r         io.Reader
-	remaining uint32 // bytes remaining in current frame payload
-}
-
-func (s *dockerLogStripper) Read(p []byte) (int, error) {
-	for s.remaining == 0 {
-		// Read the 8-byte frame header. Returns io.EOF when the log stream ends.
-		var hdr [8]byte
-		if _, err := io.ReadFull(s.r, hdr[:]); err != nil {
-			return 0, err
-		}
-		s.remaining = binary.BigEndian.Uint32(hdr[4:8])
-		// Skip zero-length frames and loop back to read the next header.
-	}
-	limit := int(s.remaining)
-	if len(p) < limit {
-		limit = len(p)
-	}
-	n, err := s.r.Read(p[:limit])
-	s.remaining -= uint32(n)
-	return n, err
-}
-
 // logReadTracker wraps an io.Reader and records the time of the last successful
 // read. Used by waitForLogDrain to detect when streamLogs has consumed all
 // buffered Docker output (i.e. the reader has gone idle).
@@ -2008,7 +1973,7 @@ func (t *logReadTracker) Read(p []byte) (int, error) {
 // shutdown (Close), a non-streaming reconciliation pass fetches any remaining
 // bytes from Docker's persisted log file.
 //
-// Line assembly uses a bounded reader on a dockerLogStripper so oversized log
+// Line assembly uses a bounded reader on a docker.DemuxReader so oversized log
 // lines are truncated instead of stalling the stream forever.
 //
 // The goroutine exits when logCtx is cancelled (i.e. when Close is called).
@@ -2096,7 +2061,7 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 	}
 
 	// Wrap the multiplexed stream so the line reader sees a plain byte stream.
-	stripped := &dockerLogStripper{r: stream}
+	stripped := docker.NewDemuxReader(stream)
 	tracked := &logReadTracker{r: stripped, readAt: &ci.logReadAt, clk: ci.clk}
 	reader := bufio.NewReaderSize(tracked, 64*1024)
 	admission := ci.logCursor.NewAdmission(!since.IsZero())
@@ -2289,7 +2254,7 @@ func (ci *containerInstance) reconcileLogs() {
 	}
 	defer body.Close()
 
-	stripped := &dockerLogStripper{r: body}
+	stripped := docker.NewDemuxReader(body)
 	reader := bufio.NewReaderSize(stripped, 64*1024)
 	admission := ci.logCursor.NewAdmission(!since.IsZero())
 

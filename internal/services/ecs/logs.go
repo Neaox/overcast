@@ -11,13 +11,12 @@ package ecs
 import (
 	"bufio"
 	"context"
-	"fmt"
-	"io"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 )
@@ -90,7 +89,7 @@ func (h *Handler) pumpContainerLogs(ctx context.Context, dockerID string, target
 	}
 	defer stream.Close() //nolint:errcheck
 
-	scanner := bufio.NewScanner(&dockerLogStripper{r: stream})
+	scanner := bufio.NewScanner(docker.NewDemuxReader(stream))
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLogLine)
 	for scanner.Scan() {
 		ts, message := splitDockerTimestamp(scanner.Text())
@@ -123,36 +122,4 @@ func splitDockerTimestamp(line string) (int64, string) {
 		return time.Now().UnixMilli(), strings.TrimRight(line, "\r")
 	}
 	return parsed.UnixMilli(), strings.TrimRight(msg, "\r")
-}
-
-// dockerLogStripper removes the 8-byte header Docker puts in front of every
-// frame on a multiplexed (non-TTY) log stream, leaving the payload.
-type dockerLogStripper struct {
-	r         io.Reader
-	remaining int
-}
-
-func (s *dockerLogStripper) Read(p []byte) (int, error) {
-	for s.remaining == 0 {
-		var header [8]byte
-		if _, err := io.ReadFull(s.r, header[:]); err != nil {
-			return 0, err
-		}
-		// A TTY stream has no headers; its first byte is ordinary output, which
-		// never has 0 in the first byte followed by three zero bytes.
-		if header[0] > 2 {
-			n := copy(p, header[:])
-			return n, nil
-		}
-		s.remaining = int(uint32(header[4])<<24 | uint32(header[5])<<16 | uint32(header[6])<<8 | uint32(header[7]))
-	}
-	if len(p) > s.remaining {
-		p = p[:s.remaining]
-	}
-	n, err := s.r.Read(p)
-	s.remaining -= n
-	if err != nil && err != io.EOF {
-		return n, fmt.Errorf("ecs: read container log stream: %w", err)
-	}
-	return n, err
 }
