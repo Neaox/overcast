@@ -44,6 +44,22 @@ When Docker is available, `CreateDBInstance` starts a real database container
 allocation from `RDS_PORT_BASE` (default 33060). When Docker is unavailable,
 operations are metadata-only.
 
+### Modes — `OVERCAST_RDS_MODE`
+
+- `live` (default): a real engine container per DB instance, as described
+  above. It asks nothing of a machine that cannot provide it — without a
+  reachable Docker daemon it starts nothing and behaves exactly like `mock`.
+- `mock` (opt out with `OVERCAST_RDS_MODE=mock`): metadata-only. Instances move
+  through the status model on a timer and reach `available` in a moment, and
+  RDS touches Docker for nothing.
+
+The trade in `mock` is the endpoint: `DescribeDBInstances` still reports an
+address and port, and nothing is listening on them. Reach for it when you are
+testing the control plane and the tens of seconds a real first boot costs are
+the thing in your way — Overcast's own compatibility suites run this way, which
+[issue #614](https://github.com/Neaox/overcast/issues/614) tracks undoing. If
+your code connects to the database, keep the default.
+
 ### Changing the master password — `ModifyDBInstance` and `ModifyDBCluster`
 
 `MasterUserPassword` is applied to the database that is running, not just to

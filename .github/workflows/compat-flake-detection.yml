@@ -133,7 +133,10 @@ jobs:
           set -u
           for i in $(seq 1 "${RUNS}"); do
             echo "── run $i of ${RUNS}"
-            OVERCAST_PORT=4566 OVERCAST_STATE=memory OVERCAST_LOG_LEVEL=warn ./bin/overcast serve &
+            # OVERCAST_RDS_MODE=mock matches the compat workflow — flake
+            # detection has to run the same emulator the gate does, or it
+            # measures a configuration nothing else uses. See issue #614.
+            OVERCAST_PORT=4566 OVERCAST_STATE=memory OVERCAST_LOG_LEVEL=warn OVERCAST_RDS_MODE=mock ./bin/overcast serve &
             pid=$!
             for _ in $(seq 1 30); do
               curl -sf http://localhost:4566/_health > /dev/null && break
