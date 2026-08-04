@@ -49,6 +49,11 @@ MAX_LOG_LINES=${PR_WAIT_MAX_LOG_LINES:-40}
 # How long to keep looking for checks to appear. Right after a push GitHub has
 # not dispatched anything yet, and `gh pr checks` reports "no checks".
 APPEAR_TIMEOUT=${PR_WAIT_APPEAR_TIMEOUT:-180}
+# GitHub computes mergeability asynchronously and reports UNKNOWN until it has;
+# asking is what schedules the computation. Look again a couple of times before
+# concluding nothing.
+MERGEABILITY_TRIES=${PR_WAIT_MERGEABILITY_TRIES:-3}
+MERGEABILITY_INTERVAL=${PR_WAIT_MERGEABILITY_INTERVAL:-2}
 
 # summarize_log reads a `gh pr checks` (or --watch) log and prints
 #   passed=<count of distinct checks that passed>
@@ -73,15 +78,45 @@ if [ "${1:-}" = "--summarize-log" ]; then
     exit 0
 fi
 
+# merge_verdict turns the two merge fields into the decision the guard below
+# acts on: "conflicting", "unknown" (GitHub has not computed it yet), or "ok".
+#
+# Split out so scripts/pr-wait_test.py can exercise it without a live PR,
+# because the field names are a trap and this guard was dead for exactly that
+# reason. CONFLICTING is a value of `mergeable` (MERGEABLE / CONFLICTING /
+# UNKNOWN). It is NOT a member of the MergeStateStatus enum — BEHIND, BLOCKED,
+# CLEAN, DIRTY, DRAFT, HAS_HOOKS, UNKNOWN, UNSTABLE — which spells a conflict
+# DIRTY. The guard tested mergeStateStatus for CONFLICTING, a value it can
+# never hold, so it never fired: on 2026-08-04 PR #395 was genuinely
+# conflicting, reported "merge state: DIRTY", sailed past, and went on to
+# --watch a PR that dispatches no workflows at all.
+#
+# Both fields are tested. `mergeable` is the one that actually means this;
+# DIRTY is the same fact seen from the other side, and either arriving first is
+# enough to stop.
+merge_verdict() {
+    case "$1:$2" in
+        CONFLICTING:*|*:DIRTY) echo conflicting ;;
+        UNKNOWN:*|*:UNKNOWN)   echo unknown ;;
+        *)                     echo ok ;;
+    esac
+}
+
+if [ "${1:-}" = "--merge-verdict" ]; then
+    merge_verdict "${2:-}" "${3:-}"
+    exit 0
+fi
+
 pr="${1:-}"
 
 # shellcheck disable=SC2086 # $pr is deliberately unquoted: empty = current branch
-state_json=$(gh pr view $pr --json number,state,mergeStateStatus,headRefOid 2>/dev/null) || {
+state_json=$(gh pr view $pr --json number,state,mergeable,mergeStateStatus,headRefOid 2>/dev/null) || {
     echo "pr-wait: no pull request found${pr:+ for $pr}" >&2
     exit 2
 }
 number=$(printf '%s' "$state_json" | jq -r .number)
 state=$(printf '%s' "$state_json" | jq -r .state)
+mergeable=$(printf '%s' "$state_json" | jq -r .mergeable)
 merge_state=$(printf '%s' "$state_json" | jq -r .mergeStateStatus)
 head_sha=$(printf '%s' "$state_json" | jq -r .headRefOid)
 
@@ -92,7 +127,18 @@ fi
 
 # A conflicting PR dispatches no workflows at all, so --watch would sit there
 # until it timed out. See AGENTS.md § Stacked pull requests.
-if [ "$merge_state" = "CONFLICTING" ]; then
+verdict=$(merge_verdict "$mergeable" "$merge_state")
+tries=0
+while [ "$verdict" = "unknown" ] && [ "$tries" -lt "$MERGEABILITY_TRIES" ]; do
+    sleep "$MERGEABILITY_INTERVAL"
+    tries=$((tries + 1))
+    recheck=$(gh pr view "$number" --json mergeable,mergeStateStatus 2>/dev/null) || break
+    mergeable=$(printf '%s' "$recheck" | jq -r .mergeable)
+    merge_state=$(printf '%s' "$recheck" | jq -r .mergeStateStatus)
+    verdict=$(merge_verdict "$mergeable" "$merge_state")
+done
+
+if [ "$verdict" = "conflicting" ]; then
     echo "pr-wait: PR #$number is CONFLICTING — GitHub dispatches no checks on it." >&2
     echo "pr-wait: rebase or merge main into the branch, then run this again." >&2
     exit 2
@@ -103,7 +149,9 @@ log=$(mktemp)
 # shellcheck disable=SC2064 # expand $log now, not at trap time
 trap "rm -f '$log'" EXIT
 
-echo "pr-wait: PR #$number at ${head_sha%"${head_sha#???????}"} (merge state: $merge_state) — waiting for checks to settle…"
+# Both merge fields, because printing only mergeStateStatus is what let a
+# CONFLICTING PR read as a merely-DIRTY one for as long as it did.
+echo "pr-wait: PR #$number at ${head_sha%"${head_sha#???????}"} (mergeable: $mergeable, merge state: $merge_state) — waiting for checks to settle…"
 
 # Wait for checks to exist. A push that has not been picked up yet reports none,
 # and calling --watch on nothing just burns the timeout.
