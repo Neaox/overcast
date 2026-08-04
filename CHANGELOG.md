@@ -118,6 +118,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [rds] `DescribeEvents` records a DB instance's create, start, stop, delete and failure transitions as `db-instance` events, kept for 14 days — this is where the reason an instance failed to start now surfaces, since the real `DBInstance` shape has nowhere to put it
 
+- [docker] `Exec` runs a command inside a running container and returns its exit status and output
+
 ### Changed
 
 - **BREAKING** [cloudwatch] alarms now evaluate their own metrics: epoch-aligned periods, `DatapointsToAlarm` M-of-N, `Dimensions`, and all four `TreatMissingData` modes
@@ -246,6 +248,10 @@ can be applied mechanically rather than reconstructed from memory.
 - [rds] the emulator's instance logs endpoint explains a database that failed to start instead of showing an empty pane: it carries the instance's status and failure reason, serves the tail it captured from the container before that container went away, and answers 404 rather than 500 when the container is gone
 
 - [rds] `ModifyDBInstance` applies `MultiAZ=false`, which only the raw Query path did — stop, start and modify had one implementation per dispatch path and now have one between them
+
+- [rds] `ModifyDBInstance` reads `MasterUserPassword`, which it had never done: the parameter was not on the request type at all, so a stack that rotated a database's master password deployed clean over an instance — and a container — still on the old one. The change is made the way it has to be for it to mean anything, by running the engine's own `ALTER USER` inside the container: the old password stops working and the new one starts, as on AWS. A container reads `MYSQL_ROOT_PASSWORD` and its equivalents once, when it initialises its data directory, so nothing short of that would have applied
+
+- [rds] a master password the running engine will not take is reported rather than recorded — the engine's own error comes back and nothing in the request is stored, and an instance that is not `available` is refused with `InvalidDBInstanceState` instead of being told a password it has no way to start honouring
 
 - [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
 
