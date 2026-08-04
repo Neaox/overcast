@@ -213,6 +213,32 @@ func (h *rdsDBClusterHandler) Create(ctx context.Context, router http.Handler, c
 			}
 		}
 	}
+	// The settings ModifyDBCluster can change are set at create too. Reading
+	// them only on the update path would leave a template that sets them once
+	// and never touches them again with a cluster that has never had them
+	// applied — and would make the first no-op update look like a change.
+	if v := fmtPropString(props, "BackupRetentionPeriod"); v != "" {
+		params["BackupRetentionPeriod"] = v
+	}
+	if v, _ := props["PreferredBackupWindow"].(string); v != "" {
+		params["PreferredBackupWindow"] = v
+	}
+	if v, _ := props["PreferredMaintenanceWindow"].(string); v != "" {
+		params["PreferredMaintenanceWindow"] = v
+	}
+	if v, _ := props["DBClusterParameterGroupName"].(string); v != "" {
+		params["DBClusterParameterGroupName"] = v
+	}
+	if v, ok := props["DeletionProtection"]; ok {
+		params["DeletionProtection"] = cfnScalarString(v)
+	}
+	if logs, ok := props["EnableCloudwatchLogsExports"].([]any); ok {
+		for i, l := range logs {
+			if s, _ := l.(string); s != "" {
+				params[fmt.Sprintf("EnableCloudwatchLogsExports.member.%d", i+1)] = s
+			}
+		}
+	}
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {
@@ -246,8 +272,38 @@ func (h *rdsDBClusterHandler) Delete(ctx context.Context, router http.Handler, c
 		"DBClusterIdentifier": physicalID,
 		"SkipFinalSnapshot":   "true",
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	if err == nil {
+		return nil
+	}
+	// Deletion protection is the one refusal that has to reach the stack. On
+	// AWS a stack cannot delete a protected cluster: the delete fails, the
+	// cluster survives, and the operator disables the flag and tries again.
+	// Swallowing it here would report DELETE_COMPLETE over a cluster that is
+	// still there, which is the failure the flag exists to prevent.
+	//
+	// Every other error stays swallowed, as it is for the other resource
+	// handlers: a cluster that is already gone must not block a teardown.
+	if rec != nil && strings.Contains(rec.Body.String(), "InvalidParameterCombination") {
+		return fmt.Errorf("%w: DB cluster %s has deletion protection enabled", errDeletionBlocked, physicalID)
+	}
 	return nil
+}
+
+// rdsClusterReplaceOnChange are the AWS::RDS::DBCluster properties AWS
+// documents as "Update requires: Replacement". ModifyDBCluster cannot apply
+// any of them, so an update that changes one and reports success leaves the
+// cluster holding its old value behind a stack that claims otherwise — the
+// same defect rdsInstanceReplaceOnChange exists to prevent one level down.
+//
+// As there, a property is only compared when the template carried it both
+// times: a value appearing or disappearing between templates is far more often
+// a template being tidied than an intent to rebuild the database.
+var rdsClusterReplaceOnChange = []string{
+	"Engine",
+	"MasterUsername",
+	"DatabaseName",
+	"DBSubnetGroupName",
 }
 
 func (h *rdsDBClusterHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -255,8 +311,10 @@ func (h *rdsDBClusterHandler) Update(ctx context.Context, router http.Handler, _
 		return "", nil, errReplacementRequired
 	}
 	if oldProps != nil {
-		if newEngine, _ := props["Engine"].(string); newEngine != "" {
-			if oldEngine, _ := oldProps["Engine"].(string); oldEngine != "" && newEngine != oldEngine {
+		for _, name := range rdsClusterReplaceOnChange {
+			newVal, _ := props[name].(string)
+			oldVal, _ := oldProps[name].(string)
+			if newVal != "" && oldVal != "" && newVal != oldVal {
 				return "", nil, errReplacementRequired
 			}
 		}

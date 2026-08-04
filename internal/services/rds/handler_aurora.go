@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"time"
 
-	"go.uber.org/zap"
-
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -27,6 +25,18 @@ type xmlCreateDBClusterResponse struct {
 
 type xmlCreateDBClusterResult struct {
 	DBCluster xmlDBCluster `xml:"DBCluster"`
+}
+
+// xmlModifyDBClusterResponse is ModifyDBCluster's own envelope. The typed
+// implementation used to answer with a CreateDBClusterResponse element, which
+// only went unnoticed because the raw Query path — the one an SDK reached
+// through — declared the right one locally. Collapsing the two onto the typed
+// implementation makes this the single answer, so it has to be the correct one.
+type xmlModifyDBClusterResponse struct {
+	XMLName          xml.Name                  `xml:"ModifyDBClusterResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           xmlCreateDBClusterResult  `xml:"ModifyDBClusterResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 type xmlDeleteDBClusterResponse struct {
@@ -55,21 +65,56 @@ type xmlDBClusters struct {
 	Items []xmlDBCluster `xml:"DBCluster"`
 }
 
+// xmlDBCluster is the DBCluster wire shape. MasterUserPassword is deliberately
+// absent — AWS never returns it — while the settings ModifyDBCluster changes
+// are all present, because an update that cannot be observed is
+// indistinguishable from one that was dropped.
+//
+// Several of them are spelled differently on the way out than on the way in,
+// and the request spellings are the ones CloudFormation sends:
+// DBClusterParameterGroupName arrives, DBClusterParameterGroup goes back;
+// CloudwatchLogsExportConfiguration.EnableLogTypes arrives,
+// EnabledCloudwatchLogsExports goes back; VpcSecurityGroupIds arrives, a list
+// of VpcSecurityGroupMembership goes back.
 type xmlDBCluster struct {
-	DBClusterIdentifier string              `xml:"DBClusterIdentifier"`
-	DBClusterArn        string              `xml:"DBClusterArn"`
-	Engine              string              `xml:"Engine"`
-	EngineVersion       string              `xml:"EngineVersion"`
-	Status              string              `xml:"Status"`
-	MasterUsername      string              `xml:"MasterUsername"`
-	DatabaseName        string              `xml:"DatabaseName,omitempty"`
-	Port                int                 `xml:"Port"`
-	Endpoint            string              `xml:"Endpoint,omitempty"`
-	ReaderEndpoint      string              `xml:"ReaderEndpoint,omitempty"`
-	MultiAZ             bool                `xml:"MultiAZ"`
-	StorageType         string              `xml:"StorageType"`
-	ClusterCreateTime   string              `xml:"ClusterCreateTime,omitempty"`
-	DBClusterMembers    xmlDBClusterMembers `xml:"DBClusterMembers"`
+	DBClusterIdentifier          string               `xml:"DBClusterIdentifier"`
+	DBClusterArn                 string               `xml:"DBClusterArn"`
+	Engine                       string               `xml:"Engine"`
+	EngineVersion                string               `xml:"EngineVersion"`
+	Status                       string               `xml:"Status"`
+	MasterUsername               string               `xml:"MasterUsername"`
+	DatabaseName                 string               `xml:"DatabaseName,omitempty"`
+	Port                         int                  `xml:"Port"`
+	Endpoint                     string               `xml:"Endpoint,omitempty"`
+	ReaderEndpoint               string               `xml:"ReaderEndpoint,omitempty"`
+	MultiAZ                      bool                 `xml:"MultiAZ"`
+	StorageType                  string               `xml:"StorageType"`
+	ClusterCreateTime            string               `xml:"ClusterCreateTime,omitempty"`
+	DBSubnetGroup                string               `xml:"DBSubnetGroup,omitempty"`
+	BackupRetentionPeriod        int                  `xml:"BackupRetentionPeriod"`
+	PreferredBackupWindow        string               `xml:"PreferredBackupWindow,omitempty"`
+	PreferredMaintenanceWindow   string               `xml:"PreferredMaintenanceWindow,omitempty"`
+	DBClusterParameterGroup      string               `xml:"DBClusterParameterGroup,omitempty"`
+	DeletionProtection           bool                 `xml:"DeletionProtection"`
+	VpcSecurityGroups            xmlVpcSecurityGroups `xml:"VpcSecurityGroups"`
+	EnabledCloudwatchLogsExports xmlLogTypeList       `xml:"EnabledCloudwatchLogsExports"`
+	DBClusterMembers             xmlDBClusterMembers  `xml:"DBClusterMembers"`
+}
+
+// xmlVpcSecurityGroups is AWS's VpcSecurityGroupMembership list. The Status
+// field is part of the shape; Overcast does not model attachment progress, so
+// a recorded membership is reported as "active".
+type xmlVpcSecurityGroups struct {
+	Items []xmlVpcSecurityGroupMembership `xml:"VpcSecurityGroupMembership"`
+}
+
+type xmlVpcSecurityGroupMembership struct {
+	VpcSecurityGroupId string `xml:"VpcSecurityGroupId"`
+	Status             string `xml:"Status"`
+}
+
+type xmlLogTypeList struct {
+	Items []string `xml:"member"`
 }
 
 type xmlDBClusterMembers struct {
@@ -88,131 +133,21 @@ type xmlDBClusterMember struct {
 // CreateDBCluster creates a new Aurora DB cluster. Only aurora-mysql and
 // aurora-postgresql engines are accepted. The cluster is a logical resource —
 // Docker containers are started when instances are added via CreateDBInstance.
+//
+// An adapter, for the reason given on ModifyDBCluster: this was a second full
+// implementation, and it read none of the settings the typed one accepts, so a
+// create arriving on this path would have discarded every one of them —
+// including the master password the cluster has to remember in order to know,
+// later, whether a rotation is really a change.
 func (h *Handler) CreateDBCluster(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBClusterIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBClusterIdentifier is required"))
-		return
-	}
-
-	engine := r.FormValue("Engine")
-	if !auroraEngines[engine] {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue(
-			"Engine must be one of: aurora-mysql, aurora-postgresql"))
-		return
-	}
-
-	masterUser := r.FormValue("MasterUsername")
-	if masterUser == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("MasterUsername is required"))
-		return
-	}
-
-	masterPass := r.FormValue("MasterUserPassword")
-	if masterPass == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("MasterUserPassword is required"))
-		return
-	}
-
-	// Check for duplicate.
-	if _, aerr := h.store.getDBCluster(r.Context(), id); aerr == nil {
-		protocol.WriteQueryXMLError(w, r, errDBClusterAlreadyExists(id))
-		return
-	}
-
-	engineVersion := r.FormValue("EngineVersion")
-	if engineVersion == "" {
-		engineVersion = defaultEngineVersions[engine]
-	}
-
-	storageType := r.FormValue("StorageType")
-	if storageType == "" {
-		storageType = "aurora"
-	}
-
-	multiAZ := r.FormValue("MultiAZ") == "true"
-	dbName := r.FormValue("DatabaseName")
-	region := h.store.region(r.Context())
-	arn := protocol.ARN(region, h.cfg.AccountID, "rds", "cluster:"+id)
-	now := h.clk.Now().UTC().Format(time.RFC3339)
-
-	cluster := &DBCluster{
-		DBClusterIdentifier: id,
-		DBClusterArn:        arn,
-		Engine:              engine,
-		EngineVersion:       engineVersion,
-		Status:              "creating",
-		MasterUsername:      masterUser,
-		DatabaseName:        dbName,
-		Port:                defaultPorts[engine],
-		Endpoint:            clusterEndpointHostname(id, "cluster-rw", region, h.externalHostname()),
-		ReaderEndpoint:      clusterEndpointHostname(id, "cluster-ro", region, h.externalHostname()),
-		MultiAZ:             multiAZ,
-		StorageType:         storageType,
-		ClusterCreateTime:   now,
-		DBClusterMembers:    []DBClusterMember{},
-	}
-
-	if aerr := h.store.putDBCluster(r.Context(), cluster); aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	// Schedule the metadata-only creating → available transition.
-	clID := id
-	h.scheduler.AfterScoped(region, clID, "available", 500*time.Millisecond, func(ctx context.Context) {
-		h.transitionCluster(ctx, clID, "creating", "available")
-	})
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateDBClusterResponse{
-		Xmlns: rdsXMLNS,
-		Result: xmlCreateDBClusterResult{
-			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
-		},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("CreateDBCluster", w, r)
 }
 
 // ── DescribeDBClusters ────────────────────────────────────────────────────────
 
 // DescribeDBClusters returns Aurora DB clusters, optionally filtered by identifier.
 func (h *Handler) DescribeDBClusters(w http.ResponseWriter, r *http.Request) {
-	filterID := r.FormValue("DBClusterIdentifier")
-
-	if filterID != "" {
-		cluster, aerr := h.store.getDBCluster(r.Context(), filterID)
-		if aerr != nil {
-			protocol.WriteQueryXMLError(w, r, aerr)
-			return
-		}
-		protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDBClustersResponse{
-			Xmlns: rdsXMLNS,
-			Result: xmlDescribeDBClustersResult{
-				DBClusters: xmlDBClusters{Items: []xmlDBCluster{h.toXMLDBCluster(r.Context(), cluster)}},
-			},
-			ResponseMetadata: protocol.QueryResponseMetadata(r),
-		})
-		return
-	}
-
-	all, aerr := h.store.listDBClusters(r.Context())
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	items := make([]xmlDBCluster, 0, len(all))
-	for _, c := range all {
-		items = append(items, h.toXMLDBCluster(r.Context(), c))
-	}
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDBClustersResponse{
-		Xmlns: rdsXMLNS,
-		Result: xmlDescribeDBClustersResult{
-			DBClusters: xmlDBClusters{Items: items},
-		},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("DescribeDBClusters", w, r)
 }
 
 // ── DeleteDBCluster ───────────────────────────────────────────────────────────
@@ -220,76 +155,27 @@ func (h *Handler) DescribeDBClusters(w http.ResponseWriter, r *http.Request) {
 // DeleteDBCluster deletes an Aurora DB cluster. The cluster is marked "deleting"
 // immediately and removed asynchronously. Member instances are not automatically
 // deleted — callers should delete instances first (matching AWS behaviour).
+// An adapter, and necessarily one: the typed implementation refuses a cluster
+// with DeletionProtection enabled, and a second implementation that did not
+// would make the protection bypassable by choosing a dispatch path.
 func (h *Handler) DeleteDBCluster(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBClusterIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBClusterIdentifier is required"))
-		return
-	}
-
-	cluster, aerr := h.mutateCluster(r.Context(), id, func(cluster *DBCluster) *protocol.AWSError {
-		cluster.Status = "deleting"
-		return nil
-	})
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteDBClusterResponse{
-		Xmlns: rdsXMLNS,
-		Result: xmlDeleteDBClusterResult{
-			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
-		},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
-
-	// Remove the cluster record asynchronously.
-	clID := id
-	region := h.store.region(r.Context())
-	h.scheduler.AfterScoped(region, clID, "delete", 50*time.Millisecond, func(ctx context.Context) {
-		if aerr := h.store.deleteDBCluster(ctx, clID); aerr != nil {
-			h.log.Warn("failed to delete RDS cluster record",
-				zap.String("cluster", clID), zap.Error(aerr))
-		}
-	})
+	h.invokeTypedAsQuery("DeleteDBCluster", w, r)
 }
 
 // ── ModifyDBCluster ───────────────────────────────────────────────────────────
 
 // ModifyDBCluster updates settings on an Aurora DB cluster.
+//
+// This was a second full implementation, reachable whenever
+// Service.DispatchQuery found no codec in context and fell back to h.dispatch.
+// It read exactly one parameter, as the typed one did, so the two agreed by
+// accident rather than by construction — and the moment the typed one learned
+// to apply the rest of ModifyDBCluster's parameters they would have disagreed
+// about every one of them. It is an adapter now, for the same reason the
+// instance operations became adapters; the behaviour lives once, in
+// typed_logic.go.
 func (h *Handler) ModifyDBCluster(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBClusterIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBClusterIdentifier is required"))
-		return
-	}
-
-	cluster, aerr := h.mutateCluster(r.Context(), id, func(cluster *DBCluster) *protocol.AWSError {
-		if v := r.FormValue("EngineVersion"); v != "" {
-			cluster.EngineVersion = v
-		}
-		return nil
-	})
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	type xmlModifyDBClusterResponse struct {
-		XMLName          xml.Name                  `xml:"ModifyDBClusterResponse"`
-		Xmlns            string                    `xml:"xmlns,attr"`
-		Result           xmlCreateDBClusterResult  `xml:"ModifyDBClusterResult"`
-		ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
-	}
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlModifyDBClusterResponse{
-		Xmlns: rdsXMLNS,
-		Result: xmlCreateDBClusterResult{
-			DBCluster: h.toXMLDBCluster(r.Context(), cluster),
-		},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("ModifyDBCluster", w, r)
 }
 
 // ── StartDBCluster / StopDBCluster ────────────────────────────────────────────
@@ -398,20 +284,32 @@ func (h *Handler) toXMLDBCluster(ctx context.Context, c *DBCluster) xmlDBCluster
 	for _, m := range c.DBClusterMembers {
 		members = append(members, xmlDBClusterMember(m))
 	}
+	groups := make([]xmlVpcSecurityGroupMembership, 0, len(c.VpcSecurityGroupIds))
+	for _, id := range c.VpcSecurityGroupIds {
+		groups = append(groups, xmlVpcSecurityGroupMembership{VpcSecurityGroupId: id, Status: "active"})
+	}
 	return xmlDBCluster{
-		DBClusterIdentifier: c.DBClusterIdentifier,
-		DBClusterArn:        c.DBClusterArn,
-		Engine:              c.Engine,
-		EngineVersion:       c.EngineVersion,
-		Status:              c.Status,
-		MasterUsername:      c.MasterUsername,
-		DatabaseName:        c.DatabaseName,
-		Port:                c.Port,
-		Endpoint:            writer,
-		ReaderEndpoint:      reader,
-		MultiAZ:             c.MultiAZ,
-		StorageType:         c.StorageType,
-		ClusterCreateTime:   c.ClusterCreateTime,
-		DBClusterMembers:    xmlDBClusterMembers{Items: members},
+		DBClusterIdentifier:          c.DBClusterIdentifier,
+		DBClusterArn:                 c.DBClusterArn,
+		Engine:                       c.Engine,
+		EngineVersion:                c.EngineVersion,
+		Status:                       c.Status,
+		MasterUsername:               c.MasterUsername,
+		DatabaseName:                 c.DatabaseName,
+		Port:                         c.Port,
+		Endpoint:                     writer,
+		ReaderEndpoint:               reader,
+		MultiAZ:                      c.MultiAZ,
+		StorageType:                  c.StorageType,
+		ClusterCreateTime:            c.ClusterCreateTime,
+		DBSubnetGroup:                c.DBSubnetGroupName,
+		BackupRetentionPeriod:        c.BackupRetentionPeriod,
+		PreferredBackupWindow:        c.PreferredBackupWindow,
+		PreferredMaintenanceWindow:   c.PreferredMaintenanceWindow,
+		DBClusterParameterGroup:      c.DBClusterParameterGroup,
+		DeletionProtection:           c.DeletionProtection,
+		VpcSecurityGroups:            xmlVpcSecurityGroups{Items: groups},
+		EnabledCloudwatchLogsExports: xmlLogTypeList{Items: c.EnabledCloudwatchLogsExports},
+		DBClusterMembers:             xmlDBClusterMembers{Items: members},
 	}
 }

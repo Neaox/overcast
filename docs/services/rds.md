@@ -37,7 +37,7 @@ When Docker is available, `CreateDBInstance` starts a real database container
 allocation from `RDS_PORT_BASE` (default 33060). When Docker is unavailable,
 operations are metadata-only.
 
-### Changing the master password — `ModifyDBInstance`
+### Changing the master password — `ModifyDBInstance` and `ModifyDBCluster`
 
 `MasterUserPassword` is applied to the database that is running, not just to
 the record describing it. The engine's own password statement is run inside the
@@ -71,6 +71,40 @@ For MySQL and MariaDB the change covers the container's `root` account as well
 as the master user. `root` is how Overcast seeds a container, so leaving it on
 the old password would make the record wrong about any container rebuilt later.
 `DescribeDBInstances` never returns the password, on AWS or here.
+
+`ModifyDBCluster` rotates a cluster's password the same way, through the same
+code, once per member. A `DBCluster` is a logical record with no container of
+its own — the engines belong to its `DBClusterMembers` — so reaching them is
+the whole of what a cluster-level rotation can mean, and a cluster with no
+members yet is the metadata-only case above. If one member refuses, the call
+fails and names it; the members already rotated keep the new password, because
+rolling them back would need the old one to still work on engines that have
+stopped accepting it.
+
+### What a cluster records and what it enforces
+
+`ModifyDBCluster` accepts the settings CloudFormation sends, and
+`DescribeDBClusters` reports them back. What sits behind each one differs, and
+the difference matters if you are relying on it:
+
+| Setting | Behaviour |
+| --- | --- |
+| `MasterUserPassword` | Applied to every member's engine — see above |
+| `EngineVersion`, `Port` | Recorded and reported |
+| `DeletionProtection` | **Enforced**: `DeleteDBCluster` refuses a protected cluster, and a stack delete fails rather than removing it |
+| `BackupRetentionPeriod`, `PreferredBackupWindow`, `PreferredMaintenanceWindow` | Recorded only — Overcast takes no backups and runs no maintenance |
+| `DBClusterParameterGroupName` | Recorded only — engine parameters are not applied to the container |
+| `VpcSecurityGroupIds` | Recorded only — security groups are not enforced against a database |
+| `EnableCloudwatchLogsExports` | Recorded only — no engine log is shipped to CloudWatch Logs |
+
+"Recorded only" is still the difference between an update that lands and one
+that vanishes: before this, every one of these was dropped between the wire and
+the handler, so a stack update that changed any of them reported
+`UPDATE_COMPLETE` having changed nothing at all.
+
+On the CloudFormation side, `Engine`, `MasterUsername`, `DatabaseName` and
+`DBSubnetGroupName` carry "Update requires: Replacement" on AWS and force
+replacement here too, rather than being quietly applied in place.
 
 ### Finding out why an instance failed — `DescribeEvents`
 
@@ -208,17 +242,17 @@ is fully supported. Docker containers are started when instances are added to th
 
 ### Aurora clusters
 
-| Operation                    | Status         | Notes                                                                                      | AWS Docs                                                                                              |
-| ---------------------------- | -------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `CreateDBCluster`            | ✅ Supported   | aurora-mysql and aurora-postgresql only; logical cluster, Docker started on first instance | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBCluster.html)            |
-| `DescribeDBClusters`         | ✅ Supported   | List all or filter by DBClusterIdentifier; returns cluster members                         | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBClusters.html)         |
-| `DeleteDBCluster`            | ✅ Supported   | Sets status to "deleting"; async removal                                                   | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBCluster.html)            |
-| `ModifyDBCluster`            | ✅ Supported   | Engine version update                                                                      | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ModifyDBCluster.html)            |
-| `StartDBCluster`             | ✅ Supported   | stopped→starting→available                                                                 | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StartDBCluster.html)             |
-| `StopDBCluster`              | ✅ Supported   | available→stopping→stopped                                                                 | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StopDBCluster.html)              |
-| `CreateDBClusterSnapshot`    | ❌ Unsupported | stub; returns 501                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBClusterSnapshot.html)    |
-| `DeleteDBClusterSnapshot`    | ❌ Unsupported | stub; returns 501                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBClusterSnapshot.html)    |
-| `DescribeDBClusterSnapshots` | ❌ Unsupported | stub; returns 501                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBClusterSnapshots.html) |
+| Operation                    | Status         | Notes                                                                                                                                                                                                       | AWS Docs                                                                                              |
+| ---------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `CreateDBCluster`            | ✅ Supported   | aurora-mysql and aurora-postgresql only; logical cluster, Docker started on first instance                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBCluster.html)            |
+| `DescribeDBClusters`         | ✅ Supported   | List all or filter by DBClusterIdentifier; returns cluster members                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBClusters.html)         |
+| `DeleteDBCluster`            | ✅ Supported   | Sets status to "deleting"; async removal; refuses a cluster with `DeletionProtection` enabled                                                                                                               | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBCluster.html)            |
+| `ModifyDBCluster`            | ✅ Supported   | `MasterUserPassword` applied to every member's engine; engine version, port and `DeletionProtection` applied; backup/maintenance windows, cluster parameter group, security groups and log exports recorded | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ModifyDBCluster.html)            |
+| `StartDBCluster`             | ✅ Supported   | stopped→starting→available                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StartDBCluster.html)             |
+| `StopDBCluster`              | ✅ Supported   | available→stopping→stopped                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StopDBCluster.html)              |
+| `CreateDBClusterSnapshot`    | ❌ Unsupported | stub; returns 501                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBClusterSnapshot.html)    |
+| `DeleteDBClusterSnapshot`    | ❌ Unsupported | stub; returns 501                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBClusterSnapshot.html)    |
+| `DescribeDBClusterSnapshots` | ❌ Unsupported | stub; returns 501                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBClusterSnapshots.html) |
 
 ### Events
 

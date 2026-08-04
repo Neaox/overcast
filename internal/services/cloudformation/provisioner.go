@@ -499,7 +499,15 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 			continue
 		}
 		p.recordEvent(ctx, stack, logicalID, old.PhysicalID, old.Type, ResourceDeleteInProgress, "")
-		p.deleteResource(ctx, logicalID, old.Type, old.PhysicalID, rCtx)
+		// A refusal here does not fail the update. This is the cleanup phase,
+		// which AWS runs after the update has already succeeded and does not
+		// roll back — so the event says the resource is still standing and the
+		// stack still completes, rather than either lying about the delete or
+		// failing an update that worked.
+		if err := p.deleteResource(ctx, logicalID, old.Type, old.PhysicalID, rCtx); err != nil {
+			p.recordEvent(ctx, stack, logicalID, old.PhysicalID, old.Type, ResourceDeleteFailed, err.Error())
+			continue
+		}
 		p.recordEvent(ctx, stack, logicalID, old.PhysicalID, old.Type, ResourceDeleteComplete, "")
 		p.publishResourceEvent(ctx, events.CFNResourceDeleted, stack.StackName, logicalID, old.Type, old.PhysicalID)
 	}
@@ -509,7 +517,10 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 	// roll back to them.
 	for _, s := range superseded {
 		p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteInProgress, "")
-		p.deleteResource(ctx, s.LogicalID, s.Type, s.PhysicalID, rCtx)
+		if err := p.deleteResource(ctx, s.LogicalID, s.Type, s.PhysicalID, rCtx); err != nil {
+			p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteFailed, err.Error())
+			continue
+		}
 		p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteComplete, "")
 	}
 
@@ -581,7 +592,16 @@ func (p *provisioner) deleteStackResources(stack *Stack) {
 		}
 		stack.Resources[i].Status = ResourceDeleteInProgress
 		p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteInProgress, "")
-		p.deleteResource(ctx, r.LogicalID, r.Type, r.PhysicalID, rCtx)
+		if err := p.deleteResource(ctx, r.LogicalID, r.Type, r.PhysicalID, rCtx); err != nil {
+			// The resource refused. Leave it in the stack's resource list —
+			// AWS keeps a DELETE_FAILED resource visible so the retry, once
+			// the block is cleared, knows what is still standing.
+			stack.Resources[i].Status = ResourceDeleteFailed
+			stack.Resources[i].StatusReason = err.Error()
+			p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteFailed, err.Error())
+			p.failStack(ctx, stack, StatusDeleteFailed, err.Error())
+			return
+		}
 		stack.Resources[i].Status = ResourceDeleteComplete
 		p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteComplete, "")
 		p.publishResourceEvent(ctx, events.CFNResourceDeleted, stack.StackName, r.LogicalID, r.Type, r.PhysicalID)
@@ -822,26 +842,36 @@ func hashProps(props map[string]any) string {
 }
 
 // deleteResource tears down a provisioned resource.
-func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, physicalID string, rCtx *resolveContext) {
+//
+// It reports only a refusal by the resource itself (errDeletionBlocked); every
+// other teardown error is logged and swallowed, so a resource that has already
+// gone cannot wedge a stack teardown.
+func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, physicalID string, rCtx *resolveContext) error {
 	p.mu.Lock()
 	router := p.router
 	p.mu.Unlock()
 	if router == nil {
-		return
+		return nil
 	}
 
 	handler, ok := p.resolveHandler(resType)
 	if !ok {
-		return // stub resources have nothing to delete
+		return nil // stub resources have nothing to delete
 	}
 
-	if err := handler.Delete(ctx, router, p.cfg, physicalID, rCtx); err != nil {
-		p.log.Warn("cfn: failed to delete resource",
-			zap.String("type", resType),
-			zap.String("logicalId", logicalID),
-			zap.String("physicalId", physicalID),
-			zap.Error(err))
+	err := handler.Delete(ctx, router, p.cfg, physicalID, rCtx)
+	if err == nil {
+		return nil
 	}
+	p.log.Warn("cfn: failed to delete resource",
+		zap.String("type", resType),
+		zap.String("logicalId", logicalID),
+		zap.String("physicalId", physicalID),
+		zap.Error(err))
+	if errors.Is(err, errDeletionBlocked) {
+		return err
+	}
+	return nil
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1687,6 +1717,20 @@ type resourceUpdater interface {
 // one — which mirrors how AWS CloudFormation handles "Replacement: Yes"
 // property changes.
 var errReplacementRequired = errors.New("cfn: replacement required")
+
+// errDeletionBlocked is returned by a Delete implementation when the resource
+// itself refuses to be deleted — today only an RDS cluster with
+// DeletionProtection enabled. The provisioner reacts by failing the stack
+// operation instead of reporting a deletion that did not happen, which is what
+// AWS does: the delete fails, the resource survives, and the operator clears
+// the block and tries again.
+//
+// It is a sentinel rather than "any error fails the delete" on purpose. Every
+// other handler swallows its own teardown errors so that a resource which is
+// already gone cannot wedge a stack teardown, and that is the behaviour worth
+// keeping — a resource refusing deletion is a different thing from a resource
+// that could not be reached.
+var errDeletionBlocked = errors.New("cfn: deletion blocked by the resource")
 
 // updateFailure marks an update error the provisioner must answer by failing
 // the resource rather than by replacing it. The default for an update error is
