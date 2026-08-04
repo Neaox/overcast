@@ -2,9 +2,9 @@
 //
 // Implemented: CreateDBInstance, DescribeDBInstances, DeleteDBInstance,
 // DescribeDBEngineVersions, StopDBInstance, StartDBInstance, ModifyDBInstance,
-// CreateDBSubnetGroup, DeleteDBSubnetGroup, DescribeDBSubnetGroups,
-// CreateDBParameterGroup, DeleteDBParameterGroup, DescribeDBParameterGroups,
-// DescribeOrderableDBInstanceOptions.
+// DescribeEvents, CreateDBSubnetGroup, DeleteDBSubnetGroup,
+// DescribeDBSubnetGroups, CreateDBParameterGroup, DeleteDBParameterGroup,
+// DescribeDBParameterGroups, DescribeOrderableDBInstanceOptions.
 // All other operations return HTTP 501 Not Implemented.
 package rds
 

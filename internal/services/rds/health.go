@@ -79,6 +79,11 @@ func (h *Handler) failInstance(ctx context.Context, instanceID, reason string) {
 	if !awaitingStartup(got.DBInstanceStatus) {
 		return
 	}
+	priorStatus := got.DBInstanceStatus
+	// Take the engine's own output before anything removes the container. It
+	// is the only place the actual cause is written down — "exited with code
+	// 1" says nothing, and the line above it usually says everything.
+	h.captureContainerLogs(ctx, got)
 	got.DBInstanceStatus = "failed"
 	got.StatusReason = reason
 	if aerr := h.store.putDBInstance(ctx, got); aerr != nil {
@@ -86,6 +91,7 @@ func (h *Handler) failInstance(ctx context.Context, instanceID, reason string) {
 			zap.String("instance", instanceID), zap.String("error", aerr.Message))
 		return
 	}
+	h.recordInstanceFailureEvent(ctx, instanceID, priorStatus, reason)
 	h.log.Warn("RDS: instance failed to start",
 		zap.String("instance", instanceID), zap.String("reason", reason))
 }

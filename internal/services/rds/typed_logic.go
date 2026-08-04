@@ -54,8 +54,12 @@ type modifyDBInstanceReq struct {
 	DBInstanceClass      string `json:"DBInstanceClass"`
 	AllocatedStorage     int    `json:"AllocatedStorage"`
 	EngineVersion        string `json:"EngineVersion"`
-	MultiAZ              bool   `json:"MultiAZ"`
-	StorageType          string `json:"StorageType"`
+	// MultiAZ is a pointer because "absent" and "false" are different
+	// requests: absent leaves the instance alone, `MultiAZ=false` turns
+	// Multi-AZ off. A plain bool cannot tell them apart, which is why this
+	// operation used to ignore a request to disable Multi-AZ.
+	MultiAZ     *bool  `json:"MultiAZ"`
+	StorageType string `json:"StorageType"`
 }
 
 type createDBSubnetGroupReq struct {
@@ -273,6 +277,7 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.RDSInstanceCreated, Time: h.clk.Now(), Source: "rds", Payload: events.ResourcePayload{Name: id}})
 	}
+	h.recordInstanceEvent(ctx, id, "DB instance created.", "creation")
 
 	if clusterID != "" {
 		h.addInstanceToCluster(ctx, clusterID, id)
@@ -349,6 +354,7 @@ func (h *Handler) deleteDBInstanceTyped(ctx context.Context, req *deleteDBInstan
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.RDSInstanceDeleted, Time: h.clk.Now(), Source: "rds", Payload: events.ResourcePayload{Name: id}})
 	}
+	h.recordInstanceEvent(ctx, id, "DB instance deleted.", "deletion")
 
 	resp := &xmlDeleteDBInstanceResponse{
 		Xmlns: rdsXMLNS,
@@ -451,6 +457,8 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.RDSInstanceStopped, Time: h.clk.Now(), Source: "rds", Payload: events.ResourcePayload{Name: id}})
 	}
+	// RDS-EVENT-0087.
+	h.recordInstanceEvent(ctx, id, "DB instance stopped.", "notification")
 
 	return &xmlStopDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
@@ -507,6 +515,8 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.RDSInstanceStarted, Time: h.clk.Now(), Source: "rds", Payload: events.ResourcePayload{Name: id}})
 	}
+	// RDS-EVENT-0088.
+	h.recordInstanceEvent(ctx, id, "DB instance started.", "notification")
 
 	return &xmlStartDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
@@ -541,8 +551,8 @@ func (h *Handler) modifyDBInstanceTyped(ctx context.Context, req *modifyDBInstan
 		}
 		inst.EngineVersion = req.EngineVersion
 	}
-	if req.MultiAZ {
-		inst.MultiAZ = true
+	if req.MultiAZ != nil {
+		inst.MultiAZ = *req.MultiAZ
 	}
 	if req.StorageType != "" {
 		inst.StorageType = req.StorageType

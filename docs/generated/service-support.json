@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1349,
+  "total_ops": 1350,
   "services": [
     {
       "service": "s3",
@@ -5025,8 +5025,8 @@
     {
       "service": "rds",
       "display_name": "RDS",
-      "total_ops": 33,
-      "implemented_ops": 20,
+      "total_ops": 34,
+      "implemented_ops": 21,
       "operations": [
         {
           "operation": "CreateDBInstance",
@@ -5159,6 +5159,12 @@
           "category": "Aurora clusters",
           "status": "❌ Unsupported",
           "notes": "stub; returns 501"
+        },
+        {
+          "operation": "DescribeEvents",
+          "category": "Events",
+          "status": "✅ Supported",
+          "notes": "db-instance events for create/start/stop/delete/failure; 14-day retention, 60-minute default window; `SourceIdentifier`, `SourceType`, `EventCategories`, `StartTime`/`EndTime`/`Duration`, `Marker`/`MaxRecords`"
         },
         {
           "operation": "DescribeDBEngineVersions",

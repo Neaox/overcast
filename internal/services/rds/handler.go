@@ -20,6 +20,7 @@ import (
 	"github.com/Neaox/overcast/internal/lifecycle"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -72,6 +73,7 @@ func (h *Handler) initOps() {
 		"StopDBInstance":                     h.StopDBInstance,
 		"StartDBInstance":                    h.StartDBInstance,
 		"ModifyDBInstance":                   h.ModifyDBInstance,
+		"DescribeEvents":                     h.DescribeEvents,
 		"CreateDBSubnetGroup":                h.CreateDBSubnetGroup,
 		"DeleteDBSubnetGroup":                h.DeleteDBSubnetGroup,
 		"DescribeDBSubnetGroups":             h.DescribeDBSubnetGroups,
@@ -114,6 +116,24 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	protocol.NotImplementedQueryXML(w, r)
+}
+
+// invokeTypedAsQuery runs a typed operation on the raw Query dispatch path.
+//
+// Service.DispatchQuery prefers the typed operation whenever a codec is in
+// context and otherwise falls back to h.dispatch, so every operation reachable
+// both ways needs one implementation, not two. StopDBInstance, StartDBInstance
+// and ModifyDBInstance had two, and they had already drifted: only the raw pair
+// honoured `MultiAZ=false`. Registering the raw entry as this adapter keeps
+// ownsAction working — the router asks h.ops what RDS claims — while leaving
+// exactly one place where the behaviour lives.
+func (h *Handler) invokeTypedAsQuery(action string, w http.ResponseWriter, r *http.Request) {
+	typed, ok := h.typedOp[action]
+	if !ok {
+		protocol.NotImplementedQueryXML(w, r)
+		return
+	}
+	typed.Invoke(w, r, codec.QueryXML)
 }
 
 // publish emits an event if the bus is wired.
@@ -536,6 +556,7 @@ func (h *Handler) CreateDBInstance(w http.ResponseWriter, r *http.Request) {
 	})
 
 	h.publish(r, events.RDSInstanceCreated, events.ResourcePayload{Name: id})
+	h.recordInstanceEvent(r.Context(), id, "DB instance created.", "creation")
 
 	// If the instance belongs to a cluster, register it as a cluster member.
 	if clusterID != "" {
@@ -625,6 +646,7 @@ func (h *Handler) DeleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.publish(r, events.RDSInstanceDeleted, events.ResourcePayload{Name: id})
+	h.recordInstanceEvent(r.Context(), id, "DB instance deleted.", "deletion")
 
 	// Return the "deleting" response to the caller right away (AWS does the same).
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteDBInstanceResponse{

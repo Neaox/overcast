@@ -15,6 +15,8 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"StopDBInstance":           op.NewTyped("StopDBInstance", h.stopDBInstanceTyped),
 		"StartDBInstance":          op.NewTyped("StartDBInstance", h.startDBInstanceTyped),
 		"ModifyDBInstance":         op.NewTyped("ModifyDBInstance", h.modifyDBInstanceTyped),
+		// Events
+		"DescribeEvents": op.NewTyped("DescribeEvents", h.describeEventsTyped),
 		// Subnet group operations
 		"CreateDBSubnetGroup":    op.NewTyped("CreateDBSubnetGroup", h.createDBSubnetGroupTyped),
 		"DeleteDBSubnetGroup":    op.NewTyped("DeleteDBSubnetGroup", h.deleteDBSubnetGroupTyped),

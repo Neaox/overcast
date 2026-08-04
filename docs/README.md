@@ -114,7 +114,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | EventBridge      | [eventbridge.md](./services/eventbridge.md)         | 28  | Core CRUD + common workflows  |
 | Scheduler        | [scheduler.md](./services/scheduler.md)             | 12  | Core CRUD + common workflows  |
 | CloudFormation   | [cloudformation.md](./services/cloudformation.md)   | 52  | Core CRUD + common workflows  |
-| RDS              | [rds.md](./services/rds.md)                         | 33  | Core CRUD + common workflows  |
+| RDS              | [rds.md](./services/rds.md)                         | 34  | Core CRUD + common workflows  |
 | ElastiCache      | [elasticache.md](./services/elasticache.md)         | 24  | Core CRUD + common workflows  |
 | EFS              | [efs.md](./services/efs.md)                         | 31  | Core CRUD + common workflows  |
 | AppConfig        | [appconfig.md](./services/appconfig.md)             | 16  | Core CRUD + common workflows  |

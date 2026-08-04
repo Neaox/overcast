@@ -30,6 +30,8 @@ func init() {
 		capabilities.Capability{Service: "rds", Operation: "CreateDBClusterSnapshot", Category: "Aurora clusters", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "rds", Operation: "DeleteDBClusterSnapshot", Category: "Aurora clusters", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "rds", Operation: "DescribeDBClusterSnapshots", Category: "Aurora clusters", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		// Events
+		capabilities.Capability{Service: "rds", Operation: "DescribeEvents", Category: "Events", Status: capabilities.StatusSupported, Notes: "db-instance events for create/start/stop/delete/failure; 14-day retention, 60-minute default window; `SourceIdentifier`, `SourceType`, `EventCategories`, `StartTime`/`EndTime`/`Duration`, `Marker`/`MaxRecords`"},
 		// Engine metadata
 		capabilities.Capability{Service: "rds", Operation: "DescribeDBEngineVersions", Category: "Engine metadata", Status: capabilities.StatusSupported, Notes: "mysql (8.0, 5.7), postgres (16.1, 15.5, 14.11), mariadb (11.4, 10.11), aurora-mysql (3.04, 2.11), aurora-postgresql (15.4, 14.11)"},
 		capabilities.Capability{Service: "rds", Operation: "DescribeOrderableDBInstanceOptions", Category: "Engine metadata", Status: capabilities.StatusSupported, Notes: "Static list of engine + instance class combos for mysql/postgres/mariadb"},
