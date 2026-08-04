@@ -190,14 +190,17 @@ remains available as an emulator-only tail of a *running* container.
 
 ## EFS volumes
 
-`efsVolumeConfiguration` mounts need EFS live mode (`OVERCAST_EFS_MODE=live`),
-which backs each file system with a Docker volume tasks can really read and
-write. In the default mock mode the EFS control plane is still fully emulated —
-file systems, mount targets, access points, tags — but there is no data plane, so
-a task starts *without* the mount and its writes to that path go to the
-container's own writable layer and are lost when it stops. The skipped-mount
-warning says which of the three causes applied (mock mode, no container runtime,
-or an unresolvable reference) rather than listing all three.
+`efsVolumeConfiguration` mounts need EFS live mode, which backs each file
+system with a Docker volume tasks can really read and write. That is the
+default, so a task with a Docker daemon behind it gets its mount without any
+configuration; `OVERCAST_EFS_MODE=mock`, or no reachable daemon, leaves the EFS
+control plane fully emulated — file systems, mount targets, access points,
+tags — with no data plane behind it. A task then starts *without* the mount and
+its writes to that path go to the container's own writable layer and are lost
+when it stops. The skipped-mount warning says which of the three causes applied
+(mock mode, no container runtime, or an unresolvable reference) rather than
+listing all three; it is logged once per mount point each time the task is
+started, so a service replacing a crash-looping task repeats it every cycle.
 
 ## Task container networking
 

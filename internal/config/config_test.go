@@ -1086,15 +1086,19 @@ func TestLoad_eksModeRejectsInvalidValues(t *testing.T) {
 	}
 }
 
-func TestLoad_efsModeDefaultsToMock(t *testing.T) {
+// EFS defaults to live because live mode costs nothing without Docker: it
+// creates volumes only while a daemon is reachable and otherwise behaves
+// exactly like mock. Defaulting to mock meant a file system silently had no
+// storage behind it on a machine that could have backed it for free.
+func TestLoad_efsModeDefaultsToLive(t *testing.T) {
 	clearEnv(t)
 
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.EFSMode != config.EFSModeMock {
-		t.Fatalf("EFSMode: expected %q, got %q", config.EFSModeMock, cfg.EFSMode)
+	if cfg.EFSMode != config.EFSModeLive {
+		t.Fatalf("EFSMode: expected %q, got %q", config.EFSModeLive, cfg.EFSMode)
 	}
 }
 
@@ -1108,6 +1112,21 @@ func TestLoad_efsModeLive(t *testing.T) {
 	}
 	if cfg.EFSMode != config.EFSModeLive {
 		t.Fatalf("EFSMode: expected %q, got %q", config.EFSModeLive, cfg.EFSMode)
+	}
+}
+
+// Mock stays reachable as an explicit opt-out for anyone who wants EFS to keep
+// its hands off Docker entirely.
+func TestLoad_efsModeMock(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_EFS_MODE", "mock")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EFSMode != config.EFSModeMock {
+		t.Fatalf("EFSMode: expected %q, got %q", config.EFSModeMock, cfg.EFSMode)
 	}
 }
 
