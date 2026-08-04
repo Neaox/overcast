@@ -9,8 +9,10 @@
 #   scripts\pr-wait.ps1             # the PR for the current branch
 #   scripts\pr-wait.ps1 586         # a specific PR
 #
-# Exit codes: 0 all passed, 1 a check failed, 2 no checks will run, 8 pending
-# (or the head moved while watching, making the result stale).
+# Exit codes: 0 all passed, 1 a check failed, 2 the result is not worth acting
+# on (the PR is CONFLICTING before the wait or by the time it ended, closed, or
+# no checks appeared), 8 pending (or the head moved while watching, making the
+# result stale).
 
 $ErrorActionPreference = "Stop"
 
@@ -234,13 +236,33 @@ try {
 
     # The merge state is what actually gates a merge: a green run can still
     # leave UNSTABLE behind a failing non-required check.
-    $finalJson = & gh pr view $view.number --json state,mergeStateStatus,headRefOid
+    $finalJson = & gh pr view $view.number --json state,mergeable,mergeStateStatus,headRefOid
     if ($finalJson) {
         $final = $finalJson | ConvertFrom-Json
-        Write-Output "pr-wait: state=$($final.state) mergeState=$($final.mergeStateStatus)"
+        Write-Output "pr-wait: state=$($final.state) mergeable=$($final.mergeable) mergeState=$($final.mergeStateStatus)"
         if ($final.headRefOid -ne $headSha) {
             Write-Stderr "pr-wait: head moved while watching ($($headSha.Substring(0,7)) -> $($final.headRefOid.Substring(0,7))) -- this result is stale; run again."
             exit 8
+        }
+
+        # The guard at the top only sees the PR as it was before the wait. A PR
+        # goes conflicting mid-watch whenever main moves under it, and nothing
+        # so far would say so: that does not touch this PR's head, so the
+        # stale-head check above cannot fire, and it dispatches no new checks,
+        # so --watch returns its usual green. The run then ended on a PR that
+        # will not merge and reported success -- with auto-merge armed, it
+        # simply never merges and nothing tells you why.
+        #
+        # Only for a PR still OPEN. A PR that merged while we watched -- the
+        # normal happy ending, and what PR #603 did on 2026-08-04 -- answers
+        # state=MERGED with mergeState=UNKNOWN, which must not read as trouble.
+        if ($final.state -eq "OPEN" -and
+            (Get-MergeVerdict $final.mergeable $final.mergeStateStatus) -eq "conflicting") {
+            Write-Stderr "pr-wait: PR #$($view.number) went CONFLICTING while watching -- main moved under it. The checks above ran against the old base; rebase or merge main, then run this again."
+            # Only when the checks themselves were fine. A real failure is the
+            # more actionable signal and its evidence is already above, so exit
+            # 1 stands and this stays a warning.
+            if ($status -eq 0 -and $failing.Count -eq 0) { exit 2 }
         }
     }
 

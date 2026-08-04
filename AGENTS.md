@@ -330,8 +330,8 @@ scripts/pr-wait.sh <n>            # or scripts\pr-wait.ps1 <n>
 ```
 
 It wraps `gh pr checks --watch --fail-fast` and exits 0/1/2/8 — passed / failed
-/ no checks will run / still pending. Run it in the background so you get
-exactly one notification. Three things it does for you:
+/ not worth acting on / still pending. Run it in the background so you get
+exactly one notification. Four things it does for you:
 
 - **Returns at the first failure**, rather than waiting out the rest of a
   doomed run.
@@ -342,6 +342,11 @@ exactly one notification. Three things it does for you:
 - **Is re-runnable.** After you push a fix, run it again and it waits on the new
   head's run. If the head moves mid-watch it says so and exits 8, because the
   result it just collected is stale.
+- **Checks the conflict at both ends.** A PR that is conflicting before the wait
+  never gets watched (exit 2). One that goes conflicting *during* it — `main`
+  moved underneath, which changes no check and no head SHA — is caught at the
+  end and also exits 2, rather than reporting a green run on a PR that will now
+  never merge.
 
 Do **not** write a `while` loop over `gh pr checks --json` on a `sleep`
 interval. It costs a request per tick, fires whether or not anything changed,
