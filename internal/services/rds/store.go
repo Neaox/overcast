@@ -376,9 +376,14 @@ func errDBClusterAlreadyExists(id string) *protocol.AWSError {
 
 // ── Port allocation ───────────────────────────────────────────────────────────
 
+// portAllocationSpan is how many ports above the base allocatePort will
+// consider. Named because it is also what says which ports a given base can
+// ever produce, which is not only allocatePort's business.
+const portAllocationSpan = 1000
+
 // allocatePort scans existing port allocations and claims the first free port
-// in [portBase, portBase+1000). Protected by a mutex to prevent concurrent
-// callers from claiming the same port.
+// in [portBase, portBase+portAllocationSpan). Protected by a mutex to prevent
+// concurrent callers from claiming the same port.
 func (s *rdsStore) allocatePort(ctx context.Context, instanceID string, portBase int) (int, *protocol.AWSError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -395,7 +400,7 @@ func (s *rdsStore) allocatePort(ctx context.Context, instanceID string, portBase
 		}
 	}
 
-	for port := portBase; port < portBase+1000; port++ {
+	for port := portBase; port < portBase+portAllocationSpan; port++ {
 		if !used[port] {
 			if err := s.store.Set(ctx, nsPorts, strconv.Itoa(port), instanceID); err != nil {
 				return 0, protocol.Wrap(protocol.ErrInternalError, err)
