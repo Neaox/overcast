@@ -32,14 +32,26 @@ var s3BucketSubresources = []struct {
 }
 
 type cfnS3BucketProperties struct {
-	BucketName                string                          `json:"BucketName,omitempty"`
-	LifecycleConfiguration    *cfnS3LifecycleConfiguration    `json:"LifecycleConfiguration,omitempty"`
-	VersioningConfiguration   *cfnS3VersioningConfiguration   `json:"VersioningConfiguration,omitempty"`
-	NotificationConfiguration *cfnS3NotificationConfiguration `json:"NotificationConfiguration,omitempty"`
-	BucketEncryption          *cfnS3BucketEncryption          `json:"BucketEncryption,omitempty"`
-	Tags                      *[]cfnS3Tag                     `json:"Tags,omitempty"`
-	CorsConfiguration         *cfnS3CorsConfiguration         `json:"CorsConfiguration,omitempty"`
-	WebsiteConfiguration      *cfnS3WebsiteConfiguration      `json:"WebsiteConfiguration,omitempty"`
+	BucketName                       string                          `json:"BucketName,omitempty"`
+	LifecycleConfiguration           *cfnS3LifecycleConfiguration    `json:"LifecycleConfiguration,omitempty"`
+	VersioningConfiguration          *cfnS3VersioningConfiguration   `json:"VersioningConfiguration,omitempty"`
+	NotificationConfiguration        *cfnS3NotificationConfiguration `json:"NotificationConfiguration,omitempty"`
+	BucketEncryption                 *cfnS3BucketEncryption          `json:"BucketEncryption,omitempty"`
+	Tags                             *[]cfnS3Tag                     `json:"Tags,omitempty"`
+	CorsConfiguration                *cfnS3CorsConfiguration         `json:"CorsConfiguration,omitempty"`
+	WebsiteConfiguration             *cfnS3WebsiteConfiguration      `json:"WebsiteConfiguration,omitempty"`
+	AccelerateConfiguration          json.RawMessage                 `json:"AccelerateConfiguration,omitempty"`
+	AccessControl                    json.RawMessage                 `json:"AccessControl,omitempty"`
+	AnalyticsConfigurations          json.RawMessage                 `json:"AnalyticsConfigurations,omitempty"`
+	IntelligentTieringConfigurations json.RawMessage                 `json:"IntelligentTieringConfigurations,omitempty"`
+	InventoryConfigurations          json.RawMessage                 `json:"InventoryConfigurations,omitempty"`
+	LoggingConfiguration             json.RawMessage                 `json:"LoggingConfiguration,omitempty"`
+	MetricsConfigurations            json.RawMessage                 `json:"MetricsConfigurations,omitempty"`
+	ObjectLockConfiguration          json.RawMessage                 `json:"ObjectLockConfiguration,omitempty"`
+	ObjectLockEnabled                json.RawMessage                 `json:"ObjectLockEnabled,omitempty"`
+	OwnershipControls                json.RawMessage                 `json:"OwnershipControls,omitempty"`
+	PublicAccessBlockConfiguration   json.RawMessage                 `json:"PublicAccessBlockConfiguration,omitempty"`
+	ReplicationConfiguration         json.RawMessage                 `json:"ReplicationConfiguration,omitempty"`
 }
 
 type cfnS3LifecycleConfiguration struct {
@@ -50,11 +62,11 @@ type cfnS3LifecycleConfiguration struct {
 type cfnS3LifecycleRule struct {
 	AbortIncompleteMultipartUpload    *cfnS3AbortIncompleteMultipartUpload `json:"AbortIncompleteMultipartUpload,omitempty"`
 	ExpirationDate                    *string                              `json:"ExpirationDate,omitempty"`
-	ExpirationInDays                  *int                                 `json:"ExpirationInDays,omitempty"`
+	ExpirationInDays                  *cfnS3Int                            `json:"ExpirationInDays,omitempty"`
 	ExpiredObjectDeleteMarker         *bool                                `json:"ExpiredObjectDeleteMarker,omitempty"`
 	ID                                string                               `json:"Id,omitempty"`
 	NoncurrentVersionExpiration       json.RawMessage                      `json:"NoncurrentVersionExpiration,omitempty"`
-	NoncurrentVersionExpirationInDays *int                                 `json:"NoncurrentVersionExpirationInDays,omitempty"`
+	NoncurrentVersionExpirationInDays *cfnS3Int                            `json:"NoncurrentVersionExpirationInDays,omitempty"`
 	NoncurrentVersionTransition       json.RawMessage                      `json:"NoncurrentVersionTransition,omitempty"`
 	NoncurrentVersionTransitions      json.RawMessage                      `json:"NoncurrentVersionTransitions,omitempty"`
 	ObjectSizeGreaterThan             *string                              `json:"ObjectSizeGreaterThan,omitempty"`
@@ -67,7 +79,7 @@ type cfnS3LifecycleRule struct {
 }
 
 type cfnS3AbortIncompleteMultipartUpload struct {
-	DaysAfterInitiation int `json:"DaysAfterInitiation"`
+	DaysAfterInitiation cfnS3Int `json:"DaysAfterInitiation"`
 }
 
 type cfnS3TagFilter struct {
@@ -76,9 +88,9 @@ type cfnS3TagFilter struct {
 }
 
 type cfnS3Transition struct {
-	StorageClass     string  `json:"StorageClass"`
-	TransitionDate   *string `json:"TransitionDate,omitempty"`
-	TransitionInDays *int    `json:"TransitionInDays,omitempty"`
+	StorageClass     string    `json:"StorageClass"`
+	TransitionDate   *string   `json:"TransitionDate,omitempty"`
+	TransitionInDays *cfnS3Int `json:"TransitionInDays,omitempty"`
 }
 
 type cfnS3VersioningConfiguration struct {
@@ -153,7 +165,31 @@ type cfnS3CorsRule struct {
 	AllowedOrigins []string `json:"AllowedOrigins"`
 	ExposedHeaders []string `json:"ExposedHeaders,omitempty"`
 	ID             *string  `json:"Id,omitempty"`
-	MaxAge         int      `json:"MaxAge,omitempty"`
+	MaxAge         cfnS3Int `json:"MaxAge,omitempty"`
+}
+
+// cfnS3Int accepts both JSON numbers and the numeric strings produced when a
+// CloudFormation Number parameter is resolved. It is a shape adapter only;
+// range and semantic validation still belongs to S3.
+type cfnS3Int int
+
+func (n *cfnS3Int) UnmarshalJSON(data []byte) error {
+	var number json.Number
+	if len(data) > 0 && data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		number = json.Number(value)
+	} else {
+		number = json.Number(string(data))
+	}
+	value, err := strconv.ParseInt(number.String(), 10, 64)
+	if err != nil {
+		return fmt.Errorf("%q is not an integer", number.String())
+	}
+	*n = cfnS3Int(value)
+	return nil
 }
 
 type cfnS3WebsiteConfiguration struct {
@@ -181,6 +217,28 @@ func decodeS3BucketProperties(props map[string]any) (*cfnS3BucketProperties, err
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&decoded); err != nil {
 		return nil, fmt.Errorf("decode AWS::S3::Bucket properties: %w", err)
+	}
+	unsupported := []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{"AccelerateConfiguration", decoded.AccelerateConfiguration},
+		{"AccessControl", decoded.AccessControl},
+		{"AnalyticsConfigurations", decoded.AnalyticsConfigurations},
+		{"IntelligentTieringConfigurations", decoded.IntelligentTieringConfigurations},
+		{"InventoryConfigurations", decoded.InventoryConfigurations},
+		{"LoggingConfiguration", decoded.LoggingConfiguration},
+		{"MetricsConfigurations", decoded.MetricsConfigurations},
+		{"ObjectLockConfiguration", decoded.ObjectLockConfiguration},
+		{"ObjectLockEnabled", decoded.ObjectLockEnabled},
+		{"OwnershipControls", decoded.OwnershipControls},
+		{"PublicAccessBlockConfiguration", decoded.PublicAccessBlockConfiguration},
+		{"ReplicationConfiguration", decoded.ReplicationConfiguration},
+	}
+	for _, property := range unsupported {
+		if len(property.raw) != 0 {
+			return nil, fmt.Errorf("AWS::S3::Bucket property %s is not supported", property.name)
+		}
 	}
 	return &decoded, nil
 }
@@ -396,11 +454,11 @@ func translateS3LifecycleRule(in *cfnS3LifecycleRule) (s3service.LifecycleRule, 
 		}
 		rule.Expiration = &s3service.LifecycleExpiration{Date: &date}
 	} else if in.ExpirationInDays != nil {
-		rule.Expiration = &s3service.LifecycleExpiration{Days: *in.ExpirationInDays}
+		rule.Expiration = &s3service.LifecycleExpiration{Days: int(*in.ExpirationInDays)}
 	}
 	if in.AbortIncompleteMultipartUpload != nil {
 		rule.AbortIncompleteMultipartUpload = &s3service.LifecycleAbortMPU{
-			DaysAfterInitiation: in.AbortIncompleteMultipartUpload.DaysAfterInitiation,
+			DaysAfterInitiation: int(in.AbortIncompleteMultipartUpload.DaysAfterInitiation),
 		}
 	}
 
@@ -481,7 +539,7 @@ func translateS3LifecycleTransition(in *cfnS3Transition) (s3service.LifecycleTra
 		}
 		out.Date = &date
 	} else if in.TransitionInDays != nil {
-		out.Days = *in.TransitionInDays
+		out.Days = int(*in.TransitionInDays)
 	}
 	return out, nil
 }
@@ -578,7 +636,7 @@ func translateS3CorsConfiguration(in *cfnS3CorsConfiguration) ([]s3service.CORSR
 			AllowedMethods: rule.AllowedMethods,
 			AllowedOrigins: rule.AllowedOrigins,
 			ExposeHeaders:  rule.ExposedHeaders,
-			MaxAgeSeconds:  rule.MaxAge,
+			MaxAgeSeconds:  int(rule.MaxAge),
 		})
 	}
 	return out, nil

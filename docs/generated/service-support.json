@@ -54,12 +54,14 @@
         {
           "operation": "GetBucketCors",
           "category": "CORS",
-          "status": "✅ Supported"
+          "status": "⚠️ Partial",
+          "notes": "CORS rules; rule Id is not yet preserved"
         },
         {
           "operation": "PutBucketCors",
           "category": "CORS",
-          "status": "✅ Supported"
+          "status": "⚠️ Partial",
+          "notes": "CORS rules; rule Id is not yet preserved"
         },
         {
           "operation": "DeleteBucketCors",
@@ -69,14 +71,14 @@
         {
           "operation": "GetBucketWebsite",
           "category": "Website",
-          "status": "✅ Supported",
-          "notes": "IndexDocument and ErrorDocument"
+          "status": "⚠️ Partial",
+          "notes": "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"
         },
         {
           "operation": "PutBucketWebsite",
           "category": "Website",
-          "status": "✅ Supported",
-          "notes": "IndexDocument and ErrorDocument"
+          "status": "⚠️ Partial",
+          "notes": "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"
         },
         {
           "operation": "DeleteBucketWebsite",

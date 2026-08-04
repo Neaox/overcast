@@ -1,6 +1,7 @@
 package cloudformation_test
 
 import (
+	"encoding/xml"
 	"io"
 	"net/http"
 	"net/url"
@@ -201,7 +202,9 @@ func TestS3BucketProperties_updateAndRemovalDispatchSubresourceAPIs(t *testing.T
 	assertS3SubresourceExcludes(t, srv, "cfn-s3-properties", "notification", "<QueueConfiguration>", "<TopicConfiguration>", "<CloudFunctionConfiguration>")
 	assertS3SubresourceContains(t, srv, "cfn-s3-properties", "encryption", http.StatusOK,
 		"<SSEAlgorithm>AES256</SSEAlgorithm>")
-	assertS3SubresourceExcludes(t, srv, "cfn-s3-properties", "tagging", "<Tag>")
+	assertS3SubresourceExcludes(t, srv, "cfn-s3-properties", "encryption", "<KMSMasterKeyID>")
+	assertS3SubresourceContains(t, srv, "cfn-s3-properties", "tagging", http.StatusNotFound,
+		"<Code>NoSuchTagSet</Code>")
 	assertS3SubresourceContains(t, srv, "cfn-s3-properties", "cors", http.StatusNotFound,
 		"<Code>NoSuchCORSConfiguration</Code>")
 	assertS3SubresourceContains(t, srv, "cfn-s3-properties", "website", http.StatusNotFound,
@@ -288,6 +291,93 @@ func TestS3BucketProperties_validationErrorsComeFromS3(t *testing.T) {
 			t.Errorf("stack events %q do not contain S3 validation fragment %q", body, fragment)
 		}
 	}
+	resources := cfnQuery(t, srv, "DescribeStackResources", url.Values{"StackName": {"cfn-s3-validation-owner"}})
+	defer resources.Body.Close()
+	if got := string(readBody(t, resources)); !strings.Contains(got, "cfn-s3-invalid-versioning") {
+		t.Fatalf("failed partial create lost its physical ID: %s", got)
+	}
+}
+
+func TestS3BucketProperties_failedPartialCreateIsDeletedByRollback(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-partial-create","VersioningConfiguration":{"Status":"Invalid"}}}}}`
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{"StackName": {"cfn-s3-partial-create"}, "TemplateBody": {template}})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-partial-create", "ROLLBACK_COMPLETE")
+	probe, err := http.Get(srv.URL + "/cfn-s3-partial-create")
+	if err != nil {
+		t.Fatalf("probe rolled-back bucket: %v", err)
+	}
+	defer probe.Body.Close()
+	helpers.AssertStatus(t, probe, http.StatusNotFound)
+}
+
+func TestS3BucketProperties_numberParametersTranslateAtTheCFNBoundary(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	template := `{"Parameters":{"Days":{"Type":"Number","Default":14},"MaxAge":{"Type":"Number","Default":900}},"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-number-params","LifecycleConfiguration":{"Rules":[{"Id":"expiry","Status":"Enabled","ExpirationInDays":{"Ref":"Days"}}]},"CorsConfiguration":{"CorsRules":[{"AllowedMethods":["GET"],"AllowedOrigins":["*"],"MaxAge":{"Ref":"MaxAge"}}]}}}}}`
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{"StackName": {"cfn-s3-number-params"}, "TemplateBody": {template}})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-number-params", "CREATE_COMPLETE")
+	assertS3SubresourceContains(t, srv, "cfn-s3-number-params", "lifecycle", http.StatusOK, "<Days>14</Days>")
+	assertS3SubresourceContains(t, srv, "cfn-s3-number-params", "cors", http.StatusOK, "<MaxAgeSeconds>900</MaxAgeSeconds>")
+}
+
+func TestS3BucketProperties_removingExplicitNameReplacesBucket(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	stackName := "cfn-s3-name-replacement"
+	createTemplate := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-explicit-name"}}}}`
+	create := cfnQuery(t, srv, "CreateStack", url.Values{"StackName": {stackName}, "TemplateBody": {createTemplate}})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	updateTemplate := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{}}}}`
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{"StackName": {stackName}, "TemplateBody": {updateTemplate}})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+	if got := stackResourcePhysicalID(t, srv, stackName, "Bucket"); got == "cfn-s3-explicit-name" || got == "" {
+		t.Fatalf("BucketName removal did not replace the bucket: %q", got)
+	}
+	probe, err := http.Get(srv.URL + "/cfn-s3-explicit-name")
+	if err != nil {
+		t.Fatalf("probe replaced bucket: %v", err)
+	}
+	defer probe.Body.Close()
+	helpers.AssertStatus(t, probe, http.StatusNotFound)
+}
+
+func TestS3BucketProperties_laterResourceFailureRollsBackSuccessfulInPlaceUpdate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	stackName := "cfn-s3-stack-rollback"
+	createTemplate := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-stack-rollback","LifecycleConfiguration":{"Rules":[{"Id":"original","Status":"Enabled","ExpirationInDays":7}]}}},"Later":{"Type":"AWS::S3::Bucket","DependsOn":"Bucket","Properties":{"BucketName":"cfn-s3-stack-rollback-later","VersioningConfiguration":{"Status":"Enabled"}}}}}`
+	create := cfnQuery(t, srv, "CreateStack", url.Values{"StackName": {stackName}, "TemplateBody": {createTemplate}})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	updateTemplate := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-stack-rollback","LifecycleConfiguration":{"Rules":[{"Id":"attempted","Status":"Enabled","ExpirationInDays":30}]}}},"Later":{"Type":"AWS::S3::Bucket","DependsOn":"Bucket","Properties":{"BucketName":"cfn-s3-stack-rollback-later","VersioningConfiguration":{"Status":"Invalid"}}}}}`
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{"StackName": {stackName}, "TemplateBody": {updateTemplate}})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_ROLLBACK_COMPLETE")
+	assertS3SubresourceContains(t, srv, "cfn-s3-stack-rollback", "lifecycle", http.StatusOK, "<ID>original</ID>", "<Days>7</Days>")
+	assertS3SubresourceExcludes(t, srv, "cfn-s3-stack-rollback", "lifecycle", "<ID>attempted</ID>")
+}
+
+func TestS3BucketProperties_nonEmptyBucketBlocksStackDeletion(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	stackName := "cfn-s3-delete-blocked"
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-delete-blocked"}}}}`
+	create := cfnQuery(t, srv, "CreateStack", url.Values{"StackName": {stackName}, "TemplateBody": {template}})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	s3PutObject(t, srv, "cfn-s3-delete-blocked", "keep.txt", "not empty")
+	remove := cfnQuery(t, srv, "DeleteStack", url.Values{"StackName": {stackName}})
+	defer remove.Body.Close()
+	helpers.AssertStatus(t, remove, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "DELETE_FAILED")
 }
 
 func TestS3BucketProperties_failedUpdateRestoresEarlierSubresourceChanges(t *testing.T) {
@@ -350,4 +440,27 @@ func readS3Subresource(t *testing.T, srv *helpers.TestServer, bucket, subresourc
 		t.Fatalf("read GET /%s?%s: %v", bucket, subresource, err)
 	}
 	return string(body)
+}
+
+func stackResourcePhysicalID(t *testing.T, srv *helpers.TestServer, stackName, logicalID string) string {
+	t.Helper()
+	resp := cfnQuery(t, srv, "DescribeStackResources", url.Values{"StackName": {stackName}})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	body := readBody(t, resp)
+	var result struct {
+		Resources []struct {
+			LogicalID  string `xml:"LogicalResourceId"`
+			PhysicalID string `xml:"PhysicalResourceId"`
+		} `xml:"DescribeStackResourcesResult>StackResources>member"`
+	}
+	if err := xml.Unmarshal(body, &result); err != nil {
+		t.Fatalf("decode DescribeStackResources: %v\n%s", err, body)
+	}
+	for _, resource := range result.Resources {
+		if resource.LogicalID == logicalID {
+			return resource.PhysicalID
+		}
+	}
+	return ""
 }

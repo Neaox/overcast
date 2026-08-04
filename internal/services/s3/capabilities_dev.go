@@ -26,17 +26,17 @@ func init() {
 
 		// CORS
 		capabilities.Capability{Service: "s3", Operation: "GetBucketCors", Category: "CORS",
-			Status: capabilities.StatusSupported},
+			Status: capabilities.StatusPartial, Notes: "CORS rules; rule Id is not yet preserved"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketCors", Category: "CORS",
-			Status: capabilities.StatusSupported},
+			Status: capabilities.StatusPartial, Notes: "CORS rules; rule Id is not yet preserved"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketCors", Category: "CORS",
 			Status: capabilities.StatusSupported},
 
 		// Website
 		capabilities.Capability{Service: "s3", Operation: "GetBucketWebsite", Category: "Website",
-			Status: capabilities.StatusSupported, Notes: "IndexDocument and ErrorDocument"},
+			Status: capabilities.StatusPartial, Notes: "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketWebsite", Category: "Website",
-			Status: capabilities.StatusSupported, Notes: "IndexDocument and ErrorDocument"},
+			Status: capabilities.StatusPartial, Notes: "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketWebsite", Category: "Website",
 			Status: capabilities.StatusSupported},
 

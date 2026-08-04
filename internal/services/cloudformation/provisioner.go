@@ -333,6 +333,10 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 	// logical ID → the replacement's new physical ID, so rollback knows which
 	// resources it created and must remove.
 	replacedBy := map[string]string{}
+	// Tracks only updates that actually succeeded through resourceUpdater.
+	// Replacement fallbacks can return the same physical ID for upsert-shaped
+	// services and must not be replayed as in-place updates during rollback.
+	inPlaceUpdated := map[string]bool{}
 
 	for _, logicalID := range order {
 		if ctx.Err() != nil {
@@ -400,6 +404,9 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 					})
 				}
 			}
+			if outcome.UpdatedInPlace {
+				inPlaceUpdated[logicalID] = true
+			}
 			now := p.clk.Now()
 			if updErr != nil {
 				newResources = append(newResources, StackResource{
@@ -416,7 +423,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 						fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 					return
 				}
-				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, rCtx,
+				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, rCtx,
 					fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 				return
 			}
@@ -467,7 +474,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 			}
 			// Roll back: delete newly created resources (those not in `existing`)
 			// in reverse order, then restore the previous resource list.
-			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, rCtx,
+			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, rCtx,
 				fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
 			return
 		}
@@ -679,7 +686,10 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 
 	physID, attrs, err := handler.Create(ctx, router, p.cfg, props, rCtx)
 	if err != nil {
-		return "", err
+		// A handler may create the primary resource before a later configuration
+		// call fails. Preserve its identity so the caller can record the failed
+		// resource and rollback can delete what exists service-side.
+		return physID, err
 	}
 	// Store attributes for Fn::GetAtt resolution.
 	if len(attrs) > 0 {
@@ -768,7 +778,7 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 				}
 				rCtx.Attributes[logicalID] = attrs
 			}
-			return resourceUpdateOutcome{PhysicalID: physID}, nil
+			return resourceUpdateOutcome{PhysicalID: physID, UpdatedInPlace: true}, nil
 		}
 		// An update that applied and then failed is terminal — replacing the
 		// resource would neither fix it nor be what AWS does. See updateFailure.
@@ -856,6 +866,7 @@ type resourceUpdateOutcome struct {
 	// RetainReplaced reports that UpdateReplacePolicy keeps the original, so
 	// the cleanup phase must leave it alone.
 	RetainReplaced bool
+	UpdatedInPlace bool
 }
 
 // Replaced reports whether this update replaced the resource rather than
@@ -922,7 +933,7 @@ func (p *provisioner) buildResolveContext(stack *Stack, tmpl *Template) *resolve
 	// resolves correctly.
 	for name, def := range tmpl.Parameters {
 		if _, ok := params[name]; !ok {
-			params[name] = def.Default
+			params[name] = string(def.Default)
 		}
 	}
 
@@ -1109,8 +1120,8 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 // rollbackUpdate is the default failure handler for UpdateStack.
 //
 // It undoes the update in reverse order and restores the previous resource
-// list, marking the stack UPDATE_ROLLBACK_COMPLETE. Two kinds of resource are
-// undone:
+// list, marking the stack UPDATE_ROLLBACK_COMPLETE. Three kinds of resource
+// are undone:
 //
 //   - Resources created by this update (absent before it) are deleted.
 //   - Resources this update *replaced* are rolled back to the original: the
@@ -1118,10 +1129,12 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 //     because replacement creates before deleting and defers the delete to the
 //     post-success cleanup — is what the stack keeps. This is why a failed
 //     replacement leaves the resource intact rather than destroying it.
+//   - Resources successfully updated in place are passed back through their
+//     resourceUpdater with the previous properties.
 //
 // replacedBy maps a logical ID to the physical ID of the replacement created
 // for it, for exactly that second case.
-func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, rCtx *resolveContext, reason string) {
+func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated map[string]bool, rCtx *resolveContext, reason string) {
 	stack.Status = StatusUpdateRollbackInProgress
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
@@ -1134,6 +1147,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		StatusUpdateRollbackCompleteCleanupInProgress, reason)
 
 	rollbackFailed := false
+	var rollbackErr error
 	// Track resources that were created during the failed update but could
 	// not be deleted during rollback. Real CloudFormation keeps these in the
 	// stack's resource list with status DELETE_FAILED so subsequent
@@ -1179,8 +1193,14 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 			continue
 		}
 
-		if _, wasExisting := previous[r.LogicalID]; wasExisting {
-			continue // was pre-existing and untouched — do not delete
+		if old, wasExisting := previous[r.LogicalID]; wasExisting {
+			if inPlaceUpdated[r.LogicalID] && r.Status == ResourceUpdateComplete && r.PhysicalID == old.PhysicalID {
+				if err := p.rollbackInPlaceUpdate(ctx, stack, r, old, rCtx); err != nil {
+					rollbackFailed = true
+					rollbackErr = errors.Join(rollbackErr, err)
+				}
+			}
+			continue
 		}
 		if !r.existsServiceSide() {
 			continue
@@ -1225,6 +1245,9 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 
 	if rollbackFailed {
 		stack.Status = StatusUpdateRollbackFailed
+		if rollbackErr != nil {
+			stack.StatusReason = fmt.Sprintf("%s; rollback failed: %v", reason, rollbackErr)
+		}
 	} else {
 		stack.Status = StatusUpdateRollbackComplete
 		stack.StatusReason = ""
@@ -1234,6 +1257,48 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		p.log.Warn("cfn: failed to flush update rollback state", zap.String("stack", stack.StackName), zap.Error(err))
 	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+}
+
+// rollbackInPlaceUpdate restores a resource that was successfully changed
+// before a later resource failed. Reusing the resourceUpdater in reverse keeps
+// validation, persistence, and service behavior out of CloudFormation.
+func (p *provisioner) rollbackInPlaceUpdate(ctx context.Context, stack *Stack, attempted, previous StackResource, rCtx *resolveContext) error {
+	handler, ok := p.resolveHandler(previous.Type)
+	if !ok {
+		return fmt.Errorf("restore %s: resource handler is unavailable", previous.LogicalID)
+	}
+	updater, ok := handler.(resourceUpdater)
+	if !ok {
+		return fmt.Errorf("restore %s: resource handler cannot update in place", previous.LogicalID)
+	}
+	p.mu.Lock()
+	router := p.router
+	p.mu.Unlock()
+	if router == nil {
+		return fmt.Errorf("restore %s: router not initialised", previous.LogicalID)
+	}
+
+	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateInProgress, "Update rollback initiated")
+	physicalID, _, err := updater.Update(ctx, router, p.cfg, previous.PhysicalID, previous.Properties, attempted.Properties, rCtx)
+	if err == nil && physicalID != "" && physicalID != previous.PhysicalID {
+		err = fmt.Errorf("rollback changed physical ID from %q to %q", previous.PhysicalID, physicalID)
+	}
+	if err == nil {
+		if stabilizer, ok := handler.(resourceStabilizer); ok {
+			err = stabilizer.Stabilize(ctx, router, p.cfg, p.clk, previous.PhysicalID, rCtx)
+		}
+	}
+	if err != nil {
+		p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateFailed, err.Error())
+		return fmt.Errorf("restore %s: %w", previous.LogicalID, err)
+	}
+	if rCtx.Attributes == nil {
+		rCtx.Attributes = make(map[string]map[string]string)
+	}
+	rCtx.Attributes[previous.LogicalID] = previous.Attributes
+	rCtx.Resources[previous.LogicalID] = previous.PhysicalID
+	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateComplete, "")
+	return nil
 }
 
 // ── Rollback stack (async) ─────────────────────────────────────────────────
@@ -2607,7 +2672,7 @@ func (h *s3BucketHandler) Update(ctx context.Context, router http.Handler, cfg *
 		return "", nil, failUpdate(err)
 	}
 	// BucketName is immutable.
-	if decoded.BucketName != "" && decoded.BucketName != physicalID {
+	if decoded.BucketName != oldDecoded.BucketName {
 		return "", nil, errReplacementRequired
 	}
 	operations, err := planS3BucketOperations(decoded, oldDecoded)
@@ -2670,16 +2735,21 @@ func s3BucketAttrs(cfg *config.Config, bucket, region string) map[string]string 
 		base = cfg.ExternalBaseURL()
 	}
 	return map[string]string{
-		"Arn":                fmt.Sprintf("arn:aws:s3:::%s", bucket),
-		"BucketName":         bucket,
-		"DomainName":         serviceutil.HostRoutedHostnameFromBase(base, "s3", bucket, ""),
-		"RegionalDomainName": serviceutil.HostRoutedHostnameFromBase(base, "s3", bucket, region),
+		"Arn":                 fmt.Sprintf("arn:aws:s3:::%s", bucket),
+		"BucketName":          bucket,
+		"DomainName":          serviceutil.HostRoutedHostnameFromBase(base, "s3", bucket, ""),
+		"DualStackDomainName": serviceutil.HostRoutedHostnameFromBase(base, "s3.dualstack", bucket, region),
+		"RegionalDomainName":  serviceutil.HostRoutedHostnameFromBase(base, "s3", bucket, region),
+		"WebsiteURL":          serviceutil.HostRoutedURLFromBase(base, "s3-website", bucket, region, ""),
 	}
 }
 
 func (h *s3BucketHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
-	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/"+physicalID, "", nil)
-	return nil
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/"+physicalID, "", nil)
+	if err == nil || (rec != nil && rec.Code == http.StatusNotFound) {
+		return nil
+	}
+	return fmt.Errorf("%w: s3 DeleteBucket: %v", errDeletionBlocked, err)
 }
 
 // ── DynamoDB Table handler ─────────────────────────────────────────────────

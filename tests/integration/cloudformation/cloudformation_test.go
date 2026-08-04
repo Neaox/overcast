@@ -1339,6 +1339,12 @@ const getAttTemplate = `{
     },
     "BucketDomainName": {
       "Value": { "Fn::GetAtt": ["MyBucket", "DomainName"] }
+    },
+    "BucketDualStackDomainName": {
+      "Value": { "Fn::GetAtt": ["MyBucket", "DualStackDomainName"] }
+    },
+    "BucketWebsiteURL": {
+      "Value": { "Fn::GetAtt": ["MyBucket", "WebsiteURL"] }
     }
   }
 }`
@@ -1371,6 +1377,12 @@ func TestCreateStack_GetAttResolution(t *testing.T) {
 	// TestCreateStack_S3BucketDomainsAreServableByThisEmulator for why.
 	if !strings.Contains(body, "getatt-test-bucket.s3.localhost") {
 		t.Errorf("expected S3 domain name in output, got: %s", body)
+	}
+	if !strings.Contains(body, "getatt-test-bucket.s3.dualstack.us-east-1.localhost") {
+		t.Errorf("expected S3 dual-stack domain name in output, got: %s", body)
+	}
+	if !strings.Contains(body, "http://getatt-test-bucket.s3-website.us-east-1.localhost:") {
+		t.Errorf("expected S3 website URL in output, got: %s", body)
 	}
 }
 

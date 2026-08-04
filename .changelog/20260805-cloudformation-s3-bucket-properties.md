@@ -1,1 +1,1 @@
-* [cloudformation/s3] `AWS::S3::Bucket` now applies lifecycle, versioning, notification, encryption, tag, CORS, and website properties through S3, including in-place updates and removals.
+* [cloudformation/s3] `AWS::S3::Bucket` now applies lifecycle, versioning, notification, encryption, tag, CORS, and website properties through S3, including in-place updates, removals, and rollback restoration.

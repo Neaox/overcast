@@ -110,6 +110,38 @@ func TestPutBucketVersioning_invalidStatusReturnsMalformedXML(t *testing.T) {
 	}
 }
 
+func TestDeleteBucket_removesNotificationConfiguration(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "notification-recreate")
+	notificationXML := `<NotificationConfiguration><QueueConfiguration><Queue>arn:aws:sqs:us-east-1:000000000000:events</Queue><Event>s3:ObjectCreated:*</Event></QueueConfiguration></NotificationConfiguration>`
+	putResp, err := http.DefaultClient.Do(put(srv, "/notification-recreate?notification", []byte(notificationXML), map[string]string{"Content-Type": "application/xml"}))
+	if err != nil {
+		t.Fatalf("PutBucketNotificationConfiguration: %v", err)
+	}
+	putResp.Body.Close()
+	helpers.AssertStatus(t, putResp, http.StatusOK)
+	deleteResp, err := http.DefaultClient.Do(bucketConfigurationDeleteRequest(t, srv, "/notification-recreate"))
+	if err != nil {
+		t.Fatalf("DeleteBucket: %v", err)
+	}
+	deleteResp.Body.Close()
+	helpers.AssertStatus(t, deleteResp, http.StatusNoContent)
+	createBucket(t, srv, "notification-recreate")
+	getResp, err := http.DefaultClient.Do(get(srv, "/notification-recreate?notification"))
+	if err != nil {
+		t.Fatalf("GetBucketNotificationConfiguration: %v", err)
+	}
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+	body, err := io.ReadAll(getResp.Body)
+	if err != nil {
+		t.Fatalf("read notification response: %v", err)
+	}
+	if strings.Contains(string(body), "QueueConfiguration") {
+		t.Fatalf("notification configuration survived bucket recreation: %s", body)
+	}
+}
+
 func assertS3ErrorCode(t *testing.T, resp *http.Response, want string) {
 	t.Helper()
 	var result struct {

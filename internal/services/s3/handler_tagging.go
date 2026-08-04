@@ -65,6 +65,12 @@ func (h *Handler) GetBucketTagging(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
+	if b.Tags == nil {
+		protocol.WriteXMLError(w, r, &protocol.AWSError{
+			Code: "NoSuchTagSet", Message: "The TagSet does not exist", HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
 	resp := xmlTagging{Xmlns: s3XMLNamespace, TagSet: xmlTagSet{Tags: tagsToXML(b.Tags)}}
 	protocol.WriteXML(w, r, http.StatusOK, resp)
 }

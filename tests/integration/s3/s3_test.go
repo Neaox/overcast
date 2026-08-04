@@ -4177,8 +4177,9 @@ func TestGetBucketTagging_noTags(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Then: 200 with empty TagSet (not an error)
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	// Then: AWS reports that no bucket tag set exists.
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	assertS3ErrorCode(t, resp, "NoSuchTagSet")
 }
 
 // ---- Bucket Versioning -----------------------------------------------------
