@@ -34,6 +34,26 @@ the data directory has to be initialised before the server accepts anything.
 Poll `DescribeDBInstances` until it reports `available`, exactly as you would
 against AWS, and the connection will succeed on the first attempt.
 
+### CloudFormation and CDK wait for the database
+
+`CreateDBInstance` is asynchronous, but CloudFormation is not: an
+`AWS::RDS::DBInstance` resource is not `CREATE_COMPLETE` until the instance
+reports `available`, and an `AWS::RDS::DBCluster` behaves the same way. So a
+`cdk deploy` blocks for as long as the engine takes to come up, and anything
+downstream of the database — a `DependsOn`, a `Fn::GetAtt` on
+`Endpoint.Address`, a task that runs migrations — waits behind it. This is what
+AWS does, and the point of it: a deploy that returns success is a deploy whose
+database accepts connections.
+
+An instance that goes to `failed` fails the resource with the reason RDS
+recorded against it, and the stack rolls back — deleting the database it
+created rather than leaving it behind. Updates wait too: `ModifyDBInstance`
+puts the instance into `modifying`, and the resource is not `UPDATE_COMPLETE`
+until it settles.
+
+If you want the control plane without the wait, `OVERCAST_RDS_MODE=mock` reaches
+`available` immediately — see below.
+
 Starting an instance whose container Docker no longer has (a `docker prune`, a
 container removed by hand) rebuilds it rather than reporting a start that
 started nothing. Containers belonging to a stopped instance survive an Overcast

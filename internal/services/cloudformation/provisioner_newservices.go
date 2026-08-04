@@ -5,16 +5,238 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/protocol"
 )
+
+// ── RDS stabilization ──────────────────────────────────────────────────────
+//
+// CreateDBInstance and CreateDBCluster are asynchronous: they answer with the
+// database in "creating" and it comes up behind them. CloudFormation does not
+// pass that on. An AWS::RDS::DBInstance is not CREATE_COMPLETE until the
+// instance reaches "available", and everything downstream of it — a DependsOn,
+// a GetAtt on Endpoint.Address, a secret attachment — waits behind that.
+//
+// Returning as soon as the API answered made `cdk deploy` report success while
+// the engine was still initialising its data directory, which against a real
+// MySQL container is around half a minute after the create returns: a migration
+// or an app started off the back of a green deploy was refused a connection.
+// It broke the failure case in the other direction too — an instance whose
+// container never came up settled into "failed" behind a stack that had already
+// claimed CREATE_COMPLETE, where AWS fails the resource and rolls the stack
+// back.
+//
+// Create and update share the wait, as they do for an ECS service and for the
+// same reason: they are the same question about the same resource, and the bug
+// is what happens when the two answers drift apart.
+
+const (
+	// rdsStabilizeTimeout bounds the wait for a database to come up. It has to
+	// exceed what the RDS service itself will spend before giving up — a
+	// five-minute health-check budget that only starts once the container is
+	// running, behind an image pull that may be cold — or a stack would report a
+	// timeout over an instance that was still legitimately coming up and blame
+	// the wrong thing for it. CloudFormation waits hours; the instance's own
+	// "failed" status is the fast path out of here, so this only ever bites on a
+	// database that is genuinely wedged.
+	rdsStabilizeTimeout = 15 * time.Minute
+	// rdsStabilizePollInterval is how often the status is re-read. A database
+	// takes tens of seconds at the very best, so there is nothing to gain from
+	// asking faster; the calls are in-process, so there is little to lose either.
+	rdsStabilizePollInterval = 250 * time.Millisecond
+)
+
+// rdsStatusOutcome is what a DB instance or cluster status means for the
+// resource waiting on it.
+type rdsStatusOutcome int
+
+const (
+	rdsStatusWaiting rdsStatusOutcome = iota
+	rdsStatusAvailable
+	rdsStatusFailed
+)
+
+// rdsFailedStatuses are the statuses AWS documents as "the database is not
+// coming up". Overcast only ever produces "failed" itself; the rest are here so
+// that a status arriving from anywhere else is not mistaken for progress and
+// waited out for the full budget.
+var rdsFailedStatuses = map[string]bool{
+	"cloning-failed":                      true,
+	"failed":                              true,
+	"inaccessible-encryption-credentials": true,
+	"incompatible-create":                 true,
+	"incompatible-network":                true,
+	"incompatible-option-group":           true,
+	"incompatible-parameters":             true,
+	"incompatible-restore":                true,
+	"insufficient-capacity":               true,
+	"migration-failed":                    true,
+	"restore-error":                       true,
+	"upgrade-failed":                      true,
+}
+
+// rdsOutcome classifies a status. Anything unrecognised keeps the resource
+// waiting: AWS adds statuses, and treating an unknown one as done would
+// complete the resource over a database in an unknown state — the failure this
+// whole path exists to prevent.
+func rdsOutcome(status string) rdsStatusOutcome {
+	switch {
+	case status == "available":
+		return rdsStatusAvailable
+	case rdsFailedStatuses[status]:
+		return rdsStatusFailed
+	default:
+		return rdsStatusWaiting
+	}
+}
+
+// awaitRDSAvailable polls describe until the database reports "available".
+// subject names the resource in every message this produces ("DB instance
+// appdb"); reason, which may be nil, supplies the database's own account of why
+// it failed.
+func awaitRDSAvailable(ctx context.Context, clk clock.Clock, subject string, describe func() (string, error), reason func() string) error {
+	deadline := clk.Now().Add(rdsStabilizeTimeout)
+	for {
+		status, err := describe()
+		if err != nil {
+			return err
+		}
+		switch rdsOutcome(status) {
+		case rdsStatusAvailable:
+			return nil
+		case rdsStatusFailed:
+			// The status alone says nothing useful — "failed" is the same word
+			// for an image that would not pull and an engine that would not
+			// start. RDS records the difference as an event, which is where the
+			// container's own exit reason ends up.
+			if reason != nil {
+				if r := reason(); r != "" {
+					return fmt.Errorf("%s failed to come up: %s", subject, r)
+				}
+			}
+			return fmt.Errorf("%s failed to come up (status %q)", subject, status)
+		case rdsStatusWaiting:
+			// Still coming up — fall through to the deadline check and poll again.
+		}
+		if clk.Now().After(deadline) {
+			return fmt.Errorf("%s did not become available within %s (status %q)",
+				subject, rdsStabilizeTimeout, status)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-clk.After(rdsStabilizePollInterval):
+		}
+	}
+}
+
+// describedRDSDatabases is the projection a status poll reads. Both describe
+// calls are decoded through it: a response carries exactly one of the two
+// element paths, and encoding/xml leaves the field the response does not
+// mention empty.
+type describedRDSDatabases struct {
+	Instances []struct {
+		Status string `xml:"DBInstanceStatus"`
+	} `xml:"DescribeDBInstancesResult>DBInstances>DBInstance"`
+	Clusters []struct {
+		Status string `xml:"Status"`
+	} `xml:"DescribeDBClustersResult>DBClusters>DBCluster"`
+}
+
+// describeRDSDatabases runs an RDS describe call and decodes it. The two calls
+// differ in nothing but the name of the action and of the identifier parameter.
+func describeRDSDatabases(ctx context.Context, router http.Handler, region, action, idParam, id string) (describedRDSDatabases, error) {
+	var decoded describedRDSDatabases
+	rec, err := internalQuery(ctx, router, region, map[string]string{
+		"Action":  action,
+		"Version": "2014-10-31",
+		idParam:   id,
+	})
+	if err != nil {
+		return decoded, fmt.Errorf("%s: %w", action, err)
+	}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		return decoded, fmt.Errorf("%s: parse response: %w", action, err)
+	}
+	return decoded, nil
+}
+
+// waitForDBInstanceAvailable blocks until a DB instance's database answers, so
+// the resource is not complete until the thing it stands for is usable.
+func waitForDBInstanceAvailable(ctx context.Context, clk clock.Clock, router http.Handler, region, instanceID string) error {
+	subject := fmt.Sprintf("DB instance %s", instanceID)
+	return awaitRDSAvailable(ctx, clk, subject, func() (string, error) {
+		decoded, err := describeRDSDatabases(ctx, router, region,
+			"DescribeDBInstances", "DBInstanceIdentifier", instanceID)
+		if err != nil {
+			return "", err
+		}
+		if len(decoded.Instances) == 0 {
+			// Deleted from under the stack. It is not going to become available,
+			// and waiting out the budget for one only delays saying so.
+			return "", fmt.Errorf("%s no longer exists", subject)
+		}
+		return decoded.Instances[0].Status, nil
+	}, func() string {
+		return latestDBInstanceEvent(ctx, router, region, instanceID)
+	})
+}
+
+// waitForDBClusterAvailable is waitForDBInstanceAvailable for a cluster, which
+// reports its state as "Status" rather than "DBInstanceStatus". Cluster events
+// are not modelled, so a failure here has only its status to report.
+func waitForDBClusterAvailable(ctx context.Context, clk clock.Clock, router http.Handler, region, clusterID string) error {
+	subject := fmt.Sprintf("DB cluster %s", clusterID)
+	return awaitRDSAvailable(ctx, clk, subject, func() (string, error) {
+		decoded, err := describeRDSDatabases(ctx, router, region,
+			"DescribeDBClusters", "DBClusterIdentifier", clusterID)
+		if err != nil {
+			return "", err
+		}
+		if len(decoded.Clusters) == 0 {
+			return "", fmt.Errorf("%s no longer exists", subject)
+		}
+		return decoded.Clusters[0].Status, nil
+	}, nil)
+}
+
+// latestDBInstanceEvent returns the most recent thing RDS recorded against an
+// instance, which for one that has just failed is why. Best-effort: a stack
+// failing for the reason it has is better than one failing because the reason
+// could not be fetched, so every error here yields an empty string and lets the
+// caller fall back to the status.
+func latestDBInstanceEvent(ctx context.Context, router http.Handler, region, instanceID string) string {
+	rec, err := internalQuery(ctx, router, region, map[string]string{
+		"Action":           "DescribeEvents",
+		"Version":          "2014-10-31",
+		"SourceIdentifier": instanceID,
+		"SourceType":       "db-instance",
+	})
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Events []struct {
+			Message string `xml:"Message"`
+		} `xml:"DescribeEventsResult>Events>Event"`
+	}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &resp); err != nil || len(resp.Events) == 0 {
+		return ""
+	}
+	// RDS returns events oldest-first, so the newest is the last one — and the
+	// failure is the last thing that happened to an instance that just failed.
+	return resp.Events[len(resp.Events)-1].Message
+}
 
 // ── AWS::RDS::DBInstance ───────────────────────────────────────────────────
 
@@ -107,6 +329,14 @@ func (h *rdsDBInstanceHandler) Create(ctx context.Context, router http.Handler, 
 	return id, attrs, nil
 }
 
+// Stabilize holds the resource open until the database answers. The endpoint
+// attributes above are minted at create time, so they are known before the
+// database is — and a GetAtt on Endpoint.Address is exactly the dependency that
+// must not run early. See resourceStabilizer.
+func (h *rdsDBInstanceHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	return waitForDBInstanceAvailable(ctx, clk, router, rCtx.Region, physicalID)
+}
+
 func (h *rdsDBInstanceHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
 	params := map[string]string{
 		"Action":               "DeleteDBInstance",
@@ -161,6 +391,9 @@ func (h *rdsDBInstanceHandler) Update(ctx context.Context, router http.Handler, 
 		params["MasterUserPassword"] = v
 	}
 
+	// ModifyDBInstance puts the instance into "modifying" and settles it
+	// afterwards, so the resource is no more complete when this returns than it
+	// is on the create path. The provisioner waits for it — see Stabilize.
 	if _, err := internalQuery(ctx, router, rCtx.Region, params); err != nil {
 		return "", nil, fmt.Errorf("ModifyDBInstance: %w", err)
 	}
@@ -263,6 +496,12 @@ func (h *rdsDBClusterHandler) Create(ctx context.Context, router http.Handler, c
 		"DBClusterResourceId":  fmt.Sprintf("cluster-%s", id),
 	}
 	return id, attrs, nil
+}
+
+// Stabilize holds the resource open until the cluster is available, for the
+// same reason a DB instance does. See resourceStabilizer.
+func (h *rdsDBClusterHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	return waitForDBClusterAvailable(ctx, clk, router, rCtx.Region, physicalID)
 }
 
 func (h *rdsDBClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {

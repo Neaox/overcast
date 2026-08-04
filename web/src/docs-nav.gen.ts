@@ -1802,6 +1802,11 @@ export const DOCS_NAV = [
         "id": "supported-resource-types"
       },
       {
+        "depth": 3,
+        "text": "Resources that wait",
+        "id": "resources-that-wait"
+      },
+      {
         "depth": 2,
         "text": "Notes",
         "id": "notes"
@@ -3763,6 +3768,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Instance status is what actually happened",
         "id": "instance-status-is-what-actually-happened"
+      },
+      {
+        "depth": 3,
+        "text": "CloudFormation and CDK wait for the database",
+        "id": "cloudformation-and-cdk-wait-for-the-database"
       },
       {
         "depth": 3,

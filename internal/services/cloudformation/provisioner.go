@@ -211,14 +211,18 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 		now := p.clk.Now()
 		if provErr != nil {
 			// Record failed resource state and emit CREATE_FAILED with reason.
+			// physID is empty for a create that never got as far as naming the
+			// resource, and set for one that failed to stabilize — which leaves
+			// a real resource behind for rollback to delete.
 			stack.Resources = append(stack.Resources, StackResource{
 				LogicalID:    logicalID,
+				PhysicalID:   physID,
 				Type:         res.Type,
 				Status:       ResourceCreateFailed,
 				StatusReason: provErr.Error(),
 				Timestamp:    now,
 			})
-			p.recordEvent(ctx, stack, logicalID, "", res.Type, ResourceCreateFailed, provErr.Error())
+			p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateFailed, provErr.Error())
 
 			if stack.DisableRollback {
 				// DisableRollback: leave partial stack, status CREATE_FAILED.
@@ -445,14 +449,17 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 		}
 		now := p.clk.Now()
 		if provErr != nil {
+			// As on the create path: a resource that failed to stabilize has a
+			// physical ID, and rollback needs it to clean the resource up.
 			newResources = append(newResources, StackResource{
 				LogicalID:    logicalID,
+				PhysicalID:   physID,
 				Type:         res.Type,
 				Status:       ResourceCreateFailed,
 				StatusReason: provErr.Error(),
 				Timestamp:    now,
 			})
-			p.recordEvent(ctx, stack, logicalID, "", res.Type, ResourceCreateFailed, provErr.Error())
+			p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateFailed, provErr.Error())
 			if stack.DisableRollback {
 				p.failStack(ctx, stack, StatusUpdateFailed,
 					fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
@@ -682,6 +689,16 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 		rCtx.Attributes[logicalID] = attrs
 	}
 
+	// The resource exists but may not yet be usable — see resourceStabilizer.
+	// The physical ID travels out with a failure here precisely because the
+	// resource is real: the caller records it against the failed resource so
+	// rollback can delete it.
+	if stabilizer, ok := handler.(resourceStabilizer); ok {
+		if err := stabilizer.Stabilize(ctx, router, p.cfg, p.clk, physID, rCtx); err != nil {
+			return physID, err
+		}
+	}
+
 	// CDK's Application construct propagates `awsApplication=<app-arn>` to
 	// every resource in the stack. Honour it by recording a direct resource
 	// association so the UI can resolve ownership via ListAssociatedResources.
@@ -736,6 +753,15 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 			if physID == "" {
 				physID = oldPhysicalID
 			}
+			// The change has been applied; the resource may still be settling
+			// into it — see resourceStabilizer. Failing to settle is terminal
+			// for the resource rather than a reason to replace it, so it takes
+			// the same updateFailure path a handler's own failure does.
+			if stabilizer, ok := handler.(resourceStabilizer); ok {
+				if stErr := stabilizer.Stabilize(ctx, router, p.cfg, p.clk, physID, rCtx); stErr != nil {
+					return resourceUpdateOutcome{}, failUpdate(stErr)
+				}
+			}
 			if len(attrs) > 0 {
 				if rCtx.Attributes == nil {
 					rCtx.Attributes = make(map[string]map[string]string)
@@ -770,6 +796,15 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 	// names for resources the template does not name (see generatedName).
 	newPhysID, err := p.provisionResource(ctx, logicalID, res, props, rCtx)
 	if err != nil {
+		// Create may have named the replacement before its stabilizer failed.
+		// Preserve both IDs so the caller can delete the failed replacement
+		// during rollback while leaving the original resource in place.
+		if newPhysID != "" {
+			return resourceUpdateOutcome{
+				PhysicalID:         newPhysID,
+				ReplacedPhysicalID: oldPhysicalID,
+			}, err
+		}
 		return resourceUpdateOutcome{}, err
 	}
 
@@ -1027,7 +1062,7 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 			break
 		}
 		r := stack.Resources[i]
-		if r.Status != ResourceCreateComplete || r.PhysicalID == "" {
+		if !r.existsServiceSide() {
 			continue
 		}
 		stack.Resources[i].Status = ResourceDeleteInProgress
@@ -1147,7 +1182,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		if _, wasExisting := previous[r.LogicalID]; wasExisting {
 			continue // was pre-existing and untouched — do not delete
 		}
-		if r.Status != ResourceCreateComplete || r.PhysicalID == "" {
+		if !r.existsServiceSide() {
 			continue
 		}
 		handler, ok := p.resolveHandler(r.Type)
@@ -1708,6 +1743,35 @@ type resourceHandler interface {
 // implement this interface fall back to delete + create on UpdateStack.
 type resourceUpdater interface {
 	Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (newPhysicalID string, attrs map[string]string, err error)
+}
+
+// resourceStabilizer is implemented by resource handlers whose resource is not
+// finished when the call that created or changed it returns. Real
+// CloudFormation's resource-provider contract has the same split: a create
+// reports IN_PROGRESS and is re-invoked until the resource settles, and nothing
+// downstream of it runs until it does. An RDS DB instance reaching "available"
+// and an ECS service reaching its desired count are what this exists for — in
+// both cases the service API is asynchronous by design and answers long before
+// the database or the container is usable.
+//
+// The provisioner calls Stabilize after Create and after a successful in-place
+// Update so that a handler cannot implement one and forget the other, and so
+// that the three rules a failed stabilization has to obey live in one place
+// rather than in each handler:
+//
+//   - The resource is real. Create named it before the wait began, so the
+//     physical ID travels out with the error and rollback deletes it. Dropping
+//     it strands a database that nothing is left holding the name of.
+//   - A failed update is terminal, never answered with a replacement. The
+//     change was applied to the resource that exists; building a second one
+//     fixes nothing (see updateFailure).
+//   - The wait ends when the provisioner's context does, so a stuck resource
+//     cannot outlive a shutdown.
+//
+// Stabilize must be safe to call on a resource that is already settled: the
+// first status read may find that the service completed the work immediately.
+type resourceStabilizer interface {
+	Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error
 }
 
 // errReplacementRequired is returned by an Update implementation when one or

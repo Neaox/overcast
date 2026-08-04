@@ -116,6 +116,26 @@ The provisioner dispatches internal HTTP requests to the emulated services. Reso
 listed as **Provisioned** create real state in the target service; **Stub** resources
 generate a placeholder ID without side effects.
 
+### Resources that wait
+
+Some services answer a create long before the thing they created is usable, and
+CloudFormation does not pass that on: the resource is not `CREATE_COMPLETE`
+until it settles, and anything downstream of it waits behind that. Three
+resource types stabilize in Overcast, matching AWS:
+
+| Resource Type              | Complete when                                   |
+| -------------------------- | ----------------------------------------------- |
+| `AWS::RDS::DBInstance`     | the instance reports `available`                |
+| `AWS::RDS::DBCluster`      | the cluster reports `available`                 |
+| `AWS::ECS::Service`        | the current deployment reaches its desired count |
+
+Updates wait on the same condition, so an `UPDATE_COMPLETE` means the change was
+applied *and* settled. A resource that cannot settle fails with the reason the
+service itself gives — an RDS event, an ECS service event — and the stack rolls
+back, deleting the resource it created. A failed update is never answered by
+replacing the resource: the change has already been applied to the one that
+exists, so a second copy would carry the same problem.
+
 | Resource Type                              | Status      | Physical ID Format        | GetAtt Attributes                               |
 | ------------------------------------------ | ----------- | ------------------------- | ----------------------------------------------- |
 | `AWS::SQS::Queue`                          | Provisioned | ARN                       | QueueName, Arn, QueueUrl                        |
