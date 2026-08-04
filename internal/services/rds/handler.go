@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -1090,43 +1089,8 @@ func (h *Handler) network() string {
 // region is the region the instance is stored under — the callbacks run outside
 // any request context, so the store lookup would otherwise hit the default
 // region and silently no-op for instances created elsewhere.
-func (h *Handler) scheduleHealthCheck(region, instanceID, host string, port int) {
-	const maxRetries = 30
-	var attempt int
-	var check func(ctx context.Context)
-	check = func(ctx context.Context) {
-		attempt++
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
-		if err == nil {
-			conn.Close()
-			// DB is ready — transition to available.
-			got, aerr := h.store.getDBInstance(ctx, instanceID)
-			if aerr != nil {
-				return
-			}
-			if got.DBInstanceStatus == "creating" || got.DBInstanceStatus == "starting" {
-				got.DBInstanceStatus = "available"
-				h.store.putDBInstance(ctx, got) //nolint:errcheck
-			}
-			return
-		}
-		if attempt < maxRetries {
-			h.scheduler.AfterScoped(region, instanceID, "health", 2*time.Second, check)
-		} else {
-			h.log.Warn("RDS health check timed out", zap.String("instance", instanceID), zap.Int("attempts", attempt))
-			// Transition to available anyway so the API is usable.
-			got, aerr := h.store.getDBInstance(ctx, instanceID)
-			if aerr != nil {
-				return
-			}
-			if got.DBInstanceStatus == "creating" || got.DBInstanceStatus == "starting" {
-				got.DBInstanceStatus = "available"
-				h.store.putDBInstance(ctx, got) //nolint:errcheck
-			}
-		}
-	}
-	h.scheduler.AfterScoped(region, instanceID, "health", 1*time.Second, check)
-}
+// scheduleHealthCheck lives in health.go, along with the failure handling it
+// now does instead of declaring every instance available.
 
 // launchDBContainerAsync starts the instance's DB container in the background
 // so the image pull and container start do not block the request path. ctx is

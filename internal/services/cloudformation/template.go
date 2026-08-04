@@ -286,6 +286,7 @@ const (
 	maxNameLenIAM     = 64 // role, policy and instance-profile names
 	maxNameLenS3      = 63 // bucket names
 	maxNameLenSQS     = 80 // queue names
+	maxNameLenRDS     = 63 // DB instance and cluster identifiers
 	maxNameLenDefault = 255
 )
 
@@ -601,14 +602,15 @@ func resolveImportValue(impVal any, ctx *resolveContext) any {
 	return name
 }
 
-// resolveAllProperties resolves all intrinsics in a resource's properties, then
-// expands the dynamic references in the result. The two are separate passes so
-// that each string is expanded exactly once — see dynamic_refs.go.
+// resolveAllProperties resolves the intrinsic functions in a resource's
+// properties. Dynamic references are deliberately left as written — expanding
+// them is a separate pass, and which form a caller wants depends on what it is
+// for. See provisioner.resolveProperties.
 func resolveAllProperties(props map[string]any, ctx *resolveContext) map[string]any {
 	if props == nil {
 		return nil
 	}
-	resolved := expandDynamicRefs(resolveIntrinsics(props, ctx), ctx)
+	resolved := resolveIntrinsics(props, ctx)
 	if m, ok := resolved.(map[string]any); ok {
 		return m
 	}

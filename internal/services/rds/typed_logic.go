@@ -483,11 +483,11 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 
 	region := h.store.region(ctx)
 	if h.dockerReady.Load() && inst.DockerContainerID != "" {
-		if err := h.docker.StartContainer(ctx, inst.DockerContainerID); err != nil {
-			h.log.Warn("failed to start RDS container", zap.String("instance", id), zap.Error(err))
-		}
-		healthHost, healthPort := dialTarget(inst)
-		h.scheduleHealthCheck(region, id, healthHost, healthPort)
+		// Off the request path: a container Docker no longer has is rebuilt,
+		// which may pull an image. The instance settles to available or failed
+		// on its own — AWS answers StartDBInstance 200 with "starting" and
+		// surfaces a start failure through the status, not through this call.
+		h.startInstanceContainerAsync(ctx, id)
 	} else {
 		instID2 := id
 		h.scheduler.AfterScoped(region, instID2, "available", 0, func(ctx context.Context) {

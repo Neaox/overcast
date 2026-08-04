@@ -23,7 +23,13 @@ type rdsDBInstanceHandler struct{}
 func (h *rdsDBInstanceHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	id, _ := props["DBInstanceIdentifier"].(string)
 	if id == "" {
-		id = fmt.Sprintf("%s-db", rCtx.StackName)
+		// A name derived from the stack alone is the same name on every
+		// provision, so a replacement collides with the instance it is meant to
+		// stand alongside — and replacement creates before it deletes precisely
+		// so a failed update can roll back. generatedName carries the random
+		// component that makes the two coexist. RDS lowercases identifiers, so
+		// match it rather than handing the engine a name it would rewrite.
+		id = strings.ToLower(rCtx.generatedNameWithin(maxNameLenRDS))
 	}
 
 	params := map[string]string{
@@ -112,15 +118,29 @@ func (h *rdsDBInstanceHandler) Delete(ctx context.Context, router http.Handler, 
 	return nil
 }
 
+// rdsInstanceReplaceOnChange are the AWS::RDS::DBInstance properties AWS
+// documents as "Update requires: Replacement". None of them can be applied by
+// ModifyDBInstance, so an update that changes one and reports success leaves
+// the instance holding its old value behind a stack that claims otherwise —
+// which is how an instance kept an unresolved "{{resolve:secretsmanager:...}}"
+// master username across redeploys long after the reference itself resolved.
+//
+// A property is only compared when the template carried it both times: a value
+// appearing or disappearing between templates is far more often a template
+// being tidied than an intent to rebuild the database.
+var rdsInstanceReplaceOnChange = []string{
+	"DBInstanceIdentifier",
+	"Engine",
+	"MasterUsername",
+	"DBName",
+}
+
 func (h *rdsDBInstanceHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	if oldProps != nil {
-		if newID, _ := props["DBInstanceIdentifier"].(string); newID != "" {
-			if oldID, _ := oldProps["DBInstanceIdentifier"].(string); oldID != "" && newID != oldID {
-				return "", nil, errReplacementRequired
-			}
-		}
-		if newEngine, _ := props["Engine"].(string); newEngine != "" {
-			if oldEngine, _ := oldProps["Engine"].(string); oldEngine != "" && newEngine != oldEngine {
+		for _, name := range rdsInstanceReplaceOnChange {
+			newVal, _ := props[name].(string)
+			oldVal, _ := oldProps[name].(string)
+			if newVal != "" && oldVal != "" && newVal != oldVal {
 				return "", nil, errReplacementRequired
 			}
 		}

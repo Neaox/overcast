@@ -99,15 +99,11 @@ func (h *Handler) StartDBInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If Docker container exists, restart it.
+	// If Docker container exists, restart it. Same path as the typed handler —
+	// see startInstanceContainerAsync.
 	region := h.store.region(r.Context())
 	if h.dockerReady.Load() && inst.DockerContainerID != "" {
-		if err := h.docker.StartContainer(r.Context(), inst.DockerContainerID); err != nil {
-			h.log.Warn("failed to start RDS container", zap.String("instance", id), zap.Error(err))
-		}
-		// Schedule health check.
-		healthHost, healthPort := dialTarget(inst)
-		h.scheduleHealthCheck(region, id, healthHost, healthPort)
+		h.startInstanceContainerAsync(r.Context(), id)
 	} else {
 		// Metadata-only: transition starting → available.  Scheduler runs
 		// 0-delay callbacks synchronously with a real clock.

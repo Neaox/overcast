@@ -240,6 +240,22 @@ func (g *GC) DrainAndSweep(ctx context.Context, service string) {
 // the GC. Call at startup to clean up orphaned containers from prior runs.
 // service="" matches all services. Non-blocking — runs in a goroutine.
 func (g *GC) Sweep(service string) {
+	g.SweepExcept(service, nil)
+}
+
+// SweepExcept is Sweep with a veto. keep is asked about each candidate's
+// resource ID and reports whether something live still owns it; those are left
+// alone. Pass nil to sweep every non-running container, which is Sweep.
+//
+// A stopped container is not automatically litter. Compute that is recreated on
+// demand — an ECS task, a Lambda runtime — has no attachment to the container
+// it last ran in, so state alone is a fair test there. A database does: a
+// stopped RDS DB instance is a resource the user still owns and expects to
+// start again, and its container has to outlive an Overcast restart. Sweeping
+// it left the instance record pointing at an ID Docker no longer had, after
+// which every start failed, every log fetch 404'd, and the instance still
+// claimed to be available.
+func (g *GC) SweepExcept(service string, keep func(resourceID string) bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -255,6 +271,12 @@ func (g *GC) Sweep(service string) {
 			id := c.ID
 			if c.State == "running" {
 				continue // Don't touch running containers from the current session.
+			}
+			if keep != nil && keep(c.ResourceID()) {
+				g.logger.Debug("gc: startup sweep keeping container owned by a live resource",
+					zap.String("container", id), zap.String("service", c.Service()),
+					zap.String("resource", c.ResourceID()), zap.String("state", c.State))
+				continue
 			}
 			g.logger.Debug("gc: startup sweep removing orphaned container",
 				zap.String("container", id), zap.String("service", c.Service()),

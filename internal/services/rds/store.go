@@ -24,23 +24,29 @@ const (
 
 // DBInstance represents a stored RDS DB instance.
 type DBInstance struct {
-	DBInstanceIdentifier string    `json:"DBInstanceIdentifier"`
-	DBInstanceClass      string    `json:"DBInstanceClass"`
-	Engine               string    `json:"Engine"`
-	EngineVersion        string    `json:"EngineVersion"`
-	DBInstanceStatus     string    `json:"DBInstanceStatus"`
-	MasterUsername       string    `json:"MasterUsername"`
-	MasterUserPassword   string    `json:"MasterUserPassword,omitempty"`
-	DBName               string    `json:"DBName,omitempty"`
-	AllocatedStorage     int       `json:"AllocatedStorage"`
-	Endpoint             *Endpoint `json:"Endpoint,omitempty"`
-	DBInstanceArn        string    `json:"DBInstanceArn"`
-	InstanceCreateTime   string    `json:"InstanceCreateTime,omitempty"`
-	MultiAZ              bool      `json:"MultiAZ"`
-	StorageType          string    `json:"StorageType"`
-	Port                 int       `json:"Port"`
-	DockerContainerID    string    `json:"DockerContainerID,omitempty"`
-	HostPort             int       `json:"HostPort,omitempty"`
+	DBInstanceIdentifier string `json:"DBInstanceIdentifier"`
+	DBInstanceClass      string `json:"DBInstanceClass"`
+	Engine               string `json:"Engine"`
+	EngineVersion        string `json:"EngineVersion"`
+	DBInstanceStatus     string `json:"DBInstanceStatus"`
+	// StatusReason is why the instance is in a failure status. It is
+	// deliberately absent from the DescribeDBInstances wire shape: the real
+	// DBInstance carries no such field, and StatusInfos is documented as
+	// read-replica-only. AWS exposes a failure reason through RDS events, and
+	// this is the text those events carry.
+	StatusReason       string    `json:"StatusReason,omitempty"`
+	MasterUsername     string    `json:"MasterUsername"`
+	MasterUserPassword string    `json:"MasterUserPassword,omitempty"`
+	DBName             string    `json:"DBName,omitempty"`
+	AllocatedStorage   int       `json:"AllocatedStorage"`
+	Endpoint           *Endpoint `json:"Endpoint,omitempty"`
+	DBInstanceArn      string    `json:"DBInstanceArn"`
+	InstanceCreateTime string    `json:"InstanceCreateTime,omitempty"`
+	MultiAZ            bool      `json:"MultiAZ"`
+	StorageType        string    `json:"StorageType"`
+	Port               int       `json:"Port"`
+	DockerContainerID  string    `json:"DockerContainerID,omitempty"`
+	HostPort           int       `json:"HostPort,omitempty"`
 	// DialAddress/DialPort are how *Overcast* reaches the engine container
 	// (health checks), which is not what any client is told: see dialTarget and
 	// instanceEndpointFor in endpoint.go.
