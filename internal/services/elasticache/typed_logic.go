@@ -511,31 +511,28 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 			// not persisted yet — so the start goroutine owns the teardown.
 			// Merge the container fields into a fresh read rather than
 			// persisting the pre-start snapshot.
-			fresh, aerr := h.store.getCacheCluster(bgCtx, clusterID)
-			if aerr != nil || fresh == nil || fresh.CacheClusterStatus == "deleting" {
+			fresh, aerr := h.mutateCacheCluster(bgCtx, clusterID, func(stored *CacheCluster) *protocol.AWSError {
+				if stored.CacheClusterStatus == "deleting" {
+					return errRecordMovedOn
+				}
+				stored.DockerContainerID = got.DockerContainerID
+				stored.HostPort = got.HostPort
+				stored.ConfigurationEndpoint = got.ConfigurationEndpoint
+				return nil
+			})
+			if aerr != nil {
+				if aerr != errRecordMovedOn {
+					h.log.Warn("ElastiCache: persist post-start cluster",
+						zap.String("cluster", clusterID), zap.String("error", aerr.Message))
+				}
 				h.teardownOrphanedContainer(bgCtx, "cache cluster", clusterID, got.DockerContainerID, got.HostPort)
-				return
-			}
-			fresh.DockerContainerID = got.DockerContainerID
-			fresh.HostPort = got.HostPort
-			fresh.ConfigurationEndpoint = got.ConfigurationEndpoint
-			if aerr := h.store.putCacheCluster(bgCtx, fresh); aerr != nil {
-				h.log.Warn("ElastiCache: persist post-start cluster",
-					zap.String("cluster", clusterID), zap.String("error", aerr.Message))
 				return
 			}
 			h.scheduleHealthCheck(region, clusterID, fresh.ConfigurationEndpoint.Address, fresh.ConfigurationEndpoint.Port)
 		}()
 	} else {
 		h.scheduler.AfterScoped(h.store.region(ctx), clusterID, "available", 0, func(bgCtx context.Context) {
-			got, aerr := h.store.getCacheCluster(bgCtx, clusterID)
-			if aerr != nil {
-				return
-			}
-			if got.CacheClusterStatus == "creating" {
-				got.CacheClusterStatus = "available"
-				h.store.putCacheCluster(bgCtx, got) //nolint:errcheck
-			}
+			h.transitionCacheCluster(bgCtx, clusterID, "available", "creating")
 		})
 	}
 	if h.bus != nil {
@@ -567,14 +564,15 @@ func (h *Handler) deleteCacheClusterTyped(ctx context.Context, req *ecDeleteCach
 	if req.CacheClusterId == "" {
 		return nil, errInvalidParameterValue("CacheClusterId is required")
 	}
-	cluster, aerr := h.store.getCacheCluster(ctx, req.CacheClusterId)
+	var containerID string
+	var hostPort int
+	cluster, aerr := h.mutateCacheCluster(ctx, req.CacheClusterId, func(cluster *CacheCluster) *protocol.AWSError {
+		containerID = cluster.DockerContainerID
+		hostPort = cluster.HostPort
+		cluster.CacheClusterStatus = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-	containerID := cluster.DockerContainerID
-	hostPort := cluster.HostPort
-	cluster.CacheClusterStatus = "deleting"
-	if aerr := h.store.putCacheCluster(ctx, cluster); aerr != nil {
 		return nil, aerr
 	}
 	if h.bus != nil {
@@ -677,31 +675,28 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 			// or the container outlives its resource (the compat teardowns
 			// hit this window on every run). Merge the container fields into
 			// a fresh read rather than persisting the pre-start snapshot.
-			fresh, aerr := h.store.getReplicationGroup(bgCtx, rgID)
-			if aerr != nil || fresh == nil || fresh.Status == "deleting" {
+			fresh, aerr := h.mutateReplicationGroup(bgCtx, rgID, func(stored *ReplicationGroup) *protocol.AWSError {
+				if stored.Status == "deleting" {
+					return errRecordMovedOn
+				}
+				stored.DockerContainerID = got.DockerContainerID
+				stored.HostPort = got.HostPort
+				stored.ConfigurationEndpoint = got.ConfigurationEndpoint
+				return nil
+			})
+			if aerr != nil {
+				if aerr != errRecordMovedOn {
+					h.log.Warn("ElastiCache: persist post-start replication group",
+						zap.String("rg", rgID), zap.String("error", aerr.Message))
+				}
 				h.teardownOrphanedContainer(bgCtx, "replication group", rgID, got.DockerContainerID, got.HostPort)
-				return
-			}
-			fresh.DockerContainerID = got.DockerContainerID
-			fresh.HostPort = got.HostPort
-			fresh.ConfigurationEndpoint = got.ConfigurationEndpoint
-			if aerr := h.store.putReplicationGroup(bgCtx, fresh); aerr != nil {
-				h.log.Warn("ElastiCache: persist post-start replication group",
-					zap.String("rg", rgID), zap.String("error", aerr.Message))
 				return
 			}
 			h.scheduleReplicationGroupHealthCheck(region, rgID, fresh.ConfigurationEndpoint.Address, fresh.ConfigurationEndpoint.Port)
 		}()
 	} else {
 		h.scheduler.AfterScoped(h.store.region(ctx), rgID, "rg-available", 0, func(bgCtx context.Context) {
-			got, aerr := h.store.getReplicationGroup(bgCtx, rgID)
-			if aerr != nil {
-				return
-			}
-			if got.Status == "creating" {
-				got.Status = "available"
-				h.store.putReplicationGroup(bgCtx, got) //nolint:errcheck
-			}
+			h.transitionReplicationGroup(bgCtx, rgID, "available", "creating")
 		})
 	}
 	if h.bus != nil {
@@ -733,14 +728,15 @@ func (h *Handler) deleteReplicationGroupTyped(ctx context.Context, req *ecDelete
 	if req.ReplicationGroupId == "" {
 		return nil, errInvalidParameterValue("ReplicationGroupId is required")
 	}
-	rg, aerr := h.store.getReplicationGroup(ctx, req.ReplicationGroupId)
+	var containerID string
+	var hostPort int
+	rg, aerr := h.mutateReplicationGroup(ctx, req.ReplicationGroupId, func(rg *ReplicationGroup) *protocol.AWSError {
+		containerID = rg.DockerContainerID
+		hostPort = rg.HostPort
+		rg.Status = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-	containerID := rg.DockerContainerID
-	hostPort := rg.HostPort
-	rg.Status = "deleting"
-	if aerr := h.store.putReplicationGroup(ctx, rg); aerr != nil {
 		return nil, aerr
 	}
 	if h.bus != nil {
@@ -925,24 +921,23 @@ func (h *Handler) modifyCacheClusterTyped(ctx context.Context, req *ecModifyCach
 	if req.CacheClusterId == "" {
 		return nil, errInvalidParameterValue("CacheClusterId is required")
 	}
-	cluster, aerr := h.store.getCacheCluster(ctx, req.CacheClusterId)
+	cluster, aerr := h.mutateCacheCluster(ctx, req.CacheClusterId, func(cluster *CacheCluster) *protocol.AWSError {
+		if req.CacheNodeType != "" {
+			cluster.CacheNodeType = req.CacheNodeType
+		}
+		if req.EngineVersion != "" {
+			cluster.EngineVersion = req.EngineVersion
+		}
+		if req.NumCacheNodes > 0 {
+			cluster.NumCacheNodes = req.NumCacheNodes
+		}
+		if req.CacheParameterGroupName != "" {
+			cluster.CacheParameterGroupName = req.CacheParameterGroupName
+		}
+		cluster.CacheClusterStatus = "modifying"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-	if req.CacheNodeType != "" {
-		cluster.CacheNodeType = req.CacheNodeType
-	}
-	if req.EngineVersion != "" {
-		cluster.EngineVersion = req.EngineVersion
-	}
-	if req.NumCacheNodes > 0 {
-		cluster.NumCacheNodes = req.NumCacheNodes
-	}
-	if req.CacheParameterGroupName != "" {
-		cluster.CacheParameterGroupName = req.CacheParameterGroupName
-	}
-	cluster.CacheClusterStatus = "modifying"
-	if aerr := h.store.putCacheCluster(ctx, cluster); aerr != nil {
 		return nil, aerr
 	}
 	if h.bus != nil {
@@ -950,14 +945,7 @@ func (h *Handler) modifyCacheClusterTyped(ctx context.Context, req *ecModifyCach
 	}
 	id := req.CacheClusterId
 	h.scheduler.AfterScoped(h.store.region(ctx), id, "available", 0, func(bgCtx context.Context) {
-		got, aerr := h.store.getCacheCluster(bgCtx, id)
-		if aerr != nil {
-			return
-		}
-		if got.CacheClusterStatus == "modifying" {
-			got.CacheClusterStatus = "available"
-			h.store.putCacheCluster(bgCtx, got) //nolint:errcheck
-		}
+		h.transitionCacheCluster(bgCtx, id, "available", "modifying")
 	})
 	return &ecModifyCacheClusterResp{Xmlns: cacheXMLNS, Result: ecModifyCacheClusterResult{CacheCluster: ecToXMLCacheCluster(cluster)}, Meta: ecMetaFromCtx(ctx)}, nil
 }
@@ -966,47 +954,39 @@ func (h *Handler) modifyReplicationGroupTyped(ctx context.Context, req *ecModify
 	if req.ReplicationGroupId == "" {
 		return nil, errInvalidParameterValue("ReplicationGroupId is required")
 	}
-	rg, aerr := h.store.getReplicationGroup(ctx, req.ReplicationGroupId)
+	rg, aerr := h.mutateReplicationGroup(ctx, req.ReplicationGroupId, func(rg *ReplicationGroup) *protocol.AWSError {
+		if req.ReplicationGroupDescription != "" {
+			rg.Description = req.ReplicationGroupDescription
+		}
+		if req.CacheNodeType != "" {
+			rg.CacheNodeType = req.CacheNodeType
+		}
+		if req.AutomaticFailoverEnabled != "" {
+			if req.AutomaticFailoverEnabled == "true" {
+				rg.AutomaticFailover = "enabled"
+			} else {
+				rg.AutomaticFailover = "disabled"
+			}
+		}
+		if req.MultiAZEnabled != "" {
+			if req.MultiAZEnabled == "true" {
+				rg.MultiAZ = "enabled"
+			} else {
+				rg.MultiAZ = "disabled"
+			}
+		}
+		if req.SnapshotRetentionLimit > 0 {
+			rg.SnapshotRetentionLimit = req.SnapshotRetentionLimit
+		}
+		rg.Status = "modifying"
+		return nil
+	})
 	if aerr != nil {
-		return nil, aerr
-	}
-	if req.ReplicationGroupDescription != "" {
-		rg.Description = req.ReplicationGroupDescription
-	}
-	if req.CacheNodeType != "" {
-		rg.CacheNodeType = req.CacheNodeType
-	}
-	if req.AutomaticFailoverEnabled != "" {
-		if req.AutomaticFailoverEnabled == "true" {
-			rg.AutomaticFailover = "enabled"
-		} else {
-			rg.AutomaticFailover = "disabled"
-		}
-	}
-	if req.MultiAZEnabled != "" {
-		if req.MultiAZEnabled == "true" {
-			rg.MultiAZ = "enabled"
-		} else {
-			rg.MultiAZ = "disabled"
-		}
-	}
-	if req.SnapshotRetentionLimit > 0 {
-		rg.SnapshotRetentionLimit = req.SnapshotRetentionLimit
-	}
-	rg.Status = "modifying"
-	if aerr := h.store.putReplicationGroup(ctx, rg); aerr != nil {
 		return nil, aerr
 	}
 	id := req.ReplicationGroupId
 	h.scheduler.AfterScoped(h.store.region(ctx), id, "rg-available", 0, func(bgCtx context.Context) {
-		got, aerr := h.store.getReplicationGroup(bgCtx, id)
-		if aerr != nil {
-			return
-		}
-		if got.Status == "modifying" {
-			got.Status = "available"
-			h.store.putReplicationGroup(bgCtx, got) //nolint:errcheck
-		}
+		h.transitionReplicationGroup(bgCtx, id, "available", "modifying")
 	})
 	return &ecModifyReplicationGroupResp{Xmlns: cacheXMLNS, Result: ecModifyReplicationGroupResult{ReplicationGroup: ecToXMLReplicationGroup(rg)}, Meta: ecMetaFromCtx(ctx)}, nil
 }

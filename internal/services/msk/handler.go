@@ -106,14 +106,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		}()
 	} else {
 		h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(ctx context.Context) {
-			got, aerr := h.store.getCluster(ctx, clusterARNCopy)
-			if aerr != nil {
-				return
-			}
-			if got.State == "CREATING" {
-				got.State = "ACTIVE"
-				h.store.putCluster(ctx, got) //nolint:errcheck
-			}
+			h.transitionCluster(ctx, clusterARNCopy, "ACTIVE", "CREATING")
 		})
 	}
 
@@ -180,14 +173,11 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	cluster, aerr := h.store.getCluster(r.Context(), clusterArn)
+	cluster, aerr := h.mutateCluster(r.Context(), clusterArn, func(cluster *Cluster) *protocol.AWSError {
+		cluster.State = "DELETING"
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	cluster.State = "DELETING"
-	if aerr := h.store.putCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -545,14 +535,7 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 			}()
 		} else {
 			h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(ctx context.Context) {
-				got, aerr := h.store.getCluster(ctx, clusterARNCopy)
-				if aerr != nil {
-					return
-				}
-				if got.State == "CREATING" {
-					got.State = "ACTIVE"
-					h.store.putCluster(ctx, got) //nolint:errcheck
-				}
+				h.transitionCluster(ctx, clusterARNCopy, "ACTIVE", "CREATING")
 			})
 		}
 	}
@@ -676,11 +659,14 @@ func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Requ
 	opID := uuid.NewString()
 	opArn := fmt.Sprintf("arn:aws:kafka:%s:%s:cluster-operation/%s", region, h.cfg.AccountID, opID)
 
-	cluster.CurrentVersion = opID
-	if aerr := h.store.putCluster(r.Context(), cluster); aerr != nil {
+	if _, aerr := h.mutateCluster(r.Context(), cluster.ClusterArn, func(stored *Cluster) *protocol.AWSError {
+		stored.CurrentVersion = opID
+		return nil
+	}); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	cluster.CurrentVersion = opID
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"clusterArn":          clusterArn,
@@ -702,12 +688,5 @@ func clusterRegionCtx(clusterARN string) context.Context {
 // clusterFallbackActive sets a cluster to "ACTIVE" if it is still in "CREATING".
 func (h *Handler) clusterFallbackActive(clusterARN string) {
 	ctx := clusterRegionCtx(clusterARN)
-	got, aerr := h.store.getCluster(ctx, clusterARN)
-	if aerr != nil {
-		return
-	}
-	if got.State == "CREATING" || got.State == "STARTING" {
-		got.State = "ACTIVE"
-		h.store.putCluster(ctx, got) //nolint:errcheck
-	}
+	h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING", "STARTING")
 }

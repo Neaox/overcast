@@ -161,14 +161,7 @@ func (h *Handler) CreateDBCluster(w http.ResponseWriter, r *http.Request) {
 	// Schedule the metadata-only creating → available transition.
 	clID := id
 	h.scheduler.AfterScoped(region, clID, "available", 500*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getDBCluster(ctx, clID)
-		if aerr != nil {
-			return
-		}
-		if got.Status == "creating" {
-			got.Status = "available"
-			h.store.putDBCluster(ctx, got) //nolint:errcheck
-		}
+		h.transitionCluster(ctx, clID, "creating", "available")
 	})
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateDBClusterResponse{
@@ -234,14 +227,11 @@ func (h *Handler) DeleteDBCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster, aerr := h.store.getDBCluster(r.Context(), id)
+	cluster, aerr := h.mutateCluster(r.Context(), id, func(cluster *DBCluster) *protocol.AWSError {
+		cluster.Status = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	cluster.Status = "deleting"
-	if aerr := h.store.putDBCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -275,17 +265,13 @@ func (h *Handler) ModifyDBCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster, aerr := h.store.getDBCluster(r.Context(), id)
+	cluster, aerr := h.mutateCluster(r.Context(), id, func(cluster *DBCluster) *protocol.AWSError {
+		if v := r.FormValue("EngineVersion"); v != "" {
+			cluster.EngineVersion = v
+		}
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	if v := r.FormValue("EngineVersion"); v != "" {
-		cluster.EngineVersion = v
-	}
-
-	if aerr := h.store.putDBCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -316,23 +302,18 @@ func (h *Handler) StartDBCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster, aerr := h.store.getDBCluster(r.Context(), id)
+	cluster, aerr := h.mutateCluster(r.Context(), id, func(cluster *DBCluster) *protocol.AWSError {
+		if cluster.Status != "stopped" {
+			return &protocol.AWSError{
+				Code:       "InvalidDBClusterStateFault",
+				Message:    "Cluster " + id + " is not in a stopped state.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		cluster.Status = "starting"
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	if cluster.Status != "stopped" {
-		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
-			Code:       "InvalidDBClusterStateFault",
-			Message:    "Cluster " + id + " is not in a stopped state.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	cluster.Status = "starting"
-	if aerr := h.store.putDBCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -341,14 +322,7 @@ func (h *Handler) StartDBCluster(w http.ResponseWriter, r *http.Request) {
 	clID := id
 	region := h.store.region(r.Context())
 	h.scheduler.AfterScoped(region, clID, "start", 500*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getDBCluster(ctx, clID)
-		if aerr != nil {
-			return
-		}
-		if got.Status == "starting" {
-			got.Status = "available"
-			h.store.putDBCluster(ctx, got) //nolint:errcheck
-		}
+		h.transitionCluster(ctx, clID, "starting", "available")
 	})
 
 	type xmlStartDBClusterResponse struct {
@@ -375,23 +349,18 @@ func (h *Handler) StopDBCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster, aerr := h.store.getDBCluster(r.Context(), id)
+	cluster, aerr := h.mutateCluster(r.Context(), id, func(cluster *DBCluster) *protocol.AWSError {
+		if cluster.Status != "available" {
+			return &protocol.AWSError{
+				Code:       "InvalidDBClusterStateFault",
+				Message:    "Cluster " + id + " is not in an available state.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		cluster.Status = "stopping"
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	if cluster.Status != "available" {
-		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
-			Code:       "InvalidDBClusterStateFault",
-			Message:    "Cluster " + id + " is not in an available state.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	cluster.Status = "stopping"
-	if aerr := h.store.putDBCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -400,14 +369,7 @@ func (h *Handler) StopDBCluster(w http.ResponseWriter, r *http.Request) {
 	clID := id
 	region := h.store.region(r.Context())
 	h.scheduler.AfterScoped(region, clID, "stop", 500*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getDBCluster(ctx, clID)
-		if aerr != nil {
-			return
-		}
-		if got.Status == "stopping" {
-			got.Status = "stopped"
-			h.store.putDBCluster(ctx, got) //nolint:errcheck
-		}
+		h.transitionCluster(ctx, clID, "stopping", "stopped")
 	})
 
 	type xmlStopDBClusterResponse struct {

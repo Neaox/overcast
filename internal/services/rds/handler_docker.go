@@ -8,6 +8,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
@@ -37,14 +38,17 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	}
 	ctx := middleware.ContextWithRegion(context.Background(), region)
 
+	// The status is re-read under the record's lock rather than written back
+	// from the scan above: the event stream is a writer like any other, and the
+	// copy it found is already older than whatever an API call is doing now.
 	switch inst.DBInstanceStatus {
 	case "available", "starting":
 		// Read the container's output while the container still exists. A
 		// database that dies on its own leaves its explanation here, and
-		// Docker discards it with the container.
+		// Docker discards it with the container. The read is a Docker call, so
+		// it stays outside the record's lock, on the snapshot found above.
 		h.captureContainerLogs(ctx, inst)
-		inst.DBInstanceStatus = "stopped"
-		h.store.putDBInstance(ctx, inst) //nolint:errcheck
+		h.stopInstanceWithLogs(ctx, inst)
 		h.log.Info("instance container stopped",
 			zap.String("instance", p.ResourceID),
 			zap.String("action", p.Action))
@@ -125,8 +129,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		case c == nil:
 			// Container gone — mark stopped if it was supposed to be live.
 			if inst.DBInstanceStatus == "available" || inst.DBInstanceStatus == "starting" || inst.DBInstanceStatus == "creating" {
-				inst.DBInstanceStatus = "stopped"
-				h.store.putDBInstance(rctx, inst) //nolint:errcheck
+				h.transitionInstance(rctx, inst.DBInstanceIdentifier, inst.DBInstanceStatus, "stopped")
 				h.log.Info("reconcile: container missing — marked stopped",
 					zap.String("instance", inst.DBInstanceIdentifier))
 			}
@@ -135,9 +138,19 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			// Container is running — refresh the endpoint address (it may have
 			// changed if the container was assigned a new IP) and schedule a
 			// health check to verify DB connectivity before marking available.
+			// The Docker inspect stays outside the record's lock; only the two
+			// fields it decides are written back, onto a fresh read, because
+			// this sweep runs while the API is already serving.
 			ecfg := engineEnvConfig[inst.Engine]
 			h.setContainerDialTarget(rctx, inst, ecfg)
-			h.store.putDBInstance(rctx, inst) //nolint:errcheck
+			if _, aerr := h.mutateInstance(rctx, inst.DBInstanceIdentifier, func(stored *DBInstance) *protocol.AWSError {
+				stored.DialAddress = inst.DialAddress
+				stored.DialPort = inst.DialPort
+				return nil
+			}); aerr != nil {
+				h.log.Warn("reconcile: persist dial target",
+					zap.String("instance", inst.DBInstanceIdentifier), zap.String("error", aerr.Message))
+			}
 
 			if inst.DBInstanceStatus == "creating" || inst.DBInstanceStatus == "starting" || inst.DBInstanceStatus == "stopped" || inst.DBInstanceStatus == "available" {
 				healthHost, healthPort := dialTarget(inst)
@@ -153,8 +166,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 				// The container outlived Overcast and died meanwhile; its logs
 				// are still there to be read, and only until it is removed.
 				h.captureContainerLogs(rctx, inst)
-				inst.DBInstanceStatus = "stopped"
-				h.store.putDBInstance(rctx, inst) //nolint:errcheck
+				h.stopInstanceWithLogs(rctx, inst)
 				h.log.Info("reconcile: container not running — marked stopped",
 					zap.String("instance", inst.DBInstanceIdentifier),
 					zap.String("containerState", c.State))

@@ -43,6 +43,10 @@ type Handler struct {
 	gc          *docker.GC
 	ops         map[string]http.HandlerFunc
 	typedOp     map[string]op.Operation
+
+	// One writer at a time per record — see locks.go.
+	instanceLocks serviceutil.RecordLocks
+	clusterLocks  serviceutil.RecordLocks
 }
 
 // VPCNetworkResolver resolves DB subnet groups back to EC2 VPC network state.
@@ -545,14 +549,7 @@ func (h *Handler) CreateDBInstance(w http.ResponseWriter, r *http.Request) {
 	// pending until clock.Add is called.
 	instID := id
 	h.scheduler.AfterScoped(region, instID, "available", 0, func(ctx context.Context) {
-		got, aerr := h.store.getDBInstance(ctx, instID)
-		if aerr != nil {
-			return
-		}
-		if got.DBInstanceStatus == "creating" {
-			got.DBInstanceStatus = "available"
-			h.store.putDBInstance(ctx, got) //nolint:errcheck
-		}
+		h.transitionInstance(ctx, instID, "creating", "available")
 	})
 
 	h.publish(r, events.RDSInstanceCreated, events.ResourcePayload{Name: id})
@@ -628,19 +625,17 @@ func (h *Handler) DeleteDBInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inst, aerr := h.store.getDBInstance(r.Context(), id)
+	// Mark as deleting immediately — this is what AWS returns in the response —
+	// and snapshot the fields the async cleanup needs.
+	var containerID string
+	var hostPort int
+	inst, aerr := h.mutateInstance(r.Context(), id, func(inst *DBInstance) *protocol.AWSError {
+		containerID = inst.DockerContainerID
+		hostPort = inst.HostPort
+		inst.DBInstanceStatus = "deleting"
+		return nil
+	})
 	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	// Snapshot the fields we need for async cleanup before mutating the record.
-	containerID := inst.DockerContainerID
-	hostPort := inst.HostPort
-
-	// Mark as deleting immediately — this is what AWS returns in the response.
-	inst.DBInstanceStatus = "deleting"
-	if aerr := h.store.putDBInstance(r.Context(), inst); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -793,22 +788,21 @@ func formInt(r *http.Request, key string, def int) int {
 // Errors are logged and not surfaced — the instance creation response has
 // already been committed at this point.
 func (h *Handler) addInstanceToCluster(ctx context.Context, clusterID, instanceID string) {
-	cluster, aerr := h.store.getDBCluster(ctx, clusterID)
-	if aerr != nil {
-		h.log.Warn("addInstanceToCluster: cluster not found",
-			zap.String("cluster", clusterID), zap.Error(aerr))
-		return
-	}
-	isWriter := len(cluster.DBClusterMembers) == 0
-	cluster.DBClusterMembers = append(cluster.DBClusterMembers, DBClusterMember{
-		DBInstanceIdentifier:          instanceID,
-		IsClusterWriter:               isWriter,
-		DBClusterParameterGroupStatus: "in-sync",
-		PromotionTier:                 1,
-	})
-	if aerr := h.store.putDBCluster(ctx, cluster); aerr != nil {
+	// Atomically: two instances created together each read the member list, and
+	// without the lock the second write drops the first's member — and makes a
+	// second writer, having seen an empty list.
+	if _, aerr := h.mutateCluster(ctx, clusterID, func(cluster *DBCluster) *protocol.AWSError {
+		isWriter := len(cluster.DBClusterMembers) == 0
+		cluster.DBClusterMembers = append(cluster.DBClusterMembers, DBClusterMember{
+			DBInstanceIdentifier:          instanceID,
+			IsClusterWriter:               isWriter,
+			DBClusterParameterGroupStatus: "in-sync",
+			PromotionTier:                 1,
+		})
+		return nil
+	}); aerr != nil {
 		h.log.Warn("addInstanceToCluster: failed to update cluster",
-			zap.String("cluster", clusterID), zap.Error(aerr))
+			zap.String("cluster", clusterID), zap.String("error", aerr.Message))
 	}
 }
 
@@ -1139,17 +1133,23 @@ func (h *Handler) launchDBContainerAsync(ctx context.Context, instID string) {
 				zap.String("instance", instID), zap.Error(err))
 			return
 		}
-		fresh, aerr := h.store.getDBInstance(bgCtx, instID)
-		if aerr != nil || fresh == nil || fresh.DBInstanceStatus == "deleting" {
+		fresh, aerr := h.mutateInstance(bgCtx, instID, func(inst *DBInstance) *protocol.AWSError {
+			if inst.DBInstanceStatus == "deleting" {
+				return errInstanceMovedOn
+			}
+			inst.DockerContainerID = got.DockerContainerID
+			inst.HostPort = got.HostPort
+			inst.Endpoint = got.Endpoint
+			return nil
+		})
+		if aerr != nil {
+			// Deleted, being deleted, or unpersistable: either way the
+			// container it started belongs to no record, so it comes down.
+			if aerr != errInstanceMovedOn {
+				h.log.Warn("RDS: persist post-start instance",
+					zap.String("instance", instID), zap.String("error", aerr.Message))
+			}
 			h.teardownOrphanedContainer(bgCtx, instID, got.DockerContainerID, got.HostPort)
-			return
-		}
-		fresh.DockerContainerID = got.DockerContainerID
-		fresh.HostPort = got.HostPort
-		fresh.Endpoint = got.Endpoint
-		if aerr := h.store.putDBInstance(bgCtx, fresh); aerr != nil {
-			h.log.Warn("RDS: persist post-start instance",
-				zap.String("instance", instID), zap.String("error", aerr.Message))
 			return
 		}
 		switch fresh.DBInstanceStatus {
