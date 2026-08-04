@@ -17,6 +17,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
   - [Contents](#contents)
   - [Project goals](#project-goals)
   - [Design philosophy: match real AWS](#design-philosophy-match-real-aws)
+    - [AWS is the tie-breaker](#aws-is-the-tie-breaker)
   - [Service implementation tiers](#service-implementation-tiers)
   - [Core principles](#core-principles)
   - [Supported platforms](#supported-platforms)
@@ -106,6 +107,38 @@ This means:
 - **When you're unsure how AWS behaves, test it.** Spin up a real AWS resource, try the edge
   case, and replicate what you observe. Guessing leads to drift.
 
+### AWS is the tie-breaker
+
+The rules above tell you what to do once you know a decision is a fidelity decision. Most
+drift does not arrive that way. It arrives as an ordinary design choice where two or three
+options all look reasonable on internal grounds — what to call a derived resource, which
+default to pick for an unset field, whether an operation on a missing resource errors or
+no-ops, what order side effects fire in, whether an empty result is an omitted field or an
+empty list. Nothing about those choices announces itself as a compatibility question, so the
+temptation is to settle them on taste, convenience, or whatever the surrounding code does.
+
+**When you have several defensible options in front of you, the question that decides is:
+what does AWS do here? How does this specific service behave in this specific case?** Not
+"what would a reasonable service do" — services differ, and AWS is not always internally
+consistent. S3 and DynamoDB disagree about plenty. The answer you want is the one for the
+service you are editing.
+
+This applies even when the choice looks purely internal. Anything a client can observe —
+through a response, a subsequent read, a state transition, a timing dependency, or an error
+it has to handle — is part of the contract whether or not you were thinking about the
+contract when you chose. If checking is cheap (docs, an existing test, a sibling
+implementation), check before you decide rather than after review asks. If the answer turns
+out not to be observable, you have lost a minute; if it was, you have avoided a divergence
+that would have shipped looking correct.
+
+When the evidence runs out and you genuinely have to pick, the two directions are not equally
+bad. **A divergence that makes something work here and fail on AWS is the expensive one** — the
+user tested locally, we said yes, and they find out in their account. That is the exact promise
+this project exists to keep, and permissiveness is how it gets broken: accepting an input AWS
+rejects, skipping a validation AWS enforces, defaulting a field AWS requires, ignoring a
+property AWS acts on. Being stricter than AWS is also wrong, but it fails loudly, locally, in
+front of the person who can report it. Prefer the error you can see.
+
 Perfect parity is not always achievable — some behaviours depend on AWS internals we can't
 replicate, and that's fine. But fidelity is the default goal, not a stretch goal. When a
 known divergence is unavoidable, document it explicitly (in the service doc and in code
@@ -173,6 +206,11 @@ These guide every decision — from architecture to variable naming. Read them b
     (progress SSE, source browsing, saved test events, topology graph) live behind `/_` prefixed
     internal endpoints or custom headers — never on the AWS API surface. If a feature cannot be
     implemented faithfully, return `501` rather than a divergent `200`.
+13. **When several options are defensible, ask what AWS does.** Fidelity is not only a bar for
+    changes you already know are AWS-facing — it is the tie-breaker for ordinary design choices
+    whose alternatives all look reasonable. Naming, defaults, ordering, error-vs-no-op, empty-vs-
+    omitted: settle them on how the service you are editing behaves in that exact case, not on
+    taste or convenience. See [AWS is the tie-breaker](#aws-is-the-tie-breaker).
 
 ---
 

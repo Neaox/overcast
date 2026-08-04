@@ -139,14 +139,74 @@ Use `Notes` for review-relevant context that should not be crammed into commits:
 - Intentional emulator limitations.
 - Follow-ups that are real, specific, and worth tracking.
 - Risk areas reviewers should inspect.
+- Anything that could surprise code written against real AWS, and any fork in the road where
+  several options were defensible and you picked one — see [The surprise check](#the-surprise-check--run-this-before-opening-the-pr).
 
 Keep notes succinct. If there is extensive compatibility research, link to the issue, doc, or compatibility tracker instead of embedding everything in the PR.
+
+---
+
+## The surprise check — run this before opening the PR
+
+Before writing the description, ask one question about the branch as a whole:
+
+> **Will these changes cause surprising or unexpected behavior — in a bad way — for someone whose code was written against real AWS?**
+
+Surprise is the failure mode this project actually ships. A response that looks right and acts
+wrong costs a user a debugging session they will blame on their own code, because the emulator
+answered confidently.
+
+**The worst version is directional: it works on Overcast and fails on AWS.** A stack that
+deploys clean locally and then breaks in the account is the single most damaging thing we can
+produce — the user did the responsible thing, tested first, and we told them yes. The divergence
+that causes it is almost always *permissiveness*: we accept an input AWS rejects, skip a
+validation AWS enforces, default a field AWS requires, ignore a resource property AWS acts on,
+or allow a combination AWS refuses. Being stricter than AWS is a bug too, but it fails loudly
+and locally, where the user can see it. Being laxer fails in production. **When you cannot
+verify which side a validation falls on, prefer the behavior that fails locally.**
+
+Work through where surprise comes from:
+
+- **A fork in the road settled on taste.** The branch picked one of several defensible options —
+  a name for a derived resource, a default for an omitted field, error-vs-no-op on a missing
+  resource, empty list vs omitted field, ordering of side effects or validation — without
+  checking what that service does. See [CONTRIBUTING § AWS is the tie-breaker](../../../CONTRIBUTING.md#aws-is-the-tie-breaker).
+- **A missing constraint reads as a working feature.** Required-vs-optional fields, value ranges,
+  name/charset rules, quota-shaped limits, and cross-field combinations that AWS rejects. Nothing
+  in the diff looks wrong; the emulator simply never says no. CloudFormation amplifies this — a
+  property we accept and ignore turns into a stack that provisions locally and rolls back on AWS.
+- **An existing behavior changed shape.** Callers already depend on the old response, status,
+  ordering, or timing. Changing it toward AWS is correct and still worth calling out; changing
+  it away from AWS is a defect.
+- **A fidelity fix moved a divergence somewhere else** — a sibling handler, a CloudFormation
+  path, the web UI, a compat suite — rather than removing it.
+- **A `200` now hides a gap** that previously answered `501`.
+
+**Additive is fine when it is clearly additive.** A new endpoint, a new optional field AWS also
+returns, a new internal `/_` surface, a new emulator-only tool — none of these can surprise code
+that does not call them, and they need no special defense. The bar applies to anything that
+changes what an *existing* call does. If you cannot tell which kind a change is, it is not
+clearly additive; treat it as a behavior change and say so under `Notes`.
+
+If the answer is "yes, something here could surprise" and the change is still right, keep it and
+name it explicitly under `Notes` — a reviewer who has been told where to look is the point. A
+surprise you noticed and disclosed is a design decision; the same surprise found after merge is
+a bug with your name on it.
 
 ---
 
 ## AWS Compatibility Evidence
 
 For compatibility alignments, include enough evidence that reviewers can distinguish deliberate AWS fidelity from guesswork.
+
+**Every claim the PR description makes about how real AWS behaves must link to its source.** If
+the description says AWS returns a particular error code, omits a field, orders states a certain
+way, or accepts an input Overcast used to reject, the sentence carries a link to the evidence
+for that specific claim. This is not satisfied by a general docs link at the bottom, and it is
+not satisfied by the claim being true — a reviewer cannot tell a verified fact from a confident
+guess without the source, and unsourced assertions are exactly how a wrong one gets waved
+through. If you cannot produce a source, say so in the same sentence ("inferred from the SDK
+model; not documented") so the uncertainty is reviewable rather than invisible.
 
 Preferred evidence order:
 
@@ -155,7 +215,11 @@ Preferred evidence order:
 3. Other emulator behavior when AWS docs are ambiguous.
 4. Real AWS observation, only when the user explicitly approved using real AWS.
 
-Put one or two high-value links in the PR body. Put only the most important link in a commit body, and only when the commit is hard to understand without it.
+Cite the tier you actually used — a compat-test reference is a legitimate source, a docs link you
+did not read is not. For a real-AWS observation, include the date and tool/version, since that is
+what makes it re-checkable later.
+
+Put the link next to the claim it supports. Put only the most important link in a commit body, and only when the commit is hard to understand without it.
 
 For surprising behavior, add a short code comment near the implementation using the verification comment style from `new-feature` and `bug-fix` skills. Do not use comments to restate obvious code.
 
@@ -361,6 +425,8 @@ Before creating the PR:
 6. Run final verification. Prefer `make check` (`fmt vet lint test`) over assembling a subset — "targeted equivalents" is how a required CI job gets skipped. At minimum: `go build ./...`, `go vet ./...`, `make lint-go`, and the scoped tests. Lint is not optional and is not implied by the others: CI runs it as its own job, and staticcheck findings pass build, vet and tests. For `web/` changes add `pnpm run typecheck` and `pnpm run lint` — never bare `tsc --noEmit`, which resolves the solution-style `web/tsconfig.json`, compiles zero files and always exits 0 (`tsc -b` is a correct alternative).
 7. Ensure no secrets, local config, or throwaway debug output are included.
 8. For visual changes, capture screenshots and confirm any capture harness (temporary pages under `web/public/`, seeded fixtures) is removed from the branch.
+9. Run [the surprise check](#the-surprise-check--run-this-before-opening-the-pr) over the branch, and disclose anything it turns up under `Notes`.
+10. Confirm every statement the description makes about real AWS behavior links to its source — see [AWS Compatibility Evidence](#aws-compatibility-evidence).
 
 When creating a PR with `gh pr create`, use a heredoc for the body so markdown stays readable.
 
@@ -452,7 +518,10 @@ Avoid titles that describe mechanics only:
 
 ```markdown
 ## Summary
-- Aligns DynamoDB `Query`/`Scan` limit handling with AWS by applying `Limit` before filtering.
+- Aligns DynamoDB `Query`/`Scan` limit handling with AWS: `Limit` caps items *read*, and the
+  filter expression is applied afterwards, so a filtered page can return fewer than `Limit`
+  items and still carry `LastEvaluatedKey`
+  ([API_Query](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html)).
 - Updates integration coverage for count and pagination behavior.
 - Notes the behavior in the DynamoDB changelog entry.
 
@@ -462,6 +531,9 @@ Avoid titles that describe mechanics only:
 - `go vet ./internal/services/dynamodb/... ./tests/integration/dynamodb/...`
 
 ## Notes
-- AWS docs: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html
+- Behavior change, not additive: callers that previously got a full page under a filter now get
+  a short page plus `LastEvaluatedKey`. That is what real DynamoDB does — code written against
+  AWS already handles it, code written against the old Overcast behavior may not.
+- `ScannedCount` vs `Count` reporting was already correct and is unchanged.
 - Follow-up: none.
 ```
