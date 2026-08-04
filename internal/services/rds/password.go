@@ -31,6 +31,7 @@ package rds
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -53,10 +54,64 @@ var engineClients = map[string]string{
 	"aurora-postgresql": "psql",
 }
 
+const (
+	// minMasterPasswordLen and maxMasterPasswordLen are RDS's bounds on a
+	// master password. Individual engines are stricter — Aurora MySQL stops at
+	// 41 — which Overcast does not model: the point is to reject what every
+	// engine rejects, not to reproduce the matrix.
+	minMasterPasswordLen = 8
+	maxMasterPasswordLen = 128
+)
+
+// forbiddenPasswordChars are the characters RDS documents as not allowed in a
+// master password: forward slash, double quote, at sign, single quote, space.
+const forbiddenPasswordChars = `/"@' `
+
+// validateMasterUserPassword applies RDS's constraints on a master password,
+// so one real RDS would refuse is refused here too rather than working locally
+// and failing on deploy — which is the whole reason to run a database against
+// an emulator first.
+//
+// It is worth knowing that this rejects passwords Overcast itself can generate:
+// GetRandomPassword's default punctuation set contains four of the five
+// forbidden characters. That is not a contradiction, it is AWS reproduced —
+// GetRandomPassword on AWS produces passwords RDS rejects too, which is exactly
+// why CDK's `Credentials.fromGeneratedSecret` excludes them by default. A
+// template that trips this would trip it on deploy; finding out here is cheaper.
+// The fix in a template is `ExcludeCharacters`, the same as on AWS.
+//
+// Nothing downstream depends on this for safety. The statements in this file
+// quote and escape their inputs (mysqlString, pgString, pgIdentifier), so a
+// password containing a quote is handled correctly regardless — this is a
+// fidelity rule, not the injection defence.
+func validateMasterUserPassword(password string) *protocol.AWSError {
+	if len(password) < minMasterPasswordLen || len(password) > maxMasterPasswordLen {
+		return errInvalidParameterValue(fmt.Sprintf(
+			"The parameter MasterUserPassword must be between %d and %d characters long.",
+			minMasterPasswordLen, maxMasterPasswordLen))
+	}
+	for _, r := range password {
+		if r < 0x21 || r > 0x7e || strings.ContainsRune(forbiddenPasswordChars, r) {
+			return errInvalidParameterValue(
+				"The parameter MasterUserPassword is not a valid password. " +
+					"It can include any printable ASCII character except forward slash (/), " +
+					"double quote (\"), at symbol (@), single quote (') or space.")
+		}
+	}
+	return nil
+}
+
 // changeMasterPassword makes a new master password true of the instance, or
 // says why it cannot be. It returns nil only when the caller may record the
 // new password: either the engine has taken it, or there is no engine.
 func (h *Handler) changeMasterPassword(ctx context.Context, inst *DBInstance, newPassword string) *protocol.AWSError {
+	// Before the Docker check, not after: AWS validates the parameter whether
+	// or not there is anything running to apply it to, and a metadata-only
+	// instance that accepted a password no engine could ever take would just
+	// move the problem to whenever a container is first built from the record.
+	if aerr := validateMasterUserPassword(newPassword); aerr != nil {
+		return aerr
+	}
 	if !h.dockerReady.Load() || inst.DockerContainerID == "" {
 		// Metadata-only: nothing is serving connections, so nothing can
 		// disagree with the record. A container built for this instance later
@@ -88,6 +143,14 @@ func (h *Handler) changeMasterPassword(ctx context.Context, inst *DBInstance, ne
 // The caller records the new password on the cluster afterwards, and only if
 // this returns nil.
 func (h *Handler) changeClusterMasterPassword(ctx context.Context, cluster *DBCluster, newPassword string) *protocol.AWSError {
+	// Up front rather than relying on the per-member call below, which a
+	// cluster with no members never reaches — that cluster would otherwise
+	// record a password RDS refuses, and hand it to the first member created
+	// under it.
+	if aerr := validateMasterUserPassword(newPassword); aerr != nil {
+		return aerr
+	}
+
 	for _, member := range cluster.DBClusterMembers {
 		instanceID := member.DBInstanceIdentifier
 		inst, aerr := h.store.getDBInstance(ctx, instanceID)
@@ -168,13 +231,22 @@ func masterPasswordCommand(inst *DBInstance, newPassword string) (cmd, env []str
 		// Always as root: a non-root master user is created with rights on its
 		// own database only, and cannot alter accounts. The container's root
 		// password is the master password the instance was created with.
+		//
+		// MYSQL_PWD rather than `-p<password>`, which both clients read, for
+		// the same reason psql gets PGPASSWORD: argv is visible to `docker
+		// inspect` and to the host process table, and an environment set for
+		// one command is not. It also keeps the output usable — given `-p` on
+		// the command line, both clients print "Using a password on the
+		// command line interface can be insecure" to stderr on every run, and
+		// with a TTY-allocated exec that warning lands in the middle of
+		// whatever the engine says when a statement fails.
 		return []string{
-			client,
-			"--protocol=socket",
-			"-u", "root",
-			"-p" + inst.MasterUserPassword,
-			"-e", mysqlPasswordStatements(inst.MasterUsername, newPassword),
-		}, nil, true
+				client,
+				"--protocol=socket",
+				"-u", "root",
+				"-e", mysqlPasswordStatements(inst.MasterUsername, newPassword),
+			},
+			[]string{"MYSQL_PWD=" + inst.MasterUserPassword}, true
 	}
 }
 

@@ -68,17 +68,20 @@ func TestModifyDBCluster_masterPasswordReachesEveryMember(t *testing.T) {
 		t.Fatalf("ModifyDBCluster: %s: %s", aerr.Code, aerr.Message)
 	}
 
-	cmds, _ := d.recordedExecs()
+	cmds, envs := d.recordedExecs()
 	if len(cmds) != 2 {
 		t.Fatalf("the rotation ran %d commands, want one per member: %v", len(cmds), cmds)
 	}
-	for _, cmd := range cmds {
+	for i, cmd := range cmds {
 		joined := strings.Join(cmd, " ")
 		if !strings.Contains(joined, "ALTER USER") || !strings.Contains(joined, "new-password") {
 			t.Errorf("member rotation did not carry the new password: %v", cmd)
 		}
-		if !strings.Contains(joined, "-pold-password") {
-			t.Errorf("member rotation did not authenticate with the password the engine still has: %v", cmd)
+		if !strings.Contains(strings.Join(envs[i], " "), "MYSQL_PWD=old-password") {
+			t.Errorf("member rotation did not authenticate with the password the engine still has: %v", envs[i])
+		}
+		if strings.Contains(joined, "old-password") {
+			t.Errorf("the password the engine still has appears in argv: %v", cmd)
 		}
 	}
 
@@ -149,6 +152,115 @@ func TestModifyDBCluster_unchangedMasterPasswordTouchesNoEngine(t *testing.T) {
 
 	if cmds, _ := d.recordedExecs(); len(cmds) != 0 {
 		t.Errorf("an unchanged password still ran %d commands in a container: %v", len(cmds), cmds)
+	}
+}
+
+// RDS's own constraints on a master password. Applying them here is what stops
+// a database working locally and being refused on deploy.
+//
+// The forbidden characters are worth spelling out because Overcast's own
+// GetRandomPassword produces them by default — as AWS's does, which is why
+// CDK excludes them. A generated password that trips this would trip it on AWS.
+func TestValidateMasterUserPassword(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		wantErr  bool
+	}{
+		{"typical", "correct-horse-battery", false},
+		{"punctuation RDS allows", "p#ssw%rd!12*", false},
+		{"exactly the minimum", "12345678", false},
+		{"one under the minimum", "1234567", true},
+		{"one over the maximum", strings.Repeat("a", 129), true},
+		{"single quote", "pass'word12", true},
+		{"double quote", "pass\"word12", true},
+		{"at sign", "pass@word12", true},
+		{"forward slash", "pass/word12", true},
+		{"space", "pass word12", true},
+		{"non-printable", "pass\tword12", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			aerr := validateMasterUserPassword(tc.password)
+			if tc.wantErr && aerr == nil {
+				t.Errorf("validateMasterUserPassword(%q) = nil, want a refusal", tc.password)
+			}
+			if !tc.wantErr && aerr != nil {
+				t.Errorf("validateMasterUserPassword(%q) = %s, want nil", tc.password, aerr.Message)
+			}
+		})
+	}
+}
+
+// A password RDS would refuse must be refused before anything runs against an
+// engine — and on create as well as on modify, or a database could be created
+// holding a password it could never afterwards change to.
+func TestMasterPassword_invalidIsRefusedBeforeTheEngine(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+
+	createRunningInstanceWith(t, h, "db", "mysql", "admin", "old-password")
+	_, aerr := h.modifyDBInstanceTyped(ctx, &modifyDBInstanceReq{
+		DBInstanceIdentifier: "db",
+		MasterUserPassword:   "has@sign12",
+	})
+	if aerr == nil {
+		t.Fatal("ModifyDBInstance accepted a password RDS forbids")
+	}
+	if aerr.Code != "InvalidParameterValue" {
+		t.Errorf("error code = %q, want InvalidParameterValue", aerr.Code)
+	}
+	if cmds, _ := d.recordedExecs(); len(cmds) != 0 {
+		t.Errorf("an invalid password reached the engine: %v", cmds)
+	}
+	if got := storedPassword(t, h, "db"); got != "old-password" {
+		t.Errorf("stored password = %q after a refused change, want it left alone", got)
+	}
+
+	if _, aerr := h.createDBInstanceTyped(ctx, &createDBInstanceReq{
+		DBInstanceIdentifier: "fresh",
+		Engine:               "mysql",
+		MasterUsername:       "admin",
+		MasterUserPassword:   "short",
+	}); aerr == nil {
+		t.Error("CreateDBInstance accepted a password too short for RDS")
+	}
+	if _, aerr := h.createDBClusterTyped(ctx, &createDBClusterReq{
+		DBClusterIdentifier: "fresh-cl",
+		Engine:              "aurora-mysql",
+		MasterUsername:      "admin",
+		MasterUserPassword:  "has/slash12",
+	}); aerr == nil {
+		t.Error("CreateDBCluster accepted a password RDS forbids")
+	}
+}
+
+// A cluster with no members validates too. The per-member rotation is where
+// the check would otherwise happen, and an empty member list never reaches it
+// — so a memberless cluster would record a password RDS refuses and hand it to
+// the first instance created under it.
+func TestModifyDBCluster_invalidMasterPasswordIsRefusedWithNoMembers(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+
+	newClusterWithMembers(t, h, "aurora-cl", "old-password")
+
+	_, aerr := h.modifyDBClusterTyped(ctx, &modifyDBClusterReq{
+		DBClusterIdentifier: "aurora-cl",
+		MasterUserPassword:  "has@sign12",
+	})
+	if aerr == nil {
+		t.Fatal("ModifyDBCluster accepted a password RDS forbids on a memberless cluster")
+	}
+	if aerr.Code != "InvalidParameterValue" {
+		t.Errorf("error code = %q, want InvalidParameterValue", aerr.Code)
+	}
+
+	cl, _ := h.store.getDBCluster(ctx, "aurora-cl")
+	if cl.MasterUserPassword != "old-password" {
+		t.Errorf("cluster stored password = %q after a refused change, want it left alone", cl.MasterUserPassword)
 	}
 }
 

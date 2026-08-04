@@ -5062,7 +5062,7 @@
           "operation": "ModifyDBInstance",
           "category": "DB instances",
           "status": "✅ Supported",
-          "notes": "Metadata updates (class, storage, engine version, multi-AZ); `MasterUserPassword` is applied to the running engine, and requires an `available` instance"
+          "notes": "Metadata updates (class, storage, engine version, multi-AZ); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and is held to RDS's 8–128 character and forbidden-character rules"
         },
         {
           "operation": "RebootDBInstance",
