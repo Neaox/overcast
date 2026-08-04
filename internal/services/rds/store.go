@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -20,6 +21,7 @@ const (
 	nsPorts           = "rds:ports"
 	nsSubnetGroups    = "rds:subnet-groups"
 	nsParameterGroups = "rds:parameter-groups"
+	nsEvents          = "rds:events"
 )
 
 // DBInstance represents a stored RDS DB instance.
@@ -55,6 +57,25 @@ type DBInstance struct {
 	DBClusterIdentifier string `json:"DBClusterIdentifier,omitempty"`
 	DBSubnetGroupName   string `json:"DBSubnetGroupName,omitempty"`
 	VpcID               string `json:"VpcId,omitempty"`
+	// LastLogs is a bounded tail of the container's own output, kept from the
+	// moment the container stopped answering. Docker discards a removed
+	// container's logs, and the whole reason anyone opens the logs of a
+	// database that would not start is to read the lines that explain why —
+	// so they are copied onto the record while they still exist. Bounded by
+	// maxRetainedLogBytes; LastLogsAt says when the copy was taken.
+	LastLogs   string `json:"LastLogs,omitempty"`
+	LastLogsAt string `json:"LastLogsAt,omitempty"`
+}
+
+// DBEvent is a stored RDS event — the channel AWS provides for "why did that
+// happen to my database". DescribeEvents renders these; nothing else does.
+type DBEvent struct {
+	SourceIdentifier string    `json:"SourceIdentifier"`
+	SourceType       string    `json:"SourceType"`
+	SourceArn        string    `json:"SourceArn,omitempty"`
+	Message          string    `json:"Message"`
+	EventCategories  []string  `json:"EventCategories,omitempty"`
+	Date             time.Time `json:"Date"`
 }
 
 // DBCluster represents a stored Aurora DB cluster.
@@ -165,6 +186,66 @@ func (s *rdsStore) listDBInstances(ctx context.Context) ([]*DBInstance, *protoco
 		instances = append(instances, &inst)
 	}
 	return instances, nil
+}
+
+// ── Event store ───────────────────────────────────────────────────────────────
+
+// putEvent stores one event under a caller-supplied, lexicographically sortable
+// key so a Scan comes back in chronological order.
+func (s *rdsStore) putEvent(ctx context.Context, key string, e *DBEvent) *protocol.AWSError {
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsEvents, serviceutil.RegionKey(s.region(ctx), key), string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// listEvents returns the region's events oldest-first. A record that will not
+// decode is skipped rather than failing the whole call — one bad payload must
+// not take DescribeEvents down with it.
+func (s *rdsStore) listEvents(ctx context.Context) ([]*DBEvent, *protocol.AWSError) {
+	pairs, err := s.store.Scan(ctx, nsEvents, serviceutil.RegionKey(s.region(ctx), ""))
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	events := make([]*DBEvent, 0, len(pairs))
+	for _, p := range pairs {
+		var e DBEvent
+		if err := json.Unmarshal([]byte(p.Value), &e); err != nil {
+			continue
+		}
+		events = append(events, &e)
+	}
+	return events, nil
+}
+
+// pruneEvents drops the region's events that fall outside the retention window
+// or past the count cap, keeping the newest. Without it the event log is the
+// one part of RDS state that only ever grows.
+func (s *rdsStore) pruneEvents(ctx context.Context, cutoff time.Time, keep int) {
+	pairs, err := s.store.Scan(ctx, nsEvents, serviceutil.RegionKey(s.region(ctx), ""))
+	if err != nil {
+		return
+	}
+	// Scan is key-ordered and the keys are timestamp-prefixed, so the surplus
+	// oldest entries are simply the front of the slice.
+	drop := len(pairs) - keep
+	for i, p := range pairs {
+		expired := false
+		var e DBEvent
+		if err := json.Unmarshal([]byte(p.Value), &e); err != nil {
+			expired = true // undecodable: it can never be served, so it is litter
+		} else if e.Date.Before(cutoff) {
+			expired = true
+		}
+		if !expired && i >= drop {
+			continue
+		}
+		_ = s.store.Delete(ctx, nsEvents, p.Key)
+	}
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────

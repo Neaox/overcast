@@ -17,6 +17,7 @@ var rdsOps = []string{
 	"DescribeOrderableDBInstanceOptions",
 	"CreateDBCluster", "DeleteDBCluster", "DescribeDBClusters",
 	"ModifyDBCluster", "StartDBCluster", "StopDBCluster",
+	"DescribeEvents",
 }
 
 func TestTypedOps_matchKnownOperations(t *testing.T) {
@@ -32,9 +33,9 @@ func TestTypedOps_matchKnownOperations(t *testing.T) {
 			t.Fatalf("typed operation %s reports name %s", name, operation.Name())
 		}
 	}
-	// Verify that Operations() returns the expected count (20 implemented + 13 stubs)
+	// Verify that Operations() returns the expected count (21 implemented + 13 stubs)
 	ops := s.Operations()
-	if len(ops) != 33 {
-		t.Fatalf("Operations() returned %d ops, want 33", len(ops))
+	if len(ops) != 34 {
+		t.Fatalf("Operations() returned %d ops, want 34", len(ops))
 	}
 }

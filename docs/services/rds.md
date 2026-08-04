@@ -37,6 +37,45 @@ When Docker is available, `CreateDBInstance` starts a real database container
 allocation from `RDS_PORT_BASE` (default 33060). When Docker is unavailable,
 operations are metadata-only.
 
+### Finding out why an instance failed — `DescribeEvents`
+
+A `failed` instance records why, but that reason is not in the
+`DescribeDBInstances` response and deliberately so: the real `DBInstance` has
+no `StatusReason` field, and `StatusInfos` is documented as read-replica-only.
+AWS's general channel for "why did that happen to my database" is RDS events,
+so that is where Overcast puts it.
+
+`DescribeEvents` returns `db-instance` events for the instance lifecycle
+Overcast observes:
+
+| Event | Categories | Message |
+| --- | --- | --- |
+| Instance created | `creation` | `DB instance created.` |
+| Instance started | `notification` | `DB instance started.` (RDS-EVENT-0088) |
+| Instance stopped | `notification` | `DB instance stopped.` (RDS-EVENT-0087) |
+| Instance deleted | `deletion` | `DB instance deleted.` |
+| Failed while being created | `failure` | `The DB instance creation failed. {reason}.` (RDS-EVENT-0278) |
+| Failed while being started | `failure` | `Database instance put into failed state. {reason}.` (RDS-EVENT-0035) |
+
+Events are kept for 14 days, as on AWS, and the store holds at most 1000 per
+region. Calling `DescribeEvents` with neither `StartTime` nor `Duration`
+returns the past 60 minutes — AWS's default, and the usual reason a call comes
+back empty. `SourceIdentifier`, `SourceType`, `EventCategories`,
+`StartTime`/`EndTime`/`Duration` and `Marker`/`MaxRecords` all apply; events are
+returned oldest-first. Overcast only records `db-instance` events, so a query
+for another source type is an empty list rather than an error.
+
+### Instance logs — `GET /_rds/instances/{id}/logs`
+
+An emulator-only endpoint (not part of the AWS API) that the web UI's Logs tab
+renders. It returns the container's live output when there is a container, and
+otherwise the bounded tail Overcast captured when that container died — which
+is the case that matters, because a database that failed to start usually has
+no container left by the time anyone looks. The response also carries the
+instance's status and failure reason, so the tab can explain an empty log
+rather than just showing one. A DB instance with nothing at all to report
+answers `404`; a missing container is never a `500`.
+
 ---
 
 ## Engine support
@@ -104,6 +143,7 @@ is fully supported. Docker containers are started when instances are added to th
 | ---------------- | ------------ | -------------- |
 | DB instances     | 6            | 7              |
 | Aurora clusters  | 6            | 3              |
+| Events           | 1            |                |
 | Engine metadata  | 2            |                |
 | Subnet groups    | 3            |                |
 | Parameter groups | 3            |                |
@@ -144,6 +184,12 @@ is fully supported. Docker containers are started when instances are added to th
 | `CreateDBClusterSnapshot`    | ❌ Unsupported | stub; returns 501                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBClusterSnapshot.html)    |
 | `DeleteDBClusterSnapshot`    | ❌ Unsupported | stub; returns 501                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBClusterSnapshot.html)    |
 | `DescribeDBClusterSnapshots` | ❌ Unsupported | stub; returns 501                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBClusterSnapshots.html) |
+
+### Events
+
+| Operation        | Status       | Notes                                                                                                                                                                                                             | AWS Docs                                                                                  |
+| ---------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `DescribeEvents` | ✅ Supported | db-instance events for create/start/stop/delete/failure; 14-day retention, 60-minute default window; `SourceIdentifier`, `SourceType`, `EventCategories`, `StartTime`/`EndTime`/`Duration`, `Marker`/`MaxRecords` | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeEvents.html) |
 
 ### Engine metadata
 

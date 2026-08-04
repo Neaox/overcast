@@ -1699,3 +1699,111 @@ func TestCreateDBInstance_withClusterIdentifier(t *testing.T) {
 	assert.Equal(t, "my-cluster-instance", cluster.DBClusterMembers.Items[0].DBInstanceIdentifier)
 	assert.True(t, cluster.DBClusterMembers.Items[0].IsClusterWriter)
 }
+
+// ─── DescribeEvents ───────────────────────────────────────────────────────────
+
+type rdsEventsResponse struct {
+	XMLName xml.Name `xml:"DescribeEventsResponse"`
+	Result  struct {
+		Marker string `xml:"Marker"`
+		Events struct {
+			Items []struct {
+				SourceIdentifier string `xml:"SourceIdentifier"`
+				SourceType       string `xml:"SourceType"`
+				Message          string `xml:"Message"`
+				Date             string `xml:"Date"`
+				SourceArn        string `xml:"SourceArn"`
+				EventCategories  struct {
+					Items []string `xml:"EventCategory"`
+				} `xml:"EventCategories"`
+			} `xml:"Event"`
+		} `xml:"Events"`
+	} `xml:"DescribeEventsResult"`
+}
+
+// A DB instance's lifecycle shows up in DescribeEvents, which is the channel
+// AWS provides for "what happened to my database" — and the only one a failure
+// reason can travel on, since DBInstance has no StatusReason field.
+func TestDescribeEvents_instanceLifecycleOnTheWire(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+
+	resp1 := rdsQuery(t, srv, "CreateDBInstance", url.Values{
+		"DBInstanceIdentifier": []string{"events-db"},
+		"Engine":               []string{"mysql"},
+		"MasterUsername":       []string{"admin"},
+		"MasterUserPassword":   []string{"Password1!"},
+	})
+	resp1.Body.Close()
+
+	resp := rdsQuery(t, srv, "DescribeEvents", url.Values{
+		"SourceIdentifier": []string{"events-db"},
+		"SourceType":       []string{"db-instance"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result rdsEventsResponse
+	decodeXML(t, resp, &result)
+
+	require.Len(t, result.Result.Events.Items, 1)
+	e := result.Result.Events.Items[0]
+	assert.Equal(t, "events-db", e.SourceIdentifier)
+	assert.Equal(t, "db-instance", e.SourceType)
+	assert.Equal(t, "DB instance created.", e.Message)
+	assert.Equal(t, []string{"creation"}, e.EventCategories.Items)
+	assert.NotEmpty(t, e.Date)
+	assert.Contains(t, e.SourceArn, ":rds:")
+}
+
+// The EventCategories filter arrives as an indexed list on the wire, and the
+// AWS SDKs spell that list two different ways. A filter that fails to decode
+// silently returns everything, which reads as the filter being ignored.
+func TestDescribeEvents_categoryFilterOnTheWire(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+
+	resp1 := rdsQuery(t, srv, "CreateDBInstance", url.Values{
+		"DBInstanceIdentifier": []string{"events-filter-db"},
+		"Engine":               []string{"mysql"},
+		"MasterUsername":       []string{"admin"},
+		"MasterUserPassword":   []string{"Password1!"},
+	})
+	resp1.Body.Close()
+	srv.Clock.Add(1 * time.Second) // creating → available
+
+	resp2 := rdsQuery(t, srv, "StopDBInstance", url.Values{
+		"DBInstanceIdentifier": []string{"events-filter-db"},
+	})
+	resp2.Body.Close()
+
+	resp := rdsQuery(t, srv, "DescribeEvents", url.Values{
+		"EventCategories.EventCategory.1": []string{"notification"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result rdsEventsResponse
+	decodeXML(t, resp, &result)
+	require.Len(t, result.Result.Events.Items, 1)
+	assert.Equal(t, "DB instance stopped.", result.Result.Events.Items[0].Message)
+
+	resp3 := rdsQuery(t, srv, "DescribeEvents", url.Values{
+		"EventCategories.member.1": []string{"creation"},
+	})
+	defer resp3.Body.Close()
+	var byMember rdsEventsResponse
+	decodeXML(t, resp3, &byMember)
+	require.Len(t, byMember.Result.Events.Items, 1)
+	assert.Equal(t, "DB instance created.", byMember.Result.Events.Items[0].Message)
+}
+
+func TestDescribeEvents_invalidSourceType(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+
+	resp := rdsQuery(t, srv, "DescribeEvents", url.Values{
+		"SourceType": []string{"not-a-source-type"},
+	})
+	defer resp.Body.Close()
+
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	assertQueryXMLError(t, resp, "InvalidParameterValue")
+}

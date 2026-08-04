@@ -1,201 +1,31 @@
 package rds
 
-import (
-	"context"
-	"net/http"
-	"time"
+// handler_instances.go — the raw Query entry points for the instance
+// stop/start/modify operations.
+//
+// These used to be full second implementations, reachable whenever
+// Service.DispatchQuery found no codec in context and fell back to
+// h.dispatch. Two implementations of the same operation is two chances to be
+// wrong, and these had already diverged: the raw ModifyDBInstance honoured
+// `MultiAZ=false` and the typed one silently ignored it, so the answer to
+// "can I turn Multi-AZ off" depended on which path the request took.
+//
+// They are adapters now. The behaviour lives once, in typed_logic.go; see
+// invokeTypedAsQuery for why the raw registry entry still exists.
 
-	"go.uber.org/zap"
-
-	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/protocol"
-)
-
-// ── StopDBInstance ───────────────────────────────────────────────────────────
+import "net/http"
 
 // StopDBInstance stops a running DB instance.
 func (h *Handler) StopDBInstance(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBInstanceIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBInstanceIdentifier is required"))
-		return
-	}
-
-	inst, aerr := h.store.getDBInstance(r.Context(), id)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	if inst.DBInstanceStatus != "available" {
-		protocol.WriteQueryXMLError(w, r, errInvalidDBInstanceState(id, "must be available to stop"))
-		return
-	}
-
-	inst.DBInstanceStatus = "stopping"
-	if aerr := h.store.putDBInstance(r.Context(), inst); aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	// If Docker container is running, stop it (don't remove).
-	if h.dockerReady.Load() && inst.DockerContainerID != "" {
-		if h.gc != nil {
-			h.gc.StopNow(inst.DockerContainerID)
-		} else {
-			_ = h.docker.StopContainer(r.Context(), inst.DockerContainerID, 10)
-		}
-	}
-
-	// Transition stopping → stopped.  With a real clock the scheduler runs
-	// 0-delay callbacks synchronously; with a mock clock the transition stays
-	// pending until clock.Add is called.
-	instID := id
-	region := h.store.region(r.Context())
-	h.scheduler.AfterScoped(region, instID, "stopped", 0, func(ctx context.Context) {
-		got, aerr := h.store.getDBInstance(ctx, instID)
-		if aerr != nil {
-			return
-		}
-		if got.DBInstanceStatus == "stopping" {
-			got.DBInstanceStatus = "stopped"
-			h.store.putDBInstance(ctx, got) //nolint:errcheck
-		}
-	})
-
-	h.publish(r, events.RDSInstanceStopped, events.ResourcePayload{Name: id})
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlStopDBInstanceResponse{
-		Xmlns:            rdsXMLNS,
-		Result:           xmlStopDBInstanceResult{DBInstance: h.toXMLDBInstance(r.Context(), inst)},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("StopDBInstance", w, r)
 }
-
-// ── StartDBInstance ──────────────────────────────────────────────────────────
 
 // StartDBInstance starts a previously stopped DB instance.
 func (h *Handler) StartDBInstance(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBInstanceIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBInstanceIdentifier is required"))
-		return
-	}
-
-	inst, aerr := h.store.getDBInstance(r.Context(), id)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	if inst.DBInstanceStatus != "stopped" {
-		protocol.WriteQueryXMLError(w, r, errInvalidDBInstanceState(id, "must be stopped to start"))
-		return
-	}
-
-	inst.DBInstanceStatus = "starting"
-	if aerr := h.store.putDBInstance(r.Context(), inst); aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	// If Docker container exists, restart it. Same path as the typed handler —
-	// see startInstanceContainerAsync.
-	region := h.store.region(r.Context())
-	if h.dockerReady.Load() && inst.DockerContainerID != "" {
-		h.startInstanceContainerAsync(r.Context(), id)
-	} else {
-		// Metadata-only: transition starting → available.  Scheduler runs
-		// 0-delay callbacks synchronously with a real clock.
-		instID2 := id
-		h.scheduler.AfterScoped(region, instID2, "available", 0, func(ctx context.Context) {
-			got, aerr := h.store.getDBInstance(ctx, instID2)
-			if aerr != nil {
-				return
-			}
-			if got.DBInstanceStatus == "starting" {
-				got.DBInstanceStatus = "available"
-				h.store.putDBInstance(ctx, got) //nolint:errcheck
-			}
-		})
-	}
-
-	h.publish(r, events.RDSInstanceStarted, events.ResourcePayload{Name: id})
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlStartDBInstanceResponse{
-		Xmlns:            rdsXMLNS,
-		Result:           xmlStartDBInstanceResult{DBInstance: h.toXMLDBInstance(r.Context(), inst)},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("StartDBInstance", w, r)
 }
-
-// ── ModifyDBInstance ─────────────────────────────────────────────────────────
 
 // ModifyDBInstance modifies metadata properties of an existing DB instance.
 func (h *Handler) ModifyDBInstance(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBInstanceIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBInstanceIdentifier is required"))
-		return
-	}
-
-	inst, aerr := h.store.getDBInstance(r.Context(), id)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	// Apply modifications.
-	if v := r.FormValue("DBInstanceClass"); v != "" {
-		inst.DBInstanceClass = v
-	}
-	if v := r.FormValue("AllocatedStorage"); v != "" {
-		inst.AllocatedStorage = formInt(r, "AllocatedStorage", inst.AllocatedStorage)
-	}
-	if v := r.FormValue("EngineVersion"); v != "" {
-		if v != inst.EngineVersion {
-			h.log.Warn("EngineVersion change requested — restart would be needed in production",
-				zap.String("instance", id), zap.String("from", inst.EngineVersion), zap.String("to", v))
-		}
-		inst.EngineVersion = v
-	}
-	if v := r.FormValue("MultiAZ"); v != "" {
-		inst.MultiAZ = v == "true"
-	}
-	if v := r.FormValue("StorageType"); v != "" {
-		inst.StorageType = v
-	}
-
-	// Transition through modifying → available.
-	prevStatus := inst.DBInstanceStatus
-	inst.DBInstanceStatus = "modifying"
-	if aerr := h.store.putDBInstance(r.Context(), inst); aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	instID := id
-	region := h.store.region(r.Context())
-	h.scheduler.AfterScoped(region, instID, "modified", 500*time.Millisecond, func(ctx context.Context) {
-		got, aerr := h.store.getDBInstance(ctx, instID)
-		if aerr != nil {
-			return
-		}
-		if got.DBInstanceStatus == "modifying" {
-			if prevStatus == "available" || prevStatus == "" {
-				got.DBInstanceStatus = "available"
-			} else {
-				got.DBInstanceStatus = prevStatus
-			}
-			h.store.putDBInstance(ctx, got) //nolint:errcheck
-		}
-	})
-
-	h.publish(r, events.RDSInstanceModified, events.ResourcePayload{Name: id})
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlModifyDBInstanceResponse{
-		Xmlns:            rdsXMLNS,
-		Result:           xmlModifyDBInstanceResult{DBInstance: h.toXMLDBInstance(r.Context(), inst)},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
+	h.invokeTypedAsQuery("ModifyDBInstance", w, r)
 }
