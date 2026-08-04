@@ -1,4 +1,16 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
+#
+# The frontend is digest-pinned like every FROM below it. It was the one
+# reference in this file that was not, and it is fetched before any of them —
+# so a Docker Hub hiccup resolving it failed the build before a single layer
+# was read, which is how `main` went red on an afternoon when nothing about the
+# image had changed. A digest is immutable and can be served from any mirror;
+# a floating tag has to be resolved from the registry every time.
+#
+# Dependabot advances the FROM digests below, but its docker ecosystem reads
+# FROM lines and this is a comment — so if it is still on this digest a release
+# or two from now, bump it by hand:
+#   docker buildx imagetools inspect docker/dockerfile:1 --format '{{.Manifest.Digest}}'
 #
 # Multi-platform, multi-target image.
 #
