@@ -72,6 +72,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [cloudformation/rds/ecs] CloudFormation waits for asynchronous resources to become usable before completing them and preserves their physical IDs through stabilisation failures so rollback can delete what it created. `AWS::RDS::DBInstance` and `AWS::RDS::DBCluster` now remain in progress until the database reports `available`, or fail with RDS's recorded reason and roll the stack back; `cdk deploy` no longer returns green while the engine is still initialising. Failed RDS databases and ECS services are now removed during rollback instead of being leaked under names that collide with the next deployment.
 
+- [sns/cloudformation] CloudFormation SNS topics and subscriptions now forward configured SNS attributes, including subscription filtering and raw SQS delivery (#522)
+
 ## [0.0.1-alpha.29] - 2026-08-03
 
 ### Added
