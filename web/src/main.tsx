@@ -8,6 +8,7 @@ import { ToastContextProvider, useToast } from "@/components/ui/toast"
 import { RoutePending } from "@/components/layout/route-pending"
 import { RouteError } from "@/components/layout/route-error"
 import { DevToolsContext } from "@/hooks/use-dev-tools"
+import { isNetworkError } from "@/lib/network-error"
 import { preloadRouteChunksWhenIdle } from "@/lib/preload-route-chunks"
 import { endpointStore } from "@/services/endpoint-store"
 import { hasPersistedRegion, fetchServerRegion } from "@/services/discovery"
@@ -18,12 +19,6 @@ const DevToolsPanel = lazy(() => import("@/components/dev-tools"))
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return "Unknown error"
-}
-
-function isNetworkError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  if (error.name === "NetworkError") return true
-  return /failed to fetch|network\s?error|load failed/i.test(error.message)
 }
 
 // On startup, seed the region from the server's OVERCAST_DEFAULT_REGION if
@@ -67,6 +62,10 @@ function QueryProvider({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
+        // These fire per failed request, so a dropped connection would raise
+        // one for every query and mutation in flight at the time. They are not
+        // gated here: `toast()` drops a transport failure while the shell
+        // already knows it is offline — see `isOfflineNoise` in ui/toast.tsx.
         queryCache: new QueryCache({
           onError: (error) => {
             if (!isNetworkError(error)) return
