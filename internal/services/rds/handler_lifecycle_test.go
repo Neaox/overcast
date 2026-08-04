@@ -33,14 +33,42 @@ import (
 
 const lifecycleContainerID = "cafecafecafe"
 
+// enginePortsPerHandler is how many host ports a test handler reserves. The
+// allocator hands its instances consecutive ports from RDSPortBase, and the
+// most any test here stands up against one handler is two — an Aurora cluster's
+// writer and reader — so this is that with room to spare. serveEngine says so
+// if a test ever outgrows it rather than quietly going back to binding on
+// demand.
+const enginePortsPerHandler = 8
+
+// The fake engines, and the ports being kept for engines that have not started
+// answering yet.
+//
 // engineListeners keys the fake engines by the address they answer on, so two
-// instances sharing a dial target share one listener. Package-level because
-// serveEngine is called from several files; every entry is removed by the
-// t.Cleanup that created it, and these tests do not run in parallel.
+// instances sharing a dial target share one listener. engineHeldPorts keys the
+// reserved ports the same way, and engineBlocks records which bases those
+// reservations were made from.
+//
+// Package-level because serveEngine is called from several files; every entry
+// is removed by the t.Cleanup that created it, and these tests do not run in
+// parallel.
 var (
 	engineListenersMu sync.Mutex
-	engineListeners   = map[string]net.Listener{}
+	engineListeners   = map[string]net.Listener{} // addr → the engine answering there
+	engineHeldPorts   = map[string]heldPort{}     // addr → a port held for an engine
+	engineBlocks      = map[int]int{}             // reserved base → ports reserved from it
 )
+
+// heldPort is a port kept for a fake engine that has not started yet: bound, so
+// nothing else on the machine can take it, but not listening, so a connection
+// to it is refused exactly as if nothing were there. listen promotes that same
+// socket when the engine is meant to answer. Implemented per platform in
+// held_port_unix_test.go and held_port_other_test.go.
+type heldPort interface {
+	port() int
+	listen() (net.Listener, error)
+	close()
+}
 
 // lifecycleDaemon is an httptest server speaking enough of the Docker Engine
 // API for the RDS container lifecycle, and — crucially — modelling AutoRemove
@@ -108,16 +136,37 @@ func serveEngine(t *testing.T, h *Handler, id string) net.Listener {
 
 	engineListenersMu.Lock()
 	defer engineListenersMu.Unlock()
-	// lifecycleDaemon models a single container, so every instance created
-	// against one daemon shares a dial target — an Aurora cluster's members
-	// above all. One engine answering for all of them is what that fake shape
-	// means; listening twice on the same address is just a bind error.
+	// lifecycleDaemon models a single container, so instances created against
+	// one daemon can share a dial target — an Aurora cluster's members when the
+	// suite itself runs in a container, where the target is the container's own
+	// address rather than a host port. One engine answering for all of them is
+	// what that fake shape means; listening twice on the same address is just a
+	// bind error.
 	if ln, ok := engineListeners[addr]; ok {
 		return ln
 	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		t.Fatalf("fake engine could not listen on the instance's dial target %s: %v", addr, err)
+
+	var ln net.Listener
+	if held, ok := engineHeldPorts[addr]; ok {
+		// This port has been held since the handler was built, for exactly
+		// this. Promoting the socket that holds it is what keeps the port from
+		// having to be free a second time.
+		delete(engineHeldPorts, addr)
+		var err error
+		if ln, err = held.listen(); err != nil {
+			t.Fatalf("fake engine could not answer on the port held for %s (%s): %v", id, addr, err)
+		}
+	} else {
+		if base, count, ok := reservedBlockFor(port); ok {
+			t.Fatalf("instance %s was allocated %s, past the %d ports reserved from %d — "+
+				"raise enginePortsPerHandler to cover what this test stands up", id, addr, count, base)
+		}
+		// Not a reserved host port: the suite is running inside a container, so
+		// the dial target is the engine container's own address and port.
+		var err error
+		if ln, err = net.Listen("tcp", addr); err != nil {
+			t.Fatalf("fake engine could not listen on the instance's dial target %s: %v", addr, err)
+		}
 	}
 	engineListeners[addr] = ln
 	t.Cleanup(func() {
@@ -307,20 +356,124 @@ func (d *lifecycleDaemon) containerGone(within time.Duration) bool {
 	}
 }
 
-// freePortBase gives a test handler a port range nothing else is using.
+// reserveEnginePorts gives a test handler a port range nothing else is using,
+// and keeps it that way until the test is over.
 //
 // The allocator hands out ports from cfg.RDSPortBase, and a test then has to
 // listen on whichever one it picked — so the range has to actually be free.
 // Left at the default every test allocated the same port and the second to run
 // could not bind; a fixed alternative range only moves that assumption
 // somewhere less obvious, since it still asserts nothing else on the machine
-// wants those ports. Asking the OS for one it is willing to give removes the
+// wants those ports. Asking the OS for ports it is willing to give removes the
 // assumption instead of relocating it.
 //
-// The port is released before it is handed back, so this is advisory rather
-// than a reservation — but each caller gets a different one, which is the
-// property the tests actually need.
-func freePortBase(t *testing.T) int {
+// Asking is not enough on its own, though, and that is what this used to do:
+// probe one port with :0, close it, and bind it again once the instance was
+// up. `go test ./...` runs the package binaries in parallel and half of them
+// stand up httptest servers on ephemeral ports, so between the probe and the
+// bind — seconds, across a container create and start — something else could
+// take it, and TestModifyDBCluster_masterPasswordReachesEveryMember failed on
+// CI with "address already in use". The second member's port was worse than
+// racy: the allocator hands out consecutive ports and only the first had ever
+// been established to be free at all.
+//
+// So the base and the enginePortsPerHandler ports above it — every port a test
+// handler's instances actually reach — are held from here until serveEngine
+// takes one over or the test ends. A held port is bound but not listening,
+// which is both halves of what the tests need: nothing else can bind it, and
+// connecting to it is refused until an engine is meant to answer.
+func reserveEnginePorts(t *testing.T) int {
+	t.Helper()
+	if !heldPortsSupported {
+		return probeFreePort(t)
+	}
+
+	base, held, err := holdEnginePortBlock(enginePortsPerHandler)
+	if err != nil {
+		t.Fatalf("could not reserve %d consecutive ports for the test's RDS port base: %v",
+			enginePortsPerHandler, err)
+	}
+
+	engineListenersMu.Lock()
+	engineBlocks[base] = enginePortsPerHandler
+	for port, hp := range held {
+		engineHeldPorts[engineAddr(port)] = hp
+	}
+	engineListenersMu.Unlock()
+
+	t.Cleanup(func() {
+		engineListenersMu.Lock()
+		defer engineListenersMu.Unlock()
+		delete(engineBlocks, base)
+		for port := base; port < base+enginePortsPerHandler; port++ {
+			addr := engineAddr(port)
+			if hp, ok := engineHeldPorts[addr]; ok {
+				hp.close()
+				delete(engineHeldPorts, addr)
+			}
+		}
+	})
+	return base
+}
+
+// portBlockAttempts bounds the search for a run of free ports. Each attempt is
+// a handful of syscalls, and only a machine with almost no ephemeral ports left
+// needs more than the first.
+const portBlockAttempts = 100
+
+// holdEnginePortBlock holds count consecutive ports, starting wherever the OS
+// is willing to put the first one. A neighbour that is already taken means this
+// run is not available: the block is dropped and another asked for.
+func holdEnginePortBlock(count int) (int, map[int]heldPort, error) {
+	var lastErr error
+	for attempt := 0; attempt < portBlockAttempts; attempt++ {
+		first, err := holdPort(0)
+		if err != nil {
+			return 0, nil, err
+		}
+		base := first.port()
+
+		held := map[int]heldPort{base: first}
+		for port := base + 1; port < base+count; port++ {
+			hp, err := holdPort(port)
+			if err != nil {
+				lastErr = err
+				break
+			}
+			held[port] = hp
+		}
+		if len(held) == count {
+			return base, held, nil
+		}
+		for _, hp := range held {
+			hp.close()
+		}
+	}
+	return 0, nil, fmt.Errorf("no run of %d free ports in %d attempts; last refusal: %w",
+		count, portBlockAttempts, lastErr)
+}
+
+// reservedBlockFor reports the reservation an allocated port came from, if any.
+// A base can produce any port in [base, base+portAllocationSpan), so one in
+// that range past the reserved run is a test that has stood up more instances
+// than its handler reserved ports for. Callers hold engineListenersMu.
+func reservedBlockFor(port int) (base, count int, ok bool) {
+	for b, c := range engineBlocks {
+		if port >= b && port < b+portAllocationSpan {
+			return b, c, true
+		}
+	}
+	return 0, 0, false
+}
+
+func engineAddr(port int) string {
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+}
+
+// probeFreePort asks the OS for a port and hands it back released. It is the
+// fallback for platforms that cannot hold one (held_port_other_test.go), and
+// carries the window reserveEnginePorts exists to close.
+func probeFreePort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -335,7 +488,7 @@ func freePortBase(t *testing.T) int {
 
 func newLifecycleHandler(t *testing.T, d *lifecycleDaemon) *Handler {
 	t.Helper()
-	cfg := &config.Config{Region: "us-east-1", AccountID: "123456789012", RDSPortBase: freePortBase(t)}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "123456789012", RDSPortBase: reserveEnginePorts(t)}
 	s := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	h := s.handler
 	h.docker = docker.NewClient("tcp://"+d.srv.Listener.Addr().String(), zap.NewNop())
