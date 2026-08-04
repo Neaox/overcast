@@ -13,6 +13,8 @@ package cloudformation_test
 // On AWS a MasterUsername change carries "Update requires: Replacement".
 
 import (
+	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -21,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
@@ -28,6 +31,10 @@ import (
 // instance unnamed, which is what makes CloudFormation generate a physical name
 // and so what makes replacement possible at all.
 func rdsInstanceTemplate(id, masterUsername string) string {
+	return rdsInstanceTemplateWithPassword(id, masterUsername, "correct-horse-battery")
+}
+
+func rdsInstanceTemplateWithPassword(id, masterUsername, masterPassword string) string {
 	idProp := ""
 	if id != "" {
 		idProp = fmt.Sprintf(`"DBInstanceIdentifier": %q,`, id)
@@ -43,11 +50,11 @@ func rdsInstanceTemplate(id, masterUsername string) string {
         "DBInstanceClass": "db.t3.micro",
         "AllocatedStorage": "20",
         "MasterUsername": %q,
-        "MasterUserPassword": "correct-horse-battery"
+        "MasterUserPassword": %q
       }
     }
   }
-}`, idProp, masterUsername)
+}`, idProp, masterUsername, masterPassword)
 }
 
 // rdsMasterUsernames returns every DB instance's identifier and master username.
@@ -133,6 +140,63 @@ func TestUpdateStack_rdsMasterUsernameChangeIsApplied(t *testing.T) {
 		}
 		return true
 	}, fmt.Sprintf("stack never settled on a single instance with the new master username; last saw %v", final))
+}
+
+// rdsStoredMasterPassword reads the master password off the stored DB instance
+// record. DescribeDBInstances deliberately never returns it — AWS does not —
+// so the record is the only place a test can see whether a rotation landed.
+func rdsStoredMasterPassword(t *testing.T, srv *helpers.TestServer, instanceID string) string {
+	t.Helper()
+	raw, ok, err := srv.Store.Get(context.Background(), "rds:instances", serviceutil.RegionKey(srv.Config.Region, instanceID))
+	if err != nil {
+		t.Fatalf("read stored DB instance %s: %v", instanceID, err)
+	}
+	if !ok {
+		t.Fatalf("no stored DB instance %s", instanceID)
+	}
+	var inst struct {
+		MasterUserPassword string `json:"MasterUserPassword"`
+	}
+	if err := json.Unmarshal([]byte(raw), &inst); err != nil {
+		t.Fatalf("unmarshal stored DB instance %s: %v", instanceID, err)
+	}
+	return inst.MasterUserPassword
+}
+
+// Rotating the master password is an in-place update on AWS, and the handler
+// has been passing MasterUserPassword to ModifyDBInstance all along — but
+// ModifyDBInstance did not read the parameter, so the stack reported a clean
+// update over a database still on the old password.
+func TestUpdateStack_rdsMasterPasswordChangeIsApplied(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	const stackName = "rds-master-password-stack"
+	const instanceID = "rotating-db"
+
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{rdsInstanceTemplateWithPassword(instanceID, "dbadmin", "first-password")},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	if got := rdsStoredMasterPassword(t, srv, instanceID); got != "first-password" {
+		t.Fatalf("master password after create = %q, want %q", got, "first-password")
+	}
+
+	ur := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{rdsInstanceTemplateWithPassword(instanceID, "dbadmin", "second-password")},
+	})
+	defer ur.Body.Close()
+	helpers.AssertStatus(t, ur, http.StatusOK)
+	waitForStackStatusIn(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// The identifier is pinned, so this is the same instance throughout — a
+	// password change must never provoke a replacement.
+	if got := rdsStoredMasterPassword(t, srv, instanceID); got != "second-password" {
+		t.Errorf("master password after update = %q, want the rotated %q", got, "second-password")
+	}
 }
 
 // With the identifier pinned in the template, replacement cannot succeed — the
