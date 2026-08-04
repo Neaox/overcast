@@ -1419,8 +1419,17 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 	// callers that asked for a tail pay this: every other path discards
 	// LogResult, and warm p50 is ~6 ms, so an unconditional wait here would
 	// dominate it. We do NOT wait for CloudWatch flushes — those happen
-	// asynchronously after Invoke returns. This matches AWS / LocalStack
-	// semantics: invoke latency is decoupled from log delivery.
+	// asynchronously after Invoke returns, as on AWS, where a function's logs
+	// reach CloudWatch some time after its caller has its response.
+	//
+	// LocalStack chose the opposite trade and is worth knowing about rather
+	// than copying: its in-container init POSTs the invocation's collected logs
+	// back to LocalStack and only then the result, so every invoke pays for log
+	// delivery, tail or no tail. That ordering is what lets it attribute a line
+	// to an invocation without waiting on a clock — it owns the runtime's
+	// stdout, so the buffer boundary is the invocation boundary. Reading logs
+	// back off the Docker daemon, as here, buys the looser coupling and pays
+	// for it in waitForScannerIdle.
 	logWaitStart := ci.clk.Now()
 	if opts.LogTail && ci.logWriter != nil {
 		ci.waitForScannerIdle(logMark)
