@@ -261,6 +261,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web] filter-term highlighting in the CloudWatch Logs viewer marks every match in a line rather than every other one
 
+- [web] network error toasts stay quiet while the UI knows it is offline
+
 - [docs] `docs/networking.md` gains a *Data-plane endpoints* section stating the rule across services: every hostname Overcast hands back is minted on the endpoint the request came in on, how a name that points at a container (rather than at Overcast) is made resolvable, and why the port differs by caller
 
 ## [0.0.1-alpha.28] - 2026-07-31
