@@ -1,6 +1,9 @@
 # CI streamlining — where the time goes, and what is safe to cut
 
-Status: proposal. Nothing here is implemented.
+Status: A, B, C and F are implemented; D was investigated and declined; E is
+half done. See [Outcome](#outcome) for what is left. The measurements below
+are from before any of it landed, and are kept as the baseline the changes
+were argued from.
 
 The question this answers: CI is slow enough to be felt on every PR, on `main`,
 and on a release. What can be made faster without buying the speed with
@@ -80,16 +83,19 @@ same tests, and is the single biggest block of compute in CI.
 
 **This is mostly worth keeping** — see "What not to cut".
 
-### 4. `cross-build` builds 11 targets on every PR
+### 4. `cross-build` builds 10 targets on every PR
 
 `cross-build` is `needs: [web, release-gate]` with no `if:`; only
 `upload-artifacts` is conditional on the release-candidate check. So every PR
-spends ~600 job-seconds proving that 11 GOOS/GOARCH combinations compile. Most
-of each job is runner startup rather than compilation.
+spends ~550 job-seconds proving that 10 GOOS/GOARCH combinations compile —
+five `overcast` and five `overcastd`. Most of each job is runner startup
+rather than compilation.
 
 Cross-compilation breakage is real but rare, and it is a *compile* failure —
 the class most cheaply caught, and least likely to be introduced by a change
 that `go build ./...` already accepts.
+
+**On investigation this should be left alone. See proposal D.**
 
 ### 5. One Docker Hub reference escaped the hardening that covers the rest
 
@@ -184,36 +190,87 @@ it is not, the pin needs an explicit refresh path or it rots quietly.
 
 ### Tier 2 — structural, needs design
 
-**C. Take the SPA build off the critical path.** Run the coverage job with
-`-tags slim` and add one narrow job that exercises what only exists in a
-non-slim build — the embedded SPA handler and the `!slim` routes — taking the
-`web/dist` artifact. That job is small and parallel; the long one stops waiting.
+**C. Take the SPA build off the critical path.** **Done — and it needed none of
+the surgery proposed here.**
 
-*Saves:* up to ~187 s of wall clock on every PR and every push to `main`.
-*Risks:* the narrow job has to actually cover the non-slim surface, or this
-trades wall clock for a hole. Worth writing the job first, confirming it fails
-when `/_mcp` regresses, and only then changing `coverage`.
+The proposal was to move `coverage` to `-tags slim` behind a new narrow job
+covering the `!slim` surface. The premise was that the untagged job needs
+`web/dist` because it embeds it. It does not: the committed
+`web/dist/.gitkeep` is what keeps `//go:embed all:web/dist` resolving, a binary
+without a real SPA serves the API and answers 503 on the UI port by design, and
+nothing in the Go suite asks for real SPA content — the BFF's static-serving
+tests inject an `fstest.MapFS` of their own. The full untagged suite,
+`go vet ./...` and golangci-lint all pass against a `web/dist` holding nothing
+but the placeholder.
 
-**D. Fold `cross-build` into fewer jobs, or scope it.** Either loop the targets
-inside one job (saves ~9 runner-minutes, costs wall clock in that job, which is
-off the critical path anyway), or keep a two-target smoke on PRs and run all 11
-on `main` and on release candidates.
+So `vet`, `coverage`, `lint` and `sqs-protocol-dispatch` simply stopped waiting.
+No new job, no `-tags slim`, no coverage-semantics change, and no renamed check
+— which matters, because `Vet`, `Lint` and `Full test suite with coverage` are
+all in the required set.
 
-*Saves:* ~9 runner-minutes per PR. *Risks:* scoping delays discovery of a
-GOOS-specific break from PR to `main`. The loop-in-one-job option has no such
-tradeoff and is the safer of the two.
+*Saved:* ~187 s of wall clock on every PR and every push to `main`.
+
+**D. Leave `cross-build` alone.** Investigated and declined.
+
+Consolidating the 10 targets into one looping job saves ~5 runner-minutes of
+startup, and the earlier draft called it the safer option because it keeps full
+coverage. The arithmetic says otherwise. `cross-build` starts after `web`
+(187 s) and finishes around 250 s, comfortably inside the critical path. Ten
+sequential builds in one job is roughly 250 s of work, so it would finish
+around 437 s — **making `cross-build` the new critical path and undoing C.**
+
+The alternatives are worse rather than better: scoping the PR target set breaks
+the property `test.yml` states in a comment — that the PR check "builds exactly
+what a release would ship" — and splitting into GOOS groups buys ~3 runner-
+minutes for a permanent complication of a workflow deliberately shared with
+`release.yml`.
+
+It is off the critical path and not a required check. The ~5 runner-minutes are
+real but they are the cheapest minutes in the run.
 
 ### Tier 3 — scope reduction, handle required checks carefully
 
-**E. Path-filter the heavy workflows.** A docs-only PR does not need 14
-runner-minutes of SDK suites. `compat.yml` already uses `paths-ignore` on
-`push`, but its `pull_request` trigger is unfiltered.
+**E. Path-filter the heavy workflows.** **Half done, and the half that is done
+is the half that is safe.**
 
-*Risks, and they are the real content of this item:* a required check that is
-skipped never reports, and the PR waits forever. This needs the standard
-skip-shim — a cheap job with the same name that reports success when the filter
-excludes the real one — or the check must not be in the required set. Do not
-add a path filter to a required check without one.
+The risk in this item is the whole item: a required check that is filtered out
+never reports, and the pull request waits on it forever. Which checks are
+required is therefore the fact the item turns on, and it is now known. From the
+`Protect Main` ruleset:
+
+```
+Vet, Lint, Actionlint, Web UI,
+Test suite (-tags slim), Test suite (-tags slim,nosqlite),
+Full test suite with coverage,
+Docker build (console), Docker build (slim),
+Breaking-change hold, Changelog entry, Changelog fragments
+```
+
+**No compat check is in that set.** So `compat.yml`'s `pull_request` trigger
+can be filtered directly, with no shim, and now is: a PR touching only `**.md`,
+`docs/**` or `.changelog/**` skips ~14 runner-minutes of SDK suites. The filter
+is deliberately short — editing a published doc also regenerates
+`internal/docssearch/index.gen.go` and `web/src/docs-index.gen.ts`, which are
+not matched, so a docs change that touches the index still runs the suites.
+
+**`test.yml` is not filtered and must not be** without a skip-shim, because
+nine of its jobs are required. The shim is a second workflow declaring jobs
+with byte-identical names that runs on the inverse filter and exits 0. It is
+mechanical, but it is a name-matching contract with the ruleset: rename a job
+in one place and PRs block. If it is built, the list above is the contract.
+
+*Remaining:* the `test.yml` shim, worth ~42 runner-minutes on a docs-only PR.
+
+### Also worth fixing: a required-set gap
+
+`Test suite (-tags slim,dev)` is **not** in the required set, though
+`-tags slim` and `-tags slim,nosqlite` are. It is the only job that compiles
+tag-gated code — every `*_dev.go`, `internal/capabilities`, `internal/mcp` —
+and it is the job that caught the gap in finding 7 when it reached CI.
+
+A change can therefore go red in that job and still be mergeable. Adding it to
+the ruleset is a repository-settings change rather than a code one, so it is
+noted here rather than made.
 
 ### Tier 4 — the local gate
 
@@ -248,14 +305,30 @@ between a release and an unexplained entry.
 and with the tag matrix's own vet, but it is 62 s in parallel and off the
 critical path. Removing it buys nothing worth the argument.
 
-## Suggested order
+## Outcome
 
-1. **A** and **B** — independent, days not weeks, and B stops the bleeding that
-   makes everything else look worse than it is.
-2. **F** — small, and closes the gap that prompted this review.
-3. **C** — the real wall-clock win; write the narrow non-slim job first.
-4. **D**, then **E** with its skip-shim.
+| | |
+| --- | --- |
+| **A** cancel superseded runs | done |
+| **B** mirror + frontend digest pin | done |
+| **C** SPA off the critical path | done, ~187 s saved, and simpler than proposed |
+| **D** consolidate `cross-build` | **declined** — would become the new critical path |
+| **E** path-filter heavy workflows | compat done; `test.yml` needs a shim first |
+| **F** local tag-matrix gate | done |
 
-Expected outcome if all land: PR wall clock roughly 9 → 6 minutes, runner
-minutes roughly 56 → 40 per PR, and a materially lower rate of red that is
-nobody's fault.
+CI wall clock drops from roughly 9 minutes to roughly 6 on the critical path,
+a force-push no longer costs a duplicate of both workflows, a docs-only PR
+skips compat entirely, and the two recurring false reds have had their causes
+removed rather than their symptoms re-run.
+
+Two things are left, and neither is code:
+
+1. **The `test.yml` skip-shim**, worth ~42 runner-minutes on a docs-only PR.
+   The required-check list it has to match is above.
+2. **Add `Test suite (-tags slim,dev)` to the required set.** It is the only
+   job that compiles tag-gated code and it is currently advisory.
+
+The estimate this document opened with — 56 → 40 runner-minutes — was built on
+D landing. Without it the figure is closer to 56 → 50 on a code PR, and near
+zero on a docs-only one. The wall-clock improvement is the real result; the
+runner-minute one was mostly D, and D was not worth its cost.
