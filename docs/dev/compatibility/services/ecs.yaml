@@ -2,20 +2,86 @@ service: ecs
 status: not_started
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-08-05
 protocols: [aws_json_1_1, rpcv2_cbor]
 implementation: [internal/services/ecs]
 integration_tests: [tests/integration/ecs]
 capability_docs: docs/services/ecs.md
 operation_count_estimate: 40 supported, 8 unsupported
 current_support_level: Substantial cluster, task, service, task set, and Fargate support; some agent/attribute/exec operations stubbed.
-operations: {}
+operations:
+  DescribeClusters:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_Cluster.html
+    scenarios:
+      current_resource_counts:
+        status: fixed
+        evidence:
+          - tests/integration/ecs/ecs_test.go#TestDescribeClusters_resourceCountsReflectCurrentState
+        notes: Counts RUNNING/PENDING tasks, ACTIVE services, and ACTIVE/DRAINING container instances from current stored state. Fargate tasks do not create container instances.
+  ListTasks:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_ListTasks.html
+    scenarios:
+      omitted_desired_status:
+        status: fixed
+        evidence:
+          - tests/integration/ecs/ecs_test.go#TestListTasks_filterByDesiredStatus
+          - compat/suites/go-sdk/internal/groups/ecs.go
+          - compat/suites/python-sdk/groups/ecs.py
+          - compat/suites/node-js-sdk/src/groups/ecs.ts
+          - compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/EcsGroup.java
+          - compat/suites/cli/internal/groups/ecs.go
+        notes: The omitted desiredStatus defaults to RUNNING, so stopped tasks remain available only through an explicit STOPPED query.
+      stopped_task_retention:
+        status: fixed
+        evidence:
+          - tests/integration/ecs/ecs_test.go#TestListTasks_filterByDesiredStatus
+        notes: Stopped tasks remain listable for one hour, then expire from ListTasks and DescribeTasks using the injected clock.
+  DescribeTasks:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTasks.html
+    scenarios:
+      stopped_task_retention:
+        status: fixed
+        evidence:
+          - tests/integration/ecs/ecs_test.go#TestListTasks_filterByDesiredStatus
+        notes: A stopped task is describable during AWS's documented minimum one-hour window and returns a MISSING failure after expiry.
+  StopTask:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StopTask.html
+    scenarios:
+      user_initiated_metadata:
+        status: fixed
+        evidence:
+          - tests/integration/ecs/service_lifecycle_test.go#TestStopTask_setsUserInitiatedStopCode
+          - tests/integration/ecs/service_lifecycle_test.go#TestStopTask_withoutReason
+          - compat/suites/go-sdk/internal/groups/ecs.go
+          - compat/suites/python-sdk/groups/ecs.py
+          - compat/suites/node-js-sdk/src/groups/ecs.ts
+          - compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/EcsGroup.java
+          - compat/suites/cli/internal/groups/ecs.go
+        notes: Caller stops report UserInitiated, preserve a supplied reason, default to Task stopped by user, populate stoppingAt/stoppedAt, and delete task tags.
+      scheduler_metadata:
+        status: fixed
+        evidence:
+          - tests/integration/ecs/service_lifecycle_test.go#TestUpdateService_scaleDownStopsTasksWithSchedulerStopCode
+        notes: Scheduler replacement and scale-down stops report ServiceSchedulerInitiated and populate stoppingAt/stoppedAt.
 findings:
-  fixed: []
+  fixed:
+    - DescribeClusters no longer returns creation-time zeroes after resources are added to a cluster.
+    - ListTasks applies AWS's default RUNNING desired-status filter.
+    - Stopped task records expire after the documented one-hour visibility window.
+    - StopTask and scheduler stops expose stable stop codes, reasons, and transition timestamps.
   remaining_gaps:
     - Prioritize RunTask, CreateService, RegisterTaskDefinition, Fargate awsvpc, and CDK paths.
+    - Modern ListServiceDeployments, DescribeServiceDeployments, and service revision history are not implemented; they are a separate endpoint-sized feature rather than task retention metadata.
   intentionally_partial: []
 handoff:
   start_with: [RegisterTaskDefinition, RunTask, CreateService]
-  do_not_redo: []
+  do_not_redo: [DescribeClusters current counts, ListTasks omitted desiredStatus, stopped task one-hour retention, StopTask stop metadata]
   commands: [go test -count=1 ./internal/services/ecs/... ./tests/integration/ecs/...]

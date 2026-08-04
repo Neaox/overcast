@@ -535,6 +535,9 @@ func (h *Handler) describeClustersTyped(ctx context.Context, req *describeCluste
 			})
 			continue
 		}
+		if aerr := h.refreshClusterCounts(ctx, c); aerr != nil {
+			return nil, aerr
+		}
 		found = append(found, *c)
 	}
 	return &describeClustersResponse{Clusters: found, Failures: failures}, nil
@@ -827,7 +830,7 @@ func (h *Handler) stopTaskTyped(ctx context.Context, req *stopTaskRequest) (*sto
 		}
 	}
 	task, _, aerr = h.stopTaskRecord(ctx, clusterName, taskID, taskStop{
-		reason: req.Reason, code: "UserInitiated", stoppingAt: true,
+		reason: req.Reason, code: "UserInitiated",
 	})
 	if aerr != nil {
 		return nil, aerr
@@ -852,8 +855,11 @@ func (h *Handler) describeTasksTyped(ctx context.Context, req *describeTasksRequ
 	failures := make([]taskFailure, 0)
 	for _, ref := range req.Tasks {
 		taskID := extractTaskID(ref)
-		task, aerr := h.store.getTask(ctx, clusterName, taskID)
-		if aerr != nil || task == nil {
+		task, aerr := h.getVisibleTask(ctx, clusterName, taskID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if task == nil {
 			arn := ref
 			if !strings.HasPrefix(arn, "arn:") {
 				arn = h.taskARN(ctx, clusterName, taskID)
@@ -871,13 +877,17 @@ func (h *Handler) listTasksTyped(ctx context.Context, req *listTasksRequest) (*l
 		req.Cluster = "default"
 	}
 	clusterName := extractClusterName(req.Cluster)
-	tasks, aerr := h.store.listTasks(ctx, clusterName)
+	tasks, aerr := h.listVisibleTasks(ctx, clusterName)
 	if aerr != nil {
 		return nil, aerr
 	}
+	desiredStatus := req.DesiredStatus
+	if desiredStatus == "" {
+		desiredStatus = "RUNNING"
+	}
 	arns := make([]string, 0, len(tasks))
 	for _, t := range tasks {
-		if req.DesiredStatus != "" && t.DesiredStatus != req.DesiredStatus {
+		if t.DesiredStatus != desiredStatus {
 			continue
 		}
 		if req.Family != "" && !strings.Contains(t.TaskDefinitionArn, "/"+req.Family+":") {

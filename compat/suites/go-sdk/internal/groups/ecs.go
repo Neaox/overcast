@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
 	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
@@ -284,6 +285,28 @@ func (g *ecsGroup) StopTask(ctx context.Context, t *harness.TestContext) error {
 	}
 	if resp.Task == nil || resp.Task.DesiredStatus == nil || *resp.Task.DesiredStatus != "STOPPED" {
 		return fmt.Errorf("StopTask: expected desiredStatus STOPPED")
+	}
+	if resp.Task.StopCode != "UserInitiated" || aws.ToString(resp.Task.StoppedReason) != "compat test cleanup" {
+		return fmt.Errorf("StopTask: expected UserInitiated with caller reason, got code=%q reason=%q", resp.Task.StopCode, aws.ToString(resp.Task.StoppedReason))
+	}
+	if resp.Task.StoppingAt == nil || resp.Task.StoppedAt == nil {
+		return fmt.Errorf("StopTask: expected stoppingAt and stoppedAt")
+	}
+	listed, err := g.cl().ListTasks(ctx, &ecs.ListTasksInput{Cluster: aws.String(cluster)})
+	if err != nil {
+		return err
+	}
+	for _, arn := range listed.TaskArns {
+		if arn == taskArn {
+			return fmt.Errorf("StopTask: default ListTasks returned stopped task")
+		}
+	}
+	stopped, err := g.cl().ListTasks(ctx, &ecs.ListTasksInput{Cluster: aws.String(cluster), DesiredStatus: ecstypes.DesiredStatusStopped})
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(stopped.TaskArns, taskArn) {
+		return fmt.Errorf("StopTask: explicit STOPPED ListTasks did not return task")
 	}
 	return nil
 }

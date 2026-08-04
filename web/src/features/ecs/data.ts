@@ -23,6 +23,7 @@ export const ecsKeys = {
   taskDefinitions: () => [...ecsKeys.all(), "task-definitions"] as const,
   taskDefinitionFamilies: () => [...ecsKeys.all(), "task-definition-families"] as const,
   tasks: (cluster: string) => [...ecsKeys.all(), "tasks", cluster] as const,
+  task: (cluster: string, taskId: string) => [...ecsKeys.tasks(cluster), "detail", taskId] as const,
   services: (cluster: string) => [...ecsKeys.all(), "services", cluster] as const,
   containerInstances: (cluster: string) =>
     [...ecsKeys.all(), "container-instances", cluster] as const,
@@ -55,10 +56,21 @@ export function ecsTaskDefinitionsQueryOptions() {
   })
 }
 
-export function ecsTasksQueryOptions(cluster: string) {
+export function ecsTasksQueryOptions(
+  cluster: string,
+  desiredStatus: "RUNNING" | "STOPPED" = "RUNNING",
+) {
   return queryOptions({
-    queryKey: ecsKeys.tasks(cluster),
-    queryFn: () => ecs.listTasks(cluster),
+    queryKey: [...ecsKeys.tasks(cluster), desiredStatus] as const,
+    queryFn: () => ecs.listTasks(cluster, desiredStatus),
+    staleTime: 5_000,
+  })
+}
+
+export function ecsTaskQueryOptions(cluster: string, taskId: string) {
+  return queryOptions({
+    queryKey: ecsKeys.task(cluster, taskId),
+    queryFn: () => ecs.describeTask(cluster, taskId),
     staleTime: 5_000,
   })
 }

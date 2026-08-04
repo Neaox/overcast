@@ -200,6 +200,18 @@ public final class EcsGroup implements ServiceGroup {
         Assertions.assertNotBlank(taskArn, "StopTask: no task from RunTask");
         var resp = ecs().stopTask(r -> r.cluster(cluster).task(taskArn).reason("compat test cleanup"));
         Assertions.assertEquals("STOPPED", resp.task().desiredStatus(), "StopTask: expected STOPPED");
+        Assertions.assertEquals("UserInitiated", resp.task().stopCodeAsString(), "StopTask: expected UserInitiated");
+        Assertions.assertEquals("compat test cleanup", resp.task().stoppedReason(), "StopTask: expected caller reason");
+        Assertions.assertNotNull(resp.task().stoppingAt(), "StopTask: expected stoppingAt");
+        Assertions.assertNotNull(resp.task().stoppedAt(), "StopTask: expected stoppedAt");
+        var listed = ecs().listTasks(r -> r.cluster(cluster));
+        if (listed.taskArns().contains(taskArn)) {
+            throw new AssertionError("StopTask: default ListTasks returned stopped task");
+        }
+        var stopped = ecs().listTasks(r -> r.cluster(cluster).desiredStatus(DesiredStatus.STOPPED));
+        if (!stopped.taskArns().contains(taskArn)) {
+            throw new AssertionError("StopTask: explicit STOPPED ListTasks did not return task");
+        }
     }
 
     // ── ecs-services ───────────────────────────────────────────────────────

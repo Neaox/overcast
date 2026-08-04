@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ChevronDown, ChevronRight } from "lucide-react"
-import { ecsTasksQueryOptions } from "@/features/ecs/data"
+import { ecsTaskQueryOptions } from "@/features/ecs/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
@@ -10,12 +10,7 @@ import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import type { EcsContainer } from "@/types"
 
 export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskId: string }) {
-  const { data: tasks = [], isLoading } = useQuery(ecsTasksQueryOptions(clusterName))
-
-  const task = tasks.find((t) => {
-    const id = t.taskArn.split("/").pop() ?? ""
-    return id === taskId
-  })
+  const { data: task, isLoading } = useQuery(ecsTaskQueryOptions(clusterName, taskId))
 
   if (isLoading) {
     return (

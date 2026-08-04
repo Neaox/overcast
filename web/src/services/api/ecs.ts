@@ -24,6 +24,7 @@ import {
   type ContainerDefinition,
   type NetworkMode,
   type LaunchType,
+  type DesiredStatus,
 } from "@aws-sdk/client-ecs"
 import type {
   EcsCluster,
@@ -151,13 +152,22 @@ export const ecs = {
     await awsClients.ecs().send(new DeregisterTaskDefinitionCommand({ taskDefinition }))
   },
 
-  listTasks: async (cluster: string): Promise<EcsTask[]> => {
+  listTasks: async (
+    cluster: string,
+    desiredStatus: DesiredStatus = "RUNNING",
+  ): Promise<EcsTask[]> => {
     const client = awsClients.ecs()
-    const listRes = await client.send(new ListTasksCommand({ cluster }))
+    const listRes = await client.send(new ListTasksCommand({ cluster, desiredStatus }))
     const arns = listRes.taskArns ?? []
     if (arns.length === 0) return []
     const descRes = await client.send(new DescribeTasksCommand({ cluster, tasks: arns }))
     return (descRes.tasks ?? []).map(mapTask)
+  },
+
+  describeTask: async (cluster: string, task: string): Promise<EcsTask | null> => {
+    const res = await awsClients.ecs().send(new DescribeTasksCommand({ cluster, tasks: [task] }))
+    const described = res.tasks?.[0]
+    return described ? mapTask(described) : null
   },
 
   runTask: async (opts: {

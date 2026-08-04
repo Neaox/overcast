@@ -265,6 +265,24 @@ export function makeECSGroups(suite: string): TestGroup[] {
               "STOPPED",
               `StopTask: expected desiredStatus STOPPED, got ${resp.task.desiredStatus}`,
             );
+            assert.strictEqual(resp.task.stopCode, "UserInitiated");
+            assert.strictEqual(resp.task.stoppedReason, "compat test cleanup");
+            assert.ok(resp.task.stoppingAt, "StopTask: missing stoppingAt");
+            assert.ok(resp.task.stoppedAt, "StopTask: missing stoppedAt");
+            const listed = await ecs.send(
+              new ListTasksCommand({ cluster: clusterName }),
+            );
+            assert.ok(
+              !listed.taskArns?.includes(taskArn),
+              "StopTask: default ListTasks returned stopped task",
+            );
+            const stopped = await ecs.send(
+              new ListTasksCommand({ cluster: clusterName, desiredStatus: "STOPPED" }),
+            );
+            assert.ok(
+              stopped.taskArns?.includes(taskArn),
+              "StopTask: explicit STOPPED ListTasks did not return task",
+            );
           },
         },
       ],
