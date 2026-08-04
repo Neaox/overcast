@@ -28,9 +28,20 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # No `needs: web`. An untagged Go build embeds `all:web/dist`, and the
+  # committed `web/dist/.gitkeep` is what keeps that pattern resolving without
+  # a built SPA — a binary without one serves the API normally and answers 503
+  # on the UI port, which is documented behaviour rather than a broken build.
+  #
+  # Nothing in the Go suite asks for real SPA content: the BFF's static-serving
+  # tests inject an fstest.MapFS of their own (internal/bff/debug_test.go), and
+  # no test skips itself when the directory is empty. So waiting for the
+  # artifact bought these jobs nothing and cost them the whole SPA build.
+  #
+  # `cross-build` keeps its dependency, and must: release builds assert a real
+  # web/dist/index.html and fail loudly without one.
   vet:
     name: Vet
-    needs: web
     runs-on: ubuntu-latest
 
     steps:
@@ -40,11 +51,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: web-dist
-          path: web/dist
 
       - name: Install dependencies
         run: go mod download
@@ -52,9 +58,11 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+  # The longest job in the workflow, and it used to start 187 s late waiting on
+  # the SPA it never read — see the note on `vet`. It sets the critical path,
+  # so this is where dropping the dependency is worth the most.
   coverage:
     name: Full test suite with coverage
-    needs: web
     runs-on: ubuntu-latest
 
     steps:
@@ -64,11 +72,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: web-dist
-          path: web/dist
 
       - name: Install dependencies
         run: go mod download
@@ -128,7 +131,6 @@ jobs:
 
   sqs-protocol-dispatch:
     name: SQS integration tests (protocol dispatch)
-    needs: web
     runs-on: ubuntu-latest
 
     steps:
@@ -138,11 +140,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: web-dist
-          path: web/dist
 
       - name: Install dependencies
         run: go mod download
@@ -155,7 +152,6 @@ jobs:
 
   lint:
     name: Lint
-    needs: web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -163,10 +159,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: web-dist
-          path: web/dist
       # No install step: `make lint-go` runs golangci-lint via a pinned
       # `go run`, so CI and local runs cannot drift onto different versions.
       # The pin lives in the Makefile (GOLANGCI_LINT_VERSION).
