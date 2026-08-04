@@ -1,3 +1,0 @@
-* [rds] a health check no longer reverts an API call it overlapped: it polls the engine for minutes, and used to write back the instance record it had read before dialling — silently undoing a `ModifyDBInstance`'s new instance class, or rolling its status back
-* [elasticache] a cluster, replication group or serverless cache deleted while its container was still starting stays deleted over the Query protocol, and its container is torn down rather than left running — the typed protocol already did this
-* [rds/elasticache/msk] every writer of an instance, cluster, replication group or cache record now holds that record's lock across the read and the write, so a lifecycle transition, a Docker event and an API call can no longer discard one another's edits

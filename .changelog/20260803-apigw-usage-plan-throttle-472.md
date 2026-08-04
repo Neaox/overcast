@@ -1,3 +1,0 @@
-+ [apigateway] usage-plan throttle and quota limits are measured on every request that presents an API key — `GetUsage` returns AWS's daily `[used, remaining]` log per key, and reaching a limit publishes an `apigateway:Throttled` event
-  `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` (default off) turns that measurement into rejection, answering an over-limit request with API Gateway's `429`: `TooManyRequestsException` for the rate limit, `LimitExceededException` for the quota
-+ [web/apigateway] the Usage Plans page shows each plan's rate, burst and quota, today's usage per API key, and a live feed of limits being reached

@@ -1,2 +1,0 @@
-* [protocol/rds] Query-protocol lists whose members carry a model `locationName` now decode — RDS `CreateDBSubnetGroup` rejected every real AWS SDK with "At least one SubnetId is required" because the SDKs serialise `SubnetIds.SubnetIdentifier.N` and the codec only recognised `member.N`, flattened, and map forms
-* [protocol] Query-protocol map entries no longer lose their values — `entry.N.key` and `entry.N.value` arrive as separate wire keys and were never merged by index, so maps decoded with every value empty

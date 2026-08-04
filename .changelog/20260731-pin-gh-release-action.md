@@ -1,1 +1,0 @@
-* [ci] `softprops/action-gh-release` is pinned to a commit SHA rather than a tag. A tag can be moved to point at different code, so a tag pin is a convenience and not a supply-chain control; the version stays readable as a trailing comment
