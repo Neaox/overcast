@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/Neaox/overcast-compat-cli/internal/awscli"
 	"github.com/Neaox/overcast-compat-cli/internal/harness"
@@ -259,6 +260,30 @@ func (g *ecsCliGroup) StopTask(_ context.Context, t *harness.TestContext) error 
 	desired, _ := task["desiredStatus"].(string)
 	if desired != "STOPPED" {
 		return fmt.Errorf("StopTask: expected desiredStatus STOPPED, got %s", desired)
+	}
+	if task["stopCode"] != "UserInitiated" || task["stoppedReason"] != "compat test cleanup" {
+		return fmt.Errorf("StopTask: expected UserInitiated with caller reason, got code=%v reason=%v", task["stopCode"], task["stoppedReason"])
+	}
+	if task["stoppingAt"] == nil || task["stoppedAt"] == nil {
+		return fmt.Errorf("StopTask: expected stoppingAt and stoppedAt")
+	}
+	listed, err := awscli.RunOutput(t.Endpoint, t.Region, "ecs", "list-tasks", "--cluster", cluster)
+	if err != nil {
+		return err
+	}
+	arns, _ := listed["taskArns"].([]interface{})
+	for _, arn := range arns {
+		if arn == taskArn {
+			return fmt.Errorf("StopTask: default ListTasks returned stopped task")
+		}
+	}
+	stopped, err := awscli.RunOutput(t.Endpoint, t.Region, "ecs", "list-tasks", "--cluster", cluster, "--desired-status", "STOPPED")
+	if err != nil {
+		return err
+	}
+	stoppedArns, _ := stopped["taskArns"].([]interface{})
+	if !slices.Contains(stoppedArns, any(taskArn)) {
+		return fmt.Errorf("StopTask: explicit STOPPED ListTasks did not return task")
 	}
 	return nil
 }

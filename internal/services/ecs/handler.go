@@ -325,12 +325,58 @@ func (h *Handler) DescribeClusters(w http.ResponseWriter, r *http.Request) {
 			})
 			continue
 		}
+		if aerr := h.refreshClusterCounts(r.Context(), c); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
 		found = append(found, *c)
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"clusters": found,
 		"failures": failures,
 	}, "application/x-amz-json-1.1")
+}
+
+// refreshClusterCounts derives the summary fields AWS exposes from the current
+// resource records instead of relying on counters captured when the cluster was
+// created. Fargate tasks count as cluster tasks but never as container instances.
+func (h *Handler) refreshClusterCounts(ctx context.Context, cluster *Cluster) *protocol.AWSError {
+	tasks, aerr := h.store.listTasks(ctx, cluster.ClusterName)
+	if aerr != nil {
+		return aerr
+	}
+	services, aerr := h.store.listServices(ctx, cluster.ClusterName)
+	if aerr != nil {
+		return aerr
+	}
+	instances, aerr := h.store.listContainerInstances(ctx, cluster.ClusterName)
+	if aerr != nil {
+		return aerr
+	}
+
+	cluster.RunningTasksCount = 0
+	cluster.PendingTasksCount = 0
+	for _, task := range tasks {
+		switch task.LastStatus {
+		case "RUNNING":
+			cluster.RunningTasksCount++
+		case "PENDING":
+			cluster.PendingTasksCount++
+		}
+	}
+	cluster.ActiveServicesCount = 0
+	for _, service := range services {
+		if service.Status == "ACTIVE" {
+			cluster.ActiveServicesCount++
+		}
+	}
+	cluster.RegisteredContainerInstancesCount = 0
+	for _, instance := range instances {
+		if instance.Status == "ACTIVE" || instance.Status == "DRAINING" {
+			cluster.RegisteredContainerInstancesCount++
+		}
+	}
+	return nil
 }
 
 // ListClusters handles AmazonEC2ContainerServiceV20141113.ListClusters.

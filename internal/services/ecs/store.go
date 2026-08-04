@@ -628,6 +628,14 @@ func (s *ecsStore) getTask(ctx context.Context, cluster, taskID string) (*Task, 
 	return &t, nil
 }
 
+func (s *ecsStore) deleteTask(ctx context.Context, cluster, taskID string) *protocol.AWSError {
+	key := serviceutil.RegionKey(s.region(ctx), cluster+"/"+taskID)
+	if err := s.store.Delete(ctx, nsTasks, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
 func (s *ecsStore) listTasks(ctx context.Context, cluster string) ([]Task, *protocol.AWSError) {
 	prefix := serviceutil.RegionKey(s.region(ctx), cluster+"/")
 	pairs, err := s.store.Scan(ctx, nsTasks, prefix)
@@ -740,6 +748,13 @@ func (s *ecsStore) getTags(ctx context.Context, arn string) (map[string]string, 
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return tags, nil
+}
+
+func (s *ecsStore) deleteTags(ctx context.Context, arn string) *protocol.AWSError {
+	if err := s.store.Delete(ctx, nsTags, serviceutil.RegionKey(s.region(ctx), arn)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
 }
 
 // ---- Task definition family listing -------------------------------------------

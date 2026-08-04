@@ -423,6 +423,8 @@ func TestUpdateService_scaleDownStopsTasksWithSchedulerStopCode(t *testing.T) {
 		Tasks []struct {
 			StopCode      string `json:"stopCode"`
 			StoppedReason string `json:"stoppedReason"`
+			StoppingAt    *int64 `json:"stoppingAt"`
+			StoppedAt     *int64 `json:"stoppedAt"`
 		} `json:"tasks"`
 	}
 	helpers.DecodeJSON(t, descResp, &described)
@@ -432,6 +434,9 @@ func TestUpdateService_scaleDownStopsTasksWithSchedulerStopCode(t *testing.T) {
 	}
 	if described.Tasks[0].StopCode != "ServiceSchedulerInitiated" {
 		t.Errorf("expected stopCode=ServiceSchedulerInitiated, got %q", described.Tasks[0].StopCode)
+	}
+	if described.Tasks[0].StoppingAt == nil || described.Tasks[0].StoppedAt == nil {
+		t.Errorf("expected scheduler stop timestamps, got stoppingAt=%v stoppedAt=%v", described.Tasks[0].StoppingAt, described.Tasks[0].StoppedAt)
 	}
 }
 
@@ -523,6 +528,12 @@ func TestStopTask_setsUserInitiatedStopCode(t *testing.T) {
 	if len(run.Tasks) != 1 {
 		t.Fatalf("expected 1 task, got %d", len(run.Tasks))
 	}
+	tagResp := ecsCall(t, srv, "TagResource", map[string]any{
+		"resourceArn": run.Tasks[0].TaskArn,
+		"tags":        []map[string]string{{"key": "lifecycle", "value": "temporary"}},
+	})
+	helpers.AssertStatus(t, tagResp, http.StatusOK)
+	tagResp.Body.Close()
 
 	// When: the caller stops it
 	stopResp := ecsCall(t, srv, "StopTask", map[string]any{
@@ -546,5 +557,57 @@ func TestStopTask_setsUserInitiatedStopCode(t *testing.T) {
 	}
 	if stopped.Task.StoppedReason != "done with it" {
 		t.Errorf("expected the caller's reason, got %q", stopped.Task.StoppedReason)
+	}
+
+	listTags := ecsCall(t, srv, "ListTagsForResource", map[string]any{
+		"resourceArn": run.Tasks[0].TaskArn,
+	})
+	defer listTags.Body.Close()
+	helpers.AssertStatus(t, listTags, http.StatusOK)
+	var tags struct {
+		Tags []map[string]string `json:"tags"`
+	}
+	helpers.DecodeJSON(t, listTags, &tags)
+	if len(tags.Tags) != 0 {
+		t.Fatalf("expected StopTask to delete task tags, got %v", tags.Tags)
+	}
+}
+
+func TestStopTask_withoutReason(t *testing.T) {
+	// Given: a running standalone task.
+	srv := awsvpcTaskDefCluster(t, "default-reason-cluster", "default-reason-task")
+	run := ecsCall(t, srv, "RunTask", map[string]any{
+		"cluster":        "default-reason-cluster",
+		"taskDefinition": "default-reason-task:1",
+		"launchType":     "FARGATE",
+		"networkConfiguration": map[string]any{
+			"awsvpcConfiguration": map[string]any{"subnets": []string{"subnet-12345678"}},
+		},
+	})
+	helpers.AssertStatus(t, run, http.StatusOK)
+	var started struct {
+		Tasks []struct {
+			TaskArn string `json:"taskArn"`
+		} `json:"tasks"`
+	}
+	helpers.DecodeJSON(t, run, &started)
+	run.Body.Close()
+
+	// When: StopTask omits the optional reason.
+	stopped := ecsCall(t, srv, "StopTask", map[string]any{
+		"cluster": "default-reason-cluster", "task": started.Tasks[0].TaskArn,
+	})
+	defer stopped.Body.Close()
+	helpers.AssertStatus(t, stopped, http.StatusOK)
+	var result struct {
+		Task struct {
+			StoppedReason string `json:"stoppedReason"`
+		} `json:"task"`
+	}
+	helpers.DecodeJSON(t, stopped, &result)
+
+	// Then: AWS's documented default reason is returned.
+	if result.Task.StoppedReason != "Task stopped by user" {
+		t.Fatalf("expected AWS default stoppedReason, got %q", result.Task.StoppedReason)
 	}
 }

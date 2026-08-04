@@ -226,6 +226,17 @@ def StopTask(ctx: TestContext) -> None:
         raise AssertionError(
             f"StopTask: expected desiredStatus STOPPED, got {task.get('desiredStatus')}"
         )
+    if task.get("stopCode") != "UserInitiated" or task.get("stoppedReason") != "compat test cleanup":
+        raise AssertionError(
+            f"StopTask: expected UserInitiated with caller reason, got "
+            f"code={task.get('stopCode')} reason={task.get('stoppedReason')}"
+        )
+    if not task.get("stoppingAt") or not task.get("stoppedAt"):
+        raise AssertionError("StopTask: expected stoppingAt and stoppedAt")
+    if task_arn in ecs.list_tasks(cluster=cluster).get("taskArns", []):
+        raise AssertionError("StopTask: default ListTasks returned stopped task")
+    if task_arn not in ecs.list_tasks(cluster=cluster, desiredStatus="STOPPED").get("taskArns", []):
+        raise AssertionError("StopTask: explicit STOPPED ListTasks did not return task")
 
 
 # ── ecs-services ──────────────────────────────────────────────────────────────

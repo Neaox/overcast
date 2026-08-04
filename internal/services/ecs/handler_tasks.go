@@ -24,6 +24,17 @@ import (
 // taskLockStripes is how many mutexes lockTask spreads task records over.
 const taskLockStripes = 64
 
+// stoppedTaskRetention is the deterministic end of ECS's documented minimum
+// visibility window. AWS guarantees that stopped tasks remain describable for
+// at least one hour, while its console displays them for one hour:
+// https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTasks.html
+const stoppedTaskRetention = time.Hour
+
+// AWS's StopTask response example uses this reason when the optional caller
+// reason is omitted:
+// https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StopTask.html
+const defaultUserStoppedReason = "Task stopped by user"
+
 // lockTask serialises the read-modify-write of one task's record, returning the
 // function that releases it. Same shape and same reason as lockService: a task
 // is stored as one JSON blob, so every writer reads the whole record, edits it
@@ -79,10 +90,6 @@ func taskLockStripe(key string) uint32 {
 type taskStop struct {
 	reason string
 	code   string
-	// stoppingAt stamps stoppingAt as well as stoppedAt. Only the
-	// caller-initiated paths do; the service scheduler's stops never have, and
-	// changing that is a wire change rather than part of closing a race.
-	stoppingAt bool
 }
 
 // stopTaskRecord writes a stop onto one task's record under lockTask, and
@@ -107,7 +114,11 @@ func (h *Handler) stopTaskRecord(ctx context.Context, clusterName, taskID string
 		return nil, false, aerr
 	}
 	if task.LastStatus == "STOPPED" {
+		h.deleteStoppedTaskTags(ctx, task)
 		return task, false, nil
+	}
+	if stop.code == "UserInitiated" && stop.reason == "" {
+		stop.reason = defaultUserStoppedReason
 	}
 
 	task.LastStatus = "STOPPED"
@@ -116,16 +127,67 @@ func (h *Handler) stopTaskRecord(ctx context.Context, clusterName, taskID string
 	task.StopCode = stop.code
 	stoppedAt := h.clk.Now().Unix()
 	task.StoppedAt = &stoppedAt
-	if stop.stoppingAt {
-		task.StoppingAt = &stoppedAt
-	}
+	task.StoppingAt = &stoppedAt
 	for i := range task.Containers {
 		task.Containers[i].LastStatus = "STOPPED"
 	}
 	if aerr := h.store.putTask(ctx, task); aerr != nil {
 		return nil, false, aerr
 	}
+	h.deleteStoppedTaskTags(ctx, task)
 	return task, true, nil
+}
+
+func (h *Handler) deleteStoppedTaskTags(ctx context.Context, task *Task) {
+	if aerr := h.store.deleteTags(ctx, task.TaskArn); aerr != nil && h.log != nil {
+		h.log.Warn("ecs: failed to delete stopped task tags",
+			zap.String("task", task.TaskArn),
+			zap.String("error", aerr.Message))
+	}
+}
+
+func (h *Handler) stoppedTaskExpired(task *Task) bool {
+	if task == nil || task.LastStatus != "STOPPED" || task.StoppedAt == nil {
+		return false
+	}
+	return !h.clk.Now().Before(time.Unix(*task.StoppedAt, 0).Add(stoppedTaskRetention))
+}
+
+// getVisibleTask applies ECS's stopped-task retention contract and lazily
+// removes expired records so both memory and persistent stores stay bounded.
+func (h *Handler) getVisibleTask(ctx context.Context, clusterName, taskID string) (*Task, *protocol.AWSError) {
+	task, aerr := h.store.getTask(ctx, clusterName, taskID)
+	if aerr != nil || !h.stoppedTaskExpired(task) {
+		return task, aerr
+	}
+	if aerr := h.store.deleteTags(ctx, task.TaskArn); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := h.store.deleteTask(ctx, clusterName, taskID); aerr != nil {
+		return nil, aerr
+	}
+	return nil, nil
+}
+
+func (h *Handler) listVisibleTasks(ctx context.Context, clusterName string) ([]Task, *protocol.AWSError) {
+	tasks, aerr := h.store.listTasks(ctx, clusterName)
+	if aerr != nil {
+		return nil, aerr
+	}
+	visible := make([]Task, 0, len(tasks))
+	for i := range tasks {
+		if !h.stoppedTaskExpired(&tasks[i]) {
+			visible = append(visible, tasks[i])
+			continue
+		}
+		if aerr := h.store.deleteTags(ctx, tasks[i].TaskArn); aerr != nil {
+			return nil, aerr
+		}
+		if aerr := h.store.deleteTask(ctx, clusterName, extractTaskID(tasks[i].TaskArn)); aerr != nil {
+			return nil, aerr
+		}
+	}
+	return visible, nil
 }
 
 // RunTask handles AmazonEC2ContainerServiceV20141113.RunTask.
@@ -625,7 +687,7 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 	// Docker die event whose handler races this write, and a caller-initiated
 	// stop that loses the race is reported as a task that died on its own.
 	task, _, aerr = h.stopTaskRecord(r.Context(), clusterName, taskID, taskStop{
-		reason: req.Reason, code: "UserInitiated", stoppingAt: true,
+		reason: req.Reason, code: "UserInitiated",
 	})
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -689,8 +751,12 @@ func (h *Handler) DescribeTasks(w http.ResponseWriter, r *http.Request) {
 
 	for _, ref := range req.Tasks {
 		taskID := extractTaskID(ref)
-		task, aerr := h.store.getTask(r.Context(), clusterName, taskID)
-		if aerr != nil || task == nil {
+		task, aerr := h.getVisibleTask(r.Context(), clusterName, taskID)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		if task == nil {
 			arn := ref
 			if !strings.HasPrefix(arn, "arn:") {
 				arn = h.taskARN(r.Context(), clusterName, taskID)
@@ -723,15 +789,19 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	clusterName := extractClusterName(req.Cluster)
 
-	tasks, aerr := h.store.listTasks(r.Context(), clusterName)
+	tasks, aerr := h.listVisibleTasks(r.Context(), clusterName)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
+	desiredStatus := req.DesiredStatus
+	if desiredStatus == "" {
+		desiredStatus = "RUNNING"
+	}
 	arns := make([]string, 0, len(tasks))
 	for _, t := range tasks {
-		if req.DesiredStatus != "" && t.DesiredStatus != req.DesiredStatus {
+		if t.DesiredStatus != desiredStatus {
 			continue
 		}
 		if req.Family != "" && !strings.Contains(t.TaskDefinitionArn, "/"+req.Family+":") {

@@ -13,6 +13,9 @@ const navigateMock = vi.fn()
 const setEndpointMock = vi.fn()
 const receiveMessagesMock = vi.fn()
 const clipboardWriteTextMock = vi.fn()
+const { nodeIdMock } = vi.hoisted(() => ({
+  nodeIdMock: { value: "us-east-1::ecr::backend/api" },
+}))
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
@@ -21,7 +24,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("@xyflow/react", () => ({
   Handle: () => <div data-testid="handle" />,
   Position: { Left: "left", Right: "right" },
-  useNodeId: () => "us-east-1::ecr::backend/api",
+  useNodeId: () => nodeIdMock.value,
 }))
 
 vi.mock("@/hooks/use-endpoint", () => ({
@@ -290,5 +293,58 @@ describe("ServiceNode ECR interactions", () => {
 
     expect(screen.getByText("2")).toBeInTheDocument()
     expect(navigateMock).not.toHaveBeenCalled()
+  })
+})
+
+describe("ServiceNode ECS navigation", () => {
+  beforeEach(() => {
+    navigateMock.mockReset()
+  })
+
+  it("opens the owning cluster from a service node", () => {
+    nodeIdMock.value = "us-east-1::ecs-service::demo/web"
+    render(
+      <ServiceNode
+        {...makeServiceNodeProps({
+          service: "ecs",
+          label: "web",
+          ecsResourceType: "service",
+          clusterName: "demo",
+          region: "us-east-1",
+        })}
+      />,
+    )
+
+    fireEvent.click(screen.getByText("web").closest('[role="button"]')!)
+
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/ecs/$cluster",
+      params: { cluster: "demo" },
+      search: undefined,
+    })
+  })
+
+  it("opens task detail from a task node", () => {
+    nodeIdMock.value = "us-east-1::ecs-task::demo/task-1"
+    render(
+      <ServiceNode
+        {...makeServiceNodeProps({
+          service: "ecs",
+          label: "task-1",
+          ecsResourceType: "task",
+          clusterName: "demo",
+          taskId: "task-1",
+          region: "us-east-1",
+        })}
+      />,
+    )
+
+    fireEvent.click(screen.getByText("task-1").closest('[role="button"]')!)
+
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/ecs/$cluster/tasks/$taskId",
+      params: { cluster: "demo", taskId: "task-1" },
+      search: undefined,
+    })
   })
 })

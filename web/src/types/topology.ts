@@ -46,6 +46,12 @@ export interface TopologyNode {
   sourceType?: string
   /** Lambda ESM filter node only — raw FilterCriteria patterns. */
   filterPatterns?: string[]
+  /** ECS only — whether this node is a cluster, service, or current task. */
+  ecsResourceType?: "cluster" | "service" | "task"
+  /** ECS service/task owner, used for detail navigation. */
+  clusterName?: string
+  /** ECS task only — task UUID used by the task detail route. */
+  taskId?: string
 }
 
 export interface TopologyEdge {
