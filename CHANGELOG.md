@@ -116,6 +116,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [cloudformation] `{{resolve:...}}` dynamic references, resolved against Secrets Manager and SSM Parameter Store — a reference that cannot be resolved fails its resource rather than being written into it as literal text
 
+- [rds] `DescribeEvents` records a DB instance's create, start, stop, delete and failure transitions as `db-instance` events, kept for 14 days — this is where the reason an instance failed to start now surfaces, since the real `DBInstance` shape has nowhere to put it
+
 ### Changed
 
 - **BREAKING** [cloudwatch] alarms now evaluate their own metrics: epoch-aligned periods, `DatapointsToAlarm` M-of-N, `Dimensions`, and all four `TreatMissingData` modes
@@ -241,6 +243,10 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [rds] starting an instance rebuilds a container Docker no longer has, and the startup sweep keeps containers a stopped instance still owns
 
+- [rds] the emulator's instance logs endpoint explains a database that failed to start instead of showing an empty pane: it carries the instance's status and failure reason, serves the tail it captured from the container before that container went away, and answers 404 rather than 500 when the container is gone
+
+- [rds] `ModifyDBInstance` applies `MultiAZ=false`, which only the raw Query path did — stop, start and modify had one implementation per dispatch path and now have one between them
+
 - [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
 
 - [release] the `Changelog entry` check no longer asks the release PR to write itself a release note. A release-prep PR consumes every fragment into its version section and adds none by construction, but it also carries the new, untagged `VERSION` — the same predicate the check reads to decide which release window a PR is in — so it classified the release PR as "merged, waiting to be tagged" and posted an ask saying the release had already gone out, on the one PR that had not merged. The release PR is now exempt by shape: `VERSION` and `CHANGELOG.md` both changed, nothing touched outside those and `.changelog/`, the version untagged, and a non-empty `## [x.y.z]` section present. Push a code change onto the release branch and the check asks again, in words written for that case — the note belongs in the release section the PR already owns, the one place where editing `CHANGELOG.md` is the answer rather than the thing to avoid
@@ -276,6 +282,8 @@ can be applied mechanically rather than reconstructed from memory.
 - [web] filter-term highlighting in the CloudWatch Logs viewer marks every match in a line rather than every other one
 
 - [web] network error toasts stay quiet while the UI knows it is offline
+
+- [web/rds] the instance Logs tab shows the failure reason and the dead container's last output rather than "No logs available", and a new Events tab lists the instance's events newest-first with failures called out
 
 - [docs] `docs/networking.md` gains a *Data-plane endpoints* section stating the rule across services: every hostname Overcast hands back is minted on the endpoint the request came in on, how a name that points at a container (rather than at Overcast) is made resolvable, and why the port differs by caller
 

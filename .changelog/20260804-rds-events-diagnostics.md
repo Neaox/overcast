@@ -1,4 +1,0 @@
-+ [rds] `DescribeEvents` records a DB instance's create, start, stop, delete and failure transitions as `db-instance` events, kept for 14 days — this is where the reason an instance failed to start now surfaces, since the real `DBInstance` shape has nowhere to put it
-* [rds] the emulator's instance logs endpoint explains a database that failed to start instead of showing an empty pane: it carries the instance's status and failure reason, serves the tail it captured from the container before that container went away, and answers 404 rather than 500 when the container is gone
-* [web/rds] the instance Logs tab shows the failure reason and the dead container's last output rather than "No logs available", and a new Events tab lists the instance's events newest-first with failures called out
-* [rds] `ModifyDBInstance` applies `MultiAZ=false`, which only the raw Query path did — stop, start and modify had one implementation per dispatch path and now have one between them
