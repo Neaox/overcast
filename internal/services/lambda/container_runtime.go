@@ -1152,6 +1152,13 @@ type containerInstance struct {
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
 
+	// tailUnclaimed records that a tail wait gave up before its invocation's
+	// output arrived, so whatever lands next belongs to an invocation that has
+	// already answered. Guarded by tailMu, along with the boundary that wait was
+	// working to. See discardUnclaimedOutput.
+	tailUnclaimed     bool
+	tailUnclaimedMark tailMark
+
 	// initStartedAt is when the container was started, for environments whose
 	// init was triggered by an invoke (on-demand cold starts). Zero for
 	// proactively initialised environments (provisioned concurrency), which —
@@ -1261,6 +1268,12 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		deadline = ci.clk.Now().Add(900 * time.Second)
 	}
 
+	// Settle the previous invocation's straggling output before this one's tail
+	// opens, under the same gate as the wait itself: only a caller that will
+	// read LogResult pays for it.
+	if opts.LogTail && ci.logWriter != nil {
+		ci.discardUnclaimedOutput()
+	}
 	logMark := ci.beginTail()
 	if reason, ok := ci.runtimeAPI.ContainerError(ci.containerIP); ok {
 		ci.healthy = false
@@ -1615,6 +1628,18 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 	defer deadline.Stop()
 	tick := ci.clk.Ticker(tickInterval)
 	defer tick.Stop()
+	// However this wait ends, if it ends without this invocation's own output
+	// then that output is still coming and is still this invocation's. Leave
+	// the boundary behind so the next tail can drop it rather than open with a
+	// line it never wrote — see discardUnclaimedOutput.
+	defer func() {
+		if ci.tailAppendAt.Load() > mark.appended {
+			return
+		}
+		ci.tailMu.Lock()
+		ci.tailUnclaimed, ci.tailUnclaimedMark = true, mark
+		ci.tailMu.Unlock()
+	}()
 	for {
 		select {
 		case <-deadline.C:
@@ -1669,6 +1694,40 @@ func (ci *containerInstance) beginTail() tailMark {
 	defer ci.tailMu.Unlock()
 	ci.tailBuf = ci.tailBuf[:0]
 	return tailMark{read: ci.logReadAt.Load(), appended: ci.tailAppendAt.Load()}
+}
+
+// discardUnclaimedOutput settles the previous invocation's account before a new
+// tail opens: if its wait expired before its output arrived, that output is
+// still on its way, and the invocation it belongs to has already answered. Run
+// immediately before beginTail, whose reset is what actually drops it.
+//
+// The wait it runs is the same bounded one the invocation itself ran, against
+// the same boundary — long enough for Docker to hand over what it was holding,
+// and no longer. Two things follow, both deliberate:
+//
+//   - The cost lands on the next tail-requesting invoke, and only after a
+//     give-up. Non-tail invokes never call this, for the same reason they never
+//     wait: they discard LogResult, and warm p50 is ~6 ms.
+//   - Straggler output is dropped from the *tail* only. It still reaches
+//     CloudWatch Logs by the streaming path, which never consults any of this,
+//     so nothing is lost — it is read one call further out.
+//
+// This narrows the window rather than closing it: output that stays in Docker's
+// pipe through both waits is still unattributable, and still lands in the next
+// tail. Closing it outright needs the line tagged at the point it is written,
+// which needs Overcast to own the runtime's stdout inside the container the way
+// AWS's RIE and LocalStack's init do. What this buys is that a single stall now
+// costs a truncated tail — which is what LogResult promises, "the last 4 KB of
+// the execution log" — instead of one carrying another request's line, which
+// LogResult can never mean.
+func (ci *containerInstance) discardUnclaimedOutput() {
+	ci.tailMu.Lock()
+	unclaimed, mark := ci.tailUnclaimed, ci.tailUnclaimedMark
+	ci.tailUnclaimed = false
+	ci.tailMu.Unlock()
+	if unclaimed {
+		ci.waitForScannerIdle(mark)
+	}
 }
 
 // logDrainFirstReadGrace is how long a teardown that follows a failed
