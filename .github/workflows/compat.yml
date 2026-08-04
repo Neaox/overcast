@@ -13,6 +13,24 @@ on:
       - compat/baseline.json
   pull_request:
     branches: [main]
+    # A pull request that changes only prose cannot change how an SDK talks to
+    # the emulator, and the suites are ~14 runner-minutes across nine jobs
+    # against live instances. GitHub skips the run only when *every* changed
+    # file matches, so a PR touching a doc and a handler still runs in full.
+    #
+    # This is safe here specifically because no compat check is in the branch
+    # ruleset's required set — a required check that is filtered out never
+    # reports, and the pull request waits on it forever. Do not copy this block
+    # into test.yml, whose checks are required.
+    #
+    # Generated files are the reason the list can be this short: editing a
+    # published doc also regenerates internal/docssearch/index.gen.go and
+    # web/src/docs-index.gen.ts, neither of which is matched here, so a docs
+    # change that touches the index still runs the suites.
+    paths-ignore:
+      - "**.md"
+      - docs/**
+      - .changelog/**
   release:
     types: [created]
   workflow_dispatch:
@@ -21,6 +39,14 @@ on:
         description: "Suite(s) to run — comma-separated (empty = all)"
         required: false
         default: ""
+
+# One run per pull request — see the same block in test.yml for why, and why
+# cancellation stops at pull requests. It matters more here: a run is nine
+# suite jobs against live Overcast instances, and the baseline promotion on
+# main reads the result of a completed run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   prepare-matrix:
