@@ -425,8 +425,20 @@ Four rules, each of which has cost this repo a recovery:
   ```
 
 - **A PR showing no checks at all is `CONFLICTING`, not queued** — GitHub
-  dispatches no workflows on a conflicting PR. Check `mergeStateStatus` before
-  waiting on CI.
+  dispatches no workflows on a conflicting PR. Check **`mergeable`** before
+  waiting on CI, not `mergeStateStatus`: `CONFLICTING` is a value of `mergeable`
+  (MERGEABLE / CONFLICTING / UNKNOWN) and is not a member of the
+  `MergeStateStatus` enum at all — that field spells a conflict `DIRTY`.
+  `pr-wait` guarded on the wrong one for months and never fired.
+
+  ```sh
+  gh pr view <n> --json mergeable,mergeStateStatus
+  # a conflicting PR: {"mergeable":"CONFLICTING","mergeStateStatus":"DIRTY"}
+  ```
+
+  `mergeable` is `UNKNOWN` until GitHub finishes computing it — asking is what
+  schedules the computation — so look again after a second rather than reading
+  `UNKNOWN` as "fine".
 
 Full workflow, including the generated-file conflict recipe, is in the
 `stacked-prs` skill.

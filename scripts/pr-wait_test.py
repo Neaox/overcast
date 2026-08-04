@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for scripts/pr-wait.sh's log summarising.
+"""Tests for scripts/pr-wait.sh's log summarising and merge-state guard.
 
 This parsing has been wrong three separate ways in as many days:
 
@@ -13,6 +13,12 @@ This parsing has been wrong three separate ways in as many days:
 Each was found only by running the script against a live PR. The summarising is
 exposed as `pr-wait.sh --summarize-log <file>` so it can be exercised here
 instead, against synthetic logs, with no network and no pull request.
+
+The merge-state guard is exposed the same way, as `--merge-verdict <mergeable>
+<mergeStateStatus>`, for the same reason: it tested `mergeStateStatus` for
+CONFLICTING, which is a value of the separate `mergeable` field and not a member
+of the MergeStateStatus enum at all, so the branch was unreachable and nothing
+short of a live conflicting PR said so.
 
 Run: python scripts/pr-wait_test.py   (CI runs every scripts/*_test.py)
 """
@@ -96,6 +102,14 @@ def summarize(lines):
     return passed, out[1:]
 
 
+def verdict(mergeable, merge_state):
+    """Run pr-wait.sh --merge-verdict, return the decision it prints."""
+    return subprocess.run(
+        [BASH, SCRIPT.as_posix(), "--merge-verdict", mergeable, merge_state],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
 class BashResolutionTest(unittest.TestCase):
     def test_resolved_bash_can_read_the_script(self):
         # Without this the WSL mix-up arrives as seven CalledProcessErrors
@@ -111,6 +125,44 @@ class BashResolutionTest(unittest.TestCase):
             f"C:\\Windows\\System32\\bash.exe, the WSL launcher, whose "
             f"filesystem has no {SCRIPT.drive or 'such'} drive.",
         )
+
+
+class MergeVerdictTest(unittest.TestCase):
+    # The whole point. Observed live on PR #395, 2026-08-04: genuinely
+    # conflicting, and `gh pr view --json mergeable,mergeStateStatus` answered
+    # exactly this pair.
+    def test_conflicting_pr_as_github_actually_reports_it(self):
+        self.assertEqual(verdict("CONFLICTING", "DIRTY"), "conflicting")
+
+    def test_conflicting_is_never_a_merge_state_status(self):
+        # The dead branch: mergeStateStatus cannot hold CONFLICTING, so a guard
+        # reading only this field can only ever be reading MERGEABLE-ish values.
+        # Pinned so nobody "simplifies" the guard back onto the wrong field.
+        self.assertEqual(verdict("MERGEABLE", "CLEAN"), "ok")
+
+    def test_either_field_alone_is_enough(self):
+        self.assertEqual(verdict("CONFLICTING", "UNKNOWN"), "conflicting")
+        self.assertEqual(verdict("UNKNOWN", "DIRTY"), "conflicting")
+
+    def test_mergeable_states_that_still_dispatch_checks(self):
+        # Every other MergeStateStatus member. A PR that is BEHIND, BLOCKED by
+        # required reviews, a DRAFT, or UNSTABLE from a failing non-required
+        # check still gets workflows dispatched — there is something to wait on.
+        for state in ("BEHIND", "BLOCKED", "CLEAN", "DRAFT", "HAS_HOOKS", "UNSTABLE"):
+            with self.subTest(state=state):
+                self.assertEqual(verdict("MERGEABLE", state), "ok")
+
+    def test_unknown_asks_again_rather_than_deciding(self):
+        # GitHub computes mergeability asynchronously; UNKNOWN means "not yet",
+        # not "fine". Deciding "ok" here would race a conflicting PR straight
+        # into --watch, and deciding "conflicting" would reject a clean one.
+        self.assertEqual(verdict("UNKNOWN", "UNKNOWN"), "unknown")
+        self.assertEqual(verdict("MERGEABLE", "UNKNOWN"), "unknown")
+
+    def test_missing_fields_do_not_claim_a_conflict(self):
+        # jq prints "null" for an absent field. Better to wait on checks that
+        # exist than to refuse to wait on a PR that is fine.
+        self.assertEqual(verdict("null", "null"), "ok")
 
 
 class SummarizeLogTest(unittest.TestCase):
