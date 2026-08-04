@@ -61,8 +61,20 @@ type StackResource struct {
 	// PropertiesHash is a sha256 of the resolved Properties at provisioning
 	// time. UpdateStack uses it to detect property drift and re-provision
 	// only resources whose properties actually changed (e.g. Lambda code).
-	PropertiesHash string         `json:"PropertiesHash,omitempty"`
-	Properties     map[string]any `json:"-"`
+	PropertiesHash string `json:"PropertiesHash,omitempty"`
+	// Properties are the resolved properties this resource was provisioned
+	// with. They must persist: an update reads them back as the "old" side of
+	// the comparison every Update handler makes to decide whether a changed
+	// property can be applied in place or forces replacement, and to diff which
+	// fields to patch. Marked `json:"-"` they came back nil on every update, so
+	// each of those comparisons quietly concluded "nothing changed" — an
+	// AWS::RDS::DBInstance kept its old master username, an API Gateway stage
+	// patched nothing, and a custom resource's Lambda was handed a null
+	// OldResourceProperties, which the custom-resource contract does not allow.
+	//
+	// Records written before this was persisted decode to nil, which every
+	// caller already treats as "no prior state known" and skips.
+	Properties map[string]any `json:"Properties,omitempty"`
 	// DeletionPolicy / UpdateReplacePolicy are copied from the template at
 	// provisioning time so DeleteStack and UpdateStack can honour Retain /
 	// Snapshot semantics without re-parsing the template.

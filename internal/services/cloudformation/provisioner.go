@@ -200,8 +200,8 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 		// An unresolvable dynamic reference fails the resource. Provisioning it
 		// anyway would persist the literal "{{resolve:...}}" text as the
 		// property's value, which every service downstream then treats as data.
-		props, provErr := p.resolveProperties(res, rCtx)
-		propsHash := hashProps(props)
+		props, recordedProps, provErr := p.resolveProperties(res, rCtx)
+		propsHash := hashProps(recordedProps)
 		resStart := p.clk.Now()
 		var physID string
 		if provErr == nil {
@@ -243,7 +243,7 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 			Timestamp:           now,
 			Attributes:          rCtx.Attributes[logicalID],
 			PropertiesHash:      propsHash,
-			Properties:          props,
+			Properties:          recordedProps,
 			DeletionPolicy:      res.DeletionPolicy,
 			UpdateReplacePolicy: res.UpdateReplacePolicy,
 		})
@@ -339,8 +339,8 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 
 		// As in the create path: a reference that will not resolve fails the
 		// resource rather than being written into it verbatim.
-		props, refErr := p.resolveProperties(res, rCtx)
-		propsHash := hashProps(props)
+		props, recordedProps, refErr := p.resolveProperties(res, rCtx)
+		propsHash := hashProps(recordedProps)
 
 		if old, ok := existing[logicalID]; ok && old.Type == res.Type {
 			// Same logical ID and type. Diff the resolved properties and
@@ -369,7 +369,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 					Timestamp:           old.Timestamp,
 					Attributes:          old.Attributes,
 					PropertiesHash:      propsHash,
-					Properties:          props,
+					Properties:          recordedProps,
 					DeletionPolicy:      res.DeletionPolicy,
 					UpdateReplacePolicy: res.UpdateReplacePolicy,
 				})
@@ -424,7 +424,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 				Timestamp:           now,
 				Attributes:          rCtx.Attributes[logicalID],
 				PropertiesHash:      propsHash,
-				Properties:          props,
+				Properties:          recordedProps,
 				DeletionPolicy:      res.DeletionPolicy,
 				UpdateReplacePolicy: res.UpdateReplacePolicy,
 			})
@@ -472,7 +472,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 			Timestamp:           now,
 			Attributes:          rCtx.Attributes[logicalID],
 			PropertiesHash:      propsHash,
-			Properties:          props,
+			Properties:          recordedProps,
 			DeletionPolicy:      res.DeletionPolicy,
 			UpdateReplacePolicy: res.UpdateReplacePolicy,
 		})
@@ -884,14 +884,35 @@ func (p *provisioner) buildResolveContext(stack *Stack, tmpl *Template) *resolve
 	}
 }
 
-// resolveProperties resolves a resource's properties and surfaces any dynamic
-// reference that could not be resolved. The error must be taken here rather
-// than at dispatch: a resource whose properties are unchanged never dispatches
-// at all, and a failure left on the context would be blamed on the next
-// resource instead.
-func (p *provisioner) resolveProperties(res TemplateResource, rCtx *resolveContext) (map[string]any, error) {
-	props := resolveAllProperties(res.Properties, rCtx)
-	return props, rCtx.takeDynamicRefErr()
+// resolveProperties returns the two forms of a resource's resolved properties,
+// and surfaces any dynamic reference that could not be resolved.
+//
+// recorded has the intrinsics resolved but every "{{resolve:...}}" left exactly
+// as the template wrote it. It is what gets hashed for change detection and
+// what gets stored on the stack resource, because that is what CloudFormation
+// itself compares — the literal reference string, not the value behind it:
+// "Updating only the secret value in Secrets Manager doesn't automatically
+// cause CloudFormation to retrieve the new value." Hashing the resolved form
+// instead would mean a rotated secret made every stack think its database had
+// changed, and — now that a MasterUsername change forces replacement — could
+// replace a database because a secret rotated. It also keeps resolved secrets
+// out of the store: for secure references AWS "never stores the actual secure
+// string value... only the literal dynamic reference".
+//
+// expanded additionally has the references resolved, and is what the resource
+// handler is given. That is the one place AWS does let the value reach: "the
+// secret value may show up in the service whose resource it's being used in".
+//
+// The error must be taken here rather than at dispatch: a resource whose
+// properties are unchanged never dispatches at all, and a failure left on the
+// context would be blamed on the next resource instead.
+func (p *provisioner) resolveProperties(res TemplateResource, rCtx *resolveContext) (expanded, recorded map[string]any, err error) {
+	recorded = resolveAllProperties(res.Properties, rCtx)
+	expanded, _ = expandDynamicRefs(recorded, rCtx).(map[string]any)
+	if expanded == nil {
+		expanded = recorded
+	}
+	return expanded, recorded, rCtx.takeDynamicRefErr()
 }
 
 // collectExports gathers all cross-stack exports from completed stacks in the
@@ -917,22 +938,19 @@ func (p *provisioner) resolveOutputs(tmpl *Template, rCtx *resolveContext) []Out
 	if tmpl.Outputs == nil {
 		return nil
 	}
-	// An output is reported, not provisioned, so an unresolvable dynamic
-	// reference in one is logged and left as written rather than failing a
-	// stack whose resources all came up. Taking the error here still matters:
-	// left on the context it would be blamed on the next resource resolved.
-	defer func() {
-		if err := rCtx.takeDynamicRefErr(); err != nil {
-			p.log.Warn("cfn: unresolved dynamic reference in a stack output",
-				zap.String("stack", rCtx.StackName), zap.Error(err))
-		}
-	}()
 	outputs := make([]Output, 0, len(tmpl.Outputs))
 	for name, o := range tmpl.Outputs {
 		if o.Condition != "" && !rCtx.Conditions[o.Condition] {
 			continue
 		}
-		val := expandDynamicRefs(resolveIntrinsics(o.Value, rCtx), rCtx)
+		// Dynamic references are deliberately not expanded in outputs. Real
+		// CloudFormation leaves them as written here — an output built from a
+		// secretsmanager reference comes back as the literal
+		// "{{resolve:secretsmanager:...}}" string, with no error — and an
+		// output is exactly where a resolved secret would be most exposed:
+		// DescribeStacks returns it, and CloudFormation "doesn't redact or
+		// obfuscate any information you include in the Outputs section".
+		val := resolveIntrinsics(o.Value, rCtx)
 		out := Output{
 			Key:         name,
 			Value:       fmt.Sprintf("%v", val),
