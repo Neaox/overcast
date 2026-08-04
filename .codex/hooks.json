@@ -1,0 +1,19 @@
+{
+  "description": "Repository guardrails mirrored from the Claude Code hooks.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/scripts/hooks/codex-pre-tool-use.sh\"",
+            "commandWindows": "& 'C:\\Program Files\\Git\\bin\\bash.exe' -lc '\"$(git rev-parse --show-toplevel)/scripts/hooks/codex-pre-tool-use.sh\"'",
+            "timeout": 900,
+            "statusMessage": "Checking repository shell guardrails"
+          }
+        ]
+      }
+    ]
+  }
+}

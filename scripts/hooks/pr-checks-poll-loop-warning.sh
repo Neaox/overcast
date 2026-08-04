@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse hook: catch a hand-rolled CI poll loop before it runs.
+# Claude Code/Codex PreToolUse hook: catch a hand-rolled CI poll loop before it runs.
 #
 # The anti-pattern is a `while`/`until` loop around `gh pr checks --json` on a
 # `sleep` interval, usually wired to a per-iteration notifier. It costs a request

@@ -20,7 +20,7 @@
 #                                         ran yourself — see `make lint-go`
 #
 # Exit codes: 0 = nothing to do or everything passed, 2 = a check failed.
-# 2 is what a Claude Code PreToolUse hook treats as "block", with stderr shown.
+# 2 is what the Claude Code and Codex PreToolUse hooks treat as "block", with stderr shown.
 
 set -uo pipefail
 
