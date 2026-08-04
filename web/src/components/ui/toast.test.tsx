@@ -1,4 +1,5 @@
 import { useEffect } from "react"
+import { onlineManager } from "@tanstack/react-query"
 import { act, render, within } from "@/test/render"
 import { useToast, type ToastOptions, type ToastVariant } from "@/components/ui/toast"
 
@@ -183,6 +184,107 @@ describe("Toast > dismissal", () => {
 
     act(() => api.dismissToast(id))
 
+    expect(toasts()).toHaveLength(0)
+  })
+})
+
+/**
+ * A dropped connection is one event, but every query and mutation in flight
+ * when it happens fails on its own — so without a gate the shell stacks a
+ * column of identical "Failed to fetch" cards on top of the reconnecting card
+ * that already explains all of them.
+ */
+describe("Toast > while the UI knows it is offline", () => {
+  afterEach(() => {
+    // The flag is a module singleton shared by every test in the run.
+    onlineManager.setOnline(true)
+  })
+
+  function goOffline() {
+    act(() => onlineManager.setOnline(false))
+  }
+
+  it("drops the query client's generic network-failure toast", () => {
+    render(<Harness />)
+    goOffline()
+
+    show({ title: "Network error", description: "Failed to fetch", variant: "danger" })
+
+    expect(toasts()).toHaveLength(0)
+  })
+
+  it("drops a per-operation failure that is only the connection failing", () => {
+    render(<Harness />)
+    goOffline()
+
+    show({ title: "Delete failed", description: "Load failed", variant: "danger" })
+
+    expect(toasts()).toHaveLength(0)
+  })
+
+  it("still surfaces a real service error, because being offline is not why it failed", () => {
+    render(<Harness />)
+    goOffline()
+
+    show({
+      title: "Delete failed",
+      description: "The specified bucket is not empty.",
+      variant: "danger",
+    })
+
+    expect(within(onlyToast()).getByText("The specified bucket is not empty.")).toBeInTheDocument()
+  })
+
+  it("still surfaces a failed upload, whose title merely reads like Safari's wording", () => {
+    render(<Harness />)
+    goOffline()
+
+    show({
+      title: "Upload failed · 501",
+      description: "Operation not implemented for this service.",
+      variant: "danger",
+    })
+
+    expect(within(onlyToast()).getByText("Upload failed · 501")).toBeInTheDocument()
+  })
+
+  it("still surfaces a validation failure", () => {
+    render(<Harness />)
+    goOffline()
+
+    show({ title: "Invalid JSON", description: "Must be a JSON object { … }", variant: "danger" })
+
+    expect(within(onlyToast()).getByText("Must be a JSON object { … }")).toBeInTheDocument()
+  })
+
+  it("leaves non-failure toasts alone — the reconnect announcement is one of them", () => {
+    render(<Harness />)
+    goOffline()
+
+    show({ title: "Reconnected", description: "localhost:4566", variant: "success" })
+
+    expect(within(onlyToast()).getByText("Reconnected")).toBeInTheDocument()
+  })
+
+  it("shows the network toast again once the connection is back", () => {
+    render(<Harness />)
+    goOffline()
+    act(() => onlineManager.setOnline(true))
+
+    show({ title: "Network error", description: "Failed to fetch", variant: "danger" })
+
+    expect(within(onlyToast()).getByText("Network error")).toBeInTheDocument()
+  })
+
+  it("hands back an id a caller can resolve or dismiss without effect", () => {
+    render(<Harness />)
+    goOffline()
+
+    const id = show({ title: "Network error", description: "Failed to fetch", variant: "danger" })
+
+    expect(id).not.toBe("")
+    act(() => api.updateToast(id, { variant: "success", title: "Done" }))
+    act(() => api.dismissToast(id))
     expect(toasts()).toHaveLength(0)
   })
 })
