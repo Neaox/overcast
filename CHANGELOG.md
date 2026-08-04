@@ -74,6 +74,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [sns/cloudformation] CloudFormation SNS topics and subscriptions now forward configured SNS attributes, including subscription filtering and raw SQS delivery (#522)
 
+- [ecs/web] cluster summaries and topology reflect current resources, while stopped tasks remain inspectable with AWS-compatible status, reason, and one-hour retention metadata
+
 ## [0.0.1-alpha.29] - 2026-08-03
 
 ### Added
