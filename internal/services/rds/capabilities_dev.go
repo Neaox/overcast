@@ -23,8 +23,8 @@ func init() {
 		// Aurora clusters
 		capabilities.Capability{Service: "rds", Operation: "CreateDBCluster", Category: "Aurora clusters", Status: capabilities.StatusSupported, Notes: "aurora-mysql and aurora-postgresql only; logical cluster, Docker started on first instance"},
 		capabilities.Capability{Service: "rds", Operation: "DescribeDBClusters", Category: "Aurora clusters", Status: capabilities.StatusSupported, Notes: "List all or filter by DBClusterIdentifier; returns cluster members"},
-		capabilities.Capability{Service: "rds", Operation: "DeleteDBCluster", Category: "Aurora clusters", Status: capabilities.StatusSupported, Notes: "Sets status to \"deleting\"; async removal"},
-		capabilities.Capability{Service: "rds", Operation: "ModifyDBCluster", Category: "Aurora clusters", Status: capabilities.StatusSupported, Notes: "Engine version update"},
+		capabilities.Capability{Service: "rds", Operation: "DeleteDBCluster", Category: "Aurora clusters", Status: capabilities.StatusSupported, Notes: "Sets status to \"deleting\"; async removal; refuses a cluster with `DeletionProtection` enabled"},
+		capabilities.Capability{Service: "rds", Operation: "ModifyDBCluster", Category: "Aurora clusters", Status: capabilities.StatusSupported, Notes: "`MasterUserPassword` applied to every member's engine; engine version, port and `DeletionProtection` applied; backup/maintenance windows, cluster parameter group, security groups and log exports recorded"},
 		capabilities.Capability{Service: "rds", Operation: "StartDBCluster", Category: "Aurora clusters", Status: capabilities.StatusSupported, Notes: "stopped→starting→available"},
 		capabilities.Capability{Service: "rds", Operation: "StopDBCluster", Category: "Aurora clusters", Status: capabilities.StatusSupported, Notes: "available→stopping→stopped"},
 		capabilities.Capability{Service: "rds", Operation: "CreateDBClusterSnapshot", Category: "Aurora clusters", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},

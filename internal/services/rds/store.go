@@ -80,20 +80,51 @@ type DBEvent struct {
 
 // DBCluster represents a stored Aurora DB cluster.
 type DBCluster struct {
-	DBClusterIdentifier string            `json:"DBClusterIdentifier"`
-	DBClusterArn        string            `json:"DBClusterArn"`
-	Engine              string            `json:"Engine"`
-	EngineVersion       string            `json:"EngineVersion"`
-	Status              string            `json:"Status"`
-	MasterUsername      string            `json:"MasterUsername"`
-	DatabaseName        string            `json:"DatabaseName,omitempty"`
-	Port                int               `json:"Port"`
-	Endpoint            string            `json:"Endpoint,omitempty"`
-	ReaderEndpoint      string            `json:"ReaderEndpoint,omitempty"`
-	MultiAZ             bool              `json:"MultiAZ"`
-	StorageType         string            `json:"StorageType"`
-	ClusterCreateTime   string            `json:"ClusterCreateTime,omitempty"`
-	DBClusterMembers    []DBClusterMember `json:"DBClusterMembers,omitempty"`
+	DBClusterIdentifier string `json:"DBClusterIdentifier"`
+	DBClusterArn        string `json:"DBClusterArn"`
+	Engine              string `json:"Engine"`
+	EngineVersion       string `json:"EngineVersion"`
+	Status              string `json:"Status"`
+	MasterUsername      string `json:"MasterUsername"`
+	// MasterUserPassword is the password the cluster's members answer to. A
+	// cluster has no engine of its own, so this is not what a connection uses
+	// — it is what tells a later ModifyDBCluster whether the password is
+	// really changing, and it is never returned on the wire.
+	MasterUserPassword string            `json:"MasterUserPassword,omitempty"`
+	DatabaseName       string            `json:"DatabaseName,omitempty"`
+	Port               int               `json:"Port"`
+	Endpoint           string            `json:"Endpoint,omitempty"`
+	ReaderEndpoint     string            `json:"ReaderEndpoint,omitempty"`
+	MultiAZ            bool              `json:"MultiAZ"`
+	StorageType        string            `json:"StorageType"`
+	ClusterCreateTime  string            `json:"ClusterCreateTime,omitempty"`
+	DBClusterMembers   []DBClusterMember `json:"DBClusterMembers,omitempty"`
+	DBSubnetGroupName  string            `json:"DBSubnetGroup,omitempty"`
+
+	// Settings ModifyDBCluster can change. They are recorded and reported
+	// because that is what the AWS management plane does with them, and
+	// because a stack update that changes one has to be able to show that it
+	// landed. What sits behind them differs:
+	//
+	//   - DeletionProtection is enforced: DeleteDBCluster refuses a protected
+	//     cluster, as AWS does.
+	//   - BackupRetentionPeriod, PreferredBackupWindow and
+	//     PreferredMaintenanceWindow are recorded only — Overcast takes no
+	//     backups and has no maintenance window to schedule anything in.
+	//   - DBClusterParameterGroup and VpcSecurityGroupIds are recorded only;
+	//     neither engine parameters nor security groups are applied to the
+	//     containers behind a cluster.
+	//   - EnabledCloudwatchLogsExports is recorded only; no engine log is
+	//     shipped to CloudWatch Logs.
+	//
+	// docs/services/rds.md carries the same list for users.
+	BackupRetentionPeriod        int      `json:"BackupRetentionPeriod,omitempty"`
+	PreferredBackupWindow        string   `json:"PreferredBackupWindow,omitempty"`
+	PreferredMaintenanceWindow   string   `json:"PreferredMaintenanceWindow,omitempty"`
+	DBClusterParameterGroup      string   `json:"DBClusterParameterGroup,omitempty"`
+	VpcSecurityGroupIds          []string `json:"VpcSecurityGroupIds,omitempty"`
+	EnabledCloudwatchLogsExports []string `json:"EnabledCloudwatchLogsExports,omitempty"`
+	DeletionProtection           bool     `json:"DeletionProtection,omitempty"`
 }
 
 // DBClusterMember represents one DB instance that belongs to an Aurora cluster.
