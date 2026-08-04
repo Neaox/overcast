@@ -33,6 +33,15 @@ import (
 
 const lifecycleContainerID = "cafecafecafe"
 
+// engineListeners keys the fake engines by the address they answer on, so two
+// instances sharing a dial target share one listener. Package-level because
+// serveEngine is called from several files; every entry is removed by the
+// t.Cleanup that created it, and these tests do not run in parallel.
+var (
+	engineListenersMu sync.Mutex
+	engineListeners   = map[string]net.Listener{}
+)
+
 // lifecycleDaemon is an httptest server speaking enough of the Docker Engine
 // API for the RDS container lifecycle, and — crucially — modelling AutoRemove
 // the way the real daemon does: a container created with it is gone once it
@@ -95,11 +104,28 @@ func serveEngine(t *testing.T, h *Handler, id string) net.Listener {
 	if host == "" || port == 0 {
 		t.Fatalf("instance %s has no dial target — the health check has nothing to dial", id)
 	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
-	if err != nil {
-		t.Fatalf("fake engine could not listen on the instance's dial target %s:%d: %v", host, port, err)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+
+	engineListenersMu.Lock()
+	defer engineListenersMu.Unlock()
+	// lifecycleDaemon models a single container, so every instance created
+	// against one daemon shares a dial target — an Aurora cluster's members
+	// above all. One engine answering for all of them is what that fake shape
+	// means; listening twice on the same address is just a bind error.
+	if ln, ok := engineListeners[addr]; ok {
+		return ln
 	}
-	t.Cleanup(func() { _ = ln.Close() })
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("fake engine could not listen on the instance's dial target %s: %v", addr, err)
+	}
+	engineListeners[addr] = ln
+	t.Cleanup(func() {
+		engineListenersMu.Lock()
+		delete(engineListeners, addr)
+		engineListenersMu.Unlock()
+		_ = ln.Close()
+	})
 	go func() {
 		for {
 			c, err := ln.Accept()
