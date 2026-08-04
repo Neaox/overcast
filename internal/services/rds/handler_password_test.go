@@ -34,13 +34,17 @@ func storedPassword(t *testing.T, h *Handler, id string) string {
 // connections, not just the record describing it.
 func TestModifyDBInstance_masterPasswordReachesTheRunningEngine(t *testing.T) {
 	tests := []struct {
-		name     string
-		engine   string
-		user     string
-		wantCmd  string   // argv[0] — the engine's own client
-		wantSQL  []string // statements the exec must carry
-		wantEnv  []string
-		wantAuth string // how the exec authenticates, with the *old* password
+		name    string
+		engine  string
+		user    string
+		wantCmd string   // argv[0] — the engine's own client
+		wantSQL []string // statements the exec must carry
+		// wantEnv is how the exec authenticates, with the *old* password. Every
+		// engine does it by environment: argv is visible to `docker inspect`
+		// and to the host process table, and both clients also print a warning
+		// about a command-line password that would otherwise land in the middle
+		// of whatever the engine says when a statement fails.
+		wantEnv []string
 	}{
 		{
 			name:    "mysql",
@@ -51,15 +55,15 @@ func TestModifyDBInstance_masterPasswordReachesTheRunningEngine(t *testing.T) {
 				`ALTER USER IF EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`,
 				`ALTER USER IF EXISTS 'admin'@'%' IDENTIFIED BY 'new-password'`,
 			},
-			wantAuth: "-pold-password",
+			wantEnv: []string{"MYSQL_PWD=old-password"},
 		},
 		{
-			name:     "mariadb",
-			engine:   "mariadb",
-			user:     "root",
-			wantCmd:  "mariadb",
-			wantSQL:  []string{`ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY 'new-password'`},
-			wantAuth: "-pold-password",
+			name:    "mariadb",
+			engine:  "mariadb",
+			user:    "root",
+			wantCmd: "mariadb",
+			wantSQL: []string{`ALTER USER IF EXISTS 'root'@'%' IDENTIFIED BY 'new-password'`},
+			wantEnv: []string{"MYSQL_PWD=old-password"},
 		},
 		{
 			name:    "postgres",
@@ -107,13 +111,16 @@ func TestModifyDBInstance_masterPasswordReachesTheRunningEngine(t *testing.T) {
 					t.Errorf("password change does not carry %q; ran: %v", want, cmd)
 				}
 			}
-			if tc.wantAuth != "" && !strings.Contains(joined, tc.wantAuth) {
-				t.Errorf("password change does not authenticate with the password the engine still has (%q); ran: %v", tc.wantAuth, cmd)
-			}
 			for _, want := range tc.wantEnv {
 				if !strings.Contains(strings.Join(envs[0], " "), want) {
 					t.Errorf("password change environment %v does not carry %q", envs[0], want)
 				}
+			}
+			// The old password authenticates the change, so it has to travel
+			// somewhere — and argv is the one place it must not, because that
+			// is what `docker inspect` and the host process table both show.
+			if strings.Contains(joined, "old-password") {
+				t.Errorf("the password the engine still has appears in argv, where it is visible outside the container: %v", cmd)
 			}
 
 			if got := storedPassword(t, h, id); got != "new-password" {
