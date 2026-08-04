@@ -3,6 +3,7 @@ package rds
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,7 +34,9 @@ const lifecycleContainerID = "cafecafecafe"
 // lifecycleDaemon is an httptest server speaking enough of the Docker Engine
 // API for the RDS container lifecycle, and — crucially — modelling AutoRemove
 // the way the real daemon does: a container created with it is gone once it
-// stops, and every later request for it is a 404.
+// stops, and every later request for it is a 404. It also serves the exec
+// endpoints a master-password change runs through, including the daemon's
+// refusal to exec into a container that is not running.
 type lifecycleDaemon struct {
 	srv *httptest.Server
 
@@ -44,6 +47,33 @@ type lifecycleDaemon struct {
 	starts     int  // successful start requests
 	creates    int  // create-container requests
 	failCreate bool // reject creates, so a rebuild cannot succeed
+
+	execCmds     [][]string // Cmd of every exec create, in order
+	execEnvs     [][]string // Env of every exec create, in order
+	execExitCode int        // exit status reported for every exec
+	execOutput   string     // what every exec writes to its stream
+}
+
+// execCreateRequest is the subset of the exec-create body these tests read.
+type execCreateRequest struct {
+	Cmd []string `json:"Cmd"`
+	Env []string `json:"Env"`
+}
+
+// recordedExecs returns the commands and environments of every exec so far.
+func (d *lifecycleDaemon) recordedExecs() (cmds, envs [][]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([][]string(nil), d.execCmds...), append([][]string(nil), d.execEnvs...)
+}
+
+// failExecs makes every subsequent exec exit non-zero with output — what an
+// engine that refuses the statement looks like from here.
+func (d *lifecycleDaemon) failExecs(code int, output string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.execExitCode = code
+	d.execOutput = output
 }
 
 // drop makes the daemon forget the container, as a startup sweep, a
@@ -86,6 +116,40 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 		switch {
 		case strings.HasSuffix(p, "/images/create"), strings.HasSuffix(p, "/images/prune"):
 			w.WriteHeader(http.StatusOK)
+
+		// Exec create. Docker refuses to exec into a container that is not
+		// running, and so does this.
+		case strings.HasSuffix(p, "/containers/"+cid+"/exec"):
+			var req execCreateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode exec create request: %v", err)
+			}
+			d.mu.Lock()
+			running := d.running
+			if running {
+				d.execCmds = append(d.execCmds, req.Cmd)
+				d.execEnvs = append(d.execEnvs, req.Env)
+			}
+			d.mu.Unlock()
+			if !running {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"message":"Container ` + cid + ` is not running"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"Id":"exec-1"}`))
+
+		case strings.HasSuffix(p, "/exec/exec-1/start"):
+			d.mu.Lock()
+			out := d.execOutput
+			d.mu.Unlock()
+			w.Header().Set("Content-Type", "application/vnd.docker.raw-stream")
+			_, _ = w.Write([]byte(out))
+
+		case strings.HasSuffix(p, "/exec/exec-1/json"):
+			d.mu.Lock()
+			code := d.execExitCode
+			d.mu.Unlock()
+			_, _ = fmt.Fprintf(w, `{"Running":false,"ExitCode":%d}`, code)
 
 		// GetContainerByName lookup before create — no existing container.
 		case strings.Contains(p, "/containers/overcast-rds-") && strings.HasSuffix(p, "/json"):
@@ -202,11 +266,18 @@ func newLifecycleHandler(t *testing.T, d *lifecycleDaemon) *Handler {
 // to finish, so the test acts on a settled record.
 func createRunningInstance(t *testing.T, h *Handler, id string) {
 	t.Helper()
+	createRunningInstanceWith(t, h, id, "mysql", "admin", "password123")
+}
+
+// createRunningInstanceWith is createRunningInstance for a test that cares
+// which engine and credentials the instance was built with.
+func createRunningInstanceWith(t *testing.T, h *Handler, id, engine, user, password string) {
+	t.Helper()
 	if _, aerr := h.createDBInstanceTyped(context.Background(), &createDBInstanceReq{
 		DBInstanceIdentifier: id,
-		Engine:               "mysql",
-		MasterUsername:       "admin",
-		MasterUserPassword:   "password123",
+		Engine:               engine,
+		MasterUsername:       user,
+		MasterUserPassword:   password,
 	}); aerr != nil {
 		t.Fatalf("CreateDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}

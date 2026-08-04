@@ -282,6 +282,19 @@ func errInvalidDBInstanceState(id, msg string) *protocol.AWSError {
 	}
 }
 
+// errMasterPasswordNotApplied reports a master-password change the engine did
+// not take. It carries the engine's own words because that is what tells a
+// rejected password apart from a container that was not there to be asked, and
+// it is a 500 rather than a 400 because AWS accepts this modification — the
+// failure is Overcast's, not the caller's.
+func errMasterPasswordNotApplied(id, detail string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InternalError",
+		Message:    fmt.Sprintf("The master password for DB instance %s was not changed: %s", id, detail),
+		HTTPStatus: http.StatusInternalServerError,
+	}
+}
+
 func errDBSubnetGroupNotFound(name string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "DBSubnetGroupNotFoundFault",
