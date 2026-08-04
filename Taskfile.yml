@@ -142,17 +142,17 @@ tasks:
       - docs/**/*.md
       - scripts/docs-index.go
     generates:
-      - web/src/docs-index.gen.ts
-      - internal/docssearch/index.gen.go
+      - web/src/docs-nav.gen.ts
+      - internal/docssearch/index.gen.jsonl
     cmds:
-      - go run ./scripts/docs-index.go --write-index --write-go-index
+      - go run ./scripts/docs-index.go --write-nav --write-search-index
 
   docs:
     desc: Regenerate service docs and docs search index
     deps: [generate-caps]
     cmds:
       - go run -tags dev ./cmd/capgen --write-docs
-      - go run ./scripts/docs-index.go --write-index --write-go-index
+      - go run ./scripts/docs-index.go --write-nav --write-search-index
 
   docs-check:
     desc: Verify generated docs artifacts are up to date and every doc has frontmatter

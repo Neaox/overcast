@@ -5,18 +5,15 @@
 //
 // Usage:
 //
-//	go run ./scripts/docs-index.go --write-frontmatter --write-index --write-go-index
+//	go run ./scripts/docs-index.go --write-frontmatter --write-nav --write-search-index
 //	go run ./scripts/docs-index.go --check
 package main
 
 import (
 	"bytes"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"go/format"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -33,15 +30,27 @@ import (
 
 const (
 	docsRoot = "docs"
-	// indexOutput and goIndexOutput are generated but committed, like
+	// navOutput and searchOutput are generated but committed, like
 	// internal/capabilities/all.gen.go: `git clone && go build ./...` has to
 	// work with nothing but the Go toolchain, and importers of these files
 	// cannot compile without them. --check keeps them honest. Naming/location
 	// follows the TanStack Router convention used elsewhere in this repo
 	// (web/src/routeTree.gen.ts, internal/capabilities/all.gen.go): a flat
 	// "*.gen.*" file next to its consumers, no "generated/" subfolder.
-	indexOutput    = "web/src/docs-index.gen.ts"
-	goIndexOutput  = "internal/docssearch/index.gen.go"
+	//
+	// Both artifacts are document-major: one TypeScript object or one JSONL
+	// line per doc, in path order. That is what keeps them out of the way in
+	// git. The predecessor of searchOutput was a Go source file holding a
+	// term-major inverted index — postings keyed by term, referring to
+	// documents by position — so adding a doc renumbered every document after
+	// it and a one-line docs edit rewrote 100 to 1,500 lines. Two PRs that
+	// touched any docs at all therefore conflicted, and the conflict could
+	// only be resolved by regenerating. Document-major output cannot do that:
+	// editing a doc rewrites that doc's line and nothing else. The inverted
+	// index still exists, but it is built at load time in internal/docssearch,
+	// where it costs about a millisecond and no merge conflicts at all.
+	navOutput      = "web/src/docs-nav.gen.ts"
+	searchOutput   = "internal/docssearch/index.gen.jsonl"
 	frontmatterSep = "---"
 )
 
@@ -70,6 +79,9 @@ type heading struct {
 	ID    string `json:"id"`
 }
 
+// docEntry is the navigation shape: what the console needs to render the docs
+// sidebar and the "On this page" table of contents. It carries no search
+// corpus — that lives in searchEntry, which the SPA never downloads.
 type docEntry struct {
 	Path        string    `json:"path"`
 	Href        string    `json:"href"`
@@ -78,8 +90,20 @@ type docEntry struct {
 	Section     string    `json:"section"`
 	Tags        []string  `json:"tags"`
 	Headings    []heading `json:"headings"`
-	SearchText  string    `json:"searchText"`
-	Checksum    string    `json:"checksum"`
+}
+
+// searchEntry is one line of searchOutput: a document's result metadata plus
+// its own term scores, as "term:score" pairs in one space-separated field.
+// Terms are sorted, and a term can itself contain ':' (normalizeSearchText
+// keeps it), so a reader splits each pair on its *last* colon.
+type searchEntry struct {
+	Path        string   `json:"path"`
+	Href        string   `json:"href"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Section     string   `json:"section"`
+	Tags        []string `json:"tags"`
+	Terms       string   `json:"terms"`
 }
 
 type weightedDoc struct {
@@ -87,26 +111,29 @@ type weightedDoc struct {
 	BodyText string
 }
 
-type goPosting struct {
-	Doc   int
-	Score int
-}
-
 func main() {
 	writeFrontmatter := flag.Bool("write-frontmatter", false, "add frontmatter to docs that are missing it")
 	refreshFrontmatter := flag.Bool("refresh-frontmatter", false, "replace docs frontmatter with inferred metadata")
-	writeIndex := flag.Bool("write-index", false, "write the generated TypeScript docs index")
-	writeGoIndex := flag.Bool("write-go-index", false, "write the generated Go docs search index")
-	check := flag.Bool("check", false, "verify frontmatter and generated index are up to date")
+	writeNav := flag.Bool("write-nav", false, "write the generated TypeScript docs navigation index")
+	writeSearchIndex := flag.Bool("write-search-index", false, "write the generated docs search index")
+	check := flag.Bool("check", false, "verify frontmatter and generated indexes are up to date")
 	flag.Parse()
 
-	if !*writeFrontmatter && !*writeIndex && !*writeGoIndex && !*check {
-		*writeIndex = true
-		*writeGoIndex = true
+	if !*writeFrontmatter && !*writeNav && !*writeSearchIndex && !*check {
+		*writeNav = true
+		*writeSearchIndex = true
 	}
 
 	docs, frontmatterChanges, err := collectDocs(*writeFrontmatter, *refreshFrontmatter)
 	if err != nil {
+		fatal(err)
+	}
+	// Fail rather than emit a degenerate index. A doc that parses to nothing
+	// searchable, or that lost its title, is a bug in this generator or in the
+	// doc — either way it must not reach an artifact, where it would silently
+	// drop a page out of the console's docs search and still regenerate
+	// byte-identically on the next --check.
+	if err := validateDocs(docs); err != nil {
 		fatal(err)
 	}
 
@@ -116,17 +143,17 @@ func main() {
 	// index as well as a stale one, and reports the fix by name.
 	if *check {
 		if frontmatterChanges > 0 {
-			fatal(fmt.Errorf("%d docs are missing frontmatter; run go run ./scripts/docs-index.go --write-frontmatter --write-index", frontmatterChanges))
+			fatal(fmt.Errorf("%d docs are missing frontmatter; run go run ./scripts/docs-index.go --write-frontmatter --write-nav", frontmatterChanges))
 		}
 		entries := make([]docEntry, 0, len(docs))
 		for _, doc := range docs {
 			entries = append(entries, doc.Entry)
 		}
-		wantTS, err := renderIndex(entries)
+		wantNav, err := renderNav(entries)
 		if err != nil {
 			fatal(err)
 		}
-		wantGo, err := renderGoIndex(docs)
+		wantSearch, err := renderSearchIndex(docs)
 		if err != nil {
 			fatal(err)
 		}
@@ -134,7 +161,7 @@ func main() {
 		for _, f := range []struct {
 			path string
 			want []byte
-		}{{indexOutput, wantTS}, {goIndexOutput, wantGo}} {
+		}{{navOutput, wantNav}, {searchOutput, wantSearch}} {
 			got, err := os.ReadFile(f.path)
 			if err != nil || !bytes.Equal(got, f.want) {
 				stale = append(stale, f.path)
@@ -146,34 +173,60 @@ func main() {
 		return
 	}
 
-	if *writeIndex {
+	if *writeNav {
 		entries := make([]docEntry, 0, len(docs))
 		for _, doc := range docs {
 			entries = append(entries, doc.Entry)
 		}
-		generated, err := renderIndex(entries)
+		generated, err := renderNav(entries)
 		if err != nil {
 			fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Dir(indexOutput), 0o755); err != nil {
-			fatal(err)
-		}
-		if err := os.WriteFile(indexOutput, generated, 0o644); err != nil {
+		if err := writeGenerated(navOutput, generated); err != nil {
 			fatal(err)
 		}
 	}
-	if *writeGoIndex {
-		goGenerated, err := renderGoIndex(docs)
+	if *writeSearchIndex {
+		generated, err := renderSearchIndex(docs)
 		if err != nil {
 			fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Dir(goIndexOutput), 0o755); err != nil {
-			fatal(err)
-		}
-		if err := os.WriteFile(goIndexOutput, goGenerated, 0o644); err != nil {
+		if err := writeGenerated(searchOutput, generated); err != nil {
 			fatal(err)
 		}
 	}
+}
+
+func writeGenerated(path string, content []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0o644)
+}
+
+// validateDocs rejects a document set that would produce a broken index.
+func validateDocs(docs []weightedDoc) error {
+	if len(docs) == 0 {
+		return fmt.Errorf("no published docs found under %s/", docsRoot)
+	}
+	problems := []string{}
+	for _, doc := range docs {
+		e := doc.Entry
+		switch {
+		case e.Title == "":
+			problems = append(problems, e.Path+": no title")
+		case e.Section == "":
+			problems = append(problems, e.Path+": no section")
+		case e.Href == "" || strings.HasPrefix(e.Href, "/"):
+			problems = append(problems, e.Path+": bad href "+e.Href)
+		case len(scoreDoc(doc)) == 0:
+			problems = append(problems, e.Path+": no searchable terms")
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("docs cannot be indexed:\n\t%s", strings.Join(problems, "\n\t"))
+	}
+	return nil
 }
 
 func collectDocs(writeFrontmatter, refreshFrontmatter bool) ([]weightedDoc, int, error) {
@@ -419,16 +472,6 @@ func renderFrontmatter(meta docMeta) string {
 }
 
 func buildEntry(path string, meta docMeta, body string) weightedDoc {
-	headings := extractHeadings(body)
-	bodyText := markdownText(body)
-	searchText := normalizeSearchText(strings.Join([]string{
-		meta.Title,
-		meta.Description,
-		meta.Section,
-		strings.Join(meta.Tags, " "),
-		bodyText,
-	}, "\n"))
-	sum := sha1.Sum([]byte(body))
 	entry := docEntry{
 		Path:        filepath.ToSlash(path),
 		Href:        strings.TrimPrefix(filepath.ToSlash(path), "docs/"),
@@ -436,11 +479,9 @@ func buildEntry(path string, meta docMeta, body string) weightedDoc {
 		Description: meta.Description,
 		Section:     meta.Section,
 		Tags:        uniqueSortedTags(meta.Tags),
-		Headings:    headings,
-		SearchText:  searchText,
-		Checksum:    hex.EncodeToString(sum[:8]),
+		Headings:    extractHeadings(body),
 	}
-	return weightedDoc{Entry: entry, BodyText: bodyText}
+	return weightedDoc{Entry: entry, BodyText: markdownText(body)}
 }
 
 func extractHeadings(body string) []heading {
@@ -538,98 +579,87 @@ func isIdentifierBoundary(prev, curr rune) bool {
 	return (unicode.IsLower(prev) && unicode.IsUpper(curr)) || (unicode.IsLetter(prev) && unicode.IsDigit(curr)) || (unicode.IsDigit(prev) && unicode.IsLetter(curr))
 }
 
-func renderIndex(entries []docEntry) ([]byte, error) {
+func renderNav(entries []docEntry) ([]byte, error) {
 	raw, err := json.MarshalIndent(entries, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	var b strings.Builder
-	b.WriteString("// Code generated by go run ./scripts/docs-index.go --write-index; DO NOT EDIT.\n\n")
+	b.WriteString("// Code generated by go run ./scripts/docs-index.go --write-nav; DO NOT EDIT.\n\n")
 	b.WriteString("export interface DocsHeading {\n")
 	b.WriteString("  depth: number\n  text: string\n  id: string\n}\n\n")
-	b.WriteString("export interface DocsIndexEntry {\n")
-	b.WriteString("  path: string\n  href: string\n  title: string\n  description: string\n  section: string\n  tags: readonly string[]\n  headings: readonly DocsHeading[]\n  searchText: string\n  checksum: string\n}\n\n")
-	b.WriteString("export const DOCS_INDEX = ")
+	b.WriteString("export interface DocsNavEntry {\n")
+	b.WriteString("  path: string\n  href: string\n  title: string\n  description: string\n  section: string\n  tags: readonly string[]\n  headings: readonly DocsHeading[]\n}\n\n")
+	b.WriteString("export const DOCS_NAV = ")
 	b.Write(raw)
-	b.WriteString(" as const satisfies readonly DocsIndexEntry[]\n")
+	b.WriteString(" as const satisfies readonly DocsNavEntry[]\n")
 	return []byte(b.String()), nil
 }
 
-func renderGoIndex(docs []weightedDoc) ([]byte, error) {
-	postings := buildPostings(docs)
-	terms := make([]string, 0, len(postings))
-	for term := range postings {
-		terms = append(terms, term)
-	}
-	sort.Strings(terms)
-
+// renderSearchIndex writes one JSONL line per document, in path order, each
+// carrying that document's own term scores. The scores are the same weighted
+// occurrence counts the inverted index held before (title 10, tags 8, heading
+// 7/5, section 6, description 4, body 1), just grouped by document instead of
+// by term, so ranking is unchanged and a docs edit touches one line.
+func renderSearchIndex(docs []weightedDoc) ([]byte, error) {
 	var b strings.Builder
-	b.WriteString("// Code generated by go run ./scripts/docs-index.go --write-go-index; DO NOT EDIT.\n\n")
-	b.WriteString("package docssearch\n\n")
-	b.WriteString("var docs = []Document{\n")
-	for id, doc := range docs {
+	b.WriteString("# Generated by go run ./scripts/docs-index.go --write-search-index; DO NOT EDIT.\n")
+	for _, doc := range docs {
 		e := doc.Entry
-		fmt.Fprintf(&b, "\t{ID: %d, Path: %q, Href: %q, Title: %q, Description: %q, Section: %q, Tags: %#v},\n",
-			id, e.Path, e.Href, e.Title, e.Description, e.Section, e.Tags)
-	}
-	b.WriteString("}\n\n")
-	b.WriteString("var postings = map[string][]Posting{\n")
-	for _, term := range terms {
-		b.WriteString("\t")
-		b.WriteString(fmt.Sprintf("%q: {", term))
-		for _, posting := range postings[term] {
-			b.WriteString(fmt.Sprintf("{Doc: %d, Score: %d},", posting.Doc, posting.Score))
+		terms := scoreDoc(doc)
+		names := make([]string, 0, len(terms))
+		for term := range terms {
+			names = append(names, term)
 		}
-		b.WriteString("},\n")
-	}
-	b.WriteString("}\n")
-	formatted, err := format.Source([]byte(b.String()))
-	if err != nil {
-		return nil, fmt.Errorf("format Go docs index: %w", err)
-	}
-	return formatted, nil
-}
-
-func buildPostings(docs []weightedDoc) map[string][]goPosting {
-	perTerm := map[string]map[int]int{}
-	for id, doc := range docs {
-		addWeightedTokens(perTerm, id, doc.Entry.Title, 10)
-		addWeightedTokens(perTerm, id, strings.Join(doc.Entry.Tags, " "), 8)
-		addWeightedTokens(perTerm, id, doc.Entry.Section, 6)
-		for _, heading := range doc.Entry.Headings {
-			weight := 5
-			if heading.Depth == 1 {
-				weight = 7
+		sort.Strings(names)
+		var pairs strings.Builder
+		for i, term := range names {
+			if i > 0 {
+				pairs.WriteByte(' ')
 			}
-			addWeightedTokens(perTerm, id, heading.Text, weight)
+			fmt.Fprintf(&pairs, "%s:%d", term, terms[term])
 		}
-		addWeightedTokens(perTerm, id, doc.Entry.Description, 4)
-		addWeightedTokens(perTerm, id, doc.BodyText, 1)
-	}
-	out := make(map[string][]goPosting, len(perTerm))
-	for term, docScores := range perTerm {
-		postings := make([]goPosting, 0, len(docScores))
-		for docID, score := range docScores {
-			postings = append(postings, goPosting{Doc: docID, Score: score})
-		}
-		sort.Slice(postings, func(i, j int) bool {
-			if postings[i].Score == postings[j].Score {
-				return postings[i].Doc < postings[j].Doc
-			}
-			return postings[i].Score > postings[j].Score
+		line, err := json.Marshal(searchEntry{
+			Path:        e.Path,
+			Href:        e.Href,
+			Title:       e.Title,
+			Description: e.Description,
+			Section:     e.Section,
+			Tags:        e.Tags,
+			Terms:       pairs.String(),
 		})
-		out[term] = postings
+		if err != nil {
+			return nil, fmt.Errorf("marshal search entry for %s: %w", e.Path, err)
+		}
+		b.Write(line)
+		b.WriteByte('\n')
 	}
-	return out
+	return []byte(b.String()), nil
 }
 
-func addWeightedTokens(index map[string]map[int]int, docID int, text string, weight int) {
-	for _, token := range tokenize(text) {
-		if index[token] == nil {
-			index[token] = map[int]int{}
+// scoreDoc weights one document's terms the way search ranks them: a term in
+// the title is worth ten of the same term in the body, and a term occurring
+// twice counts twice.
+func scoreDoc(doc weightedDoc) map[string]int {
+	scores := map[string]int{}
+	add := func(text string, weight int) {
+		for _, token := range tokenize(text) {
+			scores[token] += weight
 		}
-		index[token][docID] += weight
 	}
+	add(doc.Entry.Title, 10)
+	add(strings.Join(doc.Entry.Tags, " "), 8)
+	add(doc.Entry.Section, 6)
+	for _, heading := range doc.Entry.Headings {
+		weight := 5
+		if heading.Depth == 1 {
+			weight = 7
+		}
+		add(heading.Text, weight)
+	}
+	add(doc.Entry.Description, 4)
+	add(doc.BodyText, 1)
+	return scores
 }
 
 func tokenize(s string) []string {

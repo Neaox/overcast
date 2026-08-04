@@ -12,7 +12,7 @@
 #   - embed.go has `//go:embed all:web/dist`, so every non-slim Go build, vet
 #     and test needs a built SPA. The web stages run before the Go stages.
 #
-# The docs index (web/src/docs-index.gen.ts, internal/docssearch/index.gen.go)
+# The docs index (web/src/docs-nav.gen.ts, internal/docssearch/index.gen.jsonl)
 # is generated but committed, so nothing has to be generated before a build.
 # The docs-index stage below regenerates it anyway and the docs-check stage
 # diffs the result, which is what catches a docs/ edit committed without a
@@ -222,7 +222,7 @@ fi
 # committed one.
 
 stage "docs-index"
-go_cmd run ./scripts/docs-index.go --write-index --write-go-index || fail
+go_cmd run ./scripts/docs-index.go --write-nav --write-search-index || fail
 
 # ─── Web (produces web/dist, which the Go stages embed) ──────────────────────
 
@@ -288,7 +288,7 @@ if [ "$scope" != "web" ]; then
     git -C "$ROOT" diff --exit-code -- \
         internal/capabilities/all.gen.go README.md STATUS.md \
         docs/README.md docs/services/ docs/generated/service-support.json \
-        internal/docssearch/index.gen.go web/src/docs-index.gen.ts \
+        internal/docssearch/index.gen.jsonl web/src/docs-nav.gen.ts \
         || { echo "  generated files are stale — commit the regenerated files above" >&2; fail; }
 fi
 

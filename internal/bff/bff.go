@@ -1357,6 +1357,15 @@ func handleDocsSearch(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
+	// An index that failed to load must not look like a corpus with no
+	// matches: every query would answer "no results" and the console would
+	// show a working search box over nothing. Say the index is missing, the
+	// way a binary built without an SPA says so instead of 404ing.
+	if err := docssearch.Unavailable(); err != nil {
+		http.Error(w, "docs search index unavailable ("+err.Error()+"). "+
+			"The docs pages themselves are unaffected.", http.StatusServiceUnavailable)
+		return
+	}
 	results := docssearch.Search(query, limit)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
