@@ -34,6 +34,34 @@ func extractTaskSetID(input string) string {
 	return input
 }
 
+// registerServiceTaskSet records a new task set on its service, and
+// deregisterServiceTaskSet takes a deleted one off again.
+//
+// Both re-read the service under mutateService rather than writing back the
+// copy the handler read: that copy predates the task set store write, so a
+// reconcile landing in between would either lose its own edit or have this one
+// lost. The write is best-effort, as it was before — a task set that exists but
+// is not listed on its service is a lesser failure than refusing the call.
+func (h *Handler) registerServiceTaskSet(ctx context.Context, clusterName, serviceName, taskSetArn string) {
+	_, _ = h.mutateService(ctx, clusterName, serviceName, func(svc *ecsService) *protocol.AWSError {
+		svc.TaskSets = append(svc.TaskSets, taskSetArn)
+		return nil
+	})
+}
+
+func (h *Handler) deregisterServiceTaskSet(ctx context.Context, clusterName, serviceName, taskSetID string) {
+	_, _ = h.mutateService(ctx, clusterName, serviceName, func(svc *ecsService) *protocol.AWSError {
+		kept := svc.TaskSets[:0]
+		for _, arn := range svc.TaskSets {
+			if extractTaskSetID(arn) != taskSetID {
+				kept = append(kept, arn)
+			}
+		}
+		svc.TaskSets = kept
+		return nil
+	})
+}
+
 // computeDesiredCount calculates tasks from a percentage scale.
 func computeDesiredCount(scale Scale, serviceDesired int) int {
 	if scale.Unit != "PERCENT" {
@@ -139,8 +167,7 @@ func (h *Handler) CreateTaskSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Register task set ARN on the service.
-	svc.TaskSets = append(svc.TaskSets, ts.TaskSetArn)
-	_ = h.store.putService(r.Context(), clusterName, svc)
+	h.registerServiceTaskSet(r.Context(), clusterName, serviceName, ts.TaskSetArn)
 
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskSet": ts}, "application/x-amz-json-1.1")
 }
@@ -216,8 +243,8 @@ func (h *Handler) DeleteTaskSet(w http.ResponseWriter, r *http.Request) {
 	serviceName := extractServiceName(req.Service)
 	taskSetID := extractTaskSetID(req.TaskSet)
 
-	svc, aerr := h.store.getService(r.Context(), clusterName, serviceName)
-	if aerr != nil {
+	// The service is read only to reject a task set on one that is not there.
+	if _, aerr := h.store.getService(r.Context(), clusterName, serviceName); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -242,14 +269,7 @@ func (h *Handler) DeleteTaskSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remove ARN from service task set list.
-	updated := svc.TaskSets[:0]
-	for _, arn := range svc.TaskSets {
-		if extractTaskSetID(arn) != taskSetID {
-			updated = append(updated, arn)
-		}
-	}
-	svc.TaskSets = updated
-	_ = h.store.putService(r.Context(), clusterName, svc)
+	h.deregisterServiceTaskSet(r.Context(), clusterName, serviceName, taskSetID)
 
 	ts.Status = "DRAINING"
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"taskSet": ts}, "application/x-amz-json-1.1")

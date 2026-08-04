@@ -986,88 +986,11 @@ func (h *Handler) createServiceTyped(ctx context.Context, req *createServiceRequ
 }
 
 func (h *Handler) updateServiceTyped(ctx context.Context, req *updateServiceRequest) (*updateServiceResponse, *protocol.AWSError) {
-	if req.Cluster == "" {
-		req.Cluster = "default"
-	}
-	clusterName := extractClusterName(req.Cluster)
-	serviceName := extractServiceName(req.Service)
-	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
+	svc, aerr := h.updateServiceRecord(ctx, req)
 	if aerr != nil {
 		return nil, aerr
 	}
-	now := h.clk.Now().Unix()
-	if req.DesiredCount != nil {
-		svc.DesiredCount = *req.DesiredCount
-		for i := range svc.Deployments {
-			if svc.Deployments[i].Status == "PRIMARY" {
-				svc.Deployments[i].DesiredCount = *req.DesiredCount
-				svc.Deployments[i].UpdatedAt = now
-			}
-		}
-		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has begun draining connections on %d tasks.", serviceName, 0))
-	}
-	if req.TaskDefinition != "" {
-		family, revision, hasRevision := parseTaskDefRef(req.TaskDefinition)
-		var td *TaskDefinition
-		if hasRevision {
-			td, aerr = h.store.getTaskDefinition(ctx, family, revision)
-		} else {
-			td, aerr = h.store.getLatestTaskDefinition(ctx, family)
-		}
-		if aerr != nil {
-			return nil, aerr
-		}
-		if td.TaskDefinitionArn != svc.TaskDefinition {
-			for i := range svc.Deployments {
-				if svc.Deployments[i].Status == "PRIMARY" {
-					svc.Deployments[i].Status = "ACTIVE"
-					svc.Deployments[i].UpdatedAt = now
-				}
-			}
-			newNetCfg := req.NetworkConfiguration
-			if newNetCfg == nil {
-				newNetCfg = svc.NetworkConfiguration
-			}
-			if _, placementErr := h.resolveAwsvpcPlacement(ctx, newNetCfg, "awsvpc services"); placementErr != nil {
-				return nil, placementErr
-			}
-			newPlatformVersion := req.PlatformVersion
-			if newPlatformVersion == "" {
-				newPlatformVersion = svc.PlatformVersion
-			}
-			svc.Deployments = append([]Deployment{{
-				ID:                   uuid.New().String(),
-				Status:               "PRIMARY",
-				TaskDefinition:       td.TaskDefinitionArn,
-				DesiredCount:         svc.DesiredCount,
-				RunningCount:         0,
-				PendingCount:         0,
-				CreatedAt:            now,
-				UpdatedAt:            now,
-				NetworkConfiguration: newNetCfg,
-				PlatformVersion:      newPlatformVersion,
-			}}, svc.Deployments...)
-			svc.TaskDefinition = td.TaskDefinitionArn
-			h.addServiceEvent(svc, fmt.Sprintf("(service %s) was updated to use task definition %s.", serviceName, td.TaskDefinitionArn))
-		}
-	}
-	if req.NetworkConfiguration != nil {
-		svc.NetworkConfiguration = req.NetworkConfiguration
-		for i := range svc.Deployments {
-			if svc.Deployments[i].Status == "PRIMARY" {
-				svc.Deployments[i].NetworkConfiguration = req.NetworkConfiguration
-				svc.Deployments[i].UpdatedAt = now
-			}
-		}
-	}
-	if req.PlatformVersion != "" {
-		svc.PlatformVersion = req.PlatformVersion
-	}
-	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
-		return nil, aerr
-	}
-	h.reconcile(ctx, clusterName, serviceName)
-	svc, _ = h.store.getService(ctx, clusterName, serviceName)
+	serviceName := extractServiceName(req.Service)
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ECSServiceUpdated, Payload: events.ResourcePayload{Name: serviceName}})
 	}
@@ -1075,29 +998,11 @@ func (h *Handler) updateServiceTyped(ctx context.Context, req *updateServiceRequ
 }
 
 func (h *Handler) deleteServiceTyped(ctx context.Context, req *deleteServiceRequest) (*deleteServiceResponse, *protocol.AWSError) {
-	if req.Cluster == "" {
-		req.Cluster = "default"
-	}
-	clusterName := extractClusterName(req.Cluster)
-	serviceName := extractServiceName(req.Service)
-	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
+	svc, aerr := h.drainServiceRecord(ctx, req.Cluster, req.Service)
 	if aerr != nil {
 		return nil, aerr
 	}
-	svc.Status = "DRAINING"
-	svc.DesiredCount = 0
-	for i := range svc.Deployments {
-		if svc.Deployments[i].Status == "PRIMARY" {
-			svc.Deployments[i].DesiredCount = 0
-			svc.Deployments[i].UpdatedAt = h.clk.Now().Unix()
-		}
-	}
-	h.addServiceEvent(svc, fmt.Sprintf("(service %s) is draining.", serviceName))
-	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
-		return nil, aerr
-	}
-	h.reconcile(ctx, clusterName, serviceName)
-	svc, _ = h.store.getService(ctx, clusterName, serviceName)
+	serviceName := extractServiceName(req.Service)
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ECSServiceDeleted, Payload: events.ResourcePayload{Name: serviceName}})
 	}
@@ -1373,8 +1278,7 @@ func (h *Handler) createTaskSetTyped(ctx context.Context, req *createTaskSetRequ
 	if aerr := h.store.putTaskSet(ctx, clusterName, serviceName, ts); aerr != nil {
 		return nil, aerr
 	}
-	svc.TaskSets = append(svc.TaskSets, ts.TaskSetArn)
-	_ = h.store.putService(ctx, clusterName, svc)
+	h.registerServiceTaskSet(ctx, clusterName, serviceName, ts.TaskSetArn)
 	return &createTaskSetResponse{TaskSet: *ts}, nil
 }
 
@@ -1414,8 +1318,8 @@ func (h *Handler) deleteTaskSetTyped(ctx context.Context, req *deleteTaskSetRequ
 	clusterName := extractClusterName(req.Cluster)
 	serviceName := extractServiceName(req.Service)
 	taskSetID := extractTaskSetID(req.TaskSet)
-	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
-	if aerr != nil {
+	// The service is read only to reject a task set on one that is not there.
+	if _, aerr := h.store.getService(ctx, clusterName, serviceName); aerr != nil {
 		return nil, aerr
 	}
 	ts, aerr := h.store.getTaskSet(ctx, clusterName, serviceName, taskSetID)
@@ -1430,14 +1334,7 @@ func (h *Handler) deleteTaskSetTyped(ctx context.Context, req *deleteTaskSetRequ
 	if aerr := h.store.deleteTaskSet(ctx, clusterName, serviceName, taskSetID); aerr != nil {
 		return nil, aerr
 	}
-	updated := svc.TaskSets[:0]
-	for _, arn := range svc.TaskSets {
-		if extractTaskSetID(arn) != taskSetID {
-			updated = append(updated, arn)
-		}
-	}
-	svc.TaskSets = updated
-	_ = h.store.putService(ctx, clusterName, svc)
+	h.deregisterServiceTaskSet(ctx, clusterName, serviceName, taskSetID)
 	ts.Status = "DRAINING"
 	return &deleteTaskSetResponse{TaskSet: *ts}, nil
 }
