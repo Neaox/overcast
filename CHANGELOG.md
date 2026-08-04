@@ -66,6 +66,14 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.30] - 2026-08-04
+
+### Fixed
+
+- [cloudformation/rds] an `AWS::RDS::DBInstance` or `AWS::RDS::DBCluster` resource completes only once the database reports `available`, as it does on AWS `cdk deploy` used to return green while the engine was still initialising — around half a minute for a MySQL container — so a migration or an app started off the back of a successful deploy was refused a connection. An instance that never came up settled into `failed` behind a stack that had already reported `CREATE_COMPLETE`; it now fails the resource with the reason RDS recorded against it and rolls the stack back.
+
+- [cloudformation] a resource that is created and then fails to become usable is deleted when the stack rolls back Its physical ID was dropped with the error, so rollback skipped it and left a real resource behind under a name nothing recorded — which the next deploy then collided with. Affects RDS databases and ECS services, the two resource types whose creation is asynchronous.
+
 ## [0.0.1-alpha.29] - 2026-08-03
 
 ### Added
@@ -916,7 +924,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.29...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.30...HEAD
+[0.0.1-alpha.30]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.29...v0.0.1-alpha.30
 [0.0.1-alpha.29]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.28...v0.0.1-alpha.29
 [0.0.1-alpha.28]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.27...v0.0.1-alpha.28
 [0.0.1-alpha.27]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.26...v0.0.1-alpha.27
