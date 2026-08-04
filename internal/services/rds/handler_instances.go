@@ -15,6 +15,16 @@ package rds
 
 import "net/http"
 
+// CreateDBInstance creates a DB instance.
+func (h *Handler) CreateDBInstance(w http.ResponseWriter, r *http.Request) {
+	h.invokeTypedAsQuery("CreateDBInstance", w, r)
+}
+
+// DeleteDBInstance deletes a DB instance.
+func (h *Handler) DeleteDBInstance(w http.ResponseWriter, r *http.Request) {
+	h.invokeTypedAsQuery("DeleteDBInstance", w, r)
+}
+
 // StopDBInstance stops a running DB instance.
 func (h *Handler) StopDBInstance(w http.ResponseWriter, r *http.Request) {
 	h.invokeTypedAsQuery("StopDBInstance", w, r)

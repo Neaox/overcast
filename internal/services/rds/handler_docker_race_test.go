@@ -185,14 +185,21 @@ func waitStarted(t *testing.T, fd *fakeDockerDaemon) {
 	}
 }
 
-// TestCreateDBInstance_containerStartDoesNotClobberStop reproduces the
-// cli/rds-instances/StartDBInstance compat flake: the background goroutine
-// spawned by CreateDBInstance reads the instance record, spends real time
-// starting the DB container, and must not write that stale snapshot back over
-// a Stop transition that landed in the meantime — otherwise the subsequent
-// StartDBInstance sees a status other than "stopped" and returns
-// InvalidDBInstanceState.
-func TestCreateDBInstance_containerStartDoesNotClobberStop(t *testing.T) {
+// An instance whose container is still coming up cannot be stopped, and the
+// container-start goroutine must not lose the container's identity either way.
+//
+// This test used to stop the instance mid-create and assert the start goroutine
+// did not clobber the transition — the cli/rds-instances/StartDBInstance compat
+// flake. That scenario was only reachable because CreateDBInstance declared the
+// instance "available" the moment it was created, whether or not a container
+// was coming up; the stop then landed on an instance that was really still
+// creating. AWS rejects a stop in that state, and now so does Overcast, which
+// removes that particular race by construction rather than by careful merging.
+//
+// The stale-snapshot merge it guarded is still covered, against the transition
+// that *is* legal while an instance is creating — see
+// TestCreateDBInstance_containerStartDoesNotResurrectDeleted.
+func TestStopDBInstance_isRejectedWhileTheInstanceIsStillCreating(t *testing.T) {
 	fd := newFakeDockerDaemon(t)
 	h := newDockerTestHandler(t, fd)
 	ctx := context.Background()
@@ -208,32 +215,25 @@ func TestCreateDBInstance_containerStartDoesNotClobberStop(t *testing.T) {
 	}
 	waitStarted(t, fd)
 
-	// The instance is "available" (zero-delay transition runs inline); stop it
-	// while the container start is still in flight.
-	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
-		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	_, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id})
+	if aerr == nil {
+		t.Fatal("StopDBInstance succeeded on an instance that is still creating")
+	}
+	if aerr.Code != "InvalidDBInstanceState" {
+		t.Errorf("error code = %q, want %q", aerr.Code, "InvalidDBInstanceState")
 	}
 
-	// Let the container start finish and its result land in the store.
+	// Let the container start finish; the record must still own its container.
 	fd.release()
 	h.dockerWg.Wait()
 
-	inst, aerr := h.store.getDBInstance(ctx, id)
-	if aerr != nil {
-		t.Fatalf("getDBInstance after container start: %s", aerr.Message)
-	}
-	if inst.DBInstanceStatus != "stopped" {
-		t.Fatalf("container-start goroutine clobbered the stop transition: status = %q, want %q",
-			inst.DBInstanceStatus, "stopped")
+	inst, gerr := h.store.getDBInstance(ctx, id)
+	if gerr != nil {
+		t.Fatalf("getDBInstance after container start: %s", gerr.Message)
 	}
 	if inst.DockerContainerID != fd.containerID {
 		t.Fatalf("container identity lost in merge: DockerContainerID = %q, want %q",
 			inst.DockerContainerID, fd.containerID)
-	}
-
-	// The compat suite's next step must succeed.
-	if _, aerr := h.startDBInstanceTyped(ctx, &startDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
-		t.Fatalf("StartDBInstance after stop: %s: %s", aerr.Code, aerr.Message)
 	}
 }
 

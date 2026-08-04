@@ -21,11 +21,18 @@ identified by the `Action` parameter with API version `2014-10-31`.
 ### Instance status is what actually happened
 
 An instance only reports `available` once Overcast has opened a TCP connection
-to the engine. If the container exits, cannot be started, or never accepts a
-connection within five minutes, the instance goes to AWS's `failed` status
-rather than being declared available anyway — a database you cannot connect to
-is not available, and discovering that by trying to connect is worse than being
-told. An instance is never left in `starting` indefinitely.
+to the engine — on creation as well as on start. If the container exits, cannot
+be started or created, or never accepts a connection within five minutes, the
+instance goes to AWS's `failed` status rather than being declared available
+anyway — a database you cannot connect to is not available, and discovering
+that by trying to connect is worse than being told. An instance is never left
+in `creating` or `starting` indefinitely.
+
+That means `CreateDBInstance` leaves the instance in `creating` for as long as
+the engine takes to come up, which for a first boot is roughly half a minute:
+the data directory has to be initialised before the server accepts anything.
+Poll `DescribeDBInstances` until it reports `available`, exactly as you would
+against AWS, and the connection will succeed on the first attempt.
 
 Starting an instance whose container Docker no longer has (a `docker prune`, a
 container removed by hand) rebuilds it rather than reporting a start that

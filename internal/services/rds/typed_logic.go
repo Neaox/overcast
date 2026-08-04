@@ -298,17 +298,31 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		return nil, aerr
 	}
 
-	if h.dockerReady.Load() {
+	launchingContainer := h.dockerReady.Load()
+	if launchingContainer {
 		if image, _, ok := resolveEngineImage(inst.Engine, inst.EngineVersion); ok && h.puller != nil {
 			h.puller.Prewarm(image)
 		}
 		h.launchDBContainerAsync(ctx, id)
 	}
 
-	instID := id
-	h.scheduler.AfterScoped(region, instID, "available", 0, func(ctx context.Context) {
-		h.transitionInstance(ctx, instID, "creating", "available")
-	})
+	// Only a metadata-only instance is available the moment it exists. When a
+	// container is coming up, the health check owns the transition — it is the
+	// only thing that knows whether the engine answers.
+	//
+	// This used to run unconditionally, "so the instance is immediately usable
+	// via the API". It made the status meaningless on the path most people
+	// use: against a real MySQL container the instance reported available 0.9s
+	// after CreateDBInstance and did not accept a connection for another 27s,
+	// and because the health check only promotes creating/starting it found
+	// the instance already available and did nothing — so a create whose
+	// container never came up stayed available forever.
+	if !launchingContainer {
+		instID := id
+		h.scheduler.AfterScoped(region, instID, "available", 0, func(ctx context.Context) {
+			h.transitionInstance(ctx, instID, "creating", "available")
+		})
+	}
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.RDSInstanceCreated, Time: h.clk.Now(), Source: "rds", Payload: events.ResourcePayload{Name: id}})

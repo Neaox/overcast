@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -392,183 +391,6 @@ type xmlSubnet struct {
 	SubnetIdentifier string `xml:"SubnetIdentifier"`
 }
 
-// ── CreateDBInstance ─────────────────────────────────────────────────────────
-
-// CreateDBInstance creates a new RDS DB instance (metadata-only).
-func (h *Handler) CreateDBInstance(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBInstanceIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBInstanceIdentifier is required"))
-		return
-	}
-
-	engine := r.FormValue("Engine")
-	if engine == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("Engine is required"))
-		return
-	}
-	if !supportedEngines[engine] {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("Engine must be one of: mysql, postgres, mariadb, aurora-mysql, aurora-postgresql"))
-		return
-	}
-
-	masterUser := r.FormValue("MasterUsername")
-	if masterUser == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("MasterUsername is required"))
-		return
-	}
-
-	masterPass := r.FormValue("MasterUserPassword")
-	if masterPass == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("MasterUserPassword is required"))
-		return
-	}
-
-	// Check for duplicate.
-	if _, aerr := h.store.getDBInstance(r.Context(), id); aerr == nil {
-		protocol.WriteQueryXMLError(w, r, errDBInstanceAlreadyExists(id))
-		return
-	}
-
-	// Defaults.
-	instanceClass := r.FormValue("DBInstanceClass")
-	if instanceClass == "" {
-		instanceClass = "db.t3.micro"
-	}
-
-	engineVersion := r.FormValue("EngineVersion")
-	if engineVersion == "" {
-		engineVersion = defaultEngineVersions[engine]
-	}
-
-	allocatedStorage := formInt(r, "AllocatedStorage", 20)
-
-	port := formInt(r, "Port", defaultPorts[engine])
-
-	storageType := r.FormValue("StorageType")
-	if storageType == "" {
-		storageType = "gp2"
-	}
-
-	multiAZ := r.FormValue("MultiAZ") == "true"
-	dbName := r.FormValue("DBName")
-	clusterID := r.FormValue("DBClusterIdentifier")
-	dbSubnetGroupName := r.FormValue("DBSubnetGroupName")
-	vpcID := ""
-
-	// If a cluster identifier is supplied, validate it exists before proceeding.
-	if clusterID != "" {
-		if _, aerr := h.store.getDBCluster(r.Context(), clusterID); aerr != nil {
-			protocol.WriteQueryXMLError(w, r, aerr)
-			return
-		}
-	}
-	if dbSubnetGroupName != "" {
-		sg, aerr := h.store.getDBSubnetGroup(r.Context(), dbSubnetGroupName)
-		if aerr != nil {
-			protocol.WriteQueryXMLError(w, r, aerr)
-			return
-		}
-		vpcID = sg.VpcId
-		if h.vpcResolver != nil && vpcID != "" {
-			switch status := h.vpcResolver.VPCNetworkStatus(r.Context(), vpcID); status {
-			case "", "ok", "shared", "remapped":
-				// launchable
-			case "conflict", "unbacked":
-				protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
-					Code:       "InvalidVPCNetworkStateFault",
-					Message:    fmt.Sprintf("VPC '%s' is not launchable for DB instances (network status=%s).", vpcID, status),
-					HTTPStatus: http.StatusBadRequest,
-				})
-				return
-			default:
-				protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
-					Code:       "InvalidVPCNetworkStateFault",
-					Message:    fmt.Sprintf("VPC '%s' is not launchable for DB instances (network status=%s).", vpcID, status),
-					HTTPStatus: http.StatusBadRequest,
-				})
-				return
-			}
-		}
-	}
-
-	region := h.store.region(r.Context())
-	arn := protocol.ARN(region, h.cfg.AccountID, "rds", "db:"+id)
-	now := h.clk.Now().UTC().Format(time.RFC3339)
-
-	// Stored canonical, re-minted for whoever reads it — see endpoint.go.
-	endpoint := &Endpoint{
-		Address: instanceEndpointHostname(id, region, h.externalHostname()),
-		Port:    port,
-	}
-
-	inst := &DBInstance{
-		DBInstanceIdentifier: id,
-		DBInstanceClass:      instanceClass,
-		Engine:               engine,
-		EngineVersion:        engineVersion,
-		DBInstanceStatus:     "creating",
-		MasterUsername:       masterUser,
-		MasterUserPassword:   masterPass,
-		DBName:               dbName,
-		AllocatedStorage:     allocatedStorage,
-		Endpoint:             endpoint,
-		DBInstanceArn:        arn,
-		InstanceCreateTime:   now,
-		MultiAZ:              multiAZ,
-		StorageType:          storageType,
-		Port:                 port,
-		DBClusterIdentifier:  clusterID,
-		DBSubnetGroupName:    dbSubnetGroupName,
-		VpcID:                vpcID,
-	}
-
-	if aerr := h.store.putDBInstance(r.Context(), inst); aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	// If Docker is available, start the database container in the background
-	// so the image pull does not block CreateDBInstance on the request path.
-	// The instance stays in "creating" until the pull + container start +
-	// health check all complete, matching AWS semantics where CreateDBInstance
-	// returns immediately and clients poll DescribeDBInstances.
-	if h.dockerReady.Load() {
-		// Pre-warm the image via the shared puller's dedup so a concurrent
-		// describe-wait has its pull coalesced with the background start.
-		if image, _, ok := resolveEngineImage(inst.Engine, inst.EngineVersion); ok && h.puller != nil {
-			h.puller.Prewarm(image)
-		}
-		h.launchDBContainerAsync(r.Context(), id)
-	}
-
-	// Always schedule the metadata-only creating → available transition so
-	// the instance is immediately usable via the API regardless of whether
-	// a Docker container was started.  With a real clock the scheduler runs
-	// 0-delay callbacks synchronously; with a mock clock the transition stays
-	// pending until clock.Add is called.
-	instID := id
-	h.scheduler.AfterScoped(region, instID, "available", 0, func(ctx context.Context) {
-		h.transitionInstance(ctx, instID, "creating", "available")
-	})
-
-	h.publish(r, events.RDSInstanceCreated, events.ResourcePayload{Name: id})
-	h.recordInstanceEvent(r.Context(), id, "DB instance created.", "creation")
-
-	// If the instance belongs to a cluster, register it as a cluster member.
-	if clusterID != "" {
-		h.addInstanceToCluster(r.Context(), clusterID, id)
-	}
-
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateDBInstanceResponse{
-		Xmlns: rdsXMLNS,
-		Result: xmlCreateDBInstanceResult{
-			DBInstance: h.toXMLDBInstance(r.Context(), inst),
-		},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
-}
-
 // ── DescribeDBInstances ──────────────────────────────────────────────────────
 
 // DescribeDBInstances returns DB instances, optionally filtered by identifier.
@@ -608,70 +430,6 @@ func (h *Handler) DescribeDBInstances(w http.ResponseWriter, r *http.Request) {
 			DBInstances: xmlDBInstances{Items: items},
 		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
-}
-
-// ── DeleteDBInstance ─────────────────────────────────────────────────────────
-
-// DeleteDBInstance deletes a DB instance. It immediately transitions to
-// "deleting" (matching AWS behaviour), then asynchronously stops/removes the
-// Docker container (if any) and removes the record from the store.
-// All Docker cleanup steps are best-effort and fault-tolerant: a missing or
-// already-stopped container will not block deletion.
-func (h *Handler) DeleteDBInstance(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("DBInstanceIdentifier")
-	if id == "" {
-		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBInstanceIdentifier is required"))
-		return
-	}
-
-	// Mark as deleting immediately — this is what AWS returns in the response —
-	// and snapshot the fields the async cleanup needs.
-	var containerID string
-	var hostPort int
-	inst, aerr := h.mutateInstance(r.Context(), id, func(inst *DBInstance) *protocol.AWSError {
-		containerID = inst.DockerContainerID
-		hostPort = inst.HostPort
-		inst.DBInstanceStatus = "deleting"
-		return nil
-	})
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	h.publish(r, events.RDSInstanceDeleted, events.ResourcePayload{Name: id})
-	h.recordInstanceEvent(r.Context(), id, "DB instance deleted.", "deletion")
-
-	// Return the "deleting" response to the caller right away (AWS does the same).
-	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDeleteDBInstanceResponse{
-		Xmlns: rdsXMLNS,
-		Result: xmlDeleteDBInstanceResult{
-			DBInstance: h.toXMLDBInstance(r.Context(), inst),
-		},
-		ResponseMetadata: protocol.QueryResponseMetadata(r),
-	})
-
-	// Cancel any in-flight health check so it doesn't race with cleanup.
-	region := h.store.region(r.Context())
-	h.scheduler.CancelScoped(region, id, "health")
-
-	// Stop the container immediately (async, non-blocking).
-	if h.gc != nil && containerID != "" {
-		h.gc.StopNow(containerID)
-		h.gc.ScheduleRemove(containerID)
-	}
-	// Release port reservation.
-	if hostPort > 0 {
-		_ = h.store.releasePort(r.Context(), hostPort) //nolint:errcheck
-	}
-
-	// Schedule async store record deletion. The GC handles the Docker
-	// container cleanup independently — this just removes the DB record.
-	h.scheduler.AfterScoped(region, id, "delete", 50*time.Millisecond, func(ctx context.Context) {
-		if aerr := h.store.deleteDBInstance(ctx, id); aerr != nil {
-			h.log.Warn("failed to delete RDS instance record", zap.String("instance", id), zap.Error(aerr))
-		}
 	})
 }
 
@@ -767,18 +525,6 @@ func toXMLDBSubnetGroup(sg *DBSubnetGroup) xmlDBSubnetGroup {
 		SubnetIds:                xmlSubnets{Items: subnets},
 		Status:                   sg.Status,
 	}
-}
-
-func formInt(r *http.Request, key string, def int) int {
-	v := r.FormValue(key)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
 }
 
 // ── Cluster helpers ───────────────────────────────────────────────────────────
@@ -1129,8 +875,12 @@ func (h *Handler) launchDBContainerAsync(ctx context.Context, instID string) {
 			return
 		}
 		if err := h.startDBContainer(bgCtx, got); err != nil {
-			h.log.Warn("failed to start Docker container for RDS instance — falling back to metadata-only",
-				zap.String("instance", instID), zap.Error(err))
+			// Not a fallback to metadata-only. Docker was available when the
+			// instance was created, so failing to build its container is a
+			// real failure, and leaving the instance sitting in "creating" —
+			// or, as it used to, in "available" with nothing behind it — tells
+			// the caller nothing. Same treatment as a failed start.
+			h.failInstance(bgCtx, instID, fmt.Sprintf("the database container could not be created: %v", err))
 			return
 		}
 		fresh, aerr := h.mutateInstance(bgCtx, instID, func(inst *DBInstance) *protocol.AWSError {
@@ -1140,6 +890,14 @@ func (h *Handler) launchDBContainerAsync(ctx context.Context, instID string) {
 			inst.DockerContainerID = got.DockerContainerID
 			inst.HostPort = got.HostPort
 			inst.Endpoint = got.Endpoint
+			// DialAddress/DialPort are how Overcast itself reaches the engine,
+			// and dropping them here left the health check falling back to the
+			// endpoint name — a DNS record only sibling containers resolve — so
+			// on the create path it dialled something it could never reach. The
+			// start path's merge has always carried them; see
+			// startInstanceContainerAsync.
+			inst.DialAddress = got.DialAddress
+			inst.DialPort = got.DialPort
 			return nil
 		})
 		if aerr != nil {

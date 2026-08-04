@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +76,40 @@ func (d *lifecycleDaemon) failExecs(code int, output string) {
 	defer d.mu.Unlock()
 	d.execExitCode = code
 	d.execOutput = output
+}
+
+// serveEngine answers on whatever address Overcast is going to dial for this
+// instance, standing in for a database that has finished booting.
+//
+// It reads the dial target off the record rather than assuming a port: which
+// address that is depends on whether Overcast is running beside the engine or
+// on the host, and the test suite itself runs inside a container, so hardcoding
+// either one makes the test pass for the wrong reason.
+func serveEngine(t *testing.T, h *Handler, id string) net.Listener {
+	t.Helper()
+	inst, aerr := h.store.getDBInstance(context.Background(), id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance: %s", aerr.Message)
+	}
+	host, port := dialTarget(inst)
+	if host == "" || port == 0 {
+		t.Fatalf("instance %s has no dial target — the health check has nothing to dial", id)
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		t.Fatalf("fake engine could not listen on the instance's dial target %s:%d: %v", host, port, err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	return ln
 }
 
 // drop makes the daemon forget the container, as a startup sweep, a
@@ -245,9 +281,35 @@ func (d *lifecycleDaemon) containerGone(within time.Duration) bool {
 	}
 }
 
+// freePortBase gives a test handler a port range nothing else is using.
+//
+// The allocator hands out ports from cfg.RDSPortBase, and a test then has to
+// listen on whichever one it picked — so the range has to actually be free.
+// Left at the default every test allocated the same port and the second to run
+// could not bind; a fixed alternative range only moves that assumption
+// somewhere less obvious, since it still asserts nothing else on the machine
+// wants those ports. Asking the OS for one it is willing to give removes the
+// assumption instead of relocating it.
+//
+// The port is released before it is handed back, so this is advisory rather
+// than a reservation — but each caller gets a different one, which is the
+// property the tests actually need.
+func freePortBase(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("could not find a free port for the test's RDS port base: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("closing the probe listener: %v", err)
+	}
+	return port
+}
+
 func newLifecycleHandler(t *testing.T, d *lifecycleDaemon) *Handler {
 	t.Helper()
-	cfg := &config.Config{Region: "us-east-1", AccountID: "123456789012"}
+	cfg := &config.Config{Region: "us-east-1", AccountID: "123456789012", RDSPortBase: freePortBase(t)}
 	s := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	h := s.handler
 	h.docker = docker.NewClient("tcp://"+d.srv.Listener.Addr().String(), zap.NewNop())
@@ -294,6 +356,11 @@ func createRunningInstanceWith(t *testing.T, h *Handler, id, engine, user, passw
 		time.Sleep(10 * time.Millisecond)
 	}
 	h.dockerWg.Wait()
+	// A create no longer declares itself available; the health check does,
+	// once the engine answers. Standing one up and waiting exercises the real
+	// promotion path rather than writing the status in behind its back.
+	serveEngine(t, h, id)
+	waitForStatus(t, h, id, "available")
 }
 
 // A stopped instance must still have a container to start again. AWS's
