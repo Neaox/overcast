@@ -229,6 +229,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [lambda] an invoke with `LogType: Tail` waits for the handler's output to reach the tail buffer rather than for Docker to hand over bytes, so `X-Amz-Log-Result` carries the function's own log lines instead of just `START`/`END`/`REPORT` — and the missing line no longer surfaces against the *next* invocation, whose request ID it was never written under
 
+- [lambda] a `LogType: Tail` invoke no longer opens with a log line another invocation wrote. When the wait for a function's output expires before Docker hands it over, the next tail settles that account first and drops what arrives late, so `X-Amz-Log-Result` comes back short — which is what it promises, "the last 4 KB of the execution log" — rather than carrying a line logged under a different request ID. The line itself is unaffected in CloudWatch Logs
+
 - [msk] deleting a cluster while its Redpanda container was still starting no longer leaks the container — the delete stopped the container ID on the record, which is empty until the start completes, so the start goroutine now tears down its own container when the cluster went away
 
 - [pipes] a DynamoDB-sourced pipe is no longer cancelled part-way through delivery when the write that triggered it answers its client
