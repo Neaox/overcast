@@ -199,6 +199,12 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 	if masterPass == "" {
 		return nil, errInvalidParameterValue("MasterUserPassword is required")
 	}
+	// Validated at create as well as on modify. Accepting a password here that
+	// ModifyDBInstance would refuse leaves an instance that can never change
+	// it, and RDS rejects it at this point too.
+	if aerr := validateMasterUserPassword(masterPass); aerr != nil {
+		return nil, aerr
+	}
 
 	if _, aerr := h.store.getDBInstance(ctx, id); aerr == nil {
 		return nil, errDBInstanceAlreadyExists(id)
@@ -897,6 +903,9 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 
 	if req.MasterUserPassword == "" {
 		return nil, errInvalidParameterValue("MasterUserPassword is required")
+	}
+	if aerr := validateMasterUserPassword(req.MasterUserPassword); aerr != nil {
+		return nil, aerr
 	}
 
 	if _, aerr := h.store.getDBCluster(ctx, id); aerr == nil {
