@@ -154,8 +154,12 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web] log timestamps read the same everywhere: an event with no timestamp shows a dash rather than a 1970 clock time in the map's stream peek, and a debug row carries the same faint tint in every viewer
 
+- [web] the console's docs bundle drops the search corpus it never used: `web/src/docs-index.gen.ts` (655 KB, carrying a flattened copy of every page's text) is replaced by `web/src/docs-nav.gen.ts` (112 KB) holding only what the sidebar and page outline render. Docs search already went through the API
+
 - **BREAKING** [efs/ecs/lambda] EFS live mode is the default, so a file system is backed by a real Docker volume whenever a daemon is reachable and an ECS task or Lambda function that declares an EFS mount gets storage it can actually share — no configuration, no `OVERCAST_EFS_MODE=live`. Live mode asks nothing of a machine that cannot provide it: it creates a volume only for a file system someone created, and with Docker out of reach it creates nothing and behaves exactly as mock mode did
   migration: set `OVERCAST_EFS_MODE=mock` to keep EFS metadata-only. One task-level behaviour changes with the default: a container whose `rootDirectory` — or whose access-point root directory declared without `CreationInfo` — does not exist in the volume now fails to start, where before the mount was skipped and the task started without it. That is AWS's own mount failure, and it surfaces a task definition that was never going to work on AWS
+
+- [docs/web] the generated docs search index is stored per document rather than per term, so editing a doc rewrites that doc's line instead of up to 1,500 lines of a term-major inverted index. Two branches that each touched `docs/` conflicted in the generated file almost every time, and the conflict could only be resolved by regenerating; document-major output merges cleanly. Search results and ranking are unchanged — the same weighted term scores are simply grouped by document, and the inverted index is rebuilt at load time
 
 ### Fixed
 
@@ -326,7 +330,11 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web/rds] the instance Logs tab shows the failure reason and the dead container's last output rather than "No logs available", and a new Events tab lists the instance's events newest-first with failures called out
 
+- [web] docs search in `pnpm run dev` answers like a built binary. The dev BFF matched a raw substring against a flattened text blob while the Go BFF matched whole tokens against a ranked index, so the same query could return different pages, in a different order, with every score reported as 1. Both now read the same generated index with the same tokenizer and ranking
+
 - [docs] `docs/networking.md` gains a *Data-plane endpoints* section stating the rule across services: every hostname Overcast hands back is minted on the endpoint the request came in on, how a name that points at a container (rather than at Overcast) is made resolvable, and why the port differs by caller
+
+- [docs] a doc that cannot be indexed — no title, no section, or no searchable terms — fails `make docs-index` instead of being written out as a degenerate entry that regenerates byte-identically and so passes the staleness check while the page is missing from search
 
 ## [0.0.1-alpha.28] - 2026-07-31
 
