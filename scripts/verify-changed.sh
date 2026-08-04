@@ -112,6 +112,28 @@ _fp_go() {
     '*.go' go.mod go.sum .golangci.yml ':(exclude)compat/suites/*'
 }
 
+# The build-tag sets CI runs the suite under (test.yml, the `build-tags`
+# matrix). Vetting each of them is what makes tag-gated code visible here at
+# all: golangci-lint, `go vet ./...` and `go test ./...` all use the default
+# build context, so a file behind `//go:build dev` or `nosqlite` is not
+# compiled by any of them — a syntax error in one passes every local check and
+# fails only in CI.
+#
+# Setting `build-tags` in .golangci.yml is not the fix. Those files come in
+# pairs with `//go:build !dev` halves (registry_dev.go / registry_prod.go and
+# friends), so naming the tag drops the other half from analysis: the blind
+# spot moves rather than closing.
+#
+# Vet rather than test: this stays a compile-and-vet gate, matching the
+# script's charter of not running the suite. Every set carries `slim`, so none
+# of them needs a built web/dist.
+_ci_build_tags='slim slim,nosqlite slim,dev'
+
+_fp_tags() {
+  _fingerprint "go vet -tags [$_ci_build_tags] ./..." \
+    '*.go' go.mod go.sum ':(exclude)compat/suites/*'
+}
+
 _fp_web() {
   _fingerprint 'pnpm run typecheck && pnpm run lint' 'web/'
 }
@@ -166,6 +188,31 @@ if [ -n "$go_changed" ]; then
     failed="$failed$go_failed"
     if [ -n "$fp" ]; then
       if [ -z "$go_failed" ]; then _cache_put golangci-lint "$fp"; else _cache_put golangci-lint ""; fi
+    fi
+  fi
+fi
+
+# ---- Go: vet under CI's build tags -----------------------------------------
+if [ -n "$go_changed" ]; then
+  fp=$(_fp_tags)
+  if [ "$force" -eq 0 ] && [ -n "$fp" ] && [ "$(_cache_get vet-tags)" = "$fp" ]; then
+    cached="$cached vet-tags"
+  else
+    tags_failed=""
+    for tagset in $_ci_build_tags; do
+      if command -v go >/dev/null 2>&1; then
+        go vet -tags "$tagset" ./... || tags_failed="$tags_failed vet(-tags $tagset)"
+      elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
+        scripts/docker-go.sh vet -tags "$tagset" ./... || tags_failed="$tags_failed vet(-tags $tagset)"
+      else
+        skipped="$skipped vet-tags(no go/docker)"
+        fp="" # never ran, so there is no pass to cache and none to invalidate
+        break
+      fi
+    done
+    failed="$failed$tags_failed"
+    if [ -n "$fp" ]; then
+      if [ -z "$tags_failed" ]; then _cache_put vet-tags "$fp"; else _cache_put vet-tags ""; fi
     fi
   fi
 fi
