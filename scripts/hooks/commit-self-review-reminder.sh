@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code PreToolUse hook: remind the agent to self-review its own commit.
+# Claude Code/Codex PreToolUse hook: remind the agent to self-review its own commit.
 #
 # This runs no checks and blocks nothing — scripts/verify-changed.sh is the gate, this is
 # the nudge. It exists because a plain `echo` from a PreToolUse hook reaches nobody: on
