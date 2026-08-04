@@ -30,12 +30,81 @@ opencode and Claude Code both discover them without prompting.
 - `bug-fix`: Use for diagnosing and fixing bugs with reproducing tests and full verification.
 - `code-review`: Use for PR/code reviews, AWS parity checks, regression risk, performance, leaks, DRY/SOLID, and maintainability.
 - `commit`: Use for clean commit creation, staging review, and commit-message hygiene.
-- `git-worktrees`: Use for parallel multi-agent work that needs isolated worktrees.
+- `git-worktrees`: Use for every mutating task so each agent works in an isolated, task-owned worktree.
 - `github-issue-lifecycle`: Use for creating, triaging, updating, linking, and closing GitHub issues.
 - `new-feature`: Use for adding AWS endpoints, services, CloudFormation resources, or other product features.
 - `pull-request`: Use for preparing PRs, PR descriptions, commit hygiene, screenshots for visual changes, and CHANGELOG decisions.
 - `release`: Use for cutting a release — curating changelog fragments, bumping `VERSION`, and smoke/regression testing the release candidate before it ships.
 - `stacked-prs`: Use when a PR depends on another PR that has not merged yet — building, linking, syncing and landing a chain of dependent PRs.
+
+### Worktree policy
+
+All repository mutations must happen in a dedicated, task-owned git worktree. Derive the default
+worktree root portably as `<primary-checkout-parent>/.worktrees/<repo-name>`; an absolute
+clone-local `overcast.worktreeRoot` Git config value may override it. Never commit a
+machine-specific absolute path. The primary checkout is for read-only inspection and worktree
+management unless the user explicitly asks an agent to edit it. If an agent is already running in
+a dedicated worktree, it may continue there.
+
+Before editing, use the `git-worktrees` skill and inspect the current repository root, branch,
+and registered worktrees. Every write-capable sub-agent must receive its own uniquely named
+worktree and branch under the resolved worktree root; two write-capable agents must never share a
+checkout. Read-only sub-agents may share a checkout. If an isolated worktree cannot be created,
+perform the work sequentially or ask for direction instead of allowing concurrent writers.
+
+Claim a write-capable worktree with Git's portable lock metadata while it is active:
+`git worktree lock --reason "owner=<agent-or-user>; task=<task>; claimed=<ISO-8601>" <path>`.
+Use a stable task or session identifier when one is available. A host and process ID may be added
+as diagnostics, but they are not proof that the claim is live: processes end, PIDs are reused, and
+another host cannot inspect them. `git worktree list --porcelain` exposes the lock and its reason.
+The lock is an advisory ownership marker and removal/pruning guard, not an exclusive filesystem
+lease; agents must still obey the one-writer-per-worktree rule. Only the owner (or a user after
+confirming that the owner is gone) may unlock a claimed worktree.
+
+The parent agent owns integration and cleanup of any worktrees it creates for sub-agents. Never use
+`git stash` in a linked worktree: the stash stack is shared by the entire repository, so concurrent
+agents can restore or drop one another's entries. The Claude and Codex `PreToolUse` hooks enforce
+this rule. Prefer a temporary WIP commit, then amend or squash it before review; alternatively,
+move the changes explicitly to the intended task branch or worktree.
+
+This repository lands PRs with squash merge. A worktree branch's commit SHA therefore normally
+does not appear in `main`; verify integration from the PR's merged state and `mergeCommit` (for
+example, `gh pr view <pr> --json state,mergedAt,mergeCommit`) rather than relying on
+`git merge-base --is-ancestor`, `git branch --merged`, or finding the branch commit in `main`.
+
+When a task is complete or handed off, first ensure its commits are recoverable from another
+checkout (pushed or integrated), verify the task worktree is clean, then remove it from another
+checkout with `git worktree remove <absolute-path>` and run `git worktree prune`. After a squash
+merge is verified, delete the local branch with `git branch -D <branch>`; `-d` rejects it because
+its pre-squash commits are not ancestors of `main`. Never force-remove a dirty worktree or
+force-delete a branch without verified integration; report retained work instead. Only clean up
+worktrees owned by the current task—other registered worktrees may belong to users or agents
+still working.
+
+Completed or merged worktrees should not be retained for convenience. Up to three clean, pushed,
+explicitly claimed worktrees may remain only for paused, unmerged tasks that are genuinely likely
+to resume. Record why each is retained in its lock reason. Housekeeping must skip every locked or
+dirty worktree, and must never infer abandonment from an old timestamp or dead PID alone. For an
+unlocked, clean candidate, confirm recoverability and the associated PR state first; because this
+repository squash-merges, only a PR reported as `MERGED` with a `mergeCommit` proves integration.
+Before removal, unlock a task-owned worktree, remove it from a different checkout, delete its local
+branch only after that proof, and prune stale administrative records. If more than three paused
+worktrees would remain, ask their owners or the user which tasks to retire rather than deleting the
+oldest automatically.
+
+### Cross-platform guardrail
+
+Overcast and its contributor tooling must work on Windows, macOS, and Linux. Treat scripts, hooks,
+paths, setup steps, and agent instructions as product-quality cross-platform surfaces. Never
+commit a personal absolute path, assume one shell or path separator, or replace a portable workflow
+with a platform-only one. Prefer platform-neutral implementations; when shell-specific behavior is
+unavoidable, provide and verify equivalent POSIX and PowerShell entry points or a tested platform
+dispatcher. See
+[CONTRIBUTING.md § Cross-platform development contract](./CONTRIBUTING.md#cross-platform-development-contract).
+
+Before finishing a tooling or documentation change, check every command and path from all three
+platforms' perspective. If support cannot be kept equivalent, stop and surface the tradeoff rather
+than silently narrowing the supported development stack.
 
 ---
 

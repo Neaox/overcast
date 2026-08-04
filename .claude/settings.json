@@ -23,6 +23,12 @@
             "command": "bash scripts/hooks/pr-checks-poll-loop-warning.sh",
             "timeout": 10,
             "statusMessage": "Checking for a hand-rolled CI poll loop"
+          },
+          {
+            "type": "command",
+            "command": "bash scripts/hooks/reject-worktree-stash.sh",
+            "timeout": 10,
+            "statusMessage": "Protecting the shared worktree stash"
           }
         ]
       }

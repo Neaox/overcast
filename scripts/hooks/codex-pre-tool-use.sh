@@ -12,6 +12,10 @@ command=$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/n
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 0
 repo_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null) || exit 0
 
+printf '%s' "$payload" | bash "$script_dir/reject-worktree-stash.sh"
+status=$?
+[ "$status" -eq 0 ] || exit "$status"
+
 if printf '%s' "$command" | grep -Eq '^[[:space:]]*git[[:space:]]+commit([[:space:]]|$)'; then
   exec "$script_dir/commit-self-review-reminder.sh"
 fi

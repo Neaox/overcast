@@ -21,6 +21,7 @@ AI agents using this repo should also read [AGENTS.md](./AGENTS.md) for agent-sp
   - [Service implementation tiers](#service-implementation-tiers)
   - [Core principles](#core-principles)
   - [Supported platforms](#supported-platforms)
+    - [Cross-platform development contract](#cross-platform-development-contract)
   - [Prerequisites](#prerequisites)
   - [First-time setup](#first-time-setup)
   - [Development workflow](#development-workflow)
@@ -216,11 +217,11 @@ These guide every decision — from architecture to variable naming. Read them b
 
 ## Supported platforms
 
-| Platform | Arch         | Tier      | Notes                                        |
-| -------- | ------------ | --------- | -------------------------------------------- |
-| Linux    | amd64, arm64 | Primary   | Docker image target; CI runs here            |
-| macOS    | amd64, arm64 | Primary   | Developer workstations; Apple Silicon native |
-| Windows  | amd64        | Secondary | Console `.exe`; init hooks use `cmd.exe /c`  |
+| Platform | Arch         | Support  | Notes                                        |
+| -------- | ------------ | -------- | -------------------------------------------- |
+| Linux    | amd64, arm64 | Required | Docker image target; CI runs here            |
+| macOS    | amd64, arm64 | Required | Developer workstations; Apple Silicon native |
+| Windows  | amd64        | Required | Native console binary and development host   |
 
 **All contributions must compile without error on every supported platform.**
 Use build tags (`//go:build linux`, `//go:build !windows`, etc.) to isolate
@@ -239,12 +240,38 @@ from `golang.org/x/sys/unix`, add a build tag and a corresponding stub for other
 platforms. See `internal/inithooks/hooks_unix.go` and `hooks_windows.go` for the
 pattern, and `internal/router/procstart_*.go` for the process-start-time files.
 
+### Cross-platform development contract
+
+Platform support covers both the shipped Overcast runtime and the contributor experience. Source
+code, build and test tooling, hooks, setup instructions, and routine development workflows must
+work on Windows, macOS, and Linux. A workflow that only works on its author's machine or preferred
+shell is not complete.
+
+- Never commit machine-specific absolute paths. Derive locations from the repository, operating
+  system, environment, or an explicitly documented local override.
+- Prefer platform-neutral implementations and standard path/process APIs. Do not concatenate path
+  separators, assume `/tmp`, or rely on Unix process behavior in shared code.
+- When tooling genuinely needs shell-specific behavior, provide equivalent POSIX and PowerShell
+  entry points or a tested platform dispatcher. Keep their observable behavior and exit codes in
+  sync.
+- Label shell-specific command examples and provide the equivalent command when syntax differs.
+  Requiring Git Bash on Windows is acceptable only when it is an explicit prerequisite and the
+  invocation does not assume one installation path.
+- Test platform-selection and path-resolution logic. Cross-build the runtime with `make
+  build-cross`; exercise native platform tooling when changing it or explain the verification gap
+  in the PR.
+
+If a dependency cannot support one of these platforms, surface the tradeoff before adding it. Do
+not silently narrow platform support or document a single-machine workaround as project policy.
+
 ---
 
 ## Prerequisites
 
 | Tool          | Version | Install                                                   |
 | ------------- | ------- | --------------------------------------------------------- |
+| Git           | Current | https://git-scm.com/downloads — use Git for Windows on Windows (includes Git Bash used by hooks) |
+| jq            | 1.6+    | JSON processing for agent hooks and PR helper scripts — https://jqlang.org/download/ |
 | Go            | 1.24+   | https://go.dev/dl/                                        |
 | Docker        | 24+     | https://docs.docker.com/get-docker/                       |
 | golangci-lint | v2.8.0  | `make lint-go` uses pinned `go run` automatically          |
@@ -1562,6 +1589,8 @@ chore(ci): add TODO-to-issue GitHub Action
 - [ ] Commit messages follow conventional commits
 - [ ] No debug logging left in production paths
 - [ ] No new global variables
+- [ ] Runtime, tooling, hooks, and instructions remain usable on Windows, macOS, and Linux; any
+      shell-specific workflow has an equivalent or tested dispatcher
 
 ---
 
