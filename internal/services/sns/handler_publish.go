@@ -332,12 +332,20 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 	// Filter-policy matching works on plain string values. Derive them at most
 	// once per publish rather than once per subscription, and only when some
 	// subscription actually carries a policy.
-	var filterValues map[string]string
+	var attributeFilterValues map[string]string
+	var bodyFilterValues map[string]string
 	for _, sub := range subs {
 		// Apply FilterPolicy if set.
 		if fp, ok := sub.Attributes["FilterPolicy"]; ok && fp != "" {
-			if filterValues == nil {
-				filterValues = filterPolicyValues(msgAttrs)
+			filterValues := attributeFilterValues
+			if strings.EqualFold(sub.Attributes["FilterPolicyScope"], "MessageBody") {
+				if bodyFilterValues == nil {
+					bodyFilterValues = filterPolicyValuesFromBody(plainMessage)
+				}
+				filterValues = bodyFilterValues
+			} else if attributeFilterValues == nil {
+				attributeFilterValues = filterPolicyValues(msgAttrs)
+				filterValues = attributeFilterValues
 			}
 			if !messageMatchesFilterPolicy(fp, filterValues) {
 				continue
@@ -353,6 +361,10 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 			continue
 		}
 		jsonBody := string(jsonBytes)
+		deliveryBody := jsonBody
+		if strings.EqualFold(sub.Attributes["RawMessageDelivery"], "true") {
+			deliveryBody = plainMessage
+		}
 		d := delivery{
 			sub:       sub,
 			envelope:  subEnv,
@@ -365,7 +377,7 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 			if h.enqueuer == nil || sub.QueueName == "" {
 				continue
 			}
-			if err := h.enqueuer.EnqueueRaw(ctx, sub.QueueName, jsonBody); err != nil {
+			if err := h.enqueuer.EnqueueRaw(ctx, sub.QueueName, deliveryBody); err != nil {
 				h.failDelivery(ctx, d, "SQS enqueue failed: "+err.Error())
 				continue
 			}
@@ -449,7 +461,7 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 			if h.outbound == nil {
 				continue
 			}
-			if err := h.outbound.CaptureWebhook("sns", sub.Endpoint, jsonBody, msgID, topicName); err != nil {
+			if err := h.outbound.CaptureWebhook("sns", sub.Endpoint, deliveryBody, msgID, topicName); err != nil {
 				h.failDelivery(ctx, d, "webhook capture failed: "+err.Error())
 				continue
 			}
@@ -708,6 +720,27 @@ func filterPolicyValues(attrs map[string]messageAttribute) map[string]string {
 		}
 	}
 	return out
+}
+
+// filterPolicyValuesFromBody extracts the scalar top-level values that the
+// currently supported simple filter policy evaluator can compare. SNS applies
+// subscriptions with FilterPolicyScope=MessageBody to the published JSON body
+// rather than the message attributes.
+func filterPolicyValuesFromBody(message string) map[string]string {
+	var body map[string]any
+	if err := json.Unmarshal([]byte(message), &body); err != nil {
+		return nil
+	}
+	values := make(map[string]string, len(body))
+	for key, value := range body {
+		switch typed := value.(type) {
+		case string:
+			values[key] = typed
+		case float64, bool:
+			values[key] = fmt.Sprint(typed)
+		}
+	}
+	return values
 }
 
 // messageMatchesFilterPolicy checks whether the published message attributes satisfy

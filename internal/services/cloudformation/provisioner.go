@@ -2257,9 +2257,182 @@ func (h *sqsQueueHandler) Delete(ctx context.Context, router http.Handler, cfg *
 
 // ── SNS Topic handler ──────────────────────────────────────────────────────
 
+type snsAttribute struct {
+	name  string
+	value string
+}
+
+// snsAttributesFromProps translates CloudFormation's typed property values to
+// the strings accepted by SNS's Set*Attributes APIs. It owns no SNS behavior:
+// validation, defaults, and persistence remain in the SNS service.
+func snsAttributesFromProps(props map[string]any, scalarNames, jsonNames []string) ([]snsAttribute, error) {
+	attrs := make([]snsAttribute, 0, len(scalarNames)+len(jsonNames))
+	for _, name := range scalarNames {
+		if value, ok := props[name]; ok && value != nil {
+			attrs = append(attrs, snsAttribute{name: name, value: cfnScalarString(value)})
+		}
+	}
+	for _, name := range jsonNames {
+		if value, ok := props[name]; ok && value != nil {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, fmt.Errorf("marshal SNS attribute %s: %w", name, err)
+			}
+			attrs = append(attrs, snsAttribute{name: name, value: string(encoded)})
+		}
+	}
+	return attrs, nil
+}
+
+func snsTopicAttributesFromProps(props map[string]any) ([]snsAttribute, error) {
+	return snsAttributesFromProps(props,
+		[]string{"ContentBasedDeduplication", "DisplayName", "FifoTopic", "FifoThroughputScope", "KmsMasterKeyId", "SignatureVersion", "TracingConfig"},
+		[]string{"ArchivePolicy", "DataProtectionPolicy", "DeliveryPolicy"},
+	)
+}
+
+func snsSubscriptionAttributesFromProps(props map[string]any) ([]snsAttribute, error) {
+	return snsAttributesFromProps(props,
+		[]string{"FilterPolicyScope", "RawMessageDelivery", "SubscriptionRoleArn"},
+		[]string{"DeliveryPolicy", "FilterPolicy", "RedrivePolicy", "ReplayPolicy"},
+	)
+}
+
+func snsRemovedAttribute(props, oldProps map[string]any, names []string) string {
+	for _, name := range names {
+		oldValue, hadOldValue := oldProps[name]
+		if !hadOldValue || oldValue == nil {
+			continue
+		}
+		newValue, hasNewValue := props[name]
+		if !hasNewValue || newValue == nil {
+			return name
+		}
+	}
+	return ""
+}
+
+func cfnPropertyChanged(props, oldProps map[string]any, name string) (bool, error) {
+	oldValue, err := json.Marshal(oldProps[name])
+	if err != nil {
+		return false, fmt.Errorf("marshal previous CloudFormation property %s: %w", name, err)
+	}
+	newValue, err := json.Marshal(props[name])
+	if err != nil {
+		return false, fmt.Errorf("marshal CloudFormation property %s: %w", name, err)
+	}
+	return !bytes.Equal(oldValue, newValue), nil
+}
+
+func applySNSAttributes(ctx context.Context, router http.Handler, region, action, resourceParam, resourceARN string, attrs []snsAttribute) error {
+	for _, attr := range attrs {
+		params := map[string]string{
+			"Action":         action,
+			resourceParam:    resourceARN,
+			"AttributeName":  attr.name,
+			"AttributeValue": attr.value,
+			"Version":        "2010-03-31",
+		}
+		if _, err := internalQuery(ctx, router, region, params); err != nil {
+			return fmt.Errorf("sns %s(%s): %w", action, attr.name, err)
+		}
+	}
+	return nil
+}
+
+// applySNSTopicTags deliberately dispatches to SNS rather than treating tags
+// as CloudFormation metadata. TagResource is not implemented by SNS yet, so a
+// template that uses non-empty Tags fails through the service instead of
+// deploying a topic with silently discarded configuration.
+func applySNSTopicTags(ctx context.Context, router http.Handler, region, topicARN string, props map[string]any) error {
+	rawTags, ok := props["Tags"]
+	if !ok || rawTags == nil {
+		return nil
+	}
+	params, err := snsTopicTagParams(topicARN, rawTags)
+	if err != nil {
+		return err
+	}
+	if len(params) == 3 {
+		return nil
+	}
+	if _, err := internalQuery(ctx, router, region, params); err != nil {
+		return fmt.Errorf("sns TagResource: %w", err)
+	}
+	return nil
+}
+
+func snsTopicTagParams(topicARN string, rawTags any) (map[string]string, error) {
+	tags, ok := rawTags.([]any)
+	if !ok {
+		return nil, fmt.Errorf("SNS Topic Tags must be an array")
+	}
+	params := map[string]string{
+		"Action":      "TagResource",
+		"ResourceArn": topicARN,
+		"Version":     "2010-03-31",
+	}
+	for i, rawTag := range tags {
+		tag, ok := rawTag.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("SNS Topic Tags entry must be an object")
+		}
+		key, ok := tag["Key"]
+		if !ok || key == nil {
+			return nil, fmt.Errorf("SNS Topic Tags entry must contain Key")
+		}
+		prefix := fmt.Sprintf("Tags.member.%d", i+1)
+		params[prefix+".Key"] = cfnScalarString(key)
+		if value, ok := tag["Value"]; ok && value != nil {
+			params[prefix+".Value"] = cfnScalarString(value)
+		}
+	}
+	return params, nil
+}
+
+func snsSubscriptionRequestRegion(props map[string]any, stackRegion string) (string, error) {
+	rawRegion, ok := props["Region"]
+	if !ok || rawRegion == nil {
+		return stackRegion, nil
+	}
+	region := cfnScalarString(rawRegion)
+	if region == "" || region == stackRegion {
+		return stackRegion, nil
+	}
+	return "", fmt.Errorf("AWS::SNS::Subscription Region %q is not implemented for cross-region subscriptions", region)
+}
+
+func subscribeSNSInline(ctx context.Context, router http.Handler, region, topicARN string, props map[string]any) error {
+	rawSubscriptions, ok := props["Subscription"]
+	if !ok || rawSubscriptions == nil {
+		return nil
+	}
+	subscriptions, ok := rawSubscriptions.([]any)
+	if !ok {
+		return fmt.Errorf("SNS Topic Subscription must be an array")
+	}
+	for _, rawSubscription := range subscriptions {
+		subscription, ok := rawSubscription.(map[string]any)
+		if !ok {
+			return fmt.Errorf("SNS Topic Subscription entry must be an object")
+		}
+		params := map[string]string{
+			"Action":   "Subscribe",
+			"TopicArn": topicARN,
+			"Protocol": cfnScalarString(subscription["Protocol"]),
+			"Endpoint": cfnScalarString(subscription["Endpoint"]),
+			"Version":  "2010-03-31",
+		}
+		if _, err := internalQuery(ctx, router, region, params); err != nil {
+			return fmt.Errorf("sns Subscribe inline subscription: %w", err)
+		}
+	}
+	return nil
+}
+
 type snsTopicHandler struct{}
 
-func (h *snsTopicHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *snsTopicHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// physicalID is the topic ARN; last segment is the topic name.
 	oldName := physicalID
 	if i := strings.LastIndex(physicalID, ":"); i >= 0 {
@@ -2268,28 +2441,27 @@ func (h *snsTopicHandler) Update(ctx context.Context, router http.Handler, cfg *
 	if n, ok := props["TopicName"].(string); ok && n != "" && n != oldName {
 		return "", nil, errReplacementRequired
 	}
+	if asBool(props["FifoTopic"]) != asBool(oldProps["FifoTopic"]) {
+		return "", nil, errReplacementRequired
+	}
+	if changed, err := cfnPropertyChanged(props, oldProps, "Subscription"); err != nil {
+		return "", nil, err
+	} else if changed {
+		return "", nil, failUpdate(fmt.Errorf("AWS::SNS::Topic Subscription updates are not implemented"))
+	}
+	if name := snsRemovedAttribute(props, oldProps, []string{"ArchivePolicy", "ContentBasedDeduplication", "DataProtectionPolicy", "DeliveryPolicy", "DisplayName", "FifoThroughputScope", "KmsMasterKeyId", "SignatureVersion", "TracingConfig"}); name != "" {
+		return "", nil, failUpdate(fmt.Errorf("removing SNS topic attribute %s is not implemented", name))
+	}
 
-	// Apply mutable attributes via SetTopicAttributes (one call per attr name).
-	setAttr := func(name string, val any) error {
-		params := map[string]string{
-			"Action":         "SetTopicAttributes",
-			"TopicArn":       physicalID,
-			"AttributeName":  name,
-			"AttributeValue": fmt.Sprintf("%v", val),
-			"Version":        "2010-03-31",
-		}
-		_, err := internalQuery(ctx, router, rCtx.Region, params)
-		return err
+	attrs, err := snsTopicAttributesFromProps(props)
+	if err != nil {
+		return "", nil, err
 	}
-	if v, ok := props["DisplayName"]; ok && v != nil {
-		if err := setAttr("DisplayName", v); err != nil {
-			return "", nil, fmt.Errorf("sns SetTopicAttributes(DisplayName): %w", err)
-		}
+	if err := applySNSAttributes(ctx, router, rCtx.Region, "SetTopicAttributes", "TopicArn", physicalID, attrs); err != nil {
+		return "", nil, err
 	}
-	if v, ok := props["KmsMasterKeyId"]; ok && v != nil {
-		if err := setAttr("KmsMasterKeyId", v); err != nil {
-			return "", nil, fmt.Errorf("sns SetTopicAttributes(KmsMasterKeyId): %w", err)
-		}
+	if err := applySNSTopicTags(ctx, router, rCtx.Region, physicalID, props); err != nil {
+		return "", nil, err
 	}
 	return physicalID, map[string]string{"TopicName": oldName, "TopicArn": physicalID}, nil
 }
@@ -2312,6 +2484,19 @@ func (h *snsTopicHandler) Create(ctx context.Context, router http.Handler, cfg *
 	arn := extractXMLValue(rec.Body.String(), "TopicArn")
 	if arn == "" {
 		arn = protocol.ARN(rCtx.Region, cfg.AccountID, "sns", topicName)
+	}
+	topicAttributes, err := snsTopicAttributesFromProps(props)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := applySNSAttributes(ctx, router, rCtx.Region, "SetTopicAttributes", "TopicArn", arn, topicAttributes); err != nil {
+		return "", nil, err
+	}
+	if err := applySNSTopicTags(ctx, router, rCtx.Region, arn, props); err != nil {
+		return "", nil, err
+	}
+	if err := subscribeSNSInline(ctx, router, rCtx.Region, arn, props); err != nil {
+		return "", nil, err
 	}
 	attrs := map[string]string{
 		"TopicName": topicName,
@@ -2346,13 +2531,24 @@ func (h *snsSubscriptionHandler) Create(ctx context.Context, router http.Handler
 		"Endpoint": endpoint,
 		"Version":  "2010-03-31",
 	}
-	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	subscriptionRegion, err := snsSubscriptionRequestRegion(props, rCtx.Region)
+	if err != nil {
+		return "", nil, err
+	}
+	rec, err := internalQuery(ctx, router, subscriptionRegion, params)
 	if err != nil {
 		return "", nil, fmt.Errorf("sns Subscribe: %w", err)
 	}
 	arn := extractXMLValue(rec.Body.String(), "SubscriptionArn")
 	if arn == "" {
 		arn = fmt.Sprintf("stub-sub-%s-%d", rCtx.StackName, len(rCtx.Resources))
+	}
+	attributes, err := snsSubscriptionAttributesFromProps(props)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := applySNSAttributes(ctx, router, subscriptionRegion, "SetSubscriptionAttributes", "SubscriptionArn", arn, attributes); err != nil {
+		return "", nil, err
 	}
 	attrs := map[string]string{
 		"Arn":      arn,
@@ -2374,7 +2570,27 @@ func (h *snsSubscriptionHandler) Delete(ctx context.Context, router http.Handler
 }
 
 func (h *snsSubscriptionHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	return "", nil, errReplacementRequired
+	for _, name := range []string{"TopicArn", "Protocol", "Endpoint", "Region"} {
+		if cfnScalarString(props[name]) != cfnScalarString(oldProps[name]) {
+			return "", nil, errReplacementRequired
+		}
+	}
+	if name := snsRemovedAttribute(props, oldProps, []string{"DeliveryPolicy", "FilterPolicy", "FilterPolicyScope", "RawMessageDelivery", "RedrivePolicy", "ReplayPolicy", "SubscriptionRoleArn"}); name != "" {
+		return "", nil, failUpdate(fmt.Errorf("removing SNS subscription attribute %s is not implemented", name))
+	}
+	attributes, err := snsSubscriptionAttributesFromProps(props)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := applySNSAttributes(ctx, router, rCtx.Region, "SetSubscriptionAttributes", "SubscriptionArn", physicalID, attributes); err != nil {
+		return "", nil, err
+	}
+	return physicalID, map[string]string{
+		"Arn":      physicalID,
+		"TopicArn": cfnScalarString(props["TopicArn"]),
+		"Protocol": cfnScalarString(props["Protocol"]),
+		"Endpoint": cfnScalarString(props["Endpoint"]),
+	}, nil
 }
 
 // ── S3 Bucket handler ──────────────────────────────────────────────────────
