@@ -23,15 +23,22 @@ work as-is.
 
 EFS supports two modes:
 
-- `mock` (default): metadata-only control plane.
-- `live` (opt-in via `OVERCAST_EFS_MODE=live`): each file system is backed by
-  a named Docker volume (`overcast-efs-<FileSystemId>`), created on
-  `CreateFileSystem` and removed on `DeleteFileSystem`. On startup, volumes
-  are reconciled against persisted file systems (missing volumes are
-  recreated; orphaned managed volumes are removed). `EFS_DOCKER_SOCKET`
-  overrides the Docker socket (defaults to the Lambda socket). Volume
-  operations are best-effort: the control plane keeps working when Docker is
-  unavailable, and reconciliation heals the gap when it returns.
+- `live` (default): each file system is backed by a named Docker volume
+  (`overcast-efs-<FileSystemId>`), created on `CreateFileSystem` and removed on
+  `DeleteFileSystem`. On startup, volumes are reconciled against persisted file
+  systems (missing volumes are recreated; orphaned managed volumes are
+  removed). `EFS_DOCKER_SOCKET` overrides the Docker socket (defaults to the
+  Lambda socket). Volume operations are best-effort: the control plane keeps
+  working when Docker is unavailable, and reconciliation heals the gap when it
+  returns.
+- `mock` (opt out with `OVERCAST_EFS_MODE=mock`): metadata-only control plane,
+  and EFS touches Docker for nothing.
+
+Live mode is the default because it asks nothing of a machine that cannot
+provide it. It creates a volume only for a file system someone created, and
+without a reachable Docker daemon it creates nothing at all and behaves exactly
+like `mock` — so the setting to reach for is `mock`, only if you want EFS kept
+away from Docker deliberately.
 
 Within `live` mode, `OVERCAST_EFS_NFS=true` additionally opts into the NFS
 data plane: each mount target runs an NFS-Ganesha container exporting its file
@@ -49,9 +56,10 @@ system's volume. See [Mounting over NFS](#mounting-over-nfs).
   volume with the declared ownership and permissions before the first mount;
   without `CreationInfo`, a missing directory makes the mount fail, as on
   AWS (see `docs/plans/efs-data-plane.md`).
-- In `mock` mode there is no data plane at all: mount targets are metadata
-  with deterministic synthesized network fields (availability zone, IP
-  address, ENI ID derived from the subnet ID).
+- In `mock` mode — and in `live` mode while no Docker daemon is reachable —
+  there is no data plane at all: mount targets are metadata with deterministic
+  synthesized network fields (availability zone, IP address, ENI ID derived
+  from the subnet ID).
 - `DescribeMountTargets.IpAddress` is always synthetic, including with NFS
   exports on — the export is reached through its published host port or the
   export network, never through that address.
@@ -132,7 +140,7 @@ client's business — the server side needs only the one capability above.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OVERCAST_EFS_NFS` | `false` | Opt into exports (requires `OVERCAST_EFS_MODE=live`) |
+| `OVERCAST_EFS_NFS` | `false` | Opt into exports (needs live mode, which is the default) |
 | `EFS_NFS_PORT_BASE` | `22049` | First host port considered for publishing 2049 |
 | `EFS_NFS_IMAGE` | digest-pinned NFS-Ganesha | Override the export image |
 | `EFS_NETWORK` | `overcast_efs` | Docker network the export containers join |

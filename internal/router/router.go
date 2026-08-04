@@ -704,9 +704,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		dockerServices["eks"] = docker.ServiceConfig{Name: "eks", Socket: cfg.EKSDockerSocket, Network: cfg.EKSNetwork}
 		dockerSetters["eks"] = eksSvc.SetDocker
 	}
-	// EFS live mode manages named volumes; without the opt-in NFS data plane
-	// it starts no long-lived containers, so an empty Network skips static
-	// network creation in the Supervisor probe.
+	// EFS live mode is the default, so this normally registers: it manages
+	// named volumes, and without the opt-in NFS data plane it starts no
+	// long-lived containers, so an empty Network skips static network creation
+	// in the Supervisor probe. A failed probe leaves the service metadata-only,
+	// which is what mock mode is.
 	if cfg.EFSMode == config.EFSModeLive && cfg.EFSDockerSocket != "" {
 		efsNetwork := ""
 		if cfg.EFSNFSExport {
