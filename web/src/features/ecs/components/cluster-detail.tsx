@@ -119,13 +119,14 @@ export function ClusterDetail({ clusterName }: { clusterName: string }) {
 function TasksPanel({ clusterName }: { clusterName: string }) {
   const [showRunTask, setShowRunTask] = useState(false)
   const [expandedTask, setExpandedTask] = useState<string>()
+  const [desiredStatus, setDesiredStatus] = useState<"RUNNING" | "STOPPED">("RUNNING")
 
   const {
     data: tasks = [],
     isLoading,
     isFetching,
     refetch,
-  } = useQuery(ecsTasksQueryOptions(clusterName))
+  } = useQuery(ecsTasksQueryOptions(clusterName, desiredStatus))
   const { data: taskDefs = [] } = useQuery(ecsTaskDefinitionsQueryOptions())
 
   const runMut = useResourceMutation({
@@ -145,6 +146,22 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
+        <div className="flex rounded border border-border p-0.5">
+          <Button
+            size="sm"
+            variant={desiredStatus === "RUNNING" ? "secondary" : "ghost"}
+            onClick={() => setDesiredStatus("RUNNING")}
+          >
+            Running
+          </Button>
+          <Button
+            size="sm"
+            variant={desiredStatus === "STOPPED" ? "secondary" : "ghost"}
+            onClick={() => setDesiredStatus("STOPPED")}
+          >
+            Stopped
+          </Button>
+        </div>
         <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
           Refresh
@@ -161,13 +178,19 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
         </div>
       ) : tasks.length === 0 ? (
         <EmptyState
-          title="No tasks"
-          description="Run a task to get started."
+          title={desiredStatus === "STOPPED" ? "No stopped tasks" : "No running tasks"}
+          description={
+            desiredStatus === "STOPPED"
+              ? "Stopped tasks remain available for one hour."
+              : "Run a task to get started."
+          }
           action={
-            <Button size="sm" onClick={() => setShowRunTask(true)}>
-              <Play className="mr-1.5 h-3.5 w-3.5" />
-              Run Task
-            </Button>
+            desiredStatus === "RUNNING" ? (
+              <Button size="sm" onClick={() => setShowRunTask(true)}>
+                <Play className="mr-1.5 h-3.5 w-3.5" />
+                Run Task
+              </Button>
+            ) : undefined
           }
         />
       ) : (

@@ -75,12 +75,25 @@ function openRouteInNewTab(route: NodeRoute, search?: Record<string, string | un
  * Returns the deepest available route for a given service+resource name,
  * or null if there is no per-resource page.
  */
-function nodeRoute(
-  service: string,
-  label: string,
-  nodeId?: string,
-  protocolType?: string,
-): NodeRoute | null {
+interface NodeRouteInput {
+  service: string
+  label: string
+  nodeId?: string
+  protocolType?: string
+  ecsResourceType?: ServiceNodeData["ecsResourceType"]
+  clusterName?: string
+  taskId?: string
+}
+
+function nodeRoute({
+  service,
+  label,
+  nodeId,
+  protocolType,
+  ecsResourceType,
+  clusterName,
+  taskId,
+}: NodeRouteInput): NodeRoute | null {
   switch (service) {
     case "s3":
       return { to: "/s3/$bucket", params: { bucket: label } }
@@ -95,7 +108,13 @@ function nodeRoute(
     case "logs":
       return { to: "/cloudwatch/logs/group" as const, search: { groupName: label } }
     case "ecs":
-      return { to: "/ecs/$cluster", params: { cluster: label } }
+      if (ecsResourceType === "task" && clusterName && taskId) {
+        return {
+          to: "/ecs/$cluster/tasks/$taskId",
+          params: { cluster: clusterName, taskId },
+        }
+      }
+      return { to: "/ecs/$cluster", params: { cluster: clusterName ?? label } }
     case "ecr":
       return { to: "/ecr/$repositoryName", params: { repositoryName: label } }
     case "ec2":
@@ -165,6 +184,12 @@ export interface ServiceNodeData extends Record<string, unknown> {
   dataSourceCount?: number
   /** AppSync only — number of resolvers */
   resolverCount?: number
+  /** ECS only — distinguishes cluster, service, and task map nodes. */
+  ecsResourceType?: "cluster" | "service" | "task"
+  /** ECS service/task owner used for navigation. */
+  clusterName?: string
+  /** ECS task UUID used for task detail navigation. */
+  taskId?: string
   /** ECR only — full push-ready repository URI for copy-to-clipboard action. */
   repositoryUri?: string
   /** ESM filter node only. */
@@ -1170,6 +1195,9 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
     authenticationType,
     dataSourceCount,
     resolverCount,
+    ecsResourceType,
+    clusterName,
+    taskId,
   } = data as ServiceNodeData
   const { esmId, filterPatterns = [] } = data as ServiceNodeData
 
@@ -1192,7 +1220,15 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
   const navigate = useNavigate()
   const endpoint = useEndpoint()
   const nodeId = useNodeId()
-  const route = nodeRoute(service, label, nodeId ?? undefined, protocolType)
+  const route = nodeRoute({
+    service,
+    label,
+    nodeId: nodeId ?? undefined,
+    protocolType,
+    ecsResourceType,
+    clusterName,
+    taskId,
+  })
   const nodeRegion = (data as ServiceNodeData).region
   const handleClick = useCallback(() => {
     if (!route) return

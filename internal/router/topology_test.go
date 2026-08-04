@@ -150,8 +150,82 @@ func TestBuildTopologyAddsECREdgesForLambdaAndECSConsumers(t *testing.T) {
 	if _, ok := edges["ecr-lambda::us-east-1::ecr::sample-app→us-east-1::lambda::image-fn"]; !ok {
 		t.Fatalf("expected ECR → Lambda edge, got %#v", resp.Edges)
 	}
-	if _, ok := edges["ecr-ecs::us-east-1::ecr::sample-app→us-east-1::ecs-service::cluster/demo/web"]; !ok {
+	if _, ok := edges["ecr-ecs::us-east-1::ecr::sample-app→us-east-1::ecs-service::demo/web"]; !ok {
 		t.Fatalf("expected ECR → ECS service edge, got %#v", resp.Edges)
+	}
+}
+
+func TestBuildTopologyECSResourcesUseCurrentClusterOwnership(t *testing.T) {
+	// Given: one cluster with a Fargate service, one running task, and one stopped task.
+	clusterPayload, _ := json.Marshal(map[string]any{
+		"clusterName": "demo",
+		"clusterArn":  "arn:aws:ecs:us-east-1:000000000000:cluster/demo",
+		"status":      "ACTIVE",
+	})
+	servicePayload, _ := json.Marshal(map[string]any{
+		"serviceName": "web",
+		"serviceArn":  "arn:aws:ecs:us-east-1:000000000000:service/demo/web",
+		"clusterArn":  "arn:aws:ecs:us-east-1:000000000000:cluster/demo",
+		"status":      "ACTIVE",
+	})
+	runningTaskPayload, _ := json.Marshal(map[string]any{
+		"taskArn":    "arn:aws:ecs:us-east-1:000000000000:task/demo/running-task",
+		"clusterArn": "arn:aws:ecs:us-east-1:000000000000:cluster/demo",
+		"lastStatus": "RUNNING",
+		"group":      "service:web",
+	})
+	stoppedTaskPayload, _ := json.Marshal(map[string]any{
+		"taskArn":    "arn:aws:ecs:us-east-1:000000000000:task/demo/stopped-task",
+		"clusterArn": "arn:aws:ecs:us-east-1:000000000000:cluster/demo",
+		"lastStatus": "STOPPED",
+		"group":      "service:web",
+	})
+
+	// When: the topology is built from the stored ECS records.
+	resp := buildTopology(&config.Config{Region: "us-east-1"}, map[string][]state.KV{
+		tNsClusters:    {{Key: "us-east-1/demo", Value: string(clusterPayload)}},
+		tNsECSServices: {{Key: "us-east-1/demo/web", Value: string(servicePayload)}},
+		tNsECSTasks: {
+			{Key: "us-east-1/demo/running-task", Value: string(runningTaskPayload)},
+			{Key: "us-east-1/demo/stopped-task", Value: string(stoppedTaskPayload)},
+		},
+	}, "")
+
+	// Then: only the current task is shown, and every edge points at the real cluster/service nodes.
+	nodes := map[string]topologyNode{}
+	for _, node := range resp.Nodes {
+		nodes[node.ID] = node
+	}
+	if _, ok := nodes["us-east-1::ecs::demo"]; !ok {
+		t.Fatalf("expected real cluster node, got %#v", resp.Nodes)
+	}
+	serviceNode, ok := nodes["us-east-1::ecs-service::demo/web"]
+	if !ok {
+		t.Fatalf("expected service node owned by demo, got %#v", resp.Nodes)
+	}
+	if serviceNode.ClusterName != "demo" || serviceNode.ECSResourceType != "service" {
+		t.Fatalf("unexpected service navigation metadata: %#v", serviceNode)
+	}
+	taskNode, ok := nodes["us-east-1::ecs-task::demo/running-task"]
+	if !ok {
+		t.Fatalf("expected running task node, got %#v", resp.Nodes)
+	}
+	if taskNode.Label != "running-task" || taskNode.ClusterName != "demo" || taskNode.TaskID != "running-task" {
+		t.Fatalf("unexpected task node: %#v", taskNode)
+	}
+	if _, ok := nodes["us-east-1::ecs-task::demo/stopped-task"]; ok {
+		t.Fatalf("stopped task should not remain on the current-resource map: %#v", resp.Nodes)
+	}
+
+	edges := map[string]topologyEdge{}
+	for _, edge := range resp.Edges {
+		edges[edge.ID] = edge
+	}
+	if _, ok := edges["ecs-svc::us-east-1::ecs::demo→us-east-1::ecs-service::demo/web"]; !ok {
+		t.Fatalf("expected cluster to service edge, got %#v", resp.Edges)
+	}
+	if _, ok := edges["ecs-task::us-east-1::ecs-service::demo/web→us-east-1::ecs-task::demo/running-task"]; !ok {
+		t.Fatalf("expected service to running task edge, got %#v", resp.Edges)
 	}
 }
 
@@ -196,7 +270,7 @@ func TestBuildTopologyMatchesECRConsumersWithNormalizedImageRefs(t *testing.T) {
 	if _, ok := edges["ecr-lambda::us-east-1::ecr::sample-app→us-east-1::lambda::image-fn"]; !ok {
 		t.Fatalf("expected normalized ECR → Lambda edge, got %#v", resp.Edges)
 	}
-	if _, ok := edges["ecr-ecs::us-east-1::ecr::sample-app→us-east-1::ecs-service::cluster/demo/web"]; !ok {
+	if _, ok := edges["ecr-ecs::us-east-1::ecr::sample-app→us-east-1::ecs-service::demo/web"]; !ok {
 		t.Fatalf("expected normalized ECR → ECS service edge, got %#v", resp.Edges)
 	}
 }

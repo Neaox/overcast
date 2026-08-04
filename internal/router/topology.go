@@ -54,6 +54,9 @@ type topologyNode struct {
 	EventSource                           string   `json:"eventSource,omitempty"`
 	SourceType                            string   `json:"sourceType,omitempty"`
 	FilterPatterns                        []string `json:"filterPatterns,omitempty"`
+	ECSResourceType                       string   `json:"ecsResourceType,omitempty"`
+	ClusterName                           string   `json:"clusterName,omitempty"`
+	TaskID                                string   `json:"taskId,omitempty"`
 }
 
 type topologyEdge struct {
@@ -738,15 +741,16 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 		region := regionFromARN(c.ARN, defaultRegion)
 		clusterIndex[c.ARN] = region
 		addNode(topologyNode{
-			ID:      region + "::ecs::" + c.Name,
-			Service: "ecs",
-			Label:   c.Name,
-			Region:  region,
+			ID:              region + "::ecs::" + c.Name,
+			Service:         "ecs",
+			Label:           c.Name,
+			Region:          region,
+			ECSResourceType: "cluster",
+			ClusterName:     c.Name,
 		})
 	}
 
 	// ECS services (nodes + edges to clusters)
-	ecsServiceIndex := make(map[string]string) // service ARN → cluster name
 	ecsServiceTaskDefs := make(map[string]string)
 	for _, kv := range byNS[tNsECSServices] {
 		var svc tECSService
@@ -754,14 +758,15 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			continue
 		}
 		region := regionFromARN(svc.ARN, defaultRegion)
-		clusterName := nameFromARNSuffix(svc.ClusterARN)
-		ecsServiceIndex[svc.ARN] = clusterName
+		clusterName := nameFromSlashSuffix(svc.ClusterARN)
 		ecsServiceTaskDefs[region+"::ecs-service::"+clusterName+"/"+svc.Name] = svc.TaskDefinition
 		addNode(topologyNode{
-			ID:      region + "::ecs-service::" + clusterName + "/" + svc.Name,
-			Service: "ecs",
-			Label:   svc.Name,
-			Region:  region,
+			ID:              region + "::ecs-service::" + clusterName + "/" + svc.Name,
+			Service:         "ecs",
+			Label:           svc.Name,
+			Region:          region,
+			ECSResourceType: "service",
+			ClusterName:     clusterName,
 		})
 	}
 
@@ -771,13 +776,20 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 		if json.Unmarshal([]byte(kv.Value), &task) != nil {
 			continue
 		}
+		if task.LastStatus == "STOPPED" {
+			continue
+		}
 		region := regionFromARN(task.TaskARN, defaultRegion)
-		taskID := nameFromARNSuffix(task.TaskARN)
+		taskID := nameFromSlashSuffix(task.TaskARN)
+		clusterName := nameFromSlashSuffix(task.ClusterARN)
 		addNode(topologyNode{
-			ID:      region + "::ecs-task::" + taskID,
-			Service: "ecs",
-			Label:   taskID,
-			Region:  region,
+			ID:              region + "::ecs-task::" + clusterName + "/" + taskID,
+			Service:         "ecs",
+			Label:           taskID,
+			Region:          region,
+			ECSResourceType: "task",
+			ClusterName:     clusterName,
+			TaskID:          taskID,
 		})
 	}
 
@@ -1590,7 +1602,7 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			continue
 		}
 		region := regionFromARN(svc.ARN, defaultRegion)
-		clusterName := nameFromARNSuffix(svc.ClusterARN)
+		clusterName := nameFromSlashSuffix(svc.ClusterARN)
 		srcID := region + "::ecs::" + clusterName
 		tgtID := region + "::ecs-service::" + clusterName + "/" + svc.Name
 		addEdge(topologyEdge{
@@ -1607,14 +1619,17 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 		if json.Unmarshal([]byte(kv.Value), &task) != nil {
 			continue
 		}
+		if task.LastStatus == "STOPPED" {
+			continue
+		}
 		region := regionFromARN(task.TaskARN, defaultRegion)
-		taskID := nameFromARNSuffix(task.TaskARN)
-		taskNodeID := region + "::ecs-task::" + taskID
+		taskID := nameFromSlashSuffix(task.TaskARN)
+		clusterName := nameFromSlashSuffix(task.ClusterARN)
+		taskNodeID := region + "::ecs-task::" + clusterName + "/" + taskID
 
 		// Task → service (if it belongs to one)
 		if strings.HasPrefix(task.Group, "service:") {
 			svcName := strings.TrimPrefix(task.Group, "service:")
-			clusterName := nameFromARNSuffix(task.ClusterARN)
 			svcNodeID := region + "::ecs-service::" + clusterName + "/" + svcName
 			addEdge(topologyEdge{
 				ID:     "ecs-task::" + svcNodeID + "→" + taskNodeID,
@@ -1624,7 +1639,6 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			})
 		} else {
 			// Orphan task → cluster directly
-			clusterName := nameFromARNSuffix(task.ClusterARN)
 			clusterNodeID := region + "::ecs::" + clusterName
 			addEdge(topologyEdge{
 				ID:     "ecs-task::" + clusterNodeID + "→" + taskNodeID,
@@ -1957,6 +1971,13 @@ func nameFromARNSuffix(arn string) string {
 		return arn[i+1:]
 	}
 	return arn
+}
+
+func nameFromSlashSuffix(arn string) string {
+	if i := strings.LastIndexByte(arn, '/'); i >= 0 {
+		return arn[i+1:]
+	}
+	return nameFromARNSuffix(arn)
 }
 
 func normalizeContainerImageRef(image string) string {

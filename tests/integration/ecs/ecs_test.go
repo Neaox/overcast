@@ -185,6 +185,59 @@ func TestDescribeClusters_success(t *testing.T) {
 	}
 }
 
+func TestDescribeClusters_resourceCountsReflectCurrentState(t *testing.T) {
+	// Given: a cluster with current and historical tasks, services, and container instances.
+	srv := helpers.NewTestServer(t)
+	cr := ecsCall(t, srv, "CreateCluster", map[string]any{"clusterName": "counted-cluster"})
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	cr.Body.Close()
+	ctx := context.Background()
+	stored := []struct {
+		namespace string
+		key       string
+		value     string
+	}{
+		{"ecs:tasks", "us-east-1/counted-cluster/running", `{"lastStatus":"RUNNING"}`},
+		{"ecs:tasks", "us-east-1/counted-cluster/pending", `{"lastStatus":"PENDING"}`},
+		{"ecs:tasks", "us-east-1/counted-cluster/stopped", `{"lastStatus":"STOPPED"}`},
+		{"ecs:services", "us-east-1/counted-cluster/active", `{"status":"ACTIVE"}`},
+		{"ecs:services", "us-east-1/counted-cluster/inactive", `{"status":"INACTIVE"}`},
+		{"ecs:container-instances", "us-east-1/counted-cluster/active", `{"status":"ACTIVE"}`},
+		{"ecs:container-instances", "us-east-1/counted-cluster/draining", `{"status":"DRAINING"}`},
+		{"ecs:container-instances", "us-east-1/counted-cluster/inactive", `{"status":"INACTIVE"}`},
+	}
+	for _, record := range stored {
+		if err := srv.Store.Set(ctx, record.namespace, record.key, record.value); err != nil {
+			t.Fatalf("seed %s/%s: %v", record.namespace, record.key, err)
+		}
+	}
+
+	// When: DescribeClusters reads the cluster summary.
+	resp := ecsCall(t, srv, "DescribeClusters", map[string]any{
+		"clusters": []string{"counted-cluster"},
+	})
+	defer resp.Body.Close()
+
+	// Then: its counts are derived from current resource state.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Clusters []struct {
+			RunningTasksCount                 int `json:"runningTasksCount"`
+			PendingTasksCount                 int `json:"pendingTasksCount"`
+			ActiveServicesCount               int `json:"activeServicesCount"`
+			RegisteredContainerInstancesCount int `json:"registeredContainerInstancesCount"`
+		} `json:"clusters"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.Clusters) != 1 {
+		t.Fatalf("expected one cluster, got %+v", result.Clusters)
+	}
+	got := result.Clusters[0]
+	if got.RunningTasksCount != 1 || got.PendingTasksCount != 1 || got.ActiveServicesCount != 1 || got.RegisteredContainerInstancesCount != 2 {
+		t.Fatalf("unexpected current resource counts: %+v", got)
+	}
+}
+
 // ─── RegisterTaskDefinition ───────────────────────────────────────────────────
 
 func TestRegisterTaskDefinition_success(t *testing.T) {
@@ -848,6 +901,71 @@ func TestListTasks_filterByDesiredStatus(t *testing.T) {
 	helpers.DecodeJSON(t, stoppedResp, &stoppedResult)
 	if len(stoppedResult.TaskArns) != 1 {
 		t.Fatalf("expected 1 STOPPED task, got %d: %v", len(stoppedResult.TaskArns), stoppedResult.TaskArns)
+	}
+
+	// When: the stopped task is described during AWS's documented retention window.
+	describeStopped := ecsCall(t, srv, "DescribeTasks", map[string]any{
+		"cluster": "filter-cluster",
+		"tasks":   []string{run2Result.Tasks[0].TaskArn},
+	})
+	defer describeStopped.Body.Close()
+	var describedStopped struct {
+		Tasks    []map[string]any `json:"tasks"`
+		Failures []map[string]any `json:"failures"`
+	}
+	helpers.AssertStatus(t, describeStopped, http.StatusOK)
+	helpers.DecodeJSON(t, describeStopped, &describedStopped)
+	if len(describedStopped.Tasks) != 1 || len(describedStopped.Failures) != 0 {
+		t.Fatalf("expected stopped task to remain describable, got tasks=%v failures=%v", describedStopped.Tasks, describedStopped.Failures)
+	}
+
+	// When: ListTasks is called without a desiredStatus filter.
+	defaultResp := ecsCall(t, srv, "ListTasks", map[string]any{
+		"cluster": "filter-cluster",
+	})
+	defer defaultResp.Body.Close()
+
+	// Then: AWS's default RUNNING filter hides the stopped task.
+	helpers.AssertStatus(t, defaultResp, http.StatusOK)
+	var defaultResult struct {
+		TaskArns []string `json:"taskArns"`
+	}
+	helpers.DecodeJSON(t, defaultResp, &defaultResult)
+	if len(defaultResult.TaskArns) != 1 {
+		t.Fatalf("expected default filter to return 1 RUNNING task, got %d: %v", len(defaultResult.TaskArns), defaultResult.TaskArns)
+	}
+
+	// When: AWS's one-hour stopped-task retention window has elapsed.
+	srv.Clock.Add(time.Hour)
+	expiredList := ecsCall(t, srv, "ListTasks", map[string]any{
+		"cluster":       "filter-cluster",
+		"desiredStatus": "STOPPED",
+	})
+	defer expiredList.Body.Close()
+	var expiredListResult struct {
+		TaskArns []string `json:"taskArns"`
+	}
+	helpers.AssertStatus(t, expiredList, http.StatusOK)
+	helpers.DecodeJSON(t, expiredList, &expiredListResult)
+	if len(expiredListResult.TaskArns) != 0 {
+		t.Fatalf("expected expired stopped task to be absent, got %v", expiredListResult.TaskArns)
+	}
+
+	expiredDescribe := ecsCall(t, srv, "DescribeTasks", map[string]any{
+		"cluster": "filter-cluster",
+		"tasks":   []string{run2Result.Tasks[0].TaskArn},
+	})
+	defer expiredDescribe.Body.Close()
+	var expiredDescribeResult struct {
+		Tasks    []map[string]any `json:"tasks"`
+		Failures []struct {
+			Reason string `json:"reason"`
+		} `json:"failures"`
+	}
+	helpers.AssertStatus(t, expiredDescribe, http.StatusOK)
+	helpers.DecodeJSON(t, expiredDescribe, &expiredDescribeResult)
+	if len(expiredDescribeResult.Tasks) != 0 || len(expiredDescribeResult.Failures) != 1 || expiredDescribeResult.Failures[0].Reason != "MISSING" {
+		t.Fatalf("expected expired task to return MISSING, got tasks=%v failures=%v", expiredDescribeResult.Tasks, expiredDescribeResult.Failures)
 	}
 }
 
