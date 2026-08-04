@@ -159,6 +159,14 @@ class MergeVerdictTest(unittest.TestCase):
         self.assertEqual(verdict("UNKNOWN", "UNKNOWN"), "unknown")
         self.assertEqual(verdict("MERGEABLE", "UNKNOWN"), "unknown")
 
+    def test_a_merged_pr_does_not_read_as_conflicting(self):
+        # The end-of-run check has to tell "went conflicting while watching"
+        # apart from the happy ending. Observed on PR #603, 2026-08-04: a PR
+        # that merges mid-watch answers state=MERGED, mergeState=UNKNOWN. The
+        # caller skips anything not OPEN, and the verdict must not say
+        # "conflicting" here either.
+        self.assertEqual(verdict("UNKNOWN", "UNKNOWN"), "unknown")
+
     def test_missing_fields_do_not_claim_a_conflict(self):
         # jq prints "null" for an absent field. Better to wait on checks that
         # exist than to refuse to wait on a PR that is fine.

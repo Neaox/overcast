@@ -9,7 +9,8 @@
 # Exit codes:
 #   0  every check passed
 #   1  a check failed — its annotations and failing log lines are printed
-#   2  no checks will run: the PR is CONFLICTING, closed, or none appeared
+#   2  the result is not worth acting on: the PR is CONFLICTING (before the
+#      wait, or by the time it ended), closed, or no checks ever appeared
 #   8  still pending when gh gave up
 #
 # Why this exists: `gh pr checks --watch` already does the waiting, in one call,
@@ -236,15 +237,46 @@ fi
 
 # The merge state is what actually gates a merge: a green run can still leave
 # UNSTABLE behind a failing non-required check.
-final=$(gh pr view "$number" --json state,mergeStateStatus,headRefOid 2>/dev/null || true)
+final=$(gh pr view "$number" --json state,mergeable,mergeStateStatus,headRefOid 2>/dev/null || true)
 if [ -n "$final" ]; then
+    now_state=$(printf '%s' "$final" | jq -r .state)
+    now_mergeable=$(printf '%s' "$final" | jq -r .mergeable)
+    now_merge_state=$(printf '%s' "$final" | jq -r .mergeStateStatus)
     now_sha=$(printf '%s' "$final" | jq -r .headRefOid)
-    printf 'pr-wait: state=%s mergeState=%s\n' \
-        "$(printf '%s' "$final" | jq -r .state)" \
-        "$(printf '%s' "$final" | jq -r .mergeStateStatus)"
+    printf 'pr-wait: state=%s mergeable=%s mergeState=%s\n' \
+        "$now_state" "$now_mergeable" "$now_merge_state"
     if [ "$now_sha" != "$head_sha" ]; then
         echo "pr-wait: head moved while watching (${head_sha%"${head_sha#???????}"} → ${now_sha%"${now_sha#???????}"}) — this result is stale; run again." >&2
         exit 8
+    fi
+
+    # The guard at the top only sees the PR as it was before the wait. A PR
+    # goes conflicting mid-watch whenever main moves under it, and nothing so
+    # far would say so: that does not touch this PR's head, so the stale-head
+    # check above cannot fire, and it dispatches no new checks, so --watch
+    # returns its usual green. The run then ended on a PR that will not merge
+    # and reported success — with auto-merge armed, it simply never merges and
+    # nothing tells you why.
+    #
+    # Only for a PR still OPEN. A PR that merged while we watched — the normal
+    # happy ending, and what PR #603 did on 2026-08-04 — answers state=MERGED
+    # with mergeState=UNKNOWN, which must not read as trouble.
+    if [ "$now_state" = "OPEN" ]; then
+        case $(merge_verdict "$now_mergeable" "$now_merge_state") in
+            conflicting)
+                echo "pr-wait: PR #$number went CONFLICTING while watching — main moved under it." >&2
+                echo "pr-wait: the checks above ran against the old base; rebase or merge main, then run this again." >&2
+                # Only when the checks themselves were fine. A real failure is
+                # the more actionable signal and its evidence is already above,
+                # so exit 1 stands and this stays a warning. Spelled as an if,
+                # not an && chain: under `set -e` a chain whose test fails is
+                # itself a failing command, and would exit 1 here rather than
+                # falling through to the real status.
+                if [ "$status" -eq 0 ] && [ -z "$failing" ]; then
+                    exit 2
+                fi
+                ;;
+        esac
     fi
 fi
 
