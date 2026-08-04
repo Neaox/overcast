@@ -269,6 +269,16 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [rds] `ModifyDBCluster` answers with a `ModifyDBClusterResponse` element on both dispatch paths. The typed implementation returned a `CreateDBClusterResponse`, which went unnoticed only because a second raw implementation of the same operation declared the right envelope locally; `CreateDBCluster`, `DescribeDBClusters`, `DeleteDBCluster` and `ModifyDBCluster` now have one implementation each, as the instance operations already did
 
+- [rds] `CreateDBInstance` reports `available` only once the engine accepts a connection, instead of immediately — a created instance was queryable around 27 seconds after it claimed to be ready, and one whose container never started stayed `available` for good
+
+- [rds] a create whose database container cannot be built reports `failed` with the reason, as a failed start already did
+
+- [rds] the health check on a newly created instance dials the address Overcast can actually reach, rather than an endpoint name only sibling containers resolve
+
+- [rds] `CreateDBInstance` and `DeleteDBInstance` have one implementation again, joining the operations collapsed in the previous change
+
+- [rds] `OVERCAST_RDS_MODE=mock` keeps RDS metadata-only on a machine that has Docker, for testing a control plane without paying for a real engine boot; `live` remains the default
+
 - [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
 
 - [release] the `Changelog entry` check no longer asks the release PR to write itself a release note. A release-prep PR consumes every fragment into its version section and adds none by construction, but it also carries the new, untagged `VERSION` — the same predicate the check reads to decide which release window a PR is in — so it classified the release PR as "merged, waiting to be tagged" and posted an ask saying the release had already gone out, on the one PR that had not merged. The release PR is now exempt by shape: `VERSION` and `CHANGELOG.md` both changed, nothing touched outside those and `.changelog/`, the version untagged, and a non-empty `## [x.y.z]` section present. Push a code change onto the release branch and the check asks again, in words written for that case — the note belongs in the release section the PR already owns, the one place where editing `CHANGELOG.md` is the answer rather than the thing to avoid
