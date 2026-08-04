@@ -63,6 +63,23 @@ const (
 	EFSModeLive EFSMode = "live"
 )
 
+// RDSMode identifies how the RDS service behaves.
+type RDSMode string
+
+const (
+	// RDSModeMock keeps RDS metadata-only: instances move through the status
+	// model on a timer and no engine container is ever started, so nothing
+	// listens on the reported endpoint. An explicit opt-out — the default is
+	// live — for environments that have a Docker daemon but cannot afford the
+	// tens of seconds a real engine takes to accept its first connection.
+	RDSModeMock RDSMode = "mock"
+
+	// RDSModeLive runs a real engine container per DB instance, which is what
+	// makes the endpoint connectable. The default. Live mode needs no Docker to
+	// be safe: without a reachable daemon it behaves exactly like mock.
+	RDSModeLive RDSMode = "live"
+)
+
 // DefaultEFSNFSImage is the digest-pinned NFS-Ganesha image used for
 // mount-target exports when OVERCAST_EFS_NFS is on. Pinned rather than
 // floating so an upstream retag cannot change what a mount target runs.
@@ -216,6 +233,13 @@ type Config struct {
 	// (`mock`). Live mode needs no Docker to be safe: it falls back to
 	// metadata-only whenever a daemon is unreachable.
 	EFSMode EFSMode
+
+	// RDSMode controls whether the RDS service starts a real engine container
+	// per DB instance (`live`, the default) or stays metadata-only (`mock`).
+	// Mock mode makes an instance reach `available` in a moment rather than in
+	// the tens of seconds a real engine takes, at the cost of nothing listening
+	// on the endpoint it reports.
+	RDSMode RDSMode
 
 	// SigV4Validate enables SigV4 signature verification.
 	SigV4Validate bool
@@ -881,6 +905,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_ACCOUNT_ID                000000000000
 //	OVERCAST_EKS_MODE                  mock    (mock | live)
 //	OVERCAST_EFS_MODE                  live    (mock | live; live is inert without Docker)
+//	OVERCAST_RDS_MODE                  live    (mock | live; mock starts no engine container)
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
 //	OVERCAST_ENFORCE_APIGATEWAY_THROTTLE false
@@ -1117,6 +1142,15 @@ func Load() (*Config, error) {
 	cfg.EFSMode = EFSMode(rawEFSMode)
 	if cfg.EFSMode != EFSModeMock && cfg.EFSMode != EFSModeLive {
 		return nil, fmt.Errorf("config: OVERCAST_EFS_MODE %q is invalid (expected mock or live)", rawEFSMode)
+	}
+
+	// RDS mode. Live by default: a DB instance whose endpoint nothing answers
+	// on is not much of a database, and live mode costs nothing where it cannot
+	// be used — without a reachable daemon RDS is metadata-only anyway.
+	rawRDSMode := strings.ToLower(strings.TrimSpace(envOr("OVERCAST_RDS_MODE", string(RDSModeLive))))
+	cfg.RDSMode = RDSMode(rawRDSMode)
+	if cfg.RDSMode != RDSModeMock && cfg.RDSMode != RDSModeLive {
+		return nil, fmt.Errorf("config: OVERCAST_RDS_MODE %q is invalid (expected mock or live)", rawRDSMode)
 	}
 
 	// SigV4 validation

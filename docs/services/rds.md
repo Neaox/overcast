@@ -21,11 +21,18 @@ identified by the `Action` parameter with API version `2014-10-31`.
 ### Instance status is what actually happened
 
 An instance only reports `available` once Overcast has opened a TCP connection
-to the engine. If the container exits, cannot be started, or never accepts a
-connection within five minutes, the instance goes to AWS's `failed` status
-rather than being declared available anyway — a database you cannot connect to
-is not available, and discovering that by trying to connect is worse than being
-told. An instance is never left in `starting` indefinitely.
+to the engine — on creation as well as on start. If the container exits, cannot
+be started or created, or never accepts a connection within five minutes, the
+instance goes to AWS's `failed` status rather than being declared available
+anyway — a database you cannot connect to is not available, and discovering
+that by trying to connect is worse than being told. An instance is never left
+in `creating` or `starting` indefinitely.
+
+That means `CreateDBInstance` leaves the instance in `creating` for as long as
+the engine takes to come up, which for a first boot is roughly half a minute:
+the data directory has to be initialised before the server accepts anything.
+Poll `DescribeDBInstances` until it reports `available`, exactly as you would
+against AWS, and the connection will succeed on the first attempt.
 
 Starting an instance whose container Docker no longer has (a `docker prune`, a
 container removed by hand) rebuilds it rather than reporting a start that
@@ -36,6 +43,22 @@ When Docker is available, `CreateDBInstance` starts a real database container
 (mysql, postgres, mariadb, aurora-mysql, aurora-postgresql) with automatic port
 allocation from `RDS_PORT_BASE` (default 33060). When Docker is unavailable,
 operations are metadata-only.
+
+### Modes — `OVERCAST_RDS_MODE`
+
+- `live` (default): a real engine container per DB instance, as described
+  above. It asks nothing of a machine that cannot provide it — without a
+  reachable Docker daemon it starts nothing and behaves exactly like `mock`.
+- `mock` (opt out with `OVERCAST_RDS_MODE=mock`): metadata-only. Instances move
+  through the status model on a timer and reach `available` in a moment, and
+  RDS touches Docker for nothing.
+
+The trade in `mock` is the endpoint: `DescribeDBInstances` still reports an
+address and port, and nothing is listening on them. Reach for it when you are
+testing the control plane and the tens of seconds a real first boot costs are
+the thing in your way — Overcast's own compatibility suites run this way, which
+[issue #614](https://github.com/Neaox/overcast/issues/614) tracks undoing. If
+your code connects to the database, keep the default.
 
 ### Changing the master password — `ModifyDBInstance` and `ModifyDBCluster`
 

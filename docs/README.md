@@ -204,6 +204,7 @@ All configuration is via environment variables. No config file required.
 | `ECS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for ECS — Unix path or `tcp://host:port`                             |
 | `ECS_NETWORK`                    | `overcast_ecs`         | Docker network for ECS task containers                                               |
 | `ECS_KEEP_CONTAINERS`            | `false`                | Keep stopped ECS task containers after they exit                                     |
+| `OVERCAST_RDS_MODE`              | `live`                 | `live` runs a real engine container per instance; `mock` is metadata-only            |
 | `RDS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for RDS — Unix path or `tcp://host:port`                             |
 | `RDS_NETWORK`                    | `overcast_rds`         | Docker network for RDS database containers                                           |
 | `RDS_PORT_BASE`                  | `33060`                | Starting host port for RDS containers (each instance gets the next available port)   |

@@ -688,8 +688,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// Lambda probes Docker independently (it needs the Runtime API server);
 	// we register its socket/network so the Supervisor starts a watcher.
 	dockerServices["lambda"] = docker.ServiceConfig{Name: "lambda", Socket: cfg.LambdaDockerSocket, Network: cfg.LambdaNetwork}
-	dockerServices["rds"] = docker.ServiceConfig{Name: "rds", Socket: cfg.RDSDockerSocket, Network: cfg.RDSNetwork}
-	dockerSetters["rds"] = rdsSvc.SetDocker
+	// Live is the default. Mock mode is not registered at all, so no probe runs
+	// and no rds network is created for containers that will never exist.
+	if cfg.RDSMode == config.RDSModeLive {
+		dockerServices["rds"] = docker.ServiceConfig{Name: "rds", Socket: cfg.RDSDockerSocket, Network: cfg.RDSNetwork}
+		dockerSetters["rds"] = rdsSvc.SetDocker
+	}
 	dockerServices["elasticache"] = docker.ServiceConfig{Name: "elasticache", Socket: cfg.ElastiCacheDockerSocket, Network: cfg.ElastiCacheNetwork}
 	dockerSetters["elasticache"] = elasticacheSvc.SetDocker
 	dockerServices["msk"] = docker.ServiceConfig{Name: "msk", Socket: cfg.MSKDockerSocket, Network: cfg.MSKNetwork}

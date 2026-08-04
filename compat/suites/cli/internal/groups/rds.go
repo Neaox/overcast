@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Neaox/overcast-compat-cli/internal/awscli"
 	"github.com/Neaox/overcast-compat-cli/internal/harness"
@@ -123,10 +124,49 @@ func (g *rdsCliGroup) DeleteDBInstance(_ context.Context, t *harness.TestContext
 		"--skip-final-snapshot",
 	)
 }
+
+// waitForDBStatus polls DescribeDBInstances until the instance reports target.
+//
+// The go, java, node and python suites have carried this for a while; the CLI
+// suite went straight from create to stop and only passed because Overcast used
+// to report an instance available the instant it was created. It does not any
+// more — the status now waits on the engine actually accepting a connection —
+// so the CLI suite was the one asking for something real AWS refuses too:
+// stop-db-instance on a creating instance is InvalidDBInstanceState there as
+// well.
+func waitForDBStatus(t *harness.TestContext, id, target string) error {
+	const maxAttempts = 60 // a first boot initialises the data directory
+	for range maxAttempts {
+		out, err := awscli.RunOutput(t.Endpoint, t.Region, "rds", "describe-db-instances",
+			"--db-instance-identifier", id,
+		)
+		if err != nil {
+			return fmt.Errorf("waiting for %s to be %s: %w", id, target, err)
+		}
+		instances, _ := out["DBInstances"].([]interface{})
+		if len(instances) > 0 {
+			db, _ := instances[0].(map[string]interface{})
+			status, _ := db["DBInstanceStatus"].(string)
+			if status == target {
+				return nil
+			}
+			if status == "failed" {
+				return fmt.Errorf("%s went to failed while waiting for %s", id, target)
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("%s never reached %s", id, target)
+}
+
 func (g *rdsCliGroup) StopDBInstance(_ context.Context, t *harness.TestContext) error {
 	id := t.GetString("db_id")
 	if id == "" {
 		return fmt.Errorf("StopDBInstance: no db_id from CreateDBInstance")
+	}
+	// stop-db-instance requires an available instance, here and on AWS.
+	if err := waitForDBStatus(t, id, "available"); err != nil {
+		return fmt.Errorf("StopDBInstance: %w", err)
 	}
 	out, err := awscli.RunOutput(t.Endpoint, t.Region, "rds", "stop-db-instance",
 		"--db-instance-identifier", id,

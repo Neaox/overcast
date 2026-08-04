@@ -1130,6 +1130,49 @@ func TestLoad_efsModeMock(t *testing.T) {
 	}
 }
 
+// RDS defaults to live for the same reason EFS does: a DB instance nothing
+// answers on is not much of a database, and live mode degrades to metadata-only
+// by itself when no daemon is reachable.
+func TestLoad_rdsModeDefaultsToLive(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RDSMode != config.RDSModeLive {
+		t.Fatalf("RDSMode: expected %q, got %q", config.RDSModeLive, cfg.RDSMode)
+	}
+}
+
+// Mock is the opt-out for an environment that has a daemon but cannot afford
+// the tens of seconds a real engine takes to accept its first connection.
+func TestLoad_rdsModeMock(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_RDS_MODE", "mock")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RDSMode != config.RDSModeMock {
+		t.Fatalf("RDSMode: expected %q, got %q", config.RDSModeMock, cfg.RDSMode)
+	}
+}
+
+func TestLoad_rdsModeRejectsInvalidValues(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_RDS_MODE", "metadata")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error for invalid OVERCAST_RDS_MODE, got nil")
+	}
+	if got := err.Error(); got == "" || !containsAll(got, "OVERCAST_RDS_MODE", "mock", "live") {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
 func TestLoad_efsModeRejectsInvalidValues(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OVERCAST_EFS_MODE", "nfs")
@@ -1361,6 +1404,9 @@ func clearEnv(t *testing.T) {
 		"OVERCAST_LAMBDA_HOT_RELOAD",
 		"OVERCAST_LAMBDA_NODE_BIN", "OVERCAST_DEBUG", "OVERCAST_TLS", "OVERCAST_TLS_CERT", "OVERCAST_TLS_KEY",
 		"OVERCAST_HOSTNAME", "OVERCAST_SPLIT_HORIZON_HOSTS", "OVERCAST_EKS_MODE", "OVERCAST_EC2_VPC_STRATEGY",
+		// The mode defaults these assert are only defaults if the developer
+		// running the suite has not exported an opt-out of their own.
+		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE",
 		"OVERCAST_MCP_REPLAY_LIMIT", "OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
 		"EKS_DOCKER_SOCKET", "EKS_NETWORK",
 	}
