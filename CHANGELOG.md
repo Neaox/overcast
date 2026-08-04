@@ -150,6 +150,9 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web] log timestamps read the same everywhere: an event with no timestamp shows a dash rather than a 1970 clock time in the map's stream peek, and a debug row carries the same faint tint in every viewer
 
+- **BREAKING** [efs/ecs/lambda] EFS live mode is the default, so a file system is backed by a real Docker volume whenever a daemon is reachable and an ECS task or Lambda function that declares an EFS mount gets storage it can actually share — no configuration, no `OVERCAST_EFS_MODE=live`. Live mode asks nothing of a machine that cannot provide it: it creates a volume only for a file system someone created, and with Docker out of reach it creates nothing and behaves exactly as mock mode did
+  migration: set `OVERCAST_EFS_MODE=mock` to keep EFS metadata-only. One task-level behaviour changes with the default: a container whose `rootDirectory` — or whose access-point root directory declared without `CreationInfo` — does not exist in the volume now fails to start, where before the mount was skipped and the task started without it. That is AWS's own mount failure, and it surfaces a task definition that was never going to work on AWS
+
 ### Fixed
 
 - **BREAKING** [ecs] `networkConfiguration` is required when the task definition's `networkMode` is `awsvpc`, as on AWS, rather than when `launchType` is `FARGATE`. An awsvpc task definition launched under EC2, or under a `capacityProviderStrategy` with no launch type — the shape CDK emits — was accepted and produced a service that could never place a task
