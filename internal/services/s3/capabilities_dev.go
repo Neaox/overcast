@@ -24,6 +24,22 @@ func init() {
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketEncryption", Category: "Buckets",
 			Status: capabilities.StatusSupported},
 
+		// CORS
+		capabilities.Capability{Service: "s3", Operation: "GetBucketCors", Category: "CORS",
+			Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "s3", Operation: "PutBucketCors", Category: "CORS",
+			Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "s3", Operation: "DeleteBucketCors", Category: "CORS",
+			Status: capabilities.StatusSupported},
+
+		// Website
+		capabilities.Capability{Service: "s3", Operation: "GetBucketWebsite", Category: "Website",
+			Status: capabilities.StatusSupported, Notes: "IndexDocument and ErrorDocument"},
+		capabilities.Capability{Service: "s3", Operation: "PutBucketWebsite", Category: "Website",
+			Status: capabilities.StatusSupported, Notes: "IndexDocument and ErrorDocument"},
+		capabilities.Capability{Service: "s3", Operation: "DeleteBucketWebsite", Category: "Website",
+			Status: capabilities.StatusSupported},
+
 		// Objects
 		capabilities.Capability{Service: "s3", Operation: "PutObject", Category: "Objects",
 			Status: capabilities.StatusSupported, Notes: "Stores body + x-amz-meta-* headers"},

@@ -1,12 +1,12 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1350,
+  "total_ops": 1356,
   "services": [
     {
       "service": "s3",
       "display_name": "S3",
-      "total_ops": 47,
-      "implemented_ops": 39,
+      "total_ops": 53,
+      "implemented_ops": 45,
       "operations": [
         {
           "operation": "CreateBucket",
@@ -49,6 +49,38 @@
         {
           "operation": "DeleteBucketEncryption",
           "category": "Buckets",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetBucketCors",
+          "category": "CORS",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "PutBucketCors",
+          "category": "CORS",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "DeleteBucketCors",
+          "category": "CORS",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "GetBucketWebsite",
+          "category": "Website",
+          "status": "✅ Supported",
+          "notes": "IndexDocument and ErrorDocument"
+        },
+        {
+          "operation": "PutBucketWebsite",
+          "category": "Website",
+          "status": "✅ Supported",
+          "notes": "IndexDocument and ErrorDocument"
+        },
+        {
+          "operation": "DeleteBucketWebsite",
+          "category": "Website",
           "status": "✅ Supported"
         },
         {

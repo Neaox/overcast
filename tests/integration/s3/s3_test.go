@@ -2335,8 +2335,6 @@ func TestS3_UnimplementedOperations_return501(t *testing.T) {
 		{"UpdateBucketMetadataTableConfiguration", http.MethodPut, "/stub-bucket?metadataTable"},
 
 		// ---- Bucket DELETE sub-resources --------------------------------
-		{"DeleteBucketCors", http.MethodDelete, "/stub-bucket?cors"},
-		{"DeleteBucketWebsite", http.MethodDelete, "/stub-bucket?website"},
 		{"DeleteBucketReplication", http.MethodDelete, "/stub-bucket?replication"},
 		{"DeleteBucketAnalyticsConfiguration", http.MethodDelete, "/stub-bucket?analytics"},
 		{"DeleteBucketIntelligentTieringConfiguration", http.MethodDelete, "/stub-bucket?intelligent-tiering"},

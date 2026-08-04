@@ -785,6 +785,14 @@ func (h *Handler) PutBucketVersioning(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument("malformed XML"))
 		return
 	}
+	if req.Status != "Enabled" && req.Status != "Suspended" {
+		protocol.WriteXMLError(w, r, &protocol.AWSError{
+			Code:       "MalformedXML",
+			Message:    "The XML you provided was not well-formed or did not validate against our published schema",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
 	b, aerr := h.store.getBucket(r.Context(), bucket)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
@@ -802,6 +810,7 @@ func (h *Handler) PutBucketVersioning(w http.ResponseWriter, r *http.Request) {
 
 type websiteConfigurationXML struct {
 	XMLName       xml.Name          `xml:"WebsiteConfiguration"`
+	Xmlns         string            `xml:"xmlns,attr,omitempty"`
 	IndexDocument *indexDocumentXML `xml:"IndexDocument"`
 	ErrorDocument *errorDocumentXML `xml:"ErrorDocument"`
 }
@@ -860,10 +869,11 @@ func (h *Handler) getBucketWebsite(w http.ResponseWriter, r *http.Request) {
 	}
 	type response struct {
 		XMLName       xml.Name          `xml:"WebsiteConfiguration"`
+		Xmlns         string            `xml:"xmlns,attr,omitempty"`
 		IndexDocument *indexDocumentXML `xml:"IndexDocument,omitempty"`
 		ErrorDocument *errorDocumentXML `xml:"ErrorDocument,omitempty"`
 	}
-	resp := response{}
+	resp := response{Xmlns: s3XMLNamespace}
 	if b.WebsiteConfig.IndexDocument != "" {
 		resp.IndexDocument = &indexDocumentXML{Suffix: b.WebsiteConfig.IndexDocument}
 	}
@@ -873,10 +883,27 @@ func (h *Handler) getBucketWebsite(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteXML(w, r, http.StatusOK, &resp)
 }
 
+// deleteBucketWebsite handles DELETE /{bucket}?website.
+func (h *Handler) deleteBucketWebsite(w http.ResponseWriter, r *http.Request) {
+	bucket := chi.URLParam(r, "bucket")
+	b, aerr := h.store.getBucket(r.Context(), bucket)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+	b.WebsiteConfig = nil
+	if aerr := h.store.putBucket(r.Context(), b); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+	protocol.WriteEmpty(w, r, http.StatusNoContent)
+}
+
 // ─── CORS configuration ────────────────────────────────────────────────────────
 
 type corsConfigurationXML struct {
 	XMLName   xml.Name      `xml:"CORSConfiguration"`
+	Xmlns     string        `xml:"xmlns,attr,omitempty"`
 	CORSRules []corsRuleXML `xml:"CORSRule"`
 }
 
@@ -935,9 +962,13 @@ func (h *Handler) getBucketCors(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	xmlRules := make([]corsRuleXML, 0, len(b.CORSRules))
-	for _, rule := range b.CORSRules {
-		xmlRules = append(xmlRules, corsRuleXML{
+	protocol.WriteXML(w, r, http.StatusOK, &corsConfigurationXML{Xmlns: s3XMLNamespace, CORSRules: corsRulesToXML(b.CORSRules)})
+}
+
+func corsRulesToXML(rules []CORSRule) []corsRuleXML {
+	out := make([]corsRuleXML, 0, len(rules))
+	for _, rule := range rules {
+		out = append(out, corsRuleXML{
 			AllowedHeader: rule.AllowedHeaders,
 			AllowedMethod: rule.AllowedMethods,
 			AllowedOrigin: rule.AllowedOrigins,
@@ -945,7 +976,23 @@ func (h *Handler) getBucketCors(w http.ResponseWriter, r *http.Request) {
 			MaxAgeSeconds: rule.MaxAgeSeconds,
 		})
 	}
-	protocol.WriteXML(w, r, http.StatusOK, &corsConfigurationXML{CORSRules: xmlRules})
+	return out
+}
+
+// deleteBucketCors handles DELETE /{bucket}?cors.
+func (h *Handler) deleteBucketCors(w http.ResponseWriter, r *http.Request) {
+	bucket := chi.URLParam(r, "bucket")
+	b, aerr := h.store.getBucket(r.Context(), bucket)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+	b.CORSRules = nil
+	if aerr := h.store.putBucket(r.Context(), b); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+	protocol.WriteEmpty(w, r, http.StatusNoContent)
 }
 
 // PutBucketPolicy handles PUT /{bucket}?policy

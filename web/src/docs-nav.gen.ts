@@ -3999,6 +3999,16 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "CORS",
+        "id": "cors"
+      },
+      {
+        "depth": 3,
+        "text": "Website",
+        "id": "website"
+      },
+      {
+        "depth": 3,
         "text": "Objects",
         "id": "objects"
       },

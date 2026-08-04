@@ -32,6 +32,7 @@ type xmlTagSet struct {
 
 type xmlTagging struct {
 	XMLName xml.Name  `xml:"Tagging"`
+	Xmlns   string    `xml:"xmlns,attr,omitempty"`
 	TagSet  xmlTagSet `xml:"TagSet"`
 }
 
@@ -64,7 +65,7 @@ func (h *Handler) GetBucketTagging(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
-	resp := xmlTagging{TagSet: xmlTagSet{Tags: tagsToXML(b.Tags)}}
+	resp := xmlTagging{Xmlns: s3XMLNamespace, TagSet: xmlTagSet{Tags: tagsToXML(b.Tags)}}
 	protocol.WriteXML(w, r, http.StatusOK, resp)
 }
 

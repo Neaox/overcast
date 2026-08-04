@@ -462,10 +462,12 @@ forward:
   `ExpiredObjectDeleteMarker` — are refused at `Put` time with an `InvalidArgument` naming the element,
   because the object store keeps exactly one live object per key and has no version history or delete
   markers. They become implementable only if S3 gains real versioning.
-- **Deferred.** The `AWS::S3::Bucket` CloudFormation handler still ignores `LifecycleConfiguration`, as it
-  ignores every other bucket sub-resource property (versioning, notifications, tags, encryption). Wiring
-  them is one piece of work on the provisioner rather than part of this item, and is tracked separately —
-  so a CDK stack's `lifecycleRules` still do not reach the bucket, though an SDK call does.
+- **Shipped 2026-08-05 (#516).** `AWS::S3::Bucket` now translates lifecycle, versioning, notification,
+  encryption, tag, CORS and website property shapes and dispatches the existing S3 REST-XML handlers for
+  create, in-place update and removal. S3 remains the owner of validation, errors and state; the provider
+  fails unknown or untranslatable fields rather than silently dropping them. The audit split three S3
+  model gaps into focused follow-ups: EventBridge notifications (#635), transition minimum object size
+  (#636), and website redirects/routing rules (#637).
 
 **10. Secrets Manager rotation + resource policies** — Core (14/21) → Comprehensive.
 **Status: done, 2026-08-03** (issue #476). Registry now reads 19 Supported / 3 Unsupported of 22.

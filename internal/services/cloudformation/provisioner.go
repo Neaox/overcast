@@ -2597,28 +2597,55 @@ func (h *snsSubscriptionHandler) Update(ctx context.Context, router http.Handler
 
 type s3BucketHandler struct{}
 
-func (h *s3BucketHandler) Update(_ context.Context, _ http.Handler, cfg *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *s3BucketHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	decoded, err := decodeS3BucketProperties(props)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	oldDecoded, err := decodeS3BucketProperties(oldProps)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
 	// BucketName is immutable.
-	if n, ok := props["BucketName"].(string); ok && n != "" && n != physicalID {
+	if decoded.BucketName != "" && decoded.BucketName != physicalID {
 		return "", nil, errReplacementRequired
 	}
-	// Other sub-resources (Tagging, CORS, Versioning, Policy, Encryption,
-	// PublicAccessBlock, Lifecycle, etc.) are in-place mutations on the live
-	// bucket in real AWS. The emulator does not yet drive those sub-resource
-	// PUT calls from CFN — accept the change and keep the bucket. Users who
-	// need the configuration to take effect can call the S3 API directly.
+	operations, err := planS3BucketOperations(decoded, oldDecoded)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	compensations, err := planS3BucketOperations(oldDecoded, decoded)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	applied, err := applyS3BucketOperations(ctx, router, rCtx.Region, physicalID, operations)
+	if err != nil {
+		compensationErr := compensateS3BucketOperations(ctx, router, rCtx.Region, physicalID, operations[:applied], compensations)
+		return "", nil, failUpdate(errors.Join(err, compensationErr))
+	}
 	return physicalID, s3BucketAttrs(cfg, physicalID, rCtx.Region), nil
 }
 
 func (h *s3BucketHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	bucketName, _ := props["BucketName"].(string)
+	decoded, err := decodeS3BucketProperties(props)
+	if err != nil {
+		return "", nil, err
+	}
+	operations, err := planS3BucketOperations(decoded, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	bucketName := decoded.BucketName
 	if bucketName == "" {
 		bucketName = strings.ToLower(rCtx.generatedName())
 	}
 
-	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/"+bucketName, "", nil)
+	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/"+bucketName, "", nil)
 	if err != nil {
 		return "", nil, fmt.Errorf("s3 CreateBucket: %w", err)
+	}
+	if _, err := applyS3BucketOperations(ctx, router, rCtx.Region, bucketName, operations); err != nil {
+		return bucketName, nil, err
 	}
 	return bucketName, s3BucketAttrs(cfg, bucketName, rCtx.Region), nil
 }

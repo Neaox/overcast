@@ -14,6 +14,7 @@ operations:
     status: implementation_mismatch
     aws_docs:
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sqs-queue.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-s3-bucket.html
     tests:
       - tests/integration/cloudformation/cloudformation_test.go
     scenarios:
@@ -44,6 +45,11 @@ operations:
           - tests/integration/cloudformation/sns_test.go::TestUpdateStack_SNSTopicAttributes
           - tests/integration/cloudformation/sns_test.go::TestUpdateStack_SNSTopicInlineSubscriptionsFailLoudly
         notes: AWS::SNS::Topic applies supported attributes during create and update; standalone subscriptions apply supported attributes after Subscribe; inline topic subscriptions dispatch through SNS. Unsupported topic Tags dispatch to SNS TagResource and fail rather than being discarded.
+      - name: s3 bucket sub-resource property dispatch
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/s3_bucket_properties_test.go
+        notes: AWS::S3::Bucket translates lifecycle, versioning, notification, encryption, tag, CORS, and website properties to S3 REST-XML handlers on create and update. Removal deletes or clears the S3 configuration, and versioning removal suspends because S3 cannot return a versioned bucket to unversioned state. Unknown and untranslatable fields fail before bucket creation.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -81,11 +87,13 @@ findings:
     - DescribeChangeSet and ExecuteChangeSet now accept full change set ARN lookup without StackName, and ListChangeSets returns created change sets for the stack.
     - AWS::Events::Rule create provisions targets, including ECS/Fargate target metadata used by CDK scheduled task stacks.
     - AWS::SNS::Topic and AWS::SNS::Subscription forward supported configuration through SNS during stack provisioning, including raw delivery and message-body filtering.
+    - AWS::S3::Bucket create/update/removal dispatches seven sub-resource property families through S3 instead of silently dropping them.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.
     - Implement cross-region AWS::SNS::Subscription Region semantics (tracked in #633).
     - Review update/delete semantics and unsupported-resource stubbing.
+    - Add support for S3 EventBridge notifications (#635), lifecycle transition minimum object size (#636), and website redirects/routing rules (#637); CloudFormation currently fails these shapes loudly.
   intentionally_partial: []
 handoff:
   start_with: [CloudFormation Ref semantics for IAM and EventBridge resource handlers, CreateStack, DeleteStack, resource handlers]
@@ -93,4 +101,5 @@ handoff:
     - Change set ARN-only lookup for DescribeChangeSet and ExecuteChangeSet; covered by TestDescribeChangeSet_changeSetArn and TestExecuteChangeSet_changeSetArn.
     - ListChangeSets returning created stack change sets; covered by TestListChangeSets_createdChangeSet.
     - AWS::Events::Rule target creation for scheduled Fargate tasks; covered by TestCreateStack_ScheduledFargateRuleTargets.
+    - AWS::S3::Bucket lifecycle, versioning, notification, encryption, tags, CORS, and website dispatch; covered by s3_bucket_properties_test.go.
   commands: [go test -count=1 ./internal/services/cloudformation/... ./tests/integration/cloudformation/...]

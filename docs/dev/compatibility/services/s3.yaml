@@ -2,13 +2,13 @@ service: s3
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-19
+last_updated: 2026-08-05
 protocols: [rest_xml]
 implementation: [internal/services/s3]
 integration_tests: [tests/integration/s3]
 capability_docs: docs/services/s3.md
-operation_count_estimate: 44 tracked; 33 supported, 11 unsupported
-current_support_level: Broad core S3 support; lifecycle, ACL, select, and restore gaps.
+operation_count_estimate: 61 registered; 53 supported, 8 unsupported
+current_support_level: Broad core S3 support; ACL, select, restore, and optional bucket-configuration fields remain incomplete.
 operations:
   ListObjectsV2:
     status: fixed
@@ -64,13 +64,64 @@ operations:
       remaining_gaps:
         - Validate max-keys boundary and malformed values against AWS behavior.
         - Review encoding-type=url, fetch-owner, requester-pays, optional-object-attributes, and directory bucket caveats before marking reviewed.
+  PutBucketVersioning:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
+    implementation:
+      - internal/services/s3/handler_bucket.go
+    tests:
+      - tests/integration/s3/s3_test.go::TestPutBucketVersioning_enable
+      - tests/integration/s3/s3_test.go::TestPutBucketVersioning_suspend
+      - tests/integration/s3/s3_bucket_configuration_test.go::TestPutBucketVersioning_invalidStatusReturnsMalformedXML
+      - tests/integration/cloudformation/s3_bucket_properties_test.go
+    scenarios:
+      - name: enabled and suspended state
+        status: fixed
+      - name: invalid status enum
+        status: fixed
+        notes: Values outside Enabled and Suspended return the S3 REST-XML MalformedXML schema-validation error and are not persisted.
+  DeleteBucketCors:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketCors.html
+    implementation:
+      - internal/services/s3/handler_bucket.go
+    tests:
+      - tests/integration/s3/s3_bucket_configuration_test.go::TestDeleteBucketCors_removesConfiguration
+      - tests/integration/cloudformation/s3_bucket_properties_test.go
+    scenarios:
+      - name: configured bucket
+        status: fixed
+        notes: Returns 204 and subsequent GetBucketCors returns NoSuchCORSConfiguration.
+  DeleteBucketWebsite:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketWebsite.html
+    implementation:
+      - internal/services/s3/handler_bucket.go
+    tests:
+      - tests/integration/s3/s3_bucket_configuration_test.go::TestDeleteBucketWebsite_removesConfiguration
+      - tests/integration/cloudformation/s3_bucket_properties_test.go
+    scenarios:
+      - name: configured bucket
+        status: fixed
+        notes: Returns 204 and subsequent GetBucketWebsite returns NoSuchWebsiteConfiguration.
 findings:
-  fixed: []
+  fixed:
+    - PutBucketVersioning now rejects invalid status enum values with MalformedXML instead of persisting arbitrary strings.
+    - DeleteBucketCors and DeleteBucketWebsite now clear stored configurations and return 204.
+    - CloudFormation AWS::S3::Bucket uses the S3 handlers for lifecycle, versioning, notifications, encryption, tags, CORS, and website configuration.
   remaining_gaps:
     - Finish ListObjectsV2 optional-parameter review before marking the operation reviewed.
     - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
-  intentionally_partial: []
+    - EventBridge notification configuration is unsupported (#635).
+    - Lifecycle TransitionDefaultMinimumObjectSize is unsupported (#636).
+    - Website RedirectAllRequestsTo and RoutingRules are unsupported (#637).
+    - CORS rule Id and encryption BlockedEncryptionTypes are not represented by the current stored/wire models.
+  intentionally_partial:
+    - Lifecycle NoncurrentVersion* and ExpiredObjectDeleteMarker constructs remain refused because the object store has no version history or delete markers.
 handoff:
-  start_with: [ListObjectsV2 max-keys validation, ListObjectsV2 encoding-type, PutBucketPolicy, versioning, tagging]
-  do_not_redo: [ListObjectsV2 start-after, ListObjectsV2 continuation-token happy path]
+  start_with: [ListObjectsV2 max-keys validation, ListObjectsV2 encoding-type, PutBucketPolicy, CDK bootstrap, issue 635, issue 636, issue 637]
+  do_not_redo: [ListObjectsV2 start-after, ListObjectsV2 continuation-token happy path, DeleteBucketCors, DeleteBucketWebsite, PutBucketVersioning status validation, CloudFormation S3 bucket seven-property dispatch]
   commands: [go test -count=1 ./internal/services/s3/... ./tests/integration/s3/...]
