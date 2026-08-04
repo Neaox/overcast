@@ -211,9 +211,13 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [ecs] a task stopped while it is still coming up stays stopped, instead of being brought back to RUNNING by its own pending transition landing a moment later — the stop cancels that transition, but cancelling only stops a timer that has not fired, so a scale-in, a StopTask or a container exit could all lose a race with one already in flight and leave a task that reports RUNNING with nothing behind it
 
+- [ecs] `UpdateService` and `DeleteService` write the service record under the same lock the scheduler reconciles it with, so a scale-down that lands while a task is coming up is no longer overwritten by that task's reconcile — the surplus tasks were left running and the call still returned 200
+
 - [efs/ec2] a mount target's availability zone comes from the subnet's real zone in EC2 rather than a hash of the subnet ID, which put unrelated zones in collision and rejected the second mount target of any multi-AZ file system — the shape every CDK `efs.FileSystem` produces
 
 - [elasticache] deleting a cache cluster or replication group while its container was still starting no longer leaks the container — the delete path had nothing to stop (the container ID was not persisted yet), so the start goroutine now checks for a mid-start delete and tears its own container down, and container fields merge into a fresh read instead of overwriting concurrent transitions with the pre-start snapshot
+
+- [elasticache] a cluster, replication group or serverless cache deleted while its container was still starting stays deleted over the Query protocol, and its container is torn down rather than left running — the typed protocol already did this
 
 - [elbv2] a load balancer's `DNSName` is built on Overcast's external hostname, as every other service handing out an endpoint already does, instead of a hardcoded `.elb.localhost` that `OVERCAST_HOSTNAME` could not reach. Unchanged by default, since the hostname defaults to `localhost`
 
@@ -252,6 +256,10 @@ can be applied mechanically rather than reconstructed from memory.
 - [rds] `ModifyDBInstance` reads `MasterUserPassword`, which it had never done: the parameter was not on the request type at all, so a stack that rotated a database's master password deployed clean over an instance — and a container — still on the old one. The change is made the way it has to be for it to mean anything, by running the engine's own `ALTER USER` inside the container: the old password stops working and the new one starts, as on AWS. A container reads `MYSQL_ROOT_PASSWORD` and its equivalents once, when it initialises its data directory, so nothing short of that would have applied
 
 - [rds] a master password the running engine will not take is reported rather than recorded — the engine's own error comes back and nothing in the request is stored, and an instance that is not `available` is refused with `InvalidDBInstanceState` instead of being told a password it has no way to start honouring
+
+- [rds] a health check no longer reverts an API call it overlapped: it polls the engine for minutes, and used to write back the instance record it had read before dialling — silently undoing a `ModifyDBInstance`'s new instance class, or rolling its status back
+
+- [rds/elasticache/msk] every writer of an instance, cluster, replication group or cache record now holds that record's lock across the read and the write, so a lifecycle transition, a Docker event and an API call can no longer discard one another's edits
 
 - [release] release notes are written without a second approval. `finalize-release` sat in the `release` environment and depended on the three publish jobs, so it formed a second approval wave: the maintainer approved once, the release completed and looked finished, and the job that fills in the description waited for an approval nobody knew to give. `v0.0.1-alpha.27` and `v0.0.1-alpha.28` both published with empty notes as a result. It publishes nothing — everything is already out by the time it runs — so it is no longer gated
 
