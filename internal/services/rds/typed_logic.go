@@ -60,6 +60,9 @@ type modifyDBInstanceReq struct {
 	// operation used to ignore a request to disable Multi-AZ.
 	MultiAZ     *bool  `json:"MultiAZ"`
 	StorageType string `json:"StorageType"`
+	// MasterUserPassword rotates the master password. Unlike every other field
+	// here it is not applied to the record alone — see password.go.
+	MasterUserPassword string `json:"MasterUserPassword"`
 }
 
 type createDBSubnetGroupReq struct {
@@ -536,6 +539,16 @@ func (h *Handler) modifyDBInstanceTyped(ctx context.Context, req *modifyDBInstan
 	inst, aerr := h.store.getDBInstance(ctx, id)
 	if aerr != nil {
 		return nil, aerr
+	}
+
+	// The password goes first, and nothing else is applied unless it lands: a
+	// modification that half-succeeded is harder to reason about than one that
+	// was refused outright, and the caller can retry either way.
+	if req.MasterUserPassword != "" && req.MasterUserPassword != inst.MasterUserPassword {
+		if aerr := h.changeMasterPassword(ctx, inst, req.MasterUserPassword); aerr != nil {
+			return nil, aerr
+		}
+		inst.MasterUserPassword = req.MasterUserPassword
 	}
 
 	if req.DBInstanceClass != "" {

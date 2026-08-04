@@ -5062,7 +5062,7 @@
           "operation": "ModifyDBInstance",
           "category": "DB instances",
           "status": "✅ Supported",
-          "notes": "Metadata updates (class, storage, engine version, multi-AZ)"
+          "notes": "Metadata updates (class, storage, engine version, multi-AZ); `MasterUserPassword` is applied to the running engine, and requires an `available` instance"
         },
         {
           "operation": "RebootDBInstance",

@@ -514,6 +514,93 @@ func (d *Client) StopContainer(ctx context.Context, id string, timeoutSec int) e
 	return nil
 }
 
+// ExecResult reports what a command run inside a container did.
+type ExecResult struct {
+	// ExitCode is the command's exit status. Zero means it succeeded.
+	ExitCode int
+	// Output is stdout and stderr interleaved, as a terminal would show them,
+	// bounded by maxExecOutputBytes. It is what a caller quotes when the
+	// command failed, so it is the command's own explanation and not a
+	// paraphrase of it.
+	Output string
+}
+
+// maxExecOutputBytes bounds what Exec keeps. Exec is for short administrative
+// commands whose output is a diagnostic, not a data stream; anything that
+// produces more than this is not a command Exec should be running.
+const maxExecOutputBytes = 64 * 1024
+
+// Exec runs a command inside a running container and waits for it to finish.
+// It returns the command's own exit status and output — a non-zero ExitCode is
+// not an error here, because "the command ran and refused" is an answer the
+// caller has to be able to tell apart from "the command never ran".
+//
+// cmd is passed to the container verbatim, with no shell in between: quoting
+// and word splitting never happen, so an argument containing spaces, quotes or
+// a `$` reaches the process as one argument exactly as written. env adds to the
+// container's own environment for this command only.
+//
+// The exec is created with a TTY, which is what `docker exec -t` does. It costs
+// the ability to tell stdout from stderr — neither of which a caller of this
+// method distinguishes — and buys a plain byte stream instead of Docker's
+// 8-byte-framed multiplexed one.
+func (d *Client) Exec(ctx context.Context, id string, cmd, env []string) (ExecResult, error) {
+	if err := d.acquireOp(ctx); err != nil {
+		return ExecResult{}, fmt.Errorf("exec in container %s: %w", id, err)
+	}
+	defer d.releaseOp()
+
+	var created struct {
+		ID string `json:"Id"`
+	}
+	createReq := struct {
+		AttachStdout bool     `json:"AttachStdout"`
+		AttachStderr bool     `json:"AttachStderr"`
+		Tty          bool     `json:"Tty"`
+		Cmd          []string `json:"Cmd"`
+		Env          []string `json:"Env,omitempty"`
+	}{AttachStdout: true, AttachStderr: true, Tty: true, Cmd: cmd, Env: env}
+	if err := d.doJSON(ctx, http.MethodPost, "/v1.45/containers/"+id+"/exec", createReq, &created); err != nil {
+		return ExecResult{}, fmt.Errorf("exec in container %s: create: %w", id, err)
+	}
+	if created.ID == "" {
+		return ExecResult{}, fmt.Errorf("exec in container %s: daemon returned no exec ID", id)
+	}
+
+	// Detach=false streams the command's output on this connection and closes
+	// it when the command exits, so reading to EOF is how we wait for it.
+	startBody := strings.NewReader(`{"Detach":false,"Tty":true}`)
+	resp, err := d.doRequest(ctx, http.MethodPost, "/v1.45/exec/"+created.ID+"/start", startBody)
+	if err != nil {
+		return ExecResult{}, fmt.Errorf("exec in container %s: start: %w", id, err)
+	}
+	output, readErr := io.ReadAll(io.LimitReader(resp.Body, maxExecOutputBytes))
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return ExecResult{}, fmt.Errorf("exec in container %s: start: status %d: %s",
+			id, resp.StatusCode, strings.TrimSpace(string(output)))
+	}
+	if readErr != nil {
+		return ExecResult{}, fmt.Errorf("exec in container %s: read output: %w", id, readErr)
+	}
+
+	var inspect struct {
+		Running  bool `json:"Running"`
+		ExitCode int  `json:"ExitCode"`
+	}
+	if err := d.doJSON(ctx, http.MethodGet, "/v1.45/exec/"+created.ID+"/json", nil, &inspect); err != nil {
+		return ExecResult{}, fmt.Errorf("exec in container %s: inspect: %w", id, err)
+	}
+	if inspect.Running {
+		// The stream closed while the daemon still calls the command running,
+		// so the exit status we would report is not one yet. Saying so beats
+		// reporting the zero value as success.
+		return ExecResult{}, fmt.Errorf("exec in container %s: command still running after its output stream closed", id)
+	}
+
+	return ExecResult{ExitCode: inspect.ExitCode, Output: string(output)}, nil
+}
+
 // CopyFileFromContainer returns the raw bytes of a file path from inside a
 // container using Docker's archive endpoint.
 func (d *Client) CopyFileFromContainer(ctx context.Context, id, path string) ([]byte, error) {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -565,5 +566,144 @@ func TestPullImage_doesNotPrune(t *testing.T) {
 	}
 	if pruned.Load() {
 		t.Fatal("PullImage pruned dangling images; that deletes digest-pinned images it just pulled")
+	}
+}
+
+// ── Exec ────────────────────────────────────────────────────────────────────
+
+// execDaemon answers the three endpoints an exec runs through, recording the
+// create body and reporting the exit status the test asked for.
+type execDaemon struct {
+	srv      *httptest.Server
+	exitCode int
+	running  bool
+	output   string
+
+	mu      sync.Mutex
+	created map[string]any
+}
+
+func newExecDaemon(t *testing.T) *execDaemon {
+	t.Helper()
+	d := &execDaemon{}
+	d.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/exec"):
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode exec create: %v", err)
+			}
+			d.mu.Lock()
+			d.created = body
+			d.mu.Unlock()
+			_, _ = w.Write([]byte(`{"Id":"exec-abc"}`))
+		case strings.HasSuffix(r.URL.Path, "/exec/exec-abc/start"):
+			_, _ = w.Write([]byte(d.output))
+		case strings.HasSuffix(r.URL.Path, "/exec/exec-abc/json"):
+			_, _ = w.Write([]byte(`{"Running":` + strconv.FormatBool(d.running) +
+				`,"ExitCode":` + strconv.Itoa(d.exitCode) + `}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(d.srv.Close)
+	return d
+}
+
+func (d *execDaemon) client() *Client {
+	return NewClient("tcp://"+d.srv.Listener.Addr().String(), zap.NewNop())
+}
+
+func (d *execDaemon) createBody() map[string]any {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.created
+}
+
+func TestExec_sendsCommandAndReturnsOutput(t *testing.T) {
+	// Given: a daemon whose exec succeeds and writes to its stream.
+	d := newExecDaemon(t)
+	d.output = "ok\r\n"
+
+	// When: a command with an argument containing spaces and quotes is run.
+	const stmt = `ALTER USER 'a b'@'%' IDENTIFIED BY 'p''w';`
+	res, err := d.client().Exec(context.Background(), "cafe",
+		[]string{"mysql", "-e", stmt}, []string{"PGPASSWORD=old"})
+
+	// Then: the exit status and output come back, and the argument reached the
+	// daemon as one unmangled element — there is no shell to word-split it.
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", res.ExitCode)
+	}
+	if res.Output != "ok\r\n" {
+		t.Errorf("Output = %q, want the command's own bytes", res.Output)
+	}
+
+	body := d.createBody()
+	cmd, _ := body["Cmd"].([]any)
+	if len(cmd) != 3 || cmd[2] != stmt {
+		t.Errorf("Cmd = %v, want the statement passed through verbatim", cmd)
+	}
+	if env, _ := body["Env"].([]any); len(env) != 1 || env[0] != "PGPASSWORD=old" {
+		t.Errorf("Env = %v, want the caller's environment", body["Env"])
+	}
+	// A TTY is what makes the stream plain bytes rather than Docker's framed
+	// multiplexing, which is the only reason Output can be read directly.
+	if tty, _ := body["Tty"].(bool); !tty {
+		t.Error("exec was created without a TTY; its output stream is multiplexed")
+	}
+}
+
+// A command that ran and refused is an answer, not a transport failure — the
+// caller has to be able to tell it from a command that never ran.
+func TestExec_nonZeroExitIsReportedNotErrored(t *testing.T) {
+	d := newExecDaemon(t)
+	d.exitCode = 1
+	d.output = "ERROR 1064 (42000): You have an error in your SQL syntax"
+
+	res, err := d.client().Exec(context.Background(), "cafe", []string{"mysql"}, nil)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if res.ExitCode != 1 {
+		t.Errorf("ExitCode = %d, want 1", res.ExitCode)
+	}
+	if !strings.Contains(res.Output, "1064") {
+		t.Errorf("Output = %q, want the command's own explanation", res.Output)
+	}
+}
+
+// The zero ExitCode of a command the daemon still calls running is not a
+// success, and must not be returned as one.
+func TestExec_stillRunningIsAnError(t *testing.T) {
+	d := newExecDaemon(t)
+	d.running = true
+
+	if _, err := d.client().Exec(context.Background(), "cafe", []string{"mysql"}, nil); err == nil {
+		t.Fatal("Exec reported success for a command the daemon still calls running")
+	}
+}
+
+func TestExec_daemonErrorIsReturned(t *testing.T) {
+	// Given: a daemon that refuses to exec into a container that is not running.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/exec") {
+			t.Errorf("unexpected request after a failed exec create: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"message":"Container cafe is not running"}`))
+	}))
+	defer srv.Close()
+	c := NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
+
+	_, err := c.Exec(context.Background(), "cafe", []string{"mysql"}, nil)
+	if err == nil {
+		t.Fatal("Exec: expected an error when the daemon refuses to create the exec")
+	}
+	if !strings.Contains(err.Error(), "is not running") {
+		t.Errorf("Exec error = %v, want it to carry the daemon's message", err)
 	}
 }

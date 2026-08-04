@@ -1097,7 +1097,7 @@ var AllCapabilities = []Capability{
 	{Service: "rds", Operation: "DownloadDBLogFilePortion", Category: "DB instances", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "rds", Operation: "ListTagsForResource", Category: "General", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "rds", Operation: "ModifyDBCluster", Category: "Aurora clusters", Status: StatusSupported, Notes: "Engine version update", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "rds", Operation: "ModifyDBInstance", Category: "DB instances", Status: StatusSupported, Notes: "Metadata updates (class, storage, engine version, multi-AZ)", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "rds", Operation: "ModifyDBInstance", Category: "DB instances", Status: StatusSupported, Notes: "Metadata updates (class, storage, engine version, multi-AZ); `MasterUserPassword` is applied to the running engine, and requires an `available` instance", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "rds", Operation: "RebootDBInstance", Category: "DB instances", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "rds", Operation: "RemoveTagsFromResource", Category: "General", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "rds", Operation: "RestoreDBInstanceFromDBSnapshot", Category: "DB instances", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
