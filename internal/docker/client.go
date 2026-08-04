@@ -796,8 +796,7 @@ func (d *Client) ContainerLogs(ctx context.Context, id string, tail string) ([]b
 // deduplicate against events already delivered.
 //
 // The response is a multiplexed Docker log stream identical in shape to
-// ContainerLogsStream's body; pass it through dockerLogStripper to extract
-// payload bytes.
+// ContainerLogsStream's body; wrap it in a DemuxReader to extract payload bytes.
 func (d *Client) ContainerLogsSince(ctx context.Context, id string, since time.Time) (io.ReadCloser, error) {
 	path := fmt.Sprintf("/v1.45/containers/%s/logs?stdout=true&stderr=true&timestamps=true&tail=all", id)
 	if !since.IsZero() {
