@@ -680,6 +680,16 @@
     },
     {
       "service": "lambda",
+      "name": "lambda-policy",
+      "suites": ["cli", "node-js-sdk"],
+      "tests": [
+        {"name": "AddPermission"},
+        {"name": "GetPolicy", "depends": ["AddPermission"]},
+        {"name": "RemovePermission", "depends": ["GetPolicy"]}
+      ]
+    },
+    {
+      "service": "lambda",
       "name": "lambda-invoke",
       "tests": [
         {

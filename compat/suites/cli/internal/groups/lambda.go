@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Neaox/overcast-compat-cli/internal/awscli"
@@ -30,6 +31,9 @@ func Lambda() ServiceGroup {
 			"lambda-crud:UpdateFunctionCode":          g.UpdateFunctionCode,
 			"lambda-crud:UpdateFunctionConfiguration": g.UpdateFunctionConfiguration,
 			"lambda-crud:DeleteFunction":              g.DeleteFunction,
+			"lambda-policy:AddPermission":             g.AddPermission,
+			"lambda-policy:GetPolicy":                 g.GetPolicy,
+			"lambda-policy:RemovePermission":          g.RemovePermission,
 			// lambda-invoke
 			"InvokeDryRun": g.InvokeDryRun,
 			"InvokeSync":   g.InvokeSync,
@@ -51,6 +55,7 @@ func Lambda() ServiceGroup {
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"lambda-crud":          g.setupCRUD,
+			"lambda-policy":        g.setupPolicy,
 			"lambda-invoke":        g.setupInvoke,
 			"lambda-aliases":       g.setupAliases,
 			"lambda-invoke-stream": g.setupInvokeStream,
@@ -58,6 +63,7 @@ func Lambda() ServiceGroup {
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
 			"lambda-crud":          g.teardownFunction,
+			"lambda-policy":        g.teardownFunction,
 			"lambda-invoke":        g.teardownFunction,
 			"lambda-aliases":       g.teardownFunction,
 			"lambda-invoke-stream": g.teardownFunction,
@@ -124,6 +130,59 @@ func (g *lambdaGroup) setupCRUD(_ context.Context, t *harness.TestContext) error
 	t.Set("fn_name", name)
 	// Best-effort delete of leftover function — error ignored.
 	awscli.Run(t.Endpoint, t.Region, "lambda", "delete-function", "--function-name", name) //nolint:errcheck
+	return nil
+}
+
+func (g *lambdaGroup) setupPolicy(ctx context.Context, t *harness.TestContext) error {
+	name := fmt.Sprintf("%s-lmbd-policy", t.RunID)
+	t.Set("fn_name", name)
+	awscli.Run(t.Endpoint, t.Region, "lambda", "delete-function", "--function-name", name) //nolint:errcheck
+	return g.CreateFunction(ctx, t)
+}
+
+func (g *lambdaGroup) AddPermission(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, "lambda", "add-permission",
+		"--function-name", g.currentFnName(t), "--statement-id", "allow-s3",
+		"--action", "lambda:InvokeFunction", "--principal", "s3.amazonaws.com",
+		"--source-account", "000000000000")
+	if err != nil {
+		return err
+	}
+	statement, _ := out["Statement"].(string)
+	if !strings.Contains(statement, `"Sid":"allow-s3"`) {
+		return fmt.Errorf("lambda AddPermission: statement not returned: %q", statement)
+	}
+	policyOut, err := awscli.RunOutput(t.Endpoint, t.Region, "lambda", "get-policy", "--function-name", g.currentFnName(t))
+	if err != nil {
+		return err
+	}
+	policy, _ := policyOut["Policy"].(string)
+	if !strings.Contains(policy, `"Sid":"allow-s3"`) {
+		return fmt.Errorf("lambda AddPermission: statement missing from GetPolicy: %v", policyOut)
+	}
+	return nil
+}
+
+func (g *lambdaGroup) GetPolicy(_ context.Context, t *harness.TestContext) error {
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, "lambda", "get-policy", "--function-name", g.currentFnName(t))
+	if err != nil {
+		return err
+	}
+	policy, _ := out["Policy"].(string)
+	if !strings.Contains(policy, `"Sid":"allow-s3"`) || out["RevisionId"] == "" {
+		return fmt.Errorf("lambda GetPolicy: policy or revision missing: %v", out)
+	}
+	return nil
+}
+
+func (g *lambdaGroup) RemovePermission(_ context.Context, t *harness.TestContext) error {
+	if err := awscli.Run(t.Endpoint, t.Region, "lambda", "remove-permission", "--function-name", g.currentFnName(t), "--statement-id", "allow-s3"); err != nil {
+		return err
+	}
+	_, err := awscli.RunOutput(t.Endpoint, t.Region, "lambda", "get-policy", "--function-name", g.currentFnName(t))
+	if err == nil || !strings.Contains(err.Error(), "ResourceNotFoundException") {
+		return fmt.Errorf("lambda RemovePermission: expected ResourceNotFoundException after removal, got %v", err)
+	}
 	return nil
 }
 

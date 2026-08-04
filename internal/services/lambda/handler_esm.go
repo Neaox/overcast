@@ -41,6 +41,16 @@ type createESMRequest struct {
 	DestinationConfig              *DestinationConfig `json:"DestinationConfig"`
 	ScalingConfig                  *ScalingConfig     `json:"ScalingConfig"`
 	Enabled                        *bool              `json:"Enabled"` // nil == true (default enabled)
+	FunctionResponseTypes          json.RawMessage    `json:"FunctionResponseTypes"`
+	ParallelizationFactor          json.RawMessage    `json:"ParallelizationFactor"`
+	StartingPositionTimestamp      json.RawMessage    `json:"StartingPositionTimestamp"`
+	SourceAccessConfigurations     json.RawMessage    `json:"SourceAccessConfigurations"`
+	SelfManagedEventSource         json.RawMessage    `json:"SelfManagedEventSource"`
+	Topics                         json.RawMessage    `json:"Topics"`
+	Queues                         json.RawMessage    `json:"Queues"`
+	KMSKeyArn                      json.RawMessage    `json:"KMSKeyArn"`
+	MetricsConfig                  json.RawMessage    `json:"MetricsConfig"`
+	ProvisionedPollerConfig        json.RawMessage    `json:"ProvisionedPollerConfig"`
 }
 
 // updateESMRequest is the wire request body for UpdateEventSourceMapping.
@@ -56,6 +66,24 @@ type updateESMRequest struct {
 	DestinationConfig              *DestinationConfig `json:"DestinationConfig"`
 	ScalingConfig                  *ScalingConfig     `json:"ScalingConfig"`
 	Enabled                        *bool              `json:"Enabled"`
+	FunctionResponseTypes          json.RawMessage    `json:"FunctionResponseTypes"`
+	ParallelizationFactor          json.RawMessage    `json:"ParallelizationFactor"`
+	SourceAccessConfigurations     json.RawMessage    `json:"SourceAccessConfigurations"`
+	KMSKeyArn                      json.RawMessage    `json:"KMSKeyArn"`
+	MetricsConfig                  json.RawMessage    `json:"MetricsConfig"`
+	ProvisionedPollerConfig        json.RawMessage    `json:"ProvisionedPollerConfig"`
+}
+
+func unsupportedESMProperty(fields ...struct {
+	name string
+	raw  json.RawMessage
+}) *protocol.AWSError {
+	for _, field := range fields {
+		if len(field.raw) > 0 && string(field.raw) != "null" {
+			return lambdaInvalidParameter(field.name + " is not supported by this Lambda emulator.")
+		}
+	}
+	return nil
 }
 
 // listESMResponse is the wire response for ListEventSourceMappings.
@@ -68,6 +96,51 @@ type listESMResponse struct {
 func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Request) {
 	var req createESMRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if aerr := unsupportedESMProperty(
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"FunctionResponseTypes", req.FunctionResponseTypes},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"ParallelizationFactor", req.ParallelizationFactor},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"StartingPositionTimestamp", req.StartingPositionTimestamp},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"SourceAccessConfigurations", req.SourceAccessConfigurations},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"SelfManagedEventSource", req.SelfManagedEventSource},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"Topics", req.Topics},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"Queues", req.Queues},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"KmsKeyArn", req.KMSKeyArn},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"MetricsConfig", req.MetricsConfig},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"ProvisionedPollerConfig", req.ProvisionedPollerConfig},
+	); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	if req.FunctionName == "" {
@@ -226,6 +299,35 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 
 	var req updateESMRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if aerr := unsupportedESMProperty(
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"FunctionResponseTypes", req.FunctionResponseTypes},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"ParallelizationFactor", req.ParallelizationFactor},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"SourceAccessConfigurations", req.SourceAccessConfigurations},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"KmsKeyArn", req.KMSKeyArn},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"MetricsConfig", req.MetricsConfig},
+		struct {
+			name string
+			raw  json.RawMessage
+		}{"ProvisionedPollerConfig", req.ProvisionedPollerConfig},
+	); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 

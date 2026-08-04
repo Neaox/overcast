@@ -24,7 +24,7 @@ import (
 // ─── wire types ──────────────────────────────────────────────────────────────
 
 type putFunctionConcurrencyRequest struct {
-	ReservedConcurrentExecutions int `json:"ReservedConcurrentExecutions"`
+	ReservedConcurrentExecutions *int `json:"ReservedConcurrentExecutions"`
 }
 
 type functionConcurrencyResponse struct {
@@ -153,8 +153,16 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
 		return
 	}
+	if req.ReservedConcurrentExecutions == nil {
+		protocol.WriteJSONError(w, r, lambdaInvalidParameter("ReservedConcurrentExecutions is required."))
+		return
+	}
+	if *req.ReservedConcurrentExecutions < 0 {
+		protocol.WriteJSONError(w, r, lambdaInvalidParameter("ReservedConcurrentExecutions must be greater than or equal to 0."))
+		return
+	}
 
-	fn.ReservedConcurrency = &req.ReservedConcurrentExecutions
+	fn.ReservedConcurrency = req.ReservedConcurrentExecutions
 	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -162,7 +170,7 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionConcurrencyResponse(req))
+	_ = json.NewEncoder(w).Encode(functionConcurrencyResponse{ReservedConcurrentExecutions: *req.ReservedConcurrentExecutions})
 }
 
 // GetFunctionConcurrency handles GET /2019-09-30/functions/{name}/concurrency.

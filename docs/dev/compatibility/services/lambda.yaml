@@ -2,12 +2,12 @@ service: lambda
 status: fixed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-14
+last_updated: 2026-08-05
 protocols: [rest_json, event_stream]
 implementation: [internal/services/lambda]
 integration_tests: [tests/integration/lambda]
 capability_docs: docs/services/lambda.md
-operation_count_estimate: 33 tracked; 32 supported, 1 unsupported
+operation_count_estimate: 51 tracked; 49 supported, 2 unsupported
 current_support_level: Broad control plane plus Docker-backed invoke; InvokeAsync unsupported.
 operations:
   CreateFunction:
@@ -42,7 +42,7 @@ operations:
         gap: Publish=true should publish initial version 1; not reviewed in this pass.
       advanced_configuration:
         status: intentionally_partial
-        gap: Code signing, SnapStart, DeadLetterConfig, FileSystemConfigs, KMS, EphemeralStorage, TracingConfig, DurableConfig, TenancyConfig, and CapacityProviderConfig are not fully emulated.
+        gap: SnapStart, DeadLetterConfig, KMS, EphemeralStorage, TracingConfig, RuntimeManagementConfig, and RecursiveLoop are rejected before mutation rather than silently discarded. Architectures, VpcConfig (including Ipv6AllowedForDualStack), ImageConfig, FileSystemConfigs, and code-signing association are stored and returned.
       lifecycle_state:
         status: intentionally_partial
         gap: Overcast can return Pending during Docker image prewarm and Active immediately otherwise; real Lambda provisioning state timing is not fully emulated.
@@ -53,6 +53,35 @@ operations:
         - Image CreateFunction requests with Runtime were accepted; now rejected.
       remaining_gaps:
         - Review Publish=true version creation and additional optional configuration fields before marking CreateFunction reviewed.
+  AddPermission:
+    status: intentionally_partial
+    aws_docs:
+      - https://docs.aws.amazon.com/lambda/latest/api/API_AddPermission.html
+      - https://docs.aws.amazon.com/lambda/latest/dg/access-control-resource-based.html
+    protocol: REST JSON; POST /2015-03-31/functions/{FunctionName}/policy; 201 with serialized Statement
+    tests:
+      - tests/integration/lambda/policy_test.go::TestFunctionPolicy_AddGetRemoveLifecycle
+      - tests/integration/cloudformation/lambda_properties_test.go::TestCreateAndDeleteStack_LambdaPermissionMutatesFunctionPolicy
+    scenarios:
+      resource_policy_statement:
+        status: fixed
+        evidence: AddPermission atomically stores validated AWS-shaped Allow statements, enforces policy size and RevisionId preconditions, and validates qualified targets. Policy authorization during invocation remains tracked in #629, so the capability is reported unsupported.
+  GetPolicy:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/lambda/latest/api/API_GetPolicy.html
+    protocol: REST JSON; GET /2015-03-31/functions/{FunctionName}/policy; Policy is a JSON document serialized as a string
+    tests:
+      - tests/integration/lambda/policy_test.go::TestFunctionPolicy_AddGetRemoveLifecycle
+      - tests/integration/cloudformation/lambda_properties_test.go::TestCreateAndDeleteStack_LambdaPermissionMutatesFunctionPolicy
+  RemovePermission:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/lambda/latest/api/API_RemovePermission.html
+    protocol: REST JSON; DELETE /2015-03-31/functions/{FunctionName}/policy/{StatementId}; 204
+    tests:
+      - tests/integration/lambda/policy_test.go::TestFunctionPolicy_AddGetRemoveLifecycle
+      - tests/integration/cloudformation/lambda_properties_test.go::TestCreateAndDeleteStack_LambdaPermissionMutatesFunctionPolicy
   Invoke:
     status: fixed
     aws_docs:
@@ -69,15 +98,19 @@ operations:
         status: reviewed
         evidence: Missing same-account layer metadata and uncached foreign-account layer ARNs still return a Lambda init-style layer version not found error before container startup.
 findings:
-  fixed: []
+  fixed:
+    - Lambda resource-policy AddPermission, GetPolicy, and RemovePermission support race-safe AWS::Lambda::Permission create/delete orchestration; AddPermission remains reported unsupported until invocation authorization is enforced (#629).
+    - CreateFunction and UpdateFunctionCode/Configuration preserve Architectures, VpcConfig including Ipv6AllowedForDualStack, ImageConfig, and FileSystemConfigs.
+    - PutFunctionConcurrency rejects negative ReservedConcurrentExecutions with InvalidParameterValueException instead of storing an invalid throttle limit.
   remaining_gaps:
     - Finish CreateFunction Publish=true and advanced optional configuration review.
     - Review runtime invocation fidelity, error shapes, layers, and event source mappings.
     - Review Docker-unavailable fallback compatibility.
-  intentionally_partial: []
+  intentionally_partial:
+    - Resource policies are stored and observable but are not an authorization boundary for invocation.
 handoff:
   start_with: [CreateFunction Publish=true, Invoke, event source mappings]
-  do_not_redo: [CreateFunction required fields, CreateFunction PackageType/Image Runtime validation, CreateFunction Timeout/MemorySize/Architectures validation]
+  do_not_redo: [CreateFunction required fields, CreateFunction PackageType/Image Runtime validation, CreateFunction Timeout/MemorySize/Architectures/VpcConfig/ImageConfig/FileSystemConfigs validation and storage, AddPermission/GetPolicy/RemovePermission basic policy lifecycle]
   commands:
     - go test -count=1 -run 'TestCreateFunction_' ./tests/integration/lambda/...
     - go test -count=1 ./internal/services/lambda/...

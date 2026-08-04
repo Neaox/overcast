@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -16,7 +17,10 @@ import (
 // code and the configuration as separate requests, so keeping only the last one
 // would silently assert against the wrong body.
 type captureRouter struct {
-	requests []capturedRequest
+	requests  []capturedRequest
+	failPath  string
+	failed    bool
+	failPaths map[string]int
 }
 
 type capturedRequest struct {
@@ -29,11 +33,89 @@ func (c *captureRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{}
 	_ = json.Unmarshal(raw, &body)
 	c.requests = append(c.requests, capturedRequest{path: r.URL.Path, body: body})
+	if c.failPaths[r.URL.Path] > 0 {
+		c.failPaths[r.URL.Path]--
+		http.Error(w, "injected failure", http.StatusInternalServerError)
+		return
+	}
+	if r.URL.Path == c.failPath && !c.failed {
+		c.failed = true
+		http.Error(w, "injected failure", http.StatusBadRequest)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:Stack-Function",
 	})
+}
+
+func TestLambdaProvisionerCreateCleanupFailureRetainsPhysicalIDForRetry(t *testing.T) {
+	const name = "partial-function"
+	router := &captureRouter{failPaths: map[string]int{
+		"/2017-10-31/functions/" + name + "/concurrency": 1,
+		"/2015-03-31/functions/" + name:                  1,
+	}}
+	h := &lambdaFunctionHandler{}
+	props := map[string]any{
+		"FunctionName": name, "Runtime": "nodejs22.x", "Handler": "index.handler", "Role": "arn:aws:iam::000000000000:role/r",
+		"Code": map[string]any{"ZipFile": "exports.handler=()=>1"}, "ReservedConcurrentExecutions": 1,
+	}
+	physicalID, _, err := h.Create(context.Background(), router, nil, props, &resolveContext{Region: "us-east-1"})
+	if err == nil || physicalID != name || !strings.Contains(err.Error(), "PutFunctionConcurrency") || !strings.Contains(err.Error(), "cleanup DeleteFunction") {
+		t.Fatalf("Create = physicalID %q, err %v", physicalID, err)
+	}
+	if err := h.Delete(context.Background(), router, nil, physicalID, &resolveContext{Region: "us-east-1"}); err != nil {
+		t.Fatalf("retry Delete: %v", err)
+	}
+}
+
+func TestLambdaProvisionerDeletePropagatesNonNotFoundFailure(t *testing.T) {
+	router := &captureRouter{failPaths: map[string]int{"/2015-03-31/functions/delete-fn": 1}}
+	h := &lambdaFunctionHandler{}
+	err := h.Delete(context.Background(), router, nil, "delete-fn", &resolveContext{Region: "us-east-1"})
+	if err == nil || !strings.Contains(err.Error(), "injected failure") {
+		t.Fatalf("Delete error = %v, want injected failure", err)
+	}
+	if err := h.Delete(context.Background(), router, nil, "delete-fn", &resolveContext{Region: "us-east-1"}); err != nil {
+		t.Fatalf("retry Delete: %v", err)
+	}
+}
+
+func TestLambdaProvisionerUpdateOrderAndCompensation(t *testing.T) {
+	router := &captureRouter{failPath: "/2017-10-31/functions/Stack-Function/concurrency"}
+	h := &lambdaFunctionHandler{}
+	oldProps := map[string]any{
+		"Runtime": "nodejs22.x", "Handler": "index.handler", "Role": "arn:aws:iam::000000000000:role/r",
+		"Description": "old", "Code": map[string]any{"ZipFile": "exports.handler=()=>1"}, "ReservedConcurrentExecutions": 1,
+	}
+	newProps := map[string]any{
+		"Runtime": "nodejs22.x", "Handler": "index.handler", "Role": "arn:aws:iam::000000000000:role/r",
+		"Description": "new", "Code": map[string]any{"ZipFile": "exports.handler=()=>2"}, "ReservedConcurrentExecutions": 2,
+	}
+	_, _, err := h.Update(context.Background(), router, nil, "Stack-Function", newProps, oldProps, &resolveContext{Region: "us-east-1"})
+	if err == nil || !strings.Contains(err.Error(), "injected failure") {
+		t.Fatalf("Update error = %v, want original injected failure", err)
+	}
+	wantPaths := []string{
+		"/2015-03-31/functions/Stack-Function/configuration",
+		"/2015-03-31/functions/Stack-Function/code",
+		"/2017-10-31/functions/Stack-Function/concurrency",
+		"/2015-03-31/functions/Stack-Function/configuration",
+		"/2015-03-31/functions/Stack-Function/code",
+		"/2017-10-31/functions/Stack-Function/concurrency",
+	}
+	if len(router.requests) != len(wantPaths) {
+		t.Fatalf("requests = %v, want paths %v", router.requests, wantPaths)
+	}
+	for i, want := range wantPaths {
+		if router.requests[i].path != want {
+			t.Errorf("request %d path = %q, want %q", i, router.requests[i].path, want)
+		}
+	}
+	if router.requests[0].body["Description"] != "new" || router.requests[3].body["Description"] != "old" {
+		t.Errorf("configuration compensation bodies = new:%v old:%v", router.requests[0].body, router.requests[3].body)
+	}
 }
 
 // carryingCode returns the body of the one request that carried a code payload.

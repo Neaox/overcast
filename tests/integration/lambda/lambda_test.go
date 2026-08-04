@@ -5014,6 +5014,131 @@ func TestPutFunctionConcurrency_success(t *testing.T) {
 	}
 }
 
+func TestPutFunctionConcurrency_negativeValueReturnsInvalidParameter(t *testing.T) {
+	// Given: a function exists.
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "concurrency-invalid-fn")
+
+	// When: PutFunctionConcurrency receives a value below AWS's minimum.
+	resp := doJSON(t, http.MethodPut, putConcurrencyURL(srv, "concurrency-invalid-fn"), map[string]any{
+		"ReservedConcurrentExecutions": -1,
+	})
+	defer resp.Body.Close()
+
+	// Then: Lambda owns the validation and returns its modeled error.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
+}
+
+func TestPutFunctionConcurrency_missingValueReturnsInvalidParameter(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "concurrency-missing-fn")
+	resp := doJSON(t, http.MethodPut, putConcurrencyURL(srv, "concurrency-missing-fn"), map[string]any{})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
+}
+
+func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	functionFields := map[string]any{
+		"DeadLetterConfig": map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
+		"TracingConfig":    map[string]any{"Mode": "Active"}, "EphemeralStorage": map[string]any{"Size": 1024},
+		"KMSKeyArn":               "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"SnapStart":               map[string]any{"ApplyOn": "PublishedVersions"},
+		"RuntimeManagementConfig": map[string]any{"UpdateRuntimeOn": "Auto"}, "RecursiveLoop": "Allow",
+	}
+	for field, value := range functionFields {
+		t.Run("function/"+field, func(t *testing.T) {
+			name := "unsupported-" + strings.ToLower(field)
+			request := map[string]any{
+				"FunctionName": name, "Runtime": "python3.12", "Handler": "index.handler",
+				"Role": "arn:aws:iam::000000000000:role/lambda-role", "Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="}, field: value,
+			}
+			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), request)
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
+			resp.Body.Close()
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/"+name+"/configuration"), nil)
+			helpers.AssertStatus(t, get, http.StatusNotFound)
+			get.Body.Close()
+		})
+	}
+
+	createFunction(t, srv, "unsupported-update-fn")
+	baseline := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), map[string]any{
+		"Description": "before",
+	})
+	helpers.AssertStatus(t, baseline, http.StatusOK)
+	baseline.Body.Close()
+	for field, value := range functionFields {
+		t.Run("function-update/"+field, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), map[string]any{
+				"Description": "mutated", field: value,
+			})
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
+			resp.Body.Close()
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), nil)
+			var config struct {
+				Description string `json:"Description"`
+			}
+			decodeJSON(t, get, &config)
+			if config.Description != "before" {
+				t.Fatalf("Description = %q after rejected %s update, want before", config.Description, field)
+			}
+		})
+	}
+
+	esmFields := map[string]any{
+		"FunctionResponseTypes": []string{"ReportBatchItemFailures"}, "ParallelizationFactor": 2, "StartingPositionTimestamp": 1000,
+		"SourceAccessConfigurations": []any{}, "SelfManagedEventSource": map[string]any{"Endpoints": map[string]any{"KafkaBootstrapServers": []string{"host:9092"}}},
+		"Topics": []string{"topic"}, "Queues": []string{"queue"},
+		"KmsKeyArn":     "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"MetricsConfig": map[string]any{"Metrics": []string{"EventCount"}}, "ProvisionedPollerConfig": map[string]any{"MinimumPollers": 1, "MaximumPollers": 2},
+	}
+	for field, value := range esmFields {
+		t.Run("esm/"+field, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/event-source-mappings/"), map[string]any{field: value})
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
+			resp.Body.Close()
+		})
+	}
+}
+
+func TestUpdateFunctionConfiguration_explicitEmptyValuesClearOptionals(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	create := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
+		"FunctionName": "clear-optionals-fn", "Runtime": "python3.12", "Handler": "index.handler",
+		"Role": "arn:aws:iam::000000000000:role/lambda-role", "Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="},
+		"Description": "remove me", "Environment": map[string]any{"Variables": map[string]string{"A": "B"}},
+		"Layers":        []string{"arn:aws:lambda:us-east-1:000000000000:layer:test:1"},
+		"LoggingConfig": map[string]any{"LogGroup": "/custom/group", "LogFormat": "JSON", "ApplicationLogLevel": "INFO", "SystemLogLevel": "WARN"},
+	})
+	helpers.AssertStatus(t, create, http.StatusCreated)
+	create.Body.Close()
+	update := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/clear-optionals-fn/configuration"), map[string]any{
+		"Description": "", "Environment": map[string]any{"Variables": map[string]string{}}, "Layers": []string{}, "LoggingConfig": map[string]any{},
+	})
+	helpers.AssertStatus(t, update, http.StatusOK)
+	var config map[string]any
+	decodeJSON(t, update, &config)
+	if _, ok := config["Description"]; ok {
+		t.Error("Description was not cleared")
+	}
+	if _, ok := config["Environment"]; ok {
+		t.Error("Environment was not cleared")
+	}
+	if _, ok := config["Layers"]; ok {
+		t.Error("Layers were not cleared")
+	}
+	logging, _ := config["LoggingConfig"].(map[string]any)
+	if logging["LogGroup"] != "/aws/lambda/clear-optionals-fn" || logging["LogFormat"] != "Text" {
+		t.Errorf("LoggingConfig after clear = %v", logging)
+	}
+}
+
 func TestGetFunctionConcurrency_success(t *testing.T) {
 	// Given a function with reserved concurrency set
 	srv := helpers.NewTestServer(t)

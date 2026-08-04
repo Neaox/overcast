@@ -180,19 +180,22 @@ type Function struct {
 	// functionCodeIdentity and CodeSha256 responses read, so the invoke path
 	// never rehashes the package. "" only on records persisted before the field
 	// existed, where readers fall back to hashing CodeZip.
-	CodeHash        string             `json:"code_hash,omitempty"`
-	CodeS3Bucket    string             `json:"code_s3_bucket,omitempty"`
-	CodeS3Key       string             `json:"code_s3_key,omitempty"`
-	ImageUri        string             `json:"image_uri,omitempty"` // PackageType=Image only
-	PackageType     string             `json:"package_type,omitempty"`
-	Architectures   []string           `json:"architectures,omitempty"`
-	State           string             `json:"state"` // "Active", "Pending", "Inactive", "Failed"
-	StateReason     string             `json:"state_reason,omitempty"`
-	StateReasonCode string             `json:"state_reason_code,omitempty"` // e.g. "Creating", "Idle", "ImagePullError"
-	RevisionId      string             `json:"revision_id,omitempty"`
-	LastModified    string             `json:"last_modified,omitempty"`
-	LogGroup        string             `json:"log_group,omitempty"` // Custom log group; defaults to /aws/lambda/{name}
-	Layers          []LayerVersionLink `json:"layers,omitempty"`    // Attached layer versions (empty until layers are implemented)
+	CodeHash            string             `json:"code_hash,omitempty"`
+	CodeS3Bucket        string             `json:"code_s3_bucket,omitempty"`
+	CodeS3Key           string             `json:"code_s3_key,omitempty"`
+	ImageUri            string             `json:"image_uri,omitempty"` // PackageType=Image only
+	PackageType         string             `json:"package_type,omitempty"`
+	Architectures       []string           `json:"architectures,omitempty"`
+	State               string             `json:"state"` // "Active", "Pending", "Inactive", "Failed"
+	StateReason         string             `json:"state_reason,omitempty"`
+	StateReasonCode     string             `json:"state_reason_code,omitempty"` // e.g. "Creating", "Idle", "ImagePullError"
+	RevisionId          string             `json:"revision_id,omitempty"`
+	LastModified        string             `json:"last_modified,omitempty"`
+	LogGroup            string             `json:"log_group,omitempty"` // Custom log group; defaults to /aws/lambda/{name}
+	LogFormat           string             `json:"log_format,omitempty"`
+	ApplicationLogLevel string             `json:"application_log_level,omitempty"`
+	SystemLogLevel      string             `json:"system_log_level,omitempty"`
+	Layers              []LayerVersionLink `json:"layers,omitempty"` // Attached layer versions (empty until layers are implemented)
 	// CodeSigningConfigArn is the code signing configuration associated with
 	// the function, or "" when there is none — the usual case, since code
 	// signing is opt-in. Stored and echoed back so SDKs and CDK read the
@@ -231,9 +234,10 @@ type ImageConfig struct {
 
 // VpcConfig associates a Lambda function with a VPC.
 type VpcConfig struct {
-	SubnetIds        []string `json:"SubnetIds,omitempty"`
-	SecurityGroupIds []string `json:"SecurityGroupIds,omitempty"`
-	VpcId            string   `json:"VpcId,omitempty"`
+	SubnetIds               []string `json:"SubnetIds,omitempty"`
+	SecurityGroupIds        []string `json:"SecurityGroupIds,omitempty"`
+	Ipv6AllowedForDualStack bool     `json:"Ipv6AllowedForDualStack,omitempty"`
+	VpcId                   string   `json:"VpcId,omitempty"`
 }
 
 // FileSystemConfig mirrors the AWS FileSystemConfig shape: an EFS access
@@ -952,6 +956,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(apiBase+"/event-source-mappings/{uuid}", s.handler.UpdateEventSourceMapping)
 	r.Delete(apiBase+"/event-source-mappings/{uuid}", s.handler.DeleteEventSourceMapping)
 	r.Get(apiBase+"/functions/{name}", s.handler.GetFunction)
+	r.Post(apiBase+"/functions/{name}/policy", s.handler.AddPermission)
+	r.Get(apiBase+"/functions/{name}/policy", s.handler.GetPolicy)
+	r.Delete(apiBase+"/functions/{name}/policy/{statementId}", s.handler.RemovePermission)
 	r.Get(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
 	r.Put(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.PutFunctionCodeSigningConfig)
 	r.Delete(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.DeleteFunctionCodeSigningConfig)

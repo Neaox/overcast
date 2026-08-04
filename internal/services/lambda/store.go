@@ -35,6 +35,11 @@ const (
 	// start, source viewing/patching) ever touch it.
 	nsFunctionCode = "lambda:function-code"
 
+	// nsFunctionPolicies stores resource policies separately from function
+	// records so policy mutation cannot rewrite or corrupt function state.
+	// Keys are "{functionName}|{qualifier}".
+	nsFunctionPolicies = "lambda:function-policies"
+
 	// nsInvocations is the state store namespace for invocation records.
 	// Keys are "{functionName}:{timestamp_ns}" so each invocation is distinct.
 	nsInvocations = "lambda:invocations"
@@ -138,11 +143,79 @@ func (s *lambdaStore) loadFunctionCode(ctx context.Context, fn *Function) *proto
 
 // deleteFunction removes a function and its stored package.
 func (s *lambdaStore) deleteFunction(ctx context.Context, name string) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	key := serviceutil.RegionKey(s.region(ctx), name)
+	policies, err := s.store.Scan(ctx, nsFunctionPolicies, serviceutil.RegionKey(s.region(ctx), name+"|"))
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	for _, policy := range policies {
+		if err := s.store.Delete(ctx, nsFunctionPolicies, policy.Key); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+	}
+	if err := s.store.Delete(ctx, nsFunctionCode, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	// Delete the function record last. If cleanup fails before this point the
+	// physical resource remains addressable and CloudFormation can retry.
 	if err := s.store.Delete(ctx, nsFunctions, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	if err := s.store.Delete(ctx, nsFunctionCode, key); err != nil {
+	return nil
+}
+
+func policyStoreKey(name, qualifier string) string { return name + "|" + qualifier }
+
+// getFunctionPolicy isolates malformed policy records as absent. A corrupt
+// policy must not make its owning function unreadable or break unrelated
+// qualifiers; a subsequent AddPermission can repair the isolated record.
+func (s *lambdaStore) getFunctionPolicy(ctx context.Context, name, qualifier string) (functionPolicy, bool, *protocol.AWSError) {
+	raw, found, err := s.store.Get(ctx, nsFunctionPolicies, serviceutil.RegionKey(s.region(ctx), policyStoreKey(name, qualifier)))
+	if err != nil {
+		return functionPolicy{}, false, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !found {
+		return functionPolicy{}, false, nil
+	}
+	var policy functionPolicy
+	if json.Unmarshal([]byte(raw), &policy) != nil {
+		return functionPolicy{}, false, nil
+	}
+	return policy, true, nil
+}
+
+// mutateFunctionPolicy serializes read-check-write under Lambda's store lock,
+// making RevisionId preconditions and concurrent statement changes atomic.
+func (s *lambdaStore) mutateFunctionPolicy(ctx context.Context, name, qualifier string, mutate func(*functionPolicy, bool) (bool, *protocol.AWSError)) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, found, err := s.store.Get(ctx, nsFunctions, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	} else if !found {
+		return policyFunctionNotFound(name, qualifier)
+	}
+	policy, found, aerr := s.getFunctionPolicy(ctx, name, qualifier)
+	if aerr != nil {
+		return aerr
+	}
+	remove, aerr := mutate(&policy, found)
+	if aerr != nil {
+		return aerr
+	}
+	key := serviceutil.RegionKey(s.region(ctx), policyStoreKey(name, qualifier))
+	if remove {
+		if err := s.store.Delete(ctx, nsFunctionPolicies, key); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
+	raw, err := json.Marshal(policy)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsFunctionPolicies, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil

@@ -41,10 +41,10 @@ func IAM() ServiceGroup {
 			"GetInstanceProfile":       g.GetInstanceProfile,
 			"DeleteRole":               g.DeleteRole,
 			// iam-policies
-			"CreatePolicy": g.CreatePolicy,
-			"GetPolicy":    g.GetPolicy,
-			"ListPolicies": g.ListPolicies,
-			"DeletePolicy": g.DeletePolicy,
+			"CreatePolicy":           g.CreatePolicy,
+			"iam-policies:GetPolicy": g.GetPolicy,
+			"ListPolicies":           g.ListPolicies,
+			"DeletePolicy":           g.DeletePolicy,
 			// iam-groups
 			"CreateGroup":         g.CreateGroup,
 			"AddUserToGroup":      g.AddUserToGroup,

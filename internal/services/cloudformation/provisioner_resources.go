@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/config"
@@ -864,11 +865,21 @@ func (h *lambdaEventSourceMappingHandler) Create(ctx context.Context, router htt
 		"BisectBatchOnFunctionError",
 		"DestinationConfig",
 		"ScalingConfig",
+		"FunctionResponseTypes",
+		"ParallelizationFactor",
+		"StartingPositionTimestamp",
+		"SourceAccessConfigurations",
+		"SelfManagedEventSource",
+		"Topics",
+		"Queues",
+		"MetricsConfig",
+		"ProvisionedPollerConfig",
 	} {
 		if v, ok := props[key]; ok {
 			body[key] = v
 		}
 	}
+	copyAnyProp(body, props, "KmsKeyArn", "KMSKeyArn")
 
 	data, _ := json.Marshal(body)
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/2015-03-31/event-source-mappings/", "application/json", data)
@@ -903,12 +914,17 @@ func (h *lambdaEventSourceMappingHandler) Delete(ctx context.Context, router htt
 	return err
 }
 
-func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	if newESA, _ := props["EventSourceArn"].(string); newESA != "" {
+func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if !reflect.DeepEqual(props["EventSourceArn"], oldProps["EventSourceArn"]) {
 		return "", nil, errReplacementRequired
 	}
-	if newFN, _ := props["FunctionName"].(string); newFN != "" {
+	if !reflect.DeepEqual(props["FunctionName"], oldProps["FunctionName"]) {
 		return "", nil, errReplacementRequired
+	}
+	for _, key := range []string{"StartingPosition", "StartingPositionTimestamp", "SelfManagedEventSource", "Topics", "Queues"} {
+		if !reflect.DeepEqual(props[key], oldProps[key]) {
+			return "", nil, errReplacementRequired
+		}
 	}
 
 	body := map[string]any{"UUID": physicalID}
@@ -926,11 +942,18 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 		"FunctionResponseTypes",
 		"ParallelizationFactor",
 		"TumblingWindowInSeconds",
+		"SourceAccessConfigurations",
+		"MetricsConfig",
+		"ProvisionedPollerConfig",
 	} {
 		if v, ok := props[key]; ok {
 			body[key] = v
 			haveMutable = true
 		}
+	}
+	if v, ok := props["KmsKeyArn"]; ok {
+		body["KMSKeyArn"] = v
+		haveMutable = true
 	}
 	if haveMutable {
 		data, _ := json.Marshal(body)

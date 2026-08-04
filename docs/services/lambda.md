@@ -607,6 +607,7 @@ and the environment ages out through the normal idle sweep.
 | Category                    | ✅ Supported | ❌ Unsupported |
 | --------------------------- | ------------ | -------------- |
 | Function management         | 10           |                |
+| Resource-based policies     | 2            | 1              |
 | Code signing                | 6            |                |
 | Invocation                  | 2            | 1              |
 | Aliases & versions          | 7            |                |
@@ -628,11 +629,19 @@ and the environment ages out through the normal idle sweep.
 | `DeleteFunction`                  | ✅ Supported |                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)                  |
 | `GetFunction`                     | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                     |
 | `GetFunctionConfiguration`        | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                                                                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)        |
-| `UpdateFunctionCode`              | ✅ Supported | Updates code zip; generates new RevisionId                                                                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
-| `UpdateFunctionConfiguration`     | ✅ Supported | Patches Timeout/MemorySize/Description/Handler/Role/Environment/Layers/VpcConfig/ImageConfig; generates new RevisionId                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
+| `UpdateFunctionCode`              | ✅ Supported | Updates code zip or image URI and Architectures; generates new RevisionId                                                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
+| `UpdateFunctionConfiguration`     | ✅ Supported | Presence-aware updates for supported configuration; unsupported advanced fields fail before mutation                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
 | `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
 | `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                                                                                 | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
 | `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
+
+### Resource-based policies
+
+| Operation          | Status         | Notes                                                                                                         | AWS Docs                                                                       |
+| ------------------ | -------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `AddPermission`    | ❌ Unsupported | Policy lifecycle and validation are implemented, but statements are not yet enforced during invocation (#629) | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_AddPermission.html)    |
+| `GetPolicy`        | ✅ Supported   | Returns the stored AWS policy document and revision ID                                                        | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetPolicy.html)        |
+| `RemovePermission` | ✅ Supported   | Removes a statement by ID; supports revision preconditions                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_RemovePermission.html) |
 
 ### Code signing
 

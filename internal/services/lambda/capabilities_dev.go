@@ -18,15 +18,23 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionConfiguration", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns FunctionConfiguration only (no Code block)"},
 		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionCode", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Updates code zip; generates new RevisionId"},
+			Status: capabilities.StatusSupported, Notes: "Updates code zip or image URI and Architectures; generates new RevisionId"},
 		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionConfiguration", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Patches Timeout/MemorySize/Description/Handler/Role/Environment/Layers/VpcConfig/ImageConfig; generates new RevisionId"},
+			Status: capabilities.StatusSupported, Notes: "Presence-aware updates for supported configuration; unsupported advanced fields fail before mutation"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionCodeSigningConfig", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns the associated config; ResourceNotFoundException when the function has none"},
 		capabilities.Capability{Service: "lambda", Operation: "PutFunctionCodeSigningConfig", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Stores the association and validates the ARN shape; signature validation is not emulated"},
 		capabilities.Capability{Service: "lambda", Operation: "DeleteFunctionCodeSigningConfig", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Removes the association; idempotent"},
+
+		// Resource-based policies
+		capabilities.Capability{Service: "lambda", Operation: "AddPermission", Category: "Resource-based policies",
+			Status: capabilities.StatusUnsupported, Notes: "Policy lifecycle and validation are implemented, but statements are not yet enforced during invocation (#629)"},
+		capabilities.Capability{Service: "lambda", Operation: "GetPolicy", Category: "Resource-based policies",
+			Status: capabilities.StatusSupported, Notes: "Returns the stored AWS policy document and revision ID"},
+		capabilities.Capability{Service: "lambda", Operation: "RemovePermission", Category: "Resource-based policies",
+			Status: capabilities.StatusSupported, Notes: "Removes a statement by ID; supports revision preconditions"},
 
 		// Code signing configurations
 		capabilities.Capability{Service: "lambda", Operation: "CreateCodeSigningConfig", Category: "Code signing",
