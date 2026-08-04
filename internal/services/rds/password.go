@@ -71,6 +71,48 @@ func (h *Handler) changeMasterPassword(ctx context.Context, inst *DBInstance, ne
 	return h.applyMasterPassword(ctx, inst, newPassword)
 }
 
+// changeClusterMasterPassword rotates a cluster's master password across every
+// member instance, and persists it on each as it goes.
+//
+// A DBCluster has no container of its own — the engines belong to its members —
+// so this is the whole of what a cluster-level rotation can mean. Each member
+// goes through changeMasterPassword, so an instance rotated through its cluster
+// and one rotated directly are the same operation.
+//
+// It stops at the first member that refuses, and the members already rotated
+// keep the new password. That is deliberate: the alternative is rolling them
+// back, which would need the old password to still work on engines that have
+// already stopped accepting it. The error names the member that refused, which
+// is what makes the state recoverable by hand.
+//
+// The caller records the new password on the cluster afterwards, and only if
+// this returns nil.
+func (h *Handler) changeClusterMasterPassword(ctx context.Context, cluster *DBCluster, newPassword string) *protocol.AWSError {
+	for _, member := range cluster.DBClusterMembers {
+		instanceID := member.DBInstanceIdentifier
+		inst, aerr := h.store.getDBInstance(ctx, instanceID)
+		if aerr != nil {
+			return aerr
+		}
+		if inst.MasterUserPassword == newPassword {
+			continue
+		}
+		// Against the engine first, on a snapshot: this is a command run in a
+		// container, far too slow to hold a record lock across. The record is
+		// written below, under the lock, once the engine has taken it.
+		if aerr := h.changeMasterPassword(ctx, inst, newPassword); aerr != nil {
+			return aerr
+		}
+		if _, aerr := h.mutateInstance(ctx, instanceID, func(inst *DBInstance) *protocol.AWSError {
+			inst.MasterUserPassword = newPassword
+			return nil
+		}); aerr != nil {
+			return aerr
+		}
+	}
+	return nil
+}
+
 // applyMasterPassword changes the master password on the engine running in the
 // instance's container. It reports an error unless the engine accepted it.
 func (h *Handler) applyMasterPassword(ctx context.Context, inst *DBInstance, newPassword string) *protocol.AWSError {

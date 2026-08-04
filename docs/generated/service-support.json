@@ -5122,13 +5122,13 @@
           "operation": "DeleteDBCluster",
           "category": "Aurora clusters",
           "status": "✅ Supported",
-          "notes": "Sets status to \"deleting\"; async removal"
+          "notes": "Sets status to \"deleting\"; async removal; refuses a cluster with `DeletionProtection` enabled"
         },
         {
           "operation": "ModifyDBCluster",
           "category": "Aurora clusters",
           "status": "✅ Supported",
-          "notes": "Engine version update"
+          "notes": "`MasterUserPassword` applied to every member's engine; engine version, port and `DeletionProtection` applied; backup/maintenance windows, cluster parameter group, security groups and log exports recorded"
         },
         {
           "operation": "StartDBCluster",

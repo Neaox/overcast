@@ -98,15 +98,30 @@ type describeOrderableDBInstanceOptionsReq struct {
 	Engine string `json:"Engine"`
 }
 
+// createDBClusterReq accepts the same settings ModifyDBCluster can change.
+// What can be updated has to be creatable too: with Port and the rest readable
+// only on the modify path, a template that set them at create and never
+// touched them again produced a cluster that had never had them applied, and
+// made the first no-op update look like a change.
 type createDBClusterReq struct {
-	DBClusterIdentifier string `json:"DBClusterIdentifier"`
-	Engine              string `json:"Engine"`
-	MasterUsername      string `json:"MasterUsername"`
-	MasterUserPassword  string `json:"MasterUserPassword"`
-	EngineVersion       string `json:"EngineVersion"`
-	StorageType         string `json:"StorageType"`
-	MultiAZ             bool   `json:"MultiAZ"`
-	DatabaseName        string `json:"DatabaseName"`
+	DBClusterIdentifier               string                             `json:"DBClusterIdentifier"`
+	Engine                            string                             `json:"Engine"`
+	MasterUsername                    string                             `json:"MasterUsername"`
+	MasterUserPassword                string                             `json:"MasterUserPassword"`
+	EngineVersion                     string                             `json:"EngineVersion"`
+	StorageType                       string                             `json:"StorageType"`
+	MultiAZ                           bool                               `json:"MultiAZ"`
+	DatabaseName                      string                             `json:"DatabaseName"`
+	Port                              int                                `json:"Port"`
+	DBSubnetGroupName                 string                             `json:"DBSubnetGroupName"`
+	PreferredBackupWindow             string                             `json:"PreferredBackupWindow"`
+	PreferredMaintenanceWindow        string                             `json:"PreferredMaintenanceWindow"`
+	DBClusterParameterGroupName       string                             `json:"DBClusterParameterGroupName"`
+	VpcSecurityGroupIds               []string                           `json:"VpcSecurityGroupIds"`
+	BackupRetentionPeriod             *int                               `json:"BackupRetentionPeriod"`
+	DeletionProtection                *bool                              `json:"DeletionProtection"`
+	EnableCloudwatchLogsExports       []string                           `json:"EnableCloudwatchLogsExports"`
+	CloudwatchLogsExportConfiguration *cloudwatchLogsExportConfiguration `json:"CloudwatchLogsExportConfiguration"`
 }
 
 type describeDBClustersReq struct {
@@ -117,9 +132,36 @@ type deleteDBClusterReq struct {
 	DBClusterIdentifier string `json:"DBClusterIdentifier"`
 }
 
+// cloudwatchLogsExportConfiguration is ModifyDBCluster's nested log-export
+// parameter. AWS spells the request and the response differently: this goes
+// in, EnabledCloudwatchLogsExports comes back.
+type cloudwatchLogsExportConfiguration struct {
+	EnableLogTypes  []string `json:"EnableLogTypes"`
+	DisableLogTypes []string `json:"DisableLogTypes"`
+}
+
+// modifyDBClusterReq carried DBClusterIdentifier and EngineVersion, and the
+// CloudFormation handler for AWS::RDS::DBCluster sent nine other parameters
+// that decoded into nothing at all — so a stack update that changed any of
+// them reported UPDATE_COMPLETE having changed nothing.
+//
+// BackupRetentionPeriod and DeletionProtection are pointers for the reason
+// modifyDBInstanceReq.MultiAZ is: "absent" and "zero" are different requests.
+// `BackupRetentionPeriod=0` turns automated backups off and
+// `DeletionProtection=false` turns protection off, and a plain int or bool
+// cannot tell either of those from a parameter that was not sent.
 type modifyDBClusterReq struct {
-	DBClusterIdentifier string `json:"DBClusterIdentifier"`
-	EngineVersion       string `json:"EngineVersion"`
+	DBClusterIdentifier               string                             `json:"DBClusterIdentifier"`
+	EngineVersion                     string                             `json:"EngineVersion"`
+	MasterUserPassword                string                             `json:"MasterUserPassword"`
+	Port                              int                                `json:"Port"`
+	PreferredBackupWindow             string                             `json:"PreferredBackupWindow"`
+	PreferredMaintenanceWindow        string                             `json:"PreferredMaintenanceWindow"`
+	DBClusterParameterGroupName       string                             `json:"DBClusterParameterGroupName"`
+	VpcSecurityGroupIds               []string                           `json:"VpcSecurityGroupIds"`
+	BackupRetentionPeriod             *int                               `json:"BackupRetentionPeriod"`
+	DeletionProtection                *bool                              `json:"DeletionProtection"`
+	CloudwatchLogsExportConfiguration *cloudwatchLogsExportConfiguration `json:"CloudwatchLogsExportConfiguration"`
 }
 
 type startDBClusterReq struct {
@@ -861,21 +903,44 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 	arn := protocol.ARN(region, h.cfg.AccountID, "rds", "cluster:"+id)
 	now := h.clk.Now().UTC().Format(time.RFC3339)
 
+	port := req.Port
+	if port == 0 {
+		port = defaultPorts[engine]
+	}
+
+	logExports := req.EnableCloudwatchLogsExports
+	if cfg := req.CloudwatchLogsExportConfiguration; cfg != nil {
+		logExports = applyLogExportConfiguration(logExports, cfg)
+	}
+
 	cluster := &DBCluster{
-		DBClusterIdentifier: id,
-		DBClusterArn:        arn,
-		Engine:              engine,
-		EngineVersion:       engineVersion,
-		Status:              "creating",
-		MasterUsername:      req.MasterUsername,
-		DatabaseName:        req.DatabaseName,
-		Port:                defaultPorts[engine],
-		Endpoint:            id + ".cluster-rw." + region + ".rds." + h.cfg.ExternalHostname(),
-		ReaderEndpoint:      id + ".cluster-ro." + region + ".rds." + h.cfg.ExternalHostname(),
-		MultiAZ:             req.MultiAZ,
-		StorageType:         storageType,
-		ClusterCreateTime:   now,
-		DBClusterMembers:    []DBClusterMember{},
+		DBClusterIdentifier:          id,
+		DBClusterArn:                 arn,
+		Engine:                       engine,
+		EngineVersion:                engineVersion,
+		Status:                       "creating",
+		MasterUsername:               req.MasterUsername,
+		MasterUserPassword:           req.MasterUserPassword,
+		DatabaseName:                 req.DatabaseName,
+		Port:                         port,
+		Endpoint:                     id + ".cluster-rw." + region + ".rds." + h.cfg.ExternalHostname(),
+		ReaderEndpoint:               id + ".cluster-ro." + region + ".rds." + h.cfg.ExternalHostname(),
+		MultiAZ:                      req.MultiAZ,
+		StorageType:                  storageType,
+		ClusterCreateTime:            now,
+		DBClusterMembers:             []DBClusterMember{},
+		DBSubnetGroupName:            req.DBSubnetGroupName,
+		PreferredBackupWindow:        req.PreferredBackupWindow,
+		PreferredMaintenanceWindow:   req.PreferredMaintenanceWindow,
+		DBClusterParameterGroup:      req.DBClusterParameterGroupName,
+		VpcSecurityGroupIds:          req.VpcSecurityGroupIds,
+		EnabledCloudwatchLogsExports: logExports,
+	}
+	if req.BackupRetentionPeriod != nil {
+		cluster.BackupRetentionPeriod = *req.BackupRetentionPeriod
+	}
+	if req.DeletionProtection != nil {
+		cluster.DeletionProtection = *req.DeletionProtection
 	}
 
 	if aerr := h.store.putDBCluster(ctx, cluster); aerr != nil {
@@ -943,6 +1008,18 @@ func (h *Handler) deleteDBClusterTyped(ctx context.Context, req *deleteDBCluster
 	}
 
 	cluster, aerr := h.mutateCluster(ctx, id, func(cluster *DBCluster) *protocol.AWSError {
+		// AWS refuses outright rather than deleting and reporting the flag
+		// afterwards, and a flag that is recorded but not enforced is worse
+		// than one that was never recorded: the console shows the cluster as
+		// protected while a stack teardown removes it anyway. Refusing inside
+		// the mutation leaves the record untouched.
+		if cluster.DeletionProtection {
+			return &protocol.AWSError{
+				Code:       "InvalidParameterCombination",
+				Message:    "Cannot delete protected DB Cluster, please disable deletion protection and try again.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
 		cluster.Status = "deleting"
 		return nil
 	})
@@ -972,15 +1049,61 @@ func (h *Handler) deleteDBClusterTyped(ctx context.Context, req *deleteDBCluster
 
 // --- ModifyDBCluster ---
 
-func (h *Handler) modifyDBClusterTyped(ctx context.Context, req *modifyDBClusterReq) (*xmlCreateDBClusterResponse, *protocol.AWSError) {
+func (h *Handler) modifyDBClusterTyped(ctx context.Context, req *modifyDBClusterReq) (*xmlModifyDBClusterResponse, *protocol.AWSError) {
 	id := req.DBClusterIdentifier
 	if id == "" {
 		return nil, errInvalidParameterValue("DBClusterIdentifier is required")
 	}
 
+	// The password goes first, and nothing else is applied unless it lands —
+	// the same discipline ModifyDBInstance follows, and for the same reasons.
+	// It runs here rather than inside the mutation below on two counts: it
+	// reaches an engine in a container, which is far too slow to hold a record
+	// lock across, and it takes each member's instance lock, which must never
+	// nest inside the cluster's (see locks.go).
+	if req.MasterUserPassword != "" {
+		current, aerr := h.store.getDBCluster(ctx, id)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if req.MasterUserPassword != current.MasterUserPassword {
+			if aerr := h.changeClusterMasterPassword(ctx, current, req.MasterUserPassword); aerr != nil {
+				return nil, aerr
+			}
+		}
+	}
+
 	cluster, aerr := h.mutateCluster(ctx, id, func(cluster *DBCluster) *protocol.AWSError {
+		if req.MasterUserPassword != "" {
+			cluster.MasterUserPassword = req.MasterUserPassword
+		}
 		if req.EngineVersion != "" {
 			cluster.EngineVersion = req.EngineVersion
+		}
+		if req.Port != 0 {
+			cluster.Port = req.Port
+		}
+		if req.PreferredBackupWindow != "" {
+			cluster.PreferredBackupWindow = req.PreferredBackupWindow
+		}
+		if req.PreferredMaintenanceWindow != "" {
+			cluster.PreferredMaintenanceWindow = req.PreferredMaintenanceWindow
+		}
+		if req.DBClusterParameterGroupName != "" {
+			cluster.DBClusterParameterGroup = req.DBClusterParameterGroupName
+		}
+		if len(req.VpcSecurityGroupIds) > 0 {
+			cluster.VpcSecurityGroupIds = req.VpcSecurityGroupIds
+		}
+		if req.BackupRetentionPeriod != nil {
+			cluster.BackupRetentionPeriod = *req.BackupRetentionPeriod
+		}
+		if req.DeletionProtection != nil {
+			cluster.DeletionProtection = *req.DeletionProtection
+		}
+		if cfg := req.CloudwatchLogsExportConfiguration; cfg != nil {
+			cluster.EnabledCloudwatchLogsExports = applyLogExportConfiguration(
+				cluster.EnabledCloudwatchLogsExports, cfg)
 		}
 		return nil
 	})
@@ -988,13 +1111,44 @@ func (h *Handler) modifyDBClusterTyped(ctx context.Context, req *modifyDBCluster
 		return nil, aerr
 	}
 
-	return &xmlCreateDBClusterResponse{
+	return &xmlModifyDBClusterResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlCreateDBClusterResult{
 			DBCluster: h.toXMLDBCluster(ctx, cluster),
 		},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
+}
+
+// applyLogExportConfiguration folds an enable/disable request into the log
+// types already exported. AWS's parameter is a delta, not a replacement: a
+// request that enables "audit" does not turn "error" off.
+func applyLogExportConfiguration(current []string, cfg *cloudwatchLogsExportConfiguration) []string {
+	enabled := make(map[string]bool, len(current))
+	order := append([]string(nil), current...)
+	for _, t := range current {
+		enabled[t] = true
+	}
+	for _, t := range cfg.EnableLogTypes {
+		if !enabled[t] {
+			enabled[t] = true
+			order = append(order, t)
+		}
+	}
+	for _, t := range cfg.DisableLogTypes {
+		delete(enabled, t)
+	}
+
+	out := make([]string, 0, len(order))
+	for _, t := range order {
+		if enabled[t] {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // --- StartDBCluster ---
