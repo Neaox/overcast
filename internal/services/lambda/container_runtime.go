@@ -1141,6 +1141,7 @@ type containerInstance struct {
 	exitNotify     *exitNotifier      // Docker watcher exit notifications
 	tailMu         sync.Mutex
 	tailBuf        []byte        // last ≤4096 bytes of stdout+stderr for X-Amz-Log-Result
+	tailAppendAt   atomic.Int64  // UnixNano of last container line appended to tailBuf; 0 until the first
 	logReadAt      atomic.Int64  // UnixNano of last Docker log read; 0 until first read
 	logInFlight    atomic.Int64  // lines parsed by scanner but not yet flushed to CWL
 	peakMemMB      atomic.Int64  // running peak memory (MB) — what REPORT's Max Memory Used reads
@@ -1260,15 +1261,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		deadline = ci.clk.Now().Add(900 * time.Second)
 	}
 
-	// Reset tail buffer so this invocation's output starts fresh
-	// (important for warm-container reuse across multiple invocations).
-	// logReadAt is the other half of that boundary: it is a container-lifetime
-	// watermark, so the value it holds *now* is what "before this invocation"
-	// means to waitForScannerIdle later.
-	ci.tailMu.Lock()
-	ci.tailBuf = ci.tailBuf[:0]
-	ci.tailMu.Unlock()
-	logReadBase := ci.logReadAt.Load()
+	logMark := ci.beginTail()
 	if reason, ok := ci.runtimeAPI.ContainerError(ci.containerIP); ok {
 		ci.healthy = false
 		return extensionInvokeError(reason), nil
@@ -1417,7 +1410,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 	// semantics: invoke latency is decoupled from log delivery.
 	logWaitStart := ci.clk.Now()
 	if opts.LogTail && ci.logWriter != nil {
-		ci.waitForScannerIdle(logReadBase)
+		ci.waitForScannerIdle(logMark)
 	}
 	logWait := ci.clk.Now().Sub(logWaitStart)
 
@@ -1566,32 +1559,51 @@ func (ci *containerInstance) initDurationField() string {
 // It runs on the invoke success path only when the caller asked for a tail
 // (InvokeOptions.LogTail); see the call site for why that gate matters.
 //
-// base is ci.logReadAt as it stood when the invocation started, and it is what
-// makes the wait per-invocation. logReadAt is a container-lifetime watermark
-// that streamLogs bumps on every successful read and never resets, so on its
-// own it says nothing about *whose* output set it:
+// mark is where the container's two log watermarks stood when the invocation
+// started, and it is what makes the wait per-invocation. Both only ever move
+// forward across the container's whole life, so neither says on its own *whose*
+// output set it:
 //
-//   - Cold container: logReadAt is still 0 while the handler's stdout sits
+//   - Cold container: both are still 0 while the handler's stdout sits
 //     undelivered in Docker's pipe. Reading that as "the function emitted
-//     nothing" — which is what this function used to do — snapshots a tail
-//     holding only the START/END/REPORT lines writeLogLine puts there directly.
-//   - Warm container: logReadAt still holds the *previous* invocation's
-//     timestamp, already older than idleThreshold, so the idle test passed
-//     instantly and the wait was effectively a no-op.
+//     nothing" — which this function used to do — snapshots a tail holding only
+//     the START/END/REPORT lines writeLogLine puts there directly.
+//   - Warm container: both still hold the *previous* invocation's timestamps,
+//     already older than idleThreshold, so the idle test passed instantly and
+//     the wait was effectively a no-op.
 //
-// Comparing against base collapses both: only a read newer than the start of
-// this invocation counts as this invocation's output.
+// The two watermarks answer different questions, and asking logReadAt the other
+// one's question is the second defect this collapses:
 //
-// Three bounds shape the wait:
-//   - firstReadMax caps how long we wait for evidence that this invocation
-//     produced anything at all. A handler that prints nothing is
-//     indistinguishable from one whose output has not arrived yet, so silence
-//     costs this much — paid only by tail-requesting invokes.
-//   - idleThreshold is how long the reader must stay quiet after a read before
+//   - tailAppendAt moves when a container line is appended to tailBuf. That is
+//     the signal that means what the caller needs, because tailBuf is exactly
+//     what the snapshot reads.
+//   - logReadAt moves when Docker hands over bytes, several steps earlier. A
+//     Read seldom lands a whole line — the line reader keeps reading until it
+//     finds a newline, and logInFlight does not count the line until it has one
+//     — so the pipeline routinely sits in a state where logReadAt has moved and
+//     the tail is still empty. Treating that as arrived-and-quiet returned a
+//     tail without the handler's own line, which then landed in whichever
+//     invocation's buffer was current when it was finally parsed: the next one.
+//
+// logReadAt still earns its place, for the question it does answer — whether
+// this invocation produced *anything* — which is what separates the two ways of
+// having an empty tail. Four bounds shape the wait:
+//
+//   - firstReadMax caps how long we wait when not a byte has arrived. A handler
+//     that prints nothing is indistinguishable from one whose output has not
+//     left Docker's pipe, so silence costs this much — paid only by
+//     tail-requesting invokes.
+//   - Once bytes have arrived, output exists and is on its way, so there is
+//     nothing to guess at: the wait holds for the line itself, bounded only by
+//     deadlineMax. A handler that writes without a trailing newline pays that
+//     full bound, because the line reader has nothing to hand over until a
+//     newline turns up and the tail could not have shown the write either way.
+//   - idleThreshold is how long the appends must stop after one lands before
 //     the output is treated as complete; a handler's lines can span reads.
 //   - deadlineMax bounds the whole thing, so a wedged log pipeline can never
 //     hold up the invoke response.
-func (ci *containerInstance) waitForScannerIdle(base int64) {
+func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 	const (
 		idleThreshold = 5 * time.Millisecond
 		firstReadMax  = 25 * time.Millisecond
@@ -1609,25 +1621,54 @@ func (ci *containerInstance) waitForScannerIdle(base int64) {
 			return
 		case <-tick.C:
 			// Lines parsed but not yet flushed mean output exists and is still
-			// moving, whatever the read watermark currently says.
+			// moving, whatever the watermarks currently say.
 			if ci.logInFlight.Load() > 0 {
 				continue
 			}
-			last := ci.logReadAt.Load()
-			if last <= base {
-				// Nothing has been read since this invocation started. Give
-				// Docker a bounded grace period before concluding the handler
-				// was simply silent.
-				if ci.clk.Since(start) >= firstReadMax {
+			if last := ci.tailAppendAt.Load(); last > mark.appended {
+				// This invocation's output has reached the buffer. One append
+				// is not the end of it, so wait out a quiet spell before
+				// calling the tail complete.
+				if ci.clk.Since(time.Unix(0, last)) >= idleThreshold {
 					return
 				}
 				continue
 			}
-			if ci.clk.Since(time.Unix(0, last)) >= idleThreshold {
+			if ci.logReadAt.Load() > mark.read {
+				// Docker has handed over bytes for this invocation but no
+				// complete line has come of them yet. Output exists; wait for
+				// it rather than for the clock.
+				continue
+			}
+			// Nothing has been read at all since this invocation started. Give
+			// Docker a bounded grace period before concluding the handler was
+			// simply silent.
+			if ci.clk.Since(start) >= firstReadMax {
 				return
 			}
 		}
 	}
+}
+
+// tailMark is one invocation's boundary in the container's log history: both
+// watermarks as they stood when its tail buffer was reset.
+type tailMark struct {
+	read     int64 // ci.logReadAt — Docker handed over bytes
+	appended int64 // ci.tailAppendAt — a line reached ci.tailBuf
+}
+
+// beginTail starts a fresh tail for an invocation and returns its boundary. The
+// buffer is emptied so the invocation's output starts clean (which matters on
+// warm-container reuse), and the watermarks are read in the same critical
+// section: they are container-lifetime values, so what they hold at the reset
+// is precisely what "before this invocation" means to waitForScannerIdle.
+// Reading them outside the lock would let a line land in between and belong to
+// neither side of the boundary.
+func (ci *containerInstance) beginTail() tailMark {
+	ci.tailMu.Lock()
+	defer ci.tailMu.Unlock()
+	ci.tailBuf = ci.tailBuf[:0]
+	return tailMark{read: ci.logReadAt.Load(), appended: ci.tailAppendAt.Load()}
 }
 
 // logDrainFirstReadGrace is how long a teardown that follows a failed
@@ -2129,7 +2170,10 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 				ci.runtimeAPI.PublishExtensionLog(ci.containerIP, logType, logRecord)
 			}
 
-			// Append to rolling tail buffer (capped at 4096 bytes).
+			// Append to rolling tail buffer (capped at 4096 bytes). The
+			// watermark goes up here rather than at the read, because this is
+			// the point at which the line is something a tail snapshot can see;
+			// waitForScannerIdle is waiting on exactly this.
 			lineBytes := append([]byte(line), '\n')
 			ci.tailMu.Lock()
 			ci.tailBuf = append(ci.tailBuf, lineBytes...)
@@ -2138,6 +2182,7 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 				copy(ci.tailBuf, ci.tailBuf[n-maxTail:])
 				ci.tailBuf = ci.tailBuf[:maxTail]
 			}
+			ci.tailAppendAt.Store(ci.clk.Now().UnixNano())
 			ci.tailMu.Unlock()
 
 			batch = append(batch, events.LogEntry{
@@ -2193,6 +2238,7 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 						copy(ci.tailBuf, ci.tailBuf[n-maxTailDrain:])
 						ci.tailBuf = ci.tailBuf[:maxTailDrain]
 					}
+					ci.tailAppendAt.Store(ci.clk.Now().UnixNano())
 					ci.tailMu.Unlock()
 					batch = append(batch, events.LogEntry{
 						Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),

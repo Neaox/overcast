@@ -45,13 +45,23 @@ func newTailWaitInstance(clk clock.Clock) *containerInstance {
 	}
 }
 
-// deliverLine does to the instance exactly what streamOnce does when Docker
-// finally hands over a line: logReadTracker stamps logReadAt on the read, and
-// the parsed line is appended to the rolling tail buffer.
-func deliverLine(ci *containerInstance, line string) {
+// deliverBytes does to the instance what logReadTracker does the instant Docker
+// hands over bytes, and nothing more. That is the whole point of having it: a
+// Read seldom lands a whole line, so this is a state the pipeline really passes
+// through — the read watermark has moved and the tail buffer is still empty.
+func deliverBytes(ci *containerInstance) {
 	ci.logReadAt.Store(ci.clk.Now().UnixNano())
+}
+
+// deliverLine does to the instance exactly what streamOnce does when Docker
+// finally hands over a whole line: logReadTracker stamps logReadAt on the read,
+// and the parsed line is appended to the rolling tail buffer under the append
+// watermark.
+func deliverLine(ci *containerInstance, line string) {
+	deliverBytes(ci)
 	ci.tailMu.Lock()
 	ci.tailBuf = append(ci.tailBuf, append([]byte(line), '\n')...)
+	ci.tailAppendAt.Store(ci.clk.Now().UnixNano())
 	ci.tailMu.Unlock()
 }
 
@@ -69,7 +79,7 @@ func tailContents(ci *containerInstance) string {
 // Mock time only moves when this function moves it, so the wait cannot race
 // ahead of the delivery: it is parked on a ticker that will not fire until the
 // loop below advances the clock past it.
-func runScannerWait(t *testing.T, mock *clock.Mock, ci *containerInstance, base int64, deliverAt time.Duration, line string) time.Duration {
+func runScannerWait(t *testing.T, mock *clock.Mock, ci *containerInstance, mark tailMark, deliverAt time.Duration, line string) time.Duration {
 	t.Helper()
 
 	start := mock.Now()
@@ -78,7 +88,7 @@ func runScannerWait(t *testing.T, mock *clock.Mock, ci *containerInstance, base 
 	go func() {
 		defer close(done)
 		close(started)
-		ci.waitForScannerIdle(base)
+		ci.waitForScannerIdle(mark)
 	}()
 	<-started
 	// Let the goroutine reach its blocking select and register its timers
@@ -119,13 +129,13 @@ func TestWaitForScannerIdle_coldContainerWaitsForFirstOutput(t *testing.T) {
 	mock := clock.NewMock()
 	mock.Set(time.Unix(1_700_000_000, 0))
 	ci := newTailWaitInstance(mock)
-	base := ci.logReadAt.Load()
-	if base != 0 {
-		t.Fatalf("cold container should have no read watermark, got %d", base)
+	mark := ci.beginTail()
+	if mark.read != 0 || mark.appended != 0 {
+		t.Fatalf("cold container should have no watermarks, got %+v", mark)
 	}
 
 	// When: Docker delivers the handler's line 15 ms after the handler replied.
-	elapsed := runScannerWait(t, mock, ci, base, 15*time.Millisecond, "hello from lambda")
+	elapsed := runScannerWait(t, mock, ci, mark, 15*time.Millisecond, "hello from lambda")
 
 	// Then: the wait held on for it, so the tail a snapshot would take is complete.
 	if !strings.Contains(tailContents(ci), "hello from lambda") {
@@ -150,21 +160,53 @@ func TestWaitForScannerIdle_warmContainerWaitsForItsOwnOutput(t *testing.T) {
 	mock.Add(500 * time.Millisecond)
 
 	// And: a fresh invocation, which resets the tail buffer and takes its
-	// watermark from where the previous one left off.
-	ci.tailMu.Lock()
-	ci.tailBuf = ci.tailBuf[:0]
-	ci.tailMu.Unlock()
-	base := ci.logReadAt.Load()
+	// watermarks from where the previous one left off.
+	mark := ci.beginTail()
 
 	// When: this invocation's line takes 15 ms to come through Docker.
-	elapsed := runScannerWait(t, mock, ci, base, 15*time.Millisecond, "hello from invocation two")
+	elapsed := runScannerWait(t, mock, ci, mark, 15*time.Millisecond, "hello from invocation two")
 
-	// Then: the stale watermark did not short-circuit the wait.
+	// Then: the stale watermarks did not short-circuit the wait.
 	if !strings.Contains(tailContents(ci), "hello from invocation two") {
 		t.Errorf("tail is missing this invocation's output: %q", tailContents(ci))
 	}
 	if elapsed < 15*time.Millisecond {
-		t.Errorf("wait returned after %v — the previous invocation's watermark satisfied it", elapsed)
+		t.Errorf("wait returned after %v — the previous invocation's watermarks satisfied it", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_partialLineIsNotIdle is the regression test for a tail
+// that goes missing even though Docker delivered the output in good time.
+//
+// logReadAt is stamped by logReadTracker the instant Docker hands over bytes,
+// which is several steps before those bytes are anything the snapshot can read.
+// A Read seldom lands a whole line — the line reader keeps reading until it
+// finds a newline, and logInFlight does not count the line until it has one — so
+// the pipeline routinely sits in a state where the read watermark has moved and
+// the tail buffer is still empty. Waiting on logReadAt read that state as
+// "output arrived and the reader has gone quiet" and returned at the first tick
+// past idleThreshold, snapshotting a tail holding only START/END/REPORT. The
+// line then landed in whichever invocation's buffer was current when it was
+// finally parsed — the next one.
+func TestWaitForScannerIdle_partialLineIsNotIdle(t *testing.T) {
+	// Given: a container invocation whose output is on its way.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newTailWaitInstance(mock)
+	mark := ci.beginTail()
+
+	// When: Docker hands over the front of the line straight away, and the rest
+	// of it — the part carrying the newline — only 15 ms later.
+	deliverBytes(ci)
+	elapsed := runScannerWait(t, mock, ci, mark, 15*time.Millisecond, "hello from lambda")
+
+	// Then: the wait held on for the line rather than treating the read as the
+	// output itself.
+	if !strings.Contains(tailContents(ci), "hello from lambda") {
+		t.Errorf("tail is missing the handler's output: %q", tailContents(ci))
+	}
+	if elapsed < 15*time.Millisecond {
+		t.Errorf("wait returned after %v, before the line was assembled at 15ms", elapsed)
 	}
 }
 
@@ -179,7 +221,7 @@ func TestWaitForScannerIdle_silentHandlerReturnsPromptly(t *testing.T) {
 	ci := newTailWaitInstance(mock)
 
 	// When: the wait runs with nothing ever delivered.
-	elapsed := runScannerWait(t, mock, ci, ci.logReadAt.Load(), -1, "")
+	elapsed := runScannerWait(t, mock, ci, ci.beginTail(), -1, "")
 
 	// Then: it gives up at the first-read grace period rather than the deadline.
 	if elapsed > 30*time.Millisecond {

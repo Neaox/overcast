@@ -1,0 +1,1 @@
+* [lambda] an invoke with `LogType: Tail` waits for the handler's output to reach the tail buffer rather than for Docker to hand over bytes, so `X-Amz-Log-Result` carries the function's own log lines instead of just `START`/`END`/`REPORT` — and the missing line no longer surfaces against the *next* invocation, whose request ID it was never written under
