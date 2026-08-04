@@ -18,6 +18,7 @@ export const rdsKeys = {
   instances: () => [...rdsKeys.all(), "instances"] as const,
   instanceDetail: (id: string) => [...rdsKeys.all(), "instance", id] as const,
   instanceLogs: (id: string) => [...rdsKeys.all(), "instance", id, "logs"] as const,
+  instanceEvents: (id: string) => [...rdsKeys.all(), "instance", id, "events"] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -42,6 +43,15 @@ export function rdsInstanceLogsQueryOptions(id: string) {
   return queryOptions({
     queryKey: rdsKeys.instanceLogs(id),
     queryFn: () => rds.getInstanceLogs(id),
+    staleTime: 10_000,
+    refetchInterval: 10_000,
+  })
+}
+
+export function rdsInstanceEventsQueryOptions(id: string) {
+  return queryOptions({
+    queryKey: rdsKeys.instanceEvents(id),
+    queryFn: () => rds.listInstanceEvents(id),
     staleTime: 10_000,
     refetchInterval: 10_000,
   })

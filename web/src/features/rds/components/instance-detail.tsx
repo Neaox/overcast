@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import {
   rdsInstanceDetailQueryOptions,
+  rdsInstanceEventsQueryOptions,
   rdsInstanceLogsQueryOptions,
   rdsKeys,
   startInstanceMutationOptions,
@@ -14,12 +15,23 @@ import { ApplicationOwnershipBanner } from "@/components/application-ownership-b
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableCellProse,
+  TableEmpty,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { useState } from "react"
 import { Play, Square, Trash2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import type { RdsInstance } from "@/types"
+import { formatDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 export function InstanceDetail({ instanceId }: { instanceId: string }) {
@@ -118,6 +130,7 @@ export function InstanceDetail({ instanceId }: { instanceId: string }) {
           <Tab id="configuration">Configuration</Tab>
           <Tab id="connectivity">Connectivity</Tab>
           <Tab id="logs">Logs</Tab>
+          <Tab id="events">Events</Tab>
         </TabList>
 
         <TabPanel id="configuration" className="pt-4">
@@ -130,6 +143,10 @@ export function InstanceDetail({ instanceId }: { instanceId: string }) {
 
         <TabPanel id="logs" className="pt-4">
           <LogsPanel instanceId={instanceId} />
+        </TabPanel>
+
+        <TabPanel id="events" className="pt-4">
+          <EventsPanel instanceId={instanceId} />
         </TabPanel>
       </Tabs>
 
@@ -152,8 +169,85 @@ export function InstanceDetail({ instanceId }: { instanceId: string }) {
 
 // ─── Logs Panel ───────────────────────────────────────────────────────────
 
+/**
+ * The logs tab exists to answer "why will this database not start?".
+ *
+ * It used to render `data.logs` and, failing that, the words "No logs
+ * available" — in front of a database that had just failed to start, which is
+ * exactly when the container is gone and there is nothing live to read. The
+ * emulator now sends the instance's status, its recorded failure reason, and
+ * the tail it kept from the dying container, and all three are shown here:
+ * an empty pane is the one answer this tab must never give.
+ */
 function LogsPanel({ instanceId }: { instanceId: string }) {
   const { data, isLoading, refetch, isFetching } = useQuery(rdsInstanceLogsQueryOptions(instanceId))
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner className="h-5 w-5" />
+      </div>
+    )
+  }
+
+  const failed = data?.status === "failed"
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {data?.status && <RdsStatusBadge status={data.status} />}
+          {data?.logSource === "retained" && <Badge variant="warning">Retained</Badge>}
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
+          <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+
+      {data?.statusReason && (
+        <div
+          className={cn(
+            "rounded-md border p-3 text-[13px]",
+            failed ? "border-danger/40 bg-danger/10 text-danger" : "border-border bg-bg-muted",
+          )}
+        >
+          <span className="font-medium">Failure reason</span>
+          <p className="mt-1 text-fg">{data.statusReason}</p>
+        </div>
+      )}
+
+      {data?.message && <p className="text-[13px] text-fg-muted">{data.message}</p>}
+
+      {data?.logs ? (
+        <>
+          <pre className="max-h-96 overflow-y-auto rounded-md bg-bg-muted p-4 font-mono text-xs leading-relaxed text-fg">
+            {data.logs}
+          </pre>
+          {data.logSource === "retained" && data.capturedAt && (
+            <p className="text-xs text-fg-subtle">Captured {formatDate(data.capturedAt)}</p>
+          )}
+        </>
+      ) : (
+        !data?.statusReason &&
+        !data?.message && <p className="text-sm text-fg-muted">No logs available</p>
+      )}
+    </div>
+  )
+}
+
+// ─── Events Panel ─────────────────────────────────────────────────────────
+
+/**
+ * The RDS event feed for this instance, newest first — created, started,
+ * stopped, deleted, and the failure events that carry the reason a database
+ * would not come up. This is AWS's own channel for that question
+ * (`DescribeEvents`); the console's failure UI is the same feed rendered.
+ */
+function EventsPanel({ instanceId }: { instanceId: string }) {
+  const { data, isLoading, refetch, isFetching } = useQuery(
+    rdsInstanceEventsQueryOptions(instanceId),
+  )
 
   if (isLoading) {
     return (
@@ -171,13 +265,48 @@ function LogsPanel({ instanceId }: { instanceId: string }) {
           Refresh
         </Button>
       </div>
-      {data?.logs ? (
-        <pre className="max-h-96 overflow-y-auto rounded-md bg-bg-muted p-4 font-mono text-xs leading-relaxed text-fg">
-          {data.logs}
-        </pre>
-      ) : (
-        <p className="text-sm text-fg-muted">No logs available</p>
-      )}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-52">Time</TableHead>
+            <TableHead className="w-40">Categories</TableHead>
+            <TableHead>Message</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {(data ?? []).length === 0 ? (
+            <TableEmpty colSpan={3}>No events in the last 14 days</TableEmpty>
+          ) : (
+            // Keyed by position: the list is replaced wholesale on every
+            // refetch, carries no per-row state, and two events can share both
+            // timestamp and message.
+            (data ?? []).map((event, index) => {
+              const categories = event.EventCategories ?? []
+              const isFailure = categories.some((c) => c.toLowerCase() === "failure")
+              return (
+                <TableRow key={index} className={cn(isFailure && "bg-danger/5")}>
+                  <TableCell className="text-fg-muted">{formatDate(event.Date)}</TableCell>
+                  <TableCell>
+                    <span className="flex flex-wrap gap-1">
+                      {categories.map((category) => (
+                        <Badge
+                          key={category}
+                          variant={category.toLowerCase() === "failure" ? "danger" : "default"}
+                        >
+                          {category}
+                        </Badge>
+                      ))}
+                    </span>
+                  </TableCell>
+                  <TableCellProse className={cn(isFailure && "text-danger")}>
+                    {event.Message}
+                  </TableCellProse>
+                </TableRow>
+              )
+            })
+          )}
+        </TableBody>
+      </Table>
     </div>
   )
 }
