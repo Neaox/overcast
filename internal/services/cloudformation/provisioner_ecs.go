@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 )
 
@@ -193,16 +194,32 @@ func (h *ecsServiceHandler) Create(ctx context.Context, router http.Handler, cfg
 	}
 
 	arn := resp.Service.ServiceArn
-	cluster, _ := body["cluster"].(string)
-	if err := waitForServiceStable(ctx, router, rCtx.Region, cluster, arn); err != nil {
-		return "", nil, err
-	}
-
 	attrs := map[string]string{
 		"ServiceArn": arn,
 		"Name":       resp.Service.ServiceName,
 	}
 	return arn, attrs, nil
+}
+
+// Stabilize holds the resource open until the service's current deployment
+// reaches its desired count, so a service that cannot place its tasks fails the
+// stack rather than leaving it complete with nothing running. Create and update
+// share it — they are the same wait on the same definition of done, and the bug
+// this exists for is what happened when the two drifted apart. See
+// resourceStabilizer.
+func (h *ecsServiceHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, _ clock.Clock, physicalID string, rCtx *resolveContext) error {
+	return waitForServiceStable(ctx, router, rCtx.Region, ecsClusterFromServiceARN(physicalID), physicalID)
+}
+
+// ecsClusterFromServiceARN reads the cluster out of a service ARN
+// (arn:aws:ecs:region:account:service/cluster/service-name), which is where
+// every call that needs one after create gets it: the physical ID is the only
+// thing the provisioner hands back.
+func ecsClusterFromServiceARN(serviceARN string) string {
+	if parts := strings.Split(serviceARN, "/"); len(parts) >= 2 {
+		return parts[len(parts)-2]
+	}
+	return ""
 }
 
 // describedECSService is the DescribeServices projection the stabilization wait
@@ -324,12 +341,7 @@ func waitForServiceStable(ctx context.Context, router http.Handler, region, clus
 }
 
 func (h *ecsServiceHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	// Extract cluster from ARN if possible.
-	// Service ARN: arn:aws:ecs:region:account:service/cluster/service-name
-	cluster := ""
-	if parts := strings.Split(physicalID, "/"); len(parts) >= 2 {
-		cluster = parts[len(parts)-2]
-	}
+	cluster := ecsClusterFromServiceARN(physicalID)
 
 	// First set desired count to 0, then delete.
 	updateBody := map[string]any{
@@ -353,10 +365,7 @@ func (h *ecsServiceHandler) Delete(ctx context.Context, router http.Handler, cfg
 }
 
 func (h *ecsServiceHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	cluster := ""
-	if parts := strings.Split(physicalID, "/"); len(parts) >= 2 {
-		cluster = parts[len(parts)-2]
-	}
+	cluster := ecsClusterFromServiceARN(physicalID)
 
 	if oldProps != nil {
 		if newName, _ := props["ServiceName"].(string); newName != "" {
@@ -397,17 +406,10 @@ func (h *ecsServiceHandler) Update(ctx context.Context, router http.Handler, _ *
 		return "", nil, fmt.Errorf("UpdateService: %w", err)
 	}
 
-	// Wait for the new deployment the same way Create does. An update that
-	// swaps in a task definition whose tasks cannot start is the single most
-	// common way a real deployment goes wrong, and without this the resource
-	// reports success while the service sits on a failed rollout — leaving the
-	// stack UPDATE_COMPLETE around a service running nothing.
-	//
-	// The failure is terminal for the resource: the service exists and has the
-	// new task definition on it, so replacing it would add a second service
-	// running the same broken revision rather than fix anything.
-	if err := waitForServiceStable(ctx, router, rCtx.Region, cluster, physicalID); err != nil {
-		return "", nil, failUpdate(err)
-	}
+	// The provisioner waits for the new deployment here, the same way it does
+	// on create — see Stabilize. An update that swaps in a task definition whose
+	// tasks cannot start is the single most common way a real deployment goes
+	// wrong, and without the wait the resource reports success while the service
+	// sits on a failed rollout.
 	return physicalID, nil, nil
 }

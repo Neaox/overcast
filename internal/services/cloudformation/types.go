@@ -92,6 +92,22 @@ func (r *StackResource) shouldRetainOnDelete() bool {
 	return false
 }
 
+// existsServiceSide reports whether this resource was actually created, and so
+// whether a rollback has to delete it.
+//
+// CREATE_FAILED counts when the resource carries a physical ID. A create that
+// failed outright never named anything and leaves the ID empty; one that failed
+// to stabilize — an RDS instance whose database never came up, an ECS service
+// whose tasks never started — was created and named first, and only then failed
+// to become usable. Skipping those left a real database behind under a name
+// that nothing in the stack still recorded.
+func (r *StackResource) existsServiceSide() bool {
+	if r.PhysicalID == "" {
+		return false
+	}
+	return r.Status == ResourceCreateComplete || r.Status == ResourceCreateFailed
+}
+
 // shouldRetainOnReplace reports whether an UpdateStack replacement should
 // orphan the old resource (skip its delete) instead of deleting it.
 func (r *StackResource) shouldRetainOnReplace() bool {
