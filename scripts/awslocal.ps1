@@ -6,7 +6,7 @@
 .DESCRIPTION
     A developer machine usually has AWS_PROFILE, AWS_REGION, SSO state, or an
     AWS_ENDPOINT_URL left over from something else. Those leak into every `aws`
-    call and change what happens without announcing themselves — a wrong
+    call and change what happens without announcing themselves -- a wrong
     profile silently signs as a different principal, a stale AWS_ENDPOINT_URL
     sends the call somewhere else entirely. The failure looks like a bug in
     Overcast and costs an hour to find.
@@ -21,7 +21,7 @@
 
     NOT for endpoint testing. This passes --endpoint-url explicitly, which is
     exactly what suppresses the SQS queue-URL origin override in the
-    JS/.NET/Java SDKs — the bug class docs/dev/manual-testing.md exists to
+    JS/.NET/Java SDKs -- the bug class docs/dev/manual-testing.md exists to
     catch. Verifying URL minting, origins or routing needs a *bare* SDK client
     with no endpoint configured at all.
 

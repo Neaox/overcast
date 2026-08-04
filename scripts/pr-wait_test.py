@@ -17,6 +17,7 @@ instead, against synthetic logs, with no network and no pull request.
 Run: python scripts/pr-wait_test.py   (CI runs every scripts/*_test.py)
 """
 
+import os
 import shutil
 import subprocess
 import sys
@@ -26,12 +27,51 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent / "pr-wait.sh"
 
-# Resolve bash via PATH rather than letting CreateProcess pick. On Windows a
-# bare "bash" reaches C:\Windows\System32\bash.exe — the WSL launcher — whose
-# filesystem has no F:\ or C:\ path, so it reports "No such file or directory"
-# and exits 127 for a script that is plainly there. shutil.which honours PATH
-# order and finds Git Bash; on Linux and macOS it just returns /usr/bin/bash.
-BASH = shutil.which("bash") or "bash"
+
+def _under_system_root(path):
+    """True for the WSL launcher shipped in C:\\Windows\\System32."""
+    if os.name != "nt":
+        return False
+    try:
+        path.resolve().relative_to(Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def find_bash():
+    """A bash that can open a Windows path, because that is what we hand it.
+
+    On Windows, `bash` often resolves to C:\\Windows\\System32\\bash.exe -- the
+    WSL launcher, whose filesystem has no F:\\ or C:\\ -- so it reports "No such
+    file or directory" and exits 127 for a script that is plainly there.
+
+    Which one wins is decided by PATH order, and System32 sits ahead of Git on
+    a stock install, so shutil.which alone is not enough: this file used to say
+    which() "honours PATH order and finds Git Bash", and all seven tests failed
+    with exit 127 on a dev box while CI stayed green, because CI is Ubuntu and
+    never exercises the branch. Git for Windows' bash is now preferred
+    explicitly, found next to git itself rather than searched for.
+
+    On Linux and macOS the first candidates do not exist and PATH's bash is
+    returned unchanged.
+    """
+    candidates = []
+    git = shutil.which("git")
+    if git:
+        root = Path(git).resolve().parent.parent
+        candidates += [root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"]
+    found = shutil.which("bash")
+    if found:
+        candidates.append(Path(found))
+
+    for candidate in candidates:
+        if candidate.is_file() and not _under_system_root(candidate):
+            return str(candidate)
+    return "bash"
+
+
+BASH = find_bash()
 
 
 def row(name, bucket, elapsed, url):
@@ -54,6 +94,23 @@ def summarize(lines):
         Path(path).unlink(missing_ok=True)
     passed = int(out[0].removeprefix("passed="))
     return passed, out[1:]
+
+
+class BashResolutionTest(unittest.TestCase):
+    def test_resolved_bash_can_read_the_script(self):
+        # Without this the WSL mix-up arrives as seven CalledProcessErrors
+        # reporting exit 127, which reads like the summarising being broken
+        # rather than bash never having opened the file.
+        result = subprocess.run(
+            [BASH, "-c", 'test -f "$1"', "sh", SCRIPT.as_posix()],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"{BASH} cannot see {SCRIPT}. On Windows this is usually "
+            f"C:\\Windows\\System32\\bash.exe, the WSL launcher, whose "
+            f"filesystem has no {SCRIPT.drive or 'such'} drive.",
+        )
 
 
 class SummarizeLogTest(unittest.TestCase):
