@@ -251,11 +251,23 @@ These generated sources are **committed** and must be regenerated through their 
 
 ---
 
-## Human handoff — when behaviour is unclear
+## Resolving a decision — when behaviour is unclear, or options are all defensible
+
+This ladder settles two different situations. The obvious one is not knowing how AWS behaves.
+The more common one is having **several reasonable options** — a name for a derived resource, a
+default for an unset field, error-vs-no-op on a missing resource, the order side effects fire in
+— none of which feels like a compatibility question at the time. It is one. Ask **what does AWS
+do here, in this service, in this case** before you pick, then:
 
 1. Prefer **real AWS behaviour** — spin up a resource and test the edge case
 2. Then **existing Overcast behaviour** — consistency within the codebase matters
 3. Then **compatibility test expectations** — what do tests in `tests/` and `compat/` expect?
+
+This matters more for you than for a human contributor: you resolve forks like this constantly
+and silently, and a choice you never noticed making is one nobody gets to review. Where the
+answer is cheap to look up, look it up before deciding rather than defending the guess later.
+Where it is expensive and the fork is genuinely load-bearing, **say which way you went and why**
+in the PR body — see [CONTRIBUTING § AWS is the tie-breaker](./CONTRIBUTING.md#aws-is-the-tie-breaker).
 
 If a task would require broad architectural changes, **stop and surface the tradeoffs** rather than refactoring across services silently. A `501` with an honest explanation is better than a divergent `200`.
 

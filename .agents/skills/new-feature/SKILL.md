@@ -39,6 +39,34 @@ All coding standards are in [CONTRIBUTING.md](../../../CONTRIBUTING.md). Agent g
 | "This route won't fallthrough to S3" | For REST-path services: confirm the route is in `RegisterRoutes` AND the path prefix is in `detectService` (`internal/middleware/logger.go`). Test with a real request — don't assume routing works. |
 | "I know the latest version of this dependency / tool" | Check `go.mod`, `package.json`, npm registry, or the official source. Don't recommend APIs, CLI flags, or patterns from outdated versions. |
 
+### Recognising a fidelity decision — AWS is the tie-breaker
+
+The table above catches assumptions you know you are making. The escalation strategy below tells
+you how to check one. Neither fires if you never notice there was a question — and that is how
+most divergence gets in.
+
+While designing, watch for the moment **two or more options both look fine**: what to name a
+derived resource or auto-created child, which default to use for a field the caller omitted,
+whether an operation on a missing resource 404s or succeeds silently, whether an empty result is
+an omitted field or an empty list, what order side effects fire in, which validation runs first.
+These do not feel like AWS questions. Every one of them is observable by a client, which makes
+every one of them part of the contract.
+
+**Do not settle these on taste, on convenience, or on what the surrounding code happens to do.
+Ask what AWS does — in this service, in this exact case — and follow it.** Sibling services are
+evidence about house style, not about AWS: S3 and DynamoDB genuinely disagree, and copying the
+wrong sibling produces confident, consistent, wrong behaviour. Route the question through the
+escalation strategy below; tier 1 or 2 answers most of them in under a minute.
+
+When the evidence runs out and you still have to pick, break the tie toward **failing locally**.
+An emulator that accepts what AWS rejects — a missing required field, an out-of-range value, a
+CloudFormation property we ignore — hands the user a stack that deploys here and rolls back in
+their account, which is the one failure this project exists to prevent. Too strict is also wrong,
+but the user sees it immediately and can tell us.
+
+If a fork was genuinely load-bearing — you had to pick and the evidence was thin — record it in
+the PR body so a reviewer sees the choice instead of reverse-engineering it.
+
 ### AWS behaviour verification — escalation strategy
 
 When you need to confirm how AWS behaves, escalate through these sources in order. Each tier costs progressively more in time, money, or effort. Stop as soon as you have a definitive answer.

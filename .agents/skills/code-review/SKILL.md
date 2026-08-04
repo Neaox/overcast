@@ -169,6 +169,10 @@ Spaghetti code lacks clear structure: control flow jumps around unpredictably, c
 - [ ] When unsure how AWS behaves, require evidence from AWS docs, SDK/service models, existing compatibility tests, or real AWS probes — don't guess
 - [ ] Known unavoidable divergences are documented in service docs and code comments where helpful
 - [ ] A `501`/unsupported response is always preferable to a `200` that silently diverges from real AWS
+- [ ] **Nothing here works on Overcast but would fail on AWS.** The costly direction is permissiveness — an input accepted that AWS rejects, a validation skipped, a required field defaulted, a CloudFormation property accepted and ignored — because it produces a stack that deploys locally and rolls back in the user's account. Being stricter than AWS is also a defect, but it fails loudly and locally; weigh the two accordingly when evidence is thin
+- [ ] **Forks in the road went AWS's way.** Where the diff picked one of several defensible options — a name for a derived resource, a default for an omitted field, error-vs-no-op on a missing resource, empty list vs omitted field, ordering of side effects or validation — check the chosen branch against what that service actually does, not against whether the choice reads sensibly. These land as ordinary-looking code with no fidelity smell; they are the most common source of silent divergence and the least likely to be questioned
+- [ ] **Sibling services were used as evidence about house style, not about AWS.** Copying a pattern from another service is only evidence that AWS behaves that way if AWS behaves that way in *that* service too — real AWS is not internally consistent
+- [ ] Every claim the **PR description** makes about how real AWS behaves cites its source (AWS docs link, service model, existing compat test, or a dated real-AWS observation) — flag unsourced assertions even when they sound right
 
 #### Regression & Bug-Fix Blast Radius
 
