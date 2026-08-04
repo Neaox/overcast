@@ -8,7 +8,7 @@ import remarkRemoveComments from "remark-remove-comments"
 import { BookOpen, ExternalLink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/primitives"
-import { DOCS_INDEX } from "@/docs-index.gen"
+import { DOCS_NAV } from "@/docs-nav.gen"
 import { cn } from "@/lib/utils"
 
 interface DocsSearchParams {
@@ -44,8 +44,8 @@ async function fetchDoc(path: string): Promise<string> {
 
 function DocsPage() {
   const { path = "README.md" } = Route.useSearch()
-  const currentDoc = DOCS_INDEX.find((doc) => doc.href === path) ?? DOCS_INDEX[0]
-  const sections = Array.from(new Set(DOCS_INDEX.map((doc) => doc.section)))
+  const currentDoc = DOCS_NAV.find((doc) => doc.href === path) ?? DOCS_NAV[0]
+  const sections = Array.from(new Set(DOCS_NAV.map((doc) => doc.section)))
   const { data, isLoading, isError } = useQuery(
     queryOptions({
       queryKey: ["docs-page", path],
@@ -76,7 +76,7 @@ function DocsPage() {
             <div key={section} className="mb-4">
               <div className="mb-1 px-2 text-xs font-medium text-fg-subtle">{section}</div>
               <div className="space-y-0.5">
-                {DOCS_INDEX.filter((doc) => doc.section === section).map((doc) => (
+                {DOCS_NAV.filter((doc) => doc.section === section).map((doc) => (
                   <Link
                     key={doc.href}
                     to="/docs"

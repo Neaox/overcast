@@ -9,8 +9,8 @@
 # review and reduce a staleness failure to "binary files differ". Never
 # hand-merge these: resolve any conflict by re-running `make docs-index` /
 # `make generate-caps`.
-internal/docssearch/index.gen.go linguist-generated=true
-web/src/docs-index.gen.ts linguist-generated=true
+internal/docssearch/index.gen.jsonl linguist-generated=true
+web/src/docs-nav.gen.ts linguist-generated=true
 internal/capabilities/all.gen.go linguist-generated=true
 
 # Known binaries checked into the repo (compat suite helpers) — never run

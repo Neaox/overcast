@@ -1,12 +1,13 @@
 // Package docssearch serves search over the published docs/ tree.
 //
-// docs and postings (the tables searched below) are declared in index.gen.go,
-// which is generated from docs/ and committed — this package cannot compile
-// without it, and a bare checkout has to build. After editing anything under
-// docs/, regenerate with `make docs-index` (or `task docs-index`, or
-// `go generate` here) and commit the result; CI fails on a stale index.
+// The corpus searched below is index.gen.jsonl, generated from docs/ and
+// committed — this package embeds it, so a bare checkout has to build. After
+// editing anything under docs/, regenerate with `make docs-index` (or `task
+// docs-index`, or `go generate` here) and commit the result; CI fails on a
+// stale index. See index.go for how it is loaded and why it is shaped that
+// way.
 //
-//go:generate go run ../../scripts/docs-index.go --write-go-index
+//go:generate go run ../../scripts/docs-index.go --write-search-index
 package docssearch
 
 import (
@@ -14,23 +15,6 @@ import (
 	"strings"
 	"unicode"
 )
-
-// Document is the metadata returned for a searchable documentation page.
-type Document struct {
-	ID          int
-	Path        string
-	Href        string
-	Title       string
-	Description string
-	Section     string
-	Tags        []string
-}
-
-// Posting records a precomputed relevance score for a term in a document.
-type Posting struct {
-	Doc   int
-	Score int
-}
 
 // Result is one ranked documentation search result.
 type Result struct {
@@ -45,7 +29,9 @@ var stopwords = map[string]bool{
 	"this": true, "to": true, "with": true,
 }
 
-// Search returns ranked documentation matches from the generated inverted index.
+// Search returns ranked documentation matches from the generated index. A
+// document matches only when it holds every token in the query; its score is
+// the sum of the per-term scores the generator weighted by field.
 func Search(query string, limit int) []Result {
 	if limit <= 0 {
 		limit = 10
@@ -54,10 +40,11 @@ func Search(query string, limit int) []Result {
 	if len(tokens) == 0 {
 		return []Result{}
 	}
+	idx := index()
 	scores := map[int]int{}
 	hits := map[int]int{}
 	for _, token := range tokens {
-		for _, posting := range postings[token] {
+		for _, posting := range idx.postings[token] {
 			scores[posting.Doc] += posting.Score
 			hits[posting.Doc]++
 		}
@@ -70,10 +57,10 @@ func Search(query string, limit int) []Result {
 		if hits[docID] != len(tokens) {
 			continue
 		}
-		if docID < 0 || docID >= len(docs) {
+		if docID < 0 || docID >= len(idx.docs) {
 			continue
 		}
-		results = append(results, Result{Document: docs[docID], Score: score})
+		results = append(results, Result{Document: idx.docs[docID], Score: score})
 	}
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Score == results[j].Score {

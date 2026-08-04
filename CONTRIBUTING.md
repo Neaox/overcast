@@ -312,7 +312,7 @@ the Go stages need a built SPA — which is why the CI Go jobs declare
 `go build ./...` always compiles; the resulting binary just has no UI, and the
 Go stages here assert a real `index.html` rather than accepting that.)
 
-The docs index (`web/src/docs-index.gen.ts`, `internal/docssearch/index.gen.go`)
+The docs index (`web/src/docs-nav.gen.ts`, `internal/docssearch/index.gen.jsonl`)
 is generated but committed, so it is not a build prerequisite. The docs-index
 stage still runs first so the docs-check stage can diff a freshly generated
 index against the committed one — that is what catches a `docs/` edit pushed
