@@ -12,6 +12,24 @@ current_support_level: Strong table, item, query, transaction, index, and stream
 operations: {}
 findings:
   fixed:
+    - scenario: CloudFormation forwards AWS::DynamoDB::Table LocalSecondaryIndexes to CreateTable, while removal or modification fails without mutating the table because LSI updates are unsupported.
+      evidence:
+        aws_docs:
+          - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-table.html
+          - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-dynamodb-table-localsecondaryindex.html
+        tests:
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableLocalSecondaryIndex
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableLocalSecondaryIndexes
+          - internal/services/cloudformation/dynamodb_table_update_test.go
+    - scenario: CloudFormation applies AWS::DynamoDB::Table TimeToLiveSpecification with UpdateTimeToLive, including attribute changes and property removal.
+      evidence:
+        aws_docs:
+          - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-dynamodb-table-timetolivespecification.html
+          - https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTimeToLive.html
+        tests:
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableTimeToLive
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableTimeToLive
+          - internal/services/cloudformation/dynamodb_ttl_test.go
     - scenario: CreateTable rejects invalid table names outside the documented 3..255 character alphanumeric, hyphen, underscore, and period rules.
       evidence:
         aws_docs: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.NamingRulesDataTypes.html
