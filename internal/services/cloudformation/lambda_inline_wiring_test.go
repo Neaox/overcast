@@ -17,10 +17,12 @@ import (
 // code and the configuration as separate requests, so keeping only the last one
 // would silently assert against the wrong body.
 type captureRouter struct {
-	requests  []capturedRequest
-	failPath  string
-	failed    bool
-	failPaths map[string]int
+	requests     []capturedRequest
+	failPath     string
+	failed       bool
+	failPaths    map[string]int
+	pathRequests map[string]int
+	failAt       map[string]map[int]int
 }
 
 type capturedRequest struct {
@@ -33,6 +35,14 @@ func (c *captureRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{}
 	_ = json.Unmarshal(raw, &body)
 	c.requests = append(c.requests, capturedRequest{path: r.URL.Path, body: body})
+	if c.pathRequests == nil {
+		c.pathRequests = make(map[string]int)
+	}
+	c.pathRequests[r.URL.Path]++
+	if status := c.failAt[r.URL.Path][c.pathRequests[r.URL.Path]]; status != 0 {
+		http.Error(w, "injected compensation failure", status)
+		return
+	}
 	if c.failPaths[r.URL.Path] > 0 {
 		c.failPaths[r.URL.Path]--
 		http.Error(w, "injected failure", http.StatusInternalServerError)
@@ -115,6 +125,45 @@ func TestLambdaProvisionerUpdateOrderAndCompensation(t *testing.T) {
 	}
 	if router.requests[0].body["Description"] != "new" || router.requests[3].body["Description"] != "old" {
 		t.Errorf("configuration compensation bodies = new:%v old:%v", router.requests[0].body, router.requests[3].body)
+	}
+}
+
+func TestLambdaProvisionerUpdateCompensationFailurePreservesBothErrors(t *testing.T) {
+	const (
+		name              = "Stack-Function"
+		configurationPath = "/2015-03-31/functions/" + name + "/configuration"
+		concurrencyPath   = "/2017-10-31/functions/" + name + "/concurrency"
+	)
+	router := &captureRouter{
+		failAt: map[string]map[int]int{
+			concurrencyPath:   {1: http.StatusBadRequest},
+			configurationPath: {2: http.StatusInternalServerError},
+		},
+	}
+	h := &lambdaFunctionHandler{}
+	oldProps := map[string]any{
+		"Runtime": "nodejs22.x", "Handler": "index.handler", "Role": "arn:aws:iam::000000000000:role/r",
+		"Description": "old", "Code": map[string]any{"ZipFile": "exports.handler=()=>1"}, "ReservedConcurrentExecutions": 1,
+	}
+	newProps := map[string]any{
+		"Runtime": "nodejs22.x", "Handler": "index.handler", "Role": "arn:aws:iam::000000000000:role/r",
+		"Description": "new", "Code": map[string]any{"ZipFile": "exports.handler=()=>2"}, "ReservedConcurrentExecutions": 2,
+	}
+
+	_, _, err := h.Update(context.Background(), router, nil, name, newProps, oldProps, &resolveContext{Region: "us-east-1"})
+
+	if err == nil {
+		t.Fatal("Update error = nil, want original and compensation failures")
+	}
+	for _, want := range []string{
+		"lambda PutFunctionConcurrency",
+		"restore Lambda function after failed update",
+		"lambda UpdateFunctionConfiguration",
+		"injected compensation failure",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Update error = %q, want %q", err, want)
+		}
 	}
 }
 

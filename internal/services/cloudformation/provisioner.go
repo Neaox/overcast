@@ -3013,9 +3013,13 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 	arn, err := h.applyUpdate(ctx, router, name, props, oldProps, rCtx)
 	if err != nil {
 		// A Lambda function update spans three APIs. Restore every earlier
-		// mutation before reporting the original failure.
-		_, _ = h.applyUpdate(ctx, router, name, oldProps, props, rCtx)
-		return "", nil, failUpdate(err)
+		// mutation before reporting the original failure, and preserve a
+		// restoration failure so the resulting state is reported truthfully.
+		_, compensationErr := h.applyUpdate(ctx, router, name, oldProps, props, rCtx)
+		if compensationErr != nil {
+			compensationErr = fmt.Errorf("restore Lambda function after failed update: %w", compensationErr)
+		}
+		return "", nil, failUpdate(errors.Join(err, compensationErr))
 	}
 	attrs := map[string]string{"FunctionName": name}
 	if arn != "" {
