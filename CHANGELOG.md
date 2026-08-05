@@ -68,6 +68,10 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [0.0.1-alpha.30] - 2026-08-04
 
+### Added
+
+- [waf/web/docs] add Web ACL metadata CRUD views, global search, and system-map nodes while accurately surfacing missing rule enforcement and 501 boundaries
+
 ### Fixed
 
 - [cloudformation/rds/ecs] CloudFormation waits for asynchronous resources to become usable before completing them and preserves their physical IDs through stabilisation failures so rollback can delete what it created. `AWS::RDS::DBInstance` and `AWS::RDS::DBCluster` now remain in progress until the database reports `available`, or fail with RDS's recorded reason and roll the stack back; `cdk deploy` no longer returns green while the engine is still initialising. Failed RDS databases and ECS services are now removed during rollback instead of being leaked under names that collide with the next deployment.
