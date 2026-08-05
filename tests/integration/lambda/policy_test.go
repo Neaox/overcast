@@ -91,6 +91,114 @@ func TestFunctionPolicy_AddGetRemoveLifecycle(t *testing.T) {
 	helpers.AssertJSONError(t, missingResp, "ResourceNotFoundException")
 }
 
+func TestFunctionPolicy_ForeignARNCannotTargetLocalFunction(t *testing.T) {
+	// Given: a local function with a policy statement.
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "policy-arn-scope")
+	localPermission := map[string]any{
+		"StatementId": "local", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+	}
+	localAdd := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-arn-scope/policy"), localPermission)
+	helpers.AssertStatus(t, localAdd, http.StatusCreated)
+	localAdd.Body.Close()
+
+	foreignARNs := []string{
+		"arn:aws-us-gov:lambda:us-east-1:000000000000:function:policy-arn-scope",
+		"arn:aws:lambda:us-west-2:000000000000:function:policy-arn-scope",
+		"arn:aws:lambda:us-east-1:123456789012:function:policy-arn-scope",
+		"us-west-2:000000000000:function:policy-arn-scope",
+		"123456789012:function:policy-arn-scope",
+	}
+	for _, arn := range foreignARNs {
+		t.Run(arn, func(t *testing.T) {
+			// When: Add/Get/Remove address the same local name through a foreign ARN.
+			add := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/"+arn+"/policy"), map[string]any{
+				"StatementId": "foreign", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+			})
+			helpers.AssertStatus(t, add, http.StatusNotFound)
+			helpers.AssertJSONError(t, add, "ResourceNotFoundException")
+			add.Body.Close()
+
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/"+arn+"/policy"), nil)
+			helpers.AssertStatus(t, get, http.StatusNotFound)
+			helpers.AssertJSONError(t, get, "ResourceNotFoundException")
+			get.Body.Close()
+
+			remove := doJSON(t, http.MethodDelete, lambdaURL(srv, "/functions/"+arn+"/policy/local"), nil)
+			helpers.AssertStatus(t, remove, http.StatusNotFound)
+			helpers.AssertJSONError(t, remove, "ResourceNotFoundException")
+			remove.Body.Close()
+		})
+	}
+
+	// Accepted partial references in the modeled FunctionName pattern still
+	// resolve when every explicitly supplied scope component is local.
+	localReferences := []string{
+		"function:policy-arn-scope",
+		"000000000000:function:policy-arn-scope",
+		"us-east-1:000000000000:function:policy-arn-scope",
+		"000000000000:policy-arn-scope",
+		"us-east-1:000000000000:policy-arn-scope",
+	}
+	for _, reference := range localReferences {
+		get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/"+reference+"/policy"), nil)
+		helpers.AssertStatus(t, get, http.StatusOK)
+		get.Body.Close()
+	}
+
+	// Then: the local policy still contains only its original statement.
+	get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/policy-arn-scope/policy"), nil)
+	var envelope struct {
+		Policy string `json:"Policy"`
+	}
+	decodeJSON(t, get, &envelope)
+	if strings.Count(envelope.Policy, `"Sid"`) != 1 || !strings.Contains(envelope.Policy, `"Sid":"local"`) {
+		t.Fatalf("local policy mutated by foreign ARN calls: %s", envelope.Policy)
+	}
+}
+
+func TestAddPermission_ModeledLengthBoundariesAndAccountPrincipal(t *testing.T) {
+	// Given: a function and AddPermission values at the pinned model maxima.
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "policy-model-boundaries")
+	action := "lambda:" + strings.Repeat("A", 10000-len("lambda:"))
+	principal := strings.Repeat("p", 2048)
+	resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-model-boundaries/policy"), map[string]any{
+		"StatementId": "maxima", "Action": action, "Principal": principal,
+	})
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	resp.Body.Close()
+
+	// When: a 12-digit account ID is used as Principal.
+	resp = doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-model-boundaries/policy"), map[string]any{
+		"StatementId": "account", "Action": "lambda:InvokeFunction", "Principal": "123456789012",
+	})
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	var add struct {
+		Statement string `json:"Statement"`
+	}
+	decodeJSON(t, resp, &add)
+	var statement struct {
+		Principal map[string]string `json:"Principal"`
+	}
+	if err := json.Unmarshal([]byte(add.Statement), &statement); err != nil {
+		t.Fatalf("decode statement: %v", err)
+	}
+	if got := statement.Principal["AWS"]; got != "arn:aws:iam::123456789012:root" {
+		t.Fatalf("account principal = %q", got)
+	}
+
+	// Then: GetPolicy persists the normalized principal too.
+	get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/policy-model-boundaries/policy"), nil)
+	var policy struct {
+		Policy string `json:"Policy"`
+	}
+	decodeJSON(t, get, &policy)
+	if !strings.Contains(policy.Policy, `"AWS":"arn:aws:iam::123456789012:root"`) {
+		t.Fatalf("stored policy principal was not normalized: %s", policy.Policy)
+	}
+}
+
 func TestFunctionPolicy_ValidationQualificationAndConcurrentMutation(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "policy-race-fn")

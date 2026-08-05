@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -59,7 +60,7 @@ type getPolicyResponse struct {
 
 var (
 	statementIDPattern        = regexp.MustCompile(`^[a-zA-Z0-9-_]+$`)
-	policyFunctionNamePattern = regexp.MustCompile(`^(?:arn:(?:aws[a-zA-Z-]*)?:lambda:)?(?:[a-z]{2}(?:(?:-gov)|(?:-iso[a-z]?))?-[a-z]+-\d{1}:)?(?:\d{12}:)?(?:function:)?[a-zA-Z0-9-_\.]+(?::(?:\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_]+))?$`)
+	policyFunctionNamePattern = regexp.MustCompile(`^(?:arn:((?:aws[a-zA-Z-]*)?):lambda:)?(?:([a-z]{2}(?:(?:-gov)|(?:-iso[a-z]?))?-[a-z]+-\d{1}):)?(?:(\d{12}):)?(?:function:)?([a-zA-Z0-9-_\.]+)(?::(\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_]+))?$`)
 	qualifierPattern          = regexp.MustCompile(`^(?:\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_$]+)$`)
 	permissionActionPattern   = regexp.MustCompile(`^(?:\*|lambda:(?:\*|[a-zA-Z]+))$`)
 	sourceAccountPattern      = regexp.MustCompile(`^[0-9]{12}$`)
@@ -98,14 +99,14 @@ func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 	if !statementIDPattern.MatchString(*req.StatementID) {
 		return smithyPatternConstraint("statementId", *req.StatementID, statementIDConstraint)
 	}
-	if len(req.Action) > 256 {
-		return smithyStringLengthConstraint("action", req.Action, 256)
+	if len(req.Action) > 10000 {
+		return smithyStringLengthConstraint("action", req.Action, 10000)
 	}
 	if !permissionActionPattern.MatchString(req.Action) {
 		return smithyPatternConstraint("action", req.Action, permissionActionConstraint)
 	}
-	if len(req.Principal) > 256 {
-		return smithyStringLengthConstraint("principal", req.Principal, 256)
+	if len(req.Principal) > 2048 {
+		return smithyStringLengthConstraint("principal", req.Principal, 2048)
 	}
 	if strings.ContainsAny(req.Principal, "\r\n\t ") {
 		return smithyPatternConstraint("principal", req.Principal, principalConstraint)
@@ -167,7 +168,7 @@ func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	statement := permissionStatement{
-		Sid: statementID, Effect: "Allow", Principal: permissionPrincipal(req.Principal),
+		Sid: statementID, Effect: "Allow", Principal: permissionPrincipal(req.Principal, fn.ARN),
 		Action: req.Action, Resource: policyResourceARN(fn.ARN, qualifier), Condition: permissionConditions(req),
 	}
 	aerr = h.ls.mutateFunctionPolicy(r.Context(), name, qualifier, func(policy *functionPolicy, _ bool) (bool, *protocol.AWSError) {
@@ -292,6 +293,14 @@ func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qu
 	if qualifier != "" && !qualifierPattern.MatchString(qualifier) {
 		return nil, smithyPatternConstraint("qualifier", qualifier, `\$(LATEST(\.PUBLISHED)?)|[a-zA-Z0-9-_$]+`)
 	}
+	if reference, ok := parsePolicyFunctionReference(identifier, ""); ok {
+		expectedRegion := middleware.RegionFromContext(ctx, h.cfg.Region)
+		if (reference.fullARN && reference.partition != "aws") ||
+			(reference.region != "" && reference.region != expectedRegion) ||
+			(reference.account != "" && reference.account != h.cfg.AccountID) {
+			return nil, policyFunctionNotFoundIdentifier(identifier, qualifier)
+		}
+	}
 	fn, aerr := h.ls.getFunction(ctx, name)
 	if aerr != nil {
 		return nil, aerr
@@ -324,26 +333,55 @@ func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qu
 	return nil, policyFunctionNotFound(name, qualifier)
 }
 
-func policyFunctionIdentifier(identifier, queryQualifier string) (string, string) {
-	name, qualifier := identifier, ""
-	if idx := strings.Index(identifier, ":function:"); idx >= 0 {
-		name = identifier[idx+len(":function:"):]
-	}
-	if idx := strings.IndexByte(name, ':'); idx >= 0 {
-		qualifier, name = name[idx+1:], name[:idx]
-	}
-	if queryQualifier != "" {
-		qualifier = queryQualifier
-	}
-	return name, qualifier
+type policyFunctionReference struct {
+	partition string
+	region    string
+	account   string
+	name      string
+	qualifier string
+	fullARN   bool
 }
 
-func permissionPrincipal(principal string) any {
+func parsePolicyFunctionReference(identifier, queryQualifier string) (policyFunctionReference, bool) {
+	match := policyFunctionNamePattern.FindStringSubmatch(identifier)
+	if match == nil {
+		return policyFunctionReference{}, false
+	}
+	reference := policyFunctionReference{
+		partition: match[1],
+		region:    match[2],
+		account:   match[3],
+		name:      match[4],
+		qualifier: match[5],
+		fullARN:   strings.HasPrefix(identifier, "arn:"),
+	}
+	if queryQualifier != "" {
+		reference.qualifier = queryQualifier
+	}
+	return reference, true
+}
+
+func policyFunctionIdentifier(identifier, queryQualifier string) (string, string) {
+	reference, ok := parsePolicyFunctionReference(identifier, queryQualifier)
+	if !ok {
+		return identifier, queryQualifier
+	}
+	return reference.name, reference.qualifier
+}
+
+func permissionPrincipal(principal, functionARN string) any {
 	if principal == "*" {
 		return principal
 	}
 	if strings.HasSuffix(principal, ".amazonaws.com") {
 		return map[string]string{"Service": principal}
+	}
+	if sourceAccountPattern.MatchString(principal) {
+		partition := "aws"
+		if parts := strings.SplitN(functionARN, ":", 3); len(parts) == 3 && parts[0] == "arn" && parts[1] != "" {
+			partition = parts[1]
+		}
+		principal = "arn:" + partition + ":iam::" + principal + ":root"
 	}
 	return map[string]string{"AWS": principal}
 }
@@ -387,6 +425,14 @@ func policyRevisionMismatch() *protocol.AWSError {
 func policyFunctionNotFound(name, qualifier string) *protocol.AWSError {
 	resource := name
 	if qualifier != "" {
+		resource += ":" + qualifier
+	}
+	return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Function not found: " + resource, HTTPStatus: http.StatusNotFound}
+}
+
+func policyFunctionNotFoundIdentifier(identifier, qualifier string) *protocol.AWSError {
+	resource := identifier
+	if qualifier != "" && !strings.HasSuffix(identifier, ":"+qualifier) {
 		resource += ":" + qualifier
 	}
 	return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Function not found: " + resource, HTTPStatus: http.StatusNotFound}

@@ -222,8 +222,8 @@ func TestAddPermission_FieldSpecificValidationMessages(t *testing.T) {
 	createFunction(t, srv, "policy-message-validation")
 	base := map[string]any{"StatementId": "statement", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com"}
 	longStatementID := strings.Repeat("s", 101)
-	longAction := "lambda:" + strings.Repeat("A", 250)
-	longPrincipal := strings.Repeat("p", 257)
+	longAction := "lambda:" + strings.Repeat("A", 9994)
+	longPrincipal := strings.Repeat("p", 2049)
 	longSourceARN := "arn:aws:sns:us-east-1:000000000000:" + strings.Repeat("r", 1025)
 	longOrgID := "o-" + strings.Repeat("a", 33)
 	longToken := strings.Repeat("t", 257)
@@ -236,9 +236,9 @@ func TestAddPermission_FieldSpecificValidationMessages(t *testing.T) {
 		{"statement ID", "StatementId", "bad id", "1 validation error detected: Value 'bad id' at 'statementId' failed to satisfy constraint: Member must satisfy regular expression pattern: ([a-zA-Z0-9-_]+)"},
 		{"statement ID length", "StatementId", longStatementID, "1 validation error detected: Value '" + longStatementID + "' at 'statementId' failed to satisfy constraint: Member must have length less than or equal to 100"},
 		{"action", "Action", "s3:GetObject", "1 validation error detected: Value 's3:GetObject' at 'action' failed to satisfy constraint: Member must satisfy regular expression pattern: (lambda:[*]|lambda:[a-zA-Z]+|[*])"},
-		{"action length", "Action", longAction, "1 validation error detected: Value '" + longAction + "' at 'action' failed to satisfy constraint: Member must have length less than or equal to 256"},
+		{"action length", "Action", longAction, "1 validation error detected: Value '" + longAction + "' at 'action' failed to satisfy constraint: Member must have length less than or equal to 10000"},
 		{"principal", "Principal", "bad principal", "1 validation error detected: Value 'bad principal' at 'principal' failed to satisfy constraint: Member must satisfy regular expression pattern: [^\\s]+"},
-		{"principal length", "Principal", longPrincipal, "1 validation error detected: Value '" + longPrincipal + "' at 'principal' failed to satisfy constraint: Member must have length less than or equal to 256"},
+		{"principal length", "Principal", longPrincipal, "1 validation error detected: Value '" + longPrincipal + "' at 'principal' failed to satisfy constraint: Member must have length less than or equal to 2048"},
 		{"source account", "SourceAccount", "123", "1 validation error detected: Value '123' at 'sourceAccount' failed to satisfy constraint: Member must satisfy regular expression pattern: \\d{12}"},
 		{"source account length", "SourceAccount", "1234567890123", "1 validation error detected: Value '1234567890123' at 'sourceAccount' failed to satisfy constraint: Member must have length less than or equal to 12"},
 		{"source ARN", "SourceArn", "not-an-arn", "1 validation error detected: Value 'not-an-arn' at 'sourceArn' failed to satisfy constraint: Member must satisfy regular expression pattern: arn:(aws[a-zA-Z0-9-]*):([a-zA-Z0-9\\-])+:([a-z]{2}(-gov)?-[a-z]+-\\d{1})?:(\\d{12})?:(.*)"},
