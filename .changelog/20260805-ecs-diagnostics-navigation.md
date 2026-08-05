@@ -1,1 +1,0 @@
-* [web/ecs] service diagnostics now keep the actual failed task and container logs visible instead of letting a later clean exit replace the cause; ECS screens add precise event times, two-way task navigation, and distinct working map destinations

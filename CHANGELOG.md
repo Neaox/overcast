@@ -66,6 +66,34 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.30] - 2026-08-04
+
+### Added
+
+- [waf/web/docs] add Web ACL metadata CRUD views, global search, and system-map nodes while accurately surfacing missing rule enforcement and 501 boundaries
+
+### Changed
+
+- [web/ecs] service and task screens prioritize recent container failures, stopped tasks, and logs over follow-on scheduler noise
+
+### Fixed
+
+- [cloudformation/rds/ecs] CloudFormation waits for asynchronous resources to become usable before completing them and preserves their physical IDs through stabilisation failures so rollback can delete what it created. `AWS::RDS::DBInstance` and `AWS::RDS::DBCluster` now remain in progress until the database reports `available`, or fail with RDS's recorded reason and roll the stack back; `cdk deploy` no longer returns green while the engine is still initialising. Failed RDS databases and ECS services are now removed during rollback instead of being leaked under names that collide with the next deployment.
+
+- [cloudformation/s3] `AWS::S3::Bucket` now applies lifecycle, versioning, notification, encryption, tag, CORS, and website properties through S3, including in-place updates, removals, and rollback restoration. S3 lifecycle configuration now validates and round-trips `NoncurrentVersionExpiration` while true version-history execution remains tracked separately.
+
+- [cloudformation/lambda] Lambda resources now preserve supported function and event-source properties, reject unsupported fields before mutation, roll back partial updates, and store validated resource policies safely
+
+- [sns/cloudformation] CloudFormation SNS topics and subscriptions now forward configured SNS attributes, including subscription filtering and raw SQS delivery (#522)
+
+- [ecs/web] cluster summaries and topology reflect current resources, while stopped tasks remain inspectable with AWS-compatible status, reason, and one-hour retention metadata
+
+- [ecs] stopped tasks retain a bounded container log tail for post-mortem diagnostics
+
+- [rds] database containers stopped, crashed, or removed through Docker are now recovered with bounded backoff immediately, after Docker reconnects, or during Overcast startup; repeated crash loops settle to `failed`, only `StopDBInstance` establishes a durable stopped state, and MySQL 8 initialization now preserves AWS-valid special-character passwords while using `caching_sha2_password`
+
+- [web/ecs] service diagnostics now keep the actual failed task and container logs visible instead of letting a later clean exit replace the cause; ECS screens add precise event times, two-way task navigation, and distinct working map destinations
+
 ## [0.0.1-alpha.29] - 2026-08-03
 
 ### Added
@@ -916,7 +944,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.29...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.30...HEAD
+[0.0.1-alpha.30]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.29...v0.0.1-alpha.30
 [0.0.1-alpha.29]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.28...v0.0.1-alpha.29
 [0.0.1-alpha.28]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.27...v0.0.1-alpha.28
 [0.0.1-alpha.27]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.26...v0.0.1-alpha.27
