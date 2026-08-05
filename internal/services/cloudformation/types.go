@@ -150,6 +150,7 @@ type ChangeSet struct {
 	TemplateBody    string      `json:"TemplateBody"`
 	Parameters      []Parameter `json:"Parameters,omitempty"`
 	Tags            []Tag       `json:"Tags,omitempty"`
+	TagsSet         bool        `json:"TagsSet,omitempty"`
 	Capabilities    []string    `json:"Capabilities,omitempty"`
 	Status          string      `json:"Status"`
 	StatusReason    string      `json:"StatusReason,omitempty"`

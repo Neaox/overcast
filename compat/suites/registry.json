@@ -680,6 +680,15 @@
     },
     {
       "service": "lambda",
+      "name": "lambda-policy",
+      "tests": [
+        {"name": "AddPermission"},
+        {"name": "GetPolicy", "depends": ["AddPermission"]},
+        {"name": "RemovePermission", "depends": ["GetPolicy"]}
+      ]
+    },
+    {
+      "service": "lambda",
       "name": "lambda-invoke",
       "tests": [
         {

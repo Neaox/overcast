@@ -28,34 +28,108 @@ import (
 
 // createESMRequest is the wire request body for CreateEventSourceMapping.
 type createESMRequest struct {
-	FunctionName                   string             `json:"FunctionName"`
-	EventSourceArn                 string             `json:"EventSourceArn"`
-	BatchSize                      int                `json:"BatchSize"`
-	StartingPosition               string             `json:"StartingPosition"`
-	MaximumBatchingWindowInSeconds int                `json:"MaximumBatchingWindowInSeconds"`
-	FilterCriteria                 *FilterCriteria    `json:"FilterCriteria"`
-	MaximumRecordAgeInSeconds      *int               `json:"MaximumRecordAgeInSeconds"`
-	MaximumRetryAttempts           *int               `json:"MaximumRetryAttempts"`
-	TumblingWindowInSeconds        int                `json:"TumblingWindowInSeconds"`
-	BisectBatchOnFunctionError     bool               `json:"BisectBatchOnFunctionError"`
-	DestinationConfig              *DestinationConfig `json:"DestinationConfig"`
-	ScalingConfig                  *ScalingConfig     `json:"ScalingConfig"`
-	Enabled                        *bool              `json:"Enabled"` // nil == true (default enabled)
+	FunctionName                        string             `json:"FunctionName"`
+	EventSourceArn                      string             `json:"EventSourceArn"`
+	BatchSize                           *int               `json:"BatchSize"`
+	StartingPosition                    string             `json:"StartingPosition"`
+	MaximumBatchingWindowInSeconds      int                `json:"MaximumBatchingWindowInSeconds"`
+	FilterCriteria                      *FilterCriteria    `json:"FilterCriteria"`
+	MaximumRecordAgeInSeconds           *int               `json:"MaximumRecordAgeInSeconds"`
+	MaximumRetryAttempts                *int               `json:"MaximumRetryAttempts"`
+	TumblingWindowInSeconds             int                `json:"TumblingWindowInSeconds"`
+	BisectBatchOnFunctionError          bool               `json:"BisectBatchOnFunctionError"`
+	DestinationConfig                   *DestinationConfig `json:"DestinationConfig"`
+	ScalingConfig                       *ScalingConfig     `json:"ScalingConfig"`
+	Enabled                             *bool              `json:"Enabled"` // nil == true (default enabled)
+	FunctionResponseTypes               json.RawMessage    `json:"FunctionResponseTypes"`
+	ParallelizationFactor               json.RawMessage    `json:"ParallelizationFactor"`
+	StartingPositionTimestamp           json.RawMessage    `json:"StartingPositionTimestamp"`
+	SourceAccessConfigurations          json.RawMessage    `json:"SourceAccessConfigurations"`
+	SelfManagedEventSource              json.RawMessage    `json:"SelfManagedEventSource"`
+	Topics                              json.RawMessage    `json:"Topics"`
+	Queues                              json.RawMessage    `json:"Queues"`
+	KMSKeyArn                           json.RawMessage    `json:"KMSKeyArn"`
+	MetricsConfig                       json.RawMessage    `json:"MetricsConfig"`
+	ProvisionedPollerConfig             json.RawMessage    `json:"ProvisionedPollerConfig"`
+	AmazonManagedKafkaEventSourceConfig json.RawMessage    `json:"AmazonManagedKafkaEventSourceConfig"`
+	DocumentDBEventSourceConfig         json.RawMessage    `json:"DocumentDBEventSourceConfig"`
+	LoggingConfig                       json.RawMessage    `json:"LoggingConfig"`
+	SelfManagedKafkaEventSourceConfig   json.RawMessage    `json:"SelfManagedKafkaEventSourceConfig"`
+	Tags                                json.RawMessage    `json:"Tags"`
+}
+
+const (
+	defaultSQSBatchSize          = 10
+	defaultStreamBatchSize       = 100
+	maximumESMBatchSize          = 10000
+	maximumFIFOBatchSize         = 10
+	maximumBatchingWindowSeconds = 300
+)
+
+func eventSourceBatchSize(eventSourceARN string, requested *int) int {
+	if requested != nil {
+		return *requested
+	}
+	if strings.Contains(strings.ToLower(eventSourceARN), ":sqs:") {
+		return defaultSQSBatchSize
+	}
+	return defaultStreamBatchSize
+}
+
+func validateEventSourceBatching(eventSourceARN string, batchSize, maximumBatchingWindow int, batchSizeSet bool) *protocol.AWSError {
+	if batchSize < 1 || batchSize > maximumESMBatchSize {
+		return smithyIntegerConstraint("batchSize", batchSize, 1, maximumESMBatchSize)
+	}
+	if maximumBatchingWindow < 0 || maximumBatchingWindow > maximumBatchingWindowSeconds {
+		return smithyIntegerConstraint("maximumBatchingWindowInSeconds", maximumBatchingWindow, 0, maximumBatchingWindowSeconds)
+	}
+
+	source := strings.ToLower(eventSourceARN)
+	isSQS := strings.Contains(source, ":sqs:")
+	isFIFO := isSQS && strings.HasSuffix(source, ".fifo")
+	if isFIFO {
+		if batchSize > maximumFIFOBatchSize {
+			return lambdaInvalidParameter("Batch size cannot be greater than 10 for an SQS FIFO queue.")
+		}
+		if maximumBatchingWindow != 0 {
+			return lambdaInvalidParameter("Maximum batching window is not supported for SQS FIFO queues.")
+		}
+	}
+	isStream := strings.Contains(source, ":kinesis:") || strings.Contains(source, ":dynamodb:")
+	if batchSizeSet && (isSQS || isStream) && batchSize > defaultSQSBatchSize && maximumBatchingWindow < 1 {
+		// Matches a publicly reported AWS Lambda response surfaced through
+		// CloudFormation; exact direct-API text still needs an approved capture:
+		// https://forum.serverless.com/t/maximumbatchingwindow-not-passed-to-aws/13837
+		return lambdaInvalidParameter("Maximum batch window in seconds must be greater than 0 if maximum batch size is greater than 10")
+	}
+	return nil
 }
 
 // updateESMRequest is the wire request body for UpdateEventSourceMapping.
 type updateESMRequest struct {
-	FunctionName                   *string            `json:"FunctionName"`
-	BatchSize                      *int               `json:"BatchSize"`
-	MaximumBatchingWindowInSeconds *int               `json:"MaximumBatchingWindowInSeconds"`
-	FilterCriteria                 *FilterCriteria    `json:"FilterCriteria"`
-	MaximumRecordAgeInSeconds      *int               `json:"MaximumRecordAgeInSeconds"`
-	MaximumRetryAttempts           *int               `json:"MaximumRetryAttempts"`
-	TumblingWindowInSeconds        *int               `json:"TumblingWindowInSeconds"`
-	BisectBatchOnFunctionError     *bool              `json:"BisectBatchOnFunctionError"`
-	DestinationConfig              *DestinationConfig `json:"DestinationConfig"`
-	ScalingConfig                  *ScalingConfig     `json:"ScalingConfig"`
-	Enabled                        *bool              `json:"Enabled"`
+	FunctionName                        *string            `json:"FunctionName"`
+	BatchSize                           *int               `json:"BatchSize"`
+	MaximumBatchingWindowInSeconds      *int               `json:"MaximumBatchingWindowInSeconds"`
+	FilterCriteria                      *FilterCriteria    `json:"FilterCriteria"`
+	MaximumRecordAgeInSeconds           *int               `json:"MaximumRecordAgeInSeconds"`
+	MaximumRetryAttempts                *int               `json:"MaximumRetryAttempts"`
+	TumblingWindowInSeconds             *int               `json:"TumblingWindowInSeconds"`
+	BisectBatchOnFunctionError          *bool              `json:"BisectBatchOnFunctionError"`
+	DestinationConfig                   *DestinationConfig `json:"DestinationConfig"`
+	ScalingConfig                       *ScalingConfig     `json:"ScalingConfig"`
+	Enabled                             *bool              `json:"Enabled"`
+	FunctionResponseTypes               json.RawMessage    `json:"FunctionResponseTypes"`
+	ParallelizationFactor               json.RawMessage    `json:"ParallelizationFactor"`
+	SourceAccessConfigurations          json.RawMessage    `json:"SourceAccessConfigurations"`
+	KMSKeyArn                           json.RawMessage    `json:"KMSKeyArn"`
+	MetricsConfig                       json.RawMessage    `json:"MetricsConfig"`
+	ProvisionedPollerConfig             json.RawMessage    `json:"ProvisionedPollerConfig"`
+	Topics                              json.RawMessage    `json:"Topics"`
+	Queues                              json.RawMessage    `json:"Queues"`
+	AmazonManagedKafkaEventSourceConfig json.RawMessage    `json:"AmazonManagedKafkaEventSourceConfig"`
+	DocumentDBEventSourceConfig         json.RawMessage    `json:"DocumentDBEventSourceConfig"`
+	LoggingConfig                       json.RawMessage    `json:"LoggingConfig"`
+	SelfManagedKafkaEventSourceConfig   json.RawMessage    `json:"SelfManagedKafkaEventSourceConfig"`
 }
 
 // listESMResponse is the wire response for ListEventSourceMappings.
@@ -68,6 +142,17 @@ type listESMResponse struct {
 func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Request) {
 	var req createESMRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if hasUnsupportedRequestField(
+		rawRequestField(req.FunctionResponseTypes), rawRequestField(req.ParallelizationFactor),
+		rawRequestField(req.StartingPositionTimestamp), rawRequestField(req.SourceAccessConfigurations),
+		rawRequestField(req.SelfManagedEventSource), rawRequestField(req.Topics), rawRequestField(req.Queues),
+		rawRequestField(req.KMSKeyArn), rawRequestField(req.MetricsConfig), rawRequestField(req.ProvisionedPollerConfig),
+		rawRequestField(req.AmazonManagedKafkaEventSourceConfig), rawRequestField(req.DocumentDBEventSourceConfig),
+		rawRequestField(req.LoggingConfig), rawRequestField(req.SelfManagedKafkaEventSourceConfig), rawRequestField(req.Tags),
+	) {
+		protocol.NotImplementedJSON(w, r)
 		return
 	}
 	if req.FunctionName == "" {
@@ -85,6 +170,11 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	isDynamoDBStream := strings.Contains(sourceLower, ":dynamodb:") && strings.Contains(sourceLower, "/stream/")
 	if !isSQS && !isDynamoDBStream {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ValidationException", Message: "Unsupported event source type. EventSourceArn must be an SQS queue ARN or a DynamoDB Streams ARN", HTTPStatus: http.StatusBadRequest})
+		return
+	}
+	batchSize := eventSourceBatchSize(req.EventSourceArn, req.BatchSize)
+	if aerr := validateEventSourceBatching(req.EventSourceArn, batchSize, req.MaximumBatchingWindowInSeconds, req.BatchSize != nil); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -117,12 +207,6 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Apply defaults.
-	batchSize := req.BatchSize
-	if batchSize <= 0 {
-		batchSize = 10
-	}
-
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -139,6 +223,7 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		State:                          initialState,
 		StateTransitionReason:          "USER_INITIATED",
 		BatchSize:                      batchSize,
+		BatchSizeExplicit:              req.BatchSize != nil,
 		StartingPosition:               req.StartingPosition,
 		MaximumBatchingWindowInSeconds: req.MaximumBatchingWindowInSeconds,
 		FilterCriteria:                 req.FilterCriteria,
@@ -151,6 +236,9 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		LastModified:                   float64(h.clk.Now().UnixMilli()) / 1000,
 		LastProcessingResult:           "No records processed",
 	}
+	esm.EventSourceMappingArn = protocol.ARN(
+		middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, "lambda", "event-source-mapping:"+esm.UUID,
+	)
 
 	if aerr := h.esm.putESM(r.Context(), esm); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -163,7 +251,7 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(esm)
 }
 
@@ -187,6 +275,9 @@ func (h *Handler) ListEventSourceMappings(w http.ResponseWriter, r *http.Request
 	if mappings == nil {
 		mappings = []*EventSourceMapping{}
 	}
+	for _, mapping := range mappings {
+		h.ensureEventSourceMappingARN(r, mapping)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -205,6 +296,7 @@ func (h *Handler) GetEventSourceMapping(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("The event source arn (%s) and/or function provided is incorrect", id), HTTPStatus: http.StatusNotFound})
 		return
 	}
+	h.ensureEventSourceMappingARN(r, esm)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -223,9 +315,35 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("The event source arn (%s) and/or function provided is incorrect", id), HTTPStatus: http.StatusNotFound})
 		return
 	}
+	h.ensureEventSourceMappingARN(r, esm)
 
 	var req updateESMRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if hasUnsupportedRequestField(
+		rawRequestField(req.FunctionResponseTypes), rawRequestField(req.ParallelizationFactor),
+		rawRequestField(req.SourceAccessConfigurations), rawRequestField(req.KMSKeyArn),
+		rawRequestField(req.MetricsConfig), rawRequestField(req.ProvisionedPollerConfig),
+		rawRequestField(req.Topics), rawRequestField(req.Queues),
+		rawRequestField(req.AmazonManagedKafkaEventSourceConfig), rawRequestField(req.DocumentDBEventSourceConfig),
+		rawRequestField(req.LoggingConfig), rawRequestField(req.SelfManagedKafkaEventSourceConfig),
+	) {
+		protocol.NotImplementedJSON(w, r)
+		return
+	}
+
+	batchSize := esm.BatchSize
+	if req.BatchSize != nil {
+		batchSize = *req.BatchSize
+	}
+	maximumBatchingWindow := esm.MaximumBatchingWindowInSeconds
+	if req.MaximumBatchingWindowInSeconds != nil {
+		maximumBatchingWindow = *req.MaximumBatchingWindowInSeconds
+	}
+	batchSizeExplicit := esm.BatchSizeExplicit || req.BatchSize != nil
+	if aerr := validateEventSourceBatching(esm.EventSourceArn, batchSize, maximumBatchingWindow, batchSizeExplicit); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -246,10 +364,11 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		esm.FunctionArn = protocol.LambdaARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, fn.Name)
 	}
 	if req.BatchSize != nil {
-		esm.BatchSize = *req.BatchSize
+		esm.BatchSize = batchSize
+		esm.BatchSizeExplicit = true
 	}
 	if req.MaximumBatchingWindowInSeconds != nil {
-		esm.MaximumBatchingWindowInSeconds = *req.MaximumBatchingWindowInSeconds
+		esm.MaximumBatchingWindowInSeconds = maximumBatchingWindow
 	}
 	if req.FilterCriteria != nil {
 		esm.FilterCriteria = req.FilterCriteria
@@ -297,8 +416,17 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(esm)
+}
+
+func (h *Handler) ensureEventSourceMappingARN(r *http.Request, esm *EventSourceMapping) {
+	if esm == nil || esm.EventSourceMappingArn != "" {
+		return
+	}
+	esm.EventSourceMappingArn = protocol.ARN(
+		middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, "lambda", "event-source-mapping:"+esm.UUID,
+	)
 }
 
 // DeleteEventSourceMapping handles DELETE /2015-03-31/event-source-mappings/{uuid}.
@@ -313,6 +441,7 @@ func (h *Handler) DeleteEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("The event source arn (%s) and/or function provided is incorrect", id), HTTPStatus: http.StatusNotFound})
 		return
 	}
+	h.ensureEventSourceMappingARN(r, esm)
 
 	// Mark as deleting, persist, then remove.
 	esm.State = esmStateDeleting

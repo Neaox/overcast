@@ -90,6 +90,7 @@ var namespaceTiers = map[string]Tier{
 
 	// ── Lambda ──────────────────────────────────────────────────────────
 	"lambda:functions":               TierHot,
+	"lambda:function-policies":       TierHot,
 	"lambda:versions":                TierHot,
 	"lambda:aliases":                 TierHot,
 	"lambda:esm":                     TierHot,

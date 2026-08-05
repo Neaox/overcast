@@ -76,7 +76,7 @@ public final class IamGroup implements ServiceGroup {
                 Map.entry("AddRoleToInstanceProfile",this::addRoleToInstanceProfile),
                 Map.entry("GetInstanceProfile",     this::getInstanceProfile),
                 Map.entry("CreatePolicy",           this::createIamPolicy),
-                Map.entry("GetPolicy",              this::getIamPolicy),
+                Map.entry("iam-policies:GetPolicy", this::getIamPolicy),
                 Map.entry("ListPolicies",           this::listIamPolicies),
                 Map.entry("DeletePolicy",           this::deleteIamPolicy),
                 Map.entry("CreateGroup",            this::createGroup),

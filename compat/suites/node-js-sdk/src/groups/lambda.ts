@@ -29,6 +29,9 @@ import {
   PublishLayerVersionCommand,
   ListLayersCommand,
   DeleteLayerVersionCommand,
+  AddPermissionCommand,
+  GetPolicyCommand,
+  RemovePermissionCommand,
   type FunctionConfiguration,
 } from "@aws-sdk/client-lambda";
 import { DeleteLogGroupCommand } from "@aws-sdk/client-cloudwatch-logs";
@@ -202,6 +205,90 @@ export function makeLambdaGroups(suite: string): TestGroup[] {
       teardown: async (ctx) => {
         const { lambda, logs } = makeClients(ctx);
         await deleteFunctionAndLogGroup(lambda, logs, `${ctx.runId}-fn`);
+      },
+    },
+
+    // ── lambda-policy ──────────────────────────────────────────────────────
+    {
+      suite,
+      service: "lambda",
+      name: "lambda-policy",
+      tests: [
+        {
+          name: "AddPermission",
+          fn: async (ctx) => {
+            const { lambda } = makeClients(ctx);
+            const name = `${ctx.runId}-fn-policy`;
+            await lambda.send(
+              new CreateFunctionCommand({
+                FunctionName: name,
+                Runtime: RUNTIME,
+                Handler: HANDLER,
+                Role: ROLE_ARN,
+                Code: { ZipFile: makeZipBuffer() },
+              }),
+            );
+            const response = await lambda.send(
+              new AddPermissionCommand({
+                FunctionName: name,
+                StatementId: "allow-s3",
+                Action: "lambda:InvokeFunction",
+                Principal: "s3.amazonaws.com",
+                SourceAccount: "000000000000",
+              }),
+            );
+            assert.match(response.Statement ?? "", /"Sid":"allow-s3"/);
+            const stored = await lambda.send(
+              new GetPolicyCommand({ FunctionName: name }),
+            );
+            assert.match(stored.Policy ?? "", /"Sid":"allow-s3"/);
+          },
+        },
+        {
+          name: "GetPolicy",
+          fn: async (ctx) => {
+            const { lambda } = makeClients(ctx);
+            const response = await lambda.send(
+              new GetPolicyCommand({
+                FunctionName: `${ctx.runId}-fn-policy`,
+              }),
+            );
+            const policy = JSON.parse(response.Policy ?? "{}") as {
+              Statement?: Array<{ Sid?: string }>;
+            };
+            assert.ok(
+              policy.Statement?.some(
+                (statement) => statement.Sid === "allow-s3",
+              ),
+            );
+            assert.ok(response.RevisionId);
+          },
+        },
+        {
+          name: "RemovePermission",
+          fn: async (ctx) => {
+            const { lambda } = makeClients(ctx);
+            const name = `${ctx.runId}-fn-policy`;
+            await lambda.send(
+              new RemovePermissionCommand({
+                FunctionName: name,
+                StatementId: "allow-s3",
+              }),
+            );
+            await assert.rejects(
+              lambda.send(new GetPolicyCommand({ FunctionName: name })),
+              (error: unknown) =>
+                typeof error === "object" &&
+                error !== null &&
+                "name" in error &&
+                error.name === "ResourceNotFoundException",
+            );
+          },
+        },
+      ],
+      teardown: async (ctx) => {
+        const { lambda, logs } = makeClients(ctx);
+        await deleteFunctionAndLogGroup(lambda, logs, `${ctx.runId}-fn-policy`);
       },
     },
 

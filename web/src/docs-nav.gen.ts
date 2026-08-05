@@ -3519,6 +3519,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Resource-based policies",
+        "id": "resource-based-policies"
+      },
+      {
+        "depth": 3,
         "text": "Code signing",
         "id": "code-signing"
       },

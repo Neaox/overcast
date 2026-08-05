@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -34,6 +35,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -180,19 +182,28 @@ type Function struct {
 	// functionCodeIdentity and CodeSha256 responses read, so the invoke path
 	// never rehashes the package. "" only on records persisted before the field
 	// existed, where readers fall back to hashing CodeZip.
-	CodeHash        string             `json:"code_hash,omitempty"`
-	CodeS3Bucket    string             `json:"code_s3_bucket,omitempty"`
-	CodeS3Key       string             `json:"code_s3_key,omitempty"`
-	ImageUri        string             `json:"image_uri,omitempty"` // PackageType=Image only
-	PackageType     string             `json:"package_type,omitempty"`
-	Architectures   []string           `json:"architectures,omitempty"`
-	State           string             `json:"state"` // "Active", "Pending", "Inactive", "Failed"
-	StateReason     string             `json:"state_reason,omitempty"`
-	StateReasonCode string             `json:"state_reason_code,omitempty"` // e.g. "Creating", "Idle", "ImagePullError"
-	RevisionId      string             `json:"revision_id,omitempty"`
-	LastModified    string             `json:"last_modified,omitempty"`
-	LogGroup        string             `json:"log_group,omitempty"` // Custom log group; defaults to /aws/lambda/{name}
-	Layers          []LayerVersionLink `json:"layers,omitempty"`    // Attached layer versions (empty until layers are implemented)
+	CodeHash string `json:"code_hash,omitempty"`
+	// CodeGeneration changes only for explicit code-source writes. Reactive
+	// S3 refreshes preserve it so concurrent object events can be ordered while
+	// every manual/inline update—including one with identical bytes—fences out
+	// fetches that started against the previous generation.
+	CodeGeneration      string             `json:"code_generation,omitempty"`
+	CodeS3Bucket        string             `json:"code_s3_bucket,omitempty"`
+	CodeS3Key           string             `json:"code_s3_key,omitempty"`
+	ImageUri            string             `json:"image_uri,omitempty"` // PackageType=Image only
+	PackageType         string             `json:"package_type,omitempty"`
+	Architectures       []string           `json:"architectures,omitempty"`
+	State               string             `json:"state"` // "Active", "Pending", "Inactive", "Failed"
+	StateReason         string             `json:"state_reason,omitempty"`
+	StateReasonCode     string             `json:"state_reason_code,omitempty"` // e.g. "Creating", "Idle", "ImagePullError"
+	RevisionId          string             `json:"revision_id,omitempty"`
+	CreationID          string             `json:"creation_id,omitempty"`
+	LastModified        string             `json:"last_modified,omitempty"`
+	LogGroup            string             `json:"log_group,omitempty"` // Custom log group; defaults to /aws/lambda/{name}
+	LogFormat           string             `json:"log_format,omitempty"`
+	ApplicationLogLevel string             `json:"application_log_level,omitempty"`
+	SystemLogLevel      string             `json:"system_log_level,omitempty"`
+	Layers              []LayerVersionLink `json:"layers,omitempty"` // Attached layer versions (empty until layers are implemented)
 	// CodeSigningConfigArn is the code signing configuration associated with
 	// the function, or "" when there is none — the usual case, since code
 	// signing is opt-in. Stored and echoed back so SDKs and CDK read the
@@ -222,6 +233,37 @@ type Function struct {
 	ReservedConcurrency *int `json:"reserved_concurrency,omitempty"`
 }
 
+// functionImagePullGeneration identifies the exact deployment generation a
+// background image pull prepared. State alone is insufficient: a function can
+// remain Pending while its image, platform, or entire creation changes.
+type functionImagePullGeneration struct {
+	arn        string
+	creationID string
+	image      string
+	platform   string
+}
+
+func imagePullGenerationForFunction(fn *Function) (functionImagePullGeneration, error) {
+	image, err := imageForFunction(fn)
+	if err != nil {
+		return functionImagePullGeneration{}, err
+	}
+	return functionImagePullGeneration{
+		arn:        fn.ARN,
+		creationID: fn.CreationID,
+		image:      image,
+		platform:   dockerPlatformForLambdaArchitectures(fn.Architectures),
+	}, nil
+}
+
+func (g functionImagePullGeneration) matches(fn *Function) bool {
+	if fn == nil || fn.State != "Pending" || fn.ARN != g.arn || fn.CreationID != g.creationID {
+		return false
+	}
+	current, err := imagePullGenerationForFunction(fn)
+	return err == nil && current.image == g.image && current.platform == g.platform
+}
+
 // ImageConfig overrides for container image Lambda functions.
 type ImageConfig struct {
 	EntryPoint       []string `json:"entry_point,omitempty"`
@@ -231,9 +273,10 @@ type ImageConfig struct {
 
 // VpcConfig associates a Lambda function with a VPC.
 type VpcConfig struct {
-	SubnetIds        []string `json:"SubnetIds,omitempty"`
-	SecurityGroupIds []string `json:"SecurityGroupIds,omitempty"`
-	VpcId            string   `json:"VpcId,omitempty"`
+	SubnetIds               []string `json:"SubnetIds,omitempty"`
+	SecurityGroupIds        []string `json:"SecurityGroupIds,omitempty"`
+	Ipv6AllowedForDualStack bool     `json:"Ipv6AllowedForDualStack,omitempty"`
+	VpcId                   string   `json:"VpcId,omitempty"`
 }
 
 // FileSystemConfig mirrors the AWS FileSystemConfig shape: an EFS access
@@ -248,6 +291,15 @@ type FileSystemConfig struct {
 // CodeSize and CodeHash fields in step. Every site that changes CodeZip must
 // go through here — see the CodeZip field comment for why.
 func (f *Function) setCode(zip []byte) {
+	f.setCodeBytes(zip)
+	f.CodeGeneration = uuid.NewString()
+}
+
+func (f *Function) setSyncedCode(zip []byte) {
+	f.setCodeBytes(zip)
+}
+
+func (f *Function) setCodeBytes(zip []byte) {
 	f.CodeZip = zip
 	f.CodeSize = int64(len(zip))
 	f.CodeHash = codeHashOf(zip)
@@ -450,6 +502,7 @@ func (s *Service) InitS3Sync(fetch S3FetchFunc) {
 	}
 	w := newS3SyncWatcher(s.ls, fetch, s.log.Logger(), s.clk)
 	w.retire = s.handler.retireExecutionEnvironment
+	s.handler.setS3SyncWatcher(w)
 	w.register(bus)
 }
 
@@ -651,7 +704,7 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 
 	// Wire the image prewarmer so CreateFunction can kick off image pulls
 	// in the background instead of paying the cost on the first Invoke.
-	s.handler.prewarmer = containerRuntime.PrewarmFunction
+	s.handler.setPrewarmer(containerRuntime.PrewarmFunction)
 
 	// Cold starts materialize the deployment package from its own store key —
 	// function records travel without the bytes (see lambdaStore.putFunction).
@@ -755,18 +808,18 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 		return
 	}
 	for _, fn := range fns {
-		image, err := imageForFunction(fn)
+		pullGeneration, err := imagePullGenerationForFunction(fn)
 		if err != nil {
 			s.log.Debug("skip seed: cannot resolve image for persisted function",
 				zap.String("function", fn.Name),
 				zap.Error(err))
 			continue
 		}
-		pullErr := cr.ensureImage(ctx, image, dockerPlatformForLambdaArchitectures(fn.Architectures))
+		pullErr := cr.ensureImage(ctx, pullGeneration.image, pullGeneration.platform)
 		if pullErr != nil {
 			s.log.Warn("seed pull failed for persisted function",
 				zap.String("function", fn.Name),
-				zap.String("image", image),
+				zap.String("image", pullGeneration.image),
 				zap.Error(pullErr))
 		}
 
@@ -780,35 +833,38 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 		if fn.State == "Pending" {
 			// Use the function's own region for the store key.
 			fnCtx := middleware.ContextWithRegion(ctx, regionFromFunctionARN(fn.ARN))
-			fresh, aerr := s.ls.getFunction(fnCtx, fn.Name)
+			fresh, changed, aerr := s.ls.mutateFunction(fnCtx, fn.Name, func(current *Function) (bool, *protocol.AWSError) {
+				if !pullGeneration.matches(current) {
+					return false, nil
+				}
+				if pullErr != nil {
+					current.State = "Failed"
+					current.StateReason = "Failed to pull container image: " + pullErr.Error()
+					current.StateReasonCode = "ImagePullError"
+				} else {
+					current.State = "Active"
+					current.StateReason = ""
+					current.StateReasonCode = ""
+				}
+				return true, nil
+			})
 			if aerr != nil {
 				s.log.Warn("failed to re-read pending function for reconciliation",
 					zap.String("function", fn.Name),
 					zap.String("error", aerr.Message))
 				continue
 			}
-			if fresh == nil || fresh.State != "Pending" {
-				continue // deleted or transitioned while the pulls ran
+			if !changed {
+				// A different Pending generation replaced the startup snapshot.
+				// Arrange its own pull outside mutateFunction's lock.
+				if fresh != nil && fresh.State == "Pending" && s.handler != nil {
+					s.handler.startFunctionPrewarm(fresh)
+				}
+				continue
 			}
-			if pullErr != nil {
-				fresh.State = "Failed"
-				fresh.StateReason = "Failed to pull container image: " + pullErr.Error()
-				fresh.StateReasonCode = "ImagePullError"
-			} else {
-				fresh.State = "Active"
-				fresh.StateReason = ""
-				fresh.StateReasonCode = ""
-			}
-			if serr := s.ls.putFunction(fnCtx, fresh); serr != nil {
-				s.log.Warn("failed to reconcile pending function state",
-					zap.String("function", fn.Name),
-					zap.String("target_state", fresh.State),
-					zap.String("error", serr.Message))
-			} else {
-				s.log.Info("reconciled pending function",
-					zap.String("function", fn.Name),
-					zap.String("state", fresh.State))
-			}
+			s.log.Info("reconciled pending function",
+				zap.String("function", fn.Name),
+				zap.String("state", fresh.State))
 		}
 	}
 }
@@ -952,6 +1008,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(apiBase+"/event-source-mappings/{uuid}", s.handler.UpdateEventSourceMapping)
 	r.Delete(apiBase+"/event-source-mappings/{uuid}", s.handler.DeleteEventSourceMapping)
 	r.Get(apiBase+"/functions/{name}", s.handler.GetFunction)
+	r.Post(apiBase+"/functions/{name}/policy", s.handler.AddPermission)
+	r.Get(apiBase+"/functions/{name}/policy", s.handler.GetPolicy)
+	r.Delete(apiBase+"/functions/{name}/policy/{statementId}", s.handler.RemovePermission)
 	r.Get(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.GetFunctionCodeSigningConfig)
 	r.Put(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.PutFunctionCodeSigningConfig)
 	r.Delete(codeSigningBase+"/functions/{name}/code-signing-config", s.handler.DeleteFunctionCodeSigningConfig)

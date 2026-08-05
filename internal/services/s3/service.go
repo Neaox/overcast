@@ -35,6 +35,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -113,13 +114,20 @@ func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, invoker eve
 // GetObjectBytes returns the full body of an S3 object for internal callers
 // such as the Lambda S3-reactive sync watcher.
 // Returns an error if the bucket or key does not exist.
-func (s *Service) GetObjectBytes(ctx context.Context, bucket, key string) ([]byte, error) {
+func (s *Service) GetObjectBytes(ctx context.Context, bucket, key string) ([]byte, *protocol.AWSError) {
+	if _, aerr := s.handler.store.getObjectMeta(ctx, bucket, key); aerr != nil {
+		return nil, aerr
+	}
 	f, aerr := s.handler.store.openBody(bucket, key)
 	if aerr != nil {
-		return nil, fmt.Errorf("s3: get object %s/%s: %w", bucket, key, aerr)
+		return nil, aerr
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	body, err := io.ReadAll(f)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: read object %s/%s: %w", bucket, key, err))
+	}
+	return body, nil
 }
 
 // RegisterRoutes mounts all S3 endpoints onto the given router.

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -201,7 +202,7 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 		// anyway would persist the literal "{{resolve:...}}" text as the
 		// property's value, which every service downstream then treats as data.
 		props, recordedProps, provErr := p.resolveProperties(res, rCtx)
-		propsHash := hashProps(recordedProps)
+		propsHash := hashResourceProperties(res.Type, recordedProps, stack.Tags)
 		resStart := p.clk.Now()
 		var physID string
 		if provErr == nil {
@@ -282,13 +283,13 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 
 // ── Update stack (async) ───────────────────────────────────────────────────
 
-func (p *provisioner) updateStack(stack *Stack, tmpl *Template, onComplete stackCompletionFunc) {
+func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previousStackTags []Tag, onComplete stackCompletionFunc) {
 	done := make(chan struct{})
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		defer close(done)
-		p.updateStackResources(stack, tmpl)
+		p.updateStackResources(stack, tmpl, previousStackTags)
 		if onComplete != nil {
 			onComplete(p.regionCtx(stack.Region), stack)
 		}
@@ -296,10 +297,11 @@ func (p *provisioner) updateStack(stack *Stack, tmpl *Template, onComplete stack
 	p.awaitBriefly(done)
 }
 
-func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
+func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previousStackTags []Tag) {
 	ctx := p.regionCtx(stack.Region)
 
 	rCtx := p.buildResolveContext(stack, tmpl)
+	rCtx.PreviousStackTags = append([]Tag(nil), previousStackTags...)
 
 	// Emit the initial stack UPDATE_IN_PROGRESS event.
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateInProgress, "User Initiated")
@@ -337,6 +339,11 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 	// Replacement fallbacks can return the same physical ID for upsert-shaped
 	// services and must not be replayed as in-place updates during rollback.
 	inPlaceUpdated := map[string]bool{}
+	// A handler may fail after applying a mutation and also fail its own
+	// compensation. Keep that distinct from a validation rejection so rollback
+	// does not report a clean restoration over service-side state it could not
+	// restore.
+	dirtyUpdates := map[string]bool{}
 
 	for _, logicalID := range order {
 		if ctx.Err() != nil {
@@ -348,7 +355,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 		// As in the create path: a reference that will not resolve fails the
 		// resource rather than being written into it verbatim.
 		props, recordedProps, refErr := p.resolveProperties(res, rCtx)
-		propsHash := hashProps(recordedProps)
+		propsHash := hashResourceProperties(res.Type, recordedProps, stack.Tags)
 
 		if old, ok := existing[logicalID]; ok && old.Type == res.Type {
 			// Same logical ID and type. Diff the resolved properties and
@@ -362,7 +369,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 				rCtx.Attributes[logicalID] = old.Attributes
 			}
 
-			if refErr == nil && (old.PropertiesHash == "" || old.PropertiesHash == propsHash) {
+			if refErr == nil && resourcePropertiesMatch(old.PropertiesHash, res.Type, recordedProps, stack.Tags, previousStackTags) {
 				// No change, or legacy resource without a recorded hash —
 				// treat as unchanged. (Stacks created before property
 				// hashing was added have no recorded hash; without a
@@ -409,21 +416,37 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 			}
 			now := p.clk.Now()
 			if updErr != nil {
-				newResources = append(newResources, StackResource{
+				resourceDirty := isDirtyUpdateFailure(updErr)
+				resourceStateChanged := resourceDirty || outcome.UpdatedInPlace
+				if resourceDirty {
+					dirtyUpdates[logicalID] = true
+				}
+				failedResource := StackResource{
 					LogicalID:    logicalID,
 					PhysicalID:   old.PhysicalID,
 					Type:         res.Type,
 					Status:       ResourceUpdateFailed,
 					StatusReason: updErr.Error(),
 					Timestamp:    now,
-				})
-				p.recordEvent(ctx, stack, logicalID, old.PhysicalID, res.Type, ResourceUpdateFailed, updErr.Error())
+				}
+				if resourceStateChanged {
+					if outcome.PhysicalID != "" {
+						failedResource.PhysicalID = outcome.PhysicalID
+					}
+					failedResource.Attributes = rCtx.Attributes[logicalID]
+					failedResource.PropertiesHash = propsHash
+					failedResource.Properties = recordedProps
+					failedResource.DeletionPolicy = res.DeletionPolicy
+					failedResource.UpdateReplacePolicy = res.UpdateReplacePolicy
+				}
+				newResources = append(newResources, failedResource)
+				p.recordEvent(ctx, stack, logicalID, failedResource.PhysicalID, res.Type, ResourceUpdateFailed, updErr.Error())
 				if stack.DisableRollback {
 					p.failStack(ctx, stack, StatusUpdateFailed,
 						fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 					return
 				}
-				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, rCtx,
+				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, dirtyUpdates, rCtx,
 					fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 				return
 			}
@@ -474,7 +497,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 			}
 			// Roll back: delete newly created resources (those not in `existing`)
 			// in reverse order, then restore the previous resource list.
-			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, rCtx,
+			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, dirtyUpdates, rCtx,
 				fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
 			return
 		}
@@ -763,22 +786,24 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 			if physID == "" {
 				physID = oldPhysicalID
 			}
-			// The change has been applied; the resource may still be settling
-			// into it — see resourceStabilizer. Failing to settle is terminal
-			// for the resource rather than a reason to replace it, so it takes
-			// the same updateFailure path a handler's own failure does.
-			if stabilizer, ok := handler.(resourceStabilizer); ok {
-				if stErr := stabilizer.Stabilize(ctx, router, p.cfg, p.clk, physID, rCtx); stErr != nil {
-					return resourceUpdateOutcome{}, failUpdate(stErr)
-				}
-			}
+			outcome := resourceUpdateOutcome{PhysicalID: physID, UpdatedInPlace: true}
 			if len(attrs) > 0 {
 				if rCtx.Attributes == nil {
 					rCtx.Attributes = make(map[string]map[string]string)
 				}
 				rCtx.Attributes[logicalID] = attrs
 			}
-			return resourceUpdateOutcome{PhysicalID: physID, UpdatedInPlace: true}, nil
+			// The change has been applied; the resource may still be settling
+			// into it — see resourceStabilizer. Failing to settle is terminal
+			// for the resource rather than a reason to replace it, so it takes
+			// the same updateFailure path a handler's own failure does. The
+			// successful outcome still travels back so rollback can reverse it.
+			if stabilizer, ok := handler.(resourceStabilizer); ok {
+				if stErr := stabilizer.Stabilize(ctx, router, p.cfg, p.clk, physID, rCtx); stErr != nil {
+					return outcome, failUpdate(stErr)
+				}
+			}
+			return outcome, nil
 		}
 		// An update that applied and then failed is terminal — replacing the
 		// resource would neither fix it nor be what AWS does. See updateFailure.
@@ -885,6 +910,48 @@ func hashProps(props map[string]any) string {
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// hashResourceProperties includes only tags CloudFormation propagates outside
+// the resource property map. Resource-level tags are already present in props;
+// merging here also avoids updates when they override a changed stack tag.
+func hashResourceProperties(resourceType string, props map[string]any, stackTags []Tag) string {
+	switch resourceType {
+	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping":
+		return hashProps(map[string]any{
+			"Properties":    props,
+			"EffectiveTags": mergeLambdaTags(stackTags, props["Tags"]),
+		})
+	case "AWS::CloudFormation::Stack":
+		return hashProps(map[string]any{
+			"Properties":    props,
+			"EffectiveTags": mergeNestedStackTags(stackTags, props["Tags"]),
+		})
+	default:
+		return hashProps(props)
+	}
+}
+
+func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any, stackTags, previousStackTags []Tag) bool {
+	if oldHash == hashResourceProperties(resourceType, props, stackTags) {
+		return true
+	}
+	// Hashes written before propagated-tag tracking contained only the property
+	// map. Preserve their no-op behavior when effective tags did not change,
+	// while still reconciling a real stack-only tag delta.
+	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::CloudFormation::Stack" {
+		return oldHash == ""
+	}
+	var currentTags, previousTags any
+	if resourceType == "AWS::CloudFormation::Stack" {
+		currentTags = mergeNestedStackTags(stackTags, props["Tags"])
+		previousTags = mergeNestedStackTags(previousStackTags, props["Tags"])
+	} else {
+		currentTags = mergeLambdaTags(stackTags, props["Tags"])
+		previousTags = mergeLambdaTags(previousStackTags, props["Tags"])
+	}
+	effectiveTagsUnchanged := reflect.DeepEqual(currentTags, previousTags)
+	return effectiveTagsUnchanged && (oldHash == "" || oldHash == hashProps(props))
 }
 
 // deleteResource tears down a provisioned resource.
@@ -1120,8 +1187,8 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 // rollbackUpdate is the default failure handler for UpdateStack.
 //
 // It undoes the update in reverse order and restores the previous resource
-// list, marking the stack UPDATE_ROLLBACK_COMPLETE. Three kinds of resource
-// are undone:
+// list, marking the stack UPDATE_ROLLBACK_COMPLETE when every resource is
+// restored. Four kinds of resource are handled:
 //
 //   - Resources created by this update (absent before it) are deleted.
 //   - Resources this update *replaced* are rolled back to the original: the
@@ -1131,10 +1198,13 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 //     replacement leaves the resource intact rather than destroying it.
 //   - Resources successfully updated in place are passed back through their
 //     resourceUpdater with the previous properties.
+//   - Resources whose updater could not compensate an applied mutation, or
+//     whose reverse update fails here, are retained as UPDATE_FAILED and make
+//     the rollback fail truthfully.
 //
 // replacedBy maps a logical ID to the physical ID of the replacement created
 // for it, for exactly that second case.
-func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated map[string]bool, rCtx *resolveContext, reason string) {
+func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated, dirtyUpdates map[string]bool, rCtx *resolveContext, reason string) {
 	stack.Status = StatusUpdateRollbackInProgress
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
@@ -1154,6 +1224,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 	// operations can see them (instead of treating them as new and double-
 	// creating against an orphaned service-side resource).
 	var orphaned []StackResource
+	dirtyResources := make(map[string]StackResource, len(dirtyUpdates))
 	// Delete newly created resources in reverse order. Resources that existed
 	// before the update (present in `previous`) are left untouched.
 	for i := len(attempted) - 1; i >= 0; i-- {
@@ -1194,10 +1265,22 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		}
 
 		if old, wasExisting := previous[r.LogicalID]; wasExisting {
-			if inPlaceUpdated[r.LogicalID] && r.Status == ResourceUpdateComplete && r.PhysicalID == old.PhysicalID {
+			if dirtyUpdates[r.LogicalID] {
+				rollbackFailed = true
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf(
+					"restore %s: resource may still be mutated after failed compensation: %s",
+					r.LogicalID, r.StatusReason))
+				dirtyResources[r.LogicalID] = r
+				continue
+			}
+			if inPlaceUpdated[r.LogicalID] && r.PhysicalID == old.PhysicalID {
 				if err := p.rollbackInPlaceUpdate(ctx, stack, r, old, rCtx); err != nil {
 					rollbackFailed = true
 					rollbackErr = errors.Join(rollbackErr, err)
+					r.Status = ResourceUpdateFailed
+					r.StatusReason = err.Error()
+					r.Timestamp = p.clk.Now()
+					dirtyResources[r.LogicalID] = r
 				}
 			}
 			continue
@@ -1237,11 +1320,16 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 	// failed-delete resources visible in the stack so they're not double-
 	// created on the next attempt.
 	restored := make([]StackResource, 0, len(previous)+len(orphaned))
-	for _, res := range previous {
+	for logicalID, res := range previous {
+		if dirty, ok := dirtyResources[logicalID]; ok {
+			restored = append(restored, dirty)
+			continue
+		}
 		restored = append(restored, res)
 	}
 	restored = append(restored, orphaned...)
 	stack.Resources = restored
+	stack.Tags = append([]Tag(nil), rCtx.PreviousStackTags...)
 
 	if rollbackFailed {
 		stack.Status = StatusUpdateRollbackFailed
@@ -1263,23 +1351,26 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 // before a later resource failed. Reusing the resourceUpdater in reverse keeps
 // validation, persistence, and service behavior out of CloudFormation.
 func (p *provisioner) rollbackInPlaceUpdate(ctx context.Context, stack *Stack, attempted, previous StackResource, rCtx *resolveContext) error {
+	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateInProgress, "Update rollback initiated")
 	handler, ok := p.resolveHandler(previous.Type)
 	if !ok {
-		return fmt.Errorf("restore %s: resource handler is unavailable", previous.LogicalID)
+		return p.failRollbackInPlaceUpdate(ctx, stack, previous, errors.New("resource handler is unavailable"))
 	}
 	updater, ok := handler.(resourceUpdater)
 	if !ok {
-		return fmt.Errorf("restore %s: resource handler cannot update in place", previous.LogicalID)
+		return p.failRollbackInPlaceUpdate(ctx, stack, previous, errors.New("resource handler cannot update in place"))
 	}
 	p.mu.Lock()
 	router := p.router
 	p.mu.Unlock()
 	if router == nil {
-		return fmt.Errorf("restore %s: router not initialised", previous.LogicalID)
+		return p.failRollbackInPlaceUpdate(ctx, stack, previous, errors.New("router not initialised"))
 	}
 
-	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateInProgress, "Update rollback initiated")
-	physicalID, _, err := updater.Update(ctx, router, p.cfg, previous.PhysicalID, previous.Properties, attempted.Properties, rCtx)
+	rollbackCtx := *rCtx
+	rollbackCtx.StackTags = append([]Tag(nil), rCtx.PreviousStackTags...)
+	rollbackCtx.PreviousStackTags = append([]Tag(nil), rCtx.StackTags...)
+	physicalID, _, err := updater.Update(ctx, router, p.cfg, previous.PhysicalID, previous.Properties, attempted.Properties, &rollbackCtx)
 	if err == nil && physicalID != "" && physicalID != previous.PhysicalID {
 		err = fmt.Errorf("rollback changed physical ID from %q to %q", previous.PhysicalID, physicalID)
 	}
@@ -1289,8 +1380,7 @@ func (p *provisioner) rollbackInPlaceUpdate(ctx context.Context, stack *Stack, a
 		}
 	}
 	if err != nil {
-		p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateFailed, err.Error())
-		return fmt.Errorf("restore %s: %w", previous.LogicalID, err)
+		return p.failRollbackInPlaceUpdate(ctx, stack, previous, err)
 	}
 	if rCtx.Attributes == nil {
 		rCtx.Attributes = make(map[string]map[string]string)
@@ -1299,6 +1389,12 @@ func (p *provisioner) rollbackInPlaceUpdate(ctx context.Context, stack *Stack, a
 	rCtx.Resources[previous.LogicalID] = previous.PhysicalID
 	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateComplete, "")
 	return nil
+}
+
+func (p *provisioner) failRollbackInPlaceUpdate(ctx context.Context, stack *Stack, previous StackResource, err error) error {
+	rollbackErr := fmt.Errorf("restore %s: %w", previous.LogicalID, err)
+	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateFailed, rollbackErr.Error())
+	return rollbackErr
 }
 
 // ── Rollback stack (async) ─────────────────────────────────────────────────
@@ -1862,20 +1958,35 @@ var errReplacementRequired = errors.New("cfn: replacement required")
 var errDeletionBlocked = errors.New("cfn: deletion blocked by the resource")
 
 // updateFailure marks an update error the provisioner must answer by failing
-// the resource rather than by replacing it. The default for an update error is
+// the resource rather than by replacing it. Its dirty bit distinguishes a
+// rejected update from one whose handler could not compensate an already
+// applied mutation. The default for an update error is
 // replacement, which is right when the update could not be applied — but wrong
 // once it has been: a resource that applied its update and then failed to
 // settle is not fixed by building a second copy of it, and CloudFormation does
 // not try. An ECS service whose new deployment cannot start its tasks is the
 // case this exists for; replacing it would create a second service under a
 // generated name and delete the one that works.
-type updateFailure struct{ err error }
+type updateFailure struct {
+	err   error
+	dirty bool
+}
 
 func (e updateFailure) Error() string { return e.err.Error() }
 func (e updateFailure) Unwrap() error { return e.err }
 
 // failUpdate marks err as terminal for the resource — see updateFailure.
 func failUpdate(err error) error { return updateFailure{err: err} }
+
+// failDirtyUpdate marks a terminal update whose handler could not compensate
+// a mutation it had already applied. Stack rollback must retain that resource
+// as failed instead of claiming the previous state was restored.
+func failDirtyUpdate(err error) error { return updateFailure{err: err, dirty: true} }
+
+func isDirtyUpdateFailure(err error) bool {
+	var failed updateFailure
+	return errors.As(err, &failed) && failed.dirty
+}
 
 // asBool coerces a CFN property value (which may be a real bool, a string
 // "true"/"false", or nil) to a boolean. Used in handler Update methods to
@@ -1909,7 +2020,7 @@ var resourceHandlers = map[string]resourceHandler{
 	"AWS::Lambda::Alias":              &lambdaAliasHandler{},
 	"AWS::Lambda::Url":                &lambdaUrlHandler{},
 	"AWS::Lambda::EventSourceMapping": &lambdaEventSourceMappingHandler{},
-	"AWS::Lambda::Permission":         &stubResourceHandler{},
+	"AWS::Lambda::Permission":         &lambdaPermissionHandler{},
 	"AWS::Lambda::LayerVersion":       &lambdaLayerVersionHandler{},
 	"AWS::Lambda::CodeSigningConfig":  &lambdaCodeSigningConfigHandler{},
 	// IAM
@@ -2882,6 +2993,9 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	if funcName == "" {
 		funcName = rCtx.generatedName()
 	}
+	if err := checkLambdaFunctionAuxiliaryPropertySupport(props, nil); err != nil {
+		return "", nil, err
+	}
 
 	// A template's Code.ZipFile is inline source text; the Lambda API's is
 	// base64 of a zip archive. Package it rather than just encoding it — see
@@ -2904,6 +3018,14 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 		"Role":         props["Role"],
 		"Code":         code,
 	}
+	for _, property := range []string{
+		"Architectures", "VpcConfig", "FileSystemConfigs", "ImageConfig", "PackageType",
+		"DeadLetterConfig", "TracingConfig", "EphemeralStorage", "SnapStart",
+		"CapacityProviderConfig", "DurableConfig", "TenancyConfig",
+	} {
+		copyAnyProp(body, props, property, property)
+	}
+	copyAnyProp(body, props, "KmsKeyArn", "KMSKeyArn")
 	if desc, ok := props["Description"]; ok {
 		body["Description"] = desc
 	}
@@ -2931,11 +3053,23 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	if tagMap := mergeLambdaTags(rCtx.StackTags, props["Tags"]); len(tagMap) > 0 {
 		body["Tags"] = tagMap
 	}
+	if publish, _ := props["PublishToLatestPublished"].(bool); publish {
+		body["PublishTo"] = "LATEST_PUBLISHED"
+	}
 
 	data, _ := json.Marshal(body)
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/2015-03-31/functions", "application/json", data)
 	if err != nil {
 		return "", nil, fmt.Errorf("lambda CreateFunction: %w", err)
+	}
+	if reserved, ok := props["ReservedConcurrentExecutions"]; ok {
+		if err := putLambdaReservedConcurrency(ctx, router, rCtx.Region, funcName, reserved); err != nil {
+			_, cleanupErr := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2015-03-31/functions/"+url.PathEscape(funcName), "", nil)
+			if cleanupErr != nil {
+				return funcName, nil, errors.Join(err, fmt.Errorf("lambda cleanup DeleteFunction: %w", cleanupErr))
+			}
+			return "", nil, err
+		}
 	}
 
 	var resp map[string]any
@@ -2956,7 +3090,10 @@ func (h *lambdaFunctionHandler) Delete(ctx context.Context, router http.Handler,
 	if i := strings.LastIndex(physicalID, ":"); i >= 0 {
 		name = physicalID[i+1:]
 	}
-	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2015-03-31/functions/"+name, "", nil)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/2015-03-31/functions/"+url.PathEscape(name), "", nil)
+	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
+		return fmt.Errorf("lambda DeleteFunction: %w", err)
+	}
 	return nil
 }
 
@@ -2965,26 +3102,180 @@ func (h *lambdaFunctionHandler) Delete(ctx context.Context, router http.Handler,
 // remaining mutable configuration is dispatched to UpdateFunctionConfiguration
 // (PUT /functions/{name}/configuration). The function name is immutable on
 // real AWS, so when it changes the provisioner falls back to replacement.
-func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name := physicalID
 	if i := strings.LastIndex(physicalID, ":"); i >= 0 {
 		name = physicalID[i+1:]
 	}
-	// FunctionName is immutable: a rename forces replacement.
-	if newName, _ := props["FunctionName"].(string); newName != "" && newName != name {
+	// FunctionName is immutable. Adding, changing, or explicitly removing it
+	// all change the physical-name contract and therefore require replacement.
+	if !reflect.DeepEqual(props["FunctionName"], oldProps["FunctionName"]) {
+		return "", nil, errReplacementRequired
+	}
+	packageType, _ := props["PackageType"].(string)
+	if packageType == "" {
+		packageType = "Zip"
+	}
+	oldPackageType, _ := oldProps["PackageType"].(string)
+	if oldPackageType == "" {
+		oldPackageType = "Zip"
+	}
+	if packageType != oldPackageType {
 		return "", nil, errReplacementRequired
 	}
 
-	// 1. Update code if present. CFN templates supply ZipFile as inline source;
-	//    UpdateFunctionCode expects a base64 zip archive (matches Create).
-	if code, ok := props["Code"].(map[string]any); ok && len(code) > 0 {
+	for _, property := range []string{"DurableConfig", "TenancyConfig"} {
+		if !reflect.DeepEqual(props[property], oldProps[property]) {
+			return "", nil, errReplacementRequired
+		}
+	}
+	if err := validateLambdaFunctionRequiredPropertyRemovals(props, oldProps, packageType, rCtx.LogicalID); err != nil {
+		return "", nil, failUpdate(err)
+	}
+	if err := checkLambdaFunctionAuxiliaryPropertySupport(props, oldProps); err != nil {
+		return "", nil, failUpdate(err)
+	}
+
+	arn, completed, err := h.applyUpdate(ctx, router, name, props, oldProps, rCtx)
+	if err != nil {
+		// A Lambda function update spans several APIs. Restore only mutations
+		// that completed, in reverse order, so a rejected phase cannot change
+		// the function's revision or LastModified during compensation.
+		compensationErr := h.compensateUpdate(ctx, router, name, oldProps, props, completed, rCtx)
+		if compensationErr == nil {
+			return "", nil, failUpdate(err)
+		}
+		compensationErr = fmt.Errorf("restore Lambda function after failed update: %w", compensationErr)
+		return "", nil, failDirtyUpdate(errors.Join(err, compensationErr))
+	}
+	attrs := map[string]string{"FunctionName": name, "Arn": protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name)}
+	if arn != "" {
+		attrs["Arn"] = arn
+	}
+	return name, attrs, nil
+}
+
+type lambdaUpdateProgress struct {
+	tags          bool
+	configuration bool
+	code          bool
+	codeSigning   bool
+}
+
+// applyUpdate tracks tags first, then follows AWS's documented
+// configuration-before-code ordering and CloudFormation's separate association
+// and concurrency operations.
+func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, lambdaUpdateProgress, error) {
+	var completed lambdaUpdateProgress
+	applied, err := updateLambdaTags(ctx, router, rCtx.Region, protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name), rCtx.StackTags, rCtx.PreviousStackTags, props["Tags"], prior["Tags"])
+	completed.tags = applied
+	if err != nil {
+		return "", completed, err
+	}
+	arn, applied, err := h.updateConfiguration(ctx, router, name, props, prior, rCtx)
+	if err != nil {
+		return "", completed, err
+	}
+	completed.configuration = applied
+	if applied, err = h.updateCode(ctx, router, name, props, prior, rCtx); err != nil {
+		return "", completed, err
+	}
+	completed.code = applied
+	if applied, err = h.updateCodeSigningConfig(ctx, router, name, props, prior, rCtx); err != nil {
+		return "", completed, err
+	}
+	completed.codeSigning = applied
+	if err = h.updateConcurrency(ctx, router, name, props, prior, rCtx); err != nil {
+		return "", completed, err
+	}
+	return arn, completed, nil
+}
+
+func (h *lambdaFunctionHandler) compensateUpdate(ctx context.Context, router http.Handler, name string, props, prior map[string]any, completed lambdaUpdateProgress, rCtx *resolveContext) error {
+	var compensationErr error
+	if completed.codeSigning {
+		if _, err := h.updateCodeSigningConfig(ctx, router, name, props, prior, rCtx); err != nil {
+			compensationErr = errors.Join(compensationErr, err)
+		}
+	}
+	if completed.code {
+		if _, err := h.updateCode(ctx, router, name, props, prior, rCtx); err != nil {
+			compensationErr = errors.Join(compensationErr, err)
+		}
+	}
+	if completed.configuration {
+		if _, _, err := h.updateConfiguration(ctx, router, name, props, prior, rCtx); err != nil {
+			compensationErr = errors.Join(compensationErr, err)
+		}
+	}
+	if completed.tags {
+		if _, err := updateLambdaTags(ctx, router, rCtx.Region, protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name), rCtx.PreviousStackTags, rCtx.StackTags, props["Tags"], prior["Tags"]); err != nil {
+			compensationErr = errors.Join(compensationErr, err)
+		}
+	}
+	return compensationErr
+}
+
+func (h *lambdaFunctionHandler) updateConfiguration(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, bool, error) {
+	cfgBody := map[string]any{}
+	for _, k := range []string{
+		"Runtime", "Handler", "Role", "Description", "Environment", "Timeout", "MemorySize", "Layers", "LoggingConfig",
+		"VpcConfig", "FileSystemConfigs", "ImageConfig", "DeadLetterConfig", "TracingConfig", "EphemeralStorage",
+		"SnapStart", "CapacityProviderConfig",
+	} {
+		if v, ok := props[k]; ok && !reflect.DeepEqual(v, prior[k]) {
+			cfgBody[k] = v
+		}
+	}
+	if !reflect.DeepEqual(props["KmsKeyArn"], prior["KmsKeyArn"]) {
+		copyAnyProp(cfgBody, props, "KmsKeyArn", "KMSKeyArn")
+	}
+	clearValues := map[string]any{
+		"Description": "", "Environment": map[string]any{"Variables": map[string]any{}}, "Layers": []any{},
+		"LoggingConfig": map[string]any{}, "VpcConfig": map[string]any{}, "FileSystemConfigs": []any{}, "ImageConfig": map[string]any{},
+		"Timeout": 3, "MemorySize": 128,
+	}
+	for key, empty := range clearValues {
+		if _, present := props[key]; !present {
+			if _, existed := prior[key]; existed {
+				cfgBody[key] = empty
+			}
+		}
+	}
+	var arn string
+	if len(cfgBody) == 0 {
+		return "", false, nil
+	}
+	data, _ := json.Marshal(cfgBody)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/configuration", "application/json", data)
+	if err != nil {
+		return "", false, fmt.Errorf("lambda UpdateFunctionConfiguration: %w", err)
+	}
+	var resp map[string]any
+	if json.Unmarshal(rec.Body.Bytes(), &resp) == nil {
+		arn, _ = resp["FunctionArn"].(string)
+	}
+	return arn, true, nil
+}
+
+func (h *lambdaFunctionHandler) updateCode(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (bool, error) {
+	publish, _ := props["PublishToLatestPublished"].(bool)
+	priorPublish, _ := prior["PublishToLatestPublished"].(bool)
+	if reflect.DeepEqual(props["Code"], prior["Code"]) &&
+		reflect.DeepEqual(props["Architectures"], prior["Architectures"]) &&
+		(!publish || priorPublish) {
+		return false, nil
+	}
+	// CFN templates supply ZipFile as inline source; UpdateFunctionCode expects
+	// a base64 zip archive.
+	if code, ok := props["Code"].(map[string]any); ok {
 		body := map[string]any{}
 		if zf, ok := code["ZipFile"].(string); ok {
 			runtime, _ := props["Runtime"].(string)
 			handler, _ := props["Handler"].(string)
 			packaged, err := inlineCodeZip(zf, runtime, handler)
 			if err != nil {
-				return "", nil, fmt.Errorf("package inline function code: %w", err)
+				return false, fmt.Errorf("package inline function code: %w", err)
 			}
 			body["ZipFile"] = base64.StdEncoding.EncodeToString(packaged)
 		}
@@ -2994,52 +3285,198 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 		if v, ok := code["S3Key"]; ok {
 			body["S3Key"] = v
 		}
+		if v, ok := code["S3ObjectVersion"]; ok {
+			body["S3ObjectVersion"] = v
+		}
 		if v, ok := code["ImageUri"]; ok {
 			body["ImageUri"] = v
 		}
-		if len(body) > 0 {
-			data, _ := json.Marshal(body)
-			rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+name+"/code", "application/json", data)
-			if err != nil {
-				return "", nil, fmt.Errorf("lambda UpdateFunctionCode: %w", err)
-			}
-			if rec.Code >= 400 {
-				return "", nil, fmt.Errorf("lambda UpdateFunctionCode: status %d: %s", rec.Code, rec.Body.String())
+		for _, property := range []string{"S3ObjectStorageMode", "SourceKMSKeyArn"} {
+			if v, ok := code[property]; ok {
+				body[property] = v
 			}
 		}
-	}
-
-	// 2. Update configuration. Always send at least an empty body so that
-	//    cleared optional fields propagate; AWS treats omitted fields as
-	//    "no change", which matches our handler's semantics.
-	cfgBody := map[string]any{}
-	for _, k := range []string{"Runtime", "Handler", "Role", "Description", "Environment", "Timeout", "MemorySize", "Layers", "LoggingConfig"} {
-		if v, ok := props[k]; ok {
-			cfgBody[k] = v
+		if v, ok := props["Architectures"]; ok {
+			body["Architectures"] = v
+		} else if _, existed := prior["Architectures"]; existed {
+			body["Architectures"] = []string{"x86_64"}
 		}
-	}
-	var arn string
-	if len(cfgBody) > 0 {
-		data, _ := json.Marshal(cfgBody)
-		rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+name+"/configuration", "application/json", data)
+		if publish, _ := props["PublishToLatestPublished"].(bool); publish {
+			body["PublishTo"] = "LATEST_PUBLISHED"
+		}
+		data, _ := json.Marshal(body)
+		_, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/code", "application/json", data)
 		if err != nil {
-			return "", nil, fmt.Errorf("lambda UpdateFunctionConfiguration: %w", err)
+			return false, fmt.Errorf("lambda UpdateFunctionCode: %w", err)
 		}
-		if rec.Code >= 400 {
-			return "", nil, fmt.Errorf("lambda UpdateFunctionConfiguration: status %d: %s", rec.Code, rec.Body.String())
+		return true, nil
+	}
+	return false, nil
+}
+
+func (h *lambdaFunctionHandler) updateCodeSigningConfig(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (bool, error) {
+	if reflect.DeepEqual(props["CodeSigningConfigArn"], prior["CodeSigningConfigArn"]) {
+		return false, nil
+	}
+	path := "/2020-06-30/functions/" + url.PathEscape(name) + "/code-signing-config"
+	if arn, _ := props["CodeSigningConfigArn"].(string); arn != "" {
+		data, err := json.Marshal(map[string]any{"CodeSigningConfigArn": arn})
+		if err != nil {
+			return false, fmt.Errorf("lambda PutFunctionCodeSigningConfig: marshal request: %w", err)
 		}
-		var resp map[string]any
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err == nil {
-			if a, ok := resp["FunctionArn"].(string); ok {
-				arn = a
-			}
+		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, path, "application/json", data); err != nil {
+			return false, fmt.Errorf("lambda PutFunctionCodeSigningConfig: %w", err)
+		}
+		return true, nil
+	}
+	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil); err != nil {
+		return false, fmt.Errorf("lambda DeleteFunctionCodeSigningConfig: %w", err)
+	}
+	return true, nil
+}
+
+func checkLambdaFunctionAuxiliaryPropertySupport(props, prior map[string]any) error {
+	for _, property := range []string{"RuntimeManagementConfig", "RecursiveLoop", "FunctionScalingConfig"} {
+		if reflect.DeepEqual(props[property], prior[property]) {
+			continue
+		}
+		return fmt.Errorf("AWS::Lambda::Function property %s is not supported by CloudFormation provisioning", property)
+	}
+	return nil
+}
+
+func validateLambdaFunctionRequiredPropertyRemovals(props, prior map[string]any, packageType, logicalID string) error {
+	required := []string{"Role", "Code"}
+	if packageType == "Zip" {
+		required = append(required, "Runtime", "Handler")
+	}
+	return validateRequiredPropertyRemovals(props, prior, logicalID, "AWS::Lambda::Function", required...)
+}
+
+func validateRequiredPropertyRemovals(props, prior map[string]any, logicalID, resourceType string, required ...string) error {
+	for _, property := range required {
+		if _, existed := prior[property]; !existed {
+			continue
+		}
+		if value, present := props[property]; present && value != nil && fmt.Sprint(value) != "" {
+			continue
+		}
+		resource := logicalID
+		if resource == "" {
+			resource = resourceType
+		}
+		return fmt.Errorf("Properties validation failed for resource %s with message: #: required key [%s] not found", resource, property)
+	}
+	return nil
+}
+
+func updateLambdaTags(ctx context.Context, router http.Handler, region, resourceARN string, stackTags, priorStackTags []Tag, rawTags, rawPrior any) (bool, error) {
+	tags := mergeLambdaTags(stackTags, rawTags)
+	prior := mergeLambdaTags(priorStackTags, rawPrior)
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
 		}
 	}
-	attrs := map[string]string{"FunctionName": name}
-	if arn != "" {
-		attrs["Arn"] = arn
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
 	}
-	return name, attrs, nil
+	sort.Strings(removed)
+	path := "/2017-03-31/tags/" + url.PathEscape(resourceARN)
+	applied := false
+	if len(added) > 0 {
+		data, err := json.Marshal(map[string]any{"Tags": added})
+		if err != nil {
+			return false, fmt.Errorf("lambda TagResource: marshal request: %w", err)
+		}
+		if _, err := internalRequest(ctx, router, region, http.MethodPost, path, "application/json", data); err != nil {
+			return false, fmt.Errorf("lambda TagResource: %w", err)
+		}
+		applied = true
+	}
+	if len(removed) > 0 {
+		query := url.Values{"tagKeys": removed}.Encode()
+		if _, err := internalRequest(ctx, router, region, http.MethodDelete, path+"?"+query, "", nil); err != nil {
+			return applied, fmt.Errorf("lambda UntagResource: %w", err)
+		}
+		applied = true
+	}
+	return applied, nil
+}
+
+func (h *lambdaFunctionHandler) updateConcurrency(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) error {
+	if reflect.DeepEqual(props["ReservedConcurrentExecutions"], prior["ReservedConcurrentExecutions"]) {
+		return nil
+	}
+	if reserved, ok := props["ReservedConcurrentExecutions"]; ok {
+		if err := putLambdaReservedConcurrency(ctx, router, rCtx.Region, name, reserved); err != nil {
+			return err
+		}
+		return nil
+	} else if _, existed := prior["ReservedConcurrentExecutions"]; existed {
+		path := "/2017-10-31/functions/" + url.PathEscape(name) + "/concurrency"
+		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil); err != nil {
+			return fmt.Errorf("lambda DeleteFunctionConcurrency: %w", err)
+		}
+	}
+	return nil
+}
+
+// ── Lambda reserved concurrency and permission handlers ──────────────────
+
+// putLambdaReservedConcurrency dispatches CloudFormation's function property
+// through Lambda's separate reserved-concurrency API.
+func putLambdaReservedConcurrency(ctx context.Context, router http.Handler, region, functionName string, reserved any) error {
+	body, err := json.Marshal(map[string]any{"ReservedConcurrentExecutions": reserved})
+	if err != nil {
+		return fmt.Errorf("lambda PutFunctionConcurrency: marshal request: %w", err)
+	}
+	path := "/2017-10-31/functions/" + url.PathEscape(functionName) + "/concurrency"
+	if _, err := internalRequest(ctx, router, region, http.MethodPut, path, "application/json", body); err != nil {
+		return fmt.Errorf("lambda PutFunctionConcurrency: %w", err)
+	}
+	return nil
+}
+
+// lambdaPermissionHandler keeps CloudFormation thin: Lambda validates and
+// stores the resource-policy statement, while CloudFormation owns only the
+// generated statement ID needed to remove it later.
+type lambdaPermissionHandler struct{}
+
+func (h *lambdaPermissionHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	functionName, _ := props["FunctionName"].(string)
+	statementID := rCtx.generatedNameWithin(100)
+	body := map[string]any{"StatementId": statementID}
+	for _, property := range []string{"Action", "EventSourceToken", "FunctionUrlAuthType", "InvokedViaFunctionUrl", "Principal", "PrincipalOrgID", "SourceAccount", "SourceArn"} {
+		copyAnyProp(body, props, property, property)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", nil, fmt.Errorf("lambda AddPermission: marshal request: %w", err)
+	}
+	path := "/2015-03-31/functions/" + url.PathEscape(functionName) + "/policy"
+	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/json", data); err != nil {
+		return "", nil, fmt.Errorf("lambda AddPermission: %w", err)
+	}
+	physicalID := functionName + "|" + statementID
+	return physicalID, map[string]string{"Ref": statementID}, nil
+}
+
+func (h *lambdaPermissionHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
+	parts := strings.SplitN(physicalID, "|", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	path := "/2015-03-31/functions/" + url.PathEscape(parts[0]) + "/policy/" + url.PathEscape(parts[1])
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil)
+	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
+		return fmt.Errorf("lambda RemovePermission: %w", err)
+	}
+	return nil
 }
 
 // ── Lambda Alias handler ──────────────────────────────────────────────────
@@ -3748,6 +4185,7 @@ func (h *nestedStackHandler) Create(ctx context.Context, router http.Handler, cf
 		CreatedAt:     now,
 		Region:        rCtx.Region,
 		TemplateBody:  tmplBody,
+		Tags:          mergeNestedStackTags(rCtx.StackTags, props["Tags"]),
 	}
 
 	// Store the child stack so it appears in ListStacks/DescribeStacks.
@@ -3792,7 +4230,7 @@ func (h *nestedStackHandler) Delete(ctx context.Context, _ http.Handler, _ *conf
 	return nil
 }
 
-func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	childName := stackNameFromARN(physicalID)
 	if childName == "" {
 		return physicalID, nil, nil
@@ -3831,12 +4269,17 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 
 	childStack.TemplateBody = tmplBody
 	childStack.Status = StatusUpdateInProgress
+	previousChildTags := append([]Tag(nil), childStack.Tags...)
+	if previousChildTags == nil {
+		previousChildTags = mergeNestedStackTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	}
+	childStack.Tags = mergeNestedStackTags(rCtx.StackTags, props["Tags"])
 
 	if err := h.p.store.putStack(storeCtx, childStack); err != nil {
 		return "", nil, fmt.Errorf("nested stack update store: %w", err)
 	}
 
-	h.p.updateStackResources(childStack, tmpl)
+	h.p.updateStackResources(childStack, tmpl, previousChildTags)
 
 	if childStack.Status != StatusUpdateComplete {
 		return "", nil, fmt.Errorf("nested stack %s update failed: %s", childName, childStack.StatusReason)
@@ -3848,6 +4291,16 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 	}
 
 	return childStack.StackID, attrs, nil
+}
+
+func mergeNestedStackTags(parent []Tag, raw any) []Tag {
+	merged := mergeLambdaTags(parent, raw)
+	out := make([]Tag, 0, len(merged))
+	for key, value := range merged {
+		out = append(out, Tag{Key: key, Value: value})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 // stackNameFromARN extracts the stack name from a CloudFormation stack ARN.

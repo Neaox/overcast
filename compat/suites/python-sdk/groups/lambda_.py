@@ -180,6 +180,66 @@ def DeleteFunction(ctx: TestContext) -> None:
             raise
 
 
+# ── lambda-policy ────────────────────────────────────────────────────────────
+
+def setup_lambda_policy(ctx: TestContext) -> None:
+    fn_name = f"{ctx.run_id}-fn-policy"
+    _lambda(ctx).create_function(
+        FunctionName=fn_name,
+        Runtime="nodejs20.x",
+        Role=_ROLE_ARN,
+        Handler="index.handler",
+        Code={"ZipFile": _make_zip("index.js", _HANDLER_JS)},
+    )
+    ctx["lambda_policy_fn"] = fn_name
+
+
+def teardown_lambda_policy(ctx: TestContext) -> None:
+    fn_name = ctx.get("lambda_policy_fn")
+    if fn_name:
+        _delete_fn_and_logs(ctx, fn_name)
+
+
+def AddPermission(ctx: TestContext) -> None:
+    name = ctx["lambda_policy_fn"]
+    response = _lambda(ctx).add_permission(
+        FunctionName=name,
+        StatementId="allow-s3",
+        Action="lambda:InvokeFunction",
+        Principal="s3.amazonaws.com",
+        SourceAccount="000000000000",
+    )
+    if '"Sid":"allow-s3"' not in response.get("Statement", ""):
+        raise AssertionError("AddPermission: statement missing allow-s3 SID")
+    policy = _lambda(ctx).get_policy(FunctionName=name)
+    if '"Sid":"allow-s3"' not in policy.get("Policy", ""):
+        raise AssertionError("AddPermission: statement missing from GetPolicy")
+
+
+def GetPolicy(ctx: TestContext) -> None:
+    response = _lambda(ctx).get_policy(FunctionName=ctx["lambda_policy_fn"])
+    policy = json.loads(response.get("Policy", "{}"))
+    statements = policy.get("Statement", [])
+    if not any(statement.get("Sid") == "allow-s3" for statement in statements):
+        raise AssertionError("GetPolicy: allow-s3 statement missing")
+    if not response.get("RevisionId"):
+        raise AssertionError("GetPolicy: missing RevisionId")
+
+
+def RemovePermission(ctx: TestContext) -> None:
+    import botocore.exceptions
+
+    lmb = _lambda(ctx)
+    name = ctx["lambda_policy_fn"]
+    lmb.remove_permission(FunctionName=name, StatementId="allow-s3")
+    try:
+        lmb.get_policy(FunctionName=name)
+        raise AssertionError("RemovePermission: policy still exists")
+    except botocore.exceptions.ClientError as exc:
+        if exc.response["Error"]["Code"] != "ResourceNotFoundException":
+            raise
+
+
 # ── lambda-invoke ─────────────────────────────────────────────────────────────
 
 def setup_lambda_invoke(ctx: TestContext) -> None:
@@ -418,6 +478,9 @@ IMPLS = {
     "UpdateFunctionCode": UpdateFunctionCode,
     "UpdateFunctionConfiguration": UpdateFunctionConfiguration,
     "lambda-crud:DeleteFunction": DeleteFunction,
+    "lambda-policy:AddPermission": AddPermission,
+    "lambda-policy:GetPolicy": GetPolicy,
+    "lambda-policy:RemovePermission": RemovePermission,
     "InvokeDryRun": InvokeDryRun,
     "InvokeSync": InvokeSync,
     "InvokeAsync": InvokeAsync,
@@ -436,6 +499,7 @@ IMPLS = {
 
 SETUP = {
     "lambda-crud": setup_lambda_crud,
+    "lambda-policy": setup_lambda_policy,
     "lambda-invoke": setup_lambda_invoke,
     "lambda-invoke-stream": setup_lambda_invoke_stream,
     "lambda-aliases": setup_lambda_aliases,
@@ -444,6 +508,7 @@ SETUP = {
 
 TEARDOWN = {
     "lambda-crud": teardown_lambda_crud,
+    "lambda-policy": teardown_lambda_policy,
     "lambda-invoke": teardown_lambda_invoke,
     "lambda-invoke-stream": teardown_lambda_invoke_stream,
     "lambda-aliases": teardown_lambda_aliases,

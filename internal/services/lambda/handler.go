@@ -8,13 +8,31 @@ package lambda
 
 import (
 	"context"
+	"net/http"
 	"sync"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+func lambdaFunctionNotFound(name string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceNotFoundException",
+		Message:    "Function not found: " + name,
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+func lambdaFunctionAlreadyExists(name string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceConflictException",
+		Message:    "Function already exist: " + name,
+		HTTPStatus: http.StatusConflict,
+	}
+}
 
 // Handler holds Lambda handler dependencies.
 type Handler struct {
@@ -42,7 +60,9 @@ type Handler struct {
 	// Wired by Service.initDockerRuntime once ContainerRuntime is up; nil
 	// before Docker is ready and in test servers that don't use containers.
 	// onReady is called on the background goroutine with the pull result.
-	prewarmer func(fn *Function, onReady func(err error))
+	prewarmer  func(fn *Function, onReady func(err error))
+	prewarmMu  sync.Mutex
+	prewarming map[string]functionImagePullGeneration
 	// s3Fetch, when set, allows handlers to eagerly fetch code zips from S3
 	// at CreateFunction / UpdateFunctionCode time. Without this, code that
 	// is uploaded to S3 *before* the Lambda function is created (the typical
@@ -50,6 +70,11 @@ type Handler struct {
 	// CodeZip populated — the s3SyncWatcher only fires on subsequent
 	// PutObject events. Wired by Service.InitS3Sync.
 	s3Fetch S3FetchFunc
+	// s3Sync tracks reactive S3 ordering state so successful DeleteFunction
+	// calls can release the deleted function's slot. The mutex covers service
+	// initialization racing an early request.
+	s3SyncMu      sync.RWMutex
+	s3SyncWatcher *s3SyncWatcher
 	// proactive, when set, drives the post-deploy settle debounce: cold-start
 	// artifact pre-fill always, plus execution-environment pre-creation when
 	// LAMBDA_PROACTIVE_INIT is enabled (see proactive.go). Wired by
@@ -84,6 +109,12 @@ func (h *Handler) getEFSResolver() EFSVolumeResolver {
 	r := h.efsResolver
 	h.efsResolverMu.RUnlock()
 	return r
+}
+
+func (h *Handler) setPrewarmer(prewarmer func(*Function, func(error))) {
+	h.prewarmMu.Lock()
+	h.prewarmer = prewarmer
+	h.prewarmMu.Unlock()
 }
 
 // EFSVolumeResolver maps an EFS access-point ARN to the Docker volume backing

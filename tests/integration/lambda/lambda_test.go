@@ -92,29 +92,33 @@ type lambdaCode struct {
 }
 
 type functionConfiguration struct {
-	FunctionName  string           `json:"FunctionName"`
-	FunctionArn   string           `json:"FunctionArn"`
-	Runtime       string           `json:"Runtime"`
-	Handler       string           `json:"Handler"`
-	Role          string           `json:"Role"`
-	Description   string           `json:"Description"`
-	Timeout       int              `json:"Timeout"`
-	MemorySize    int              `json:"MemorySize"`
-	State         string           `json:"State"`
-	CodeSize      int64            `json:"CodeSize"`
-	LastModified  string           `json:"LastModified"`
-	RevisionId    string           `json:"RevisionId"`
-	PackageType   string           `json:"PackageType"`
-	Architectures []string         `json:"Architectures"`
-	ImageUri      string           `json:"ImageUri,omitempty"`
-	VpcConfig     *vpcConfigResp   `json:"VpcConfig,omitempty"`
-	ImageConfig   *imageConfigResp `json:"ImageConfig,omitempty"`
+	FunctionName        string               `json:"FunctionName"`
+	FunctionArn         string               `json:"FunctionArn"`
+	Runtime             string               `json:"Runtime"`
+	Handler             string               `json:"Handler"`
+	Role                string               `json:"Role"`
+	Description         string               `json:"Description"`
+	Timeout             int                  `json:"Timeout"`
+	MemorySize          int                  `json:"MemorySize"`
+	State               string               `json:"State"`
+	CodeSize            int64                `json:"CodeSize"`
+	LastModified        string               `json:"LastModified"`
+	RevisionId          string               `json:"RevisionId"`
+	PackageType         string               `json:"PackageType"`
+	Architectures       []string             `json:"Architectures"`
+	ImageUri            string               `json:"ImageUri,omitempty"`
+	VpcConfig           *vpcConfigResp       `json:"VpcConfig,omitempty"`
+	ImageConfigResponse *imageConfigResponse `json:"ImageConfigResponse,omitempty"`
 }
 
 type imageConfigResp struct {
 	EntryPoint       []string `json:"EntryPoint,omitempty"`
 	Command          []string `json:"Command,omitempty"`
 	WorkingDirectory string   `json:"WorkingDirectory,omitempty"`
+}
+
+type imageConfigResponse struct {
+	ImageConfig *imageConfigResp `json:"ImageConfig,omitempty"`
 }
 
 type getFunctionResponse struct {
@@ -3812,7 +3816,7 @@ func dynamoDBStreamARN(table string) string {
 func createESM(t *testing.T, srv *helpers.TestServer, body map[string]any) map[string]any {
 	t.Helper()
 	resp := doJSON(t, http.MethodPost, esmURL(srv), body)
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
 	return out
@@ -3920,6 +3924,10 @@ func TestCreateEventSourceMapping_sqsSource(t *testing.T) {
 	if esm["UUID"] == "" {
 		t.Error("expected UUID to be set")
 	}
+	wantARN := "arn:aws:lambda:us-east-1:000000000000:event-source-mapping:" + esm["UUID"].(string)
+	if esm["EventSourceMappingArn"] != wantARN {
+		t.Errorf("EventSourceMappingArn: got %v, want %s", esm["EventSourceMappingArn"], wantARN)
+	}
 	if esm["EventSourceArn"] != queueARN {
 		t.Errorf("EventSourceArn: got %v, want %s", esm["EventSourceArn"], queueARN)
 	}
@@ -3931,6 +3939,45 @@ func TestCreateEventSourceMapping_sqsSource(t *testing.T) {
 	}
 	if esm["FunctionArn"] == "" {
 		t.Error("expected FunctionArn to be set")
+	}
+}
+
+func TestEventSourceMappingLegacyRecordBackfillsARNOnResponsesAndUpdate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	const id = "84d6e94f-372a-4c5e-9d39-6fdf46e15432"
+	legacy := `{"UUID":"` + id + `","FunctionArn":"arn:aws:lambda:us-east-1:000000000000:function:legacy","EventSourceArn":"arn:aws:sqs:us-east-1:000000000000:legacy","State":"Enabled","BatchSize":10}`
+	if err := srv.Store.Set(context.Background(), "lambda:esm", "us-east-1/"+id, legacy); err != nil {
+		t.Fatalf("seed legacy event source mapping: %v", err)
+	}
+	wantARN := "arn:aws:lambda:us-east-1:000000000000:event-source-mapping:" + id
+
+	get := doJSON(t, http.MethodGet, lambdaURL(srv, "/event-source-mappings/"+id), nil)
+	var got map[string]any
+	decodeJSON(t, get, &got)
+	if got["EventSourceMappingArn"] != wantARN {
+		t.Errorf("GetEventSourceMapping ARN = %v, want %q", got["EventSourceMappingArn"], wantARN)
+	}
+
+	list := doJSON(t, http.MethodGet, esmURL(srv), nil)
+	var listed struct {
+		Mappings []map[string]any `json:"EventSourceMappings"`
+	}
+	decodeJSON(t, list, &listed)
+	if len(listed.Mappings) != 1 || listed.Mappings[0]["EventSourceMappingArn"] != wantARN {
+		t.Errorf("ListEventSourceMappings = %#v, want backfilled ARN", listed.Mappings)
+	}
+
+	update := doJSON(t, http.MethodPut, lambdaURL(srv, "/event-source-mappings/"+id), map[string]any{
+		"BatchSize": 20, "MaximumBatchingWindowInSeconds": 1,
+	})
+	helpers.AssertStatus(t, update, http.StatusAccepted)
+	decodeJSON(t, update, &got)
+	if got["EventSourceMappingArn"] != wantARN {
+		t.Errorf("UpdateEventSourceMapping ARN = %v, want %q", got["EventSourceMappingArn"], wantARN)
+	}
+	raw, found, err := srv.Store.Get(context.Background(), "lambda:esm", "us-east-1/"+id)
+	if err != nil || !found || !strings.Contains(raw, wantARN) {
+		t.Errorf("updated legacy record = found %v, err %v, raw %q", found, err, raw)
 	}
 }
 
@@ -3990,7 +4037,7 @@ func TestCreateEventSourceMapping_disabledInitially(t *testing.T) {
 		"EventSourceArn": sqsARN("disabled-queue"),
 		"Enabled":        false,
 	})
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var esm map[string]any
 	decodeJSON(t, resp, &esm)
 
@@ -4165,8 +4212,8 @@ func TestUpdateEventSourceMapping_disable(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 200 with State Disabled
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	// Then: 202 with State Disabled
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var got map[string]any
 	helpers.DecodeJSON(t, resp, &got)
 	if got["State"] != "Disabled" {
@@ -4187,16 +4234,19 @@ func TestUpdateEventSourceMapping_changeBatchSize(t *testing.T) {
 
 	// When: we update BatchSize to 20
 	resp := doJSON(t, http.MethodPut, esmURL(srv)+"/"+id, map[string]any{
-		"BatchSize": 20,
+		"BatchSize": 20, "MaximumBatchingWindowInSeconds": 1,
 	})
 	defer resp.Body.Close()
 
-	// Then: 200 with new BatchSize
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	// Then: 202 with new BatchSize
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var got map[string]any
 	helpers.DecodeJSON(t, resp, &got)
 	if got["BatchSize"] != float64(20) {
 		t.Errorf("BatchSize: got %v, want 20", got["BatchSize"])
+	}
+	if got["MaximumBatchingWindowInSeconds"] != float64(1) {
+		t.Errorf("MaximumBatchingWindowInSeconds: got %v, want 1", got["MaximumBatchingWindowInSeconds"])
 	}
 }
 
@@ -4432,8 +4482,8 @@ func TestUpdateEventSourceMapping_changeScalingConfig(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 200 with ScalingConfig set
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	// Then: 202 with ScalingConfig set
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var got map[string]any
 	helpers.DecodeJSON(t, resp, &got)
 	sc, ok := got["ScalingConfig"].(map[string]any)
@@ -4868,17 +4918,18 @@ func TestCreateFunction_imageConfig_storedAndReturned(t *testing.T) {
 	decodeJSON(t, resp, &created)
 
 	// Then ImageConfig is present in the create response
-	if created.ImageConfig == nil {
-		t.Fatal("ImageConfig must be present in CreateFunction response")
+	if created.ImageConfigResponse == nil || created.ImageConfigResponse.ImageConfig == nil {
+		t.Fatal("ImageConfigResponse.ImageConfig must be present in CreateFunction response")
 	}
-	if len(created.ImageConfig.EntryPoint) != 1 || created.ImageConfig.EntryPoint[0] != "/entry.sh" {
-		t.Errorf("EntryPoint = %v, want [/entry.sh]", created.ImageConfig.EntryPoint)
+	imageConfig := created.ImageConfigResponse.ImageConfig
+	if len(imageConfig.EntryPoint) != 1 || imageConfig.EntryPoint[0] != "/entry.sh" {
+		t.Errorf("EntryPoint = %v, want [/entry.sh]", imageConfig.EntryPoint)
 	}
-	if len(created.ImageConfig.Command) != 1 || created.ImageConfig.Command[0] != "handler" {
-		t.Errorf("Command = %v, want [handler]", created.ImageConfig.Command)
+	if len(imageConfig.Command) != 1 || imageConfig.Command[0] != "handler" {
+		t.Errorf("Command = %v, want [handler]", imageConfig.Command)
 	}
-	if created.ImageConfig.WorkingDirectory != "/var/task" {
-		t.Errorf("WorkingDirectory = %q, want /var/task", created.ImageConfig.WorkingDirectory)
+	if imageConfig.WorkingDirectory != "/var/task" {
+		t.Errorf("WorkingDirectory = %q, want /var/task", imageConfig.WorkingDirectory)
 	}
 
 	// And ImageConfig is returned by GetFunction
@@ -4888,11 +4939,11 @@ func TestCreateFunction_imageConfig_storedAndReturned(t *testing.T) {
 	var out getFunctionResponse
 	decodeJSON(t, resp2, &out)
 
-	if out.Configuration.ImageConfig == nil {
-		t.Fatal("ImageConfig must be present in GetFunction response")
+	if out.Configuration.ImageConfigResponse == nil || out.Configuration.ImageConfigResponse.ImageConfig == nil {
+		t.Fatal("ImageConfigResponse.ImageConfig must be present in GetFunction response")
 	}
-	if out.Configuration.ImageConfig.WorkingDirectory != "/var/task" {
-		t.Errorf("WorkingDirectory = %q, want /var/task", out.Configuration.ImageConfig.WorkingDirectory)
+	if out.Configuration.ImageConfigResponse.ImageConfig.WorkingDirectory != "/var/task" {
+		t.Errorf("WorkingDirectory = %q, want /var/task", out.Configuration.ImageConfigResponse.ImageConfig.WorkingDirectory)
 	}
 }
 
@@ -4921,14 +4972,15 @@ func TestUpdateFunctionConfiguration_imageConfig_patches(t *testing.T) {
 	decodeJSON(t, resp2, &updated)
 
 	// Then ImageConfig reflects the update
-	if updated.ImageConfig == nil {
-		t.Fatal("ImageConfig must be present in UpdateFunctionConfiguration response")
+	if updated.ImageConfigResponse == nil || updated.ImageConfigResponse.ImageConfig == nil {
+		t.Fatal("ImageConfigResponse.ImageConfig must be present in UpdateFunctionConfiguration response")
 	}
-	if len(updated.ImageConfig.Command) != 1 || updated.ImageConfig.Command[0] != "my-handler" {
-		t.Errorf("Command = %v, want [my-handler]", updated.ImageConfig.Command)
+	imageConfig := updated.ImageConfigResponse.ImageConfig
+	if len(imageConfig.Command) != 1 || imageConfig.Command[0] != "my-handler" {
+		t.Errorf("Command = %v, want [my-handler]", imageConfig.Command)
 	}
-	if updated.ImageConfig.WorkingDirectory != "/app" {
-		t.Errorf("WorkingDirectory = %q, want /app", updated.ImageConfig.WorkingDirectory)
+	if imageConfig.WorkingDirectory != "/app" {
+		t.Errorf("WorkingDirectory = %q, want /app", imageConfig.WorkingDirectory)
 	}
 }
 
@@ -4957,8 +5009,8 @@ func TestUpdateFunctionConfiguration_imageConfig_clearable(t *testing.T) {
 	decodeJSON(t, resp2, &updated)
 
 	// Then ImageConfig is cleared (nil or empty)
-	if updated.ImageConfig != nil && (len(updated.ImageConfig.Command) > 0 || len(updated.ImageConfig.EntryPoint) > 0 || updated.ImageConfig.WorkingDirectory != "") {
-		t.Errorf("expected ImageConfig cleared, got %+v", updated.ImageConfig)
+	if updated.ImageConfigResponse != nil && updated.ImageConfigResponse.ImageConfig != nil {
+		t.Errorf("expected ImageConfigResponse cleared, got %+v", updated.ImageConfigResponse)
 	}
 }
 
@@ -5011,6 +5063,197 @@ func TestPutFunctionConcurrency_success(t *testing.T) {
 	decodeJSON(t, resp, &out)
 	if out.ReservedConcurrentExecutions != 50 {
 		t.Errorf("ReservedConcurrentExecutions = %d, want 50", out.ReservedConcurrentExecutions)
+	}
+}
+
+func TestPutFunctionConcurrency_negativeValueReturnsInvalidParameter(t *testing.T) {
+	// Given: a function exists.
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "concurrency-invalid-fn")
+
+	// When: PutFunctionConcurrency receives a value below AWS's minimum.
+	resp := doJSON(t, http.MethodPut, putConcurrencyURL(srv, "concurrency-invalid-fn"), map[string]any{
+		"ReservedConcurrentExecutions": -1,
+	})
+	defer resp.Body.Close()
+
+	// Then: Lambda owns the validation and returns its modeled error.
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
+}
+
+func TestPutFunctionConcurrency_missingValueReturnsInvalidParameter(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "concurrency-missing-fn")
+	resp := doJSON(t, http.MethodPut, putConcurrencyURL(srv, "concurrency-missing-fn"), map[string]any{})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
+}
+
+func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createFunctionFields := map[string]any{
+		"DeadLetterConfig": map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
+		"TracingConfig":    map[string]any{"Mode": "Active"}, "EphemeralStorage": map[string]any{"Size": 1024},
+		"KMSKeyArn":              "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
+		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
+		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
+		"Publish":                false,
+		"PublishTo":              "LATEST_PUBLISHED",
+		"TenancyConfig":          map[string]any{"TenantIsolationMode": "PER_TENANT"},
+	}
+	for field, value := range createFunctionFields {
+		t.Run("function/"+field, func(t *testing.T) {
+			name := "unsupported-" + strings.ToLower(field)
+			request := map[string]any{
+				"FunctionName": name, "Runtime": "python3.12", "Handler": "index.handler",
+				"Role": "arn:aws:iam::000000000000:role/lambda-role", "Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="}, field: value,
+			}
+			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), request)
+			assertLambdaUnsupported(t, resp)
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/"+name+"/configuration"), nil)
+			helpers.AssertStatus(t, get, http.StatusNotFound)
+			get.Body.Close()
+		})
+	}
+	for field, value := range map[string]any{
+		"S3ObjectStorageMode": "Zip",
+		"SourceKMSKeyArn":     "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+	} {
+		t.Run("function-code/"+field, func(t *testing.T) {
+			name := "unsupported-code-" + strings.ToLower(field)
+			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
+				"FunctionName": name, "Runtime": "python3.12", "Handler": "index.handler",
+				"Role": "arn:aws:iam::000000000000:role/lambda-role",
+				"Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==", field: value},
+			})
+			assertLambdaUnsupported(t, resp)
+		})
+	}
+
+	createFunction(t, srv, "unsupported-update-fn")
+	baseline := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), map[string]any{
+		"Description": "before",
+	})
+	helpers.AssertStatus(t, baseline, http.StatusOK)
+	var baselineConfig functionConfiguration
+	decodeJSON(t, baseline, &baselineConfig)
+	updateConfigurationFields := map[string]any{
+		"DeadLetterConfig": map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
+		"TracingConfig":    map[string]any{"Mode": "Active"}, "EphemeralStorage": map[string]any{"Size": 1024},
+		"KMSKeyArn":              "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
+		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
+		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
+		"RevisionId":             "revision",
+	}
+	for field, value := range updateConfigurationFields {
+		t.Run("function-update/"+field, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), map[string]any{
+				"Description": "mutated", field: value,
+			})
+			assertLambdaUnsupported(t, resp)
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), nil)
+			var config struct {
+				Description string `json:"Description"`
+			}
+			decodeJSON(t, get, &config)
+			if config.Description != "before" {
+				t.Fatalf("Description = %q after rejected %s update, want before", config.Description, field)
+			}
+		})
+	}
+	for field, value := range map[string]any{
+		"DryRun": false, "Publish": false, "PublishTo": "LATEST_PUBLISHED", "RevisionId": "revision",
+		"S3ObjectStorageMode": "Zip", "SourceKMSKeyArn": "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+	} {
+		t.Run("function-code-update/"+field, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/code"), map[string]any{
+				"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==", field: value,
+			})
+			assertLambdaUnsupported(t, resp)
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), nil)
+			var config functionConfiguration
+			decodeJSON(t, get, &config)
+			if config.RevisionId != baselineConfig.RevisionId {
+				t.Fatalf("RevisionId = %q after rejected %s code update, want %q", config.RevisionId, field, baselineConfig.RevisionId)
+			}
+		})
+	}
+
+	esmFields := map[string]any{
+		"FunctionResponseTypes": []string{"ReportBatchItemFailures"}, "ParallelizationFactor": 2, "StartingPositionTimestamp": 1000,
+		"SourceAccessConfigurations": []any{}, "SelfManagedEventSource": map[string]any{"Endpoints": map[string]any{"KafkaBootstrapServers": []string{"host:9092"}}},
+		"Topics": []string{"topic"}, "Queues": []string{"queue"},
+		"KmsKeyArn":     "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"MetricsConfig": map[string]any{"Metrics": []string{"EventCount"}}, "ProvisionedPollerConfig": map[string]any{"MinimumPollers": 1, "MaximumPollers": 2},
+		"AmazonManagedKafkaEventSourceConfig": map[string]any{}, "DocumentDBEventSourceConfig": map[string]any{},
+		"LoggingConfig": map[string]any{"SystemLogLevel": "INFO"}, "SelfManagedKafkaEventSourceConfig": map[string]any{},
+		"Tags": map[string]string{"stage": "test"},
+	}
+	for field, value := range esmFields {
+		t.Run("esm/"+field, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/event-source-mappings/"), map[string]any{field: value})
+			assertLambdaUnsupported(t, resp)
+		})
+	}
+
+	createFunction(t, srv, "unsupported-esm-update-fn")
+	esm := createESM(t, srv, map[string]any{
+		"FunctionName": "unsupported-esm-update-fn", "EventSourceArn": sqsARN("unsupported-esm-update-queue"),
+	})
+	id := esm["UUID"].(string)
+	for field, value := range map[string]any{
+		"AmazonManagedKafkaEventSourceConfig": map[string]any{}, "DocumentDBEventSourceConfig": map[string]any{},
+		"LoggingConfig": map[string]any{"SystemLogLevel": "INFO"}, "SelfManagedKafkaEventSourceConfig": map[string]any{},
+		"Topics": []string{"topic"}, "Queues": []string{"queue"},
+	} {
+		t.Run("esm-update/"+field, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/event-source-mappings/"+id), map[string]any{
+				"BatchSize": 99, field: value,
+			})
+			assertLambdaUnsupported(t, resp)
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/event-source-mappings/"+id), nil)
+			var mapping map[string]any
+			decodeJSON(t, get, &mapping)
+			if mapping["BatchSize"] != float64(10) {
+				t.Fatalf("BatchSize = %v after rejected %s update, want 10", mapping["BatchSize"], field)
+			}
+		})
+	}
+}
+
+func TestUpdateFunctionConfiguration_explicitEmptyValuesClearOptionals(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	create := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
+		"FunctionName": "clear-optionals-fn", "Runtime": "python3.12", "Handler": "index.handler",
+		"Role": "arn:aws:iam::000000000000:role/lambda-role", "Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="},
+		"Description": "remove me", "Environment": map[string]any{"Variables": map[string]string{"A": "B"}},
+		"Layers":        []string{"arn:aws:lambda:us-east-1:000000000000:layer:test:1"},
+		"LoggingConfig": map[string]any{"LogGroup": "/custom/group", "LogFormat": "Text"},
+	})
+	helpers.AssertStatus(t, create, http.StatusCreated)
+	create.Body.Close()
+	update := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/clear-optionals-fn/configuration"), map[string]any{
+		"Description": "", "Environment": map[string]any{"Variables": map[string]string{}}, "Layers": []string{},
+	})
+	helpers.AssertStatus(t, update, http.StatusOK)
+	var config map[string]any
+	decodeJSON(t, update, &config)
+	if _, ok := config["Description"]; ok {
+		t.Error("Description was not cleared")
+	}
+	if _, ok := config["Environment"]; ok {
+		t.Error("Environment was not cleared")
+	}
+	if _, ok := config["Layers"]; ok {
+		t.Error("Layers were not cleared")
+	}
+	logging, _ := config["LoggingConfig"].(map[string]any)
+	if logging["LogGroup"] != "/custom/group" || logging["LogFormat"] != "Text" {
+		t.Errorf("omitted LoggingConfig changed = %v", logging)
 	}
 }
 
