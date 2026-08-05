@@ -92,6 +92,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [rds] database containers stopped, crashed, or removed through Docker are now recovered with bounded backoff immediately, after Docker reconnects, or during Overcast startup; repeated crash loops settle to `failed`, only `StopDBInstance` establishes a durable stopped state, and MySQL 8 initialization now preserves AWS-valid special-character passwords while using `caching_sha2_password`
 
+- [web/ecs] service diagnostics now keep the actual failed task and container logs visible instead of letting a later clean exit replace the cause; ECS screens add precise event times, two-way task navigation, and distinct working map destinations
+
 ## [0.0.1-alpha.29] - 2026-08-03
 
 ### Added
