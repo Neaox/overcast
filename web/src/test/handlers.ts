@@ -52,6 +52,18 @@ export const cloudwatchHandlers = [
   http.get("/api/logs/log-groups", () => HttpResponse.json({ logGroups: [] })),
 ]
 
+// --- ECS ------------------------------------------------------------------
+
+export const ecsHandlers = [
+  http.get("/api/ecs/tasks/:taskArn/logs/:container", ({ params }) =>
+    HttpResponse.json({
+      taskArn: params.taskArn,
+      containerName: params.container,
+      logs: "",
+    }),
+  ),
+]
+
 // ─── Inbox ────────────────────────────────────────────────────────────────
 
 export const inboxHandlers = [http.get("/api/inbox/messages", () => HttpResponse.json([]))]
@@ -68,6 +80,7 @@ export const handlers = [
   ...sqsHandlers,
   ...ecrHandlers,
   ...cloudwatchHandlers,
+  ...ecsHandlers,
   ...inboxHandlers,
   ...debugHandlers,
 ]

@@ -1,4 +1,5 @@
 import { awsClients } from "../aws-clients"
+import { apiFetch } from "./base"
 import {
   CreateClusterCommand,
   ListClustersCommand,
@@ -32,6 +33,7 @@ import type {
   EcsTask,
   EcsService,
   EcsContainerInstance,
+  EcsTaskLogs,
 } from "@/types"
 
 export const ecs = {
@@ -160,8 +162,21 @@ export const ecs = {
     const listRes = await client.send(new ListTasksCommand({ cluster, desiredStatus }))
     const arns = listRes.taskArns ?? []
     if (arns.length === 0) return []
-    const descRes = await client.send(new DescribeTasksCommand({ cluster, tasks: arns }))
-    return (descRes.tasks ?? []).map(mapTask)
+    const pages = await Promise.all(
+      Array.from({ length: Math.ceil(arns.length / 100) }, (_, index) =>
+        client.send(
+          new DescribeTasksCommand({ cluster, tasks: arns.slice(index * 100, (index + 1) * 100) }),
+        ),
+      ),
+    )
+    return pages.flatMap((page) => (page.tasks ?? []).map(mapTask))
+  },
+
+  getTaskLogs: (taskArn: string, container: string): Promise<EcsTaskLogs> => {
+    const taskId = taskArn.split("/").at(-1) ?? taskArn
+    return apiFetch<EcsTaskLogs>(
+      `/ecs/tasks/${encodeURIComponent(taskId)}/logs/${encodeURIComponent(container)}`,
+    )
   },
 
   describeTask: async (cluster: string, task: string): Promise<EcsTask | null> => {

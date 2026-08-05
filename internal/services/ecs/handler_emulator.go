@@ -17,11 +17,6 @@ func (h *Handler) GetTaskContainerLogs(w http.ResponseWriter, r *http.Request) {
 	taskArn := chi.URLParam(r, "taskArn")
 	container := chi.URLParam(r, "container")
 
-	if !h.dockerReady.Load() {
-		writeEmulatorError(w, http.StatusServiceUnavailable, "Docker is not available")
-		return
-	}
-
 	// Find the task across all clusters.
 	tasks, aerr := h.store.listAllTasks(r.Context())
 	if aerr != nil {
@@ -29,14 +24,17 @@ func (h *Handler) GetTaskContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var dockerID string
+	var dockerID, clusterName, taskID, resolvedTaskArn string
 	for _, t := range tasks {
-		if t.TaskArn != taskArn {
+		if t.TaskArn != taskArn && extractTaskID(t.TaskArn) != taskArn {
 			continue
 		}
 		for _, c := range t.Containers {
 			if c.Name == container {
 				dockerID = c.DockerID
+				clusterName = extractClusterName(t.ClusterArn)
+				taskID = extractTaskID(t.TaskArn)
+				resolvedTaskArn = t.TaskArn
 				break
 			}
 		}
@@ -48,19 +46,36 @@ func (h *Handler) GetTaskContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logs, found, aerr := h.store.getTaskContainerLogs(r.Context(), clusterName, taskID, container)
+	if aerr != nil {
+		writeEmulatorError(w, http.StatusInternalServerError, aerr.Message)
+		return
+	}
+	if found {
+		writeTaskContainerLogs(w, resolvedTaskArn, container, logs)
+		return
+	}
+
+	if !h.dockerReady.Load() {
+		writeEmulatorError(w, http.StatusServiceUnavailable, "Docker is not available")
+		return
+	}
+
 	raw, err := h.docker.ContainerLogs(r.Context(), dockerID, "200")
 	if err != nil {
 		writeEmulatorError(w, http.StatusInternalServerError, "failed to fetch logs: "+err.Error())
 		return
 	}
 
-	logs := stripDockerLogHeaders(raw)
+	writeTaskContainerLogs(w, resolvedTaskArn, container, string(stripDockerLogHeaders(raw)))
+}
 
+func writeTaskContainerLogs(w http.ResponseWriter, taskArn, container, logs string) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"containerName": container,
 		"taskArn":       taskArn,
-		"logs":          string(logs),
+		"logs":          logs,
 	})
 }
 

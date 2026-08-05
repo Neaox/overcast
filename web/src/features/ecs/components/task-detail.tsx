@@ -1,12 +1,14 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ChevronDown, ChevronRight } from "lucide-react"
-import { ecsTaskQueryOptions } from "@/features/ecs/data"
+import { ChevronDown, ChevronRight, ScrollText } from "lucide-react"
+import { ecsTaskLogsQueryOptions, ecsTaskQueryOptions } from "@/features/ecs/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/ui/copy-button"
+import { Button } from "@/components/ui/button"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
+import { LogViewer } from "@/components/logs/log-viewer"
 import type { EcsContainer } from "@/types"
 
 export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskId: string }) {
@@ -77,7 +79,7 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
         ) : (
           <div className="space-y-3">
             {task.containers.map((c) => (
-              <ContainerCard key={c.name} container={c} />
+              <ContainerCard key={c.name} taskArn={task.taskArn} container={c} />
             ))}
           </div>
         )}
@@ -86,12 +88,18 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
   )
 }
 
-function ContainerCard({ container }: { container: EcsContainer }) {
+function ContainerCard({ taskArn, container }: { taskArn: string; container: EcsContainer }) {
   const [envExpanded, setEnvExpanded] = useState(false)
+  const [logsExpanded, setLogsExpanded] = useState(() => (container.exitCode ?? 0) !== 0)
+  const logsQuery = useQuery(ecsTaskLogsQueryOptions(taskArn, container.name, logsExpanded))
+  const logEvents = (logsQuery.data?.logs ?? "")
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .map((message) => ({ message }))
 
   return (
     <div className="space-y-3 rounded border border-border bg-bg p-4">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm font-medium">{container.name}</span>
         <span className="text-xs text-fg-muted">{container.image ?? "—"}</span>
         <StatusBadge status={container.lastStatus} />
@@ -100,10 +108,34 @@ function ContainerCard({ container }: { container: EcsContainer }) {
             exit: {container.exitCode}
           </Badge>
         )}
+        <Button
+          size="sm"
+          variant="secondary"
+          className="ml-auto"
+          aria-expanded={logsExpanded}
+          onClick={() => setLogsExpanded((expanded) => !expanded)}
+        >
+          <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
+          {logsExpanded ? "Hide logs" : "View logs"}
+        </Button>
       </div>
 
       {/* Why the container is in this state — set when it could not be started. */}
       {container.reason && <p className="text-sm text-danger">{container.reason}</p>}
+
+      {logsExpanded && (
+        <div className="space-y-1.5">
+          <p className="font-mono text-xs font-medium text-fg-muted">Container output</p>
+          <LogViewer
+            events={logEvents}
+            loading={logsQuery.isLoading}
+            error={logsQuery.error instanceof Error ? logsQuery.error.message : null}
+            emptyMessage="No container output was captured."
+            showModeToggle={false}
+            className="h-64"
+          />
+        </div>
+      )}
 
       {/* Port mappings */}
       {container.networkBindings && container.networkBindings.length > 0 && (
