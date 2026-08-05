@@ -19,8 +19,8 @@ operations:
         evidence: Docker-backed DB instance containers now register the advertised Endpoint.Address hostname as a Docker DNS alias on the Lambda network so Lambda execution containers can resolve endpoint hostnames.
       - name: Runtime and startup reconciliation after engine-container drift
         status: fixed
-        tests: [TestHandleContainerEvent_recoversDockerLevelStop, TestHandleDockerDaemonConnected_reconcilesMissedStop, TestHandleDockerDaemonConnected_retriesRecoveryInterruptedByDaemonShutdown, TestHandleContainerStarted_preservesExplicitStop, TestHandleContainerEvent_ignoresOvercastShutdown, TestReconcileContainers_rebuildsMissingAvailableInstance, TestReconcileContainers_rebuildsMissingExternallyStoppedInstance, TestReconcileContainers_restartsExitedContainerForAvailableInstance, TestReconcileContainers_leavesExplicitlyStoppedInstanceStopped, TestReconcileContainers_stopsDockerStartedExplicitlyStoppedInstance]
-        evidence: Docker-level stops and crashes are recovered immediately, missed changes are reconciled when the Docker event stream reconnects, and startup rebuilds missing or exited containers. Only StopDBInstance establishes a durable stop; reconciliation stops a container started out of band for such an instance.
+        tests: [TestHandleContainerEvent_recoversDockerLevelStop, TestHandleContainerEvent_coalescesDuplicateRecoveryEvents, TestHandleContainerEvent_stopsRestartingAfterRecoveryBudget, TestDockerRecoveryBackoff, TestDockerRecoveryBudget_resetsOnlyAfterStableAvailability, TestDockerRecoveryBudget_recognizesPersistedStabilityAfterRestart, TestHandleDockerDaemonConnected_reconcilesMissedStop, TestHandleDockerDaemonConnected_retriesRecoveryInterruptedByDaemonShutdown, TestHandleContainerStarted_preservesExplicitStop, TestHandleContainerEvent_ignoresOvercastShutdown, TestReconcileContainers_rebuildsMissingAvailableInstance, TestReconcileContainers_rebuildsMissingExternallyStoppedInstance, TestReconcileContainers_restartsExitedContainerForAvailableInstance, TestReconcileContainers_leavesExplicitlyStoppedInstanceStopped, TestReconcileContainers_stopsDockerStartedExplicitlyStoppedInstance]
+        evidence: Docker-level stops and crashes are recovered with bounded exponential backoff, duplicate die events are coalesced, and repeated crash loops settle to failed after five attempts unless the engine remains available for a two-minute stability period. Missed changes are reconciled when the Docker event stream reconnects, and startup rebuilds missing or exited containers. Only StopDBInstance establishes a durable stop; reconciliation stops a container started out of band for such an instance.
       - name: MySQL 8 credential initialization
         status: fixed
         tests: [TestCreateMySQL8Container_bootstrapsEscapedCachingSHA2CredentialsBeforeStart]
@@ -28,7 +28,7 @@ operations:
 findings:
   fixed:
     - Docker-backed RDS DB instance endpoint hostnames are registered as Docker DNS aliases on the Lambda network.
-    - Missing, crashed, or externally stopped DB instance containers are recovered immediately, after Docker reconnects, and at startup without overriding an explicit StopDBInstance.
+    - Missing, crashed, or externally stopped DB instance containers are recovered with bounded backoff, after Docker reconnects, and at startup without overriding an explicit StopDBInstance; repeated crash loops settle to failed.
     - MySQL 8 initialization preserves AWS-valid special characters in master passwords and provisions accounts with caching_sha2_password.
   remaining_gaps:
     - Review CreateDBInstance/CreateDBCluster lifecycle, validation errors, and XML response parity.

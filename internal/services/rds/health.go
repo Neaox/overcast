@@ -122,17 +122,40 @@ func (h *Handler) failInstance(ctx context.Context, instanceID, reason string) {
 // failInstance, for the same reason.
 func (h *Handler) markAvailable(ctx context.Context, inst *DBInstance) {
 	instanceID := inst.DBInstanceIdentifier
-	if _, aerr := h.mutateInstance(ctx, instanceID, func(got *DBInstance) *protocol.AWSError {
+	fresh, aerr := h.mutateInstance(ctx, instanceID, func(got *DBInstance) *protocol.AWSError {
 		if !awaitingStartup(got.DBInstanceStatus) {
 			return errInstanceMovedOn
 		}
 		got.DBInstanceStatus = "available"
 		got.StatusReason = ""
+		if got.DockerRecoveryAttempts > 0 {
+			got.DockerRecoveryAvailableAt = h.clk.Now()
+		}
 		return nil
-	}); aerr != nil && aerr != errInstanceMovedOn {
+	})
+	if aerr != nil && aerr != errInstanceMovedOn {
 		h.log.Warn("RDS: persist available instance",
 			zap.String("instance", instanceID), zap.String("error", aerr.Message))
+		return
 	}
+	if aerr != nil || fresh.DockerRecoveryAttempts == 0 {
+		return
+	}
+
+	region := h.store.region(ctx)
+	h.scheduler.AfterScoped(region, instanceID, "docker-recovery-stable", dockerRecoveryStableFor, func(ctx context.Context) {
+		if _, aerr := h.mutateInstance(ctx, instanceID, func(got *DBInstance) *protocol.AWSError {
+			if got.DBInstanceStatus != "available" {
+				return errInstanceMovedOn
+			}
+			got.DockerRecoveryAttempts = 0
+			got.DockerRecoveryAvailableAt = time.Time{}
+			return nil
+		}); aerr != nil && aerr != errInstanceMovedOn {
+			h.log.Warn("RDS: reset stable container recovery budget",
+				zap.String("instance", instanceID), zap.String("error", aerr.Message))
+		}
+	})
 }
 
 // errInstanceMovedOn abandons a mutation whose guard no longer holds — the

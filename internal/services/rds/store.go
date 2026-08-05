@@ -41,6 +41,15 @@ type DBInstance struct {
 	// and the restart call. A later daemon reconnect may retry only these failed
 	// instances rather than restarting every genuinely failed database boot.
 	DockerRecoveryPending bool `json:"DockerRecoveryPending,omitempty"`
+	// DockerRecoveryAttempts bounds automatic restarts of an engine that keeps
+	// exiting. It is cleared only after the recovered engine remains available
+	// for a stability period, so a process that briefly opens its port before
+	// crashing cannot reset its own circuit breaker.
+	DockerRecoveryAttempts int `json:"DockerRecoveryAttempts,omitempty"`
+	// DockerRecoveryAvailableAt makes the stability window survive an Overcast
+	// restart. The reset timer is process-local, but a later recovery can still
+	// tell that the engine stayed available long enough to earn a fresh budget.
+	DockerRecoveryAvailableAt time.Time `json:"DockerRecoveryAvailableAt,omitempty"`
 	// StatusReason is why the instance is in a failure status. It is
 	// deliberately absent from the DescribeDBInstances wire shape: the real
 	// DBInstance carries no such field, and StatusInfos is documented as
