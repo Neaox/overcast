@@ -2,6 +2,8 @@ package rds
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -11,6 +13,27 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+const (
+	// maxDockerRecoveryAttempts is deliberately an emulator implementation
+	// detail, not an AWS quota. AWS exposes the terminal result — failed means
+	// RDS could not recover the instance — but not its internal retry count.
+	maxDockerRecoveryAttempts = 5
+	dockerRecoveryBaseBackoff = time.Second
+	dockerRecoveryMaxBackoff  = 30 * time.Second
+	dockerRecoveryStableFor   = 2 * time.Minute
+)
+
+func dockerRecoveryBackoff(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 0
+	}
+	delay := dockerRecoveryBaseBackoff
+	for n := 2; n < attempt && delay < dockerRecoveryMaxBackoff; n++ {
+		delay = min(delay*2, dockerRecoveryMaxBackoff)
+	}
+	return delay
+}
 
 // ── Docker container event handlers ──────────────────────────────────────────
 //
@@ -135,30 +158,62 @@ func (h *Handler) instanceOwnsContainer(resourceID string) bool {
 // Docker work starts: a concurrent StopDBInstance must win rather than have
 // startup recovery start its container behind its back.
 func (h *Handler) recoverExpectedContainer(ctx context.Context, instanceID string, captured *DBInstance) bool {
+	region := h.store.region(ctx)
+	// A new exit before this timer fires proves the previous recovery was not
+	// stable. Preserve its attempt count and replace the timer only after the
+	// next successful health check.
+	h.scheduler.CancelScoped(region, instanceID, "docker-recovery-stable")
+
+	var (
+		delay       time.Duration
+		exhausted   bool
+		priorStatus string
+	)
+	reason := fmt.Sprintf("the database container repeatedly exited and could not be recovered after %d attempts", maxDockerRecoveryAttempts)
 	if _, aerr := h.mutateInstance(ctx, instanceID, func(inst *DBInstance) *protocol.AWSError {
-		switch inst.DBInstanceStatus {
-		case "available":
-			inst.DBInstanceStatus = "starting"
-		case "creating", "starting":
-			// Already on a path that requires a running engine.
-		case "stopped":
-			if inst.StoppedByUser {
-				return errInstanceMovedOn
-			}
-			inst.DBInstanceStatus = "starting"
-		case "failed":
-			if !inst.DockerRecoveryPending {
-				return errInstanceMovedOn
-			}
-			inst.DBInstanceStatus = "starting"
-		default:
-			return errInstanceMovedOn
-		}
-		inst.DockerRecoveryPending = true
+		priorStatus = inst.DBInstanceStatus
 		if captured != nil {
 			inst.LastLogs = captured.LastLogs
 			inst.LastLogsAt = captured.LastLogsAt
 		}
+
+		switch inst.DBInstanceStatus {
+		case "available":
+		case "creating", "starting":
+			if inst.DockerRecoveryPending {
+				// Docker can deliver duplicate die events. One pending restart is
+				// enough; replacing its keyed timer would postpone recovery.
+				return errInstanceMovedOn
+			}
+		case "stopped":
+			if inst.StoppedByUser {
+				return errInstanceMovedOn
+			}
+		case "failed":
+			if !inst.DockerRecoveryPending {
+				return errInstanceMovedOn
+			}
+		default:
+			return errInstanceMovedOn
+		}
+
+		if !inst.DockerRecoveryAvailableAt.IsZero() &&
+			h.clk.Now().Sub(inst.DockerRecoveryAvailableAt) >= dockerRecoveryStableFor {
+			inst.DockerRecoveryAttempts = 0
+		}
+		inst.DockerRecoveryAvailableAt = time.Time{}
+		if inst.DockerRecoveryAttempts >= maxDockerRecoveryAttempts {
+			inst.DBInstanceStatus = "failed"
+			inst.DockerRecoveryPending = false
+			inst.StatusReason = reason
+			exhausted = true
+			return nil
+		}
+
+		inst.DBInstanceStatus = "starting"
+		inst.DockerRecoveryAttempts++
+		inst.DockerRecoveryPending = true
+		delay = dockerRecoveryBackoff(inst.DockerRecoveryAttempts)
 		return nil
 	}); aerr != nil {
 		if aerr != errInstanceMovedOn {
@@ -167,8 +222,16 @@ func (h *Handler) recoverExpectedContainer(ctx context.Context, instanceID strin
 		}
 		return false
 	}
+	if exhausted {
+		h.recordInstanceFailureEvent(ctx, instanceID, priorStatus, reason)
+		h.log.Warn("RDS: automatic container recovery exhausted",
+			zap.String("instance", instanceID), zap.String("reason", reason))
+		return false
+	}
 
-	h.startInstanceContainerAsync(ctx, instanceID)
+	h.scheduler.AfterScoped(region, instanceID, "docker-recovery", delay, func(ctx context.Context) {
+		h.startInstanceContainerAsync(ctx, instanceID)
+	})
 	return true
 }
 

@@ -82,7 +82,7 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [ecs/web] cluster summaries and topology reflect current resources, while stopped tasks remain inspectable with AWS-compatible status, reason, and one-hour retention metadata
 
-- [rds] database containers stopped, crashed, or removed through Docker are now recovered immediately, after Docker reconnects, or during Overcast startup; only `StopDBInstance` establishes a durable stopped state, and MySQL 8 initialization now preserves AWS-valid special-character passwords while using `caching_sha2_password`
+- [rds] database containers stopped, crashed, or removed through Docker are now recovered with bounded backoff immediately, after Docker reconnects, or during Overcast startup; repeated crash loops settle to `failed`, only `StopDBInstance` establishes a durable stopped state, and MySQL 8 initialization now preserves AWS-valid special-character passwords while using `caching_sha2_password`
 
 ## [0.0.1-alpha.29] - 2026-08-03
 
