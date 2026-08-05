@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -26,15 +28,17 @@ type captureRouter struct {
 }
 
 type capturedRequest struct {
-	path string
-	body map[string]any
+	method string
+	path   string
+	query  string
+	body   map[string]any
 }
 
 func (c *captureRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
 	body := map[string]any{}
 	_ = json.Unmarshal(raw, &body)
-	c.requests = append(c.requests, capturedRequest{path: r.URL.Path, body: body})
+	c.requests = append(c.requests, capturedRequest{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: body})
 	if c.pathRequests == nil {
 		c.pathRequests = make(map[string]int)
 	}
@@ -58,6 +62,129 @@ func (c *captureRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"FunctionArn": "arn:aws:lambda:us-east-1:000000000000:function:Stack-Function",
 	})
+}
+
+func TestLambdaProvisionerUpdateDispatchesOnlyChangedPhases(t *testing.T) {
+	const name = "Stack-Function"
+	base := map[string]any{
+		"Runtime": "nodejs22.x", "Handler": "index.handler", "Role": "arn:aws:iam::000000000000:role/r",
+		"Description": "same", "Code": map[string]any{"ZipFile": "exports.handler=()=>1"}, "ReservedConcurrentExecutions": 1,
+		"Tags": []any{map[string]any{"Key": "stage", "Value": "old"}},
+	}
+	tests := []struct {
+		name      string
+		mutate    func(map[string]any)
+		wantPaths []string
+	}{
+		{name: "no-op update", mutate: func(map[string]any) {}, wantPaths: nil},
+		{name: "configuration only", mutate: func(props map[string]any) { props["Description"] = "new" }, wantPaths: []string{"/2015-03-31/functions/" + name + "/configuration"}},
+		{name: "code only", mutate: func(props map[string]any) { props["Code"] = map[string]any{"ZipFile": "exports.handler=()=>2"} }, wantPaths: []string{"/2015-03-31/functions/" + name + "/code"}},
+		{name: "concurrency only", mutate: func(props map[string]any) { props["ReservedConcurrentExecutions"] = 2 }, wantPaths: []string{"/2017-10-31/functions/" + name + "/concurrency"}},
+		{name: "tags only", mutate: func(props map[string]any) { props["Tags"] = []any{map[string]any{"Key": "stage", "Value": "new"}} }, wantPaths: []string{"/2017-03-31/tags/arn:aws:lambda:us-east-1:000000000000:function:Stack-Function"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a function whose template changes only the named phase.
+			oldProps := cloneProperties(t, base)
+			newProps := cloneProperties(t, base)
+			tc.mutate(newProps)
+			router := &captureRouter{}
+
+			// When: CloudFormation applies the update.
+			_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, name, newProps, oldProps, &resolveContext{
+				Region: "us-east-1", AccountID: "000000000000",
+			})
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+
+			// Then: unrelated Lambda APIs are not called.
+			if got := capturedPaths(router.requests); !slices.Equal(got, tc.wantPaths) {
+				t.Fatalf("request paths = %v, want %v", got, tc.wantPaths)
+			}
+		})
+	}
+}
+
+func TestLambdaProvisionerUpdateRemovesTags(t *testing.T) {
+	const name = "Stack-Function"
+	oldProps := map[string]any{
+		"Tags": []any{map[string]any{"Key": "stage", "Value": "old"}},
+	}
+	router := &captureRouter{}
+
+	_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, name, map[string]any{}, oldProps, &resolveContext{
+		Region: "us-east-1", AccountID: "000000000000",
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if len(router.requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(router.requests))
+	}
+	request := router.requests[0]
+	if request.method != http.MethodDelete || request.path != "/2017-03-31/tags/arn:aws:lambda:us-east-1:000000000000:function:Stack-Function" || request.query != "tagKeys=stage" {
+		t.Fatalf("request = %s %s?%s, want DELETE tag resource with stage key", request.method, request.path, request.query)
+	}
+}
+
+func TestLambdaProvisionerUpdateCompensatesPartialTagFailure(t *testing.T) {
+	const tagPath = "/2017-03-31/tags/arn:aws:lambda:us-east-1:000000000000:function:Stack-Function"
+	oldProps := map[string]any{"Tags": []any{
+		map[string]any{"Key": "stage", "Value": "old"},
+		map[string]any{"Key": "removed", "Value": "restore"},
+	}}
+	newProps := map[string]any{"Tags": []any{
+		map[string]any{"Key": "stage", "Value": "new"},
+		map[string]any{"Key": "added", "Value": "temporary"},
+	}}
+	router := &captureRouter{failAt: map[string]map[int]int{tagPath: {2: http.StatusInternalServerError}}}
+
+	_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, "Stack-Function", newProps, oldProps, &resolveContext{
+		Region: "us-east-1", AccountID: "000000000000",
+	})
+	if err == nil {
+		t.Fatal("Update error = nil, want UntagResource failure")
+	}
+	if len(router.requests) != 4 {
+		t.Fatalf("requests = %d, want 4", len(router.requests))
+	}
+	if router.requests[0].method != http.MethodPost || router.requests[1].method != http.MethodDelete || router.requests[2].method != http.MethodPost || router.requests[3].method != http.MethodDelete {
+		t.Fatalf("request methods = %v", []string{router.requests[0].method, router.requests[1].method, router.requests[2].method, router.requests[3].method})
+	}
+	restored := router.requests[2].body["Tags"].(map[string]any)
+	if restored["stage"] != "old" || restored["removed"] != "restore" || router.requests[3].query != "tagKeys=added" {
+		t.Fatalf("compensation = tags %#v, query %q", restored, router.requests[3].query)
+	}
+}
+
+func TestLambdaProvisionerAuxiliarySupportCheckIsNonMutating(t *testing.T) {
+	router := &captureRouter{}
+	_, _, err := (&lambdaFunctionHandler{}).Create(context.Background(), router, nil, map[string]any{
+		"FunctionName":            "auxiliary-function",
+		"RuntimeManagementConfig": map[string]any{"UpdateRuntimeOn": "Auto"},
+	}, &resolveContext{Region: "us-east-1"})
+	if err == nil {
+		t.Fatal("Create error = nil, want unsupported auxiliary property")
+	}
+	if len(router.requests) != 1 || router.requests[0].method != http.MethodGet || router.requests[0].path != "/2021-07-20/functions/auxiliary-function/runtime-management-config" {
+		t.Fatalf("requests = %#v, want one non-mutating support read", router.requests)
+	}
+}
+
+func cloneProperties(t *testing.T, properties map[string]any) map[string]any {
+	t.Helper()
+	data, err := json.Marshal(properties)
+	if err != nil {
+		t.Fatalf("marshal properties: %v", err)
+	}
+	var cloned map[string]any
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		t.Fatalf("unmarshal properties: %v", err)
+	}
+	return cloned
 }
 
 func TestLambdaProvisionerCreateCleanupFailureRetainsPhysicalIDForRetry(t *testing.T) {
@@ -210,6 +337,84 @@ func TestLambdaProvisionerUpdateCompensationFailurePreservesBothErrors(t *testin
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Update error = %q, want %q", err, want)
 		}
+	}
+}
+
+func TestLambdaProvisionerUpdateCodeSigningConfigDelta(t *testing.T) {
+	const (
+		name       = "Stack-Function"
+		configPath = "/2020-06-30/functions/Stack-Function/code-signing-config"
+	)
+	tests := []struct {
+		name       string
+		oldARN     string
+		newARN     string
+		wantMethod string
+		wantBody   map[string]any
+	}{
+		{name: "add", newARN: "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-new", wantMethod: http.MethodPut, wantBody: map[string]any{"CodeSigningConfigArn": "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-new"}},
+		{name: "change", oldARN: "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-old", newARN: "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-new", wantMethod: http.MethodPut, wantBody: map[string]any{"CodeSigningConfigArn": "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-new"}},
+		{name: "remove", oldARN: "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-old", wantMethod: http.MethodDelete, wantBody: map[string]any{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a function whose code-signing association changes.
+			oldProps := map[string]any{}
+			newProps := map[string]any{}
+			if tc.oldARN != "" {
+				oldProps["CodeSigningConfigArn"] = tc.oldARN
+			}
+			if tc.newARN != "" {
+				newProps["CodeSigningConfigArn"] = tc.newARN
+			}
+			router := &captureRouter{}
+
+			// When: CloudFormation updates the function.
+			_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, name, newProps, oldProps, &resolveContext{Region: "us-east-1"})
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+
+			// Then: the matching Lambda association API receives the delta.
+			if len(router.requests) != 1 {
+				t.Fatalf("requests = %v, want one", capturedPaths(router.requests))
+			}
+			request := router.requests[0]
+			if request.path != configPath || request.method != tc.wantMethod || !reflect.DeepEqual(request.body, tc.wantBody) {
+				t.Errorf("request = %s %s %#v, want %s %s %#v", request.method, request.path, request.body, tc.wantMethod, configPath, tc.wantBody)
+			}
+		})
+	}
+}
+
+func TestLambdaProvisionerUpdateCodeSigningConfigCompensatesLaterFailure(t *testing.T) {
+	const (
+		name            = "Stack-Function"
+		configPath      = "/2020-06-30/functions/Stack-Function/code-signing-config"
+		concurrencyPath = "/2017-10-31/functions/Stack-Function/concurrency"
+	)
+	oldARN := "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-old"
+	newARN := "arn:aws:lambda:us-east-1:000000000000:code-signing-config:csc-new"
+	router := &captureRouter{failPath: concurrencyPath}
+
+	// When: a later concurrency phase fails after changing the association.
+	_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, name,
+		map[string]any{"CodeSigningConfigArn": newARN, "ReservedConcurrentExecutions": 2},
+		map[string]any{"CodeSigningConfigArn": oldARN, "ReservedConcurrentExecutions": 1},
+		&resolveContext{Region: "us-east-1"},
+	)
+
+	// Then: compensation restores the former association before returning.
+	if err == nil {
+		t.Fatal("Update error = nil, want concurrency failure")
+	}
+	wantPaths := []string{configPath, concurrencyPath, configPath}
+	if got := capturedPaths(router.requests); !slices.Equal(got, wantPaths) {
+		t.Fatalf("request paths = %v, want %v", got, wantPaths)
+	}
+	if got := router.requests[2].body["CodeSigningConfigArn"]; got != oldARN {
+		t.Errorf("restored CodeSigningConfigArn = %v, want %q", got, oldARN)
 	}
 }
 

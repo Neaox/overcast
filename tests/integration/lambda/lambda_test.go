@@ -3816,7 +3816,7 @@ func dynamoDBStreamARN(table string) string {
 func createESM(t *testing.T, srv *helpers.TestServer, body map[string]any) map[string]any {
 	t.Helper()
 	resp := doJSON(t, http.MethodPost, esmURL(srv), body)
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var out map[string]any
 	decodeJSON(t, resp, &out)
 	return out
@@ -3924,6 +3924,10 @@ func TestCreateEventSourceMapping_sqsSource(t *testing.T) {
 	if esm["UUID"] == "" {
 		t.Error("expected UUID to be set")
 	}
+	wantARN := "arn:aws:lambda:us-east-1:000000000000:event-source-mapping:" + esm["UUID"].(string)
+	if esm["EventSourceMappingArn"] != wantARN {
+		t.Errorf("EventSourceMappingArn: got %v, want %s", esm["EventSourceMappingArn"], wantARN)
+	}
 	if esm["EventSourceArn"] != queueARN {
 		t.Errorf("EventSourceArn: got %v, want %s", esm["EventSourceArn"], queueARN)
 	}
@@ -3935,6 +3939,43 @@ func TestCreateEventSourceMapping_sqsSource(t *testing.T) {
 	}
 	if esm["FunctionArn"] == "" {
 		t.Error("expected FunctionArn to be set")
+	}
+}
+
+func TestEventSourceMappingLegacyRecordBackfillsARNOnResponsesAndUpdate(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	const id = "84d6e94f-372a-4c5e-9d39-6fdf46e15432"
+	legacy := `{"UUID":"` + id + `","FunctionArn":"arn:aws:lambda:us-east-1:000000000000:function:legacy","EventSourceArn":"arn:aws:sqs:us-east-1:000000000000:legacy","State":"Enabled","BatchSize":10}`
+	if err := srv.Store.Set(context.Background(), "lambda:esm", "us-east-1/"+id, legacy); err != nil {
+		t.Fatalf("seed legacy event source mapping: %v", err)
+	}
+	wantARN := "arn:aws:lambda:us-east-1:000000000000:event-source-mapping:" + id
+
+	get := doJSON(t, http.MethodGet, lambdaURL(srv, "/event-source-mappings/"+id), nil)
+	var got map[string]any
+	decodeJSON(t, get, &got)
+	if got["EventSourceMappingArn"] != wantARN {
+		t.Errorf("GetEventSourceMapping ARN = %v, want %q", got["EventSourceMappingArn"], wantARN)
+	}
+
+	list := doJSON(t, http.MethodGet, esmURL(srv), nil)
+	var listed struct {
+		Mappings []map[string]any `json:"EventSourceMappings"`
+	}
+	decodeJSON(t, list, &listed)
+	if len(listed.Mappings) != 1 || listed.Mappings[0]["EventSourceMappingArn"] != wantARN {
+		t.Errorf("ListEventSourceMappings = %#v, want backfilled ARN", listed.Mappings)
+	}
+
+	update := doJSON(t, http.MethodPut, lambdaURL(srv, "/event-source-mappings/"+id), map[string]any{"BatchSize": 20})
+	helpers.AssertStatus(t, update, http.StatusAccepted)
+	decodeJSON(t, update, &got)
+	if got["EventSourceMappingArn"] != wantARN {
+		t.Errorf("UpdateEventSourceMapping ARN = %v, want %q", got["EventSourceMappingArn"], wantARN)
+	}
+	raw, found, err := srv.Store.Get(context.Background(), "lambda:esm", "us-east-1/"+id)
+	if err != nil || !found || !strings.Contains(raw, wantARN) {
+		t.Errorf("updated legacy record = found %v, err %v, raw %q", found, err, raw)
 	}
 }
 
@@ -3994,7 +4035,7 @@ func TestCreateEventSourceMapping_disabledInitially(t *testing.T) {
 		"EventSourceArn": sqsARN("disabled-queue"),
 		"Enabled":        false,
 	})
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var esm map[string]any
 	decodeJSON(t, resp, &esm)
 
@@ -4169,8 +4210,8 @@ func TestUpdateEventSourceMapping_disable(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 200 with State Disabled
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	// Then: 202 with State Disabled
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var got map[string]any
 	helpers.DecodeJSON(t, resp, &got)
 	if got["State"] != "Disabled" {
@@ -4195,8 +4236,8 @@ func TestUpdateEventSourceMapping_changeBatchSize(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 200 with new BatchSize
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	// Then: 202 with new BatchSize
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var got map[string]any
 	helpers.DecodeJSON(t, resp, &got)
 	if got["BatchSize"] != float64(20) {
@@ -4436,8 +4477,8 @@ func TestUpdateEventSourceMapping_changeScalingConfig(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 200 with ScalingConfig set
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	// Then: 202 with ScalingConfig set
+	helpers.AssertStatus(t, resp, http.StatusAccepted)
 	var got map[string]any
 	helpers.DecodeJSON(t, resp, &got)
 	sc, ok := got["ScalingConfig"].(map[string]any)
@@ -5047,14 +5088,18 @@ func TestPutFunctionConcurrency_missingValueReturnsInvalidParameter(t *testing.T
 
 func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	functionFields := map[string]any{
+	createFunctionFields := map[string]any{
 		"DeadLetterConfig": map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
 		"TracingConfig":    map[string]any{"Mode": "Active"}, "EphemeralStorage": map[string]any{"Size": 1024},
-		"KMSKeyArn":               "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
-		"SnapStart":               map[string]any{"ApplyOn": "PublishedVersions"},
-		"RuntimeManagementConfig": map[string]any{"UpdateRuntimeOn": "Auto"}, "RecursiveLoop": "Allow",
+		"KMSKeyArn":              "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
+		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
+		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
+		"Publish":                false,
+		"PublishTo":              "LATEST_PUBLISHED",
+		"TenancyConfig":          map[string]any{"TenantIsolationMode": "PER_TENANT"},
 	}
-	for field, value := range functionFields {
+	for field, value := range createFunctionFields {
 		t.Run("function/"+field, func(t *testing.T) {
 			name := "unsupported-" + strings.ToLower(field)
 			request := map[string]any{
@@ -5068,14 +5113,38 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 			get.Body.Close()
 		})
 	}
+	for field, value := range map[string]any{
+		"S3ObjectStorageMode": "Zip",
+		"SourceKMSKeyArn":     "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+	} {
+		t.Run("function-code/"+field, func(t *testing.T) {
+			name := "unsupported-code-" + strings.ToLower(field)
+			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
+				"FunctionName": name, "Runtime": "python3.12", "Handler": "index.handler",
+				"Role": "arn:aws:iam::000000000000:role/lambda-role",
+				"Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==", field: value},
+			})
+			assertLambdaUnsupported(t, resp)
+		})
+	}
 
 	createFunction(t, srv, "unsupported-update-fn")
 	baseline := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), map[string]any{
 		"Description": "before",
 	})
 	helpers.AssertStatus(t, baseline, http.StatusOK)
-	baseline.Body.Close()
-	for field, value := range functionFields {
+	var baselineConfig functionConfiguration
+	decodeJSON(t, baseline, &baselineConfig)
+	updateConfigurationFields := map[string]any{
+		"DeadLetterConfig": map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
+		"TracingConfig":    map[string]any{"Mode": "Active"}, "EphemeralStorage": map[string]any{"Size": 1024},
+		"KMSKeyArn":              "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
+		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
+		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
+		"RevisionId":             "revision",
+	}
+	for field, value := range updateConfigurationFields {
 		t.Run("function-update/"+field, func(t *testing.T) {
 			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), map[string]any{
 				"Description": "mutated", field: value,
@@ -5091,6 +5160,23 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 			}
 		})
 	}
+	for field, value := range map[string]any{
+		"DryRun": false, "Publish": false, "PublishTo": "LATEST_PUBLISHED", "RevisionId": "revision",
+		"S3ObjectStorageMode": "Zip", "SourceKMSKeyArn": "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+	} {
+		t.Run("function-code-update/"+field, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/code"), map[string]any{
+				"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==", field: value,
+			})
+			assertLambdaUnsupported(t, resp)
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), nil)
+			var config functionConfiguration
+			decodeJSON(t, get, &config)
+			if config.RevisionId != baselineConfig.RevisionId {
+				t.Fatalf("RevisionId = %q after rejected %s code update, want %q", config.RevisionId, field, baselineConfig.RevisionId)
+			}
+		})
+	}
 
 	esmFields := map[string]any{
 		"FunctionResponseTypes": []string{"ReportBatchItemFailures"}, "ParallelizationFactor": 2, "StartingPositionTimestamp": 1000,
@@ -5098,11 +5184,38 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 		"Topics": []string{"topic"}, "Queues": []string{"queue"},
 		"KmsKeyArn":     "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
 		"MetricsConfig": map[string]any{"Metrics": []string{"EventCount"}}, "ProvisionedPollerConfig": map[string]any{"MinimumPollers": 1, "MaximumPollers": 2},
+		"AmazonManagedKafkaEventSourceConfig": map[string]any{}, "DocumentDBEventSourceConfig": map[string]any{},
+		"LoggingConfig": map[string]any{"SystemLogLevel": "INFO"}, "SelfManagedKafkaEventSourceConfig": map[string]any{},
+		"Tags": map[string]string{"stage": "test"},
 	}
 	for field, value := range esmFields {
 		t.Run("esm/"+field, func(t *testing.T) {
 			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/event-source-mappings/"), map[string]any{field: value})
 			assertLambdaUnsupported(t, resp)
+		})
+	}
+
+	createFunction(t, srv, "unsupported-esm-update-fn")
+	esm := createESM(t, srv, map[string]any{
+		"FunctionName": "unsupported-esm-update-fn", "EventSourceArn": sqsARN("unsupported-esm-update-queue"),
+	})
+	id := esm["UUID"].(string)
+	for field, value := range map[string]any{
+		"AmazonManagedKafkaEventSourceConfig": map[string]any{}, "DocumentDBEventSourceConfig": map[string]any{},
+		"LoggingConfig": map[string]any{"SystemLogLevel": "INFO"}, "SelfManagedKafkaEventSourceConfig": map[string]any{},
+		"Topics": []string{"topic"}, "Queues": []string{"queue"},
+	} {
+		t.Run("esm-update/"+field, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/event-source-mappings/"+id), map[string]any{
+				"BatchSize": 99, field: value,
+			})
+			assertLambdaUnsupported(t, resp)
+			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/event-source-mappings/"+id), nil)
+			var mapping map[string]any
+			decodeJSON(t, get, &mapping)
+			if mapping["BatchSize"] != float64(10) {
+				t.Fatalf("BatchSize = %v after rejected %s update, want 10", mapping["BatchSize"], field)
+			}
 		})
 	}
 }

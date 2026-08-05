@@ -38,6 +38,51 @@ const lambdaPriorityOnePropertiesTemplate = `{
   }
 }`
 
+const lambdaDeltaOnlyArnTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {"Function": {"Type": "AWS::Lambda::Function", "Properties": {
+    "FunctionName": "cfn-lambda-delta-arn", "Runtime": "python3.11", "Handler": "index.handler",
+    "Role": "arn:aws:iam::000000000000:role/lambda-role",
+    "Code": {"ZipFile": "def handler(event, context): return 'before'"}
+  }}},
+  "Outputs": {"FunctionArn": {"Value": {"Fn::GetAtt": ["Function", "Arn"]}}}
+}`
+
+func TestUpdateStack_LambdaDeltaOnlyUpdatesPreserveArnGetAtt(t *testing.T) {
+	wantARN := "arn:aws:lambda:us-east-1:000000000000:function:cfn-lambda-delta-arn"
+	tests := []struct {
+		name     string
+		template string
+	}{
+		{name: "code only", template: strings.Replace(lambdaDeltaOnlyArnTemplate, "return 'before'", "return 'after'", 1)},
+		{name: "concurrency only", template: strings.Replace(lambdaDeltaOnlyArnTemplate,
+			`"Code": {"ZipFile": "def handler(event, context): return 'before'"}`,
+			`"Code": {"ZipFile": "def handler(event, context): return 'before'"}, "ReservedConcurrentExecutions": 2`, 1)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+			stackName := "lambda-delta-arn-" + strings.ReplaceAll(tc.name, " ", "-")
+			createLambdaStack(t, srv, stackName, lambdaDeltaOnlyArnTemplate)
+
+			resp := cfnQuery(t, srv, "UpdateStack", url.Values{
+				"StackName": []string{stackName}, "TemplateBody": []string{tc.template},
+			})
+			defer resp.Body.Close()
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+			describe := cfnQuery(t, srv, "DescribeStacks", url.Values{"StackName": []string{stackName}})
+			defer describe.Body.Close()
+			helpers.AssertStatus(t, describe, http.StatusOK)
+			if body := string(readBody(t, describe)); !strings.Contains(body, wantARN) {
+				t.Errorf("DescribeStacks output lost Function Arn after %s update: %s", tc.name, body)
+			}
+		})
+	}
+}
+
 func TestCreateStack_LambdaFunctionForwardsPriorityOneProperties(t *testing.T) {
 	// Given: a Lambda function with the runtime properties CloudFormation used
 	// to discard before calling CreateFunction.
@@ -311,6 +356,46 @@ func TestCreateStack_LambdaImageFunctionForwardsPackageAndImageConfig(t *testing
 	}
 	if imageConfig.WorkingDirectory != "/var/task" {
 		t.Errorf("ImageConfigResponse.ImageConfig.WorkingDirectory = %q, want /var/task", imageConfig.WorkingDirectory)
+	}
+}
+
+const lambdaTaggedFunctionTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {"Function": {"Type": "AWS::Lambda::Function", "Properties": {
+    "FunctionName": "cfn-lambda-tagged", "Runtime": "python3.11", "Handler": "index.handler",
+    "Role": "arn:aws:iam::000000000000:role/lambda-role",
+    "Code": {"ZipFile": "def handler(event, context): return {}"},
+    "Tags": [{"Key": "stage", "Value": "old"}]
+  }}}
+}`
+
+var lambdaRetaggedFunctionTemplate = strings.Replace(lambdaTaggedFunctionTemplate,
+	`"Value": "old"`, `"Value": "new"`, 1)
+
+func TestUpdateStack_LambdaFunctionTagsUnsupported(t *testing.T) {
+	// Given: CloudFormation created a function with its initial resource tags.
+	srv := helpers.NewTestServer(t)
+	createLambdaStack(t, srv, "lambda-tag-update-stack", lambdaTaggedFunctionTemplate)
+
+	// When: a stack update changes the tags while Lambda TagResource is unsupported.
+	resp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{"lambda-tag-update-stack"},
+		"TemplateBody": []string{lambdaRetaggedFunctionTemplate},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "lambda-tag-update-stack", "UPDATE_ROLLBACK_COMPLETE")
+
+	// Then: CloudFormation failed loudly before changing the function or unrelated configuration.
+	get := lambdaRequest(t, srv, http.MethodGet, "/2015-03-31/functions/cfn-lambda-tagged", nil)
+	defer get.Body.Close()
+	helpers.AssertStatus(t, get, http.StatusOK)
+	var function struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, get, &function)
+	if function.Tags["stage"] != "old" {
+		t.Errorf("stage tag = %q, want old", function.Tags["stage"])
 	}
 }
 

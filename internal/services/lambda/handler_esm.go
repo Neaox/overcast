@@ -28,50 +28,61 @@ import (
 
 // createESMRequest is the wire request body for CreateEventSourceMapping.
 type createESMRequest struct {
-	FunctionName                   string             `json:"FunctionName"`
-	EventSourceArn                 string             `json:"EventSourceArn"`
-	BatchSize                      int                `json:"BatchSize"`
-	StartingPosition               string             `json:"StartingPosition"`
-	MaximumBatchingWindowInSeconds int                `json:"MaximumBatchingWindowInSeconds"`
-	FilterCriteria                 *FilterCriteria    `json:"FilterCriteria"`
-	MaximumRecordAgeInSeconds      *int               `json:"MaximumRecordAgeInSeconds"`
-	MaximumRetryAttempts           *int               `json:"MaximumRetryAttempts"`
-	TumblingWindowInSeconds        int                `json:"TumblingWindowInSeconds"`
-	BisectBatchOnFunctionError     bool               `json:"BisectBatchOnFunctionError"`
-	DestinationConfig              *DestinationConfig `json:"DestinationConfig"`
-	ScalingConfig                  *ScalingConfig     `json:"ScalingConfig"`
-	Enabled                        *bool              `json:"Enabled"` // nil == true (default enabled)
-	FunctionResponseTypes          json.RawMessage    `json:"FunctionResponseTypes"`
-	ParallelizationFactor          json.RawMessage    `json:"ParallelizationFactor"`
-	StartingPositionTimestamp      json.RawMessage    `json:"StartingPositionTimestamp"`
-	SourceAccessConfigurations     json.RawMessage    `json:"SourceAccessConfigurations"`
-	SelfManagedEventSource         json.RawMessage    `json:"SelfManagedEventSource"`
-	Topics                         json.RawMessage    `json:"Topics"`
-	Queues                         json.RawMessage    `json:"Queues"`
-	KMSKeyArn                      json.RawMessage    `json:"KMSKeyArn"`
-	MetricsConfig                  json.RawMessage    `json:"MetricsConfig"`
-	ProvisionedPollerConfig        json.RawMessage    `json:"ProvisionedPollerConfig"`
+	FunctionName                        string             `json:"FunctionName"`
+	EventSourceArn                      string             `json:"EventSourceArn"`
+	BatchSize                           int                `json:"BatchSize"`
+	StartingPosition                    string             `json:"StartingPosition"`
+	MaximumBatchingWindowInSeconds      int                `json:"MaximumBatchingWindowInSeconds"`
+	FilterCriteria                      *FilterCriteria    `json:"FilterCriteria"`
+	MaximumRecordAgeInSeconds           *int               `json:"MaximumRecordAgeInSeconds"`
+	MaximumRetryAttempts                *int               `json:"MaximumRetryAttempts"`
+	TumblingWindowInSeconds             int                `json:"TumblingWindowInSeconds"`
+	BisectBatchOnFunctionError          bool               `json:"BisectBatchOnFunctionError"`
+	DestinationConfig                   *DestinationConfig `json:"DestinationConfig"`
+	ScalingConfig                       *ScalingConfig     `json:"ScalingConfig"`
+	Enabled                             *bool              `json:"Enabled"` // nil == true (default enabled)
+	FunctionResponseTypes               json.RawMessage    `json:"FunctionResponseTypes"`
+	ParallelizationFactor               json.RawMessage    `json:"ParallelizationFactor"`
+	StartingPositionTimestamp           json.RawMessage    `json:"StartingPositionTimestamp"`
+	SourceAccessConfigurations          json.RawMessage    `json:"SourceAccessConfigurations"`
+	SelfManagedEventSource              json.RawMessage    `json:"SelfManagedEventSource"`
+	Topics                              json.RawMessage    `json:"Topics"`
+	Queues                              json.RawMessage    `json:"Queues"`
+	KMSKeyArn                           json.RawMessage    `json:"KMSKeyArn"`
+	MetricsConfig                       json.RawMessage    `json:"MetricsConfig"`
+	ProvisionedPollerConfig             json.RawMessage    `json:"ProvisionedPollerConfig"`
+	AmazonManagedKafkaEventSourceConfig json.RawMessage    `json:"AmazonManagedKafkaEventSourceConfig"`
+	DocumentDBEventSourceConfig         json.RawMessage    `json:"DocumentDBEventSourceConfig"`
+	LoggingConfig                       json.RawMessage    `json:"LoggingConfig"`
+	SelfManagedKafkaEventSourceConfig   json.RawMessage    `json:"SelfManagedKafkaEventSourceConfig"`
+	Tags                                json.RawMessage    `json:"Tags"`
 }
 
 // updateESMRequest is the wire request body for UpdateEventSourceMapping.
 type updateESMRequest struct {
-	FunctionName                   *string            `json:"FunctionName"`
-	BatchSize                      *int               `json:"BatchSize"`
-	MaximumBatchingWindowInSeconds *int               `json:"MaximumBatchingWindowInSeconds"`
-	FilterCriteria                 *FilterCriteria    `json:"FilterCriteria"`
-	MaximumRecordAgeInSeconds      *int               `json:"MaximumRecordAgeInSeconds"`
-	MaximumRetryAttempts           *int               `json:"MaximumRetryAttempts"`
-	TumblingWindowInSeconds        *int               `json:"TumblingWindowInSeconds"`
-	BisectBatchOnFunctionError     *bool              `json:"BisectBatchOnFunctionError"`
-	DestinationConfig              *DestinationConfig `json:"DestinationConfig"`
-	ScalingConfig                  *ScalingConfig     `json:"ScalingConfig"`
-	Enabled                        *bool              `json:"Enabled"`
-	FunctionResponseTypes          json.RawMessage    `json:"FunctionResponseTypes"`
-	ParallelizationFactor          json.RawMessage    `json:"ParallelizationFactor"`
-	SourceAccessConfigurations     json.RawMessage    `json:"SourceAccessConfigurations"`
-	KMSKeyArn                      json.RawMessage    `json:"KMSKeyArn"`
-	MetricsConfig                  json.RawMessage    `json:"MetricsConfig"`
-	ProvisionedPollerConfig        json.RawMessage    `json:"ProvisionedPollerConfig"`
+	FunctionName                        *string            `json:"FunctionName"`
+	BatchSize                           *int               `json:"BatchSize"`
+	MaximumBatchingWindowInSeconds      *int               `json:"MaximumBatchingWindowInSeconds"`
+	FilterCriteria                      *FilterCriteria    `json:"FilterCriteria"`
+	MaximumRecordAgeInSeconds           *int               `json:"MaximumRecordAgeInSeconds"`
+	MaximumRetryAttempts                *int               `json:"MaximumRetryAttempts"`
+	TumblingWindowInSeconds             *int               `json:"TumblingWindowInSeconds"`
+	BisectBatchOnFunctionError          *bool              `json:"BisectBatchOnFunctionError"`
+	DestinationConfig                   *DestinationConfig `json:"DestinationConfig"`
+	ScalingConfig                       *ScalingConfig     `json:"ScalingConfig"`
+	Enabled                             *bool              `json:"Enabled"`
+	FunctionResponseTypes               json.RawMessage    `json:"FunctionResponseTypes"`
+	ParallelizationFactor               json.RawMessage    `json:"ParallelizationFactor"`
+	SourceAccessConfigurations          json.RawMessage    `json:"SourceAccessConfigurations"`
+	KMSKeyArn                           json.RawMessage    `json:"KMSKeyArn"`
+	MetricsConfig                       json.RawMessage    `json:"MetricsConfig"`
+	ProvisionedPollerConfig             json.RawMessage    `json:"ProvisionedPollerConfig"`
+	Topics                              json.RawMessage    `json:"Topics"`
+	Queues                              json.RawMessage    `json:"Queues"`
+	AmazonManagedKafkaEventSourceConfig json.RawMessage    `json:"AmazonManagedKafkaEventSourceConfig"`
+	DocumentDBEventSourceConfig         json.RawMessage    `json:"DocumentDBEventSourceConfig"`
+	LoggingConfig                       json.RawMessage    `json:"LoggingConfig"`
+	SelfManagedKafkaEventSourceConfig   json.RawMessage    `json:"SelfManagedKafkaEventSourceConfig"`
 }
 
 // listESMResponse is the wire response for ListEventSourceMappings.
@@ -91,6 +102,8 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		rawRequestField(req.StartingPositionTimestamp), rawRequestField(req.SourceAccessConfigurations),
 		rawRequestField(req.SelfManagedEventSource), rawRequestField(req.Topics), rawRequestField(req.Queues),
 		rawRequestField(req.KMSKeyArn), rawRequestField(req.MetricsConfig), rawRequestField(req.ProvisionedPollerConfig),
+		rawRequestField(req.AmazonManagedKafkaEventSourceConfig), rawRequestField(req.DocumentDBEventSourceConfig),
+		rawRequestField(req.LoggingConfig), rawRequestField(req.SelfManagedKafkaEventSourceConfig), rawRequestField(req.Tags),
 	) {
 		protocol.NotImplementedJSON(w, r)
 		return
@@ -176,6 +189,9 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		LastModified:                   float64(h.clk.Now().UnixMilli()) / 1000,
 		LastProcessingResult:           "No records processed",
 	}
+	esm.EventSourceMappingArn = protocol.ARN(
+		middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, "lambda", "event-source-mapping:"+esm.UUID,
+	)
 
 	if aerr := h.esm.putESM(r.Context(), esm); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -188,7 +204,7 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(esm)
 }
 
@@ -212,6 +228,9 @@ func (h *Handler) ListEventSourceMappings(w http.ResponseWriter, r *http.Request
 	if mappings == nil {
 		mappings = []*EventSourceMapping{}
 	}
+	for _, mapping := range mappings {
+		h.ensureEventSourceMappingARN(r, mapping)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -230,6 +249,7 @@ func (h *Handler) GetEventSourceMapping(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("The event source arn (%s) and/or function provided is incorrect", id), HTTPStatus: http.StatusNotFound})
 		return
 	}
+	h.ensureEventSourceMappingARN(r, esm)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -248,6 +268,7 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("The event source arn (%s) and/or function provided is incorrect", id), HTTPStatus: http.StatusNotFound})
 		return
 	}
+	h.ensureEventSourceMappingARN(r, esm)
 
 	var req updateESMRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
@@ -257,6 +278,9 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		rawRequestField(req.FunctionResponseTypes), rawRequestField(req.ParallelizationFactor),
 		rawRequestField(req.SourceAccessConfigurations), rawRequestField(req.KMSKeyArn),
 		rawRequestField(req.MetricsConfig), rawRequestField(req.ProvisionedPollerConfig),
+		rawRequestField(req.Topics), rawRequestField(req.Queues),
+		rawRequestField(req.AmazonManagedKafkaEventSourceConfig), rawRequestField(req.DocumentDBEventSourceConfig),
+		rawRequestField(req.LoggingConfig), rawRequestField(req.SelfManagedKafkaEventSourceConfig),
 	) {
 		protocol.NotImplementedJSON(w, r)
 		return
@@ -330,8 +354,17 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(esm)
+}
+
+func (h *Handler) ensureEventSourceMappingARN(r *http.Request, esm *EventSourceMapping) {
+	if esm == nil || esm.EventSourceMappingArn != "" {
+		return
+	}
+	esm.EventSourceMappingArn = protocol.ARN(
+		middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, "lambda", "event-source-mapping:"+esm.UUID,
+	)
 }
 
 // DeleteEventSourceMapping handles DELETE /2015-03-31/event-source-mappings/{uuid}.
@@ -346,6 +379,7 @@ func (h *Handler) DeleteEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("The event source arn (%s) and/or function provided is incorrect", id), HTTPStatus: http.StatusNotFound})
 		return
 	}
+	h.ensureEventSourceMappingARN(r, esm)
 
 	// Mark as deleting, persist, then remove.
 	esm.State = esmStateDeleting

@@ -127,14 +127,17 @@ type createFunctionRequest struct {
 	// Optional; AWS requires only FunctionName, Role and Code.
 	CodeSigningConfigArn string `json:"CodeSigningConfigArn,omitempty"`
 	// Layers is a list of layer version ARNs to attach to the function at creation.
-	Layers                  []string        `json:"Layers,omitempty"`
-	DeadLetterConfig        json.RawMessage `json:"DeadLetterConfig"`
-	TracingConfig           json.RawMessage `json:"TracingConfig"`
-	EphemeralStorage        json.RawMessage `json:"EphemeralStorage"`
-	KMSKeyArn               json.RawMessage `json:"KMSKeyArn"`
-	SnapStart               json.RawMessage `json:"SnapStart"`
-	RuntimeManagementConfig json.RawMessage `json:"RuntimeManagementConfig"`
-	RecursiveLoop           json.RawMessage `json:"RecursiveLoop"`
+	Layers                 []string        `json:"Layers,omitempty"`
+	DeadLetterConfig       json.RawMessage `json:"DeadLetterConfig"`
+	TracingConfig          json.RawMessage `json:"TracingConfig"`
+	EphemeralStorage       json.RawMessage `json:"EphemeralStorage"`
+	KMSKeyArn              json.RawMessage `json:"KMSKeyArn"`
+	SnapStart              json.RawMessage `json:"SnapStart"`
+	CapacityProviderConfig json.RawMessage `json:"CapacityProviderConfig"`
+	DurableConfig          json.RawMessage `json:"DurableConfig"`
+	Publish                json.RawMessage `json:"Publish"`
+	PublishTo              json.RawMessage `json:"PublishTo"`
+	TenancyConfig          json.RawMessage `json:"TenancyConfig"`
 }
 
 type envVariables struct {
@@ -142,21 +145,29 @@ type envVariables struct {
 }
 
 type functionCode struct {
-	ZipFile         []byte `json:"ZipFile,omitempty"`
-	S3Bucket        string `json:"S3Bucket,omitempty"`
-	S3Key           string `json:"S3Key,omitempty"`
-	S3ObjectVersion string `json:"S3ObjectVersion,omitempty"`
-	ImageUri        string `json:"ImageUri,omitempty"`
+	ZipFile             []byte          `json:"ZipFile,omitempty"`
+	S3Bucket            string          `json:"S3Bucket,omitempty"`
+	S3Key               string          `json:"S3Key,omitempty"`
+	S3ObjectVersion     string          `json:"S3ObjectVersion,omitempty"`
+	ImageUri            string          `json:"ImageUri,omitempty"`
+	S3ObjectStorageMode json.RawMessage `json:"S3ObjectStorageMode"`
+	SourceKMSKeyArn     json.RawMessage `json:"SourceKMSKeyArn"`
 }
 
 // updateFunctionCodeRequest matches AWS UpdateFunctionCode request body.
 type updateFunctionCodeRequest struct {
-	ZipFile         []byte   `json:"ZipFile,omitempty"`
-	S3Bucket        string   `json:"S3Bucket,omitempty"`
-	S3Key           string   `json:"S3Key,omitempty"`
-	S3ObjectVersion string   `json:"S3ObjectVersion,omitempty"`
-	ImageUri        string   `json:"ImageUri,omitempty"`
-	Architectures   []string `json:"Architectures,omitempty"`
+	ZipFile             []byte          `json:"ZipFile,omitempty"`
+	S3Bucket            string          `json:"S3Bucket,omitempty"`
+	S3Key               string          `json:"S3Key,omitempty"`
+	S3ObjectVersion     string          `json:"S3ObjectVersion,omitempty"`
+	ImageUri            string          `json:"ImageUri,omitempty"`
+	Architectures       []string        `json:"Architectures,omitempty"`
+	DryRun              json.RawMessage `json:"DryRun"`
+	Publish             json.RawMessage `json:"Publish"`
+	PublishTo           json.RawMessage `json:"PublishTo"`
+	RevisionId          json.RawMessage `json:"RevisionId"`
+	S3ObjectStorageMode json.RawMessage `json:"S3ObjectStorageMode"`
+	SourceKMSKeyArn     json.RawMessage `json:"SourceKMSKeyArn"`
 }
 
 // updateFunctionConfigurationRequest matches AWS UpdateFunctionConfiguration body.
@@ -176,14 +187,15 @@ type updateFunctionConfigurationRequest struct {
 	ImageConfig *imageConfigWire  `json:"ImageConfig,omitempty"`
 	// FileSystemConfigs replaces the function's EFS mounts. An empty slice
 	// clears them; a nil field means "no change".
-	FileSystemConfigs       []FileSystemConfig `json:"FileSystemConfigs,omitempty"`
-	DeadLetterConfig        json.RawMessage    `json:"DeadLetterConfig"`
-	TracingConfig           json.RawMessage    `json:"TracingConfig"`
-	EphemeralStorage        json.RawMessage    `json:"EphemeralStorage"`
-	KMSKeyArn               json.RawMessage    `json:"KMSKeyArn"`
-	SnapStart               json.RawMessage    `json:"SnapStart"`
-	RuntimeManagementConfig json.RawMessage    `json:"RuntimeManagementConfig"`
-	RecursiveLoop           json.RawMessage    `json:"RecursiveLoop"`
+	FileSystemConfigs      []FileSystemConfig `json:"FileSystemConfigs,omitempty"`
+	DeadLetterConfig       json.RawMessage    `json:"DeadLetterConfig"`
+	TracingConfig          json.RawMessage    `json:"TracingConfig"`
+	EphemeralStorage       json.RawMessage    `json:"EphemeralStorage"`
+	KMSKeyArn              json.RawMessage    `json:"KMSKeyArn"`
+	SnapStart              json.RawMessage    `json:"SnapStart"`
+	CapacityProviderConfig json.RawMessage    `json:"CapacityProviderConfig"`
+	DurableConfig          json.RawMessage    `json:"DurableConfig"`
+	RevisionId             json.RawMessage    `json:"RevisionId"`
 }
 
 // getFunctionResponse matches AWS GetFunction response body.
@@ -487,9 +499,13 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	if hasUnsupportedRequestField(
 		rawRequestField(req.DeadLetterConfig), rawRequestField(req.TracingConfig),
 		rawRequestField(req.EphemeralStorage), rawRequestField(req.KMSKeyArn),
-		rawRequestField(req.SnapStart), rawRequestField(req.RuntimeManagementConfig),
-		rawRequestField(req.RecursiveLoop),
-	) || (req.Code != nil && hasUnsupportedRequestField(stringRequestField(req.Code.S3ObjectVersion))) {
+		rawRequestField(req.SnapStart), rawRequestField(req.CapacityProviderConfig),
+		rawRequestField(req.DurableConfig), rawRequestField(req.Publish), rawRequestField(req.PublishTo),
+		rawRequestField(req.TenancyConfig),
+	) || (req.Code != nil && hasUnsupportedRequestField(
+		stringRequestField(req.Code.S3ObjectVersion), rawRequestField(req.Code.S3ObjectStorageMode),
+		rawRequestField(req.Code.SourceKMSKeyArn),
+	)) {
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
@@ -1032,7 +1048,11 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
 		return
 	}
-	if hasUnsupportedRequestField(stringRequestField(req.S3ObjectVersion)) {
+	if hasUnsupportedRequestField(
+		stringRequestField(req.S3ObjectVersion), rawRequestField(req.DryRun), rawRequestField(req.Publish),
+		rawRequestField(req.PublishTo), rawRequestField(req.RevisionId), rawRequestField(req.S3ObjectStorageMode),
+		rawRequestField(req.SourceKMSKeyArn),
+	) {
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
@@ -1202,8 +1222,8 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 	if hasUnsupportedRequestField(
 		rawRequestField(req.DeadLetterConfig), rawRequestField(req.TracingConfig),
 		rawRequestField(req.EphemeralStorage), rawRequestField(req.KMSKeyArn),
-		rawRequestField(req.SnapStart), rawRequestField(req.RuntimeManagementConfig),
-		rawRequestField(req.RecursiveLoop),
+		rawRequestField(req.SnapStart), rawRequestField(req.CapacityProviderConfig),
+		rawRequestField(req.DurableConfig), rawRequestField(req.RevisionId),
 	) {
 		protocol.NotImplementedJSON(w, r)
 		return

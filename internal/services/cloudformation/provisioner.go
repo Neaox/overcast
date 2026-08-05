@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -2882,6 +2883,9 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	if funcName == "" {
 		funcName = rCtx.generatedName()
 	}
+	if err := checkLambdaFunctionAuxiliaryPropertySupport(ctx, router, rCtx.Region, funcName, props, nil); err != nil {
+		return "", nil, err
+	}
 
 	// A template's Code.ZipFile is inline source text; the Lambda API's is
 	// base64 of a zip archive. Package it rather than just encoding it — see
@@ -2907,7 +2911,7 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	for _, property := range []string{
 		"Architectures", "VpcConfig", "FileSystemConfigs", "ImageConfig", "PackageType",
 		"DeadLetterConfig", "TracingConfig", "EphemeralStorage", "SnapStart",
-		"RuntimeManagementConfig", "RecursiveLoop",
+		"CapacityProviderConfig", "DurableConfig", "TenancyConfig",
 	} {
 		copyAnyProp(body, props, property, property)
 	}
@@ -2938,6 +2942,9 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	}
 	if tagMap := mergeLambdaTags(rCtx.StackTags, props["Tags"]); len(tagMap) > 0 {
 		body["Tags"] = tagMap
+	}
+	if publish, _ := props["PublishToLatestPublished"].(bool); publish {
+		body["PublishTo"] = "LATEST_PUBLISHED"
 	}
 
 	data, _ := json.Marshal(body)
@@ -3006,13 +3013,18 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 		return "", nil, errReplacementRequired
 	}
 
-	if props["CodeSigningConfigArn"] != oldProps["CodeSigningConfigArn"] {
-		return "", nil, failUpdate(fmt.Errorf("lambda CodeSigningConfigArn updates are not supported"))
+	for _, property := range []string{"DurableConfig", "TenancyConfig"} {
+		if !reflect.DeepEqual(props[property], oldProps[property]) {
+			return "", nil, errReplacementRequired
+		}
+	}
+	if err := checkLambdaFunctionAuxiliaryPropertySupport(ctx, router, rCtx.Region, name, props, oldProps); err != nil {
+		return "", nil, failUpdate(err)
 	}
 
 	arn, completed, err := h.applyUpdate(ctx, router, name, props, oldProps, rCtx)
 	if err != nil {
-		// A Lambda function update spans three APIs. Restore only mutations
+		// A Lambda function update spans several APIs. Restore only mutations
 		// that completed, in reverse order, so a rejected phase cannot change
 		// the function's revision or LastModified during compensation.
 		compensationErr := h.compensateUpdate(ctx, router, name, oldProps, props, completed, rCtx)
@@ -3021,7 +3033,7 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 		}
 		return "", nil, failUpdate(errors.Join(err, compensationErr))
 	}
-	attrs := map[string]string{"FunctionName": name}
+	attrs := map[string]string{"FunctionName": name, "Arn": protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name)}
 	if arn != "" {
 		attrs["Arn"] = arn
 	}
@@ -3029,14 +3041,22 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 }
 
 type lambdaUpdateProgress struct {
+	tags          bool
 	configuration bool
 	code          bool
+	codeSigning   bool
 }
 
-// applyUpdate follows AWS's documented ordering: configuration, code, then
-// CloudFormation's separate reserved-concurrency operation.
+// applyUpdate tracks tags first, then follows AWS's documented
+// configuration-before-code ordering and CloudFormation's separate association
+// and concurrency operations.
 func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, lambdaUpdateProgress, error) {
 	var completed lambdaUpdateProgress
+	applied, err := updateLambdaTags(ctx, router, rCtx.Region, protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name), rCtx.StackTags, props["Tags"], prior["Tags"])
+	completed.tags = applied
+	if err != nil {
+		return "", completed, err
+	}
 	arn, applied, err := h.updateConfiguration(ctx, router, name, props, prior, rCtx)
 	if err != nil {
 		return "", completed, err
@@ -3046,6 +3066,10 @@ func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Han
 		return "", completed, err
 	}
 	completed.code = applied
+	if applied, err = h.updateCodeSigningConfig(ctx, router, name, props, prior, rCtx); err != nil {
+		return "", completed, err
+	}
+	completed.codeSigning = applied
 	if err = h.updateConcurrency(ctx, router, name, props, prior, rCtx); err != nil {
 		return "", completed, err
 	}
@@ -3054,6 +3078,11 @@ func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Han
 
 func (h *lambdaFunctionHandler) compensateUpdate(ctx context.Context, router http.Handler, name string, props, prior map[string]any, completed lambdaUpdateProgress, rCtx *resolveContext) error {
 	var compensationErr error
+	if completed.codeSigning {
+		if _, err := h.updateCodeSigningConfig(ctx, router, name, props, prior, rCtx); err != nil {
+			compensationErr = errors.Join(compensationErr, err)
+		}
+	}
 	if completed.code {
 		if _, err := h.updateCode(ctx, router, name, props, prior, rCtx); err != nil {
 			compensationErr = errors.Join(compensationErr, err)
@@ -3061,6 +3090,11 @@ func (h *lambdaFunctionHandler) compensateUpdate(ctx context.Context, router htt
 	}
 	if completed.configuration {
 		if _, _, err := h.updateConfiguration(ctx, router, name, props, prior, rCtx); err != nil {
+			compensationErr = errors.Join(compensationErr, err)
+		}
+	}
+	if completed.tags {
+		if _, err := updateLambdaTags(ctx, router, rCtx.Region, protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name), rCtx.StackTags, props["Tags"], prior["Tags"]); err != nil {
 			compensationErr = errors.Join(compensationErr, err)
 		}
 	}
@@ -3072,13 +3106,15 @@ func (h *lambdaFunctionHandler) updateConfiguration(ctx context.Context, router 
 	for _, k := range []string{
 		"Runtime", "Handler", "Role", "Description", "Environment", "Timeout", "MemorySize", "Layers", "LoggingConfig",
 		"VpcConfig", "FileSystemConfigs", "ImageConfig", "DeadLetterConfig", "TracingConfig", "EphemeralStorage",
-		"SnapStart", "RuntimeManagementConfig", "RecursiveLoop",
+		"SnapStart", "CapacityProviderConfig",
 	} {
-		if v, ok := props[k]; ok {
+		if v, ok := props[k]; ok && !reflect.DeepEqual(v, prior[k]) {
 			cfgBody[k] = v
 		}
 	}
-	copyAnyProp(cfgBody, props, "KmsKeyArn", "KMSKeyArn")
+	if !reflect.DeepEqual(props["KmsKeyArn"], prior["KmsKeyArn"]) {
+		copyAnyProp(cfgBody, props, "KmsKeyArn", "KMSKeyArn")
+	}
 	clearValues := map[string]any{
 		"Description": "", "Environment": map[string]any{"Variables": map[string]any{}}, "Layers": []any{},
 		"LoggingConfig": map[string]any{}, "VpcConfig": map[string]any{}, "FileSystemConfigs": []any{}, "ImageConfig": map[string]any{},
@@ -3108,6 +3144,13 @@ func (h *lambdaFunctionHandler) updateConfiguration(ctx context.Context, router 
 }
 
 func (h *lambdaFunctionHandler) updateCode(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (bool, error) {
+	publish, _ := props["PublishToLatestPublished"].(bool)
+	priorPublish, _ := prior["PublishToLatestPublished"].(bool)
+	if reflect.DeepEqual(props["Code"], prior["Code"]) &&
+		reflect.DeepEqual(props["Architectures"], prior["Architectures"]) &&
+		(!publish || priorPublish) {
+		return false, nil
+	}
 	// CFN templates supply ZipFile as inline source; UpdateFunctionCode expects
 	// a base64 zip archive.
 	if code, ok := props["Code"].(map[string]any); ok && len(code) > 0 {
@@ -3133,10 +3176,18 @@ func (h *lambdaFunctionHandler) updateCode(ctx context.Context, router http.Hand
 		if v, ok := code["ImageUri"]; ok {
 			body["ImageUri"] = v
 		}
+		for _, property := range []string{"S3ObjectStorageMode", "SourceKMSKeyArn"} {
+			if v, ok := code[property]; ok {
+				body[property] = v
+			}
+		}
 		if v, ok := props["Architectures"]; ok {
 			body["Architectures"] = v
 		} else if _, existed := prior["Architectures"]; existed {
 			body["Architectures"] = []string{"x86_64"}
+		}
+		if publish, _ := props["PublishToLatestPublished"].(bool); publish {
+			body["PublishTo"] = "LATEST_PUBLISHED"
 		}
 		if len(body) > 0 {
 			data, _ := json.Marshal(body)
@@ -3150,7 +3201,92 @@ func (h *lambdaFunctionHandler) updateCode(ctx context.Context, router http.Hand
 	return false, nil
 }
 
+func (h *lambdaFunctionHandler) updateCodeSigningConfig(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (bool, error) {
+	if reflect.DeepEqual(props["CodeSigningConfigArn"], prior["CodeSigningConfigArn"]) {
+		return false, nil
+	}
+	path := "/2020-06-30/functions/" + url.PathEscape(name) + "/code-signing-config"
+	if arn, _ := props["CodeSigningConfigArn"].(string); arn != "" {
+		data, err := json.Marshal(map[string]any{"CodeSigningConfigArn": arn})
+		if err != nil {
+			return false, fmt.Errorf("lambda PutFunctionCodeSigningConfig: marshal request: %w", err)
+		}
+		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, path, "application/json", data); err != nil {
+			return false, fmt.Errorf("lambda PutFunctionCodeSigningConfig: %w", err)
+		}
+		return true, nil
+	}
+	if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil); err != nil {
+		return false, fmt.Errorf("lambda DeleteFunctionCodeSigningConfig: %w", err)
+	}
+	return true, nil
+}
+
+func checkLambdaFunctionAuxiliaryPropertySupport(ctx context.Context, router http.Handler, region, name string, props, prior map[string]any) error {
+	operations := []struct {
+		property string
+		path     string
+	}{
+		{property: "RuntimeManagementConfig", path: "/2021-07-20/functions/" + url.PathEscape(name) + "/runtime-management-config"},
+		{property: "RecursiveLoop", path: "/2024-08-31/functions/" + url.PathEscape(name) + "/recursion-config"},
+		{property: "FunctionScalingConfig", path: "/2025-11-30/functions/" + url.PathEscape(name) + "/function-scaling-config"},
+	}
+	for _, operation := range operations {
+		if reflect.DeepEqual(props[operation.property], prior[operation.property]) {
+			continue
+		}
+		if _, err := internalRequest(ctx, router, region, http.MethodGet, operation.path, "", nil); err != nil {
+			return fmt.Errorf("lambda %s: %w", operation.property, err)
+		}
+		// A successful non-mutating read means the service gained support, but the
+		// CFN write phase still needs explicit update tracking and compensation.
+		return fmt.Errorf("lambda %s unexpectedly succeeded; CloudFormation update wiring is incomplete", operation.property)
+	}
+	return nil
+}
+
+func updateLambdaTags(ctx context.Context, router http.Handler, region, resourceARN string, stackTags []Tag, rawTags, rawPrior any) (bool, error) {
+	tags := mergeLambdaTags(stackTags, rawTags)
+	prior := mergeLambdaTags(stackTags, rawPrior)
+	added := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			added[key] = value
+		}
+	}
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, ok := tags[key]; !ok {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+	path := "/2017-03-31/tags/" + url.PathEscape(resourceARN)
+	applied := false
+	if len(added) > 0 {
+		data, err := json.Marshal(map[string]any{"Tags": added})
+		if err != nil {
+			return false, fmt.Errorf("lambda TagResource: marshal request: %w", err)
+		}
+		if _, err := internalRequest(ctx, router, region, http.MethodPost, path, "application/json", data); err != nil {
+			return false, fmt.Errorf("lambda TagResource: %w", err)
+		}
+		applied = true
+	}
+	if len(removed) > 0 {
+		query := url.Values{"tagKeys": removed}.Encode()
+		if _, err := internalRequest(ctx, router, region, http.MethodDelete, path+"?"+query, "", nil); err != nil {
+			return applied, fmt.Errorf("lambda UntagResource: %w", err)
+		}
+		applied = true
+	}
+	return applied, nil
+}
+
 func (h *lambdaFunctionHandler) updateConcurrency(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) error {
+	if reflect.DeepEqual(props["ReservedConcurrentExecutions"], prior["ReservedConcurrentExecutions"]) {
+		return nil
+	}
 	if reserved, ok := props["ReservedConcurrentExecutions"]; ok {
 		if err := putLambdaReservedConcurrency(ctx, router, rCtx.Region, name, reserved); err != nil {
 			return err

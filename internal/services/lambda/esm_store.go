@@ -32,6 +32,8 @@ type ScalingConfig struct {
 type EventSourceMapping struct {
 	// UUID is the primary key assigned at creation time.
 	UUID string `json:"UUID"`
+	// EventSourceMappingArn is the full ARN assigned to the mapping.
+	EventSourceMappingArn string `json:"EventSourceMappingArn"`
 	// FunctionArn is the full ARN of the target Lambda function.
 	FunctionArn string `json:"FunctionArn"`
 	// EventSourceArn is the ARN of the SQS queue or DynamoDB stream.
