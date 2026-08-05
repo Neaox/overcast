@@ -745,6 +745,21 @@ func (h *kmsKeyHandler) Create(ctx context.Context, router http.Handler, cfg *co
 		"KeyId": resp.KeyMetadata.KeyID,
 		"Arn":   resp.KeyMetadata.Arn,
 	}
+	if enabled, ok := props["Enabled"]; ok && !asBool(enabled) {
+		keyBody := map[string]any{"KeyId": resp.KeyMetadata.KeyID}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.DisableKey", keyBody); err != nil {
+			// CreateKey already persisted the key, but this Create method cannot
+			// return a physical ID on failure for the provisioner to clean up.
+			// Schedule deletion so the failed resource is not reported as created.
+			if _, cleanupErr := internalJSON(ctx, router, rCtx.Region, "TrentService.ScheduleKeyDeletion", map[string]any{
+				"KeyId":               resp.KeyMetadata.KeyID,
+				"PendingWindowInDays": 7,
+			}); cleanupErr != nil {
+				return "", nil, fmt.Errorf("DisableKey: %w; ScheduleKeyDeletion cleanup: %v", err, cleanupErr)
+			}
+			return "", nil, fmt.Errorf("DisableKey: %w", err)
+		}
+	}
 	return resp.KeyMetadata.KeyID, attrs, nil
 }
 
@@ -782,24 +797,23 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 		}
 	}
 
+	newEnabledBool := true
 	if newEnabled, ok := props["Enabled"]; ok {
-		newEnabledBool := asBool(newEnabled)
-		oldEnabledBool := true
-		if oldProps != nil {
-			if oldEnabled, ok := oldProps["Enabled"]; ok {
-				oldEnabledBool = asBool(oldEnabled)
+		newEnabledBool = asBool(newEnabled)
+	}
+	oldEnabledBool := true
+	if oldEnabled, ok := oldProps["Enabled"]; ok {
+		oldEnabledBool = asBool(oldEnabled)
+	}
+	if newEnabledBool != oldEnabledBool {
+		kb := map[string]any{"KeyId": physicalID}
+		if newEnabledBool {
+			if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.EnableKey", kb); err != nil {
+				return "", nil, fmt.Errorf("EnableKey: %w", err)
 			}
-		}
-		if newEnabledBool != oldEnabledBool {
-			kb := map[string]any{"KeyId": physicalID}
-			if newEnabledBool {
-				if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.EnableKey", kb); err != nil {
-					return "", nil, fmt.Errorf("EnableKey: %w", err)
-				}
-			} else {
-				if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.DisableKey", kb); err != nil {
-					return "", nil, fmt.Errorf("DisableKey: %w", err)
-				}
+		} else {
+			if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.DisableKey", kb); err != nil {
+				return "", nil, fmt.Errorf("DisableKey: %w", err)
 			}
 		}
 	}

@@ -2,18 +2,23 @@ service: kms
 status: not_started
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-08-06
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/kms]
-integration_tests: [tests/integration/kms]
+integration_tests: [tests/integration/kms, tests/integration/cloudformation]
 capability_docs: docs/services/kms.md
 operation_count_estimate: 32 tracked, 32 supported
 current_support_level: Broad local-dev KMS coverage for keys, aliases, tags, policies, grants, and crypto.
 operations: {}
 findings:
-  fixed: []
+  fixed:
+    - operation: AWS::KMS::Key
+      scenario: CloudFormation applies Enabled=false during key creation and restores the documented true default when a later template removes the property.
+      evidence:
+        aws_docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-key.html
+        tests: [tests/integration/cloudformation/cloudformation_test.go, internal/services/cloudformation/provisioner_resources_test.go]
   remaining_gaps:
-    - Review crypto, key policy, and grant edge-case semantics.
+    - Implement caller-aware key-policy lockout-safety validation before forwarding CloudFormation KeyPolicy and BypassPolicyLockoutSafetyCheck (#669).
     - Align docs note for JSON 1.0 if intentional.
   intentionally_partial: []
 handoff:
