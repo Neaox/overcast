@@ -3956,7 +3956,7 @@ func (h *logsLogGroupHandler) Delete(ctx context.Context, router http.Handler, _
 	return nil
 }
 
-func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// LogGroupName is immutable in AWS — a rename forces replacement.
 	if n, ok := props["LogGroupName"].(string); ok && n != "" && n != physicalID {
 		return "", nil, errReplacementRequired
@@ -3970,7 +3970,7 @@ func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _
 		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
 			return "", nil, fmt.Errorf("logs PutRetentionPolicy: %w", err)
 		}
-	} else {
+	} else if oldRetention, hadRetention := oldProps["RetentionInDays"]; hadRetention && oldRetention != nil {
 		body := map[string]any{"logGroupName": physicalID}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteRetentionPolicy", body); err != nil {
 			return "", nil, fmt.Errorf("logs DeleteRetentionPolicy: %w", err)

@@ -49,7 +49,9 @@ func TestLogsLogGroupHandlerUpdate_retentionRemovalError(t *testing.T) {
 	h := &logsLogGroupHandler{}
 
 	// When: an update removes RetentionInDays
-	_, _, err := h.Update(context.Background(), router, nil, "/cloudformation/remove-retention", map[string]any{}, nil, &resolveContext{
+	_, _, err := h.Update(context.Background(), router, nil, "/cloudformation/remove-retention", map[string]any{}, map[string]any{
+		"RetentionInDays": 7,
+	}, &resolveContext{
 		Region:    "us-east-1",
 		AccountID: "000000000000",
 	})
@@ -57,5 +59,28 @@ func TestLogsLogGroupHandlerUpdate_retentionRemovalError(t *testing.T) {
 	// Then: CloudFormation receives the service error instead of completing the update
 	if err == nil {
 		t.Fatal("Update returned nil error after DeleteRetentionPolicy failed")
+	}
+}
+
+func TestLogsLogGroupHandlerUpdate_retentionOmittedBeforeAndAfter(t *testing.T) {
+	// Given: a Logs router that records unexpected service calls
+	dispatched := false
+	router := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		dispatched = true
+	})
+	h := &logsLogGroupHandler{}
+
+	// When: an update leaves RetentionInDays omitted
+	_, _, err := h.Update(context.Background(), router, nil, "/cloudformation/no-retention", map[string]any{}, map[string]any{}, &resolveContext{
+		Region:    "us-east-1",
+		AccountID: "000000000000",
+	})
+
+	// Then: CloudFormation does not dispatch an unnecessary retention API call
+	if err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	if dispatched {
+		t.Fatal("Update dispatched a Logs API call when retention stayed omitted")
 	}
 }
