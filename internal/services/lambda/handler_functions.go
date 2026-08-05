@@ -281,6 +281,10 @@ func smithyIntegerConstraint(member string, value, minimum, maximum int) *protoc
 	return lambdaInvalidParameter("1 validation error detected: Value '" + strconv.Itoa(value) + "' at '" + member + "' failed to satisfy constraint: " + constraint)
 }
 
+func smithyRequiredConstraint(member string) *protocol.AWSError {
+	return lambdaInvalidParameter("1 validation error detected: Value null at '" + member + "' failed to satisfy constraint: Member must not be null")
+}
+
 func smithyLengthConstraint(member string, length, maximum int) *protocol.AWSError {
 	return lambdaInvalidParameter("1 validation error detected: Value '" + strconv.Itoa(length) + "' at '" + member + "' failed to satisfy constraint: Member must have length less than or equal to " + strconv.Itoa(maximum))
 }

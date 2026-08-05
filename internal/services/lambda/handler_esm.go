@@ -30,7 +30,7 @@ import (
 type createESMRequest struct {
 	FunctionName                        string             `json:"FunctionName"`
 	EventSourceArn                      string             `json:"EventSourceArn"`
-	BatchSize                           int                `json:"BatchSize"`
+	BatchSize                           *int               `json:"BatchSize"`
 	StartingPosition                    string             `json:"StartingPosition"`
 	MaximumBatchingWindowInSeconds      int                `json:"MaximumBatchingWindowInSeconds"`
 	FilterCriteria                      *FilterCriteria    `json:"FilterCriteria"`
@@ -56,6 +56,53 @@ type createESMRequest struct {
 	LoggingConfig                       json.RawMessage    `json:"LoggingConfig"`
 	SelfManagedKafkaEventSourceConfig   json.RawMessage    `json:"SelfManagedKafkaEventSourceConfig"`
 	Tags                                json.RawMessage    `json:"Tags"`
+}
+
+const (
+	defaultSQSBatchSize          = 10
+	defaultStreamBatchSize       = 100
+	maximumESMBatchSize          = 10000
+	maximumFIFOBatchSize         = 10
+	maximumBatchingWindowSeconds = 300
+)
+
+func eventSourceBatchSize(eventSourceARN string, requested *int) int {
+	if requested != nil {
+		return *requested
+	}
+	if strings.Contains(strings.ToLower(eventSourceARN), ":sqs:") {
+		return defaultSQSBatchSize
+	}
+	return defaultStreamBatchSize
+}
+
+func validateEventSourceBatching(eventSourceARN string, batchSize, maximumBatchingWindow int, batchSizeSet bool) *protocol.AWSError {
+	if batchSize < 1 || batchSize > maximumESMBatchSize {
+		return smithyIntegerConstraint("batchSize", batchSize, 1, maximumESMBatchSize)
+	}
+	if maximumBatchingWindow < 0 || maximumBatchingWindow > maximumBatchingWindowSeconds {
+		return smithyIntegerConstraint("maximumBatchingWindowInSeconds", maximumBatchingWindow, 0, maximumBatchingWindowSeconds)
+	}
+
+	source := strings.ToLower(eventSourceARN)
+	isSQS := strings.Contains(source, ":sqs:")
+	isFIFO := isSQS && strings.HasSuffix(source, ".fifo")
+	if isFIFO {
+		if batchSize > maximumFIFOBatchSize {
+			return lambdaInvalidParameter("Batch size cannot be greater than 10 for an SQS FIFO queue.")
+		}
+		if maximumBatchingWindow != 0 {
+			return lambdaInvalidParameter("Maximum batching window is not supported for SQS FIFO queues.")
+		}
+	}
+	isStream := strings.Contains(source, ":kinesis:") || strings.Contains(source, ":dynamodb:")
+	if batchSizeSet && (isSQS || isStream) && batchSize > defaultSQSBatchSize && maximumBatchingWindow < 1 {
+		// Matches a publicly reported AWS Lambda response surfaced through
+		// CloudFormation; exact direct-API text still needs an approved capture:
+		// https://forum.serverless.com/t/maximumbatchingwindow-not-passed-to-aws/13837
+		return lambdaInvalidParameter("Maximum batch window in seconds must be greater than 0 if maximum batch size is greater than 10")
+	}
+	return nil
 }
 
 // updateESMRequest is the wire request body for UpdateEventSourceMapping.
@@ -125,6 +172,11 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ValidationException", Message: "Unsupported event source type. EventSourceArn must be an SQS queue ARN or a DynamoDB Streams ARN", HTTPStatus: http.StatusBadRequest})
 		return
 	}
+	batchSize := eventSourceBatchSize(req.EventSourceArn, req.BatchSize)
+	if aerr := validateEventSourceBatching(req.EventSourceArn, batchSize, req.MaximumBatchingWindowInSeconds, req.BatchSize != nil); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	// Resolve function name → full ARN.
 	funcName := functionNameFromARN(req.FunctionName) // no-op if already a plain name
@@ -155,12 +207,6 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Apply defaults.
-	batchSize := req.BatchSize
-	if batchSize <= 0 {
-		batchSize = 10
-	}
-
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -177,6 +223,7 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		State:                          initialState,
 		StateTransitionReason:          "USER_INITIATED",
 		BatchSize:                      batchSize,
+		BatchSizeExplicit:              req.BatchSize != nil,
 		StartingPosition:               req.StartingPosition,
 		MaximumBatchingWindowInSeconds: req.MaximumBatchingWindowInSeconds,
 		FilterCriteria:                 req.FilterCriteria,
@@ -286,6 +333,20 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	batchSize := esm.BatchSize
+	if req.BatchSize != nil {
+		batchSize = *req.BatchSize
+	}
+	maximumBatchingWindow := esm.MaximumBatchingWindowInSeconds
+	if req.MaximumBatchingWindowInSeconds != nil {
+		maximumBatchingWindow = *req.MaximumBatchingWindowInSeconds
+	}
+	batchSizeExplicit := esm.BatchSizeExplicit || req.BatchSize != nil
+	if aerr := validateEventSourceBatching(esm.EventSourceArn, batchSize, maximumBatchingWindow, batchSizeExplicit); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
 	if req.FunctionName != nil {
 		funcName := functionNameFromARN(*req.FunctionName)
 		if funcName == "" {
@@ -303,10 +364,11 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		esm.FunctionArn = protocol.LambdaARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, fn.Name)
 	}
 	if req.BatchSize != nil {
-		esm.BatchSize = *req.BatchSize
+		esm.BatchSize = batchSize
+		esm.BatchSizeExplicit = true
 	}
 	if req.MaximumBatchingWindowInSeconds != nil {
-		esm.MaximumBatchingWindowInSeconds = *req.MaximumBatchingWindowInSeconds
+		esm.MaximumBatchingWindowInSeconds = maximumBatchingWindow
 	}
 	if req.FilterCriteria != nil {
 		esm.FilterCriteria = req.FilterCriteria

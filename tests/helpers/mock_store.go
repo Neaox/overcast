@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 
@@ -35,6 +36,7 @@ type MockStore struct {
 	SetError    error
 	DeleteError error
 	ListError   error
+	ScanError   error
 }
 
 // StoreCall records a single call to a store method.
@@ -121,10 +123,31 @@ func (m *MockStore) List(_ context.Context, namespace, prefix string) ([]string,
 	return keys, nil
 }
 
+func (m *MockStore) ListNamespaces(_ context.Context) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	seen := make(map[string]struct{})
+	for key := range m.data {
+		namespace, _, _ := strings.Cut(key, "\x00")
+		seen[namespace] = struct{}{}
+	}
+	namespaces := make([]string, 0, len(seen))
+	for namespace := range seen {
+		namespaces = append(namespaces, namespace)
+	}
+	sort.Strings(namespaces)
+	return namespaces, nil
+}
+
 func (m *MockStore) Close() error { return nil }
 
 // Scan returns key-value pairs matching the prefix (implements state.Store).
 func (m *MockStore) Scan(_ context.Context, namespace, prefix string) ([]state.KV, error) {
+	if m.ScanError != nil {
+		return nil, m.ScanError
+	}
+
 	nsPrefix := namespace + "\x00"
 	fullPrefix := nsPrefix + prefix
 
@@ -141,6 +164,20 @@ func (m *MockStore) Scan(_ context.Context, namespace, prefix string) ([]state.K
 		pairs = []state.KV{}
 	}
 	return pairs, nil
+}
+
+func (m *MockStore) ScanPage(ctx context.Context, namespace, prefix, startAfter string, limit int) ([]state.KV, string, error) {
+	pairs, err := m.Scan(ctx, namespace, prefix)
+	if err != nil {
+		return nil, "", err
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Key < pairs[j].Key })
+	start := sort.Search(len(pairs), func(i int) bool { return pairs[i].Key > startAfter })
+	pairs = pairs[start:]
+	if limit <= 0 || len(pairs) <= limit {
+		return pairs, "", nil
+	}
+	return pairs[:limit], pairs[limit-1].Key, nil
 }
 
 // Reset clears all stored data and recorded calls.

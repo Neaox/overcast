@@ -68,6 +68,15 @@ operations:
       resource_policy_statement:
         status: fixed
         evidence: AddPermission atomically stores validated AWS-shaped Allow statements, enforces policy size and RevisionId preconditions, and validates qualified targets. Policy authorization during invocation remains tracked in #629, so the capability is reported unsupported.
+      required_statement_id:
+        status: fixed
+        evidence: An omitted StatementId returns an InvalidParameterValueException HTTP 400 required-member message; an explicitly empty StatementId returns the distinct minimum-length validation message. Constraint semantics come from the AWS model; exact service-rendered text is not published and remains unverified.
+        tests:
+          - tests/integration/lambda/validation_review_test.go::TestAddPermission_missingStatementID
+          - tests/integration/lambda/validation_review_test.go::TestAddPermission_emptyStatementID
+      exact_required_statement_id_text:
+        status: blocked
+        gap: The AWS model marks StatementId required with length 1..100, but exact service-rendered omission and empty-string messages need a permitted real-AWS capture before they can be claimed exact.
   GetPolicy:
     status: fixed
     aws_docs:
@@ -84,6 +93,58 @@ operations:
     tests:
       - tests/integration/lambda/policy_test.go::TestFunctionPolicy_AddGetRemoveLifecycle
       - tests/integration/cloudformation/lambda_properties_test.go::TestCreateAndDeleteStack_LambdaPermissionMutatesFunctionPolicy
+  CreateEventSourceMapping:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/lambda/latest/api/API_CreateEventSourceMapping.html
+      - https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-parameters.html
+      - https://docs.aws.amazon.com/lambda/latest/dg/services-ddb-params.html
+    protocol: REST JSON; POST /2015-03-31/event-source-mappings; 202
+    tests:
+      - tests/integration/lambda/esm_validation_test.go::TestCreateEventSourceMapping_batchSizeDefaultsBySource
+      - tests/integration/lambda/esm_validation_test.go::TestCreateEventSourceMapping_batchSizeModelBounds
+      - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_sqsBatchSizeRequiresBatchWindow
+      - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_dynamoDBBatchSizeRequiresBatchWindow
+      - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_sqsFIFOBatchSizeMaximum
+    scenarios:
+      source_specific_batch_defaults:
+        status: fixed
+        evidence: Omitted BatchSize defaults to 10 for SQS and 100 for DynamoDB Streams; explicit zero and negative values are rejected rather than treated as omission.
+      batch_size_bounds:
+        status: fixed
+        evidence: The modeled 1..10000 bounds, SQS FIFO maximum 10, and the stream/SQS explicit-batch window coupling are enforced before persistence.
+      batching_window_bounds:
+        status: fixed
+        evidence: MaximumBatchingWindowInSeconds enforces the modeled 0..300 range on create and update, including non-mutation after rejected updates.
+      explicit_batch_window_invariant:
+        status: fixed
+        evidence: Persisted internal metadata distinguishes an explicitly configured batch above 10 from DynamoDB's omitted default of 100, so later window-only updates preserve the AWS constraint without rejecting the valid default combination.
+      exact_batch_window_error_text:
+        status: blocked
+        gap: Constraint behavior is documented and the current wording matches a publicly reported CloudFormation-surfaced Lambda response, but exact direct-API text needs a permitted real-AWS capture before it can be claimed exact.
+      exact_fifo_error_text:
+        status: blocked
+        gap: AWS documents the FIFO maximum of 10 but does not publish the service-side validation message; the current AWS-shaped InvalidParameterValueException text needs a permitted real-AWS capture before it can be claimed exact.
+      fifo_batching_window:
+        status: fixed
+        evidence: Nonzero MaximumBatchingWindowInSeconds is rejected for SQS FIFO mappings on create and update, as documented by AWS; rejected updates do not mutate persisted state.
+      exact_fifo_batching_window_error_text:
+        status: blocked
+        gap: AWS documents that FIFO batching windows are unsupported but does not publish the service-side validation message; exact text needs a permitted real-AWS capture.
+  UpdateEventSourceMapping:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/lambda/latest/api/API_UpdateEventSourceMapping.html
+    protocol: REST JSON; PUT /2015-03-31/event-source-mappings/{UUID}; 202
+    tests:
+      - tests/integration/lambda/esm_validation_test.go::TestUpdateEventSourceMapping_batchSizeModelBounds
+      - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_sqsBatchSizeRequiresBatchWindow
+      - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_dynamoDBBatchSizeRequiresBatchWindow
+      - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_sqsFIFOBatchSizeMaximum
+    scenarios:
+      batch_size_validation:
+        status: fixed
+        evidence: Update rejects explicit zero, negative, above-model-maximum, FIFO-over-10, stream/SQS batch-over-10-without-window, invalid window bounds, and FIFO nonzero windows with HTTP 400 before mutation.
   Invoke:
     status: fixed
     aws_docs:

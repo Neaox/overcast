@@ -44,6 +44,11 @@ type EventSourceMapping struct {
 	StateTransitionReason string `json:"StateTransitionReason"`
 	// BatchSize is the maximum number of records per invocation batch.
 	BatchSize int `json:"BatchSize"`
+	// BatchSizeExplicit records whether BatchSize was supplied by the caller.
+	// AWS permits the omitted DynamoDB/Kinesis default of 100 with a zero-second
+	// batching window, while an explicitly configured value above 10 requires a
+	// nonzero window. This internal distinction is persisted but never returned.
+	BatchSizeExplicit bool `json:"-"`
 	// StartingPosition is required for stream-based sources ("TRIM_HORIZON", "LATEST").
 	StartingPosition string `json:"StartingPosition,omitempty"`
 	// MaximumBatchingWindowInSeconds controls how long to accumulate records
@@ -110,6 +115,11 @@ type esmStore struct {
 	s *lambdaStore
 }
 
+type persistedEventSourceMapping struct {
+	EventSourceMapping
+	BatchSizeExplicit *bool `json:"_overcastBatchSizeExplicit,omitempty"`
+}
+
 func newESMStore(ls *lambdaStore) *esmStore { return &esmStore{s: ls} }
 
 // getESM returns the ESM with the given UUID.
@@ -122,16 +132,17 @@ func (e *esmStore) getESM(ctx context.Context, uuid string) (*EventSourceMapping
 	if !found {
 		return nil, nil
 	}
-	var m EventSourceMapping
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("esm decode %s: %w", uuid, err))
+	m, err := decodeEventSourceMapping(raw)
+	if err != nil {
+		return nil, nil
 	}
-	return &m, nil
+	return m, nil
 }
 
 // putESM writes the ESM to the store.
 func (e *esmStore) putESM(ctx context.Context, m *EventSourceMapping) *protocol.AWSError {
-	raw, err := json.Marshal(m)
+	explicit := m.BatchSizeExplicit
+	raw, err := json.Marshal(persistedEventSourceMapping{EventSourceMapping: *m, BatchSizeExplicit: &explicit})
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("esm marshal %s: %w", m.UUID, err))
 	}
@@ -160,8 +171,8 @@ func (e *esmStore) listESMs(ctx context.Context, functionName, eventSourceArn st
 
 	out := make([]*EventSourceMapping, 0, len(kvs))
 	for _, v := range kvs {
-		var m EventSourceMapping
-		if err := json.Unmarshal([]byte(v.Value), &m); err != nil {
+		m, err := decodeEventSourceMapping(v.Value)
+		if err != nil {
 			continue
 		}
 		if functionName != "" && functionNameFromARN(m.FunctionArn) != functionName {
@@ -170,7 +181,7 @@ func (e *esmStore) listESMs(ctx context.Context, functionName, eventSourceArn st
 		if eventSourceArn != "" && !strings.EqualFold(m.EventSourceArn, eventSourceArn) {
 			continue
 		}
-		out = append(out, &m)
+		out = append(out, m)
 	}
 	return out, nil
 }
@@ -184,11 +195,24 @@ func (e *esmStore) listAllESMs(ctx context.Context) ([]*EventSourceMapping, *pro
 	}
 	out := make([]*EventSourceMapping, 0, len(kvs))
 	for _, v := range kvs {
-		var m EventSourceMapping
-		if err := json.Unmarshal([]byte(v.Value), &m); err != nil {
+		m, err := decodeEventSourceMapping(v.Value)
+		if err != nil {
 			continue
 		}
-		out = append(out, &m)
+		out = append(out, m)
 	}
 	return out, nil
+}
+
+func decodeEventSourceMapping(raw string) (*EventSourceMapping, error) {
+	var stored persistedEventSourceMapping
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return nil, err
+	}
+	if stored.BatchSizeExplicit != nil {
+		stored.EventSourceMapping.BatchSizeExplicit = *stored.BatchSizeExplicit
+	} else {
+		stored.EventSourceMapping.BatchSizeExplicit = stored.BatchSize != eventSourceBatchSize(stored.EventSourceArn, nil)
+	}
+	return &stored.EventSourceMapping, nil
 }

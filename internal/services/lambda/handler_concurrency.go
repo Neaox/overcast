@@ -155,7 +155,7 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if req.ReservedConcurrentExecutions == nil {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("1 validation error detected: Value null at 'reservedConcurrentExecutions' failed to satisfy constraint: Member must not be null"))
+		protocol.WriteJSONError(w, r, smithyRequiredConstraint("reservedConcurrentExecutions"))
 		return
 	}
 	if *req.ReservedConcurrentExecutions < 0 {

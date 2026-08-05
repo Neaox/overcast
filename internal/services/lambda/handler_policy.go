@@ -20,16 +20,16 @@ import (
 const maxFunctionPolicyBytes = 20 * 1024
 
 type addPermissionRequest struct {
-	Action                string `json:"Action"`
-	EventSourceToken      string `json:"EventSourceToken,omitempty"`
-	FunctionURLAuthType   string `json:"FunctionUrlAuthType,omitempty"`
-	InvokedViaFunctionURL *bool  `json:"InvokedViaFunctionUrl,omitempty"`
-	Principal             string `json:"Principal"`
-	PrincipalOrgID        string `json:"PrincipalOrgID,omitempty"`
-	RevisionID            string `json:"RevisionId,omitempty"`
-	SourceAccount         string `json:"SourceAccount,omitempty"`
-	SourceARN             string `json:"SourceArn,omitempty"`
-	StatementID           string `json:"StatementId"`
+	Action                string  `json:"Action"`
+	EventSourceToken      string  `json:"EventSourceToken,omitempty"`
+	FunctionURLAuthType   string  `json:"FunctionUrlAuthType,omitempty"`
+	InvokedViaFunctionURL *bool   `json:"InvokedViaFunctionUrl,omitempty"`
+	Principal             string  `json:"Principal"`
+	PrincipalOrgID        string  `json:"PrincipalOrgID,omitempty"`
+	RevisionID            string  `json:"RevisionId,omitempty"`
+	SourceAccount         string  `json:"SourceAccount,omitempty"`
+	SourceARN             string  `json:"SourceArn,omitempty"`
+	StatementID           *string `json:"StatementId"`
 }
 
 type permissionStatement struct {
@@ -86,11 +86,17 @@ func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 	if req.Principal == "" {
 		return protocol.ErrMissingParameter("Principal")
 	}
-	if len(req.StatementID) > 100 {
-		return smithyStringLengthConstraint("statementId", req.StatementID, 100)
+	if req.StatementID == nil {
+		return smithyRequiredConstraint("statementId")
 	}
-	if !statementIDPattern.MatchString(req.StatementID) {
-		return smithyPatternConstraint("statementId", req.StatementID, statementIDConstraint)
+	if len(*req.StatementID) < 1 {
+		return smithyStringMinimumLengthConstraint("statementId", *req.StatementID, 1)
+	}
+	if len(*req.StatementID) > 100 {
+		return smithyStringLengthConstraint("statementId", *req.StatementID, 100)
+	}
+	if !statementIDPattern.MatchString(*req.StatementID) {
+		return smithyPatternConstraint("statementId", *req.StatementID, statementIDConstraint)
 	}
 	if len(req.Action) > 256 {
 		return smithyStringLengthConstraint("action", req.Action, 256)
@@ -154,13 +160,14 @@ func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, lambdaInvalidParameter("We currently do not support adding policies for $LATEST."))
 		return
 	}
+	statementID := *req.StatementID
 	fn, aerr := h.validatePolicyTarget(r.Context(), identifier, name, qualifier)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	statement := permissionStatement{
-		Sid: req.StatementID, Effect: "Allow", Principal: permissionPrincipal(req.Principal),
+		Sid: statementID, Effect: "Allow", Principal: permissionPrincipal(req.Principal),
 		Action: req.Action, Resource: policyResourceARN(fn.ARN, qualifier), Condition: permissionConditions(req),
 	}
 	aerr = h.ls.mutateFunctionPolicy(r.Context(), name, qualifier, func(policy *functionPolicy, _ bool) (bool, *protocol.AWSError) {
@@ -168,8 +175,8 @@ func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
 			return false, policyRevisionMismatch()
 		}
 		for _, existing := range policy.Statements {
-			if existing.Sid == req.StatementID {
-				return false, &protocol.AWSError{Code: "ResourceConflictException", Message: "The statement id (" + req.StatementID + ") provided already exists.", HTTPStatus: http.StatusConflict}
+			if existing.Sid == statementID {
+				return false, &protocol.AWSError{Code: "ResourceConflictException", Message: "The statement id (" + statementID + ") provided already exists.", HTTPStatus: http.StatusConflict}
 			}
 		}
 		candidate := append(append([]permissionStatement(nil), policy.Statements...), statement)

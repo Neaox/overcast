@@ -12,6 +12,7 @@ import (
 func assertLambdaValidationMessage(t *testing.T, resp *http.Response, want string) {
 	t.Helper()
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertRequestID(t, resp)
 	var body struct {
 		Type    string `json:"__type"`
 		Message string `json:"message"`
@@ -258,6 +259,36 @@ func TestAddPermission_FieldSpecificValidationMessages(t *testing.T) {
 			assertLambdaValidationMessage(t, doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-message-validation/policy"), request), tc.want)
 		})
 	}
+}
+
+func TestAddPermission_missingStatementID(t *testing.T) {
+	// Given: a function and an otherwise valid AddPermission request.
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "policy-missing-statement")
+
+	// When: StatementId is omitted.
+	resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-missing-statement/policy"), map[string]any{
+		"Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+	})
+
+	// Then: Lambda reports the missing required member, not its pattern constraint.
+	assertLambdaValidationMessage(t, resp,
+		"1 validation error detected: Value null at 'statementId' failed to satisfy constraint: Member must not be null")
+}
+
+func TestAddPermission_emptyStatementID(t *testing.T) {
+	// Given: a function and an otherwise valid AddPermission request.
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "policy-empty-statement")
+
+	// When: StatementId is explicitly empty rather than omitted.
+	resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-empty-statement/policy"), map[string]any{
+		"StatementId": "", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+	})
+
+	// Then: Lambda reports the minimum-length constraint for the supplied value.
+	assertLambdaValidationMessage(t, resp,
+		"1 validation error detected: Value '' at 'statementId' failed to satisfy constraint: Member must have length greater than or equal to 1")
 }
 
 func TestFunctionPolicy_IdentifierLengthMessages(t *testing.T) {

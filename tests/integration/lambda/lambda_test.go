@@ -3967,7 +3967,9 @@ func TestEventSourceMappingLegacyRecordBackfillsARNOnResponsesAndUpdate(t *testi
 		t.Errorf("ListEventSourceMappings = %#v, want backfilled ARN", listed.Mappings)
 	}
 
-	update := doJSON(t, http.MethodPut, lambdaURL(srv, "/event-source-mappings/"+id), map[string]any{"BatchSize": 20})
+	update := doJSON(t, http.MethodPut, lambdaURL(srv, "/event-source-mappings/"+id), map[string]any{
+		"BatchSize": 20, "MaximumBatchingWindowInSeconds": 1,
+	})
 	helpers.AssertStatus(t, update, http.StatusAccepted)
 	decodeJSON(t, update, &got)
 	if got["EventSourceMappingArn"] != wantARN {
@@ -4232,7 +4234,7 @@ func TestUpdateEventSourceMapping_changeBatchSize(t *testing.T) {
 
 	// When: we update BatchSize to 20
 	resp := doJSON(t, http.MethodPut, esmURL(srv)+"/"+id, map[string]any{
-		"BatchSize": 20,
+		"BatchSize": 20, "MaximumBatchingWindowInSeconds": 1,
 	})
 	defer resp.Body.Close()
 
@@ -4242,6 +4244,9 @@ func TestUpdateEventSourceMapping_changeBatchSize(t *testing.T) {
 	helpers.DecodeJSON(t, resp, &got)
 	if got["BatchSize"] != float64(20) {
 		t.Errorf("BatchSize: got %v, want 20", got["BatchSize"])
+	}
+	if got["MaximumBatchingWindowInSeconds"] != float64(1) {
+		t.Errorf("MaximumBatchingWindowInSeconds: got %v, want 1", got["MaximumBatchingWindowInSeconds"])
 	}
 }
 
