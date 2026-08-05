@@ -85,6 +85,117 @@ func TestCreateStack_DynamoDBTableLocalSecondaryIndex(t *testing.T) {
 	}
 }
 
+func TestCreateStack_DynamoDBTableTimeToLive(t *testing.T) {
+	// Given: a stack template that enables a DynamoDB table TTL attribute
+	srv := helpers.NewTestServer(t)
+	const stackName = "dynamodb-ttl-stack"
+	const tableName = "cfn-ttl-table"
+	const template = `{
+  "Resources": {
+    "Sessions": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "cfn-ttl-table",
+        "AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+        "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+        "BillingMode": "PAY_PER_REQUEST",
+        "TimeToLiveSpecification": {"Enabled": true, "AttributeName": "expiresAt"}
+      }
+    }
+  }
+}`
+
+	// When: CloudFormation creates the table
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {template},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// Then: the underlying DynamoDB table has the declared TTL configuration
+	assertDynamoDBTTL(t, srv, tableName, "ENABLED", "expiresAt")
+}
+
+func TestUpdateStack_DynamoDBTableTimeToLive(t *testing.T) {
+	// Given: a stack with TTL enabled on its DynamoDB table
+	srv := helpers.NewTestServer(t)
+	const stackName = "dynamodb-ttl-update-stack"
+	const tableName = "cfn-ttl-update-table"
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName": {stackName},
+		"TemplateBody": {dynamodbTableTTLTemplate(
+			tableName, `"TimeToLiveSpecification": {"Enabled": true, "AttributeName": "expiresAt"},`,
+		)},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// When: the TTL attribute changes, then the property is removed
+	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName": {stackName},
+		"TemplateBody": {dynamodbTableTTLTemplate(
+			tableName, `"TimeToLiveSpecification": {"Enabled": true, "AttributeName": "expiresAtV2"},`,
+		)},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+	assertDynamoDBTTL(t, srv, tableName, "ENABLED", "expiresAtV2")
+
+	removeResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {dynamodbTableTTLTemplate(tableName, "")},
+	})
+	defer removeResp.Body.Close()
+	helpers.AssertStatus(t, removeResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: CloudFormation has reconciled the DynamoDB TTL configuration
+	assertDynamoDBTTL(t, srv, tableName, "DISABLED", "")
+}
+
+func dynamodbTableTTLTemplate(tableName, ttlProperty string) string {
+	return `{
+  "Resources": {
+    "Sessions": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "` + tableName + `",
+        "AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+        "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+        "BillingMode": "PAY_PER_REQUEST",
+        ` + ttlProperty + `
+        "Tags": [{"Key": "managed-by", "Value": "cloudformation"}]
+      }
+    }
+  }
+}`
+}
+
+func assertDynamoDBTTL(t *testing.T, srv *helpers.TestServer, tableName, wantStatus, wantAttribute string) {
+	t.Helper()
+	resp := dynamodbCall(t, srv, "DescribeTimeToLive", map[string]any{"TableName": tableName})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var result struct {
+		TimeToLiveDescription struct {
+			TimeToLiveStatus string `json:"TimeToLiveStatus"`
+			AttributeName    string `json:"AttributeName"`
+		} `json:"TimeToLiveDescription"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if got := result.TimeToLiveDescription.TimeToLiveStatus; got != wantStatus {
+		t.Errorf("TTL status = %q, want %q", got, wantStatus)
+	}
+	if got := result.TimeToLiveDescription.AttributeName; got != wantAttribute {
+		t.Errorf("TTL attribute = %q, want %q", got, wantAttribute)
+	}
+}
+
 func dynamodbCall(t *testing.T, srv *helpers.TestServer, operation string, body map[string]any) *http.Response {
 	t.Helper()
 	payload, err := json.Marshal(body)

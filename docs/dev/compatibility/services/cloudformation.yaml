@@ -63,6 +63,13 @@ operations:
         tests:
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableLocalSecondaryIndex
         notes: AWS::DynamoDB::Table forwards LocalSecondaryIndexes to CreateTable, so an LSI declared in a new stack is immediately available to Query.
+      - name: dynamodb table time-to-live create and updates
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableTimeToLive
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableTimeToLive
+          - internal/services/cloudformation/dynamodb_ttl_test.go
+        notes: AWS::DynamoDB::Table applies TimeToLiveSpecification through DynamoDB UpdateTimeToLive after creation, disables then re-enables TTL when its attribute changes, and disables TTL when the property is removed. Failed create or update phases compensate the table or prior TTL configuration.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -102,7 +109,7 @@ findings:
     - AWS::SNS::Topic and AWS::SNS::Subscription forward supported configuration through SNS during stack provisioning, including raw delivery and message-body filtering.
     - AWS::S3::Bucket create/update/removal dispatches seven sub-resource property families through S3 instead of silently dropping them.
     - AWS::Lambda::Function no longer drops priority configuration properties, and AWS::Lambda::Permission now mutates the function's Lambda-owned resource policy.
-    - AWS::DynamoDB::Table forwards LocalSecondaryIndexes through CreateTable on initial stack provisioning.
+    - AWS::DynamoDB::Table forwards LocalSecondaryIndexes through CreateTable and reconciles TimeToLiveSpecification through DynamoDB's TTL API, including create/update compensation.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.
