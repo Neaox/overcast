@@ -156,7 +156,11 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 	// isSliceField reports whether the target struct field for base is a slice.
 	isSliceField := func(base string) bool {
 		fieldIdx, ok := fieldByJSON[base]
-		return ok && rv.Field(fieldIdx).Kind() == reflect.Slice
+		if !ok {
+			return false
+		}
+		fieldType := rv.Field(fieldIdx).Type()
+		return fieldType.Kind() == reflect.Slice || (fieldType.Kind() == reflect.Ptr && fieldType.Elem().Kind() == reflect.Slice)
 	}
 
 	for key, vals := range values {
@@ -241,6 +245,12 @@ func decodeStruct(values url.Values, rv reflect.Value, prefix string) *protocol.
 			continue
 		}
 		field := rv.Field(fieldIdx)
+		if field.Kind() == reflect.Ptr && field.Type().Elem().Kind() == reflect.Slice {
+			if field.IsNil() {
+				field.Set(reflect.New(field.Type().Elem()))
+			}
+			field = field.Elem()
+		}
 		if field.Kind() != reflect.Slice {
 			continue
 		}
@@ -404,6 +414,12 @@ func setFieldValue(rv reflect.Value, s string) error {
 		rv.SetFloat(f)
 	case reflect.Ptr:
 		if s == "" {
+			if rv.Type().Elem().Kind() == reflect.Slice {
+				if rv.IsNil() {
+					rv.Set(reflect.New(rv.Type().Elem()))
+				}
+				rv.Elem().Set(reflect.MakeSlice(rv.Elem().Type(), 0, 0))
+			}
 			return nil
 		}
 		if rv.IsNil() {

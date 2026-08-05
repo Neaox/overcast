@@ -34,7 +34,7 @@ func IAM(c *clients.Clients) ServiceGroup {
 			"AddRoleToInstanceProfile": g.AddRoleToInstanceProfile,
 			"GetInstanceProfile":       g.GetInstanceProfile,
 			"CreatePolicy":             g.CreatePolicy,
-			"GetPolicy":                g.GetPolicy,
+			"iam-policies:GetPolicy":   g.GetPolicy,
 			"ListPolicies":             g.ListPolicies,
 			"DeletePolicy":             g.DeletePolicy,
 			"AttachRolePolicy":         g.AttachRolePolicy,

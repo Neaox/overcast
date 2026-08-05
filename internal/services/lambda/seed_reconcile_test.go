@@ -229,12 +229,11 @@ func TestSeedPersistedFunctionImages_ReconcilesCrossRegion(t *testing.T) {
 	}
 }
 
-// TestSeedPersistedFunctionImages_deletedDuringPull_staysDeleted: startup
-// reconciliation lists functions once, then pulls images — which can take a
-// long time while requests are already being served. A function deleted
-// during that window must not be written back from the startup snapshot
-// (same stale-snapshot rule as the CreateFunction prewarm callback, #414).
-func TestSeedPersistedFunctionImages_deletedDuringPull_staysDeleted(t *testing.T) {
+// Startup reconciliation lists functions once, then pulls images, which can
+// take a long time while requests are already being served. If the listed
+// generation is deleted and replaced, its pull must not transition the new
+// record; reconciliation must arrange the replacement's own pull instead.
+func TestSeedPersistedFunctionImages_deletedAndRecreatedDuringPull(t *testing.T) {
 	// Given: a Pending function persisted from a previous session,
 	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clock.New())
 	fn := &Function{
@@ -266,7 +265,20 @@ func TestSeedPersistedFunctionImages_deletedDuringPull_staysDeleted(t *testing.T
 
 	dc := docker.NewClient("tcp://"+srv.Listener.Addr().String(), zap.NewNop())
 	cr := &ContainerRuntime{docker: dc, logger: zap.NewNop(), cfg: &config.Config{Region: "us-east-1"}}
-	svc := &Service{ls: ls, log: serviceutil.NewServiceLogger(zap.NewNop(), "lambda")}
+	log := serviceutil.NewServiceLogger(zap.NewNop(), "lambda")
+	prewarmed := make(chan functionImagePullGeneration, 1)
+	h := &Handler{ls: ls, log: log}
+	h.prewarmer = func(fn *Function, ready func(error)) {
+		generation, err := imagePullGenerationForFunction(fn)
+		if err != nil {
+			t.Errorf("resolve replacement generation: %v", err)
+			ready(err)
+			return
+		}
+		prewarmed <- generation
+		ready(nil)
+	}
+	svc := &Service{ls: ls, log: log, handler: h}
 
 	done := make(chan struct{})
 	go func() {
@@ -279,15 +291,38 @@ func TestSeedPersistedFunctionImages_deletedDuringPull_staysDeleted(t *testing.T
 	if aerr := ls.deleteFunction(context.Background(), "pending-del-fn"); aerr != nil {
 		t.Fatalf("delete: %v", aerr)
 	}
+	recreated := &Function{
+		Name:          "pending-del-fn",
+		ARN:           "arn:aws:lambda:us-east-1:000000000000:function:pending-del-fn",
+		Runtime:       "nodejs22.x",
+		PackageType:   "Zip",
+		Architectures: []string{"x86_64"},
+		State:         "Pending",
+		RevisionId:    "recreated-revision",
+		CreationID:    "recreated-creation",
+	}
+	created, aerr := ls.createFunction(context.Background(), recreated)
+	if aerr != nil || !created {
+		t.Fatalf("recreate: created=%v err=%v", created, aerr)
+	}
 	close(release)
 	<-done
 
-	// Then: the delete stays deleted — reconciliation must not resurrect it.
+	// Then: the old pull cannot transition the replacement generation; startup
+	// arranges the replacement's own pull, which activates it.
+	select {
+	case generation := <-prewarmed:
+		if generation.creationID != "recreated-creation" {
+			t.Fatalf("prewarmed creation = %q, want recreated-creation", generation.creationID)
+		}
+	default:
+		t.Fatal("replacement generation was left Pending without its own pull")
+	}
 	got, aerr := ls.getFunction(context.Background(), "pending-del-fn")
 	if aerr != nil {
 		t.Fatalf("getFunction: %v", aerr)
 	}
-	if got != nil {
-		t.Fatalf("function exists in state %q after delete — startup reconciliation wrote back its stale snapshot", got.State)
+	if got == nil || got.RevisionId != "recreated-revision" || got.State != "Active" {
+		t.Fatalf("replacement = %#v, want recreated-revision/Active", got)
 	}
 }

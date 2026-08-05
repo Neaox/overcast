@@ -320,8 +320,8 @@ func TestRDSDBInstanceUpdate_failureToSettleIsNotAnsweredByReplacement(t *testin
 		t.Errorf("expected a terminal updateFailure so the provisioner does not replace the "+
 			"instance, got %T: %v", err, err)
 	}
-	if outcome.PhysicalID != "" {
-		t.Errorf("failed update reported physical ID %q", outcome.PhysicalID)
+	if outcome.PhysicalID != "appdb" || !outcome.UpdatedInPlace || outcome.Replaced() {
+		t.Errorf("failed update outcome = %+v, want applied in-place mutation", outcome)
 	}
 }
 

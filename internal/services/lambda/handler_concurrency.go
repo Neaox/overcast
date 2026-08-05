@@ -12,6 +12,7 @@ package lambda
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ import (
 // ─── wire types ──────────────────────────────────────────────────────────────
 
 type putFunctionConcurrencyRequest struct {
-	ReservedConcurrentExecutions int `json:"ReservedConcurrentExecutions"`
+	ReservedConcurrentExecutions *int `json:"ReservedConcurrentExecutions"`
 }
 
 type functionConcurrencyResponse struct {
@@ -153,16 +154,31 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
 		return
 	}
+	if req.ReservedConcurrentExecutions == nil {
+		protocol.WriteJSONError(w, r, smithyRequiredConstraint("reservedConcurrentExecutions"))
+		return
+	}
+	if *req.ReservedConcurrentExecutions < 0 {
+		protocol.WriteJSONError(w, r, lambdaInvalidParameter("1 validation error detected: Value '"+strconv.Itoa(*req.ReservedConcurrentExecutions)+"' at 'reservedConcurrentExecutions' failed to satisfy constraint: Member must have value greater than or equal to 0"))
+		return
+	}
 
-	fn.ReservedConcurrency = &req.ReservedConcurrentExecutions
-	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		current.ReservedConcurrency = req.ReservedConcurrentExecutions
+		return true, nil
+	})
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !changed || fn == nil {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(name))
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionConcurrencyResponse(req))
+	_ = json.NewEncoder(w).Encode(functionConcurrencyResponse{ReservedConcurrentExecutions: *req.ReservedConcurrentExecutions})
 }
 
 // GetFunctionConcurrency handles GET /2019-09-30/functions/{name}/concurrency.
@@ -219,9 +235,16 @@ func (h *Handler) DeleteFunctionConcurrency(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	fn.ReservedConcurrency = nil
-	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		current.ReservedConcurrency = nil
+		return true, nil
+	})
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !changed || fn == nil {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(name))
 		return
 	}
 

@@ -4,7 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
@@ -22,29 +24,33 @@ func Lambda(c *clients.Clients) ServiceGroup {
 	g := &lambdaGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"lambda-crud:CreateFunction":  g.CreateFunction,
-			"lambda-crud:GetFunction":     g.GetFunction,
-			"lambda-crud:ListFunctions":   g.ListFunctions,
-			"UpdateFunctionCode":          g.UpdateFunctionCode,
-			"UpdateFunctionConfiguration": g.UpdateFunctionConfiguration,
-			"lambda-crud:DeleteFunction":  g.DeleteFunction,
-			"InvokeSync":                  g.InvokeSync,
-			"InvokeAsync":                 g.InvokeAsync,
-			"InvokeDryRun":                g.InvokeDryRun,
-			"PublishVersion":              g.PublishVersion,
-			"ListVersionsByFunction":      g.ListVersionsByFunction,
-			"CreateAlias":                 g.CreateAlias,
-			"GetAlias":                    g.GetAlias,
-			"ListAliases":                 g.ListAliases,
-			"UpdateAlias":                 g.UpdateAlias,
-			"DeleteAlias":                 g.DeleteAlias,
-			"InvokeWithResponseStream":    g.InvokeWithResponseStream,
-			"PublishLayerVersion":         g.PublishLayerVersion,
-			"ListLayers":                  g.ListLayers,
-			"DeleteLayerVersion":          g.DeleteLayerVersion,
+			"lambda-crud:CreateFunction":     g.CreateFunction,
+			"lambda-crud:GetFunction":        g.GetFunction,
+			"lambda-crud:ListFunctions":      g.ListFunctions,
+			"UpdateFunctionCode":             g.UpdateFunctionCode,
+			"UpdateFunctionConfiguration":    g.UpdateFunctionConfiguration,
+			"lambda-crud:DeleteFunction":     g.DeleteFunction,
+			"lambda-policy:AddPermission":    g.AddPermission,
+			"lambda-policy:GetPolicy":        g.GetPolicy,
+			"lambda-policy:RemovePermission": g.RemovePermission,
+			"InvokeSync":                     g.InvokeSync,
+			"InvokeAsync":                    g.InvokeAsync,
+			"InvokeDryRun":                   g.InvokeDryRun,
+			"PublishVersion":                 g.PublishVersion,
+			"ListVersionsByFunction":         g.ListVersionsByFunction,
+			"CreateAlias":                    g.CreateAlias,
+			"GetAlias":                       g.GetAlias,
+			"ListAliases":                    g.ListAliases,
+			"UpdateAlias":                    g.UpdateAlias,
+			"DeleteAlias":                    g.DeleteAlias,
+			"InvokeWithResponseStream":       g.InvokeWithResponseStream,
+			"PublishLayerVersion":            g.PublishLayerVersion,
+			"ListLayers":                     g.ListLayers,
+			"DeleteLayerVersion":             g.DeleteLayerVersion,
 		},
 		Setup: map[string]func(context.Context, *harness.TestContext) error{
 			"lambda-crud":          g.setupCrud,
+			"lambda-policy":        g.setupPolicy,
 			"lambda-invoke":        g.setupInvoke,
 			"lambda-aliases":       g.setupAliases,
 			"lambda-invoke-stream": g.setupInvokeStream,
@@ -52,6 +58,7 @@ func Lambda(c *clients.Clients) ServiceGroup {
 		},
 		Teardown: map[string]func(context.Context, *harness.TestContext) error{
 			"lambda-crud":          g.teardownCrud,
+			"lambda-policy":        g.teardownPolicy,
 			"lambda-invoke":        g.teardownInvoke,
 			"lambda-aliases":       g.teardownAliases,
 			"lambda-invoke-stream": g.teardownInvokeStream,
@@ -216,6 +223,75 @@ func (g *lambdaGroup) DeleteFunction(ctx context.Context, t *harness.TestContext
 	}
 	_, err := g.client().DeleteFunction(ctx, &lambda.DeleteFunctionInput{FunctionName: aws.String(name)})
 	return err
+}
+
+// ── lambda-policy ──────────────────────────────────────────────────────────
+
+func (g *lambdaGroup) setupPolicy(ctx context.Context, t *harness.TestContext) error {
+	name := fmt.Sprintf("%s-fn-policy", t.RunID)
+	t.Set("lambda_policy_fn", name)
+	if err := g.createFunc(ctx, name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (g *lambdaGroup) teardownPolicy(ctx context.Context, t *harness.TestContext) error {
+	if name := t.GetString("lambda_policy_fn"); name != "" {
+		g.deleteFunc(ctx, name)
+	}
+	return nil
+}
+
+func (g *lambdaGroup) AddPermission(ctx context.Context, t *harness.TestContext) error {
+	name := t.GetString("lambda_policy_fn")
+	resp, err := g.client().AddPermission(ctx, &lambda.AddPermissionInput{
+		FunctionName:  aws.String(name),
+		StatementId:   aws.String("allow-s3"),
+		Action:        aws.String("lambda:InvokeFunction"),
+		Principal:     aws.String("s3.amazonaws.com"),
+		SourceAccount: aws.String("000000000000"),
+	})
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(aws.ToString(resp.Statement), `"Sid":"allow-s3"`) {
+		return fmt.Errorf("AddPermission: statement missing allow-s3 SID")
+	}
+	policy, err := g.client().GetPolicy(ctx, &lambda.GetPolicyInput{FunctionName: aws.String(name)})
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(aws.ToString(policy.Policy), `"Sid":"allow-s3"`) {
+		return fmt.Errorf("AddPermission: statement missing from GetPolicy")
+	}
+	return nil
+}
+
+func (g *lambdaGroup) GetPolicy(ctx context.Context, t *harness.TestContext) error {
+	resp, err := g.client().GetPolicy(ctx, &lambda.GetPolicyInput{FunctionName: aws.String(t.GetString("lambda_policy_fn"))})
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(aws.ToString(resp.Policy), `"Sid":"allow-s3"`) || aws.ToString(resp.RevisionId) == "" {
+		return fmt.Errorf("GetPolicy: policy statement or revision missing")
+	}
+	return nil
+}
+
+func (g *lambdaGroup) RemovePermission(ctx context.Context, t *harness.TestContext) error {
+	name := t.GetString("lambda_policy_fn")
+	if _, err := g.client().RemovePermission(ctx, &lambda.RemovePermissionInput{
+		FunctionName: aws.String(name), StatementId: aws.String("allow-s3"),
+	}); err != nil {
+		return err
+	}
+	_, err := g.client().GetPolicy(ctx, &lambda.GetPolicyInput{FunctionName: aws.String(name)})
+	var notFound *lambdatypes.ResourceNotFoundException
+	if !errors.As(err, &notFound) {
+		return fmt.Errorf("RemovePermission: expected ResourceNotFoundException after removal, got %v", err)
+	}
+	return nil
 }
 
 // ── lambda-invoke ─────────────────────────────────────────────────────────────

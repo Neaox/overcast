@@ -37,7 +37,7 @@ public sealed class IamGroup(AwsClients clients) : IServiceGroup
         ["DeleteRole"] = DeleteRoleAsync,
         // iam-policies
         ["CreatePolicy"] = CreatePolicyAsync,
-        ["GetPolicy"] = GetPolicyAsync,
+        ["iam-policies:GetPolicy"] = GetPolicyAsync,
         ["ListPolicies"] = ListPoliciesAsync,
         ["DeletePolicy"] = DeletePolicyAsync,
         // iam-groups

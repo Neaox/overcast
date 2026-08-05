@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1356,
+  "total_ops": 1359,
   "services": [
     {
       "service": "s3",
@@ -553,8 +553,8 @@
     {
       "service": "lambda",
       "display_name": "Lambda",
-      "total_ops": 48,
-      "implemented_ops": 47,
+      "total_ops": 51,
+      "implemented_ops": 49,
       "operations": [
         {
           "operation": "ListFunctions",
@@ -566,7 +566,7 @@
           "operation": "CreateFunction",
           "category": "Function management",
           "status": "✅ Supported",
-          "notes": "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig, ImageConfig, and FileSystemConfigs supported (EFS volumes mounted in live mode)"
+          "notes": "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647)"
         },
         {
           "operation": "DeleteFunction",
@@ -589,13 +589,13 @@
           "operation": "UpdateFunctionCode",
           "category": "Function management",
           "status": "✅ Supported",
-          "notes": "Updates code zip; generates new RevisionId"
+          "notes": "Updates code zip or image URI and Architectures; generates new RevisionId"
         },
         {
           "operation": "UpdateFunctionConfiguration",
           "category": "Function management",
           "status": "✅ Supported",
-          "notes": "Patches Timeout/MemorySize/Description/Handler/Role/Environment/Layers/VpcConfig/ImageConfig; generates new RevisionId"
+          "notes": "Presence-aware updates for supported configuration; unsupported advanced fields fail before mutation"
         },
         {
           "operation": "GetFunctionCodeSigningConfig",
@@ -614,6 +614,24 @@
           "category": "Function management",
           "status": "✅ Supported",
           "notes": "Removes the association; idempotent"
+        },
+        {
+          "operation": "AddPermission",
+          "category": "Resource-based policies",
+          "status": "❌ Unsupported",
+          "notes": "Policy lifecycle and validation are implemented, but statements are not yet enforced during invocation (#629)"
+        },
+        {
+          "operation": "GetPolicy",
+          "category": "Resource-based policies",
+          "status": "✅ Supported",
+          "notes": "Returns the stored AWS policy document and revision ID"
+        },
+        {
+          "operation": "RemovePermission",
+          "category": "Resource-based policies",
+          "status": "✅ Supported",
+          "notes": "Removes a statement by ID; supports revision preconditions"
         },
         {
           "operation": "CreateCodeSigningConfig",

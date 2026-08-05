@@ -15,6 +15,8 @@ operations:
     aws_docs:
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sqs-queue.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-s3-bucket.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-function.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-permission.html
     tests:
       - tests/integration/cloudformation/cloudformation_test.go
     scenarios:
@@ -50,6 +52,11 @@ operations:
         tests:
           - tests/integration/cloudformation/s3_bucket_properties_test.go
         notes: AWS::S3::Bucket translates lifecycle, versioning, notification, encryption, tag, CORS, and website properties to S3 REST-XML handlers on create and update. Removal deletes or clears the S3 configuration, and versioning removal suspends because S3 cannot return a versioned bucket to unversioned state. Unknown and untranslatable fields fail before bucket creation.
+      - name: lambda function advanced properties and permission lifecycle
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/lambda_properties_test.go
+        notes: AWS::Lambda::Function forwards every reviewed Function property and applies configuration, code, then reserved concurrency transactionally; unsupported advanced fields fail at Lambda before mutation, and a failed sub-operation triggers immediate compensation. EventSourceMapping forwards every reviewed property so Lambda either stores supported fields or rejects unsupported semantics. AWS::Lambda::Permission calls race-safe Lambda policy APIs rather than succeeding as a no-op stub. Shared reverse-update rollback restores successful in-place changes when a later stack resource fails.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -88,6 +95,7 @@ findings:
     - AWS::Events::Rule create provisions targets, including ECS/Fargate target metadata used by CDK scheduled task stacks.
     - AWS::SNS::Topic and AWS::SNS::Subscription forward supported configuration through SNS during stack provisioning, including raw delivery and message-body filtering.
     - AWS::S3::Bucket create/update/removal dispatches seven sub-resource property families through S3 instead of silently dropping them.
+    - AWS::Lambda::Function no longer drops priority configuration properties, and AWS::Lambda::Permission now mutates the function's Lambda-owned resource policy.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.

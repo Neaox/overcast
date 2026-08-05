@@ -16,6 +16,9 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
         ["UpdateFunctionCode"] = UpdateFunctionCodeAsync,
         ["UpdateFunctionConfiguration"] = UpdateFunctionConfigurationAsync,
         ["lambda-crud:DeleteFunction"] = DeleteFunctionAsync,
+        ["lambda-policy:AddPermission"] = AddPermissionAsync,
+        ["lambda-policy:GetPolicy"] = GetPolicyAsync,
+        ["lambda-policy:RemovePermission"] = RemovePermissionAsync,
         ["InvokeDryRun"] = InvokeDryRunAsync,
         ["InvokeSync"] = InvokeSyncAsync,
         ["InvokeAsync"] = InvokeAsyncAsync,
@@ -35,6 +38,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
     public IReadOnlyDictionary<string, SetupFn> Setups() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
     {
         ["lambda-crud"] = SetupCrudAsync,
+        ["lambda-policy"] = SetupPolicyAsync,
         ["lambda-invoke"] = SetupInvokeAsync,
         ["lambda-invoke-stream"] = SetupInvokeStreamAsync,
         ["lambda-aliases"] = SetupAliasesAsync,
@@ -43,6 +47,7 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
     public IReadOnlyDictionary<string, SetupFn> Teardowns() => new Dictionary<string, SetupFn>(StringComparer.Ordinal)
     {
         ["lambda-crud"] = TeardownCrudAsync,
+        ["lambda-policy"] = TeardownPolicyAsync,
         ["lambda-invoke"] = TeardownInvokeAsync,
         ["lambda-invoke-stream"] = TeardownInvokeStreamAsync,
         ["lambda-aliases"] = TeardownAliasesAsync,
@@ -158,6 +163,72 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
     private async Task TeardownCrudAsync(TestContext context)
     {
         var name = context.GetString("LambdaFuncName");
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            try { await clients.Lambda().DeleteFunctionAsync(new DeleteFunctionRequest { FunctionName = name }); } catch { }
+        }
+    }
+
+    // ── lambda-policy ──────────────────────────────────────────────────────
+
+    private async Task SetupPolicyAsync(TestContext context)
+    {
+        var name = $"{context.RunId}-fn-policy";
+        await CreateFunc(name);
+        context.Set("LambdaPolicyFuncName", name);
+    }
+
+    private async Task AddPermissionAsync(TestContext context)
+    {
+        var name = RequireFuncName(context, "LambdaPolicyFuncName");
+        var response = await clients.Lambda().AddPermissionAsync(new AddPermissionRequest
+        {
+            FunctionName = name,
+            StatementId = "allow-s3",
+            Action = "lambda:InvokeFunction",
+            Principal = "s3.amazonaws.com",
+            SourceAccount = "000000000000",
+        });
+        Assertions.True(response.Statement?.Contains("\"Sid\":\"allow-s3\"", StringComparison.Ordinal) == true,
+            "AddPermission: statement missing allow-s3 SID");
+        var policy = await clients.Lambda().GetPolicyAsync(new GetPolicyRequest { FunctionName = name });
+        Assertions.True(policy.Policy?.Contains("\"Sid\":\"allow-s3\"", StringComparison.Ordinal) == true,
+            "AddPermission: statement missing from GetPolicy");
+    }
+
+    private async Task GetPolicyAsync(TestContext context)
+    {
+        var response = await clients.Lambda().GetPolicyAsync(new GetPolicyRequest
+        {
+            FunctionName = RequireFuncName(context, "LambdaPolicyFuncName"),
+        });
+        Assertions.True(response.Policy?.Contains("\"Sid\":\"allow-s3\"", StringComparison.Ordinal) == true,
+            "GetPolicy: allow-s3 statement missing");
+        Assertions.NotBlank(response.RevisionId, "GetPolicy: RevisionId");
+    }
+
+    private async Task RemovePermissionAsync(TestContext context)
+    {
+        var name = RequireFuncName(context, "LambdaPolicyFuncName");
+        await clients.Lambda().RemovePermissionAsync(new RemovePermissionRequest
+        {
+            FunctionName = name,
+            StatementId = "allow-s3",
+        });
+        try
+        {
+            await clients.Lambda().GetPolicyAsync(new GetPolicyRequest { FunctionName = name });
+            throw new InvalidOperationException("RemovePermission: policy still exists");
+        }
+        catch (ResourceNotFoundException)
+        {
+            // Expected after the final statement is removed.
+        }
+    }
+
+    private async Task TeardownPolicyAsync(TestContext context)
+    {
+        var name = context.GetString("LambdaPolicyFuncName");
         if (!string.IsNullOrWhiteSpace(name))
         {
             try { await clients.Lambda().DeleteFunctionAsync(new DeleteFunctionRequest { FunctionName = name }); } catch { }

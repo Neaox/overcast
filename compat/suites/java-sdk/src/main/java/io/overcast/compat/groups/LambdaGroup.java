@@ -42,6 +42,9 @@ public final class LambdaGroup implements ServiceGroup {
                 Map.entry("UpdateFunctionCode",         this::updateFunctionCode),
                 Map.entry("UpdateFunctionConfiguration",this::updateFunctionConfiguration),
                 Map.entry("lambda-crud:DeleteFunction",             this::deleteFunction),
+                Map.entry("lambda-policy:AddPermission",             this::addPermission),
+                Map.entry("lambda-policy:GetPolicy",                 this::getPolicy),
+                Map.entry("lambda-policy:RemovePermission",          this::removePermission),
                 Map.entry("InvokeDryRun",               this::invokeDryRun),
                 Map.entry("InvokeSync",                 this::invokeSync),
                 Map.entry("InvokeAsync",                this::invokeAsync),
@@ -63,6 +66,7 @@ public final class LambdaGroup implements ServiceGroup {
     public Map<String, TestFn> setups() {
         return Map.ofEntries(
                 Map.entry("lambda-crud",    this::setupCrud),
+                Map.entry("lambda-policy",  this::setupPolicy),
                 Map.entry("lambda-invoke",  this::setupInvoke),
                 Map.entry("lambda-aliases", this::setupAliases),
                 Map.entry("lambda-invoke-stream", this::setupInvokeStream),
@@ -74,6 +78,7 @@ public final class LambdaGroup implements ServiceGroup {
     public Map<String, TestFn> teardowns() {
         return Map.ofEntries(
                 Map.entry("lambda-crud",    ctx -> deleteFunctionSilently(ctx.getString("lambdaFuncName"))),
+                Map.entry("lambda-policy",  ctx -> deleteFunctionSilently(ctx.getString("lambdaPolicyName"))),
                 Map.entry("lambda-invoke",  ctx -> deleteFunctionSilently(ctx.getString("lambdaInvokeName"))),
                 Map.entry("lambda-aliases", ctx -> deleteFunctionSilently(ctx.getString("lambdaAliasFuncName"))),
                 Map.entry("lambda-invoke-stream", ctx -> deleteFunctionSilently(ctx.getString("lambdaStreamName"))),
@@ -133,6 +138,52 @@ public final class LambdaGroup implements ServiceGroup {
                 .handler("index.handler")
                 .code(fc -> fc.zipFile(minimalNodeZip())));
         lambda().deleteFunction(r -> r.functionName(name));
+    }
+
+    // ── lambda-policy ──────────────────────────────────────────────────────
+
+    private void setupPolicy(TestContext ctx) {
+        String name = ctx.runId() + "-fn-policy";
+        lambda().createFunction(r -> r
+                .functionName(name)
+                .runtime(Runtime.NODEJS20_X)
+                .role("arn:aws:iam::000000000000:role/lambda-role")
+                .handler("index.handler")
+                .code(fc -> fc.zipFile(minimalNodeZip())));
+        ctx.set("lambdaPolicyName", name);
+    }
+
+    private void addPermission(TestContext ctx) {
+        String name = ctx.getString("lambdaPolicyName");
+        var response = lambda().addPermission(r -> r
+                .functionName(name)
+                .statementId("allow-s3")
+                .action("lambda:InvokeFunction")
+                .principal("s3.amazonaws.com")
+                .sourceAccount("000000000000"));
+        Assertions.assertTrue(response.statement().contains("\"Sid\":\"allow-s3\""),
+                "AddPermission: statement missing allow-s3 SID");
+        var policy = lambda().getPolicy(r -> r.functionName(name));
+        Assertions.assertTrue(policy.policy().contains("\"Sid\":\"allow-s3\""),
+                "AddPermission: statement missing from GetPolicy");
+    }
+
+    private void getPolicy(TestContext ctx) {
+        var response = lambda().getPolicy(r -> r.functionName(ctx.getString("lambdaPolicyName")));
+        Assertions.assertTrue(response.policy().contains("\"Sid\":\"allow-s3\""),
+                "GetPolicy: allow-s3 statement missing");
+        Assertions.assertNotBlank(response.revisionId(), "GetPolicy: RevisionId");
+    }
+
+    private void removePermission(TestContext ctx) {
+        String name = ctx.getString("lambdaPolicyName");
+        lambda().removePermission(r -> r.functionName(name).statementId("allow-s3"));
+        try {
+            lambda().getPolicy(r -> r.functionName(name));
+            throw new AssertionError("RemovePermission: policy still exists");
+        } catch (ResourceNotFoundException expected) {
+            // Expected after the final statement is removed.
+        }
     }
 
     // ── lambda-invoke ─────────────────────────────────────────────────────────

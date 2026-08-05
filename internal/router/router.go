@@ -483,7 +483,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// Lambda ← S3: reactive code sync — when a function's code object is
 	// updated in S3, automatically refresh CodeZip and invalidate the warm pool
 	// so the next invoke picks up the new code without a redeploy.
-	lambdaSvc.InitS3Sync(func(ctx context.Context, bucket, key string) ([]byte, error) {
+	lambdaSvc.InitS3Sync(func(ctx context.Context, bucket, key string) ([]byte, *protocol.AWSError) {
 		return s3Svc.GetObjectBytes(ctx, bucket, key)
 	})
 	// Lambda → EC2: VPC resolver so Lambda can connect containers to VPC networks.

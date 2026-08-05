@@ -3,11 +3,14 @@ package cloudformation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // ── AWS::IAM::Policy (inline policy) ───────────────────────────────────────
@@ -864,10 +867,27 @@ func (h *lambdaEventSourceMappingHandler) Create(ctx context.Context, router htt
 		"BisectBatchOnFunctionError",
 		"DestinationConfig",
 		"ScalingConfig",
+		"FunctionResponseTypes",
+		"ParallelizationFactor",
+		"StartingPositionTimestamp",
+		"SourceAccessConfigurations",
+		"SelfManagedEventSource",
+		"Topics",
+		"Queues",
+		"MetricsConfig",
+		"ProvisionedPollerConfig",
+		"AmazonManagedKafkaEventSourceConfig",
+		"DocumentDBEventSourceConfig",
+		"LoggingConfig",
+		"SelfManagedKafkaEventSourceConfig",
 	} {
 		if v, ok := props[key]; ok {
 			body[key] = v
 		}
+	}
+	copyAnyProp(body, props, "KmsKeyArn", "KMSKeyArn")
+	if tags := mergeLambdaTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["Tags"] = tags
 	}
 
 	data, _ := json.Marshal(body)
@@ -877,22 +897,18 @@ func (h *lambdaEventSourceMappingHandler) Create(ctx context.Context, router htt
 	}
 
 	var resp struct {
-		UUID string `json:"UUID"`
+		UUID                  string `json:"UUID"`
+		EventSourceMappingArn string `json:"EventSourceMappingArn"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		return "", nil, fmt.Errorf("CreateEventSourceMapping: parse response: %w", err)
 	}
 
-	esArn, _ := props["EventSourceArn"].(string)
-	fnName, _ := props["FunctionName"].(string)
 	attrs := map[string]string{
 		"Id": resp.UUID,
 	}
-	if esArn != "" {
-		attrs["EventSourceArn"] = esArn
-	}
-	if fnName != "" {
-		attrs["FunctionArn"] = fnName
+	if resp.EventSourceMappingArn != "" {
+		attrs["EventSourceMappingArn"] = resp.EventSourceMappingArn
 	}
 	return resp.UUID, attrs, nil
 }
@@ -903,12 +919,34 @@ func (h *lambdaEventSourceMappingHandler) Delete(ctx context.Context, router htt
 	return err
 }
 
-func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
-	if newESA, _ := props["EventSourceArn"].(string); newESA != "" {
+func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if err := validateRequiredPropertyRemovals(props, oldProps, rCtx.LogicalID, "AWS::Lambda::EventSourceMapping", "FunctionName"); err != nil {
+		return "", nil, failUpdate(err)
+	}
+	if !reflect.DeepEqual(props["EventSourceArn"], oldProps["EventSourceArn"]) {
 		return "", nil, errReplacementRequired
 	}
-	if newFN, _ := props["FunctionName"].(string); newFN != "" {
-		return "", nil, errReplacementRequired
+	for _, key := range []string{"StartingPosition", "StartingPositionTimestamp", "SelfManagedEventSource"} {
+		if !reflect.DeepEqual(props[key], oldProps[key]) {
+			return "", nil, errReplacementRequired
+		}
+	}
+	tagsChanged := !reflect.DeepEqual(props["Tags"], oldProps["Tags"]) || !reflect.DeepEqual(rCtx.StackTags, rCtx.PreviousStackTags)
+	tagsApplied := false
+	tagARN := protocol.ARN(rCtx.Region, rCtx.AccountID, "lambda", "event-source-mapping:"+physicalID)
+	if tagsChanged {
+		var err error
+		tagsApplied, err = updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.StackTags, rCtx.PreviousStackTags, props["Tags"], oldProps["Tags"])
+		if err != nil {
+			var compensationErr error
+			if tagsApplied {
+				_, compensationErr = updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.PreviousStackTags, rCtx.StackTags, oldProps["Tags"], props["Tags"])
+			}
+			if compensationErr != nil {
+				return "", nil, failDirtyUpdate(errors.Join(err, compensationErr))
+			}
+			return "", nil, failUpdate(err)
+		}
 	}
 
 	body := map[string]any{"UUID": physicalID}
@@ -926,21 +964,76 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 		"FunctionResponseTypes",
 		"ParallelizationFactor",
 		"TumblingWindowInSeconds",
+		"SourceAccessConfigurations",
+		"MetricsConfig",
+		"ProvisionedPollerConfig",
+		"FunctionName",
+		"Topics",
+		"Queues",
+		"AmazonManagedKafkaEventSourceConfig",
+		"DocumentDBEventSourceConfig",
+		"LoggingConfig",
+		"SelfManagedKafkaEventSourceConfig",
 	} {
+		if reflect.DeepEqual(props[key], oldProps[key]) {
+			continue
+		}
 		if v, ok := props[key]; ok {
 			body[key] = v
 			haveMutable = true
+			continue
+		}
+		if empty, ok := lambdaEventSourceMappingClearValue(key, fmt.Sprint(oldProps["EventSourceArn"])); ok {
+			body[key] = empty
+			haveMutable = true
+		}
+	}
+	if !reflect.DeepEqual(props["KmsKeyArn"], oldProps["KmsKeyArn"]) {
+		haveMutable = true
+		body["KMSKeyArn"] = ""
+		if value, ok := props["KmsKeyArn"]; ok {
+			body["KMSKeyArn"] = value
 		}
 	}
 	if haveMutable {
 		data, _ := json.Marshal(body)
 		path := fmt.Sprintf("/2015-03-31/event-source-mappings/%s", physicalID)
 		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, path, "application/json", data); err != nil {
-			return "", nil, fmt.Errorf("UpdateEventSourceMapping: %w", err)
+			if tagsApplied {
+				_, compensationErr := updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.PreviousStackTags, rCtx.StackTags, oldProps["Tags"], props["Tags"])
+				updateErr := fmt.Errorf("UpdateEventSourceMapping: %w", err)
+				if compensationErr != nil {
+					return "", nil, failDirtyUpdate(errors.Join(updateErr, compensationErr))
+				}
+				return "", nil, failUpdate(updateErr)
+			}
+			return "", nil, failUpdate(fmt.Errorf("UpdateEventSourceMapping: %w", err))
 		}
 	}
 
-	return physicalID, map[string]string{"Id": physicalID}, nil
+	return physicalID, map[string]string{
+		"Id":                    physicalID,
+		"EventSourceMappingArn": protocol.ARN(rCtx.Region, rCtx.AccountID, "lambda", "event-source-mapping:"+physicalID),
+	}, nil
+}
+
+func lambdaEventSourceMappingClearValue(property, eventSourceARN string) (any, bool) {
+	batchSize := 100
+	if strings.Contains(eventSourceARN, ":sqs:") {
+		batchSize = 10
+	}
+	values := map[string]any{
+		"BatchSize": batchSize, "Enabled": true, "MaximumBatchingWindowInSeconds": 0,
+		"FilterCriteria": map[string]any{}, "MaximumRecordAgeInSeconds": -1, "MaximumRetryAttempts": -1,
+		"BisectBatchOnFunctionError": false, "DestinationConfig": map[string]any{}, "ScalingConfig": map[string]any{},
+		"FunctionResponseTypes": []any{}, "ParallelizationFactor": 1, "TumblingWindowInSeconds": 0,
+		"SourceAccessConfigurations": []any{}, "MetricsConfig": map[string]any{}, "ProvisionedPollerConfig": map[string]any{},
+		"Topics": []any{}, "Queues": []any{}, "AmazonManagedKafkaEventSourceConfig": map[string]any{},
+		"DocumentDBEventSourceConfig": map[string]any{}, "LoggingConfig": map[string]any{},
+		"SelfManagedKafkaEventSourceConfig": map[string]any{},
+	}
+	value, ok := values[property]
+	return value, ok
 }
 
 // ── AWS::Lambda::LayerVersion ──────────────────────────────────────────────

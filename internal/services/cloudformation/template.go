@@ -259,14 +259,15 @@ type resolveContext struct {
 	// provisioned. Set by provisionResource before dispatching to a handler,
 	// so handlers can name a resource whose template does not name itself.
 	// Empty outside provisioning (property resolution does not need it).
-	LogicalID  string
-	StackTags  []Tag
-	Params     map[string]string            // parameter name → value
-	Resources  map[string]string            // logical ID → physical ID
-	Conditions map[string]bool              // condition name → evaluated value
-	Mappings   map[string]any               // raw mappings from template
-	Attributes map[string]map[string]string // logical ID → attributes
-	Exports    map[string]string            // export name → value (cross-stack)
+	LogicalID         string
+	StackTags         []Tag
+	PreviousStackTags []Tag
+	Params            map[string]string            // parameter name → value
+	Resources         map[string]string            // logical ID → physical ID
+	Conditions        map[string]bool              // condition name → evaluated value
+	Mappings          map[string]any               // raw mappings from template
+	Attributes        map[string]map[string]string // logical ID → attributes
+	Exports           map[string]string            // export name → value (cross-stack)
 
 	// DynamicRef resolves a {{resolve:...}} dynamic reference against the
 	// emulated services. Nil outside provisioning — a template resolved

@@ -69,7 +69,7 @@ func registerUnstable(t *testing.T) (*unstableHandler, string) {
 	return handler, resType
 }
 
-func newStabilizeTestProvisioner(t *testing.T) *provisioner {
+func newProvisionerTestFixture(t *testing.T) *provisioner {
 	t.Helper()
 	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
 	clk := clock.New()
@@ -89,7 +89,7 @@ func newStabilizeTestProvisioner(t *testing.T) *provisioner {
 func TestProvisionResource_failedStabilizationKeepsThePhysicalID(t *testing.T) {
 	// Given: a resource whose create succeeds and which then never settles
 	_, resType := registerUnstable(t)
-	p := newStabilizeTestProvisioner(t)
+	p := newProvisionerTestFixture(t)
 
 	// When: the stack provisions it
 	physID, err := p.provisionResource(context.Background(), "R", TemplateResource{Type: resType},
@@ -114,7 +114,7 @@ func TestProvisionResource_failedStabilizationKeepsThePhysicalID(t *testing.T) {
 func TestUpdateResource_failedReplacementStabilizationKeepsBothPhysicalIDs(t *testing.T) {
 	// Given: an existing resource whose handler replaces it, then fails to settle
 	_, resType := registerUnstable(t)
-	p := newStabilizeTestProvisioner(t)
+	p := newProvisionerTestFixture(t)
 	old := &StackResource{PhysicalID: "original-physical-id"}
 
 	// When: CloudFormation attempts the replacement
@@ -138,7 +138,7 @@ func TestUpdateResource_failedReplacementStabilizationKeepsBothPhysicalIDs(t *te
 func TestUpdateStack_rollbackDeletesAReplacementThatFailedToStabilize(t *testing.T) {
 	// Given: an existing resource whose changed template requires replacement
 	handler, resType := registerUnstable(t)
-	p := newStabilizeTestProvisioner(t)
+	p := newProvisionerTestFixture(t)
 	const originalID = "original-physical-id"
 	stack := &Stack{
 		StackName: "unstable-update-stack",
@@ -157,7 +157,7 @@ func TestUpdateStack_rollbackDeletesAReplacementThatFailedToStabilize(t *testing
 	}}
 
 	// When: the replacement is created but cannot stabilize
-	p.updateStackResources(stack, tmpl)
+	p.updateStackResources(stack, tmpl, nil)
 
 	// Then: rollback removes the replacement and puts the original back
 	if stack.Status != StatusUpdateRollbackComplete {
@@ -177,7 +177,7 @@ func TestUpdateStack_rollbackDeletesAReplacementThatFailedToStabilize(t *testing
 func TestCreateStack_rollbackDeletesAResourceThatFailedToStabilize(t *testing.T) {
 	// Given: a one-resource stack whose resource never settles
 	handler, resType := registerUnstable(t)
-	p := newStabilizeTestProvisioner(t)
+	p := newProvisionerTestFixture(t)
 
 	stack := &Stack{
 		StackName: "unstable-stack",

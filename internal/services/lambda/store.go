@@ -35,6 +35,11 @@ const (
 	// start, source viewing/patching) ever touch it.
 	nsFunctionCode = "lambda:function-code"
 
+	// nsFunctionPolicies stores resource policies separately from function
+	// records so policy mutation cannot rewrite or corrupt function state.
+	// Keys are "{functionName}|{qualifier}".
+	nsFunctionPolicies = "lambda:function-policies"
+
 	// nsInvocations is the state store namespace for invocation records.
 	// Keys are "{functionName}:{timestamp_ns}" so each invocation is distinct.
 	nsInvocations = "lambda:invocations"
@@ -104,6 +109,47 @@ func (s *lambdaStore) putFunction(ctx context.Context, fn *Function) *protocol.A
 	return nil
 }
 
+// createFunction commits a new function only while its name is still absent.
+// CreateFunction performs an early read for fast conflict responses, but all
+// validation and external lookups happen after it; this locked recheck is the
+// authority that prevents two concurrent creates from both succeeding.
+func (s *lambdaStore) createFunction(ctx context.Context, fn *Function) (bool, *protocol.AWSError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, aerr := s.getFunction(ctx, fn.Name)
+	if aerr != nil || existing != nil {
+		return false, aerr
+	}
+	if aerr := s.putFunction(ctx, fn); aerr != nil {
+		return false, aerr
+	}
+	return true, nil
+}
+
+// mutateFunction serializes a function read-modify-write cycle. Callers do
+// any slow external work before entering the callback, then re-check the
+// current function state inside it. Every update to an existing function
+// record uses this path so a stale writer cannot restore superseded code,
+// source metadata, configuration, or lifecycle state.
+func (s *lambdaStore) mutateFunction(ctx context.Context, name string, mutate func(*Function) (bool, *protocol.AWSError)) (*Function, bool, *protocol.AWSError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	fn, aerr := s.getFunction(ctx, name)
+	if aerr != nil || fn == nil {
+		return fn, false, aerr
+	}
+	changed, aerr := mutate(fn)
+	if aerr != nil || !changed {
+		return fn, false, aerr
+	}
+	if aerr := s.putFunction(ctx, fn); aerr != nil {
+		return nil, false, aerr
+	}
+	return fn, true, nil
+}
+
 // loadFunctionCode populates fn.CodeZip from the stored package. Call it on
 // the paths that need the actual bytes — cold start, source viewing and
 // patching — never on the invoke path, which reads CodeHash alone. A record
@@ -138,11 +184,88 @@ func (s *lambdaStore) loadFunctionCode(ctx context.Context, fn *Function) *proto
 
 // deleteFunction removes a function and its stored package.
 func (s *lambdaStore) deleteFunction(ctx context.Context, name string) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	key := serviceutil.RegionKey(s.region(ctx), name)
+	policies, err := s.store.Scan(ctx, nsFunctionPolicies, serviceutil.RegionKey(s.region(ctx), name+"|"))
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	for _, policy := range policies {
+		if err := s.store.Delete(ctx, nsFunctionPolicies, policy.Key); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+	}
+	if err := s.store.Delete(ctx, nsFunctionCode, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	// Delete the function record last. If cleanup fails before this point the
+	// physical resource remains addressable and CloudFormation can retry.
 	if err := s.store.Delete(ctx, nsFunctions, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	if err := s.store.Delete(ctx, nsFunctionCode, key); err != nil {
+	return nil
+}
+
+func policyStoreKey(name, qualifier string) string { return name + "|" + qualifier }
+
+// getFunctionPolicy isolates malformed policy records as absent. A corrupt
+// policy must not make its owning function unreadable or break unrelated
+// qualifiers; a subsequent AddPermission can repair the isolated record.
+func (s *lambdaStore) getFunctionPolicy(ctx context.Context, name, qualifier string) (functionPolicy, bool, *protocol.AWSError) {
+	raw, found, err := s.store.Get(ctx, nsFunctionPolicies, serviceutil.RegionKey(s.region(ctx), policyStoreKey(name, qualifier)))
+	if err != nil {
+		return functionPolicy{}, false, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !found {
+		return functionPolicy{}, false, nil
+	}
+	var policy functionPolicy
+	if json.Unmarshal([]byte(raw), &policy) != nil {
+		return functionPolicy{}, false, nil
+	}
+	return policy, true, nil
+}
+
+// mutateFunctionPolicy serializes read-check-write under Lambda's store lock,
+// making RevisionId preconditions and concurrent statement changes atomic.
+func (s *lambdaStore) mutateFunctionPolicy(ctx context.Context, name, qualifier string, mutate func(*functionPolicy, bool) (bool, *protocol.AWSError)) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, found, err := s.store.Get(ctx, nsFunctions, serviceutil.RegionKey(s.region(ctx), name)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	} else if !found {
+		return policyFunctionNotFound(name, qualifier)
+	}
+	if qualifier != "" && qualifier != "$LATEST" {
+		if _, err := strconv.Atoi(qualifier); err != nil {
+			if _, found, err := s.store.Get(ctx, nsAliases, serviceutil.RegionKey(s.region(ctx), aliasKey(name, qualifier))); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			} else if !found {
+				return policyFunctionNotFound(name, qualifier)
+			}
+		}
+	}
+	policy, found, aerr := s.getFunctionPolicy(ctx, name, qualifier)
+	if aerr != nil {
+		return aerr
+	}
+	remove, aerr := mutate(&policy, found)
+	if aerr != nil {
+		return aerr
+	}
+	key := serviceutil.RegionKey(s.region(ctx), policyStoreKey(name, qualifier))
+	if remove {
+		if err := s.store.Delete(ctx, nsFunctionPolicies, key); err != nil {
+			return protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		return nil
+	}
+	raw, err := json.Marshal(policy)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsFunctionPolicies, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -402,6 +525,8 @@ func aliasKey(functionName, aliasName string) string {
 
 // putAlias stores or updates an alias.
 func (s *lambdaStore) putAlias(ctx context.Context, a *FunctionAlias) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	raw, err := json.Marshal(a)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -447,6 +572,12 @@ func (s *lambdaStore) listAliases(ctx context.Context, functionName string) ([]*
 
 // deleteAlias removes an alias.
 func (s *lambdaStore) deleteAlias(ctx context.Context, functionName, aliasName string) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	policyKey := serviceutil.RegionKey(s.region(ctx), policyStoreKey(functionName, aliasName))
+	if err := s.store.Delete(ctx, nsFunctionPolicies, policyKey); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
 	if err := s.store.Delete(ctx, nsAliases, serviceutil.RegionKey(s.region(ctx), aliasKey(functionName, aliasName))); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}

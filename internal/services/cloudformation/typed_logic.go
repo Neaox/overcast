@@ -31,7 +31,7 @@ type updateStackReq struct {
 	TemplateBody string           `json:"TemplateBody"`
 	TemplateURL  string           `json:"TemplateURL"`
 	Parameters   []cfnParamMember `json:"Parameters"`
-	Tags         []cfnTagMember   `json:"Tags"`
+	Tags         *[]cfnTagMember  `json:"Tags"`
 	Capabilities []string         `json:"Capabilities"`
 }
 
@@ -56,7 +56,7 @@ type createChangeSetReq struct {
 	TemplateBody  string           `json:"TemplateBody"`
 	TemplateURL   string           `json:"TemplateURL"`
 	Parameters    []cfnParamMember `json:"Parameters"`
-	Tags          []cfnTagMember   `json:"Tags"`
+	Tags          *[]cfnTagMember  `json:"Tags"`
 	Capabilities  []string         `json:"Capabilities"`
 }
 
@@ -298,6 +298,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
 	}
+	previousTags := append([]Tag(nil), stack.Tags...)
 
 	templateBody := req.TemplateBody
 	if req.TemplateURL != "" {
@@ -320,9 +321,8 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 	if len(params) > 0 {
 		stack.Parameters = params
 	}
-	tags := typedCollectTags(req.Tags)
-	if len(tags) > 0 {
-		stack.Tags = tags
+	if req.Tags != nil {
+		applyStackTags(stack, typedCollectTags(*req.Tags), true)
 	}
 
 	stack.TemplateBody = templateBody
@@ -335,7 +335,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 	}
 
-	h.prov.updateStack(stack, tmpl, nil)
+	h.prov.updateStack(stack, tmpl, previousTags, nil)
 
 	return &updateStackResp{
 		Xmlns:  cfnXMLNS,
@@ -495,7 +495,8 @@ func (h *Handler) createChangeSetTyped(ctx context.Context, req *createChangeSet
 		StackName:       req.StackName,
 		TemplateBody:    templateBody,
 		Parameters:      typedCollectParams(req.Parameters),
-		Tags:            typedCollectTags(req.Tags),
+		Tags:            typedCollectOptionalTags(req.Tags),
+		TagsSet:         req.Tags != nil,
 		Capabilities:    req.Capabilities,
 		Status:          ChangeSetStatusCreateComplete,
 		ChangeSetType:   changeSetType,
@@ -587,11 +588,12 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 		return nil, cfnerr("ValidationError", err.Error(), http.StatusBadRequest)
 	}
 
+	previousTags := append([]Tag(nil), stack.Tags...)
 	if len(cs.Parameters) > 0 {
 		stack.Parameters = cs.Parameters
 	}
-	if len(cs.Tags) > 0 {
-		stack.Tags = cs.Tags
+	if cs.TagsSet || len(cs.Tags) > 0 {
+		applyStackTags(stack, cs.Tags, true)
 	}
 	stack.TemplateBody = cs.TemplateBody
 
@@ -609,7 +611,7 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
-		h.prov.updateStack(stack, tmpl, h.prov.completeChangeSet(cs))
+		h.prov.updateStack(stack, tmpl, previousTags, h.prov.completeChangeSet(cs))
 	}
 
 	return &struct{}{}, nil
@@ -916,6 +918,13 @@ func typedCollectTags(members []cfnTagMember) []Tag {
 		}
 	}
 	return tags
+}
+
+func typedCollectOptionalTags(members *[]cfnTagMember) []Tag {
+	if members == nil {
+		return nil
+	}
+	return typedCollectTags(*members)
 }
 
 func (h *Handler) resolveTypedTemplateBody(ctx context.Context, templateBody, templateURL string) (string, error) {
