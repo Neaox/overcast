@@ -54,8 +54,8 @@
 | Service        | Ops | Highlights                                                      |
 | -------------- | --- | --------------------------------------------------------------- |
 | Pipes          | 5   | CreatePipe, DescribePipe, DeletePipe, ListPipes; DDB→SQS only   |
-| WAF v2         | 4   | Web ACL CRUD only                                               |
-| Shield         | 5   | Stub — all ops return 501; satisfies CDK/CF discovery calls     |
+| WAF v2         | 4   | Metadata-only Web ACL CRUD; rules are stored but not evaluated or enforced |
+| Shield         | 5   | Minimal subscription and protection metadata for CDK/CF workflows |
 
 ### Op counts from capability registry
 

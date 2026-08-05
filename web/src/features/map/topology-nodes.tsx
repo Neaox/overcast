@@ -83,6 +83,7 @@ interface NodeRouteInput {
   ecsResourceType?: ServiceNodeData["ecsResourceType"]
   clusterName?: string
   taskId?: string
+  scope?: string
 }
 
 function nodeRoute({
@@ -93,6 +94,7 @@ function nodeRoute({
   ecsResourceType,
   clusterName,
   taskId,
+  scope,
 }: NodeRouteInput): NodeRoute | null {
   switch (service) {
     case "s3":
@@ -117,6 +119,15 @@ function nodeRoute({
       return { to: "/ecs/$cluster", params: { cluster: clusterName ?? label } }
     case "ecr":
       return { to: "/ecr/$repositoryName", params: { repositoryName: label } }
+    case "waf": {
+      const webAclId = nodeId?.split("::")[2]
+      return webAclId && scope
+        ? {
+            to: "/waf/$scope/$webAclId/$name",
+            params: { scope, webAclId, name: label },
+          }
+        : { to: "/waf" }
+    }
     case "ec2":
       return { to: "/ec2/$instanceId", params: { instanceId: label } }
     case "rds":
@@ -192,6 +203,10 @@ export interface ServiceNodeData extends Record<string, unknown> {
   taskId?: string
   /** ECR only — full push-ready repository URI for copy-to-clipboard action. */
   repositoryUri?: string
+  /** WAF only — REGIONAL or CLOUDFRONT. */
+  scope?: string
+  /** WAF only — number of stored rules. */
+  ruleCount?: number
   /** ESM filter node only. */
   esmId?: string
   functionName?: string
@@ -804,6 +819,8 @@ function areServiceNodePropsEqual(prev: NodeProps, next: NodeProps): boolean {
     pd.dataSourceCount === nd.dataSourceCount &&
     pd.resolverCount === nd.resolverCount &&
     pd.repositoryUri === nd.repositoryUri &&
+    pd.scope === nd.scope &&
+    pd.ruleCount === nd.ruleCount &&
     pd.esmId === nd.esmId &&
     pd.functionName === nd.functionName &&
     pd.eventSource === nd.eventSource &&
@@ -1198,6 +1215,8 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
     ecsResourceType,
     clusterName,
     taskId,
+    scope,
+    ruleCount,
   } = data as ServiceNodeData
   const { esmId, filterPatterns = [] } = data as ServiceNodeData
 
@@ -1228,6 +1247,7 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
     ecsResourceType,
     clusterName,
     taskId,
+    scope,
   })
   const nodeRegion = (data as ServiceNodeData).region
   const handleClick = useCallback(() => {
@@ -1423,6 +1443,17 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
               {resolverCount != null && resolverCount > 0 && (
                 <span className="text-xs text-fg-subtle">
                   &middot; {resolverCount} {resolverCount === 1 ? "resolver" : "resolvers"}
+                </span>
+              )}
+            </div>
+          ) : service === "waf" ? (
+            <div className="flex items-center gap-1.5">
+              <span className="rounded bg-fg-muted/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fg-muted uppercase">
+                {scope ?? "WAF"}
+              </span>
+              {ruleCount != null && (
+                <span className="text-xs text-fg-subtle">
+                  {ruleCount} {ruleCount === 1 ? "stored rule" : "stored rules"}
                 </span>
               )}
             </div>

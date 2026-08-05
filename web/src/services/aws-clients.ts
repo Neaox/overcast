@@ -39,6 +39,7 @@ import { CognitoIdentityProviderClient } from "@aws-sdk/client-cognito-identity-
 import { KMSClient } from "@aws-sdk/client-kms"
 import { SSMClient } from "@aws-sdk/client-ssm"
 import { STSClient } from "@aws-sdk/client-sts"
+import { WAFV2Client } from "@aws-sdk/client-wafv2"
 import { ECRClient } from "@aws-sdk/client-ecr"
 import { EFSClient } from "@aws-sdk/client-efs"
 import { EKSClient } from "@aws-sdk/client-eks"
@@ -95,6 +96,7 @@ export const awsClients = {
   kms: () => new KMSClient(baseConfig()),
   ssm: () => new SSMClient(baseConfig()),
   sts: () => new STSClient(baseConfig()),
+  wafv2: () => new WAFV2Client(baseConfig()),
   ecr: () => new ECRClient(baseConfig()),
   efs: () => new EFSClient(baseConfig()),
   eks: () => new EKSClient(baseConfig()),

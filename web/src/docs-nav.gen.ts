@@ -4666,7 +4666,7 @@ export const DOCS_NAV = [
     "path": "docs/services/waf.md",
     "href": "services/waf.md",
     "title": "WAF — AWS WAF v2",
-    "description": "AWS WAF v2 (Web Application Firewall) uses the application/x-amz-json-1.1 protocol. Operations are identified by the X-Amz-Target header with the prefix AWSWAF_20190729..",
+    "description": "Metadata-only AWS WAF v2 Web ACL CRUD for SDK and CloudFormation workflows; rules are stored but are not evaluated or enforced.",
     "section": "Service Reference",
     "tags": [
       "aws",
@@ -4684,6 +4684,11 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Notes",
         "id": "notes"
+      },
+      {
+        "depth": 2,
+        "text": "Web UI and system map",
+        "id": "web-ui-and-system-map"
       },
       {
         "depth": 2,

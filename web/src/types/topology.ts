@@ -36,6 +36,10 @@ export interface TopologyNode {
   resolverCount?: number
   /** ECR only — full push-ready repository URI (e.g. localhost:5000/my-repo). */
   repositoryUri?: string
+  /** WAF only — REGIONAL or CLOUDFRONT. */
+  scope?: string
+  /** WAF only — number of stored rules (rules are not enforced). */
+  ruleCount?: number
   /** Lambda ESM filter node only — EventSourceMapping UUID. */
   esmId?: string
   /** Lambda ESM filter node only — target function name. */

@@ -49,6 +49,8 @@ type topologyNode struct {
 	DataSourceCount                       *int     `json:"dataSourceCount,omitempty"`
 	ResolverCount                         *int     `json:"resolverCount,omitempty"`
 	RepositoryUri                         string   `json:"repositoryUri,omitempty"`
+	Scope                                 string   `json:"scope,omitempty"`
+	RuleCount                             *int     `json:"ruleCount,omitempty"`
 	ESMID                                 string   `json:"esmId,omitempty"`
 	FunctionName                          string   `json:"functionName,omitempty"`
 	EventSource                           string   `json:"eventSource,omitempty"`
@@ -142,6 +144,9 @@ const (
 	// CloudFront resource tracking.
 	tNsCFDistributions = "cloudfront"
 
+	// WAFv2 resource tracking.
+	tNsWAFWebACLs = "waf:webacls"
+
 	// AppSync resource tracking.
 	tNsAppSync = "appsync"
 
@@ -189,6 +194,14 @@ type tSubscription struct {
 	Protocol  string `json:"protocol"`
 	Endpoint  string `json:"endpoint"`
 	QueueName string `json:"queue_name,omitempty"`
+}
+
+type tWAFWebACL struct {
+	ID    string `json:"Id"`
+	Name  string `json:"Name"`
+	Scope string `json:"Scope"`
+	ARN   string `json:"ARN"`
+	Rules []any  `json:"Rules"`
 }
 
 type tTable struct {
@@ -454,6 +467,7 @@ func newTopologyHandler(cfg *config.Config, store state.Store) http.HandlerFunc 
 			tNsRestAPIs, tNsAPIResources, tNsAPIStages,
 			tNsV2APIs, tNsV2Routes, tNsV2Integ, tNsV2Stages,
 			tNsCFDistributions,
+			tNsWAFWebACLs,
 			tNsAppSync,
 			tNsCognitoPools,
 			tNsMSKClusters,
@@ -1185,6 +1199,33 @@ func buildTopology(cfg *config.Config, byNS map[string][]state.KV, regionFilter 
 			}
 		}
 		cfDists = append(cfDists, info)
+	}
+
+	// WAFv2 Web ACLs. These nodes represent stored control-plane metadata;
+	// Overcast does not evaluate their rules against application traffic.
+	for _, kv := range byNS[tNsWAFWebACLs] {
+		var acl tWAFWebACL
+		if json.Unmarshal([]byte(kv.Value), &acl) != nil || acl.ID == "" {
+			continue
+		}
+		keyRegion, _ := splitRegionKey(kv.Key)
+		region := regionFromARN(acl.ARN, keyRegion)
+		if region == "" {
+			region = defaultRegion
+		}
+		label := acl.Name
+		if label == "" {
+			label = acl.ID
+		}
+		ruleCount := len(acl.Rules)
+		addNode(topologyNode{
+			ID:        region + "::waf::" + acl.ID,
+			Service:   "waf",
+			Label:     label,
+			Region:    region,
+			Scope:     acl.Scope,
+			RuleCount: &ruleCount,
+		})
 	}
 
 	// AppSync GraphQL APIs
@@ -2101,6 +2142,12 @@ func cfnResourceNodeID(res tCFNResource, defaultRegion string) string {
 		return defaultRegion + "::appsync::" + res.PhysicalID
 	case res.Type == "AWS::CloudFront::Distribution":
 		return defaultRegion + "::cloudfront::" + res.PhysicalID
+	case res.Type == "AWS::WAFv2::WebACL":
+		id := res.PhysicalID
+		if parts := strings.SplitN(id, "/", 2); len(parts) == 2 {
+			id = parts[1]
+		}
+		return defaultRegion + "::waf::" + id
 	default:
 		return ""
 	}
