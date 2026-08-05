@@ -50,8 +50,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus
 	bus.Subscribe(events.DockerContainerDied, s.handler.handleContainerEvent)
-	bus.Subscribe(events.DockerContainerStopped, s.handler.handleContainerEvent)
 	bus.Subscribe(events.DockerContainerStarted, s.handler.handleContainerStarted)
+	bus.Subscribe(events.DockerDaemonConnected, s.handler.handleDockerDaemonConnected)
 }
 
 // SetDocker wires the Docker client for RDS container management and starts
@@ -115,6 +115,9 @@ func (s *Service) OwnsAction(action string) bool { return s.handler.ownsAction(a
 // via the GC. The GC does a Docker-level sweep so even orphaned containers
 // (whose store record was already deleted) are caught and removed.
 func (s *Service) Stop(ctx context.Context) {
+	s.handler.dockerLifecycleMu.Lock()
+	s.handler.shuttingDown.Store(true)
+	s.handler.dockerLifecycleMu.Unlock()
 	s.handler.scheduler.Stop(ctx)
 	s.handler.dockerWg.Wait()
 
