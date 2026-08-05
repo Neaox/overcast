@@ -6,11 +6,10 @@ package s3
 //
 // The validation is the load-bearing part. Overcast's object store keeps
 // exactly one live object per key: it has no version history and no delete
-// markers (see ListObjectVersions in handler_bucket.go). The three rule
-// constructs that depend on versioning therefore can never be acted on, so
-// they are refused here rather than stored and quietly ignored — the failure
-// mode docs/plans/full-emulation-priority.md §2.1 exists to prevent. Every
-// other construct in the schema is evaluated by the sweeper in lifecycle.go.
+// markers (see ListObjectVersions in handler_bucket.go). Version-dependent
+// constructs are accepted only when the service model can preserve and echo
+// them; otherwise they are refused rather than quietly ignored. The sweeper
+// has no noncurrent versions to act on until true version history is added.
 
 import (
 	"encoding/xml"
@@ -115,7 +114,8 @@ type lifecycleAbortMPUXML struct {
 }
 
 type lifecycleNoncurrentExpirationXML struct {
-	NoncurrentDays *int `xml:"NoncurrentDays"`
+	NoncurrentDays          *int `xml:"NoncurrentDays"`
+	NewerNoncurrentVersions *int `xml:"NewerNoncurrentVersions,omitempty"`
 }
 
 type lifecycleNoncurrentTransitionXML struct {
@@ -323,6 +323,12 @@ func parseLifecycleRule(in *lifecycleRuleXML, index int) (*LifecycleRule, *proto
 	}
 	out.Expiration = expiration
 
+	noncurrentExpiration, aerr := parseLifecycleNoncurrentExpiration(in.NoncurrentVersionExpiration, in.Filter != nil)
+	if aerr != nil {
+		return nil, aerr
+	}
+	out.NoncurrentVersionExpiration = noncurrentExpiration
+
 	for i := range in.Transition {
 		transition, tErr := parseLifecycleTransition(&in.Transition[i])
 		if tErr != nil {
@@ -340,7 +346,7 @@ func parseLifecycleRule(in *lifecycleRuleXML, index int) (*LifecycleRule, *proto
 		out.AbortIncompleteMultipartUpload = &LifecycleAbortMPU{DaysAfterInitiation: *days}
 	}
 
-	if out.Expiration == nil && len(out.Transitions) == 0 && out.AbortIncompleteMultipartUpload == nil {
+	if out.Expiration == nil && out.NoncurrentVersionExpiration == nil && len(out.Transitions) == 0 && out.AbortIncompleteMultipartUpload == nil {
 		return nil, &protocol.AWSError{
 			Code:       "InvalidRequest",
 			Message:    "At least one action needs to be specified in a rule",
@@ -350,17 +356,14 @@ func parseLifecycleRule(in *lifecycleRuleXML, index int) (*LifecycleRule, *proto
 	return out, nil
 }
 
-// refuseUnevaluatedConstructs rejects the rule elements Overcast's object
-// store cannot support. All three depend on object version history, which the
-// store does not model: every key holds exactly one live object, so there are
-// no noncurrent versions and no delete markers for a rule to act on.
+// refuseUnevaluatedConstructs rejects version-dependent actions that cannot
+// yet be represented in the stored model. NoncurrentVersionExpiration is
+// represented and round-tripped even though the current one-version store has
+// no eligible versions for the sweeper to act on.
 func refuseUnevaluatedConstructs(in *lifecycleRuleXML) *protocol.AWSError {
 	const noVersions = "this emulator's object store keeps one live object per key, " +
 		"with no version history or delete markers"
 
-	if in.NoncurrentVersionExpiration != nil {
-		return errUnevaluatedLifecycleConstruct("NoncurrentVersionExpiration", noVersions)
-	}
 	if len(in.NoncurrentVersionTransition) > 0 {
 		return errUnevaluatedLifecycleConstruct("NoncurrentVersionTransition", noVersions)
 	}
@@ -368,6 +371,33 @@ func refuseUnevaluatedConstructs(in *lifecycleRuleXML) *protocol.AWSError {
 		return errUnevaluatedLifecycleConstruct("ExpiredObjectDeleteMarker", noVersions)
 	}
 	return nil
+}
+
+func parseLifecycleNoncurrentExpiration(in *lifecycleNoncurrentExpirationXML, hasFilter bool) (*LifecycleNoncurrentVersionExpiration, *protocol.AWSError) {
+	if in == nil {
+		return nil, nil
+	}
+	if in.NoncurrentDays == nil || *in.NoncurrentDays <= 0 {
+		return nil, protocol.ErrInvalidArgument(
+			"'NoncurrentDays' for NoncurrentVersionExpiration action must be a positive integer")
+	}
+	if newer := in.NewerNoncurrentVersions; newer != nil {
+		if *newer < 1 || *newer > 100 {
+			return nil, protocol.ErrInvalidArgument(
+				"'NewerNoncurrentVersions' for NoncurrentVersionExpiration action must be between 1 and 100")
+		}
+		if !hasFilter {
+			return nil, &protocol.AWSError{
+				Code:       "InvalidRequest",
+				Message:    "A Filter must be specified when NewerNoncurrentVersions is specified for NoncurrentVersionExpiration",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+	}
+	return &LifecycleNoncurrentVersionExpiration{
+		NoncurrentDays:          *in.NoncurrentDays,
+		NewerNoncurrentVersions: in.NewerNoncurrentVersions,
+	}, nil
 }
 
 // parseLifecycleFilter validates AWS's union semantics: a Filter carries at
@@ -522,6 +552,13 @@ func lifecycleRulesToXML(rules []LifecycleRule) []lifecycleRuleXML {
 			} else {
 				days := rule.Expiration.Days
 				xmlRule.Expiration.Days = &days
+			}
+		}
+		if rule.NoncurrentVersionExpiration != nil {
+			days := rule.NoncurrentVersionExpiration.NoncurrentDays
+			xmlRule.NoncurrentVersionExpiration = &lifecycleNoncurrentExpirationXML{
+				NoncurrentDays:          &days,
+				NewerNoncurrentVersions: rule.NoncurrentVersionExpiration.NewerNoncurrentVersions,
 			}
 		}
 		for j := range rule.Transitions {

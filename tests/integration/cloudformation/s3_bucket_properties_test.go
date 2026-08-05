@@ -227,6 +227,20 @@ func TestS3BucketProperties_unknownAndUntranslatablePropertiesFailBeforeBucketCr
 			wantReason: "MysteryConfiguration",
 		},
 		{
+			name:       "non-private access control without S3 ACL support",
+			stackName:  "cfn-s3-unsupported-acl",
+			bucketName: "cfn-s3-unsupported-acl",
+			property:   `"AccessControl": "PublicRead"`,
+			wantReason: `AccessControl &#34;PublicRead&#34; is not supported`,
+		},
+		{
+			name:       "non-default public access block without S3 support",
+			stackName:  "cfn-s3-unsupported-public-access-block",
+			bucketName: "cfn-s3-unsupported-public-access-block",
+			property:   `"PublicAccessBlockConfiguration":{"BlockPublicAcls":false,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true}`,
+			wantReason: "PublicAccessBlockConfiguration is not supported unless all settings are true",
+		},
+		{
 			name:       "known shape unsupported by S3 codec",
 			stackName:  "cfn-s3-untranslatable-property",
 			bucketName: "cfn-s3-untranslatable-property",
@@ -265,6 +279,56 @@ func TestS3BucketProperties_unknownAndUntranslatablePropertiesFailBeforeBucketCr
 			helpers.AssertStatus(t, bucket, http.StatusNotFound)
 		})
 	}
+}
+
+func TestS3BucketProperties_explicitPrivateAccessControlUsesCreateBucketDefault(t *testing.T) {
+	// Given: CDK and ordinary CloudFormation templates commonly spell out the
+	// same private ACL that S3 applies to every newly-created bucket by default.
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-private-acl","AccessControl":"Private"}}}}`
+
+	// When: CloudFormation creates the bucket.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {"cfn-s3-private-acl"},
+		"TemplateBody": {template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-private-acl", "CREATE_COMPLETE")
+
+	// Then: the explicit default is accepted without introducing ACL behavior
+	// into the CloudFormation handler.
+	bucket, err := http.Get(srv.URL + "/cfn-s3-private-acl")
+	if err != nil {
+		t.Fatalf("probe bucket: %v", err)
+	}
+	defer bucket.Body.Close()
+	helpers.AssertStatus(t, bucket, http.StatusOK)
+}
+
+func TestS3BucketProperties_explicitPublicAccessBlockUsesCreateBucketDefault(t *testing.T) {
+	// Given: CDK bootstrap explicitly states the public-access protections AWS
+	// applies to every newly-created general-purpose bucket by default.
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-default-public-access-block","PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true}}}}}`
+
+	// When: CloudFormation creates the bucket.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {"cfn-s3-default-public-access-block"},
+		"TemplateBody": {template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-default-public-access-block", "CREATE_COMPLETE")
+
+	// Then: the explicit default is accepted without moving service state or
+	// policy enforcement into CloudFormation.
+	bucket, err := http.Get(srv.URL + "/cfn-s3-default-public-access-block")
+	if err != nil {
+		t.Fatalf("probe bucket: %v", err)
+	}
+	defer bucket.Body.Close()
+	helpers.AssertStatus(t, bucket, http.StatusOK)
 }
 
 func TestS3BucketProperties_validationErrorsComeFromS3(t *testing.T) {
@@ -322,6 +386,47 @@ func TestS3BucketProperties_numberParametersTranslateAtTheCFNBoundary(t *testing
 	waitForStackStatus(t, srv, "cfn-s3-number-params", "CREATE_COMPLETE")
 	assertS3SubresourceContains(t, srv, "cfn-s3-number-params", "lifecycle", http.StatusOK, "<Days>14</Days>")
 	assertS3SubresourceContains(t, srv, "cfn-s3-number-params", "cors", http.StatusOK, "<MaxAgeSeconds>900</MaxAgeSeconds>")
+}
+
+func TestS3BucketProperties_noncurrentExpirationDispatchesThroughS3(t *testing.T) {
+	// Given: the same noncurrent expiration shape CDK bootstrap emits.
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-noncurrent-expiration","LifecycleConfiguration":{"Rules":[{"Id":"retain-assets","Prefix":"","Status":"Enabled","NoncurrentVersionExpiration":{"NoncurrentDays":30,"NewerNoncurrentVersions":5}}]}}}}}`
+
+	// When: CloudFormation creates the stack.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {"cfn-s3-noncurrent-expiration"},
+		"TemplateBody": {template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-noncurrent-expiration", "CREATE_COMPLETE")
+
+	// Then: the underlying S3 API owns and exposes the translated action.
+	assertS3SubresourceContains(t, srv, "cfn-s3-noncurrent-expiration", "lifecycle", http.StatusOK,
+		"<NoncurrentVersionExpiration>",
+		"<NoncurrentDays>30</NoncurrentDays>",
+		"<NewerNoncurrentVersions>5</NewerNoncurrentVersions>")
+}
+
+func TestS3BucketProperties_legacyNoncurrentExpirationDaysDispatchesThroughS3(t *testing.T) {
+	// Given: the deprecated scalar property that CloudFormation still accepts.
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-legacy-noncurrent-expiration","LifecycleConfiguration":{"Rules":[{"Id":"expire-old-versions","Prefix":"","Status":"Enabled","NoncurrentVersionExpirationInDays":30}]}}}}}`
+
+	// When: CloudFormation creates the stack.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {"cfn-s3-legacy-noncurrent-expiration"},
+		"TemplateBody": {template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-legacy-noncurrent-expiration", "CREATE_COMPLETE")
+
+	// Then: the adapter maps the legacy scalar to S3's current action shape.
+	assertS3SubresourceContains(t, srv, "cfn-s3-legacy-noncurrent-expiration", "lifecycle", http.StatusOK,
+		"<NoncurrentVersionExpiration>",
+		"<NoncurrentDays>30</NoncurrentDays>")
 }
 
 func TestS3BucketProperties_removingExplicitNameReplacesBucket(t *testing.T) {

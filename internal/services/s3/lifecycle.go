@@ -8,10 +8,10 @@ package s3
 // transitions stop at a synthetic storage-class marker. There is no Glacier
 // retrieval-delay simulation and no replication.
 //
-// Anything the sweeper below cannot act on is refused by
-// handler_lifecycle.go's validation rather than stored and silently ignored
-// (§2.1, shape 2). Keep the two files in step: a construct added to the model
-// here must either be evaluated here or refused there.
+// Anything the sweeper below cannot act on is either preserved as truthful
+// service-owned configuration (when no modeled object can currently qualify)
+// or refused by handler_lifecycle.go rather than silently dropped. Keep the
+// model, validation, wire response and capability note in step.
 
 import (
 	"context"
@@ -65,9 +65,10 @@ type LifecycleRule struct {
 	Prefix *string          `json:"prefix,omitempty"`
 	Filter *LifecycleFilter `json:"filter,omitempty"`
 
-	Expiration                     *LifecycleExpiration  `json:"expiration,omitempty"`
-	Transitions                    []LifecycleTransition `json:"transitions,omitempty"`
-	AbortIncompleteMultipartUpload *LifecycleAbortMPU    `json:"abort_incomplete_multipart_upload,omitempty"`
+	Expiration                     *LifecycleExpiration                  `json:"expiration,omitempty"`
+	NoncurrentVersionExpiration    *LifecycleNoncurrentVersionExpiration `json:"noncurrent_version_expiration,omitempty"`
+	Transitions                    []LifecycleTransition                 `json:"transitions,omitempty"`
+	AbortIncompleteMultipartUpload *LifecycleAbortMPU                    `json:"abort_incomplete_multipart_upload,omitempty"`
 }
 
 // LifecycleFilter selects which objects a rule applies to. AWS models it as a
@@ -100,6 +101,16 @@ type LifecycleTag struct {
 type LifecycleExpiration struct {
 	Days int        `json:"days,omitempty"`
 	Date *time.Time `json:"date,omitempty"`
+}
+
+// LifecycleNoncurrentVersionExpiration records the version-dependent action
+// even though Overcast's current object store has no noncurrent versions for
+// the sweeper to delete. Keeping the validated action in service-owned state
+// makes Put/Get wire behavior faithful without pretending CloudFormation owns
+// lifecycle execution. True version-history execution is tracked separately.
+type LifecycleNoncurrentVersionExpiration struct {
+	NoncurrentDays          int  `json:"noncurrent_days"`
+	NewerNoncurrentVersions *int `json:"newer_noncurrent_versions,omitempty"`
 }
 
 // LifecycleTransition marks matching objects with a storage class. Exactly one

@@ -30,13 +30,14 @@ type lifecycleConfigurationXML struct {
 }
 
 type lifecycleRuleXMLT struct {
-	ID         string                 `xml:"ID"`
-	Prefix     string                 `xml:"Prefix"`
-	Status     string                 `xml:"Status"`
-	Filter     *lifecycleFilterXMLT   `xml:"Filter"`
-	Expiration *lifecycleExpiryXMLT   `xml:"Expiration"`
-	Transition []lifecycleTransXMLT   `xml:"Transition"`
-	AbortMPU   *lifecycleAbortMPUXMLT `xml:"AbortIncompleteMultipartUpload"`
+	ID                   string                             `xml:"ID"`
+	Prefix               string                             `xml:"Prefix"`
+	Status               string                             `xml:"Status"`
+	Filter               *lifecycleFilterXMLT               `xml:"Filter"`
+	Expiration           *lifecycleExpiryXMLT               `xml:"Expiration"`
+	NoncurrentExpiration *lifecycleNoncurrentExpirationXMLT `xml:"NoncurrentVersionExpiration"`
+	Transition           []lifecycleTransXMLT               `xml:"Transition"`
+	AbortMPU             *lifecycleAbortMPUXMLT             `xml:"AbortIncompleteMultipartUpload"`
 }
 
 type lifecycleFilterXMLT struct {
@@ -73,6 +74,11 @@ type lifecycleTransXMLT struct {
 
 type lifecycleAbortMPUXMLT struct {
 	DaysAfterInitiation int `xml:"DaysAfterInitiation"`
+}
+
+type lifecycleNoncurrentExpirationXMLT struct {
+	NoncurrentDays          int  `xml:"NoncurrentDays"`
+	NewerNoncurrentVersions *int `xml:"NewerNoncurrentVersions"`
 }
 
 // ---- Local helpers ---------------------------------------------------------
@@ -207,6 +213,35 @@ func TestPutBucketLifecycleConfiguration_roundTrip(t *testing.T) {
 	}
 	if len(rule.Transition) != 1 || rule.Transition[0].StorageClass != "GLACIER" || rule.Transition[0].Days != 7 {
 		t.Errorf("Transition = %+v, want Days 7 / GLACIER", rule.Transition)
+	}
+}
+
+func TestPutBucketLifecycleConfiguration_noncurrentExpirationRoundTrip(t *testing.T) {
+	// Given: a bucket and an AWS-valid noncurrent-version expiration action.
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lc-noncurrent-round-trip")
+	putLifecycleOK(t, srv, "lc-noncurrent-round-trip", `<LifecycleConfiguration>`+
+		`<Rule><ID>noncurrent</ID><Filter><Prefix>assets/</Prefix></Filter><Status>Enabled</Status>`+
+		`<NoncurrentVersionExpiration><NoncurrentDays>30</NoncurrentDays>`+
+		`<NewerNoncurrentVersions>5</NewerNoncurrentVersions></NoncurrentVersionExpiration>`+
+		`</Rule></LifecycleConfiguration>`)
+
+	// When: the service-owned configuration is read back.
+	resp := getLifecycle(t, srv, "lc-noncurrent-round-trip")
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var got lifecycleConfigurationXML
+	if err := xml.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode lifecycle configuration: %v", err)
+	}
+
+	// Then: S3 preserves both fields rather than silently dropping the action.
+	if len(got.Rules) != 1 || got.Rules[0].NoncurrentExpiration == nil {
+		t.Fatalf("noncurrent expiration missing from round trip: %#v", got.Rules)
+	}
+	action := got.Rules[0].NoncurrentExpiration
+	if action.NoncurrentDays != 30 || action.NewerNoncurrentVersions == nil || *action.NewerNoncurrentVersions != 5 {
+		t.Fatalf("unexpected noncurrent expiration: %#v", action)
 	}
 }
 
@@ -411,6 +446,28 @@ func TestPutBucketLifecycleConfiguration_validation(t *testing.T) {
 				`<Status>Enabled</Status><Expiration><Days>1</Days></Expiration></Rule></LifecycleConfiguration>`,
 			wantCode: "InvalidArgument",
 		},
+		{
+			name: "noncurrent expiration days missing",
+			body: `<LifecycleConfiguration><Rule><ID>a</ID><Filter/><Status>Enabled</Status>` +
+				`<NoncurrentVersionExpiration/></Rule></LifecycleConfiguration>`,
+			wantCode: "InvalidArgument",
+		},
+		{
+			name: "newer noncurrent versions out of range",
+			body: `<LifecycleConfiguration><Rule><ID>a</ID><Filter/><Status>Enabled</Status>` +
+				`<NoncurrentVersionExpiration><NoncurrentDays>3</NoncurrentDays>` +
+				`<NewerNoncurrentVersions>101</NewerNoncurrentVersions></NoncurrentVersionExpiration>` +
+				`</Rule></LifecycleConfiguration>`,
+			wantCode: "InvalidArgument",
+		},
+		{
+			name: "newer noncurrent versions requires filter",
+			body: `<LifecycleConfiguration><Rule><ID>a</ID><Prefix/><Status>Enabled</Status>` +
+				`<NoncurrentVersionExpiration><NoncurrentDays>3</NoncurrentDays>` +
+				`<NewerNoncurrentVersions>2</NewerNoncurrentVersions></NoncurrentVersionExpiration>` +
+				`</Rule></LifecycleConfiguration>`,
+			wantCode: "InvalidRequest",
+		},
 	}
 
 	for _, tc := range cases {
@@ -432,20 +489,14 @@ func TestPutBucketLifecycleConfiguration_validation(t *testing.T) {
 
 // TestPutBucketLifecycleConfiguration_refusesUnevaluatedConstructs covers the
 // §2.1 fidelity-risk veto: Overcast's object store keeps exactly one live
-// object per key and has no version history or delete markers, so the three
-// version-dependent rule constructs can never be acted on. They are refused at
-// Put time rather than stored and silently ignored.
+// object per key and has no version history or delete markers, so the two
+// remaining unrepresented version-dependent constructs cannot be acted on.
+// They are refused at Put time rather than stored and silently ignored.
 func TestPutBucketLifecycleConfiguration_refusesUnevaluatedConstructs(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
 	}{
-		{
-			name: "NoncurrentVersionExpiration",
-			body: `<LifecycleConfiguration><Rule><ID>a</ID><Filter/><Status>Enabled</Status>` +
-				`<NoncurrentVersionExpiration><NoncurrentDays>3</NoncurrentDays></NoncurrentVersionExpiration>` +
-				`</Rule></LifecycleConfiguration>`,
-		},
 		{
 			name: "NoncurrentVersionTransition",
 			body: `<LifecycleConfiguration><Rule><ID>a</ID><Filter/><Status>Enabled</Status>` +

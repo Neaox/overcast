@@ -122,7 +122,7 @@ func init() {
 		capabilities.Capability{Service: "s3", Operation: "GetBucketLifecycleConfiguration", Category: "Lifecycle",
 			Status: capabilities.StatusSupported, Notes: "NoSuchLifecycleConfiguration when none is set"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketLifecycleConfiguration", Category: "Lifecycle",
-			Status: capabilities.StatusSupported, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters, applied by an hourly sweeper; version-dependent rules (NoncurrentVersion*, ExpiredObjectDeleteMarker) are rejected rather than stored"},
+			Status: capabilities.StatusPartial, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketLifecycle", Category: "Lifecycle",
 			Status: capabilities.StatusSupported},
 

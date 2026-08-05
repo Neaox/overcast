@@ -457,11 +457,11 @@ read-only rule list and per-object expiry hints in `web/src/features/s3/`. Two d
 forward:
 
 - **§2.1 line.** `Expiration` (`Days`/`Date`), `Transition`, `AbortIncompleteMultipartUpload` and every
-  filter form (prefix, tag, object size, `And`) are evaluated by the sweeper. The three constructs that
-  depend on object *versioning* — `NoncurrentVersionExpiration`, `NoncurrentVersionTransition`,
-  `ExpiredObjectDeleteMarker` — are refused at `Put` time with an `InvalidArgument` naming the element,
-  because the object store keeps exactly one live object per key and has no version history or delete
-  markers. They become implementable only if S3 gains real versioning.
+  filter form (prefix, tag, object size, `And`) are evaluated by the sweeper.
+  `NoncurrentVersionExpiration` is validated and round-tripped because the service can preserve the
+  configuration, but it has no eligible versions to expire until S3 gains real version history (#645).
+  `NoncurrentVersionTransition` and `ExpiredObjectDeleteMarker` remain refused at `Put` time rather than
+  being silently ignored because their state and execution cannot yet be represented.
 - **Shipped 2026-08-05 (#516).** `AWS::S3::Bucket` now translates lifecycle, versioning, notification,
   encryption, tag, CORS and website property shapes and dispatches the existing S3 REST-XML handlers for
   create, in-place update and removal. S3 remains the owner of validation, errors and state; the provider

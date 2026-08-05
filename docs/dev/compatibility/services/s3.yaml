@@ -120,7 +120,7 @@ findings:
     - Website RedirectAllRequestsTo and RoutingRules are unsupported (#637).
     - CORS rule Id and encryption BlockedEncryptionTypes are not represented by the current stored/wire models.
   intentionally_partial:
-    - Lifecycle NoncurrentVersion* and ExpiredObjectDeleteMarker constructs remain refused because the object store has no version history or delete markers.
+    - Lifecycle NoncurrentVersionExpiration is validated and round-tripped, but cannot execute until the object store has version history (#645); NoncurrentVersionTransition and ExpiredObjectDeleteMarker remain refused.
 handoff:
   start_with: [ListObjectsV2 max-keys validation, ListObjectsV2 encoding-type, PutBucketPolicy, CDK bootstrap, issue 635, issue 636, issue 637]
   do_not_redo: [ListObjectsV2 start-after, ListObjectsV2 continuation-token happy path, DeleteBucketCors, DeleteBucketWebsite, PutBucketVersioning status validation, CloudFormation S3 bucket seven-property dispatch]

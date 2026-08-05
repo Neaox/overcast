@@ -278,8 +278,8 @@
         {
           "operation": "PutBucketLifecycleConfiguration",
           "category": "Lifecycle",
-          "status": "✅ Supported",
-          "notes": "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters, applied by an hourly sweeper; version-dependent rules (NoncurrentVersion*, ExpiredObjectDeleteMarker) are rejected rather than stored"
+          "status": "⚠️ Partial",
+          "notes": "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"
         },
         {
           "operation": "DeleteBucketLifecycle",

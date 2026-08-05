@@ -32,26 +32,26 @@ var s3BucketSubresources = []struct {
 }
 
 type cfnS3BucketProperties struct {
-	BucketName                       string                          `json:"BucketName,omitempty"`
-	LifecycleConfiguration           *cfnS3LifecycleConfiguration    `json:"LifecycleConfiguration,omitempty"`
-	VersioningConfiguration          *cfnS3VersioningConfiguration   `json:"VersioningConfiguration,omitempty"`
-	NotificationConfiguration        *cfnS3NotificationConfiguration `json:"NotificationConfiguration,omitempty"`
-	BucketEncryption                 *cfnS3BucketEncryption          `json:"BucketEncryption,omitempty"`
-	Tags                             *[]cfnS3Tag                     `json:"Tags,omitempty"`
-	CorsConfiguration                *cfnS3CorsConfiguration         `json:"CorsConfiguration,omitempty"`
-	WebsiteConfiguration             *cfnS3WebsiteConfiguration      `json:"WebsiteConfiguration,omitempty"`
-	AccelerateConfiguration          json.RawMessage                 `json:"AccelerateConfiguration,omitempty"`
-	AccessControl                    json.RawMessage                 `json:"AccessControl,omitempty"`
-	AnalyticsConfigurations          json.RawMessage                 `json:"AnalyticsConfigurations,omitempty"`
-	IntelligentTieringConfigurations json.RawMessage                 `json:"IntelligentTieringConfigurations,omitempty"`
-	InventoryConfigurations          json.RawMessage                 `json:"InventoryConfigurations,omitempty"`
-	LoggingConfiguration             json.RawMessage                 `json:"LoggingConfiguration,omitempty"`
-	MetricsConfigurations            json.RawMessage                 `json:"MetricsConfigurations,omitempty"`
-	ObjectLockConfiguration          json.RawMessage                 `json:"ObjectLockConfiguration,omitempty"`
-	ObjectLockEnabled                json.RawMessage                 `json:"ObjectLockEnabled,omitempty"`
-	OwnershipControls                json.RawMessage                 `json:"OwnershipControls,omitempty"`
-	PublicAccessBlockConfiguration   json.RawMessage                 `json:"PublicAccessBlockConfiguration,omitempty"`
-	ReplicationConfiguration         json.RawMessage                 `json:"ReplicationConfiguration,omitempty"`
+	BucketName                       string                               `json:"BucketName,omitempty"`
+	LifecycleConfiguration           *cfnS3LifecycleConfiguration         `json:"LifecycleConfiguration,omitempty"`
+	VersioningConfiguration          *cfnS3VersioningConfiguration        `json:"VersioningConfiguration,omitempty"`
+	NotificationConfiguration        *cfnS3NotificationConfiguration      `json:"NotificationConfiguration,omitempty"`
+	BucketEncryption                 *cfnS3BucketEncryption               `json:"BucketEncryption,omitempty"`
+	Tags                             *[]cfnS3Tag                          `json:"Tags,omitempty"`
+	CorsConfiguration                *cfnS3CorsConfiguration              `json:"CorsConfiguration,omitempty"`
+	WebsiteConfiguration             *cfnS3WebsiteConfiguration           `json:"WebsiteConfiguration,omitempty"`
+	AccelerateConfiguration          json.RawMessage                      `json:"AccelerateConfiguration,omitempty"`
+	AccessControl                    *string                              `json:"AccessControl,omitempty"`
+	AnalyticsConfigurations          json.RawMessage                      `json:"AnalyticsConfigurations,omitempty"`
+	IntelligentTieringConfigurations json.RawMessage                      `json:"IntelligentTieringConfigurations,omitempty"`
+	InventoryConfigurations          json.RawMessage                      `json:"InventoryConfigurations,omitempty"`
+	LoggingConfiguration             json.RawMessage                      `json:"LoggingConfiguration,omitempty"`
+	MetricsConfigurations            json.RawMessage                      `json:"MetricsConfigurations,omitempty"`
+	ObjectLockConfiguration          json.RawMessage                      `json:"ObjectLockConfiguration,omitempty"`
+	ObjectLockEnabled                json.RawMessage                      `json:"ObjectLockEnabled,omitempty"`
+	OwnershipControls                json.RawMessage                      `json:"OwnershipControls,omitempty"`
+	PublicAccessBlockConfiguration   *cfnS3PublicAccessBlockConfiguration `json:"PublicAccessBlockConfiguration,omitempty"`
+	ReplicationConfiguration         json.RawMessage                      `json:"ReplicationConfiguration,omitempty"`
 }
 
 type cfnS3LifecycleConfiguration struct {
@@ -65,7 +65,7 @@ type cfnS3LifecycleRule struct {
 	ExpirationInDays                  *cfnS3Int                            `json:"ExpirationInDays,omitempty"`
 	ExpiredObjectDeleteMarker         *bool                                `json:"ExpiredObjectDeleteMarker,omitempty"`
 	ID                                string                               `json:"Id,omitempty"`
-	NoncurrentVersionExpiration       json.RawMessage                      `json:"NoncurrentVersionExpiration,omitempty"`
+	NoncurrentVersionExpiration       *cfnS3NoncurrentVersionExpiration    `json:"NoncurrentVersionExpiration,omitempty"`
 	NoncurrentVersionExpirationInDays *cfnS3Int                            `json:"NoncurrentVersionExpirationInDays,omitempty"`
 	NoncurrentVersionTransition       json.RawMessage                      `json:"NoncurrentVersionTransition,omitempty"`
 	NoncurrentVersionTransitions      json.RawMessage                      `json:"NoncurrentVersionTransitions,omitempty"`
@@ -80,6 +80,11 @@ type cfnS3LifecycleRule struct {
 
 type cfnS3AbortIncompleteMultipartUpload struct {
 	DaysAfterInitiation cfnS3Int `json:"DaysAfterInitiation"`
+}
+
+type cfnS3NoncurrentVersionExpiration struct {
+	NoncurrentDays          cfnS3Int  `json:"NoncurrentDays"`
+	NewerNoncurrentVersions *cfnS3Int `json:"NewerNoncurrentVersions,omitempty"`
 }
 
 type cfnS3TagFilter struct {
@@ -199,6 +204,13 @@ type cfnS3WebsiteConfiguration struct {
 	RoutingRules          json.RawMessage `json:"RoutingRules,omitempty"`
 }
 
+type cfnS3PublicAccessBlockConfiguration struct {
+	BlockPublicAcls       *bool `json:"BlockPublicAcls,omitempty"`
+	BlockPublicPolicy     *bool `json:"BlockPublicPolicy,omitempty"`
+	IgnorePublicAcls      *bool `json:"IgnorePublicAcls,omitempty"`
+	RestrictPublicBuckets *bool `json:"RestrictPublicBuckets,omitempty"`
+}
+
 type s3BucketOperation struct {
 	api         string
 	method      string
@@ -223,7 +235,6 @@ func decodeS3BucketProperties(props map[string]any) (*cfnS3BucketProperties, err
 		raw  json.RawMessage
 	}{
 		{"AccelerateConfiguration", decoded.AccelerateConfiguration},
-		{"AccessControl", decoded.AccessControl},
 		{"AnalyticsConfigurations", decoded.AnalyticsConfigurations},
 		{"IntelligentTieringConfigurations", decoded.IntelligentTieringConfigurations},
 		{"InventoryConfigurations", decoded.InventoryConfigurations},
@@ -232,7 +243,6 @@ func decodeS3BucketProperties(props map[string]any) (*cfnS3BucketProperties, err
 		{"ObjectLockConfiguration", decoded.ObjectLockConfiguration},
 		{"ObjectLockEnabled", decoded.ObjectLockEnabled},
 		{"OwnershipControls", decoded.OwnershipControls},
-		{"PublicAccessBlockConfiguration", decoded.PublicAccessBlockConfiguration},
 		{"ReplicationConfiguration", decoded.ReplicationConfiguration},
 	}
 	for _, property := range unsupported {
@@ -240,7 +250,30 @@ func decodeS3BucketProperties(props map[string]any) (*cfnS3BucketProperties, err
 			return nil, fmt.Errorf("AWS::S3::Bucket property %s is not supported", property.name)
 		}
 	}
+	// CreateBucket already gives a new bucket the private ACL that AWS applies
+	// for an omitted AccessControl property. Accepting the explicit equivalent
+	// therefore needs no CloudFormation-owned state or lifecycle logic. Other
+	// canned ACLs require S3's PutBucketAcl implementation so they fail loudly
+	// instead of claiming a state the underlying service cannot observe.
+	if decoded.AccessControl != nil && *decoded.AccessControl != "Private" {
+		return nil, fmt.Errorf("AWS::S3::Bucket AccessControl %q is not supported", *decoded.AccessControl)
+	}
+	// AWS enables all four bucket-level public-access protections on new
+	// general-purpose buckets. CDK bootstrap states that default explicitly.
+	// Accept only the exact default until S3 owns the public-access-block APIs;
+	// any other shape would claim an observable configuration we cannot expose.
+	if block := decoded.PublicAccessBlockConfiguration; block != nil &&
+		(!cfnS3True(block.BlockPublicAcls) ||
+			!cfnS3True(block.BlockPublicPolicy) ||
+			!cfnS3True(block.IgnorePublicAcls) ||
+			!cfnS3True(block.RestrictPublicBuckets)) {
+		return nil, fmt.Errorf("AWS::S3::Bucket PublicAccessBlockConfiguration is not supported unless all settings are true")
+	}
 	return &decoded, nil
+}
+
+func cfnS3True(value *bool) bool {
+	return value != nil && *value
 }
 
 func planS3BucketOperations(props, oldProps *cfnS3BucketProperties) ([]s3BucketOperation, error) {
@@ -417,17 +450,11 @@ func translateS3LifecycleConfiguration(in *cfnS3LifecycleConfiguration) (*s3serv
 }
 
 func translateS3LifecycleRule(in *cfnS3LifecycleRule) (s3service.LifecycleRule, error) {
-	if len(in.NoncurrentVersionExpiration) != 0 {
-		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionExpiration cannot be represented by the current S3 lifecycle handler")
-	}
 	if len(in.NoncurrentVersionTransition) != 0 {
 		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionTransition cannot be represented by the current S3 lifecycle handler")
 	}
 	if len(in.NoncurrentVersionTransitions) != 0 {
 		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionTransitions cannot be represented by the current S3 lifecycle handler")
-	}
-	if in.NoncurrentVersionExpirationInDays != nil {
-		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionExpirationInDays cannot be represented by the current S3 lifecycle handler")
 	}
 	if in.ExpiredObjectDeleteMarker != nil {
 		return s3service.LifecycleRule{}, fmt.Errorf("ExpiredObjectDeleteMarker cannot be represented by the current S3 lifecycle handler")
@@ -455,6 +482,30 @@ func translateS3LifecycleRule(in *cfnS3LifecycleRule) (s3service.LifecycleRule, 
 		rule.Expiration = &s3service.LifecycleExpiration{Date: &date}
 	} else if in.ExpirationInDays != nil {
 		rule.Expiration = &s3service.LifecycleExpiration{Days: int(*in.ExpirationInDays)}
+	}
+	if in.NoncurrentVersionExpiration != nil && in.NoncurrentVersionExpirationInDays != nil {
+		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionExpiration and NoncurrentVersionExpirationInDays are mutually exclusive")
+	}
+	if in.NoncurrentVersionExpiration != nil {
+		noncurrent := &s3service.LifecycleNoncurrentVersionExpiration{
+			NoncurrentDays: int(in.NoncurrentVersionExpiration.NoncurrentDays),
+		}
+		if in.NoncurrentVersionExpiration.NewerNoncurrentVersions != nil {
+			newer := int(*in.NoncurrentVersionExpiration.NewerNoncurrentVersions)
+			noncurrent.NewerNoncurrentVersions = &newer
+			// The S3 API requires a Filter when a retained-version count is
+			// supplied. CloudFormation exposes Prefix as a rule property, so
+			// express the same predicate in S3's current Filter form.
+			if rule.Filter == nil && rule.Prefix != nil {
+				rule.Filter = &s3service.LifecycleFilter{Prefix: *rule.Prefix}
+				rule.Prefix = nil
+			}
+		}
+		rule.NoncurrentVersionExpiration = noncurrent
+	} else if in.NoncurrentVersionExpirationInDays != nil {
+		rule.NoncurrentVersionExpiration = &s3service.LifecycleNoncurrentVersionExpiration{
+			NoncurrentDays: int(*in.NoncurrentVersionExpirationInDays),
+		}
 	}
 	if in.AbortIncompleteMultipartUpload != nil {
 		rule.AbortIncompleteMultipartUpload = &s3service.LifecycleAbortMPU{
