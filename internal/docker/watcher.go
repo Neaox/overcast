@@ -22,9 +22,18 @@ import (
 //	w := docker.NewWatcher(client, bus, logger)
 //	go w.Run(ctx) // blocks until ctx is cancelled
 type Watcher struct {
-	client *Client
-	bus    *events.Bus
-	logger *zap.Logger
+	client    *Client
+	bus       *events.Bus
+	logger    *zap.Logger
+	attempted bool
+}
+
+// DaemonConnectedPayload identifies the Docker client whose event stream has
+// connected. A process can watch multiple daemon sockets, so services compare
+// this pointer with the client they were wired to before reconciling.
+type DaemonConnectedPayload struct {
+	Client      *Client `json:"-"`
+	Reconnected bool    `json:"reconnected"`
 }
 
 // NewWatcher creates a Watcher that translates Docker container and network
@@ -60,7 +69,9 @@ func (w *Watcher) Run(ctx context.Context) {
 
 	for {
 		start := time.Now()
-		err := w.stream(ctx)
+		reconnected := w.attempted
+		w.attempted = true
+		err := w.stream(ctx, reconnected)
 		if ctx.Err() != nil {
 			return // clean shutdown
 		}
@@ -81,7 +92,7 @@ func (w *Watcher) Run(ctx context.Context) {
 
 // stream opens the Docker events endpoint with label filters and reads
 // newline-delimited JSON until the stream ends or ctx is cancelled.
-func (w *Watcher) stream(ctx context.Context) error {
+func (w *Watcher) stream(ctx context.Context, reconnected bool) error {
 	filters := url.Values{}
 	// Docker filters JSON: only Overcast-managed resources, both container and
 	// network event types, limited to the actions we care about.
@@ -101,6 +112,10 @@ func (w *Watcher) stream(ctx context.Context) error {
 	}
 
 	w.logger.Info("docker event stream connected")
+	w.bus.Publish(ctx, events.Event{
+		Type:    events.DockerDaemonConnected,
+		Payload: DaemonConnectedPayload{Client: w.client, Reconnected: reconnected},
+	})
 
 	scanner := bufio.NewScanner(resp.Body)
 	// Docker events are small JSON lines; 64 KB is more than enough.

@@ -31,6 +31,16 @@ type DBInstance struct {
 	Engine               string `json:"Engine"`
 	EngineVersion        string `json:"EngineVersion"`
 	DBInstanceStatus     string `json:"DBInstanceStatus"`
+	// StoppedByUser distinguishes StopDBInstance from a Docker-driven stop.
+	// Reconciliation restores missing runtime for the latter, but must preserve
+	// the former across Overcast restarts. Older records decode to false, which
+	// recovers instances stranded by the pre-fix shutdown sweep.
+	StoppedByUser bool `json:"StoppedByUser,omitempty"`
+	// DockerRecoveryPending records desired-state recovery that could not yet
+	// complete, most notably when the daemon disappears between its die event
+	// and the restart call. A later daemon reconnect may retry only these failed
+	// instances rather than restarting every genuinely failed database boot.
+	DockerRecoveryPending bool `json:"DockerRecoveryPending,omitempty"`
 	// StatusReason is why the instance is in a failure status. It is
 	// deliberately absent from the DescribeDBInstances wire shape: the real
 	// DBInstance carries no such field, and StatusInfos is documented as

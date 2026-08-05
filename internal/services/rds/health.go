@@ -249,7 +249,13 @@ func (h *Handler) startInstanceContainer(ctx context.Context, inst *DBInstance) 
 // container-owned fields are written back onto a fresh read.
 func (h *Handler) startInstanceContainerAsync(ctx context.Context, instanceID string) {
 	region := h.store.region(ctx)
+	h.dockerLifecycleMu.Lock()
+	if h.shuttingDown.Load() {
+		h.dockerLifecycleMu.Unlock()
+		return
+	}
 	h.dockerWg.Add(1)
+	h.dockerLifecycleMu.Unlock()
 	go func() {
 		defer h.dockerWg.Done()
 		bgCtx := middleware.ContextWithRegion(context.Background(), region)
@@ -274,6 +280,7 @@ func (h *Handler) startInstanceContainerAsync(ctx context.Context, instanceID st
 			inst.Endpoint = got.Endpoint
 			inst.DialAddress = got.DialAddress
 			inst.DialPort = got.DialPort
+			inst.DockerRecoveryPending = false
 			return nil
 		})
 		if aerr != nil {

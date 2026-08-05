@@ -2,7 +2,7 @@ service: rds
 status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-14
+last_updated: 2026-08-05
 protocols: [query]
 implementation: [internal/services/rds]
 integration_tests: [tests/integration/rds]
@@ -17,13 +17,23 @@ operations:
         status: fixed
         tests: [TestEndpointAliases_dbInstance, TestEndpointAliases_dbInstancePreservesCanonicalNameWhenEndpointIsIP]
         evidence: Docker-backed DB instance containers now register the advertised Endpoint.Address hostname as a Docker DNS alias on the Lambda network so Lambda execution containers can resolve endpoint hostnames.
+      - name: Runtime and startup reconciliation after engine-container drift
+        status: fixed
+        tests: [TestHandleContainerEvent_recoversDockerLevelStop, TestHandleDockerDaemonConnected_reconcilesMissedStop, TestHandleDockerDaemonConnected_retriesRecoveryInterruptedByDaemonShutdown, TestHandleContainerStarted_preservesExplicitStop, TestHandleContainerEvent_ignoresOvercastShutdown, TestReconcileContainers_rebuildsMissingAvailableInstance, TestReconcileContainers_rebuildsMissingExternallyStoppedInstance, TestReconcileContainers_restartsExitedContainerForAvailableInstance, TestReconcileContainers_leavesExplicitlyStoppedInstanceStopped, TestReconcileContainers_stopsDockerStartedExplicitlyStoppedInstance]
+        evidence: Docker-level stops and crashes are recovered immediately, missed changes are reconciled when the Docker event stream reconnects, and startup rebuilds missing or exited containers. Only StopDBInstance establishes a durable stop; reconciliation stops a container started out of band for such an instance.
+      - name: MySQL 8 credential initialization
+        status: fixed
+        tests: [TestCreateMySQL8Container_bootstrapsEscapedCachingSHA2CredentialsBeforeStart]
+        evidence: Fresh MySQL 8 containers use an entrypoint-safe bootstrap credential, then install the exact requested master password with escaped SQL and caching_sha2_password before the engine starts accepting connections.
 findings:
   fixed:
     - Docker-backed RDS DB instance endpoint hostnames are registered as Docker DNS aliases on the Lambda network.
+    - Missing, crashed, or externally stopped DB instance containers are recovered immediately, after Docker reconnects, and at startup without overriding an explicit StopDBInstance.
+    - MySQL 8 initialization preserves AWS-valid special characters in master passwords and provisions accounts with caching_sha2_password.
   remaining_gaps:
     - Review CreateDBInstance/CreateDBCluster lifecycle, validation errors, and XML response parity.
   intentionally_partial: []
 handoff:
   start_with: [CreateDBInstance, CreateDBCluster, lifecycle states]
-  do_not_redo: [Lambda container DNS for Docker-backed RDS DB instance endpoint hostnames]
+  do_not_redo: [Lambda container DNS for Docker-backed RDS DB instance endpoint hostnames, runtime and startup recovery of DB instance containers, MySQL 8 credential initialization]
   commands: [go test -count=1 ./internal/services/rds/... ./tests/integration/rds/...]

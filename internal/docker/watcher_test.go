@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -250,6 +251,59 @@ func TestWatcher_DispatchEvents(t *testing.T) {
 	if p2.Service != "ecs" {
 		t.Errorf("oom.Service = %s, want ecs", p2.Service)
 	}
+}
+
+func TestWatcher_PublishesDaemonConnectedAfterReconnect(t *testing.T) {
+	var connections atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1.45/events") {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		if connections.Add(1) == 1 {
+			return // Drop the first stream as Docker Desktop shutting down would.
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	client := clientFromHTTPTest(t, srv)
+	bus := events.NewBus()
+	defer bus.Stop()
+
+	connected := make(chan bool, 2)
+	bus.Subscribe(events.DockerDaemonConnected, func(_ context.Context, e events.Event) {
+		p, ok := e.Payload.(DaemonConnectedPayload)
+		if !ok || p.Client != client {
+			t.Errorf("connected payload = %#v, want watcher client", e.Payload)
+			return
+		}
+		connected <- p.Reconnected
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		NewWatcher(client, bus, zaptest.NewLogger(t)).Run(ctx)
+		close(done)
+	}()
+
+	for i, wantReconnect := range []bool{false, true} {
+		select {
+		case gotReconnect := <-connected:
+			if gotReconnect != wantReconnect {
+				t.Errorf("connection %d: reconnected = %v, want %v", i+1, gotReconnect, wantReconnect)
+			}
+		case <-time.After(5 * time.Second):
+			cancel()
+			<-done
+			t.Fatalf("received %d Docker connection events, want 2", i)
+		}
+	}
+	cancel()
+	<-done
 }
 
 func TestWatcher_ContextCancellation(t *testing.T) {

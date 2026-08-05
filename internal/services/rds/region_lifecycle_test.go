@@ -169,13 +169,18 @@ func TestClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	}
 }
 
-// TestHandleContainerEvent_nonDefaultRegion asserts the Docker died/stopped
+// TestHandleContainerEvent_nonDefaultRegion asserts the Docker died
 // event handler — which only receives a resource ID — finds the instance in
-// its actual region and transitions it to "stopped".
+// its actual region and starts recovery there.
 func TestHandleContainerEvent_nonDefaultRegion(t *testing.T) {
-	h, _ := newRegionTestHandler(t)
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
 	ctx := middleware.ContextWithRegion(context.Background(), nonDefaultRegion)
 	const id = "eu-docker-instance"
+	d.mu.Lock()
+	d.exists = true
+	d.running = false
+	d.mu.Unlock()
 
 	inst := &DBInstance{
 		DBInstanceIdentifier: id,
@@ -198,8 +203,9 @@ func TestHandleContainerEvent_nonDefaultRegion(t *testing.T) {
 		},
 	})
 
-	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
-		t.Fatalf("after container die event: status = %q, want %q (cross-region lookup failed)", got, "stopped")
+	h.dockerWg.Wait()
+	if got := instanceStatus(t, h, ctx, id); got != "starting" {
+		t.Fatalf("after container die event: status = %q, want %q (cross-region recovery failed)", got, "starting")
 	}
 }
 

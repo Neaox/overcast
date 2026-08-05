@@ -524,6 +524,10 @@ const (
 	DockerContainerOOM Type = "docker:ContainerOOM"
 	// DockerContainerHealthStatus fires when a managed container's health check changes.
 	DockerContainerHealthStatus Type = "docker:ContainerHealthStatus"
+	// DockerDaemonConnected fires whenever a Docker watcher establishes or
+	// re-establishes its event stream. Container-backed services use it to
+	// reconcile state that may have changed while the daemon was unavailable.
+	DockerDaemonConnected Type = "docker:DaemonConnected"
 
 	// ---- Docker network lifecycle events ------------------------------------------
 	// Published by the Docker watcher when Overcast-managed networks are
