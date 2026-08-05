@@ -618,7 +618,7 @@ IMPLS = {
     "GetInstanceProfile": GetInstanceProfile,
     "DeleteRole": DeleteRole,
     "CreatePolicy": CreatePolicy,
-    "GetPolicy": GetPolicy,
+    "iam-policies:GetPolicy": GetPolicy,
     "ListPolicies": ListPolicies,
     "DeletePolicy": DeletePolicy,
     "CreateGroup": CreateGroup,

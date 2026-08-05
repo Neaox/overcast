@@ -681,7 +681,6 @@
     {
       "service": "lambda",
       "name": "lambda-policy",
-      "suites": ["cli", "node-js-sdk"],
       "tests": [
         {"name": "AddPermission"},
         {"name": "GetPolicy", "depends": ["AddPermission"]},

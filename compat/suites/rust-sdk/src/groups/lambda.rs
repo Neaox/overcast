@@ -6,6 +6,7 @@ use aws_sdk_lambda::types::{
     FunctionCode, InvocationType, LayerVersionContentInput, ResponseStreamingInvocationType,
     Runtime,
 };
+use aws_smithy_types::error::metadata::ProvideErrorMetadata;
 
 use crate::clients::AwsClients;
 use crate::groups::ServiceGroup;
@@ -204,6 +205,105 @@ impl ServiceGroup for LambdaGroup {
                     (!found)
                         .then_some(())
                         .ok_or_else(|| format!("DeleteFunction: {name} still present after delete"))
+                })
+            }),
+        );
+
+        // ── lambda-policy ──────────────────────────────────────────────────
+
+        let clients = self.clients.clone();
+        impls.insert(
+            "lambda-policy:AddPermission".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let name = format!("{}-fn-policy", ctx.run_id.as_ref());
+                    let response = clients
+                        .lambda()
+                        .add_permission()
+                        .function_name(&name)
+                        .statement_id("allow-s3")
+                        .action("lambda:InvokeFunction")
+                        .principal("s3.amazonaws.com")
+                        .source_account("000000000000")
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    if !response.statement().unwrap_or_default().contains("\"Sid\":\"allow-s3\"") {
+                        return Err("AddPermission: statement missing allow-s3 SID".to_string());
+                    }
+                    let policy = clients
+                        .lambda()
+                        .get_policy()
+                        .function_name(&name)
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    policy
+                        .policy()
+                        .unwrap_or_default()
+                        .contains("\"Sid\":\"allow-s3\"")
+                        .then_some(())
+                        .ok_or_else(|| "AddPermission: statement missing from GetPolicy".to_string())
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        impls.insert(
+            "lambda-policy:GetPolicy".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let name = format!("{}-fn-policy", ctx.run_id.as_ref());
+                    let response = clients
+                        .lambda()
+                        .get_policy()
+                        .function_name(&name)
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    if !response.policy().unwrap_or_default().contains("\"Sid\":\"allow-s3\"") {
+                        return Err("GetPolicy: allow-s3 statement missing".to_string());
+                    }
+                    response
+                        .revision_id()
+                        .filter(|revision| !revision.is_empty())
+                        .map(|_| ())
+                        .ok_or_else(|| "GetPolicy: RevisionId missing".to_string())
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        impls.insert(
+            "lambda-policy:RemovePermission".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let name = format!("{}-fn-policy", ctx.run_id.as_ref());
+                    clients
+                        .lambda()
+                        .remove_permission()
+                        .function_name(&name)
+                        .statement_id("allow-s3")
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    let result = clients.lambda().get_policy().function_name(&name).send().await;
+                    match result {
+                        Ok(_) => Err("RemovePermission: policy still exists".to_string()),
+                        Err(err)
+                            if err.as_service_error().and_then(ProvideErrorMetadata::code)
+                                == Some("ResourceNotFoundException") =>
+                        {
+                            Ok(())
+                        }
+                        Err(err) => Err(format!(
+                            "RemovePermission: expected ResourceNotFoundException, got {}",
+                            crate::harness::sdk_error(err)
+                        )),
+                    }
                 })
             }),
         );
@@ -635,6 +735,29 @@ impl ServiceGroup for LambdaGroup {
 
         let clients = self.clients.clone();
         setups.insert(
+            "lambda-policy".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let name = format!("{}-fn-policy", ctx.run_id.as_ref());
+                    clients
+                        .lambda()
+                        .create_function()
+                        .function_name(&name)
+                        .runtime(Runtime::Nodejs20x)
+                        .handler("index.handler")
+                        .role("arn:aws:iam::000000000000:role/lambda-exec")
+                        .code(FunctionCode::builder().zip_file(Blob::new(dummy_zip())).build())
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    Ok(())
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        setups.insert(
             "lambda-invoke".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();
@@ -726,6 +849,19 @@ impl ServiceGroup for LambdaGroup {
 
     fn teardowns(&self) -> HashMap<String, TestFn> {
         let mut teardowns: HashMap<String, TestFn> = HashMap::new();
+
+        let clients = self.clients.clone();
+        teardowns.insert(
+            "lambda-policy".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let name = format!("{}-fn-policy", ctx.run_id.as_ref());
+                    let _ = clients.lambda().delete_function().function_name(&name).send().await;
+                    Ok(())
+                })
+            }),
+        );
 
         let clients = self.clients.clone();
         teardowns.insert(
