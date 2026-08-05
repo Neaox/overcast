@@ -3010,12 +3010,12 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 		return "", nil, failUpdate(fmt.Errorf("lambda CodeSigningConfigArn updates are not supported"))
 	}
 
-	arn, err := h.applyUpdate(ctx, router, name, props, oldProps, rCtx)
+	arn, completed, err := h.applyUpdate(ctx, router, name, props, oldProps, rCtx)
 	if err != nil {
-		// A Lambda function update spans three APIs. Restore every earlier
-		// mutation before reporting the original failure, and preserve a
-		// restoration failure so the resulting state is reported truthfully.
-		_, compensationErr := h.applyUpdate(ctx, router, name, oldProps, props, rCtx)
+		// A Lambda function update spans three APIs. Restore only mutations
+		// that completed, in reverse order, so a rejected phase cannot change
+		// the function's revision or LastModified during compensation.
+		compensationErr := h.compensateUpdate(ctx, router, name, oldProps, props, completed, rCtx)
 		if compensationErr != nil {
 			compensationErr = fmt.Errorf("restore Lambda function after failed update: %w", compensationErr)
 		}
@@ -3028,9 +3028,46 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 	return name, attrs, nil
 }
 
+type lambdaUpdateProgress struct {
+	configuration bool
+	code          bool
+}
+
 // applyUpdate follows AWS's documented ordering: configuration, code, then
 // CloudFormation's separate reserved-concurrency operation.
-func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, error) {
+func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, lambdaUpdateProgress, error) {
+	var completed lambdaUpdateProgress
+	arn, applied, err := h.updateConfiguration(ctx, router, name, props, prior, rCtx)
+	if err != nil {
+		return "", completed, err
+	}
+	completed.configuration = applied
+	if applied, err = h.updateCode(ctx, router, name, props, prior, rCtx); err != nil {
+		return "", completed, err
+	}
+	completed.code = applied
+	if err = h.updateConcurrency(ctx, router, name, props, prior, rCtx); err != nil {
+		return "", completed, err
+	}
+	return arn, completed, nil
+}
+
+func (h *lambdaFunctionHandler) compensateUpdate(ctx context.Context, router http.Handler, name string, props, prior map[string]any, completed lambdaUpdateProgress, rCtx *resolveContext) error {
+	var compensationErr error
+	if completed.code {
+		if _, err := h.updateCode(ctx, router, name, props, prior, rCtx); err != nil {
+			compensationErr = errors.Join(compensationErr, err)
+		}
+	}
+	if completed.configuration {
+		if _, _, err := h.updateConfiguration(ctx, router, name, props, prior, rCtx); err != nil {
+			compensationErr = errors.Join(compensationErr, err)
+		}
+	}
+	return compensationErr
+}
+
+func (h *lambdaFunctionHandler) updateConfiguration(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, bool, error) {
 	cfgBody := map[string]any{}
 	for _, k := range []string{
 		"Runtime", "Handler", "Role", "Description", "Environment", "Timeout", "MemorySize", "Layers", "LoggingConfig",
@@ -3055,18 +3092,22 @@ func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Han
 		}
 	}
 	var arn string
-	if len(cfgBody) > 0 {
-		data, _ := json.Marshal(cfgBody)
-		rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/configuration", "application/json", data)
-		if err != nil {
-			return "", fmt.Errorf("lambda UpdateFunctionConfiguration: %w", err)
-		}
-		var resp map[string]any
-		if json.Unmarshal(rec.Body.Bytes(), &resp) == nil {
-			arn, _ = resp["FunctionArn"].(string)
-		}
+	if len(cfgBody) == 0 {
+		return "", false, nil
 	}
+	data, _ := json.Marshal(cfgBody)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/configuration", "application/json", data)
+	if err != nil {
+		return "", false, fmt.Errorf("lambda UpdateFunctionConfiguration: %w", err)
+	}
+	var resp map[string]any
+	if json.Unmarshal(rec.Body.Bytes(), &resp) == nil {
+		arn, _ = resp["FunctionArn"].(string)
+	}
+	return arn, true, nil
+}
 
+func (h *lambdaFunctionHandler) updateCode(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (bool, error) {
 	// CFN templates supply ZipFile as inline source; UpdateFunctionCode expects
 	// a base64 zip archive.
 	if code, ok := props["Code"].(map[string]any); ok && len(code) > 0 {
@@ -3076,7 +3117,7 @@ func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Han
 			handler, _ := props["Handler"].(string)
 			packaged, err := inlineCodeZip(zf, runtime, handler)
 			if err != nil {
-				return "", fmt.Errorf("package inline function code: %w", err)
+				return false, fmt.Errorf("package inline function code: %w", err)
 			}
 			body["ZipFile"] = base64.StdEncoding.EncodeToString(packaged)
 		}
@@ -3101,21 +3142,27 @@ func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Han
 			data, _ := json.Marshal(body)
 			_, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/code", "application/json", data)
 			if err != nil {
-				return "", fmt.Errorf("lambda UpdateFunctionCode: %w", err)
+				return false, fmt.Errorf("lambda UpdateFunctionCode: %w", err)
 			}
+			return true, nil
 		}
 	}
+	return false, nil
+}
+
+func (h *lambdaFunctionHandler) updateConcurrency(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) error {
 	if reserved, ok := props["ReservedConcurrentExecutions"]; ok {
 		if err := putLambdaReservedConcurrency(ctx, router, rCtx.Region, name, reserved); err != nil {
-			return "", err
+			return err
 		}
+		return nil
 	} else if _, existed := prior["ReservedConcurrentExecutions"]; existed {
 		path := "/2017-10-31/functions/" + url.PathEscape(name) + "/concurrency"
 		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, path, "", nil); err != nil {
-			return "", fmt.Errorf("lambda DeleteFunctionConcurrency: %w", err)
+			return fmt.Errorf("lambda DeleteFunctionConcurrency: %w", err)
 		}
 	}
-	return arn, nil
+	return nil
 }
 
 // ── Lambda reserved concurrency and permission handlers ──────────────────

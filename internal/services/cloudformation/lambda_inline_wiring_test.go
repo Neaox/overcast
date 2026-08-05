@@ -92,9 +92,11 @@ func TestLambdaProvisionerDeletePropagatesNonNotFoundFailure(t *testing.T) {
 	}
 }
 
-func TestLambdaProvisionerUpdateOrderAndCompensation(t *testing.T) {
-	router := &captureRouter{failPath: "/2017-10-31/functions/Stack-Function/concurrency"}
-	h := &lambdaFunctionHandler{}
+func TestLambdaProvisionerUpdateCompensatesCompletedPhasesInReverseOrder(t *testing.T) {
+	const name = "Stack-Function"
+	configurationPath := "/2015-03-31/functions/" + name + "/configuration"
+	codePath := "/2015-03-31/functions/" + name + "/code"
+	concurrencyPath := "/2017-10-31/functions/" + name + "/concurrency"
 	oldProps := map[string]any{
 		"Runtime": "nodejs22.x", "Handler": "index.handler", "Role": "arn:aws:iam::000000000000:role/r",
 		"Description": "old", "Code": map[string]any{"ZipFile": "exports.handler=()=>1"}, "ReservedConcurrentExecutions": 1,
@@ -103,29 +105,73 @@ func TestLambdaProvisionerUpdateOrderAndCompensation(t *testing.T) {
 		"Runtime": "nodejs22.x", "Handler": "index.handler", "Role": "arn:aws:iam::000000000000:role/r",
 		"Description": "new", "Code": map[string]any{"ZipFile": "exports.handler=()=>2"}, "ReservedConcurrentExecutions": 2,
 	}
-	_, _, err := h.Update(context.Background(), router, nil, "Stack-Function", newProps, oldProps, &resolveContext{Region: "us-east-1"})
-	if err == nil || !strings.Contains(err.Error(), "injected failure") {
-		t.Fatalf("Update error = %v, want original injected failure", err)
+
+	tests := []struct {
+		name      string
+		failPath  string
+		wantPaths []string
+	}{
+		{
+			name:      "configuration failure does not compensate",
+			failPath:  configurationPath,
+			wantPaths: []string{configurationPath},
+		},
+		{
+			name:      "code failure compensates configuration",
+			failPath:  codePath,
+			wantPaths: []string{configurationPath, codePath, configurationPath},
+		},
+		{
+			name:     "concurrency failure compensates code then configuration",
+			failPath: concurrencyPath,
+			wantPaths: []string{
+				configurationPath, codePath, concurrencyPath,
+				codePath, configurationPath,
+			},
+		},
 	}
-	wantPaths := []string{
-		"/2015-03-31/functions/Stack-Function/configuration",
-		"/2015-03-31/functions/Stack-Function/code",
-		"/2017-10-31/functions/Stack-Function/concurrency",
-		"/2015-03-31/functions/Stack-Function/configuration",
-		"/2015-03-31/functions/Stack-Function/code",
-		"/2017-10-31/functions/Stack-Function/concurrency",
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: the named Lambda update phase will fail before completing.
+			router := &captureRouter{failPath: tc.failPath}
+
+			// When: CloudFormation updates all three mutable phases.
+			_, _, err := (&lambdaFunctionHandler{}).Update(
+				context.Background(), router, nil, name, newProps, oldProps, &resolveContext{Region: "us-east-1"},
+			)
+
+			// Then: only completed phases are restored, in reverse order.
+			if err == nil || !strings.Contains(err.Error(), "injected failure") {
+				t.Fatalf("Update error = %v, want original injected failure", err)
+			}
+			if len(router.requests) != len(tc.wantPaths) {
+				t.Fatalf("request paths = %v, want %v", capturedPaths(router.requests), tc.wantPaths)
+			}
+			for i, want := range tc.wantPaths {
+				if router.requests[i].path != want {
+					t.Errorf("request %d path = %q, want %q", i, router.requests[i].path, want)
+				}
+			}
+			if got := router.requests[0].body["Description"]; got != "new" {
+				t.Errorf("forward Description = %v, want new", got)
+			}
+			if tc.failPath != configurationPath {
+				got := router.requests[len(router.requests)-1].body["Description"]
+				if got != "old" {
+					t.Errorf("restored Description = %v, want old", got)
+				}
+			}
+		})
 	}
-	if len(router.requests) != len(wantPaths) {
-		t.Fatalf("requests = %v, want paths %v", router.requests, wantPaths)
+}
+
+func capturedPaths(requests []capturedRequest) []string {
+	paths := make([]string, 0, len(requests))
+	for _, request := range requests {
+		paths = append(paths, request.path)
 	}
-	for i, want := range wantPaths {
-		if router.requests[i].path != want {
-			t.Errorf("request %d path = %q, want %q", i, router.requests[i].path, want)
-		}
-	}
-	if router.requests[0].body["Description"] != "new" || router.requests[3].body["Description"] != "old" {
-		t.Errorf("configuration compensation bodies = new:%v old:%v", router.requests[0].body, router.requests[3].body)
-	}
+	return paths
 }
 
 func TestLambdaProvisionerUpdateCompensationFailurePreservesBothErrors(t *testing.T) {
