@@ -1671,6 +1671,7 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	h.forgetS3SyncFunction(fn)
 
 	// Evict the warm instances so the containers stop immediately.
 	if pool := h.pool(); pool != nil {

@@ -3,6 +3,10 @@ package lambda
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -254,6 +258,427 @@ func TestS3SyncWatcher_newerSameBindingUpdateDuringFetchWins(t *testing.T) {
 	}
 	if got.RevisionId != "newer-revision" {
 		t.Fatalf("RevisionId after race = %q, want newer-revision", got.RevisionId)
+	}
+}
+
+func TestS3SyncWatcher_sameBytesManualUpdateDuringFetchWins(t *testing.T) {
+	// Given: a refresh blocked after observing one explicit code generation.
+	fetchStarted := make(chan struct{})
+	releaseFetch := make(chan struct{})
+	code := []byte("same-code-bytes")
+	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		close(fetchStarted)
+		<-releaseFetch
+		return code, nil
+	}
+	w, ls := testWatcher(t, fetch)
+	seeded := seedFunction(t, ls, "same-bytes-fence-fn", "my-bucket", "fn.zip")
+	seeded.setCode(code)
+	if aerr := ls.putFunction(context.Background(), seeded); aerr != nil {
+		t.Fatalf("seed code: %v", aerr)
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); w.syncFunctionCode(context.Background(), seeded) }()
+	<-fetchStarted
+
+	// When: UpdateFunctionCode writes identical bytes, it is still a newer
+	// explicit operation and rotates the code generation and revision.
+	_, changed, aerr := ls.mutateFunction(context.Background(), seeded.Name, func(current *Function) (bool, *protocol.AWSError) {
+		current.setCode(code)
+		current.RevisionId = "manual-same-bytes-revision"
+		return true, nil
+	})
+	if aerr != nil || !changed {
+		t.Fatalf("manual update: changed=%v err=%v", changed, aerr)
+	}
+	close(releaseFetch)
+	<-done
+
+	// Then: the stale watcher cannot rotate the manual operation's revision.
+	got, aerr := ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("get function: %v", aerr)
+	}
+	if got.RevisionId != "manual-same-bytes-revision" {
+		t.Fatalf("RevisionId = %q, want manual revision", got.RevisionId)
+	}
+}
+
+func TestS3SyncWatcher_configurationUpdateDuringFetchDoesNotFence(t *testing.T) {
+	// Given: an S3 refresh blocked after reading the function.
+	fetchStarted := make(chan struct{})
+	releaseFetch := make(chan struct{})
+	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		close(fetchStarted)
+		<-releaseFetch
+		return []byte("refreshed-code"), nil
+	}
+	w, ls := testWatcher(t, fetch)
+	seeded := seedFunction(t, ls, "config-update-fn", "my-bucket", "fn.zip")
+	done := make(chan struct{})
+	go func() { defer close(done); w.syncFunctionCode(context.Background(), seeded) }()
+	<-fetchStarted
+
+	// When: an unrelated function configuration update rotates RevisionId.
+	_, changed, aerr := ls.mutateFunction(context.Background(), seeded.Name, func(current *Function) (bool, *protocol.AWSError) {
+		current.Description = "new description"
+		current.RevisionId = "configuration-revision"
+		return true, nil
+	})
+	if aerr != nil || !changed {
+		t.Fatalf("configuration update: changed=%v err=%v", changed, aerr)
+	}
+	close(releaseFetch)
+	<-done
+
+	// Then: the refresh applies without losing the independent configuration.
+	got, aerr := ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("get function: %v", aerr)
+	}
+	if aerr := ls.loadFunctionCode(context.Background(), got); aerr != nil {
+		t.Fatalf("load code: %v", aerr)
+	}
+	if string(got.CodeZip) != "refreshed-code" || got.Description != "new description" {
+		t.Fatalf("function after refresh = code %q description %q", got.CodeZip, got.Description)
+	}
+}
+
+func TestS3SyncWatcher_concurrentEventsKeepNewestEvent(t *testing.T) {
+	for _, newerCommitsFirst := range []bool{false, true} {
+		name := "older commits first"
+		if newerCommitsFirst {
+			name = "newer commits first"
+		}
+		t.Run(name, func(t *testing.T) {
+			testConcurrentS3EventsKeepNewest(t, newerCommitsFirst)
+		})
+	}
+}
+
+func testConcurrentS3EventsKeepNewest(t *testing.T, newerCommitsFirst bool) {
+	t.Helper()
+	// Given: two same-key events whose fetches can finish in either order.
+	olderStarted := make(chan struct{})
+	newerStarted := make(chan struct{})
+	releaseOlder := make(chan struct{})
+	releaseNewer := make(chan struct{})
+	var calls int
+	var callsMu sync.Mutex
+	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		callsMu.Lock()
+		calls++
+		call := calls
+		callsMu.Unlock()
+		if call == 1 {
+			close(olderStarted)
+			<-releaseOlder
+			return []byte("older-event-code"), nil
+		}
+		close(newerStarted)
+		<-releaseNewer
+		return []byte("newest-event-code"), nil
+	}
+	w, ls := testWatcher(t, fetch)
+	seeded := seedFunction(t, ls, "event-order-fn", "my-bucket", "fn.zip")
+	seeded.setCode([]byte("initial-code"))
+	if aerr := ls.putFunction(context.Background(), seeded); aerr != nil {
+		t.Fatalf("seed code: %v", aerr)
+	}
+
+	olderDone := make(chan struct{})
+	newerDone := make(chan struct{})
+	go func() { defer close(olderDone); w.syncFunctionCodeForEvent(context.Background(), seeded, 10) }()
+	<-olderStarted
+	go func() { defer close(newerDone); w.syncFunctionCodeForEvent(context.Background(), seeded, 11) }()
+	<-newerStarted
+
+	// When: the selected event commits first. A late old event must be rejected,
+	// while a late new event must still advance watcher-authored code.
+	if newerCommitsFirst {
+		close(releaseNewer)
+		<-newerDone
+		close(releaseOlder)
+		<-olderDone
+	} else {
+		close(releaseOlder)
+		<-olderDone
+		close(releaseNewer)
+		<-newerDone
+	}
+
+	// Then: completion order cannot let the older event replace or fence out the newest event.
+	got, aerr := ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("get function: %v", aerr)
+	}
+	if aerr := ls.loadFunctionCode(context.Background(), got); aerr != nil {
+		t.Fatalf("load code: %v", aerr)
+	}
+	if string(got.CodeZip) != "newest-event-code" {
+		t.Fatalf("CodeZip = %q, want newest event", got.CodeZip)
+	}
+}
+
+func TestS3SyncWatcher_recreatedFunctionUsesStableStateSlot(t *testing.T) {
+	// Given: an initial function generation has applied an S3 event.
+	codes := []string{"first-generation-refresh", "stale-refresh", "recreated-refresh"}
+	call := 0
+	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		code := []byte(codes[call])
+		call++
+		return code, nil
+	}
+	w, ls := testWatcher(t, fetch)
+	original := seedFunction(t, ls, "recreated-state-fn", "my-bucket", "fn.zip")
+	original.setCode([]byte("original"))
+	if aerr := ls.putFunction(context.Background(), original); aerr != nil {
+		t.Fatalf("seed original: %v", aerr)
+	}
+	w.syncFunctionCodeForEvent(context.Background(), original, 1)
+
+	// When: the function is recreated under the same ARN, an event carrying the
+	// deleted creation must not mutate the replacement even with a newer bus sequence.
+	recreated := *original
+	recreated.CreationID = "recreated-generation"
+	recreated.setCode([]byte("recreated-explicit-code"))
+	recreated.RevisionId = "recreated-revision"
+	if aerr := ls.putFunction(context.Background(), &recreated); aerr != nil {
+		t.Fatalf("seed recreation: %v", aerr)
+	}
+	w.syncFunctionCodeForEvent(context.Background(), original, 2)
+	got, aerr := ls.getFunction(context.Background(), recreated.Name)
+	if aerr != nil {
+		t.Fatalf("get after stale event: %v", aerr)
+	}
+	if got.RevisionId != "recreated-revision" {
+		t.Fatalf("stale creation changed revision to %q", got.RevisionId)
+	}
+
+	// Then: the recreated generation can advance in the same per-ARN state slot.
+	w.syncFunctionCodeForEvent(context.Background(), &recreated, 3)
+	got, aerr = ls.getFunction(context.Background(), recreated.Name)
+	if aerr != nil {
+		t.Fatalf("get recreated function: %v", aerr)
+	}
+	if aerr := ls.loadFunctionCode(context.Background(), got); aerr != nil {
+		t.Fatalf("load recreated code: %v", aerr)
+	}
+	if string(got.CodeZip) != "recreated-refresh" {
+		t.Fatalf("CodeZip = %q, want recreated refresh", got.CodeZip)
+	}
+	if len(w.state) != 1 || w.state[recreated.ARN].creationID != recreated.CreationID {
+		t.Fatalf("sync state = %#v, want one slot for recreated generation", w.state)
+	}
+}
+
+func TestS3SyncWatcher_deleteFunctionCleansManyUniqueStateSlots(t *testing.T) {
+	// Given: many distinct S3-backed functions each leave an ordering slot after sync.
+	h, _ := lifecycleTestHandler(t)
+	w := newS3SyncWatcher(h.ls, testFetch([]byte("refreshed")), zap.NewNop(), h.clk)
+	h.setS3SyncWatcher(w)
+	ctx := context.Background()
+	for i := 0; i < 64; i++ {
+		name := fmt.Sprintf("sync-cleanup-%d", i)
+		fn := &Function{
+			Name: name, ARN: "arn:aws:lambda:us-east-1:000000000000:function:" + name,
+			CreationID: fmt.Sprintf("creation-%d", i), CodeS3Bucket: "bucket", CodeS3Key: name + ".zip",
+		}
+		fn.setCode([]byte("initial"))
+		if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+			t.Fatalf("seed %s: %v", name, aerr)
+		}
+		w.syncFunctionCodeForEvent(ctx, fn, uint64(i+1))
+		if len(w.state) != 1 {
+			t.Fatalf("state slots after sync %d = %d, want 1", i, len(w.state))
+		}
+
+		// When: DeleteFunction successfully removes the function.
+		req := httptest.NewRequest(http.MethodDelete, "/2015-03-31/functions/"+name, nil)
+		req = withFunctionNameParam(req, name)
+		rec := httptest.NewRecorder()
+		h.DeleteFunction(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("delete %s status = %d: %s", name, rec.Code, rec.Body.String())
+		}
+
+		// Then: no state accumulates across unique create/sync/delete churn.
+		if len(w.state) != 0 {
+			t.Fatalf("state slots after deleting %s = %#v", name, w.state)
+		}
+	}
+}
+
+func TestS3SyncWatcher_lateDeletedEventCannotRepopulateRecreationState(t *testing.T) {
+	// Given: an old-generation event is blocked in S3 after that generation
+	// already established an ordering slot.
+	oldStarted := make(chan struct{})
+	releaseOld := make(chan struct{})
+	var calls int
+	var callsMu sync.Mutex
+	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		callsMu.Lock()
+		calls++
+		call := calls
+		callsMu.Unlock()
+		if call == 1 {
+			close(oldStarted)
+			<-releaseOld
+			return []byte("late-deleted-code"), nil
+		}
+		return []byte("recreated-code"), nil
+	}
+	h, _ := lifecycleTestHandler(t)
+	w := newS3SyncWatcher(h.ls, fetch, zap.NewNop(), h.clk)
+	h.setS3SyncWatcher(w)
+	original := &Function{
+		Name: "late-recreate", ARN: "arn:aws:lambda:us-east-1:000000000000:function:late-recreate",
+		CreationID: "deleted-creation", CodeS3Bucket: "bucket", CodeS3Key: "fn.zip", RevisionId: "old-revision",
+	}
+	original.setCode([]byte("old-code"))
+	if aerr := h.ls.putFunction(context.Background(), original); aerr != nil {
+		t.Fatalf("seed original: %v", aerr)
+	}
+	w.state[original.ARN] = s3SyncState{creationID: original.CreationID, appliedRevision: 1}
+	oldDone := make(chan struct{})
+	go func() {
+		defer close(oldDone)
+		w.syncFunctionCodeForEvent(context.Background(), original, 2)
+	}()
+	<-oldStarted
+
+	// When: DeleteFunction cleans the old slot and the name is recreated and
+	// refreshed before the old fetch completes.
+	req := httptest.NewRequest(http.MethodDelete, "/2015-03-31/functions/"+original.Name, nil)
+	req = withFunctionNameParam(req, original.Name)
+	rec := httptest.NewRecorder()
+	h.DeleteFunction(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(w.state) != 0 {
+		t.Fatalf("state after delete = %#v, want empty", w.state)
+	}
+	recreated := *original
+	recreated.CreationID = "recreated-creation"
+	recreated.RevisionId = "recreated-revision"
+	recreated.setCode([]byte("recreated-initial"))
+	if aerr := h.ls.putFunction(context.Background(), &recreated); aerr != nil {
+		t.Fatalf("seed recreation: %v", aerr)
+	}
+	w.syncFunctionCodeForEvent(context.Background(), &recreated, 3)
+	close(releaseOld)
+	<-oldDone
+
+	// Then: the old event neither mutates the recreation nor repopulates its
+	// deleted generation's state; only the current creation occupies the ARN slot.
+	got, aerr := h.ls.getFunction(context.Background(), recreated.Name)
+	if aerr != nil {
+		t.Fatalf("get recreation: %v", aerr)
+	}
+	if aerr := h.ls.loadFunctionCode(context.Background(), got); aerr != nil {
+		t.Fatalf("load recreated code: %v", aerr)
+	}
+	if string(got.CodeZip) != "recreated-code" {
+		t.Fatalf("CodeZip = %q, want recreated code", got.CodeZip)
+	}
+	state, ok := w.state[recreated.ARN]
+	if len(w.state) != 1 || !ok || state.creationID != recreated.CreationID || state.appliedRevision != 3 {
+		t.Fatalf("state after late event = %#v, want only recreated revision", w.state)
+	}
+}
+
+func TestS3SyncWatcher_staleRetirementCannotReverseNewestPoolExpectation(t *testing.T) {
+	// Given: the older event commits, then pauses immediately before retirement.
+	olderStarted := make(chan struct{})
+	newerStarted := make(chan struct{})
+	releaseOlderFetch := make(chan struct{})
+	releaseNewerFetch := make(chan struct{})
+	releaseOlderRetire := make(chan struct{})
+	olderRetireReady := make(chan struct{})
+	newerRetireDone := make(chan struct{})
+	olderRetireApplied := make(chan struct{}, 1)
+	var calls int
+	var callsMu sync.Mutex
+	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		callsMu.Lock()
+		calls++
+		call := calls
+		callsMu.Unlock()
+		if call == 1 {
+			close(olderStarted)
+			<-releaseOlderFetch
+			return []byte("older-retirement-code"), nil
+		}
+		close(newerStarted)
+		<-releaseNewerFetch
+		return []byte("newest-retirement-code"), nil
+	}
+	h, pool := lifecycleTestHandler(t)
+	w := newS3SyncWatcher(h.ls, fetch, zap.NewNop(), h.clk)
+	olderHash := codeHashOf([]byte("older-retirement-code"))
+	newerHash := codeHashOf([]byte("newest-retirement-code"))
+	w.beforeRetire = func(fn *Function) {
+		if fn.CodeHash == olderHash {
+			close(olderRetireReady)
+			<-releaseOlderRetire
+		}
+	}
+	w.retire = func(fn *Function, previousIdentity string) {
+		h.retireExecutionEnvironment(fn, previousIdentity)
+		switch fn.CodeHash {
+		case olderHash:
+			olderRetireApplied <- struct{}{}
+		case newerHash:
+			close(newerRetireDone)
+		}
+	}
+	seeded := seedFunction(t, h.ls, "retirement-order-fn", "bucket", "fn.zip")
+	seeded.CreationID = "retirement-creation"
+	seeded.setCode([]byte("initial-code"))
+	if aerr := h.ls.putFunction(context.Background(), seeded); aerr != nil {
+		t.Fatalf("seed function: %v", aerr)
+	}
+
+	olderDone := make(chan struct{})
+	newerDone := make(chan struct{})
+	go func() {
+		defer close(olderDone)
+		w.syncFunctionCodeForEvent(context.Background(), seeded, 10)
+	}()
+	<-olderStarted
+	go func() {
+		defer close(newerDone)
+		w.syncFunctionCodeForEvent(context.Background(), seeded, 11)
+	}()
+	<-newerStarted
+	close(releaseOlderFetch)
+	<-olderRetireReady
+
+	// When: the newer event commits and retires while the older callback is
+	// paused, then the stale older callback resumes.
+	close(releaseNewerFetch)
+	<-newerRetireDone
+	close(releaseOlderRetire)
+	<-olderDone
+	<-newerDone
+
+	// Then: stale retirement is discarded and the pool's expected identity is
+	// still the newest function generation.
+	select {
+	case <-olderRetireApplied:
+		t.Fatal("stale older retirement callback was applied")
+	default:
+	}
+	got, aerr := h.ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("get function: %v", aerr)
+	}
+	pool.mu.Lock()
+	expected := pool.expected[seeded.Name]
+	pool.mu.Unlock()
+	if want := functionInstanceIdentity(got); expected != want {
+		t.Fatalf("pool expected identity = %q, want newest %q", expected, want)
 	}
 }
 

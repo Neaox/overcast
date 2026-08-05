@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -181,7 +182,12 @@ type Function struct {
 	// functionCodeIdentity and CodeSha256 responses read, so the invoke path
 	// never rehashes the package. "" only on records persisted before the field
 	// existed, where readers fall back to hashing CodeZip.
-	CodeHash            string             `json:"code_hash,omitempty"`
+	CodeHash string `json:"code_hash,omitempty"`
+	// CodeGeneration changes only for explicit code-source writes. Reactive
+	// S3 refreshes preserve it so concurrent object events can be ordered while
+	// every manual/inline update—including one with identical bytes—fences out
+	// fetches that started against the previous generation.
+	CodeGeneration      string             `json:"code_generation,omitempty"`
 	CodeS3Bucket        string             `json:"code_s3_bucket,omitempty"`
 	CodeS3Key           string             `json:"code_s3_key,omitempty"`
 	ImageUri            string             `json:"image_uri,omitempty"` // PackageType=Image only
@@ -285,6 +291,15 @@ type FileSystemConfig struct {
 // CodeSize and CodeHash fields in step. Every site that changes CodeZip must
 // go through here — see the CodeZip field comment for why.
 func (f *Function) setCode(zip []byte) {
+	f.setCodeBytes(zip)
+	f.CodeGeneration = uuid.NewString()
+}
+
+func (f *Function) setSyncedCode(zip []byte) {
+	f.setCodeBytes(zip)
+}
+
+func (f *Function) setCodeBytes(zip []byte) {
 	f.CodeZip = zip
 	f.CodeSize = int64(len(zip))
 	f.CodeHash = codeHashOf(zip)
@@ -487,6 +502,7 @@ func (s *Service) InitS3Sync(fetch S3FetchFunc) {
 	}
 	w := newS3SyncWatcher(s.ls, fetch, s.log.Logger(), s.clk)
 	w.retire = s.handler.retireExecutionEnvironment
+	s.handler.setS3SyncWatcher(w)
 	w.register(bus)
 }
 

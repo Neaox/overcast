@@ -70,6 +70,11 @@ type Handler struct {
 	// CodeZip populated — the s3SyncWatcher only fires on subsequent
 	// PutObject events. Wired by Service.InitS3Sync.
 	s3Fetch S3FetchFunc
+	// s3Sync tracks reactive S3 ordering state so successful DeleteFunction
+	// calls can release the deleted function's slot. The mutex covers service
+	// initialization racing an early request.
+	s3SyncMu      sync.RWMutex
+	s3SyncWatcher *s3SyncWatcher
 	// proactive, when set, drives the post-deploy settle debounce: cold-start
 	// artifact pre-fill always, plus execution-environment pre-creation when
 	// LAMBDA_PROACTIVE_INIT is enabled (see proactive.go). Wired by
