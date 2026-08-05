@@ -72,6 +72,10 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [waf/web/docs] add Web ACL metadata CRUD views, global search, and system-map nodes while accurately surfacing missing rule enforcement and 501 boundaries
 
+### Changed
+
+- [web/ecs] service and task screens prioritize recent container failures, stopped tasks, and logs over follow-on scheduler noise
+
 ### Fixed
 
 - [cloudformation/rds/ecs] CloudFormation waits for asynchronous resources to become usable before completing them and preserves their physical IDs through stabilisation failures so rollback can delete what it created. `AWS::RDS::DBInstance` and `AWS::RDS::DBCluster` now remain in progress until the database reports `available`, or fail with RDS's recorded reason and roll the stack back; `cdk deploy` no longer returns green while the engine is still initialising. Failed RDS databases and ECS services are now removed during rollback instead of being leaked under names that collide with the next deployment.
@@ -81,6 +85,8 @@ can be applied mechanically rather than reconstructed from memory.
 - [sns/cloudformation] CloudFormation SNS topics and subscriptions now forward configured SNS attributes, including subscription filtering and raw SQS delivery (#522)
 
 - [ecs/web] cluster summaries and topology reflect current resources, while stopped tasks remain inspectable with AWS-compatible status, reason, and one-hour retention metadata
+
+- [ecs] stopped tasks retain a bounded container log tail for post-mortem diagnostics
 
 - [rds] database containers stopped, crashed, or removed through Docker are now recovered with bounded backoff immediately, after Docker reconnects, or during Overcast startup; repeated crash loops settle to `failed`, only `StopDBInstance` establishes a durable stopped state, and MySQL 8 initialization now preserves AWS-valid special-character passwords while using `caching_sha2_password`
 
