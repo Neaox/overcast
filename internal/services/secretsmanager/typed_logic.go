@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -22,6 +23,7 @@ type createSecretRequest struct {
 	SecretString string `json:"SecretString" cbor:"SecretString"`
 	SecretBinary string `json:"SecretBinary" cbor:"SecretBinary"`
 	Description  string `json:"Description" cbor:"Description"`
+	KmsKeyId     string `json:"KmsKeyId" cbor:"KmsKeyId"`
 	Tags         []Tag  `json:"Tags" cbor:"Tags"`
 }
 
@@ -51,6 +53,7 @@ type describeSecretResponse struct {
 	ARN                string              `json:"ARN" cbor:"ARN"`
 	Name               string              `json:"Name" cbor:"Name"`
 	Description        string              `json:"Description" cbor:"Description"`
+	KmsKeyId           string              `json:"KmsKeyId,omitempty" cbor:"KmsKeyId,omitempty"`
 	CreatedDate        float64             `json:"CreatedDate" cbor:"CreatedDate"`
 	LastChangedDate    float64             `json:"LastChangedDate" cbor:"LastChangedDate"`
 	Tags               []Tag               `json:"Tags" cbor:"Tags"`
@@ -78,16 +81,17 @@ type putSecretValueResponse struct {
 }
 
 type updateSecretRequest struct {
-	SecretId     string `json:"SecretId" cbor:"SecretId"`
-	Description  string `json:"Description" cbor:"Description"`
-	SecretString string `json:"SecretString" cbor:"SecretString"`
-	SecretBinary string `json:"SecretBinary" cbor:"SecretBinary"`
+	SecretId     string  `json:"SecretId" cbor:"SecretId"`
+	Description  *string `json:"Description" cbor:"Description"`
+	SecretString string  `json:"SecretString" cbor:"SecretString"`
+	SecretBinary string  `json:"SecretBinary" cbor:"SecretBinary"`
+	KmsKeyId     *string `json:"KmsKeyId" cbor:"KmsKeyId"`
 }
 
 type updateSecretResponse struct {
 	ARN       string `json:"ARN" cbor:"ARN"`
 	Name      string `json:"Name" cbor:"Name"`
-	VersionId string `json:"VersionId" cbor:"VersionId"`
+	VersionId string `json:"VersionId,omitempty" cbor:"VersionId,omitempty"`
 }
 
 type listSecretsRequest struct {
@@ -98,6 +102,7 @@ type secretListEntry struct {
 	ARN               string         `json:"ARN" cbor:"ARN"`
 	Name              string         `json:"Name" cbor:"Name"`
 	Description       string         `json:"Description" cbor:"Description"`
+	KmsKeyId          string         `json:"KmsKeyId,omitempty" cbor:"KmsKeyId,omitempty"`
 	CreatedDate       float64        `json:"CreatedDate" cbor:"CreatedDate"`
 	LastChangedDate   float64        `json:"LastChangedDate" cbor:"LastChangedDate"`
 	Tags              []Tag          `json:"Tags,omitempty" cbor:"Tags,omitempty"`
@@ -179,7 +184,7 @@ type untagResourceRequest struct {
 }
 
 type getRandomPasswordRequest struct {
-	PasswordLength     int64  `json:"PasswordLength" cbor:"PasswordLength"`
+	PasswordLength     *int64 `json:"PasswordLength" cbor:"PasswordLength"`
 	ExcludeCharacters  string `json:"ExcludeCharacters" cbor:"ExcludeCharacters"`
 	ExcludeNumbers     bool   `json:"ExcludeNumbers" cbor:"ExcludeNumbers"`
 	ExcludePunctuation bool   `json:"ExcludePunctuation" cbor:"ExcludePunctuation"`
@@ -221,6 +226,9 @@ func (h *Handler) createSecretTyped(ctx context.Context, req *createSecretReques
 	if req.Name == "" {
 		return nil, errInvalidParameter("You must provide a value for the Name parameter.")
 	}
+	if utf8.RuneCountInString(req.KmsKeyId) > 2048 {
+		return nil, errInvalidParameter("KmsKeyId exceeds the maximum length of 2048 characters.")
+	}
 	if _, aerr := h.store.getSecret(ctx, req.Name); aerr == nil {
 		return nil, errResourceExists(req.Name)
 	}
@@ -233,6 +241,7 @@ func (h *Handler) createSecretTyped(ctx context.Context, req *createSecretReques
 		ARN:         arn,
 		Name:        req.Name,
 		Description: req.Description,
+		KmsKeyId:    req.KmsKeyId,
 		Tags:        req.Tags,
 		Versions: []SecretVersion{{
 			VersionId:    versionId,
@@ -323,6 +332,7 @@ func (h *Handler) describeSecretTyped(ctx context.Context, req *secretIDRequest)
 		ARN:                sec.ARN,
 		Name:               sec.Name,
 		Description:        sec.Description,
+		KmsKeyId:           sec.KmsKeyId,
 		CreatedDate:        sec.CreatedDate,
 		LastChangedDate:    sec.LastChangedDate,
 		Tags:               sec.Tags,
@@ -473,12 +483,18 @@ func (h *Handler) updateSecretTyped(ctx context.Context, req *updateSecretReques
 	if aerr != nil {
 		return nil, aerr
 	}
-	if req.Description != "" {
-		sec.Description = req.Description
+	if req.Description != nil {
+		sec.Description = *req.Description
+	}
+	if req.KmsKeyId != nil {
+		if utf8.RuneCountInString(*req.KmsKeyId) > 2048 {
+			return nil, errInvalidParameter("KmsKeyId exceeds the maximum length of 2048 characters.")
+		}
+		sec.KmsKeyId = *req.KmsKeyId
 	}
 	sec.LastChangedDate = float64(h.store.now().Unix())
 
-	versionId := sec.CurrentVersionId
+	versionId := ""
 	if req.SecretString != "" || req.SecretBinary != "" {
 		version, aerr := h.stageVersion(sec, "", req.SecretString, req.SecretBinary, nil)
 		if aerr != nil {
@@ -507,6 +523,7 @@ func (h *Handler) listSecretsTyped(ctx context.Context, req *listSecretsRequest)
 			ARN:               sec.ARN,
 			Name:              sec.Name,
 			Description:       sec.Description,
+			KmsKeyId:          sec.KmsKeyId,
 			CreatedDate:       sec.CreatedDate,
 			LastChangedDate:   sec.LastChangedDate,
 			Tags:              sec.Tags,
@@ -634,9 +651,15 @@ func (h *Handler) getRandomPasswordTyped(_ context.Context, req *getRandomPasswo
 // same knobs, and reaches this through GetRandomPassword rather than carrying a
 // second generator.
 func generatePassword(req *getRandomPasswordRequest) (string, *protocol.AWSError) {
-	length := req.PasswordLength
-	if length <= 0 {
-		length = defaultPasswordLength
+	length := int64(defaultPasswordLength)
+	if req.PasswordLength != nil {
+		length = *req.PasswordLength
+		if length < 1 || length > 4096 {
+			return "", errInvalidParameter("PasswordLength must be between 1 and 4096.")
+		}
+	}
+	if utf8.RuneCountInString(req.ExcludeCharacters) > 4096 {
+		return "", errInvalidParameter("ExcludeCharacters exceeds the maximum length of 4096 characters.")
 	}
 	charset := allowedPasswordCharset(req)
 	if len(charset) == 0 {
@@ -664,8 +687,8 @@ func generatePassword(req *getRandomPasswordRequest) (string, *protocol.AWSError
 // seedEachIncludedType overwrites distinct positions so the password holds at
 // least one character of every type the exclusions left available. Positions
 // are distinct so seeding one type never undoes another; if there are fewer
-// positions than types — only reachable below AWS's minimum PasswordLength of
-// 4 — the leftover types go unseeded rather than fighting over a slot.
+// positions than types — possible for valid PasswordLength values 1 through
+// 3 — the leftover types go unseeded rather than fighting over a slot.
 func seedEachIncludedType(password, charset []rune) error {
 	types := includedCharTypes(charset)
 	if len(types) == 0 {

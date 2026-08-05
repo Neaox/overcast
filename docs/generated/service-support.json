@@ -5761,7 +5761,7 @@
           "operation": "CreateSecret",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "String + binary, tags, description"
+          "notes": "String + binary, KMS key, tags, description"
         },
         {
           "operation": "GetSecretValue",
@@ -5773,7 +5773,7 @@
           "operation": "DescribeSecret",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "Metadata, tags, versions, rotation dates"
+          "notes": "Metadata, KMS key, tags, versions, rotation dates"
         },
         {
           "operation": "PutSecretValue",
@@ -5785,13 +5785,13 @@
           "operation": "UpdateSecret",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "Description + optional new value"
+          "notes": "Description, KMS key + optional new value"
         },
         {
           "operation": "ListSecrets",
           "category": "Secret CRUD",
           "status": "✅ Supported",
-          "notes": "Sorted by name, optional filters"
+          "notes": "Sorted by name, KMS metadata, optional filters"
         },
         {
           "operation": "ListSecretVersionIds",
@@ -5845,7 +5845,7 @@
           "operation": "GetRandomPassword",
           "category": "Password",
           "status": "✅ Supported",
-          "notes": "Length, exclusions, RequireEachIncludedType"
+          "notes": "Modeled length bounds, exclusions, RequireEachIncludedType"
         },
         {
           "operation": "GetResourcePolicy",

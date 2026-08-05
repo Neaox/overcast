@@ -81,6 +81,12 @@ operations:
           - tests/integration/cloudformation/log_group_properties_test.go::TestUpdateStack_LogGroupStackTags
           - internal/services/cloudformation/provisioner_logs_test.go::TestLogsLogGroupHandlerUpdate_omittedOrEmptyTagsRemovePreviousTags
         notes: AWS::Logs::LogGroup applies RetentionInDays with PutRetentionPolicy immediately after CreateLogGroup and effective resource-plus-stack tags through TagLogGroup, with resource tags taking precedence. Updates hash and reconcile effective tags so stack-only additions, changes, and removals dispatch; partial tag updates are compensated before reporting a service failure. A failed post-create cleanup preserves the physical ID for stack rollback. Removing RetentionInDays dispatches DeleteRetentionPolicy and reports service failures instead of silently completing the update.
+      - name: secrets manager generated values and metadata properties
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/generate_secret_string_test.go
+          - internal/services/cloudformation/provisioner_secretsmanager_test.go
+        notes: AWS::SecretsManager::Secret validates GenerateSecretString composition before service dispatch, generates through GetRandomPassword, and creates through CreateSecret. KmsKeyId, resource tags, and propagated stack tags round-trip through Secrets Manager APIs; metadata-only updates preserve the generated value.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -122,6 +128,7 @@ findings:
     - AWS::Lambda::Function no longer drops priority configuration properties, and AWS::Lambda::Permission now mutates the function's Lambda-owned resource policy.
     - AWS::DynamoDB::Table forwards LocalSecondaryIndexes through CreateTable and reconciles TimeToLiveSpecification through DynamoDB's TTL API, including create/update compensation.
     - AWS::Logs::LogGroup applies RetentionInDays, resource Tags, and propagated stack tags when created, then reconciles effective tag additions, changes, and removals during stack updates.
+    - AWS::SecretsManager::Secret no longer drops KmsKeyId or Tags, and malformed GenerateSecretString templates fail before password generation or secret creation.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.
@@ -129,6 +136,7 @@ findings:
     - Review update/delete semantics and unsupported-resource stubbing.
     - Add support for S3 EventBridge notifications (#635), lifecycle transition minimum object size (#636), and website redirects/routing rules (#637); CloudFormation currently fails these shapes loudly.
     - AWS::Logs::LogGroup KmsKeyId, DataProtectionPolicy, LogGroupClass, and newer LogGroup properties need underlying CloudWatch Logs API/state support before CloudFormation can forward them.
+    - Complete Secrets Manager generated-value updates (#678), replica regions (#679), target attachments (#680), and rotation schedules (#681).
   intentionally_partial: []
 handoff:
   start_with: [CloudFormation Ref semantics for IAM and EventBridge resource handlers, CreateStack, DeleteStack, resource handlers]

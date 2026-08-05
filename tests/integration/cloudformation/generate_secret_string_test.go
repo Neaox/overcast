@@ -33,6 +33,11 @@ const generateSecretStringTemplate = `{
       "Type": "AWS::SecretsManager::Secret",
       "Properties": {
         "Name": "gen/database/credentials",
+		"KmsKeyId": "alias/cfn-secret",
+		"Tags": [
+		  { "Key": "environment", "Value": "test" },
+		  { "Key": "owner", "Value": "cloudformation" }
+		],
         "GenerateSecretString": {
           "SecretStringTemplate": "{\"username\":\"admin\"}",
           "GenerateStringKey": "password",
@@ -74,8 +79,12 @@ func TestCreateStack_generateSecretStringPopulatesAwsCurrent(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	resp := cfnQuery(t, srv, "CreateStack", url.Values{
-		"StackName":    []string{"generate-secret-stack"},
-		"TemplateBody": []string{generateSecretStringTemplate},
+		"StackName":           []string{"generate-secret-stack"},
+		"TemplateBody":        []string{generateSecretStringTemplate},
+		"Tags.member.1.Key":   []string{"application"},
+		"Tags.member.1.Value": []string{"overcast"},
+		"Tags.member.2.Key":   []string{"owner"},
+		"Tags.member.2.Value": []string{"stack-default"},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -107,11 +116,71 @@ func TestCreateStack_generateSecretStringPopulatesAwsCurrent(t *testing.T) {
 	if i := strings.IndexAny(apiKey, `!"#$%&'()*+,-./:;<=>?@[\]^_`+"`"+`{|}~`); i >= 0 {
 		t.Errorf("api key %q contains punctuation despite ExcludePunctuation", apiKey)
 	}
-
 	// Two secrets generated from the same template do not share a value.
 	if password == apiKey {
 		t.Error("both secrets got the same generated value")
 	}
+
+	// CloudFormation forwards metadata properties through the service API.
+	metadata := describeSecretMetadata(t, srv, "gen/database/credentials")
+	if metadata.KMSKeyID != "alias/cfn-secret" {
+		t.Errorf("KmsKeyId = %q, want alias/cfn-secret", metadata.KMSKeyID)
+	}
+	wantTags := map[string]string{"application": "overcast", "environment": "test", "owner": "cloudformation"}
+	for _, tag := range metadata.Tags {
+		if want, exists := wantTags[tag.Key]; exists && want == tag.Value {
+			delete(wantTags, tag.Key)
+		}
+	}
+	if len(wantTags) != 0 {
+		t.Errorf("missing CloudFormation tags: %v (got %+v)", wantTags, metadata.Tags)
+	}
+
+	// Updating metadata uses UpdateSecret/TagResource and does not replace or
+	// regenerate the stored value when GenerateSecretString is unchanged.
+	updatedTemplate := strings.Replace(generateSecretStringTemplate, "alias/cfn-secret", "alias/cfn-secret-updated", 1)
+	updatedTemplate = strings.Replace(updatedTemplate, `"owner", "Value": "cloudformation"`, `"owner", "Value": "platform"`, 1)
+	resp = cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{"generate-secret-stack"},
+		"TemplateBody": []string{updatedTemplate},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+	waitForStackStatus(t, srv, "generate-secret-stack", "UPDATE_COMPLETE")
+	if updatedValue := getSecretString(t, srv, "gen/database/credentials"); updatedValue != raw {
+		t.Errorf("metadata-only update changed SecretString: got %q, want %q", updatedValue, raw)
+	}
+	updatedMetadata := describeSecretMetadata(t, srv, "gen/database/credentials")
+	if updatedMetadata.KMSKeyID != "alias/cfn-secret-updated" {
+		t.Errorf("updated KmsKeyId = %q, want alias/cfn-secret-updated", updatedMetadata.KMSKeyID)
+	}
+	owner := ""
+	for _, tag := range updatedMetadata.Tags {
+		if tag.Key == "owner" {
+			owner = tag.Value
+		}
+	}
+	if owner != "platform" {
+		t.Errorf("updated owner tag = %q, want platform", owner)
+	}
+}
+
+type secretMetadata struct {
+	KMSKeyID string `json:"KmsKeyId"`
+	Tags     []struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	} `json:"Tags"`
+}
+
+func describeSecretMetadata(t *testing.T, srv *helpers.TestServer, secretID string) secretMetadata {
+	t.Helper()
+	resp := secretsJSONCall(t, srv, "DescribeSecret", map[string]any{"SecretId": secretID})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var metadata secretMetadata
+	helpers.DecodeJSON(t, resp, &metadata)
+	return metadata
 }
 
 func TestCreateStack_generateSecretStringRejectsHalfATemplate(t *testing.T) {
@@ -138,4 +207,11 @@ func TestCreateStack_generateSecretStringRejectsHalfATemplate(t *testing.T) {
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	waitForStackStatus(t, srv, "generate-secret-broken-stack", "ROLLBACK_COMPLETE")
+
+	// Validation happens before CreateSecret, so rollback has no partially
+	// created secret to clean up.
+	describe := secretsJSONCall(t, srv, "DescribeSecret", map[string]any{"SecretId": "gen/broken"})
+	defer describe.Body.Close()
+	helpers.AssertStatus(t, describe, http.StatusBadRequest)
+	helpers.AssertJSONError(t, describe, "ResourceNotFoundException")
 }
