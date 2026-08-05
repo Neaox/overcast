@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -110,6 +111,94 @@ func TestDynamoDBTableCreate_TimeToLiveDeleteFailureRetainsPhysicalID(t *testing
 	})
 }
 
+func TestDynamoDBTableCreate_TimeToLiveMissingEnabledDoesNotCreateTable(t *testing.T) {
+	// Given: a TTL property without CloudFormation's required Enabled field
+	router := &dynamodbTTLRouter{}
+	props := map[string]any{
+		"TableName":               "test-table",
+		"TimeToLiveSpecification": map[string]any{"AttributeName": "expiresAt"},
+	}
+
+	// When: CloudFormation validates the resource before creation
+	physicalID, _, err := (&dynamodbTableHandler{}).Create(
+		context.Background(), router, nil, props, &resolveContext{LogicalID: "Sessions", Region: "us-east-1"},
+	)
+
+	// Then: the modeled validation error is returned without creating a table
+	const want = "Properties validation failed for resource Sessions with message: #/TimeToLiveSpecification: required key [Enabled] not found"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Create error = %v, want %q", err, want)
+	}
+	if physicalID != "" {
+		t.Errorf("physical ID = %q, want empty", physicalID)
+	}
+	assertDynamoDBTTLTargets(t, router.requests, nil)
+}
+
+func TestDynamoDBTableCreate_DisabledTimeToLiveWithoutAttributeIsNoOp(t *testing.T) {
+	// Given: valid CloudFormation TTL configuration for an already-disabled new table
+	router := &dynamodbTTLRouter{}
+	props := map[string]any{
+		"TableName":               "test-table",
+		"TimeToLiveSpecification": map[string]any{"Enabled": false},
+	}
+
+	// When: CloudFormation creates the table
+	_, _, err := (&dynamodbTableHandler{}).Create(
+		context.Background(), router, nil, props, &resolveContext{LogicalID: "Sessions", Region: "us-east-1"},
+	)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Then: it creates only the table and does not send an invalid TTL API shape
+	assertDynamoDBTTLTargets(t, router.requests, []string{dynamodbCreateTableTarget})
+}
+
+func TestDynamoDBTableCreate_TimeToLiveAttributeLengthValidation(t *testing.T) {
+	tests := []struct {
+		name          string
+		attributeName string
+		wantDetail    string
+	}{
+		{name: "empty", attributeName: "", wantDetail: "expected minLength: 1, actual: 0"},
+		{name: "minimum", attributeName: "a"},
+		{name: "maximum", attributeName: strings.Repeat("a", 255)},
+		{name: "too long", attributeName: strings.Repeat("a", 256), wantDetail: "expected maxLength: 255, actual: 256"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: an enabled TTL property with a boundary attribute name
+			router := &dynamodbTTLRouter{}
+			props := map[string]any{
+				"TableName": "test-table",
+				"TimeToLiveSpecification": map[string]any{
+					"Enabled": true, "AttributeName": tc.attributeName,
+				},
+			}
+
+			// When: CloudFormation validates the resource before creation
+			_, _, err := (&dynamodbTableHandler{}).Create(
+				context.Background(), router, nil, props, &resolveContext{LogicalID: "Sessions", Region: "us-east-1"},
+			)
+
+			// Then: names inside 1..255 are accepted and names outside are rejected
+			if tc.wantDetail == "" {
+				if err != nil {
+					t.Fatalf("Create: %v", err)
+				}
+				assertDynamoDBTTLTargets(t, router.requests, []string{dynamodbCreateTableTarget, dynamodbUpdateTimeToLiveTarget})
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantDetail) {
+				t.Fatalf("Create error = %v, want detail %q", err, tc.wantDetail)
+			}
+			assertDynamoDBTTLTargets(t, router.requests, nil)
+		})
+	}
+}
+
 func TestDynamoDBTableUpdate_TimeToLiveAttributeFailureRestoresPreviousConfiguration(t *testing.T) {
 	// Given: changing the TTL attribute fails after the old attribute is disabled
 	router := &dynamodbTTLRouter{statusByCall: map[string]map[int]int{
@@ -166,6 +255,78 @@ func TestDynamoDBTableUpdate_UpdateTableFailureRestoresTimeToLive(t *testing.T) 
 	})
 	assertDynamoDBTTLRequest(t, router.requests[3], false, "expiresAtV2")
 	assertDynamoDBTTLRequest(t, router.requests[4], true, "expiresAt")
+}
+
+func TestDynamoDBTableUpdate_DisableTimeToLiveWithoutAttributeUsesPreviousAttribute(t *testing.T) {
+	// Given: an enabled TTL property being disabled without repeating AttributeName
+	router := &dynamodbTTLRouter{}
+	oldProps := dynamodbTTLProperties("expiresAt")
+	newProps := map[string]any{
+		"TableName":               "test-table",
+		"TimeToLiveSpecification": map[string]any{"Enabled": false},
+	}
+
+	// When: CloudFormation applies the update
+	_, _, err := (&dynamodbTableHandler{}).Update(
+		context.Background(), router, nil, "test-table", newProps, oldProps,
+		&resolveContext{LogicalID: "Sessions", Region: "us-east-1"},
+	)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Then: DynamoDB receives the old attribute required by its API shape
+	assertDynamoDBTTLTargets(t, router.requests, []string{dynamodbUpdateTimeToLiveTarget})
+	assertDynamoDBTTLRequest(t, router.requests[0], false, "expiresAt")
+}
+
+func TestDynamoDBTableUpdate_DisabledTimeToLiveWithoutAttributeIsNoOp(t *testing.T) {
+	// Given: an already-disabled table receiving explicit disabled TTL configuration
+	router := &dynamodbTTLRouter{}
+	oldProps := map[string]any{"TableName": "test-table"}
+	newProps := map[string]any{
+		"TableName":               "test-table",
+		"TimeToLiveSpecification": map[string]any{"Enabled": false},
+	}
+
+	// When: CloudFormation applies the update
+	_, _, err := (&dynamodbTableHandler{}).Update(
+		context.Background(), router, nil, "test-table", newProps, oldProps,
+		&resolveContext{LogicalID: "Sessions", Region: "us-east-1"},
+	)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Then: no invalid UpdateTimeToLive request is sent
+	assertDynamoDBTTLTargets(t, router.requests, nil)
+}
+
+func TestDynamoDBTableUpdate_TimeToLiveMissingEnabledDoesNotMutateTable(t *testing.T) {
+	// Given: invalid TTL configuration alongside an otherwise mutable table property
+	router := &dynamodbTTLRouter{}
+	oldProps := map[string]any{"TableName": "test-table", "BillingMode": "PROVISIONED"}
+	newProps := map[string]any{
+		"TableName":   "test-table",
+		"BillingMode": "PAY_PER_REQUEST",
+		"TimeToLiveSpecification": map[string]any{
+			"AttributeName": "expiresAt",
+		},
+	}
+
+	// When: CloudFormation validates the update
+	_, _, err := (&dynamodbTableHandler{}).Update(
+		context.Background(), router, nil, "test-table", newProps, oldProps,
+		&resolveContext{LogicalID: "Sessions", Region: "us-east-1"},
+	)
+
+	// Then: it rejects the property before either DynamoDB operation can mutate
+	const want = "Properties validation failed for resource Sessions with message: #/TimeToLiveSpecification: required key [Enabled] not found"
+	var updateErr updateFailure
+	if !errors.As(err, &updateErr) || err.Error() != want {
+		t.Fatalf("Update error = %v, want terminal error %q", err, want)
+	}
+	assertDynamoDBTTLTargets(t, router.requests, nil)
 }
 
 func dynamodbTTLProperties(attributeName string) map[string]any {

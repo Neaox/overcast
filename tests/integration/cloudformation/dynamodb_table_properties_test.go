@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
@@ -83,6 +84,90 @@ func TestCreateStack_DynamoDBTableLocalSecondaryIndex(t *testing.T) {
 	if result.Count != 1 {
 		t.Errorf("LSI Query count = %d, want 1", result.Count)
 	}
+}
+
+func TestUpdateStack_DynamoDBTableLocalSecondaryIndexes(t *testing.T) {
+	const localIndexes = `"LocalSecondaryIndexes": [{
+          "IndexName": "by-created",
+          "KeySchema": [
+            {"AttributeName": "forumId", "KeyType": "HASH"},
+            {"AttributeName": "createdAt", "KeyType": "RANGE"}
+          ],
+          "Projection": {"ProjectionType": "ALL"}
+        }],`
+	tests := []struct {
+		name       string
+		newIndexes string
+	}{
+		{name: "removed", newIndexes: ""},
+		{name: "changed", newIndexes: strings.Replace(localIndexes, `"ALL"`, `"KEYS_ONLY"`, 1)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a stack-created table with a local secondary index
+			srv := helpers.NewTestServer(t)
+			stackName := "dynamodb-lsi-update-" + tc.name
+			tableName := "cfn-lsi-update-" + tc.name
+			createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+				"StackName":    {stackName},
+				"TemplateBody": {dynamodbTableLSITemplate(tableName, localIndexes)},
+			})
+			defer createResp.Body.Close()
+			helpers.AssertStatus(t, createResp, http.StatusOK)
+			waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+			// When: the create-time-only LSI property is removed or changed
+			updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+				"StackName":    {stackName},
+				"TemplateBody": {dynamodbTableLSITemplate(tableName, tc.newIndexes)},
+			})
+			defer updateResp.Body.Close()
+			helpers.AssertStatus(t, updateResp, http.StatusOK)
+			waitForStackStatus(t, srv, stackName, "UPDATE_ROLLBACK_COMPLETE")
+
+			// Then: CloudFormation reports unsupported LSI updates and preserves it
+			reasons := strings.Join(describeStackEventReasons(t, srv, stackName), "\n")
+			const wantReason = "AWS::DynamoDB::Table LocalSecondaryIndexes updates are not supported"
+			if !strings.Contains(reasons, wantReason) {
+				t.Errorf("stack event reasons = %q, want %q", reasons, wantReason)
+			}
+			queryResp := dynamodbCall(t, srv, "Query", map[string]any{
+				"TableName":              tableName,
+				"IndexName":              "by-created",
+				"KeyConditionExpression": "forumId = :forum",
+				"ExpressionAttributeValues": map[string]any{
+					":forum": map[string]string{"S": "f1"},
+				},
+			})
+			defer queryResp.Body.Close()
+			helpers.AssertStatus(t, queryResp, http.StatusOK)
+		})
+	}
+}
+
+func dynamodbTableLSITemplate(tableName, localIndexes string) string {
+	return `{
+  "Resources": {
+    "Posts": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": "` + tableName + `",
+        "AttributeDefinitions": [
+          {"AttributeName": "forumId", "AttributeType": "S"},
+          {"AttributeName": "postId", "AttributeType": "S"},
+          {"AttributeName": "createdAt", "AttributeType": "S"}
+        ],
+        "KeySchema": [
+          {"AttributeName": "forumId", "KeyType": "HASH"},
+          {"AttributeName": "postId", "KeyType": "RANGE"}
+        ],
+        ` + localIndexes + `
+        "BillingMode": "PAY_PER_REQUEST"
+      }
+    }
+  }
+}`
 }
 
 func TestCreateStack_DynamoDBTableTimeToLive(t *testing.T) {

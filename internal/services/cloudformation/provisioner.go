@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -2878,6 +2879,19 @@ func (h *dynamodbTableHandler) Update(ctx context.Context, router http.Handler, 
 	if n, ok := props["TableName"].(string); ok && n != "" && n != physicalID {
 		return "", nil, errReplacementRequired
 	}
+	newTTL, err := parseDynamoDBTTLConfig(props, rCtx.LogicalID)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	oldTTL, err := parseDynamoDBTTLConfig(oldProps, rCtx.LogicalID)
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	if changed, err := cfnPropertyChanged(props, oldProps, "LocalSecondaryIndexes"); err != nil {
+		return "", nil, failUpdate(err)
+	} else if changed {
+		return "", nil, failUpdate(fmt.Errorf("AWS::DynamoDB::Table LocalSecondaryIndexes updates are not supported"))
+	}
 
 	reqBody := map[string]any{"TableName": physicalID}
 	haveMutable := false
@@ -2902,7 +2916,7 @@ func (h *dynamodbTableHandler) Update(ctx context.Context, router http.Handler, 
 	}
 	// TimeToLiveSpecification is a separate API call. Apply it first so a
 	// later UpdateTable failure can restore the previous TTL configuration.
-	restoreTTL, ttlDirty, err := reconcileDynamoDBTableTTL(ctx, router, rCtx.Region, physicalID, props, oldProps)
+	restoreTTL, ttlDirty, err := reconcileDynamoDBTableTTL(ctx, router, rCtx.Region, physicalID, newTTL, oldTTL)
 	if err != nil {
 		if ttlDirty {
 			return "", nil, failDirtyUpdate(fmt.Errorf("dynamodb UpdateTimeToLive: %w", err))
@@ -2925,6 +2939,10 @@ func (h *dynamodbTableHandler) Update(ctx context.Context, router http.Handler, 
 }
 
 func (h *dynamodbTableHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	ttl, err := parseDynamoDBTTLConfig(props, rCtx.LogicalID)
+	if err != nil {
+		return "", nil, err
+	}
 	tableName, _ := props["TableName"].(string)
 	if tableName == "" {
 		tableName = rCtx.generatedName()
@@ -2968,8 +2986,8 @@ func (h *dynamodbTableHandler) Create(ctx context.Context, router http.Handler, 
 	if err != nil {
 		return "", nil, fmt.Errorf("dynamodb CreateTable: %w", err)
 	}
-	if ttl, ok := props["TimeToLiveSpecification"].(map[string]any); ok {
-		if err := updateDynamoDBTableTTL(ctx, router, rCtx.Region, tableName, ttl); err != nil {
+	if ttl.enabled {
+		if err := updateDynamoDBTableTTL(ctx, router, rCtx.Region, tableName, dynamodbTTLSpec(ttl)); err != nil {
 			ttlErr := fmt.Errorf("dynamodb UpdateTimeToLive: %w", err)
 			if _, deleteErr := internalJSON(ctx, router, rCtx.Region, "DynamoDB_20120810.DeleteTable", map[string]any{"TableName": tableName}); deleteErr != nil {
 				return tableName, nil, errors.Join(ttlErr, fmt.Errorf("delete DynamoDB table after TTL failure: %w", deleteErr))
@@ -3004,9 +3022,7 @@ func (h *dynamodbTableHandler) Create(ctx context.Context, router http.Handler, 
 // The bool result is true only when a failed transition could not restore its
 // previous configuration; callers must retain that dirty resource for stack
 // rollback rather than claiming it is unchanged.
-func reconcileDynamoDBTableTTL(ctx context.Context, router http.Handler, region, tableName string, props, oldProps map[string]any) (func() error, bool, error) {
-	newConfig := dynamodbTTLConfigFromProperties(props)
-	oldConfig := dynamodbTTLConfigFromProperties(oldProps)
+func reconcileDynamoDBTableTTL(ctx context.Context, router http.Handler, region, tableName string, newConfig, oldConfig dynamodbTTLConfig) (func() error, bool, error) {
 	if reflect.DeepEqual(newConfig, oldConfig) {
 		return nil, false, nil
 	}
@@ -3050,6 +3066,9 @@ func applyDynamoDBTableTTL(ctx context.Context, router http.Handler, region, tab
 	if reflect.DeepEqual(current, desired) {
 		return current, false, nil
 	}
+	if !current.enabled && !desired.enabled {
+		return current, false, nil
+	}
 	if !desired.specified {
 		if !current.enabled {
 			return current, false, nil
@@ -3071,17 +3090,57 @@ func applyDynamoDBTableTTL(ctx context.Context, router http.Handler, region, tab
 	return desired, true, nil
 }
 
-func dynamodbTTLConfigFromProperties(props map[string]any) dynamodbTTLConfig {
-	spec, ok := props["TimeToLiveSpecification"].(map[string]any)
+func parseDynamoDBTTLConfig(props map[string]any, logicalID string) (dynamodbTTLConfig, error) {
+	raw, specified := props["TimeToLiveSpecification"]
+	if !specified || raw == nil {
+		return dynamodbTTLConfig{}, nil
+	}
+	spec, ok := raw.(map[string]any)
 	if !ok {
-		return dynamodbTTLConfig{}
+		return dynamodbTTLConfig{}, dynamodbTTLValidationError(logicalID, "#/TimeToLiveSpecification: expected type: JSONObject")
 	}
-	attributeName, _ := spec["AttributeName"].(string)
-	return dynamodbTTLConfig{
-		specified:     true,
-		enabled:       asBool(spec["Enabled"]),
-		attributeName: attributeName,
+	rawEnabled, hasEnabled := spec["Enabled"]
+	if !hasEnabled || rawEnabled == nil {
+		return dynamodbTTLConfig{}, dynamodbTTLValidationError(logicalID, "#/TimeToLiveSpecification: required key [Enabled] not found")
 	}
+	enabled, validEnabled := rawEnabled.(bool)
+	if !validEnabled {
+		if value, ok := rawEnabled.(string); ok && (strings.EqualFold(value, "true") || strings.EqualFold(value, "false")) {
+			enabled = strings.EqualFold(value, "true")
+			validEnabled = true
+		}
+	}
+	if !validEnabled {
+		return dynamodbTTLConfig{}, dynamodbTTLValidationError(logicalID, "#/TimeToLiveSpecification/Enabled: expected type: Boolean")
+	}
+
+	attributeName := ""
+	if rawAttribute, hasAttribute := spec["AttributeName"]; hasAttribute && rawAttribute != nil {
+		var validAttribute bool
+		attributeName, validAttribute = rawAttribute.(string)
+		if !validAttribute {
+			return dynamodbTTLConfig{}, dynamodbTTLValidationError(logicalID, "#/TimeToLiveSpecification/AttributeName: expected type: String")
+		}
+		length := utf8.RuneCountInString(attributeName)
+		if length < 1 {
+			return dynamodbTTLConfig{}, dynamodbTTLValidationError(logicalID, fmt.Sprintf("#/TimeToLiveSpecification/AttributeName: expected minLength: 1, actual: %d", length))
+		}
+		if length > 255 {
+			return dynamodbTTLConfig{}, dynamodbTTLValidationError(logicalID, fmt.Sprintf("#/TimeToLiveSpecification/AttributeName: expected maxLength: 255, actual: %d", length))
+		}
+	}
+	if enabled && attributeName == "" {
+		return dynamodbTTLConfig{}, dynamodbTTLValidationError(logicalID, "#/TimeToLiveSpecification: required key [AttributeName] not found")
+	}
+	return dynamodbTTLConfig{specified: true, enabled: enabled, attributeName: attributeName}, nil
+}
+
+func dynamodbTTLValidationError(logicalID, detail string) error {
+	resource := logicalID
+	if resource == "" {
+		resource = "AWS::DynamoDB::Table"
+	}
+	return fmt.Errorf("Properties validation failed for resource %s with message: %s", resource, detail)
 }
 
 func dynamodbTTLSpec(config dynamodbTTLConfig) map[string]any {

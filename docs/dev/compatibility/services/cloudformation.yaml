@@ -58,18 +58,20 @@ operations:
         tests:
           - tests/integration/cloudformation/lambda_properties_test.go
         notes: AWS::Lambda::Function forwards every reviewed Function property and applies configuration, code, then reserved concurrency transactionally; unsupported advanced fields fail at Lambda before mutation, and a failed sub-operation triggers immediate compensation. EventSourceMapping forwards every reviewed property so Lambda either stores supported fields or rejects unsupported semantics. AWS::Lambda::Permission calls race-safe Lambda policy APIs rather than succeeding as a no-op stub. Shared reverse-update rollback restores successful in-place changes when a later stack resource fails.
-      - name: dynamodb table local secondary indexes on create
+      - name: dynamodb table local secondary index create and update semantics
         status: fixed
         tests:
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableLocalSecondaryIndex
-        notes: AWS::DynamoDB::Table forwards LocalSecondaryIndexes to CreateTable, so an LSI declared in a new stack is immediately available to Query.
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableLocalSecondaryIndexes
+          - internal/services/cloudformation/dynamodb_table_update_test.go
+        notes: AWS::DynamoDB::Table forwards LocalSecondaryIndexes to CreateTable, so an LSI declared in a new stack is immediately available to Query. Removing or changing an LSI fails the stack update without dispatching UpdateTable because AWS documents LSI updates as unsupported.
       - name: dynamodb table time-to-live create and updates
         status: fixed
         tests:
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableTimeToLive
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableTimeToLive
           - internal/services/cloudformation/dynamodb_ttl_test.go
-        notes: AWS::DynamoDB::Table applies TimeToLiveSpecification through DynamoDB UpdateTimeToLive after creation, disables then re-enables TTL when its attribute changes, and disables TTL when the property is removed. Failed create or update phases compensate the table or prior TTL configuration.
+        notes: AWS::DynamoDB::Table validates the distinct CloudFormation TimeToLiveSpecification shape before mutation, applies enabled TTL through DynamoDB UpdateTimeToLive after creation, disables then re-enables TTL when its attribute changes, and disables TTL when the property is removed. Enabled is required; AttributeName is validated at 1..255 when present or required, while Enabled=false without AttributeName is a no-op for an already-disabled/new table. Failed create or update phases compensate the table or prior TTL configuration.
   DescribeChangeSet:
     status: fixed
     aws_docs:
