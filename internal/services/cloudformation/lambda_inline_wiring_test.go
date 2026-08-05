@@ -203,6 +203,9 @@ func TestLambdaProvisionerUpdateRejectsRequiredPropertyRemoval(t *testing.T) {
 			if !errors.As(err, &terminal) || !strings.Contains(err.Error(), tc.property) {
 				t.Fatalf("Update error = %v, want terminal missing-%s failure", err, tc.property)
 			}
+			if terminal.dirty {
+				t.Fatal("validation-only failure marked resource dirty")
+			}
 			if len(router.requests) != 0 {
 				t.Fatalf("requests = %#v, want validation before service mutation", router.requests)
 			}
@@ -448,6 +451,10 @@ func TestLambdaProvisionerUpdateCompensationFailurePreservesBothErrors(t *testin
 
 	if err == nil {
 		t.Fatal("Update error = nil, want original and compensation failures")
+	}
+	var terminal updateFailure
+	if !errors.As(err, &terminal) || !terminal.dirty {
+		t.Fatalf("Update error = %v, want dirty terminal updateFailure", err)
 	}
 	for _, want := range []string{
 		"lambda PutFunctionConcurrency",

@@ -339,6 +339,11 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previou
 	// Replacement fallbacks can return the same physical ID for upsert-shaped
 	// services and must not be replayed as in-place updates during rollback.
 	inPlaceUpdated := map[string]bool{}
+	// A handler may fail after applying a mutation and also fail its own
+	// compensation. Keep that distinct from a validation rejection so rollback
+	// does not report a clean restoration over service-side state it could not
+	// restore.
+	dirtyUpdates := map[string]bool{}
 
 	for _, logicalID := range order {
 		if ctx.Err() != nil {
@@ -411,21 +416,33 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previou
 			}
 			now := p.clk.Now()
 			if updErr != nil {
-				newResources = append(newResources, StackResource{
+				resourceDirty := isDirtyUpdateFailure(updErr)
+				if resourceDirty {
+					dirtyUpdates[logicalID] = true
+				}
+				failedResource := StackResource{
 					LogicalID:    logicalID,
 					PhysicalID:   old.PhysicalID,
 					Type:         res.Type,
 					Status:       ResourceUpdateFailed,
 					StatusReason: updErr.Error(),
 					Timestamp:    now,
-				})
+				}
+				if resourceDirty {
+					failedResource.Attributes = old.Attributes
+					failedResource.PropertiesHash = propsHash
+					failedResource.Properties = recordedProps
+					failedResource.DeletionPolicy = res.DeletionPolicy
+					failedResource.UpdateReplacePolicy = res.UpdateReplacePolicy
+				}
+				newResources = append(newResources, failedResource)
 				p.recordEvent(ctx, stack, logicalID, old.PhysicalID, res.Type, ResourceUpdateFailed, updErr.Error())
 				if stack.DisableRollback {
 					p.failStack(ctx, stack, StatusUpdateFailed,
 						fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 					return
 				}
-				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, rCtx,
+				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, dirtyUpdates, rCtx,
 					fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 				return
 			}
@@ -476,7 +493,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previou
 			}
 			// Roll back: delete newly created resources (those not in `existing`)
 			// in reverse order, then restore the previous resource list.
-			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, rCtx,
+			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, dirtyUpdates, rCtx,
 				fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
 			return
 		}
@@ -1164,8 +1181,8 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 // rollbackUpdate is the default failure handler for UpdateStack.
 //
 // It undoes the update in reverse order and restores the previous resource
-// list, marking the stack UPDATE_ROLLBACK_COMPLETE. Three kinds of resource
-// are undone:
+// list, marking the stack UPDATE_ROLLBACK_COMPLETE when every resource is
+// restored. Four kinds of resource are handled:
 //
 //   - Resources created by this update (absent before it) are deleted.
 //   - Resources this update *replaced* are rolled back to the original: the
@@ -1175,10 +1192,12 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 //     replacement leaves the resource intact rather than destroying it.
 //   - Resources successfully updated in place are passed back through their
 //     resourceUpdater with the previous properties.
+//   - Resources whose updater could not compensate an applied mutation are
+//     retained as UPDATE_FAILED and make the rollback fail truthfully.
 //
 // replacedBy maps a logical ID to the physical ID of the replacement created
 // for it, for exactly that second case.
-func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated map[string]bool, rCtx *resolveContext, reason string) {
+func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated, dirtyUpdates map[string]bool, rCtx *resolveContext, reason string) {
 	stack.Status = StatusUpdateRollbackInProgress
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
@@ -1198,6 +1217,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 	// operations can see them (instead of treating them as new and double-
 	// creating against an orphaned service-side resource).
 	var orphaned []StackResource
+	dirtyResources := make(map[string]StackResource, len(dirtyUpdates))
 	// Delete newly created resources in reverse order. Resources that existed
 	// before the update (present in `previous`) are left untouched.
 	for i := len(attempted) - 1; i >= 0; i-- {
@@ -1238,6 +1258,14 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		}
 
 		if old, wasExisting := previous[r.LogicalID]; wasExisting {
+			if dirtyUpdates[r.LogicalID] {
+				rollbackFailed = true
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf(
+					"restore %s: resource may still be mutated after failed compensation: %s",
+					r.LogicalID, r.StatusReason))
+				dirtyResources[r.LogicalID] = r
+				continue
+			}
 			if inPlaceUpdated[r.LogicalID] && r.Status == ResourceUpdateComplete && r.PhysicalID == old.PhysicalID {
 				if err := p.rollbackInPlaceUpdate(ctx, stack, r, old, rCtx); err != nil {
 					rollbackFailed = true
@@ -1281,7 +1309,11 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 	// failed-delete resources visible in the stack so they're not double-
 	// created on the next attempt.
 	restored := make([]StackResource, 0, len(previous)+len(orphaned))
-	for _, res := range previous {
+	for logicalID, res := range previous {
+		if dirty, ok := dirtyResources[logicalID]; ok {
+			restored = append(restored, dirty)
+			continue
+		}
 		restored = append(restored, res)
 	}
 	restored = append(restored, orphaned...)
@@ -1910,20 +1942,35 @@ var errReplacementRequired = errors.New("cfn: replacement required")
 var errDeletionBlocked = errors.New("cfn: deletion blocked by the resource")
 
 // updateFailure marks an update error the provisioner must answer by failing
-// the resource rather than by replacing it. The default for an update error is
+// the resource rather than by replacing it. Its dirty bit distinguishes a
+// rejected update from one whose handler could not compensate an already
+// applied mutation. The default for an update error is
 // replacement, which is right when the update could not be applied — but wrong
 // once it has been: a resource that applied its update and then failed to
 // settle is not fixed by building a second copy of it, and CloudFormation does
 // not try. An ECS service whose new deployment cannot start its tasks is the
 // case this exists for; replacing it would create a second service under a
 // generated name and delete the one that works.
-type updateFailure struct{ err error }
+type updateFailure struct {
+	err   error
+	dirty bool
+}
 
 func (e updateFailure) Error() string { return e.err.Error() }
 func (e updateFailure) Unwrap() error { return e.err }
 
 // failUpdate marks err as terminal for the resource — see updateFailure.
 func failUpdate(err error) error { return updateFailure{err: err} }
+
+// failDirtyUpdate marks a terminal update whose handler could not compensate
+// a mutation it had already applied. Stack rollback must retain that resource
+// as failed instead of claiming the previous state was restored.
+func failDirtyUpdate(err error) error { return updateFailure{err: err, dirty: true} }
+
+func isDirtyUpdateFailure(err error) bool {
+	var failed updateFailure
+	return errors.As(err, &failed) && failed.dirty
+}
 
 // asBool coerces a CFN property value (which may be a real bool, a string
 // "true"/"false", or nil) to a boolean. Used in handler Update methods to
@@ -3079,10 +3126,11 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 		// that completed, in reverse order, so a rejected phase cannot change
 		// the function's revision or LastModified during compensation.
 		compensationErr := h.compensateUpdate(ctx, router, name, oldProps, props, completed, rCtx)
-		if compensationErr != nil {
-			compensationErr = fmt.Errorf("restore Lambda function after failed update: %w", compensationErr)
+		if compensationErr == nil {
+			return "", nil, failUpdate(err)
 		}
-		return "", nil, failUpdate(errors.Join(err, compensationErr))
+		compensationErr = fmt.Errorf("restore Lambda function after failed update: %w", compensationErr)
+		return "", nil, failDirtyUpdate(errors.Join(err, compensationErr))
 	}
 	attrs := map[string]string{"FunctionName": name, "Arn": protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name)}
 	if arn != "" {
@@ -3286,6 +3334,10 @@ func validateLambdaFunctionRequiredPropertyRemovals(props, prior map[string]any,
 	if packageType == "Zip" {
 		required = append(required, "Runtime", "Handler")
 	}
+	return validateRequiredPropertyRemovals(props, prior, logicalID, "AWS::Lambda::Function", required...)
+}
+
+func validateRequiredPropertyRemovals(props, prior map[string]any, logicalID, resourceType string, required ...string) error {
 	for _, property := range required {
 		if _, existed := prior[property]; !existed {
 			continue
@@ -3295,7 +3347,7 @@ func validateLambdaFunctionRequiredPropertyRemovals(props, prior map[string]any,
 		}
 		resource := logicalID
 		if resource == "" {
-			resource = "AWS::Lambda::Function"
+			resource = resourceType
 		}
 		return fmt.Errorf("Properties validation failed for resource %s with message: #: required key [%s] not found", resource, property)
 	}

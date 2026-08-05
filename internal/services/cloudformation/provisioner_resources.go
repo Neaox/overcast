@@ -920,6 +920,9 @@ func (h *lambdaEventSourceMappingHandler) Delete(ctx context.Context, router htt
 }
 
 func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	if err := validateRequiredPropertyRemovals(props, oldProps, rCtx.LogicalID, "AWS::Lambda::EventSourceMapping", "FunctionName"); err != nil {
+		return "", nil, failUpdate(err)
+	}
 	if !reflect.DeepEqual(props["EventSourceArn"], oldProps["EventSourceArn"]) {
 		return "", nil, errReplacementRequired
 	}
@@ -928,7 +931,6 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 			return "", nil, errReplacementRequired
 		}
 	}
-
 	tagsChanged := !reflect.DeepEqual(props["Tags"], oldProps["Tags"]) || !reflect.DeepEqual(rCtx.StackTags, rCtx.PreviousStackTags)
 	tagsApplied := false
 	tagARN := protocol.ARN(rCtx.Region, rCtx.AccountID, "lambda", "event-source-mapping:"+physicalID)
@@ -940,7 +942,10 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 			if tagsApplied {
 				_, compensationErr = updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.PreviousStackTags, rCtx.StackTags, oldProps["Tags"], props["Tags"])
 			}
-			return "", nil, failUpdate(errors.Join(err, compensationErr))
+			if compensationErr != nil {
+				return "", nil, failDirtyUpdate(errors.Join(err, compensationErr))
+			}
+			return "", nil, failUpdate(err)
 		}
 	}
 
@@ -996,7 +1001,11 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, path, "application/json", data); err != nil {
 			if tagsApplied {
 				_, compensationErr := updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.PreviousStackTags, rCtx.StackTags, oldProps["Tags"], props["Tags"])
-				return "", nil, failUpdate(errors.Join(fmt.Errorf("UpdateEventSourceMapping: %w", err), compensationErr))
+				updateErr := fmt.Errorf("UpdateEventSourceMapping: %w", err)
+				if compensationErr != nil {
+					return "", nil, failDirtyUpdate(errors.Join(updateErr, compensationErr))
+				}
+				return "", nil, failUpdate(updateErr)
 			}
 			return "", nil, failUpdate(fmt.Errorf("UpdateEventSourceMapping: %w", err))
 		}

@@ -105,6 +105,44 @@ func TestLambdaEventSourceMappingUpdateFailureIsTerminal(t *testing.T) {
 	if !errors.As(err, &terminal) {
 		t.Fatalf("Update error = %v, want terminal updateFailure", err)
 	}
+	if terminal.dirty {
+		t.Fatal("rejected service update marked resource dirty")
+	}
+}
+
+func TestLambdaEventSourceMappingUpdateRejectsFunctionNameRemoval(t *testing.T) {
+	// Given: an existing mapping whose required function target is removed.
+	const id = "84d6e94f-372a-4c5e-9d39-6fdf46e15432"
+	oldProps := map[string]any{
+		"EventSourceArn": "arn:aws:sqs:us-east-1:000000000000:queue",
+		"FunctionName":   "function",
+	}
+	newProps := map[string]any{
+		"EventSourceArn": "arn:aws:sqs:us-east-1:000000000000:queue",
+	}
+	router := &captureRouter{}
+
+	// When: CloudFormation plans the in-place update.
+	_, _, err := (&lambdaEventSourceMappingHandler{}).Update(
+		context.Background(), router, nil, id, newProps, oldProps,
+		&resolveContext{Region: "us-east-1", LogicalID: "Mapping"},
+	)
+
+	// Then: CloudFormation rejects its missing required property before Lambda is mutated.
+	var terminal updateFailure
+	if !errors.As(err, &terminal) {
+		t.Fatalf("Update error = %v, want terminal updateFailure", err)
+	}
+	if terminal.dirty {
+		t.Fatal("validation-only failure marked resource dirty")
+	}
+	want := "Properties validation failed for resource Mapping with message: #: required key [FunctionName] not found"
+	if err.Error() != want {
+		t.Fatalf("Update error = %q, want %q", err, want)
+	}
+	if len(router.requests) != 0 {
+		t.Fatalf("requests = %#v, want validation before service mutation", router.requests)
+	}
 }
 
 func TestLambdaEventSourceMappingCreateForwardsTags(t *testing.T) {
