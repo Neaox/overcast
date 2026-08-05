@@ -92,29 +92,33 @@ type lambdaCode struct {
 }
 
 type functionConfiguration struct {
-	FunctionName  string           `json:"FunctionName"`
-	FunctionArn   string           `json:"FunctionArn"`
-	Runtime       string           `json:"Runtime"`
-	Handler       string           `json:"Handler"`
-	Role          string           `json:"Role"`
-	Description   string           `json:"Description"`
-	Timeout       int              `json:"Timeout"`
-	MemorySize    int              `json:"MemorySize"`
-	State         string           `json:"State"`
-	CodeSize      int64            `json:"CodeSize"`
-	LastModified  string           `json:"LastModified"`
-	RevisionId    string           `json:"RevisionId"`
-	PackageType   string           `json:"PackageType"`
-	Architectures []string         `json:"Architectures"`
-	ImageUri      string           `json:"ImageUri,omitempty"`
-	VpcConfig     *vpcConfigResp   `json:"VpcConfig,omitempty"`
-	ImageConfig   *imageConfigResp `json:"ImageConfig,omitempty"`
+	FunctionName        string               `json:"FunctionName"`
+	FunctionArn         string               `json:"FunctionArn"`
+	Runtime             string               `json:"Runtime"`
+	Handler             string               `json:"Handler"`
+	Role                string               `json:"Role"`
+	Description         string               `json:"Description"`
+	Timeout             int                  `json:"Timeout"`
+	MemorySize          int                  `json:"MemorySize"`
+	State               string               `json:"State"`
+	CodeSize            int64                `json:"CodeSize"`
+	LastModified        string               `json:"LastModified"`
+	RevisionId          string               `json:"RevisionId"`
+	PackageType         string               `json:"PackageType"`
+	Architectures       []string             `json:"Architectures"`
+	ImageUri            string               `json:"ImageUri,omitempty"`
+	VpcConfig           *vpcConfigResp       `json:"VpcConfig,omitempty"`
+	ImageConfigResponse *imageConfigResponse `json:"ImageConfigResponse,omitempty"`
 }
 
 type imageConfigResp struct {
 	EntryPoint       []string `json:"EntryPoint,omitempty"`
 	Command          []string `json:"Command,omitempty"`
 	WorkingDirectory string   `json:"WorkingDirectory,omitempty"`
+}
+
+type imageConfigResponse struct {
+	ImageConfig *imageConfigResp `json:"ImageConfig,omitempty"`
 }
 
 type getFunctionResponse struct {
@@ -4868,17 +4872,18 @@ func TestCreateFunction_imageConfig_storedAndReturned(t *testing.T) {
 	decodeJSON(t, resp, &created)
 
 	// Then ImageConfig is present in the create response
-	if created.ImageConfig == nil {
-		t.Fatal("ImageConfig must be present in CreateFunction response")
+	if created.ImageConfigResponse == nil || created.ImageConfigResponse.ImageConfig == nil {
+		t.Fatal("ImageConfigResponse.ImageConfig must be present in CreateFunction response")
 	}
-	if len(created.ImageConfig.EntryPoint) != 1 || created.ImageConfig.EntryPoint[0] != "/entry.sh" {
-		t.Errorf("EntryPoint = %v, want [/entry.sh]", created.ImageConfig.EntryPoint)
+	imageConfig := created.ImageConfigResponse.ImageConfig
+	if len(imageConfig.EntryPoint) != 1 || imageConfig.EntryPoint[0] != "/entry.sh" {
+		t.Errorf("EntryPoint = %v, want [/entry.sh]", imageConfig.EntryPoint)
 	}
-	if len(created.ImageConfig.Command) != 1 || created.ImageConfig.Command[0] != "handler" {
-		t.Errorf("Command = %v, want [handler]", created.ImageConfig.Command)
+	if len(imageConfig.Command) != 1 || imageConfig.Command[0] != "handler" {
+		t.Errorf("Command = %v, want [handler]", imageConfig.Command)
 	}
-	if created.ImageConfig.WorkingDirectory != "/var/task" {
-		t.Errorf("WorkingDirectory = %q, want /var/task", created.ImageConfig.WorkingDirectory)
+	if imageConfig.WorkingDirectory != "/var/task" {
+		t.Errorf("WorkingDirectory = %q, want /var/task", imageConfig.WorkingDirectory)
 	}
 
 	// And ImageConfig is returned by GetFunction
@@ -4888,11 +4893,11 @@ func TestCreateFunction_imageConfig_storedAndReturned(t *testing.T) {
 	var out getFunctionResponse
 	decodeJSON(t, resp2, &out)
 
-	if out.Configuration.ImageConfig == nil {
-		t.Fatal("ImageConfig must be present in GetFunction response")
+	if out.Configuration.ImageConfigResponse == nil || out.Configuration.ImageConfigResponse.ImageConfig == nil {
+		t.Fatal("ImageConfigResponse.ImageConfig must be present in GetFunction response")
 	}
-	if out.Configuration.ImageConfig.WorkingDirectory != "/var/task" {
-		t.Errorf("WorkingDirectory = %q, want /var/task", out.Configuration.ImageConfig.WorkingDirectory)
+	if out.Configuration.ImageConfigResponse.ImageConfig.WorkingDirectory != "/var/task" {
+		t.Errorf("WorkingDirectory = %q, want /var/task", out.Configuration.ImageConfigResponse.ImageConfig.WorkingDirectory)
 	}
 }
 
@@ -4921,14 +4926,15 @@ func TestUpdateFunctionConfiguration_imageConfig_patches(t *testing.T) {
 	decodeJSON(t, resp2, &updated)
 
 	// Then ImageConfig reflects the update
-	if updated.ImageConfig == nil {
-		t.Fatal("ImageConfig must be present in UpdateFunctionConfiguration response")
+	if updated.ImageConfigResponse == nil || updated.ImageConfigResponse.ImageConfig == nil {
+		t.Fatal("ImageConfigResponse.ImageConfig must be present in UpdateFunctionConfiguration response")
 	}
-	if len(updated.ImageConfig.Command) != 1 || updated.ImageConfig.Command[0] != "my-handler" {
-		t.Errorf("Command = %v, want [my-handler]", updated.ImageConfig.Command)
+	imageConfig := updated.ImageConfigResponse.ImageConfig
+	if len(imageConfig.Command) != 1 || imageConfig.Command[0] != "my-handler" {
+		t.Errorf("Command = %v, want [my-handler]", imageConfig.Command)
 	}
-	if updated.ImageConfig.WorkingDirectory != "/app" {
-		t.Errorf("WorkingDirectory = %q, want /app", updated.ImageConfig.WorkingDirectory)
+	if imageConfig.WorkingDirectory != "/app" {
+		t.Errorf("WorkingDirectory = %q, want /app", imageConfig.WorkingDirectory)
 	}
 }
 
@@ -4957,8 +4963,8 @@ func TestUpdateFunctionConfiguration_imageConfig_clearable(t *testing.T) {
 	decodeJSON(t, resp2, &updated)
 
 	// Then ImageConfig is cleared (nil or empty)
-	if updated.ImageConfig != nil && (len(updated.ImageConfig.Command) > 0 || len(updated.ImageConfig.EntryPoint) > 0 || updated.ImageConfig.WorkingDirectory != "") {
-		t.Errorf("expected ImageConfig cleared, got %+v", updated.ImageConfig)
+	if updated.ImageConfigResponse != nil && updated.ImageConfigResponse.ImageConfig != nil {
+		t.Errorf("expected ImageConfigResponse cleared, got %+v", updated.ImageConfigResponse)
 	}
 }
 
@@ -5056,9 +5062,7 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 				"Role": "arn:aws:iam::000000000000:role/lambda-role", "Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="}, field: value,
 			}
 			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), request)
-			helpers.AssertStatus(t, resp, http.StatusBadRequest)
-			helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
-			resp.Body.Close()
+			assertLambdaUnsupported(t, resp)
 			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/"+name+"/configuration"), nil)
 			helpers.AssertStatus(t, get, http.StatusNotFound)
 			get.Body.Close()
@@ -5076,9 +5080,7 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), map[string]any{
 				"Description": "mutated", field: value,
 			})
-			helpers.AssertStatus(t, resp, http.StatusBadRequest)
-			helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
-			resp.Body.Close()
+			assertLambdaUnsupported(t, resp)
 			get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/unsupported-update-fn/configuration"), nil)
 			var config struct {
 				Description string `json:"Description"`
@@ -5100,9 +5102,7 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 	for field, value := range esmFields {
 		t.Run("esm/"+field, func(t *testing.T) {
 			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/event-source-mappings/"), map[string]any{field: value})
-			helpers.AssertStatus(t, resp, http.StatusBadRequest)
-			helpers.AssertJSONError(t, resp, "InvalidParameterValueException")
-			resp.Body.Close()
+			assertLambdaUnsupported(t, resp)
 		})
 	}
 }

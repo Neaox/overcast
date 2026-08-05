@@ -116,6 +116,9 @@ func TestFunctionPolicy_ValidationQualificationAndConcurrentMutation(t *testing.
 		{"StatementId": "bad-action", "Action": "s3:GetObject", "Principal": "sns.amazonaws.com"},
 		{"StatementId": "bad-account", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com", "SourceAccount": "123"},
 		{"StatementId": "bad-arn", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com", "SourceArn": "not-an-arn"},
+		{"StatementId": "missing-service", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com", "SourceArn": "arn:aws::us-east-1:000000000000:resource"},
+		{"StatementId": "bad-region", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com", "SourceArn": "arn:aws:sns:not-a-region:000000000000:topic"},
+		{"StatementId": "bad-account", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com", "SourceArn": "arn:aws:sns:us-east-1:123:topic"},
 		{"StatementId": "bad-org", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com", "PrincipalOrgID": "org"},
 		{"StatementId": "bad-token", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com", "EventSourceToken": "bad token"},
 	}
@@ -132,6 +135,16 @@ func TestFunctionPolicy_ValidationQualificationAndConcurrentMutation(t *testing.
 	helpers.AssertStatus(t, missingQualifier, http.StatusNotFound)
 	helpers.AssertJSONError(t, missingQualifier, "ResourceNotFoundException")
 	missingQualifier.Body.Close()
+
+	// $LATEST.PUBLISHED is a documented qualifier form. It is syntactically
+	// valid even though this function has no resource under that qualifier.
+	publishedQualifier := doJSON(t, http.MethodPost,
+		lambdaURL(srv, "/functions/policy-race-fn/policy")+"?Qualifier=%24LATEST.PUBLISHED", map[string]any{
+			"StatementId": "published-qualified", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+		})
+	helpers.AssertStatus(t, publishedQualifier, http.StatusNotFound)
+	helpers.AssertJSONError(t, publishedQualifier, "ResourceNotFoundException")
+	publishedQualifier.Body.Close()
 
 	versionResp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions/policy-race-fn/versions"), publishVersionReq{})
 	helpers.AssertStatus(t, versionResp, http.StatusCreated)

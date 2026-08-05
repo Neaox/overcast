@@ -47,30 +47,30 @@ import (
 //
 // https://docs.aws.amazon.com/lambda/latest/api/API_FunctionConfiguration.html
 type functionConfiguration struct {
-	FunctionName      string             `json:"FunctionName"`
-	FunctionArn       string             `json:"FunctionArn"`
-	Runtime           string             `json:"Runtime,omitempty"`
-	Handler           string             `json:"Handler,omitempty"`
-	Role              string             `json:"Role,omitempty"`
-	Description       string             `json:"Description,omitempty"`
-	Timeout           int                `json:"Timeout,omitempty"`
-	MemorySize        int                `json:"MemorySize,omitempty"`
-	CodeSize          int64              `json:"CodeSize,omitempty"`
-	LastModified      string             `json:"LastModified,omitempty"`
-	RevisionId        string             `json:"RevisionId,omitempty"`
-	PackageType       string             `json:"PackageType,omitempty"`
-	Architectures     []string           `json:"Architectures,omitempty"`
-	State             string             `json:"State,omitempty"`
-	StateReason       string             `json:"StateReason,omitempty"`
-	StateReasonCode   string             `json:"StateReasonCode,omitempty"`
-	CodeSha256        string             `json:"CodeSha256,omitempty"`
-	Environment       *functionEnvConf   `json:"Environment,omitempty"`
-	LoggingConfig     *loggingConfig     `json:"LoggingConfig,omitempty"`
-	Layers            []LayerVersionLink `json:"Layers,omitempty"`
-	ImageUri          string             `json:"ImageUri,omitempty"`
-	ImageConfig       *imageConfigWire   `json:"ImageConfig,omitempty"`
-	VpcConfig         *vpcConfigResponse `json:"VpcConfig,omitempty"`
-	FileSystemConfigs []FileSystemConfig `json:"FileSystemConfigs,omitempty"`
+	FunctionName        string                   `json:"FunctionName"`
+	FunctionArn         string                   `json:"FunctionArn"`
+	Runtime             string                   `json:"Runtime,omitempty"`
+	Handler             string                   `json:"Handler,omitempty"`
+	Role                string                   `json:"Role,omitempty"`
+	Description         string                   `json:"Description,omitempty"`
+	Timeout             int                      `json:"Timeout,omitempty"`
+	MemorySize          int                      `json:"MemorySize,omitempty"`
+	CodeSize            int64                    `json:"CodeSize,omitempty"`
+	LastModified        string                   `json:"LastModified,omitempty"`
+	RevisionId          string                   `json:"RevisionId,omitempty"`
+	PackageType         string                   `json:"PackageType,omitempty"`
+	Architectures       []string                 `json:"Architectures,omitempty"`
+	State               string                   `json:"State,omitempty"`
+	StateReason         string                   `json:"StateReason,omitempty"`
+	StateReasonCode     string                   `json:"StateReasonCode,omitempty"`
+	CodeSha256          string                   `json:"CodeSha256,omitempty"`
+	Environment         *functionEnvConf         `json:"Environment,omitempty"`
+	LoggingConfig       *loggingConfig           `json:"LoggingConfig,omitempty"`
+	Layers              []LayerVersionLink       `json:"Layers,omitempty"`
+	ImageUri            string                   `json:"ImageUri,omitempty"`
+	ImageConfigResponse *imageConfigResponseWire `json:"ImageConfigResponse,omitempty"`
+	VpcConfig           *vpcConfigResponse       `json:"VpcConfig,omitempty"`
+	FileSystemConfigs   []FileSystemConfig       `json:"FileSystemConfigs,omitempty"`
 }
 
 // imageConfigWire is the AWS wire format for ImageConfig.
@@ -78,6 +78,18 @@ type imageConfigWire struct {
 	EntryPoint       []string `json:"EntryPoint,omitempty"`
 	Command          []string `json:"Command,omitempty"`
 	WorkingDirectory string   `json:"WorkingDirectory,omitempty"`
+}
+
+// imageConfigResponseWire is the AWS response envelope for container-image
+// overrides. Lambda reserves Error for image-configuration processing errors.
+type imageConfigResponseWire struct {
+	ImageConfig *imageConfigWire      `json:"ImageConfig,omitempty"`
+	Error       *imageConfigErrorWire `json:"Error,omitempty"`
+}
+
+type imageConfigErrorWire struct {
+	ErrorCode string `json:"ErrorCode,omitempty"`
+	Message   string `json:"Message,omitempty"`
 }
 
 type functionEnvConf struct {
@@ -100,8 +112,8 @@ type createFunctionRequest struct {
 	Handler       string            `json:"Handler"`
 	Role          string            `json:"Role"`
 	Description   string            `json:"Description,omitempty"`
-	Timeout       int               `json:"Timeout,omitempty"`
-	MemorySize    int               `json:"MemorySize,omitempty"`
+	Timeout       *int              `json:"Timeout,omitempty"`
+	MemorySize    *int              `json:"MemorySize,omitempty"`
 	Environment   *envVariables     `json:"Environment,omitempty"`
 	Code          *functionCode     `json:"Code,omitempty"`
 	PackageType   string            `json:"PackageType,omitempty"`
@@ -139,11 +151,12 @@ type functionCode struct {
 
 // updateFunctionCodeRequest matches AWS UpdateFunctionCode request body.
 type updateFunctionCodeRequest struct {
-	ZipFile       []byte   `json:"ZipFile,omitempty"`
-	S3Bucket      string   `json:"S3Bucket,omitempty"`
-	S3Key         string   `json:"S3Key,omitempty"`
-	ImageUri      string   `json:"ImageUri,omitempty"`
-	Architectures []string `json:"Architectures,omitempty"`
+	ZipFile         []byte   `json:"ZipFile,omitempty"`
+	S3Bucket        string   `json:"S3Bucket,omitempty"`
+	S3Key           string   `json:"S3Key,omitempty"`
+	S3ObjectVersion string   `json:"S3ObjectVersion,omitempty"`
+	ImageUri        string   `json:"ImageUri,omitempty"`
+	Architectures   []string `json:"Architectures,omitempty"`
 }
 
 // updateFunctionConfigurationRequest matches AWS UpdateFunctionConfiguration body.
@@ -217,25 +230,86 @@ func lambdaInvalidParameter(message string) *protocol.AWSError {
 
 // localMountPathRe matches AWS's LocalMountPath constraint: an absolute path
 // directly under /mnt.
-var localMountPathRe = regexp.MustCompile(`^/mnt/[a-zA-Z0-9-_.]+$`)
+var (
+	localMountPathRe = regexp.MustCompile(`^/mnt/[a-zA-Z0-9-_.]+$`)
+	fileSystemARNRe  = regexp.MustCompile(`^(?:arn:aws[a-zA-Z-]*:elasticfilesystem:[a-z]{2}((-gov)|(-iso(b?)))?-[a-z]+-\d{1}:\d{12}:access-point/fsap-[a-f0-9]{17}|arn:aws[-a-z]*:s3files:[0-9a-z-:]+:file-system/fs-[0-9a-f]{17,40}/access-point/fsap-[0-9a-f]{17,40})$`)
+)
+
+const (
+	fileSystemARNConstraint  = `arn:aws[a-zA-Z-]*:elasticfilesystem:[a-z]{2}((-gov)|(-iso(b?)))?-[a-z]+-\d{1}:\d{12}:access-point/fsap-[a-f0-9]{17}$|^arn:aws[-a-z]*:s3files:[0-9a-z-:]+:file-system/fs-[0-9a-f]{17,40}/access-point/fsap-[0-9a-f]{17,40}`
+	localMountPathConstraint = `/mnt/[a-zA-Z0-9-_.]+`
+)
 
 // validateFileSystemConfigs enforces the AWS FileSystemConfig rules shared by
 // CreateFunction and UpdateFunctionConfiguration: at most one config, an EFS
-// access-point ARN, and a /mnt/<name> mount path.
+// or S3 Files access-point ARN, and a /mnt/<name> mount path.
 // https://docs.aws.amazon.com/lambda/latest/api/API_FileSystemConfig.html
 func validateFileSystemConfigs(configs []FileSystemConfig) *protocol.AWSError {
 	if len(configs) == 0 {
 		return nil
 	}
 	if len(configs) > 1 {
-		return lambdaInvalidParameter("FileSystemConfigs can contain at most 1 config.")
+		return smithyLengthConstraint("fileSystemConfigs", len(configs), 1)
 	}
 	fsc := configs[0]
-	if !strings.Contains(fsc.Arn, ":elasticfilesystem:") || !strings.Contains(fsc.Arn, ":access-point/fsap-") {
-		return lambdaInvalidParameter("FileSystemConfigs[0].Arn must be an EFS access point ARN.")
+	if len(fsc.Arn) > 256 || !fileSystemARNRe.MatchString(fsc.Arn) {
+		return smithyPatternConstraint("fileSystemConfigs.1.member.arn", fsc.Arn, fileSystemARNConstraint)
 	}
-	if !localMountPathRe.MatchString(fsc.LocalMountPath) {
-		return lambdaInvalidParameter("LocalMountPath must be an absolute path under /mnt (for example /mnt/efs).")
+	if len(fsc.LocalMountPath) > 160 || !localMountPathRe.MatchString(fsc.LocalMountPath) {
+		return smithyPatternConstraint("fileSystemConfigs.1.member.localMountPath", fsc.LocalMountPath, localMountPathConstraint)
+	}
+	return nil
+}
+
+func smithyIntegerConstraint(member string, value, minimum, maximum int) *protocol.AWSError {
+	constraint := "Member must have value greater than or equal to " + strconv.Itoa(minimum)
+	if value > maximum {
+		constraint = "Member must have value less than or equal to " + strconv.Itoa(maximum)
+	}
+	return lambdaInvalidParameter("1 validation error detected: Value '" + strconv.Itoa(value) + "' at '" + member + "' failed to satisfy constraint: " + constraint)
+}
+
+func smithyLengthConstraint(member string, length, maximum int) *protocol.AWSError {
+	return lambdaInvalidParameter("1 validation error detected: Value '" + strconv.Itoa(length) + "' at '" + member + "' failed to satisfy constraint: Member must have length less than or equal to " + strconv.Itoa(maximum))
+}
+
+func smithyStringLengthConstraint(member, value string, maximum int) *protocol.AWSError {
+	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must have length less than or equal to " + strconv.Itoa(maximum))
+}
+
+func smithyStringMinimumLengthConstraint(member, value string, minimum int) *protocol.AWSError {
+	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must have length greater than or equal to " + strconv.Itoa(minimum))
+}
+
+func smithyPatternConstraint(member, value, pattern string) *protocol.AWSError {
+	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must satisfy regular expression pattern: " + pattern)
+}
+
+func validateVpcConfig(config *vpcConfigRequest) *protocol.AWSError {
+	if config == nil {
+		return nil
+	}
+	if len(config.SubnetIds) > 16 {
+		return smithyLengthConstraint("vpcConfig.subnetIds", len(config.SubnetIds), 16)
+	}
+	if len(config.SecurityGroupIds) > 5 {
+		return smithyLengthConstraint("vpcConfig.securityGroupIds", len(config.SecurityGroupIds), 5)
+	}
+	return nil
+}
+
+func validateImageConfig(config *imageConfigWire) *protocol.AWSError {
+	if config == nil {
+		return nil
+	}
+	if len(config.EntryPoint) > 1500 {
+		return smithyLengthConstraint("imageConfig.entryPoint", len(config.EntryPoint), 1500)
+	}
+	if len(config.Command) > 1500 {
+		return smithyLengthConstraint("imageConfig.command", len(config.Command), 1500)
+	}
+	if len(config.WorkingDirectory) > 1000 {
+		return smithyLengthConstraint("imageConfig.workingDirectory", len(config.WorkingDirectory), 1000)
 	}
 	return nil
 }
@@ -247,16 +321,25 @@ func validateArchitectures(architectures []string) *protocol.AWSError {
 	return nil
 }
 
-func unsupportedFunctionConfigurationField(fields ...struct {
-	name string
-	raw  json.RawMessage
-}) *protocol.AWSError {
+type unsupportedRequestField struct {
+	present bool
+}
+
+func rawRequestField(raw json.RawMessage) unsupportedRequestField {
+	return unsupportedRequestField{present: len(raw) > 0 && string(raw) != "null"}
+}
+
+func stringRequestField(value string) unsupportedRequestField {
+	return unsupportedRequestField{present: value != ""}
+}
+
+func hasUnsupportedRequestField(fields ...unsupportedRequestField) bool {
 	for _, field := range fields {
-		if len(field.raw) > 0 && string(field.raw) != "null" {
-			return lambdaInvalidParameter(field.name + " is not supported by this Lambda emulator.")
+		if field.present {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 // ─── runtime metadata ────────────────────────────────────────────────────────
@@ -338,11 +421,11 @@ func functionToConfig(fn *Function) *functionConfiguration {
 		}
 	}
 	if fn.ImageConfig != nil {
-		cfg.ImageConfig = &imageConfigWire{
+		cfg.ImageConfigResponse = &imageConfigResponseWire{ImageConfig: &imageConfigWire{
 			EntryPoint:       fn.ImageConfig.EntryPoint,
 			Command:          fn.ImageConfig.Command,
 			WorkingDirectory: fn.ImageConfig.WorkingDirectory,
-		}
+		}}
 	}
 	if len(fn.FileSystemConfigs) > 0 {
 		cfg.FileSystemConfigs = fn.FileSystemConfigs
@@ -401,47 +484,25 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("Role"))
 		return
 	}
-	if aerr := unsupportedFunctionConfigurationField(
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"DeadLetterConfig", req.DeadLetterConfig},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"TracingConfig", req.TracingConfig},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"EphemeralStorage", req.EphemeralStorage},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"KMSKeyArn", req.KMSKeyArn},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"SnapStart", req.SnapStart},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"RuntimeManagementConfig", req.RuntimeManagementConfig},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"RecursiveLoop", req.RecursiveLoop},
-	); aerr != nil {
+	if hasUnsupportedRequestField(
+		rawRequestField(req.DeadLetterConfig), rawRequestField(req.TracingConfig),
+		rawRequestField(req.EphemeralStorage), rawRequestField(req.KMSKeyArn),
+		rawRequestField(req.SnapStart), rawRequestField(req.RuntimeManagementConfig),
+		rawRequestField(req.RecursiveLoop),
+	) || (req.Code != nil && hasUnsupportedRequestField(stringRequestField(req.Code.S3ObjectVersion))) {
+		protocol.NotImplementedJSON(w, r)
+		return
+	}
+	if aerr := validateVpcConfig(req.VpcConfig); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	// Reject deprecated runtimes. The check is done only when a runtime is specified
-	// (PackageType=Image functions don't require Runtime).
-	h.log.Debug("create function", zap.String("function", req.FunctionName), zap.String("runtime", req.Runtime))
-	if req.Runtime != "" && deprecatedRuntimes[req.Runtime] {
-		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
-			"The runtime "+req.Runtime+" is no longer supported. Please update your function to a supported runtime.",
-		))
+	if aerr := validateImageConfig(req.ImageConfig); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := validateFileSystemConfigs(req.FileSystemConfigs); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -449,29 +510,14 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Debug("create function", zap.String("function", req.FunctionName), zap.String("runtime", req.Runtime))
 
-	// Duplicate check.
-	existing, aerr := h.ls.getFunction(ctx, req.FunctionName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if existing != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceConflictException",
-			Message:    "Function already exist: " + req.FunctionName,
-			HTTPStatus: http.StatusConflict,
-		})
-		return
-	}
-
 	// Apply AWS defaults.
-	timeout := req.Timeout
-	if timeout <= 0 {
-		timeout = 3
+	timeout := 3
+	if req.Timeout != nil {
+		timeout = *req.Timeout
 	}
-	memorySize := req.MemorySize
-	if memorySize <= 0 {
-		memorySize = 128
+	memorySize := 128
+	if req.MemorySize != nil {
+		memorySize = *req.MemorySize
 	}
 	packageType := req.PackageType
 	if packageType == "" {
@@ -481,12 +527,12 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, lambdaInvalidParameter("1 validation error detected: Value '"+packageType+"' at 'packageType' failed to satisfy constraint: Member must satisfy enum value set: [Zip, Image]"))
 		return
 	}
-	if req.Timeout > 900 {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("1 validation error detected: Value '"+fmt.Sprint(req.Timeout)+"' at 'timeout' failed to satisfy constraint: Member must have value less than or equal to 900"))
+	if req.Timeout != nil && (*req.Timeout < 1 || *req.Timeout > 900) {
+		protocol.WriteJSONError(w, r, smithyIntegerConstraint("timeout", *req.Timeout, 1, 900))
 		return
 	}
-	if req.MemorySize > 0 && (req.MemorySize < 128 || req.MemorySize > 32768) {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("1 validation error detected: Value '"+fmt.Sprint(req.MemorySize)+"' at 'memorySize' failed to satisfy constraint: Member must have value between 128 and 32768"))
+	if req.MemorySize != nil && (*req.MemorySize < 128 || *req.MemorySize > 32768) {
+		protocol.WriteJSONError(w, r, smithyIntegerConstraint("memorySize", *req.MemorySize, 128, 32768))
 		return
 	}
 
@@ -521,6 +567,29 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	}
 	if aerr := validateArchitectures(architectures); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	// Reject deprecated runtimes after modeled request-shape validation. The
+	// check applies only when a runtime is specified (image functions omit it).
+	if req.Runtime != "" && deprecatedRuntimes[req.Runtime] {
+		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
+			"The runtime "+req.Runtime+" is no longer supported. Please update your function to a supported runtime.",
+		))
+		return
+	}
+
+	// Modeled request validation runs before state-dependent service checks.
+	existing, aerr := h.ls.getFunction(ctx, req.FunctionName)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if existing != nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "ResourceConflictException",
+			Message:    "Function already exist: " + req.FunctionName,
+			HTTPStatus: http.StatusConflict,
+		})
 		return
 	}
 
@@ -614,10 +683,6 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(req.FileSystemConfigs) > 0 {
-		if aerr := validateFileSystemConfigs(req.FileSystemConfigs); aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
-			return
-		}
 		fn.FileSystemConfigs = req.FileSystemConfigs
 	}
 	if req.ImageConfig != nil {
@@ -969,6 +1034,10 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
 		return
 	}
+	if hasUnsupportedRequestField(stringRequestField(req.S3ObjectVersion)) {
+		protocol.NotImplementedJSON(w, r)
+		return
+	}
 	if h.cfg.LambdaHotReload {
 		if _, err := validateFunctionHotReloadConfig(fn); err != nil {
 			protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(err.Error()))
@@ -1056,37 +1125,13 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if aerr := unsupportedFunctionConfigurationField(
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"DeadLetterConfig", req.DeadLetterConfig},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"TracingConfig", req.TracingConfig},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"EphemeralStorage", req.EphemeralStorage},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"KMSKeyArn", req.KMSKeyArn},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"SnapStart", req.SnapStart},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"RuntimeManagementConfig", req.RuntimeManagementConfig},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"RecursiveLoop", req.RecursiveLoop},
-	); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+	if hasUnsupportedRequestField(
+		rawRequestField(req.DeadLetterConfig), rawRequestField(req.TracingConfig),
+		rawRequestField(req.EphemeralStorage), rawRequestField(req.KMSKeyArn),
+		rawRequestField(req.SnapStart), rawRequestField(req.RuntimeManagementConfig),
+		rawRequestField(req.RecursiveLoop),
+	) {
+		protocol.NotImplementedJSON(w, r)
 		return
 	}
 	if req.Runtime != nil && deprecatedRuntimes[*req.Runtime] {
@@ -1096,19 +1141,31 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if req.Timeout != nil && (*req.Timeout < 1 || *req.Timeout > 900) {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("Timeout must be between 1 and 900."))
+		protocol.WriteJSONError(w, r, smithyIntegerConstraint("timeout", *req.Timeout, 1, 900))
 		return
 	}
 	if req.MemorySize != nil && (*req.MemorySize < 128 || *req.MemorySize > 32768) {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("MemorySize must be between 128 and 32768."))
+		protocol.WriteJSONError(w, r, smithyIntegerConstraint("memorySize", *req.MemorySize, 128, 32768))
+		return
+	}
+	if aerr := validateVpcConfig(req.VpcConfig); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := validateImageConfig(req.ImageConfig); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := validateFileSystemConfigs(req.FileSystemConfigs); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	if req.Handler != nil && *req.Handler == "" {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("Handler must not be empty."))
+		protocol.WriteJSONError(w, r, smithyPatternConstraint("handler", *req.Handler, `[^\s]+`))
 		return
 	}
 	if req.Role != nil && *req.Role == "" {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("Role must not be empty."))
+		protocol.WriteJSONError(w, r, smithyPatternConstraint("role", *req.Role, `arn:(aws[a-zA-Z-]*)?:iam::\d{12}:role/?[a-zA-Z_0-9+=,.@\-_/]+`))
 		return
 	}
 	previousIdentity := functionInstanceIdentity(fn)
@@ -1187,10 +1244,6 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		if len(req.FileSystemConfigs) == 0 {
 			fn.FileSystemConfigs = nil
 		} else {
-			if aerr := validateFileSystemConfigs(req.FileSystemConfigs); aerr != nil {
-				protocol.WriteJSONError(w, r, aerr)
-				return
-			}
 			fn.FileSystemConfigs = req.FileSystemConfigs
 		}
 	}

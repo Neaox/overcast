@@ -74,18 +74,6 @@ type updateESMRequest struct {
 	ProvisionedPollerConfig        json.RawMessage    `json:"ProvisionedPollerConfig"`
 }
 
-func unsupportedESMProperty(fields ...struct {
-	name string
-	raw  json.RawMessage
-}) *protocol.AWSError {
-	for _, field := range fields {
-		if len(field.raw) > 0 && string(field.raw) != "null" {
-			return lambdaInvalidParameter(field.name + " is not supported by this Lambda emulator.")
-		}
-	}
-	return nil
-}
-
 // listESMResponse is the wire response for ListEventSourceMappings.
 type listESMResponse struct {
 	EventSourceMappings []*EventSourceMapping `json:"EventSourceMappings"`
@@ -98,49 +86,13 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if aerr := unsupportedESMProperty(
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"FunctionResponseTypes", req.FunctionResponseTypes},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"ParallelizationFactor", req.ParallelizationFactor},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"StartingPositionTimestamp", req.StartingPositionTimestamp},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"SourceAccessConfigurations", req.SourceAccessConfigurations},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"SelfManagedEventSource", req.SelfManagedEventSource},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"Topics", req.Topics},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"Queues", req.Queues},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"KmsKeyArn", req.KMSKeyArn},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"MetricsConfig", req.MetricsConfig},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"ProvisionedPollerConfig", req.ProvisionedPollerConfig},
-	); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+	if hasUnsupportedRequestField(
+		rawRequestField(req.FunctionResponseTypes), rawRequestField(req.ParallelizationFactor),
+		rawRequestField(req.StartingPositionTimestamp), rawRequestField(req.SourceAccessConfigurations),
+		rawRequestField(req.SelfManagedEventSource), rawRequestField(req.Topics), rawRequestField(req.Queues),
+		rawRequestField(req.KMSKeyArn), rawRequestField(req.MetricsConfig), rawRequestField(req.ProvisionedPollerConfig),
+	) {
+		protocol.NotImplementedJSON(w, r)
 		return
 	}
 	if req.FunctionName == "" {
@@ -301,33 +253,12 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if aerr := unsupportedESMProperty(
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"FunctionResponseTypes", req.FunctionResponseTypes},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"ParallelizationFactor", req.ParallelizationFactor},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"SourceAccessConfigurations", req.SourceAccessConfigurations},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"KmsKeyArn", req.KMSKeyArn},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"MetricsConfig", req.MetricsConfig},
-		struct {
-			name string
-			raw  json.RawMessage
-		}{"ProvisionedPollerConfig", req.ProvisionedPollerConfig},
-	); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
+	if hasUnsupportedRequestField(
+		rawRequestField(req.FunctionResponseTypes), rawRequestField(req.ParallelizationFactor),
+		rawRequestField(req.SourceAccessConfigurations), rawRequestField(req.KMSKeyArn),
+		rawRequestField(req.MetricsConfig), rawRequestField(req.ProvisionedPollerConfig),
+	) {
+		protocol.NotImplementedJSON(w, r)
 		return
 	}
 

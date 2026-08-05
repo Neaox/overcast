@@ -29,6 +29,7 @@ type functionConfigurationWithEFS struct {
 }
 
 const testAccessPointARN = "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-0123456789abcdef0"
+const testS3FilesAccessPointARN = "arn:aws:s3files:us-east-1:000000000000:file-system/fs-0123456789abcdef0/access-point/fsap-0123456789abcdef0"
 
 func createWithEFS(t *testing.T, srv *helpers.TestServer, name string, configs []fileSystemConfig) *http.Response {
 	t.Helper()
@@ -65,6 +66,19 @@ func TestCreateFunction_fileSystemConfigsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCreateFunction_s3FilesConfigRoundTrip(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := createWithEFS(t, srv, "s3-files-fn", []fileSystemConfig{
+		{Arn: testS3FilesAccessPointARN, LocalMountPath: "/mnt/s3files"},
+	})
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	var created functionConfigurationWithEFS
+	decodeJSON(t, resp, &created)
+	if len(created.FileSystemConfigs) != 1 || created.FileSystemConfigs[0].Arn != testS3FilesAccessPointARN {
+		t.Fatalf("expected S3 Files config echoed on create, got %#v", created.FileSystemConfigs)
+	}
+}
+
 func TestCreateFunction_fileSystemConfigsValidation(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
@@ -78,6 +92,12 @@ func TestCreateFunction_fileSystemConfigsValidation(t *testing.T) {
 		}},
 		{"non access-point arn", []fileSystemConfig{
 			{Arn: "arn:aws:elasticfilesystem:us-east-1:000000000000:file-system/fs-0123456789abcdef0", LocalMountPath: "/mnt/a"},
+		}},
+		{"EFS ARN with trailing data", []fileSystemConfig{
+			{Arn: testAccessPointARN + "/extra", LocalMountPath: "/mnt/a"},
+		}},
+		{"S3 Files ARN with short IDs", []fileSystemConfig{
+			{Arn: "arn:aws:s3files:us-east-1:000000000000:file-system/fs-123/access-point/fsap-456", LocalMountPath: "/mnt/a"},
 		}},
 		{"mount path outside /mnt", []fileSystemConfig{
 			{Arn: testAccessPointARN, LocalMountPath: "/var/data"},

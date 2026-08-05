@@ -58,19 +58,25 @@ type getPolicyResponse struct {
 }
 
 var (
-	statementIDPattern      = regexp.MustCompile(`^[a-zA-Z0-9-_]{1,100}$`)
-	functionNamePattern     = regexp.MustCompile(`^[a-zA-Z0-9-_]{1,64}$`)
-	qualifierPattern        = regexp.MustCompile(`^[a-zA-Z0-9$_-]{1,128}$`)
+	statementIDPattern      = regexp.MustCompile(`^[a-zA-Z0-9-_]+$`)
+	functionNamePattern     = regexp.MustCompile(`^[a-zA-Z0-9-_.]+$`)
+	qualifierPattern        = regexp.MustCompile(`^(?:\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_$]+)$`)
 	permissionActionPattern = regexp.MustCompile(`^(?:\*|lambda:(?:\*|[a-zA-Z]+))$`)
 	sourceAccountPattern    = regexp.MustCompile(`^[0-9]{12}$`)
-	sourceARNPattern        = regexp.MustCompile(`^arn:[a-zA-Z0-9-]+:[a-zA-Z0-9-]+:[^\s]{0,1000}$`)
+	sourceARNPattern        = regexp.MustCompile(`^arn:aws[a-zA-Z0-9-]*:[a-zA-Z0-9-]+:(?:[a-z]{2}(?:-gov)?-[a-z]+-[0-9])?:(?:[0-9]{12})?:.*$`)
 	principalOrgIDPattern   = regexp.MustCompile(`^o-[a-z0-9]{10,32}$`)
 	eventSourceTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 )
 
-func policyValidationError(field string) *protocol.AWSError {
-	return lambdaInvalidParameter("1 validation error detected: Value at '" + field + "' failed to satisfy constraint.")
-}
+const (
+	statementIDConstraint      = `([a-zA-Z0-9-_]+)`
+	permissionActionConstraint = `(lambda:[*]|lambda:[a-zA-Z]+|[*])`
+	principalConstraint        = `[^\s]+`
+	sourceAccountConstraint    = `\d{12}`
+	sourceARNConstraint        = `arn:(aws[a-zA-Z0-9-]*):([a-zA-Z0-9\-])+:([a-z]{2}(-gov)?-[a-z]+-\d{1})?:(\d{12})?:(.*)`
+	principalOrgIDConstraint   = `o-[a-z0-9]{10,32}`
+	eventSourceTokenConstraint = `[a-zA-Z0-9._\-]+`
+)
 
 func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 	if req.Action == "" {
@@ -79,29 +85,53 @@ func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 	if req.Principal == "" {
 		return protocol.ErrMissingParameter("Principal")
 	}
+	if len(req.StatementID) > 100 {
+		return smithyStringLengthConstraint("statementId", req.StatementID, 100)
+	}
 	if !statementIDPattern.MatchString(req.StatementID) {
-		return policyValidationError("statementId")
+		return smithyPatternConstraint("statementId", req.StatementID, statementIDConstraint)
 	}
-	if len(req.Action) > 256 || !permissionActionPattern.MatchString(req.Action) {
-		return policyValidationError("action")
+	if len(req.Action) > 256 {
+		return smithyStringLengthConstraint("action", req.Action, 256)
 	}
-	if len(req.Principal) > 256 || strings.ContainsAny(req.Principal, "\r\n\t ") {
-		return policyValidationError("principal")
+	if !permissionActionPattern.MatchString(req.Action) {
+		return smithyPatternConstraint("action", req.Action, permissionActionConstraint)
+	}
+	if len(req.Principal) > 256 {
+		return smithyStringLengthConstraint("principal", req.Principal, 256)
+	}
+	if strings.ContainsAny(req.Principal, "\r\n\t ") {
+		return smithyPatternConstraint("principal", req.Principal, principalConstraint)
+	}
+	if req.SourceAccount != "" && len(req.SourceAccount) > 12 {
+		return smithyStringLengthConstraint("sourceAccount", req.SourceAccount, 12)
 	}
 	if req.SourceAccount != "" && !sourceAccountPattern.MatchString(req.SourceAccount) {
-		return policyValidationError("sourceAccount")
+		return smithyPatternConstraint("sourceAccount", req.SourceAccount, sourceAccountConstraint)
 	}
-	if req.SourceARN != "" && (len(req.SourceARN) > 1024 || !sourceARNPattern.MatchString(req.SourceARN)) {
-		return policyValidationError("sourceArn")
+	if req.SourceARN != "" && len(req.SourceARN) > 1024 {
+		return smithyStringLengthConstraint("sourceArn", req.SourceARN, 1024)
+	}
+	if req.SourceARN != "" && !sourceARNPattern.MatchString(req.SourceARN) {
+		return smithyPatternConstraint("sourceArn", req.SourceARN, sourceARNConstraint)
+	}
+	if req.PrincipalOrgID != "" && len(req.PrincipalOrgID) < 12 {
+		return smithyStringMinimumLengthConstraint("principalOrgID", req.PrincipalOrgID, 12)
+	}
+	if len(req.PrincipalOrgID) > 34 {
+		return smithyStringLengthConstraint("principalOrgID", req.PrincipalOrgID, 34)
 	}
 	if req.PrincipalOrgID != "" && !principalOrgIDPattern.MatchString(req.PrincipalOrgID) {
-		return policyValidationError("principalOrgID")
+		return smithyPatternConstraint("principalOrgID", req.PrincipalOrgID, principalOrgIDConstraint)
 	}
-	if req.EventSourceToken != "" && (len(req.EventSourceToken) > 256 || !eventSourceTokenPattern.MatchString(req.EventSourceToken)) {
-		return policyValidationError("eventSourceToken")
+	if req.EventSourceToken != "" && len(req.EventSourceToken) > 256 {
+		return smithyStringLengthConstraint("eventSourceToken", req.EventSourceToken, 256)
+	}
+	if req.EventSourceToken != "" && !eventSourceTokenPattern.MatchString(req.EventSourceToken) {
+		return smithyPatternConstraint("eventSourceToken", req.EventSourceToken, eventSourceTokenConstraint)
 	}
 	if req.FunctionURLAuthType != "" && req.FunctionURLAuthType != "NONE" && req.FunctionURLAuthType != "AWS_IAM" {
-		return policyValidationError("functionUrlAuthType")
+		return lambdaInvalidParameter("1 validation error detected: Value '" + req.FunctionURLAuthType + "' at 'functionUrlAuthType' failed to satisfy constraint: Member must satisfy enum value set: [NONE, AWS_IAM]")
 	}
 	return nil
 }
@@ -196,8 +226,12 @@ func (h *Handler) RemovePermission(w http.ResponseWriter, r *http.Request) {
 	identifier := chi.URLParam(r, "name")
 	name, qualifier := policyFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
 	statementID := chi.URLParam(r, "statementId")
+	if len(statementID) > 100 {
+		protocol.WriteJSONError(w, r, smithyStringLengthConstraint("statementId", statementID, 100))
+		return
+	}
 	if !statementIDPattern.MatchString(statementID) {
-		protocol.WriteJSONError(w, r, policyValidationError("statementId"))
+		protocol.WriteJSONError(w, r, smithyPatternConstraint("statementId", statementID, statementIDConstraint))
 		return
 	}
 	if _, aerr := h.validatePolicyTarget(r.Context(), identifier, name, qualifier); aerr != nil {
@@ -235,8 +269,20 @@ func (h *Handler) RemovePermission(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qualifier string) (*Function, *protocol.AWSError) {
-	if len(identifier) > 140 || !functionNamePattern.MatchString(name) || (qualifier != "" && !qualifierPattern.MatchString(qualifier)) {
-		return nil, policyValidationError("functionName")
+	if len(identifier) > 256 {
+		return nil, smithyStringLengthConstraint("functionName", identifier, 256)
+	}
+	if len(name) > 64 {
+		return nil, smithyStringLengthConstraint("functionName", name, 64)
+	}
+	if !functionNamePattern.MatchString(name) {
+		return nil, smithyPatternConstraint("functionName", identifier, `(arn:(aws[a-zA-Z-]*)?:lambda:)?([a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}:)?(\d{12}:)?(function:)?([a-zA-Z0-9-_\.]+)(:(\$LATEST(\.PUBLISHED)?|[a-zA-Z0-9-_]+))?`)
+	}
+	if len(qualifier) > 128 {
+		return nil, smithyStringLengthConstraint("qualifier", qualifier, 128)
+	}
+	if qualifier != "" && !qualifierPattern.MatchString(qualifier) {
+		return nil, smithyPatternConstraint("qualifier", qualifier, `\$(LATEST(\.PUBLISHED)?)|[a-zA-Z0-9-_$]+`)
 	}
 	fn, aerr := h.ls.getFunction(ctx, name)
 	if aerr != nil {

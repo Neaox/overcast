@@ -12,6 +12,7 @@ package lambda
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,11 +155,11 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if req.ReservedConcurrentExecutions == nil {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("ReservedConcurrentExecutions is required."))
+		protocol.WriteJSONError(w, r, lambdaInvalidParameter("1 validation error detected: Value null at 'reservedConcurrentExecutions' failed to satisfy constraint: Member must not be null"))
 		return
 	}
 	if *req.ReservedConcurrentExecutions < 0 {
-		protocol.WriteJSONError(w, r, lambdaInvalidParameter("ReservedConcurrentExecutions must be greater than or equal to 0."))
+		protocol.WriteJSONError(w, r, lambdaInvalidParameter("1 validation error detected: Value '"+strconv.Itoa(*req.ReservedConcurrentExecutions)+"' at 'reservedConcurrentExecutions' failed to satisfy constraint: Member must have value greater than or equal to 0"))
 		return
 	}
 
