@@ -1,1 +1,0 @@
-* [cloudformation/lambda] Lambda resources now preserve supported function and event-source properties, reject unsupported fields before mutation, roll back partial updates, and store validated resource policies safely

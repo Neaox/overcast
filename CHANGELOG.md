@@ -82,6 +82,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [cloudformation/s3] `AWS::S3::Bucket` now applies lifecycle, versioning, notification, encryption, tag, CORS, and website properties through S3, including in-place updates, removals, and rollback restoration. S3 lifecycle configuration now validates and round-trips `NoncurrentVersionExpiration` while true version-history execution remains tracked separately.
 
+- [cloudformation/lambda] Lambda resources now preserve supported function and event-source properties, reject unsupported fields before mutation, roll back partial updates, and store validated resource policies safely
+
 - [sns/cloudformation] CloudFormation SNS topics and subscriptions now forward configured SNS attributes, including subscription filtering and raw SQS delivery (#522)
 
 - [ecs/web] cluster summaries and topology reflect current resources, while stopped tasks remain inspectable with AWS-compatible status, reason, and one-hour retention metadata
