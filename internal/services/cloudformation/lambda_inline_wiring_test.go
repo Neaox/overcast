@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"reflect"
@@ -160,7 +161,7 @@ func TestLambdaProvisionerUpdateCompensatesPartialTagFailure(t *testing.T) {
 	}
 }
 
-func TestLambdaProvisionerAuxiliarySupportCheckIsNonMutating(t *testing.T) {
+func TestLambdaProvisionerAuxiliarySupportCheckFailsWithoutProbingService(t *testing.T) {
 	router := &captureRouter{}
 	_, _, err := (&lambdaFunctionHandler{}).Create(context.Background(), router, nil, map[string]any{
 		"FunctionName":            "auxiliary-function",
@@ -169,8 +170,128 @@ func TestLambdaProvisionerAuxiliarySupportCheckIsNonMutating(t *testing.T) {
 	if err == nil {
 		t.Fatal("Create error = nil, want unsupported auxiliary property")
 	}
-	if len(router.requests) != 1 || router.requests[0].method != http.MethodGet || router.requests[0].path != "/2021-07-20/functions/auxiliary-function/runtime-management-config" {
-		t.Fatalf("requests = %#v, want one non-mutating support read", router.requests)
+	if len(router.requests) != 0 {
+		t.Fatalf("requests = %#v, want no speculative service probe", router.requests)
+	}
+}
+
+func TestLambdaProvisionerUpdateTreatsFunctionNameRemovalAsReplacement(t *testing.T) {
+	_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), &captureRouter{}, nil, "named-function",
+		map[string]any{}, map[string]any{"FunctionName": "named-function"}, &resolveContext{Region: "us-east-1"})
+	if !errors.Is(err, errReplacementRequired) {
+		t.Fatalf("Update error = %v, want errReplacementRequired", err)
+	}
+}
+
+func TestLambdaProvisionerUpdateRejectsRequiredPropertyRemoval(t *testing.T) {
+	tests := []struct {
+		name     string
+		property string
+		oldProps map[string]any
+		newProps map[string]any
+	}{
+		{name: "role", property: "Role", oldProps: map[string]any{"Role": "arn:aws:iam::000000000000:role/r"}, newProps: map[string]any{}},
+		{name: "code", property: "Code", oldProps: map[string]any{"Code": map[string]any{"ZipFile": "old"}}, newProps: map[string]any{}},
+		{name: "zip runtime", property: "Runtime", oldProps: map[string]any{"PackageType": "Zip", "Runtime": "nodejs22.x"}, newProps: map[string]any{"PackageType": "Zip"}},
+		{name: "zip handler", property: "Handler", oldProps: map[string]any{"PackageType": "Zip", "Handler": "index.handler"}, newProps: map[string]any{"PackageType": "Zip"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &captureRouter{}
+			_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, "function", tc.newProps, tc.oldProps, &resolveContext{Region: "us-east-1"})
+			var terminal updateFailure
+			if !errors.As(err, &terminal) || !strings.Contains(err.Error(), tc.property) {
+				t.Fatalf("Update error = %v, want terminal missing-%s failure", err, tc.property)
+			}
+			if len(router.requests) != 0 {
+				t.Fatalf("requests = %#v, want validation before service mutation", router.requests)
+			}
+		})
+	}
+}
+
+func TestLambdaProvisionerUpdateDelegatesEmptyCodeObject(t *testing.T) {
+	router := &captureRouter{}
+	_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, "function",
+		map[string]any{"Code": map[string]any{}},
+		map[string]any{"Code": map[string]any{"ZipFile": "old"}},
+		&resolveContext{Region: "us-east-1", LogicalID: "Function"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(router.requests) != 1 || router.requests[0].method != http.MethodPut ||
+		router.requests[0].path != "/2015-03-31/functions/function/code" || len(router.requests[0].body) != 0 {
+		t.Fatalf("requests = %#v, want delegated PUT with empty body object", router.requests)
+	}
+}
+
+func TestLambdaProvisionerUpdateReconcilesStackOnlyTagChanges(t *testing.T) {
+	const tagPath = "/2017-03-31/tags/arn:aws:lambda:us-east-1:000000000000:function:Stack-Function"
+	router := &captureRouter{}
+	props := map[string]any{}
+	_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, "Stack-Function", props, props, &resolveContext{
+		Region: "us-east-1", AccountID: "000000000000",
+		StackTags: []Tag{{Key: "stage", Value: "new"}}, PreviousStackTags: []Tag{{Key: "stage", Value: "old"}},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(router.requests) != 1 || router.requests[0].path != tagPath || router.requests[0].body["Tags"].(map[string]any)["stage"] != "new" {
+		t.Fatalf("requests = %#v, want stack tag reconciliation", router.requests)
+	}
+}
+
+func TestLambdaProvisionerUpdateRollsBackStackOnlyTagChanges(t *testing.T) {
+	const (
+		tagPath         = "/2017-03-31/tags/arn:aws:lambda:us-east-1:000000000000:function:Stack-Function"
+		concurrencyPath = "/2017-10-31/functions/Stack-Function/concurrency"
+	)
+	router := &captureRouter{failPath: concurrencyPath}
+	oldProps := map[string]any{"ReservedConcurrentExecutions": 1}
+	newProps := map[string]any{"ReservedConcurrentExecutions": 2}
+	_, _, err := (&lambdaFunctionHandler{}).Update(context.Background(), router, nil, "Stack-Function", newProps, oldProps, &resolveContext{
+		Region: "us-east-1", AccountID: "000000000000",
+		StackTags: []Tag{{Key: "stage", Value: "new"}}, PreviousStackTags: []Tag{{Key: "stage", Value: "old"}},
+	})
+	if err == nil {
+		t.Fatal("Update error = nil, want concurrency failure")
+	}
+	if got, want := capturedPaths(router.requests), []string{tagPath, concurrencyPath, tagPath}; !slices.Equal(got, want) {
+		t.Fatalf("request paths = %v, want %v", got, want)
+	}
+	if restored := router.requests[2].body["Tags"].(map[string]any)["stage"]; restored != "old" {
+		t.Fatalf("restored stack tag = %v, want old", restored)
+	}
+}
+
+func TestLambdaResourcePropertiesHashIncludesEffectiveStackTags(t *testing.T) {
+	props := map[string]any{"Code": map[string]any{"ZipFile": "same"}}
+	for _, resourceType := range []string{"AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping"} {
+		oldHash := hashResourceProperties(resourceType, props, []Tag{{Key: "stage", Value: "old"}})
+		newHash := hashResourceProperties(resourceType, props, []Tag{{Key: "stage", Value: "new"}})
+		if oldHash == newHash {
+			t.Errorf("%s resource hash did not change with propagated stack tags", resourceType)
+		}
+	}
+	if got, want := hashResourceProperties("AWS::SQS::Queue", props, []Tag{{Key: "stage", Value: "old"}}), hashResourceProperties("AWS::SQS::Queue", props, []Tag{{Key: "stage", Value: "new"}}); got != want {
+		t.Fatalf("unrelated resource hash changed with stack tags: %q != %q", got, want)
+	}
+}
+
+func TestLambdaResourcePropertiesMatchMigratesLegacyHashesWithoutChurn(t *testing.T) {
+	props := map[string]any{"Code": map[string]any{"ZipFile": "same"}}
+	legacyHash := hashProps(props)
+	if !resourcePropertiesMatch(legacyHash, "AWS::Lambda::Function", props,
+		[]Tag{{Key: "stage", Value: "old"}}, []Tag{{Key: "stage", Value: "old"}}) {
+		t.Fatal("unchanged effective tags did not match legacy Lambda hash")
+	}
+	if resourcePropertiesMatch(legacyHash, "AWS::Lambda::Function", props,
+		[]Tag{{Key: "stage", Value: "new"}}, []Tag{{Key: "stage", Value: "old"}}) {
+		t.Fatal("changed effective tags incorrectly matched legacy Lambda hash")
+	}
+	if resourcePropertiesMatch("", "AWS::Lambda::Function", props,
+		[]Tag{{Key: "stage", Value: "new"}}, []Tag{{Key: "stage", Value: "old"}}) {
+		t.Fatal("changed effective tags incorrectly matched empty legacy Lambda hash")
 	}
 }
 

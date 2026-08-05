@@ -219,6 +219,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
 		return
 	}
+	previousTags := append([]Tag(nil), stack.Tags...)
 
 	templateBody, tplErr := h.resolveTemplateBody(r)
 	if tplErr != nil {
@@ -236,9 +237,8 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	if len(params) > 0 {
 		stack.Parameters = params
 	}
-	tags := collectTags(r)
-	if len(tags) > 0 {
-		stack.Tags = tags
+	if tagsParameterPresent(r) {
+		applyStackTags(stack, collectTags(r), true)
 	}
 
 	stack.TemplateBody = templateBody
@@ -252,7 +252,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.prov.updateStack(stack, tmpl, nil)
+	h.prov.updateStack(stack, tmpl, previousTags, nil)
 
 	writeCFNResponse(w, r, "UpdateStackResponse", "UpdateStackResult", stackIdResult{StackId: stack.StackID})
 }
@@ -514,6 +514,7 @@ func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
 		TemplateBody:    templateBody,
 		Parameters:      collectParameters(r),
 		Tags:            collectTags(r),
+		TagsSet:         tagsParameterPresent(r),
 		Capabilities:    collectCapabilities(r),
 		Status:          ChangeSetStatusCreateComplete,
 		ChangeSetType:   changeSetType,
@@ -618,11 +619,12 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply change set parameters/tags to stack.
+	previousTags := append([]Tag(nil), stack.Tags...)
 	if len(cs.Parameters) > 0 {
 		stack.Parameters = cs.Parameters
 	}
-	if len(cs.Tags) > 0 {
-		stack.Tags = cs.Tags
+	if cs.TagsSet || len(cs.Tags) > 0 {
+		applyStackTags(stack, cs.Tags, true)
 	}
 	stack.TemplateBody = cs.TemplateBody
 
@@ -640,7 +642,7 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
-		h.prov.updateStack(stack, tmpl, h.prov.completeChangeSet(cs))
+		h.prov.updateStack(stack, tmpl, previousTags, h.prov.completeChangeSet(cs))
 	}
 
 	writeCFNResponse(w, r, "ExecuteChangeSetResponse", "ExecuteChangeSetResult", nil)
@@ -1045,6 +1047,26 @@ func collectTags(r *http.Request) []Tag {
 		tags = append(tags, Tag{Key: key, Value: val})
 	}
 	return tags
+}
+
+func tagsParameterPresent(r *http.Request) bool {
+	_ = r.ParseForm()
+	if _, ok := r.Form["Tags"]; ok {
+		return true
+	}
+	for key := range r.Form {
+		if strings.HasPrefix(key, "Tags.member.") {
+			return true
+		}
+	}
+	return false
+}
+
+func applyStackTags(stack *Stack, tags []Tag, present bool) {
+	if !present {
+		return
+	}
+	stack.Tags = append([]Tag(nil), tags...)
 }
 
 func collectCapabilities(r *http.Request) []string {

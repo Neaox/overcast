@@ -2,6 +2,7 @@ package cloudformation
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"reflect"
 	"slices"
@@ -51,6 +52,58 @@ func TestLambdaEventSourceMappingUpdateForwardsInPlaceProperties(t *testing.T) {
 		if got := request.body[key]; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s = %#v, want %#v", key, got, want)
 		}
+	}
+}
+
+func TestLambdaEventSourceMappingUpdateReconcilesStackOnlyTagChanges(t *testing.T) {
+	const id = "84d6e94f-372a-4c5e-9d39-6fdf46e15432"
+	router := &captureRouter{}
+	props := map[string]any{"EventSourceArn": "arn:aws:sqs:us-east-1:000000000000:queue"}
+	_, _, err := (&lambdaEventSourceMappingHandler{}).Update(context.Background(), router, nil, id, props, props, &resolveContext{
+		Region: "us-east-1", AccountID: "000000000000",
+		StackTags: []Tag{{Key: "stage", Value: "new"}}, PreviousStackTags: []Tag{{Key: "stage", Value: "old"}},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(router.requests) != 1 || router.requests[0].body["Tags"].(map[string]any)["stage"] != "new" {
+		t.Fatalf("requests = %#v, want stack tag reconciliation", router.requests)
+	}
+}
+
+func TestLambdaEventSourceMappingUpdateRollsBackStackOnlyTagChanges(t *testing.T) {
+	const (
+		id          = "84d6e94f-372a-4c5e-9d39-6fdf46e15432"
+		mappingPath = "/2015-03-31/event-source-mappings/" + id
+		tagPath     = "/2017-03-31/tags/arn:aws:lambda:us-east-1:000000000000:event-source-mapping:" + id
+	)
+	router := &captureRouter{failPath: mappingPath}
+	oldProps := map[string]any{"EventSourceArn": "arn:aws:sqs:us-east-1:000000000000:queue", "BatchSize": 10}
+	newProps := map[string]any{"EventSourceArn": "arn:aws:sqs:us-east-1:000000000000:queue", "BatchSize": 20}
+	_, _, err := (&lambdaEventSourceMappingHandler{}).Update(context.Background(), router, nil, id, newProps, oldProps, &resolveContext{
+		Region: "us-east-1", AccountID: "000000000000",
+		StackTags: []Tag{{Key: "stage", Value: "new"}}, PreviousStackTags: []Tag{{Key: "stage", Value: "old"}},
+	})
+	if err == nil {
+		t.Fatal("Update error = nil, want mapping failure")
+	}
+	if got, want := capturedPaths(router.requests), []string{tagPath, mappingPath, tagPath}; !slices.Equal(got, want) {
+		t.Fatalf("request paths = %v, want %v", got, want)
+	}
+	if restored := router.requests[2].body["Tags"].(map[string]any)["stage"]; restored != "old" {
+		t.Fatalf("restored stack tag = %v, want old", restored)
+	}
+}
+
+func TestLambdaEventSourceMappingUpdateFailureIsTerminal(t *testing.T) {
+	const id = "84d6e94f-372a-4c5e-9d39-6fdf46e15432"
+	path := "/2015-03-31/event-source-mappings/" + id
+	oldProps := map[string]any{"EventSourceArn": "arn:aws:sqs:us-east-1:000000000000:queue", "BatchSize": 10}
+	newProps := map[string]any{"EventSourceArn": "arn:aws:sqs:us-east-1:000000000000:queue", "BatchSize": 20}
+	_, _, err := (&lambdaEventSourceMappingHandler{}).Update(context.Background(), &captureRouter{failPath: path}, nil, id, newProps, oldProps, &resolveContext{Region: "us-east-1"})
+	var terminal updateFailure
+	if !errors.As(err, &terminal) {
+		t.Fatalf("Update error = %v, want terminal updateFailure", err)
 	}
 }
 

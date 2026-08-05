@@ -929,16 +929,16 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 		}
 	}
 
-	tagsChanged := !reflect.DeepEqual(props["Tags"], oldProps["Tags"])
+	tagsChanged := !reflect.DeepEqual(props["Tags"], oldProps["Tags"]) || !reflect.DeepEqual(rCtx.StackTags, rCtx.PreviousStackTags)
 	tagsApplied := false
 	tagARN := protocol.ARN(rCtx.Region, rCtx.AccountID, "lambda", "event-source-mapping:"+physicalID)
 	if tagsChanged {
 		var err error
-		tagsApplied, err = updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.StackTags, props["Tags"], oldProps["Tags"])
+		tagsApplied, err = updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.StackTags, rCtx.PreviousStackTags, props["Tags"], oldProps["Tags"])
 		if err != nil {
 			var compensationErr error
 			if tagsApplied {
-				_, compensationErr = updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.StackTags, oldProps["Tags"], props["Tags"])
+				_, compensationErr = updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.PreviousStackTags, rCtx.StackTags, oldProps["Tags"], props["Tags"])
 			}
 			return "", nil, failUpdate(errors.Join(err, compensationErr))
 		}
@@ -995,10 +995,10 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 		path := fmt.Sprintf("/2015-03-31/event-source-mappings/%s", physicalID)
 		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, path, "application/json", data); err != nil {
 			if tagsApplied {
-				_, compensationErr := updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.StackTags, oldProps["Tags"], props["Tags"])
+				_, compensationErr := updateLambdaTags(ctx, router, rCtx.Region, tagARN, rCtx.PreviousStackTags, rCtx.StackTags, oldProps["Tags"], props["Tags"])
 				return "", nil, failUpdate(errors.Join(fmt.Errorf("UpdateEventSourceMapping: %w", err), compensationErr))
 			}
-			return "", nil, fmt.Errorf("UpdateEventSourceMapping: %w", err)
+			return "", nil, failUpdate(fmt.Errorf("UpdateEventSourceMapping: %w", err))
 		}
 	}
 

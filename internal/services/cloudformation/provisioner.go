@@ -202,7 +202,7 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 		// anyway would persist the literal "{{resolve:...}}" text as the
 		// property's value, which every service downstream then treats as data.
 		props, recordedProps, provErr := p.resolveProperties(res, rCtx)
-		propsHash := hashProps(recordedProps)
+		propsHash := hashResourceProperties(res.Type, recordedProps, stack.Tags)
 		resStart := p.clk.Now()
 		var physID string
 		if provErr == nil {
@@ -283,13 +283,13 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 
 // ── Update stack (async) ───────────────────────────────────────────────────
 
-func (p *provisioner) updateStack(stack *Stack, tmpl *Template, onComplete stackCompletionFunc) {
+func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previousStackTags []Tag, onComplete stackCompletionFunc) {
 	done := make(chan struct{})
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		defer close(done)
-		p.updateStackResources(stack, tmpl)
+		p.updateStackResources(stack, tmpl, previousStackTags)
 		if onComplete != nil {
 			onComplete(p.regionCtx(stack.Region), stack)
 		}
@@ -297,10 +297,11 @@ func (p *provisioner) updateStack(stack *Stack, tmpl *Template, onComplete stack
 	p.awaitBriefly(done)
 }
 
-func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
+func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previousStackTags []Tag) {
 	ctx := p.regionCtx(stack.Region)
 
 	rCtx := p.buildResolveContext(stack, tmpl)
+	rCtx.PreviousStackTags = append([]Tag(nil), previousStackTags...)
 
 	// Emit the initial stack UPDATE_IN_PROGRESS event.
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateInProgress, "User Initiated")
@@ -349,7 +350,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 		// As in the create path: a reference that will not resolve fails the
 		// resource rather than being written into it verbatim.
 		props, recordedProps, refErr := p.resolveProperties(res, rCtx)
-		propsHash := hashProps(recordedProps)
+		propsHash := hashResourceProperties(res.Type, recordedProps, stack.Tags)
 
 		if old, ok := existing[logicalID]; ok && old.Type == res.Type {
 			// Same logical ID and type. Diff the resolved properties and
@@ -363,7 +364,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template) {
 				rCtx.Attributes[logicalID] = old.Attributes
 			}
 
-			if refErr == nil && (old.PropertiesHash == "" || old.PropertiesHash == propsHash) {
+			if refErr == nil && resourcePropertiesMatch(old.PropertiesHash, res.Type, recordedProps, stack.Tags, previousStackTags) {
 				// No change, or legacy resource without a recorded hash —
 				// treat as unchanged. (Stacks created before property
 				// hashing was added have no recorded hash; without a
@@ -888,6 +889,48 @@ func hashProps(props map[string]any) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// hashResourceProperties includes only tags CloudFormation propagates outside
+// the resource property map. Resource-level tags are already present in props;
+// merging here also avoids updates when they override a changed stack tag.
+func hashResourceProperties(resourceType string, props map[string]any, stackTags []Tag) string {
+	switch resourceType {
+	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping":
+		return hashProps(map[string]any{
+			"Properties":    props,
+			"EffectiveTags": mergeLambdaTags(stackTags, props["Tags"]),
+		})
+	case "AWS::CloudFormation::Stack":
+		return hashProps(map[string]any{
+			"Properties":    props,
+			"EffectiveTags": mergeNestedStackTags(stackTags, props["Tags"]),
+		})
+	default:
+		return hashProps(props)
+	}
+}
+
+func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any, stackTags, previousStackTags []Tag) bool {
+	if oldHash == hashResourceProperties(resourceType, props, stackTags) {
+		return true
+	}
+	// Hashes written before propagated-tag tracking contained only the property
+	// map. Preserve their no-op behavior when effective tags did not change,
+	// while still reconciling a real stack-only tag delta.
+	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::CloudFormation::Stack" {
+		return oldHash == ""
+	}
+	var currentTags, previousTags any
+	if resourceType == "AWS::CloudFormation::Stack" {
+		currentTags = mergeNestedStackTags(stackTags, props["Tags"])
+		previousTags = mergeNestedStackTags(previousStackTags, props["Tags"])
+	} else {
+		currentTags = mergeLambdaTags(stackTags, props["Tags"])
+		previousTags = mergeLambdaTags(previousStackTags, props["Tags"])
+	}
+	effectiveTagsUnchanged := reflect.DeepEqual(currentTags, previousTags)
+	return effectiveTagsUnchanged && (oldHash == "" || oldHash == hashProps(props))
+}
+
 // deleteResource tears down a provisioned resource.
 //
 // It reports only a refusal by the resource itself (errDeletionBlocked); every
@@ -1243,6 +1286,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 	}
 	restored = append(restored, orphaned...)
 	stack.Resources = restored
+	stack.Tags = append([]Tag(nil), rCtx.PreviousStackTags...)
 
 	if rollbackFailed {
 		stack.Status = StatusUpdateRollbackFailed
@@ -1280,7 +1324,10 @@ func (p *provisioner) rollbackInPlaceUpdate(ctx context.Context, stack *Stack, a
 	}
 
 	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateInProgress, "Update rollback initiated")
-	physicalID, _, err := updater.Update(ctx, router, p.cfg, previous.PhysicalID, previous.Properties, attempted.Properties, rCtx)
+	rollbackCtx := *rCtx
+	rollbackCtx.StackTags = append([]Tag(nil), rCtx.PreviousStackTags...)
+	rollbackCtx.PreviousStackTags = append([]Tag(nil), rCtx.StackTags...)
+	physicalID, _, err := updater.Update(ctx, router, p.cfg, previous.PhysicalID, previous.Properties, attempted.Properties, &rollbackCtx)
 	if err == nil && physicalID != "" && physicalID != previous.PhysicalID {
 		err = fmt.Errorf("rollback changed physical ID from %q to %q", previous.PhysicalID, physicalID)
 	}
@@ -2883,7 +2930,7 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	if funcName == "" {
 		funcName = rCtx.generatedName()
 	}
-	if err := checkLambdaFunctionAuxiliaryPropertySupport(ctx, router, rCtx.Region, funcName, props, nil); err != nil {
+	if err := checkLambdaFunctionAuxiliaryPropertySupport(props, nil); err != nil {
 		return "", nil, err
 	}
 
@@ -2997,8 +3044,9 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 	if i := strings.LastIndex(physicalID, ":"); i >= 0 {
 		name = physicalID[i+1:]
 	}
-	// FunctionName is immutable: a rename forces replacement.
-	if newName, _ := props["FunctionName"].(string); newName != "" && newName != name {
+	// FunctionName is immutable. Adding, changing, or explicitly removing it
+	// all change the physical-name contract and therefore require replacement.
+	if !reflect.DeepEqual(props["FunctionName"], oldProps["FunctionName"]) {
 		return "", nil, errReplacementRequired
 	}
 	packageType, _ := props["PackageType"].(string)
@@ -3018,7 +3066,10 @@ func (h *lambdaFunctionHandler) Update(ctx context.Context, router http.Handler,
 			return "", nil, errReplacementRequired
 		}
 	}
-	if err := checkLambdaFunctionAuxiliaryPropertySupport(ctx, router, rCtx.Region, name, props, oldProps); err != nil {
+	if err := validateLambdaFunctionRequiredPropertyRemovals(props, oldProps, packageType, rCtx.LogicalID); err != nil {
+		return "", nil, failUpdate(err)
+	}
+	if err := checkLambdaFunctionAuxiliaryPropertySupport(props, oldProps); err != nil {
 		return "", nil, failUpdate(err)
 	}
 
@@ -3052,7 +3103,7 @@ type lambdaUpdateProgress struct {
 // and concurrency operations.
 func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, lambdaUpdateProgress, error) {
 	var completed lambdaUpdateProgress
-	applied, err := updateLambdaTags(ctx, router, rCtx.Region, protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name), rCtx.StackTags, props["Tags"], prior["Tags"])
+	applied, err := updateLambdaTags(ctx, router, rCtx.Region, protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name), rCtx.StackTags, rCtx.PreviousStackTags, props["Tags"], prior["Tags"])
 	completed.tags = applied
 	if err != nil {
 		return "", completed, err
@@ -3094,7 +3145,7 @@ func (h *lambdaFunctionHandler) compensateUpdate(ctx context.Context, router htt
 		}
 	}
 	if completed.tags {
-		if _, err := updateLambdaTags(ctx, router, rCtx.Region, protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name), rCtx.StackTags, props["Tags"], prior["Tags"]); err != nil {
+		if _, err := updateLambdaTags(ctx, router, rCtx.Region, protocol.LambdaARN(rCtx.Region, rCtx.AccountID, name), rCtx.PreviousStackTags, rCtx.StackTags, props["Tags"], prior["Tags"]); err != nil {
 			compensationErr = errors.Join(compensationErr, err)
 		}
 	}
@@ -3153,7 +3204,7 @@ func (h *lambdaFunctionHandler) updateCode(ctx context.Context, router http.Hand
 	}
 	// CFN templates supply ZipFile as inline source; UpdateFunctionCode expects
 	// a base64 zip archive.
-	if code, ok := props["Code"].(map[string]any); ok && len(code) > 0 {
+	if code, ok := props["Code"].(map[string]any); ok {
 		body := map[string]any{}
 		if zf, ok := code["ZipFile"].(string); ok {
 			runtime, _ := props["Runtime"].(string)
@@ -3189,14 +3240,12 @@ func (h *lambdaFunctionHandler) updateCode(ctx context.Context, router http.Hand
 		if publish, _ := props["PublishToLatestPublished"].(bool); publish {
 			body["PublishTo"] = "LATEST_PUBLISHED"
 		}
-		if len(body) > 0 {
-			data, _ := json.Marshal(body)
-			_, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/code", "application/json", data)
-			if err != nil {
-				return false, fmt.Errorf("lambda UpdateFunctionCode: %w", err)
-			}
-			return true, nil
+		data, _ := json.Marshal(body)
+		_, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/code", "application/json", data)
+		if err != nil {
+			return false, fmt.Errorf("lambda UpdateFunctionCode: %w", err)
 		}
+		return true, nil
 	}
 	return false, nil
 }
@@ -3222,32 +3271,40 @@ func (h *lambdaFunctionHandler) updateCodeSigningConfig(ctx context.Context, rou
 	return true, nil
 }
 
-func checkLambdaFunctionAuxiliaryPropertySupport(ctx context.Context, router http.Handler, region, name string, props, prior map[string]any) error {
-	operations := []struct {
-		property string
-		path     string
-	}{
-		{property: "RuntimeManagementConfig", path: "/2021-07-20/functions/" + url.PathEscape(name) + "/runtime-management-config"},
-		{property: "RecursiveLoop", path: "/2024-08-31/functions/" + url.PathEscape(name) + "/recursion-config"},
-		{property: "FunctionScalingConfig", path: "/2025-11-30/functions/" + url.PathEscape(name) + "/function-scaling-config"},
-	}
-	for _, operation := range operations {
-		if reflect.DeepEqual(props[operation.property], prior[operation.property]) {
+func checkLambdaFunctionAuxiliaryPropertySupport(props, prior map[string]any) error {
+	for _, property := range []string{"RuntimeManagementConfig", "RecursiveLoop", "FunctionScalingConfig"} {
+		if reflect.DeepEqual(props[property], prior[property]) {
 			continue
 		}
-		if _, err := internalRequest(ctx, router, region, http.MethodGet, operation.path, "", nil); err != nil {
-			return fmt.Errorf("lambda %s: %w", operation.property, err)
-		}
-		// A successful non-mutating read means the service gained support, but the
-		// CFN write phase still needs explicit update tracking and compensation.
-		return fmt.Errorf("lambda %s unexpectedly succeeded; CloudFormation update wiring is incomplete", operation.property)
+		return fmt.Errorf("AWS::Lambda::Function property %s is not supported by CloudFormation provisioning", property)
 	}
 	return nil
 }
 
-func updateLambdaTags(ctx context.Context, router http.Handler, region, resourceARN string, stackTags []Tag, rawTags, rawPrior any) (bool, error) {
+func validateLambdaFunctionRequiredPropertyRemovals(props, prior map[string]any, packageType, logicalID string) error {
+	required := []string{"Role", "Code"}
+	if packageType == "Zip" {
+		required = append(required, "Runtime", "Handler")
+	}
+	for _, property := range required {
+		if _, existed := prior[property]; !existed {
+			continue
+		}
+		if value, present := props[property]; present && value != nil && fmt.Sprint(value) != "" {
+			continue
+		}
+		resource := logicalID
+		if resource == "" {
+			resource = "AWS::Lambda::Function"
+		}
+		return fmt.Errorf("Properties validation failed for resource %s with message: #: required key [%s] not found", resource, property)
+	}
+	return nil
+}
+
+func updateLambdaTags(ctx context.Context, router http.Handler, region, resourceARN string, stackTags, priorStackTags []Tag, rawTags, rawPrior any) (bool, error) {
 	tags := mergeLambdaTags(stackTags, rawTags)
-	prior := mergeLambdaTags(stackTags, rawPrior)
+	prior := mergeLambdaTags(priorStackTags, rawPrior)
 	added := make(map[string]string)
 	for key, value := range tags {
 		if prior[key] != value {
@@ -4060,6 +4117,7 @@ func (h *nestedStackHandler) Create(ctx context.Context, router http.Handler, cf
 		CreatedAt:     now,
 		Region:        rCtx.Region,
 		TemplateBody:  tmplBody,
+		Tags:          mergeNestedStackTags(rCtx.StackTags, props["Tags"]),
 	}
 
 	// Store the child stack so it appears in ListStacks/DescribeStacks.
@@ -4104,7 +4162,7 @@ func (h *nestedStackHandler) Delete(ctx context.Context, _ http.Handler, _ *conf
 	return nil
 }
 
-func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	childName := stackNameFromARN(physicalID)
 	if childName == "" {
 		return physicalID, nil, nil
@@ -4143,12 +4201,17 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 
 	childStack.TemplateBody = tmplBody
 	childStack.Status = StatusUpdateInProgress
+	previousChildTags := append([]Tag(nil), childStack.Tags...)
+	if previousChildTags == nil {
+		previousChildTags = mergeNestedStackTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	}
+	childStack.Tags = mergeNestedStackTags(rCtx.StackTags, props["Tags"])
 
 	if err := h.p.store.putStack(storeCtx, childStack); err != nil {
 		return "", nil, fmt.Errorf("nested stack update store: %w", err)
 	}
 
-	h.p.updateStackResources(childStack, tmpl)
+	h.p.updateStackResources(childStack, tmpl, previousChildTags)
 
 	if childStack.Status != StatusUpdateComplete {
 		return "", nil, fmt.Errorf("nested stack %s update failed: %s", childName, childStack.StatusReason)
@@ -4160,6 +4223,16 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 	}
 
 	return childStack.StackID, attrs, nil
+}
+
+func mergeNestedStackTags(parent []Tag, raw any) []Tag {
+	merged := mergeLambdaTags(parent, raw)
+	out := make([]Tag, 0, len(merged))
+	for key, value := range merged {
+		out = append(out, Tag{Key: key, Value: value})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 // stackNameFromARN extracts the stack name from a CloudFormation stack ARN.

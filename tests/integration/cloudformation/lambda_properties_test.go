@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -81,6 +82,72 @@ func TestUpdateStack_LambdaDeltaOnlyUpdatesPreserveArnGetAtt(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestUpdateStack_LambdaEmptyCodeDelegatesPackageSpecificValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		stackName   string
+		function    string
+		template    string
+		codeLiteral string
+		wantReason  string
+	}{
+		{
+			name: "zip", stackName: "lambda-empty-code-zip", function: "cfn-lambda-delta-arn",
+			template:    lambdaDeltaOnlyArnTemplate,
+			codeLiteral: `"Code": {"ZipFile": "def handler(event, context): return 'before'"}`,
+			wantReason:  `lambda UpdateFunctionCode: HTTP 400: {"__type":"InvalidParameterValueException","message":"Please provide a source for function code."}`,
+		},
+		{
+			name: "image", stackName: "lambda-empty-code-image", function: "cfn-lambda-image",
+			template:    lambdaImagePropertiesTemplate,
+			codeLiteral: `"Code": {"ImageUri": "000000000000.dkr.ecr.us-east-1.amazonaws.com/function:latest"}`,
+			wantReason:  `lambda UpdateFunctionCode: HTTP 400: {"__type":"InvalidParameterValueException","message":"Please provide ImageUri when PackageType is Image."}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := helpers.NewTestServer(t)
+			createLambdaStack(t, srv, tc.stackName, tc.template)
+			before := getLambdaRevision(t, srv, tc.function)
+			updated := strings.Replace(tc.template, tc.codeLiteral, `"Code": {}`, 1)
+			if updated == tc.template {
+				t.Fatal("test failed to replace Code property")
+			}
+
+			resp := cfnQuery(t, srv, "UpdateStack", url.Values{
+				"StackName": {tc.stackName}, "TemplateBody": {updated},
+			})
+			defer resp.Body.Close()
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			waitForStackStatus(t, srv, tc.stackName, "UPDATE_ROLLBACK_COMPLETE")
+
+			reasons := describeStackEventReasons(t, srv, tc.stackName)
+			if !slices.Contains(reasons, tc.wantReason) {
+				t.Fatalf("stack event reasons = %#v, want exact delegated reason %q", reasons, tc.wantReason)
+			}
+			after := getLambdaRevision(t, srv, tc.function)
+			if after != before {
+				t.Fatalf("RevisionId changed after rejected empty Code: before %q, after %q", before, after)
+			}
+		})
+	}
+}
+
+func getLambdaRevision(t *testing.T, srv *helpers.TestServer, functionName string) string {
+	t.Helper()
+	resp := lambdaRequest(t, srv, http.MethodGet, "/2015-03-31/functions/"+functionName+"/configuration", nil)
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var config struct {
+		RevisionID string `json:"RevisionId"`
+	}
+	helpers.DecodeJSON(t, resp, &config)
+	if config.RevisionID == "" {
+		t.Fatal("Lambda configuration returned empty RevisionId")
+	}
+	return config.RevisionID
 }
 
 func TestCreateStack_LambdaFunctionForwardsPriorityOneProperties(t *testing.T) {
