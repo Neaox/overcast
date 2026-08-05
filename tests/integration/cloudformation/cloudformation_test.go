@@ -37,6 +37,11 @@ func cfnQuery(t *testing.T, srv *helpers.TestServer, action string, params url.V
 	return resp
 }
 
+func kmsJSONCall(t *testing.T, srv *helpers.TestServer, operation string, body map[string]any) *http.Response {
+	t.Helper()
+	return awsJSONCall(t, srv, "TrentService.", operation, "application/x-amz-json-1.1", body)
+}
+
 // ec2Query sends an EC2 Query protocol request.
 func ec2Query(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
 	t.Helper()
@@ -1215,6 +1220,94 @@ func TestCreateStack_KMSKey(t *testing.T) {
 	helpers.AssertStatus(t, cr, http.StatusOK)
 
 	waitForStackStatus(t, srv, "kms-test-stack", "CREATE_COMPLETE")
+}
+
+func TestCreateStack_KMSKey_appliesDisabledState(t *testing.T) {
+	// Given: a key resource with Enabled=false
+	srv := helpers.NewTestServer(t)
+	template := `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "MyKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Enabled": false
+      }
+    }
+  }
+}`
+
+	// When: CloudFormation creates the stack
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"kms-disabled-create-stack"},
+		"TemplateBody": []string{template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "kms-disabled-create-stack", "CREATE_COMPLETE")
+
+	// Then: the created key is disabled
+	keyID := kmsKeyPhysicalID(t, srv, "kms-disabled-create-stack")
+	if kmsKeyEnabled(t, srv, keyID) {
+		t.Fatal("created key is enabled, want disabled")
+	}
+}
+
+func TestUpdateStack_KMSKey_removedEnabledRestoresDefault(t *testing.T) {
+	// Given: a stack whose KMS key is explicitly disabled
+	srv := helpers.NewTestServer(t)
+	const initialTemplate = `{"Resources":{"MyKey":{"Type":"AWS::KMS::Key","Properties":{"Enabled":false}}}}`
+	const updatedTemplate = `{"Resources":{"MyKey":{"Type":"AWS::KMS::Key","Properties":{}}}}`
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"kms-enabled-removal-stack"},
+		"TemplateBody": []string{initialTemplate},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, "kms-enabled-removal-stack", "CREATE_COMPLETE")
+
+	// When: the updated template omits Enabled
+	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{"kms-enabled-removal-stack"},
+		"TemplateBody": []string{updatedTemplate},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	waitForStackStatus(t, srv, "kms-enabled-removal-stack", "UPDATE_COMPLETE")
+
+	// Then: the key returns to the documented enabled default
+	keyID := kmsKeyPhysicalID(t, srv, "kms-enabled-removal-stack")
+	if !kmsKeyEnabled(t, srv, keyID) {
+		t.Fatal("updated key is disabled after Enabled removal, want enabled")
+	}
+}
+
+func kmsKeyPhysicalID(t *testing.T, srv *helpers.TestServer, stackName string) string {
+	t.Helper()
+	stackResp := cfnQuery(t, srv, "DescribeStackResources", url.Values{"StackName": []string{stackName}})
+	defer stackResp.Body.Close()
+	stackBody := string(readBody(t, stackResp))
+	keyIDMatch := regexp.MustCompile(`<PhysicalResourceId>([^<]+)</PhysicalResourceId>`).FindStringSubmatch(stackBody)
+	if len(keyIDMatch) != 2 {
+		t.Fatalf("expected KMS key physical ID, got: %s", stackBody)
+	}
+	return keyIDMatch[1]
+}
+
+func kmsKeyEnabled(t *testing.T, srv *helpers.TestServer, keyID string) bool {
+	t.Helper()
+	describeResp := kmsJSONCall(t, srv, "DescribeKey", map[string]any{"KeyId": keyID})
+	defer describeResp.Body.Close()
+	helpers.AssertStatus(t, describeResp, http.StatusOK)
+	var described struct {
+		KeyMetadata struct {
+			Enabled bool `json:"Enabled"`
+		} `json:"KeyMetadata"`
+	}
+	if err := json.NewDecoder(describeResp.Body).Decode(&described); err != nil {
+		t.Fatalf("decode DescribeKey response: %v", err)
+	}
+	return described.KeyMetadata.Enabled
 }
 
 const elastiCacheServerlessCacheTemplate = `{
