@@ -38,9 +38,10 @@ func extractServiceName(input string) string {
 
 // addServiceEvent prepends an event to the service's event list, capping at maxServiceEvents.
 func (h *Handler) addServiceEvent(svc *ecsService, msg string) {
+	now := h.clk.Now()
 	evt := ServiceEvent{
 		ID:        uuid.New().String(),
-		CreatedAt: h.clk.Now().Unix(),
+		CreatedAt: float64(now.UnixMilli()) / 1000,
 		Message:   msg,
 	}
 	svc.Events = append([]ServiceEvent{evt}, svc.Events...)

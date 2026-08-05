@@ -201,6 +201,11 @@ function toFlowNode(
       eventSource: p.node.eventSource,
       sourceType: p.node.sourceType,
       filterPatterns: p.node.filterPatterns,
+      ecsResourceType: p.node.ecsResourceType,
+      clusterName: p.node.clusterName,
+      taskId: p.node.taskId,
+      desiredCount: p.node.desiredCount,
+      runningCount: p.node.runningCount,
     },
     style: { width: p.w },
   }

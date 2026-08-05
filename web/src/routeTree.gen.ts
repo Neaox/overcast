@@ -81,6 +81,7 @@ import { Route as ApigatewayApiKeysRouteImport } from './routes/apigateway/api-k
 import { Route as SqsQueueIndexRouteImport } from './routes/sqs/$queue/index'
 import { Route as S3BucketIndexRouteImport } from './routes/s3/$bucket/index'
 import { Route as LambdaLayersIndexRouteImport } from './routes/lambda/layers/index'
+import { Route as EcsClusterIndexRouteImport } from './routes/ecs/$cluster.index'
 import { Route as CloudwatchLogsIndexRouteImport } from './routes/cloudwatch/logs/index'
 import { Route as CloudfrontDistributionIdIndexRouteImport } from './routes/cloudfront/$distributionId/index'
 import { Route as AppsyncApiIdIndexRouteImport } from './routes/appsync/$apiId/index'
@@ -464,6 +465,11 @@ const LambdaLayersIndexRoute = LambdaLayersIndexRouteImport.update({
   path: '/lambda/layers/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EcsClusterIndexRoute = EcsClusterIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => EcsClusterRoute,
+} as any)
 const CloudwatchLogsIndexRoute = CloudwatchLogsIndexRouteImport.update({
   id: '/cloudwatch/logs/',
   path: '/cloudwatch/logs/',
@@ -636,6 +642,7 @@ export interface FileRoutesByFullPath {
   '/appsync/$apiId/': typeof AppsyncApiIdIndexRoute
   '/cloudfront/$distributionId/': typeof CloudfrontDistributionIdIndexRoute
   '/cloudwatch/logs/': typeof CloudwatchLogsIndexRoute
+  '/ecs/$cluster/': typeof EcsClusterIndexRoute
   '/lambda/layers/': typeof LambdaLayersIndexRoute
   '/s3/$bucket/': typeof S3BucketIndexRoute
   '/sqs/$queue/': typeof SqsQueueIndexRoute
@@ -670,7 +677,6 @@ export interface FileRoutesByTo {
   '/dynamodb/$tableName': typeof DynamodbTableNameRoute
   '/ec2/$instanceId': typeof Ec2InstanceIdRoute
   '/ecr/$repositoryName': typeof EcrRepositoryNameRoute
-  '/ecs/$cluster': typeof EcsClusterRouteWithChildren
   '/eventbridge/$busName': typeof EventbridgeBusNameRoute
   '/kinesis/$streamName': typeof KinesisStreamNameRoute
   '/kms/$keyId': typeof KmsKeyIdRoute
@@ -723,6 +729,7 @@ export interface FileRoutesByTo {
   '/appsync/$apiId': typeof AppsyncApiIdIndexRoute
   '/cloudfront/$distributionId': typeof CloudfrontDistributionIdIndexRoute
   '/cloudwatch/logs': typeof CloudwatchLogsIndexRoute
+  '/ecs/$cluster': typeof EcsClusterIndexRoute
   '/lambda/layers': typeof LambdaLayersIndexRoute
   '/s3/$bucket': typeof S3BucketIndexRoute
   '/sqs/$queue': typeof SqsQueueIndexRoute
@@ -815,6 +822,7 @@ export interface FileRoutesById {
   '/appsync/$apiId/': typeof AppsyncApiIdIndexRoute
   '/cloudfront/$distributionId/': typeof CloudfrontDistributionIdIndexRoute
   '/cloudwatch/logs/': typeof CloudwatchLogsIndexRoute
+  '/ecs/$cluster/': typeof EcsClusterIndexRoute
   '/lambda/layers/': typeof LambdaLayersIndexRoute
   '/s3/$bucket/': typeof S3BucketIndexRoute
   '/sqs/$queue/': typeof SqsQueueIndexRoute
@@ -908,6 +916,7 @@ export interface FileRouteTypes {
     | '/appsync/$apiId/'
     | '/cloudfront/$distributionId/'
     | '/cloudwatch/logs/'
+    | '/ecs/$cluster/'
     | '/lambda/layers/'
     | '/s3/$bucket/'
     | '/sqs/$queue/'
@@ -942,7 +951,6 @@ export interface FileRouteTypes {
     | '/dynamodb/$tableName'
     | '/ec2/$instanceId'
     | '/ecr/$repositoryName'
-    | '/ecs/$cluster'
     | '/eventbridge/$busName'
     | '/kinesis/$streamName'
     | '/kms/$keyId'
@@ -995,6 +1003,7 @@ export interface FileRouteTypes {
     | '/appsync/$apiId'
     | '/cloudfront/$distributionId'
     | '/cloudwatch/logs'
+    | '/ecs/$cluster'
     | '/lambda/layers'
     | '/s3/$bucket'
     | '/sqs/$queue'
@@ -1086,6 +1095,7 @@ export interface FileRouteTypes {
     | '/appsync/$apiId/'
     | '/cloudfront/$distributionId/'
     | '/cloudwatch/logs/'
+    | '/ecs/$cluster/'
     | '/lambda/layers/'
     | '/s3/$bucket/'
     | '/sqs/$queue/'
@@ -1687,6 +1697,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LambdaLayersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ecs/$cluster/': {
+      id: '/ecs/$cluster/'
+      path: '/'
+      fullPath: '/ecs/$cluster/'
+      preLoaderRoute: typeof EcsClusterIndexRouteImport
+      parentRoute: typeof EcsClusterRoute
+    }
     '/cloudwatch/logs/': {
       id: '/cloudwatch/logs/'
       path: '/cloudwatch/logs'
@@ -1836,10 +1853,12 @@ const CloudfrontDistributionIdRouteWithChildren =
   )
 
 interface EcsClusterRouteChildren {
+  EcsClusterIndexRoute: typeof EcsClusterIndexRoute
   EcsClusterTasksTaskIdRoute: typeof EcsClusterTasksTaskIdRoute
 }
 
 const EcsClusterRouteChildren: EcsClusterRouteChildren = {
+  EcsClusterIndexRoute: EcsClusterIndexRoute,
   EcsClusterTasksTaskIdRoute: EcsClusterTasksTaskIdRoute,
 }
 

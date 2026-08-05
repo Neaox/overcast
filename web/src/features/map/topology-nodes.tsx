@@ -116,6 +116,13 @@ function nodeRoute({
           params: { cluster: clusterName, taskId },
         }
       }
+      if (ecsResourceType === "service" && clusterName) {
+        return {
+          to: "/ecs/$cluster",
+          params: { cluster: clusterName },
+          search: { tab: "services", service: label },
+        }
+      }
       return { to: "/ecs/$cluster", params: { cluster: clusterName ?? label } }
     case "ecr":
       return { to: "/ecr/$repositoryName", params: { repositoryName: label } }
@@ -201,6 +208,10 @@ export interface ServiceNodeData extends Record<string, unknown> {
   clusterName?: string
   /** ECS task UUID used for task detail navigation. */
   taskId?: string
+  /** ECS service configured task count. */
+  desiredCount?: number
+  /** ECS service currently running task count. */
+  runningCount?: number
   /** ECR only — full push-ready repository URI for copy-to-clipboard action. */
   repositoryUri?: string
   /** WAF only — REGIONAL or CLOUDFRONT. */
@@ -1215,6 +1226,8 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
     ecsResourceType,
     clusterName,
     taskId,
+    desiredCount,
+    runningCount,
     scope,
     ruleCount,
   } = data as ServiceNodeData
@@ -1455,6 +1468,24 @@ export const ServiceNode = memo(function ServiceNode({ data }: NodeProps) {
                 <span className="text-xs text-fg-subtle">
                   {ruleCount} {ruleCount === 1 ? "stored rule" : "stored rules"}
                 </span>
+              )}
+            </div>
+          ) : service === "ecs" ? (
+            <div className="flex items-center gap-1.5 text-xs text-fg-subtle">
+              <span>ECS {ecsResourceType ?? "resource"}</span>
+              {ecsResourceType === "service" && desiredCount != null && runningCount != null && (
+                <>
+                  <span aria-hidden="true">&middot;</span>
+                  <span>
+                    {runningCount}/{desiredCount} running
+                  </span>
+                </>
+              )}
+              {(ecsResourceType === "task" || ecsResourceType === "cluster") && status && (
+                <>
+                  <span aria-hidden="true">&middot;</span>
+                  <span>{status}</span>
+                </>
               )}
             </div>
           ) : service === "esm-filter" ? (

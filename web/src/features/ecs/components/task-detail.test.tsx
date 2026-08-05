@@ -4,6 +4,27 @@ import { ecsTaskLogsQueryOptions, ecsTaskQueryOptions } from "@/features/ecs/dat
 import type { EcsTask, EcsTaskLogs } from "@/types"
 import { TaskDetail } from "./task-detail"
 
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    children,
+    to,
+    params = {},
+    search = {},
+  }: {
+    children: React.ReactNode
+    to: string
+    params?: Record<string, string>
+    search?: Record<string, string>
+  }) => {
+    const path = Object.entries(params).reduce(
+      (result, [key, value]) => result.replace(`$${key}`, value),
+      to,
+    )
+    const query = new URLSearchParams(search).toString()
+    return <a href={query ? `${path}?${query}` : path}>{children}</a>
+  },
+}))
+
 vi.mock("@/components/application-ownership-banner", () => ({
   ApplicationOwnershipBanner: () => null,
 }))
@@ -47,6 +68,40 @@ describe("TaskDetail", () => {
     expect(screen.getByText("exit: 2")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Hide logs" })).toBeInTheDocument()
     expect(screen.getByText("Container output")).toBeInTheDocument()
+  })
+
+  it("opens the container selected by a logs deep link", () => {
+    const running: EcsTask = {
+      ...failedTask(),
+      taskArn: "arn:aws:ecs:us-east-1:123456789012:task/demo/running-task",
+      lastStatus: "RUNNING",
+      desiredStatus: "RUNNING",
+      stopCode: undefined,
+      stoppedReason: undefined,
+      stoppedAt: undefined,
+      group: "service:website",
+      containers: [{ name: "sidecar", lastStatus: "RUNNING" }],
+    }
+    const logs: EcsTaskLogs = {
+      taskArn: running.taskArn,
+      containerName: "sidecar",
+      logs: "sidecar is ready",
+    }
+
+    renderWithData(
+      <TaskDetail clusterName="demo" taskId="running-task" initialContainerName="sidecar" />,
+      [
+        [ecsTaskQueryOptions("demo", "running-task").queryKey, running],
+        [ecsTaskLogsQueryOptions(running.taskArn, "sidecar").queryKey, logs],
+      ],
+    )
+
+    expect(screen.getByRole("button", { name: "Hide logs" })).toBeInTheDocument()
+    expect(screen.getByText("Container output")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "website" })).toHaveAttribute(
+      "href",
+      "/ecs/demo?tab=services&service=website",
+    )
   })
 })
 
