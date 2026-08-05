@@ -3929,6 +3929,19 @@ func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _
 	if err != nil {
 		return "", nil, fmt.Errorf("logs CreateLogGroup: %w", err)
 	}
+	if rd, ok := props["RetentionInDays"]; ok && rd != nil {
+		body := map[string]any{
+			"logGroupName":    name,
+			"retentionInDays": rd,
+		}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
+			cleanupBody := map[string]any{"logGroupName": name}
+			if _, cleanupErr := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteLogGroup", cleanupBody); cleanupErr != nil {
+				return "", nil, fmt.Errorf("logs PutRetentionPolicy: %w; cleanup DeleteLogGroup: %v", err, cleanupErr)
+			}
+			return "", nil, fmt.Errorf("logs PutRetentionPolicy: %w", err)
+		}
+	}
 	arn := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:*", rCtx.Region, rCtx.AccountID, name)
 	attrs := map[string]string{
 		"Arn":          arn,
@@ -3959,7 +3972,9 @@ func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _
 		}
 	} else {
 		body := map[string]any{"logGroupName": physicalID}
-		_, _ = internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteRetentionPolicy", body)
+		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteRetentionPolicy", body); err != nil {
+			return "", nil, fmt.Errorf("logs DeleteRetentionPolicy: %w", err)
+		}
 	}
 	arn := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:*", rCtx.Region, rCtx.AccountID, physicalID)
 	return physicalID, map[string]string{"Arn": arn, "LogGroupName": physicalID}, nil

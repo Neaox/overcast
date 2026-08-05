@@ -18,6 +18,7 @@ operations:
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-function.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-permission.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-table.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-logs-loggroup.html
     tests:
       - tests/integration/cloudformation/cloudformation_test.go
     scenarios:
@@ -72,6 +73,11 @@ operations:
           - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestUpdateStack_DynamoDBTableTimeToLive
           - internal/services/cloudformation/dynamodb_ttl_test.go
         notes: AWS::DynamoDB::Table validates the distinct CloudFormation TimeToLiveSpecification shape before mutation, applies enabled TTL through DynamoDB UpdateTimeToLive after creation, disables then re-enables TTL when its attribute changes, and disables TTL when the property is removed. Enabled is required; AttributeName is validated at 1..255 when present or required, while Enabled=false without AttributeName is a no-op for an already-disabled/new table. Failed create or update phases compensate the table or prior TTL configuration.
+      - name: log group retention on create and removal on update
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/log_group_properties_test.go::TestCreateStack_LogGroupRetentionInDays
+         notes: AWS::Logs::LogGroup now applies RetentionInDays with PutRetentionPolicy immediately after CreateLogGroup, so fresh stacks converge with in-place updates. Removing RetentionInDays dispatches DeleteRetentionPolicy and reports service failures instead of silently completing the update.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -112,12 +118,14 @@ findings:
     - AWS::S3::Bucket create/update/removal dispatches seven sub-resource property families through S3 instead of silently dropping them.
     - AWS::Lambda::Function no longer drops priority configuration properties, and AWS::Lambda::Permission now mutates the function's Lambda-owned resource policy.
     - AWS::DynamoDB::Table forwards LocalSecondaryIndexes through CreateTable and reconciles TimeToLiveSpecification through DynamoDB's TTL API, including create/update compensation.
+    - AWS::Logs::LogGroup applies RetentionInDays when created rather than only after a later stack update.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.
     - Implement cross-region AWS::SNS::Subscription Region semantics (tracked in #633).
     - Review update/delete semantics and unsupported-resource stubbing.
     - Add support for S3 EventBridge notifications (#635), lifecycle transition minimum object size (#636), and website redirects/routing rules (#637); CloudFormation currently fails these shapes loudly.
+    - AWS::Logs::LogGroup Tags require create/update reconciliation, including removal of deleted tag keys; KmsKeyId, DataProtectionPolicy, LogGroupClass, and newer LogGroup properties need underlying CloudWatch Logs API/state support before CloudFormation can forward them.
   intentionally_partial: []
 handoff:
   start_with: [CloudFormation Ref semantics for IAM and EventBridge resource handlers, CreateStack, DeleteStack, resource handlers]
