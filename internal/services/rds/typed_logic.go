@@ -479,6 +479,8 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 		inst.DBInstanceStatus = "stopping"
 		inst.StoppedByUser = true
 		inst.DockerRecoveryPending = false
+		inst.DockerRecoveryAttempts = 0
+		inst.DockerRecoveryAvailableAt = time.Time{}
 		return nil
 	})
 	if aerr != nil {
@@ -527,6 +529,8 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 		inst.DBInstanceStatus = "starting"
 		inst.StoppedByUser = false
 		inst.DockerRecoveryPending = false
+		inst.DockerRecoveryAttempts = 0
+		inst.DockerRecoveryAvailableAt = time.Time{}
 		return nil
 	})
 	if aerr != nil {

@@ -22,6 +22,8 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/lifecycle"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -617,6 +619,17 @@ func newLifecycleHandler(t *testing.T, d *lifecycleDaemon) *Handler {
 	return h
 }
 
+func useMockLifecycleClock(t *testing.T, h *Handler) *clock.Mock {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h.scheduler.Stop(ctx)
+	mock := clock.NewMock()
+	h.scheduler = lifecycle.NewScheduler(mock)
+	h.clk = mock
+	return mock
+}
+
 // createRunningInstance creates a DB instance and waits for its container start
 // to finish, so the test acts on a settled record.
 func createRunningInstance(t *testing.T, h *Handler, id string) {
@@ -808,6 +821,219 @@ func TestHandleContainerEvent_recoversDockerLevelStop(t *testing.T) {
 	}
 }
 
+func TestHandleContainerEvent_coalescesDuplicateRecoveryEvents(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "docker-duplicate-die"
+
+	createRunningInstance(t, h, id)
+	mock := useMockLifecycleClock(t, h)
+
+	d.mu.Lock()
+	d.running = false
+	startsBefore := d.starts
+	d.mu.Unlock()
+	event := events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: lifecycleContainerID,
+			Action:      "die",
+			Service:     "rds",
+			ResourceID:  id,
+		},
+	}
+
+	h.handleContainerEvent(ctx, event)
+	h.handleContainerEvent(ctx, event)
+
+	inst, aerr := h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance: %s", aerr.Message)
+	}
+	if inst.DockerRecoveryAttempts != 1 {
+		t.Fatalf("recovery attempts = %d, want one coalesced attempt", inst.DockerRecoveryAttempts)
+	}
+	if got := h.scheduler.PendingCount(); got != 1 {
+		t.Fatalf("pending recovery callbacks = %d, want 1", got)
+	}
+
+	h.scheduler.AdvanceAndSettle(mock, 0)
+	h.dockerWg.Wait()
+	d.mu.Lock()
+	startsAfter := d.starts
+	d.mu.Unlock()
+	if startsAfter != startsBefore+1 {
+		t.Fatalf("container starts = %d after duplicate events, want %d", startsAfter, startsBefore+1)
+	}
+}
+
+func TestHandleContainerEvent_stopsRestartingAfterRecoveryBudget(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "docker-crash-loop"
+
+	createRunningInstance(t, h, id)
+	mock := useMockLifecycleClock(t, h)
+	event := events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: lifecycleContainerID,
+			Action:      "die",
+			Service:     "rds",
+			ResourceID:  id,
+		},
+	}
+
+	for attempt := 1; attempt <= maxDockerRecoveryAttempts; attempt++ {
+		d.mu.Lock()
+		d.running = false
+		d.mu.Unlock()
+		h.handleContainerEvent(ctx, event)
+
+		inst, aerr := h.store.getDBInstance(ctx, id)
+		if aerr != nil {
+			t.Fatalf("attempt %d getDBInstance: %s", attempt, aerr.Message)
+		}
+		if inst.DockerRecoveryAttempts != attempt {
+			t.Fatalf("attempt counter = %d, want %d", inst.DockerRecoveryAttempts, attempt)
+		}
+
+		h.scheduler.AdvanceAndSettle(mock, dockerRecoveryBackoff(attempt))
+		h.dockerWg.Wait()
+		h.scheduler.AdvanceAndSettle(mock, time.Second)
+		if got := instanceStatus(t, h, ctx, id); got != "available" {
+			t.Fatalf("attempt %d status = %q, want available before the next crash", attempt, got)
+		}
+	}
+
+	d.mu.Lock()
+	d.running = false
+	startsBeforeExhaustion := d.starts
+	d.mu.Unlock()
+	h.handleContainerEvent(ctx, event)
+
+	inst, aerr := h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance after exhaustion: %s", aerr.Message)
+	}
+	if inst.DBInstanceStatus != "failed" {
+		t.Fatalf("status after recovery budget = %q, want failed", inst.DBInstanceStatus)
+	}
+	if inst.DockerRecoveryPending {
+		t.Error("exhausted recovery remains pending and can be retried on Docker reconnect")
+	}
+	if !strings.Contains(inst.StatusReason, "repeatedly exited") {
+		t.Errorf("StatusReason = %q, want repeated-exit explanation", inst.StatusReason)
+	}
+	if got := h.scheduler.PendingCount(); got != 0 {
+		t.Errorf("pending callbacks after exhaustion = %d, want 0", got)
+	}
+	d.mu.Lock()
+	startsAfterExhaustion := d.starts
+	d.mu.Unlock()
+	if startsAfterExhaustion != startsBeforeExhaustion {
+		t.Errorf("container restarted after exhaustion: starts %d -> %d", startsBeforeExhaustion, startsAfterExhaustion)
+	}
+}
+
+func TestDockerRecoveryBackoff(t *testing.T) {
+	wants := []time.Duration{0, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+	for i, want := range wants {
+		attempt := i + 1
+		if got := dockerRecoveryBackoff(attempt); got != want {
+			t.Errorf("attempt %d backoff = %s, want %s", attempt, got, want)
+		}
+	}
+	if got := dockerRecoveryBackoff(100); got != dockerRecoveryMaxBackoff {
+		t.Errorf("large-attempt backoff = %s, want cap %s", got, dockerRecoveryMaxBackoff)
+	}
+}
+
+func TestDockerRecoveryBudget_resetsOnlyAfterStableAvailability(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "docker-stable-recovery"
+
+	createRunningInstance(t, h, id)
+	mock := useMockLifecycleClock(t, h)
+	d.mu.Lock()
+	d.running = false
+	d.mu.Unlock()
+	h.handleContainerEvent(ctx, events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: lifecycleContainerID,
+			Action:      "die",
+			Service:     "rds",
+			ResourceID:  id,
+		},
+	})
+	h.scheduler.AdvanceAndSettle(mock, 0)
+	h.dockerWg.Wait()
+	h.scheduler.AdvanceAndSettle(mock, time.Second)
+
+	inst, aerr := h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance after recovery: %s", aerr.Message)
+	}
+	if inst.DockerRecoveryAttempts != 1 {
+		t.Fatalf("attempts immediately after availability = %d, want 1", inst.DockerRecoveryAttempts)
+	}
+
+	h.scheduler.AdvanceAndSettle(mock, dockerRecoveryStableFor)
+	inst, aerr = h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance after stability period: %s", aerr.Message)
+	}
+	if inst.DockerRecoveryAttempts != 0 {
+		t.Errorf("attempts after %s stable = %d, want reset", dockerRecoveryStableFor, inst.DockerRecoveryAttempts)
+	}
+}
+
+func TestDockerRecoveryBudget_recognizesPersistedStabilityAfterRestart(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "docker-persisted-stability"
+
+	createRunningInstance(t, h, id)
+	mock := useMockLifecycleClock(t, h)
+	if _, aerr := h.mutateInstance(ctx, id, func(inst *DBInstance) *protocol.AWSError {
+		inst.DockerRecoveryAttempts = maxDockerRecoveryAttempts
+		inst.DockerRecoveryAvailableAt = mock.Now().Add(-dockerRecoveryStableFor)
+		return nil
+	}); aerr != nil {
+		t.Fatalf("seed persisted recovery state: %s", aerr.Message)
+	}
+	d.mu.Lock()
+	d.running = false
+	d.mu.Unlock()
+
+	h.handleContainerEvent(ctx, events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: lifecycleContainerID,
+			Action:      "die",
+			Service:     "rds",
+			ResourceID:  id,
+		},
+	})
+
+	inst, aerr := h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance: %s", aerr.Message)
+	}
+	if inst.DBInstanceStatus != "starting" {
+		t.Fatalf("status = %q, want a fresh recovery instead of failed", inst.DBInstanceStatus)
+	}
+	if inst.DockerRecoveryAttempts != 1 {
+		t.Errorf("attempts after persisted stability = %d, want fresh attempt 1", inst.DockerRecoveryAttempts)
+	}
+}
+
 func TestHandleDockerDaemonConnected_reconcilesMissedStop(t *testing.T) {
 	d := newLifecycleDaemon(t)
 	h := newLifecycleHandler(t, d)
@@ -881,6 +1107,10 @@ func TestHandleDockerDaemonConnected_retriesRecoveryInterruptedByDaemonShutdown(
 		Type:    events.DockerDaemonConnected,
 		Payload: docker.DaemonConnectedPayload{Client: h.docker, Reconnected: true},
 	})
+	// The second automatic attempt is deliberately delayed by the recovery
+	// backoff. Wait for that keyed callback to launch the async Docker start
+	// before waiting on the Docker work itself.
+	h.scheduler.Settle()
 	h.dockerWg.Wait()
 
 	// Then: only that infrastructure-recovery failure is retried.
