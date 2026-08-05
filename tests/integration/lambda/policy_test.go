@@ -103,6 +103,14 @@ func TestFunctionPolicy_ValidationQualificationAndConcurrentMutation(t *testing.
 	helpers.AssertJSONError(t, invalidFunctionName, "InvalidParameterValueException")
 	invalidFunctionName.Body.Close()
 
+	malformedPrefixedName := doJSON(t, http.MethodPost,
+		lambdaURL(srv, "/functions/garbage:function:policy-race-fn/policy"), map[string]any{
+			"StatementId": "malformed-prefix", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+		})
+	helpers.AssertStatus(t, malformedPrefixedName, http.StatusBadRequest)
+	helpers.AssertJSONError(t, malformedPrefixedName, "InvalidParameterValueException")
+	malformedPrefixedName.Body.Close()
+
 	invalidQualifier := doJSON(t, http.MethodPost,
 		lambdaURL(srv, "/functions/policy-race-fn/policy")+"?Qualifier=bad%21", map[string]any{
 			"StatementId": "invalid-qualifier", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
@@ -212,4 +220,45 @@ func TestFunctionPolicy_ValidationQualificationAndConcurrentMutation(t *testing.
 	if !policyLimitObserved {
 		t.Fatal("AddPermission never enforced the 20 KB resource-policy limit")
 	}
+}
+
+func TestFunctionPolicy_DeleteAliasRemovesQualifiedPolicy(t *testing.T) {
+	// Given: an alias with a qualified resource policy.
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "policy-alias-delete-fn")
+	versionResp := doJSON(t, http.MethodPost,
+		lambdaURL(srv, "/functions/policy-alias-delete-fn/versions"), publishVersionReq{})
+	helpers.AssertStatus(t, versionResp, http.StatusCreated)
+	versionResp.Body.Close()
+	aliasResp := doJSON(t, http.MethodPost,
+		lambdaURL(srv, "/functions/policy-alias-delete-fn/aliases"), createAliasReq{
+			Name: "live", FunctionVersion: "1",
+		})
+	helpers.AssertStatus(t, aliasResp, http.StatusCreated)
+	aliasResp.Body.Close()
+	permissionResp := doJSON(t, http.MethodPost,
+		lambdaURL(srv, "/functions/policy-alias-delete-fn/policy")+"?Qualifier=live", map[string]any{
+			"StatementId": "alias-policy", "Action": "lambda:InvokeFunction", "Principal": "sns.amazonaws.com",
+		})
+	helpers.AssertStatus(t, permissionResp, http.StatusCreated)
+	permissionResp.Body.Close()
+
+	// When: the alias is deleted and recreated with the same name.
+	deleteResp := doJSON(t, http.MethodDelete,
+		lambdaURL(srv, "/functions/policy-alias-delete-fn/aliases/live"), nil)
+	helpers.AssertStatus(t, deleteResp, http.StatusNoContent)
+	deleteResp.Body.Close()
+	recreateResp := doJSON(t, http.MethodPost,
+		lambdaURL(srv, "/functions/policy-alias-delete-fn/aliases"), createAliasReq{
+			Name: "live", FunctionVersion: "1",
+		})
+	helpers.AssertStatus(t, recreateResp, http.StatusCreated)
+	recreateResp.Body.Close()
+
+	// Then: the deleted alias's policy does not reappear on the new resource.
+	getResp := doJSON(t, http.MethodGet,
+		lambdaURL(srv, "/functions/policy-alias-delete-fn/policy")+"?Qualifier=live", nil)
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusNotFound)
+	helpers.AssertJSONError(t, getResp, "ResourceNotFoundException")
 }

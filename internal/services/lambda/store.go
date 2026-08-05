@@ -196,6 +196,15 @@ func (s *lambdaStore) mutateFunctionPolicy(ctx context.Context, name, qualifier 
 	} else if !found {
 		return policyFunctionNotFound(name, qualifier)
 	}
+	if qualifier != "" && qualifier != "$LATEST" {
+		if _, err := strconv.Atoi(qualifier); err != nil {
+			if _, found, err := s.store.Get(ctx, nsAliases, serviceutil.RegionKey(s.region(ctx), aliasKey(name, qualifier))); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			} else if !found {
+				return policyFunctionNotFound(name, qualifier)
+			}
+		}
+	}
 	policy, found, aerr := s.getFunctionPolicy(ctx, name, qualifier)
 	if aerr != nil {
 		return aerr
@@ -475,6 +484,8 @@ func aliasKey(functionName, aliasName string) string {
 
 // putAlias stores or updates an alias.
 func (s *lambdaStore) putAlias(ctx context.Context, a *FunctionAlias) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	raw, err := json.Marshal(a)
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
@@ -520,6 +531,12 @@ func (s *lambdaStore) listAliases(ctx context.Context, functionName string) ([]*
 
 // deleteAlias removes an alias.
 func (s *lambdaStore) deleteAlias(ctx context.Context, functionName, aliasName string) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	policyKey := serviceutil.RegionKey(s.region(ctx), policyStoreKey(functionName, aliasName))
+	if err := s.store.Delete(ctx, nsFunctionPolicies, policyKey); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
 	if err := s.store.Delete(ctx, nsAliases, serviceutil.RegionKey(s.region(ctx), aliasKey(functionName, aliasName))); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}

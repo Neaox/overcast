@@ -58,24 +58,25 @@ type getPolicyResponse struct {
 }
 
 var (
-	statementIDPattern      = regexp.MustCompile(`^[a-zA-Z0-9-_]+$`)
-	functionNamePattern     = regexp.MustCompile(`^[a-zA-Z0-9-_.]+$`)
-	qualifierPattern        = regexp.MustCompile(`^(?:\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_$]+)$`)
-	permissionActionPattern = regexp.MustCompile(`^(?:\*|lambda:(?:\*|[a-zA-Z]+))$`)
-	sourceAccountPattern    = regexp.MustCompile(`^[0-9]{12}$`)
-	sourceARNPattern        = regexp.MustCompile(`^arn:aws[a-zA-Z0-9-]*:[a-zA-Z0-9-]+:(?:[a-z]{2}(?:-gov)?-[a-z]+-[0-9])?:(?:[0-9]{12})?:.*$`)
-	principalOrgIDPattern   = regexp.MustCompile(`^o-[a-z0-9]{10,32}$`)
-	eventSourceTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+	statementIDPattern        = regexp.MustCompile(`^[a-zA-Z0-9-_]+$`)
+	policyFunctionNamePattern = regexp.MustCompile(`^(?:arn:(?:aws[a-zA-Z-]*)?:lambda:)?(?:[a-z]{2}(?:(?:-gov)|(?:-iso[a-z]?))?-[a-z]+-\d{1}:)?(?:\d{12}:)?(?:function:)?[a-zA-Z0-9-_\.]+(?::(?:\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_]+))?$`)
+	qualifierPattern          = regexp.MustCompile(`^(?:\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_$]+)$`)
+	permissionActionPattern   = regexp.MustCompile(`^(?:\*|lambda:(?:\*|[a-zA-Z]+))$`)
+	sourceAccountPattern      = regexp.MustCompile(`^[0-9]{12}$`)
+	sourceARNPattern          = regexp.MustCompile(`^arn:aws[a-zA-Z0-9-]*:[a-zA-Z0-9-]+:(?:[a-z]{2}(?:-gov)?-[a-z]+-[0-9])?:(?:[0-9]{12})?:.*$`)
+	principalOrgIDPattern     = regexp.MustCompile(`^o-[a-z0-9]{10,32}$`)
+	eventSourceTokenPattern   = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 )
 
 const (
-	statementIDConstraint      = `([a-zA-Z0-9-_]+)`
-	permissionActionConstraint = `(lambda:[*]|lambda:[a-zA-Z]+|[*])`
-	principalConstraint        = `[^\s]+`
-	sourceAccountConstraint    = `\d{12}`
-	sourceARNConstraint        = `arn:(aws[a-zA-Z0-9-]*):([a-zA-Z0-9\-])+:([a-z]{2}(-gov)?-[a-z]+-\d{1})?:(\d{12})?:(.*)`
-	principalOrgIDConstraint   = `o-[a-z0-9]{10,32}`
-	eventSourceTokenConstraint = `[a-zA-Z0-9._\-]+`
+	policyFunctionNameConstraint = `(arn:(aws[a-zA-Z-]*)?:lambda:)?([a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}:)?(\d{12}:)?(function:)?([a-zA-Z0-9-_\.]+)(:(\$LATEST(\.PUBLISHED)?|[a-zA-Z0-9-_]+))?`
+	statementIDConstraint        = `([a-zA-Z0-9-_]+)`
+	permissionActionConstraint   = `(lambda:[*]|lambda:[a-zA-Z]+|[*])`
+	principalConstraint          = `[^\s]+`
+	sourceAccountConstraint      = `\d{12}`
+	sourceARNConstraint          = `arn:(aws[a-zA-Z0-9-]*):([a-zA-Z0-9\-])+:([a-z]{2}(-gov)?-[a-z]+-\d{1})?:(\d{12})?:(.*)`
+	principalOrgIDConstraint     = `o-[a-z0-9]{10,32}`
+	eventSourceTokenConstraint   = `[a-zA-Z0-9._\-]+`
 )
 
 func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
@@ -272,11 +273,11 @@ func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qu
 	if len(identifier) > 256 {
 		return nil, smithyStringLengthConstraint("functionName", identifier, 256)
 	}
+	if !policyFunctionNamePattern.MatchString(identifier) {
+		return nil, smithyPatternConstraint("functionName", identifier, policyFunctionNameConstraint)
+	}
 	if len(name) > 64 {
 		return nil, smithyStringLengthConstraint("functionName", name, 64)
-	}
-	if !functionNamePattern.MatchString(name) {
-		return nil, smithyPatternConstraint("functionName", identifier, `(arn:(aws[a-zA-Z-]*)?:lambda:)?([a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}:)?(\d{12}:)?(function:)?([a-zA-Z0-9-_\.]+)(:(\$LATEST(\.PUBLISHED)?|[a-zA-Z0-9-_]+))?`)
 	}
 	if len(qualifier) > 128 {
 		return nil, smithyStringLengthConstraint("qualifier", qualifier, 128)
