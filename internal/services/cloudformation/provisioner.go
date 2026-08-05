@@ -3918,16 +3918,112 @@ func (h *iamRoleHandler) Update(ctx context.Context, router http.Handler, _ *con
 
 type logsLogGroupHandler struct{}
 
+// logsLogGroupTagMap converts CloudFormation's [{Key, Value}] Tags shape to
+// CloudWatch Logs' string map used by TagLogGroup.
+func logsLogGroupTagMap(raw any) (map[string]string, error) {
+	tags := make(map[string]string)
+	if raw == nil {
+		return tags, nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("Logs::LogGroup Tags must be an array")
+	}
+	for i, item := range items {
+		tag, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("Logs::LogGroup Tags[%d] must be an object", i)
+		}
+		key, ok := tag["Key"].(string)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("Logs::LogGroup Tags[%d].Key must be a non-empty string", i)
+		}
+		value, ok := tag["Value"].(string)
+		if !ok {
+			return nil, fmt.Errorf("Logs::LogGroup Tags[%d].Value must be a string", i)
+		}
+		if _, duplicate := tags[key]; duplicate {
+			return nil, fmt.Errorf("Logs::LogGroup Tags contains duplicate key %q", key)
+		}
+		tags[key] = value
+	}
+	return tags, nil
+}
+
+func logsLogGroupTagChanges(want, have map[string]string) (map[string]string, []string) {
+	upserts := make(map[string]string)
+	for key, value := range want {
+		if old, ok := have[key]; !ok || old != value {
+			upserts[key] = value
+		}
+	}
+	removals := make([]string, 0)
+	for key := range have {
+		if _, ok := want[key]; !ok {
+			removals = append(removals, key)
+		}
+	}
+	sort.Strings(removals)
+	return upserts, removals
+}
+
+func putLogsLogGroupTags(ctx context.Context, router http.Handler, region, logGroupName string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	_, err := internalJSON(ctx, router, region, "Logs_20140328.TagLogGroup", map[string]any{
+		"logGroupName": logGroupName,
+		"tags":         tags,
+	})
+	return err
+}
+
+func untagLogsLogGroup(ctx context.Context, router http.Handler, region, logGroupName string, tags []string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	_, err := internalJSON(ctx, router, region, "Logs_20140328.UntagLogGroup", map[string]any{
+		"logGroupName": logGroupName,
+		"tags":         tags,
+	})
+	return err
+}
+
+// restoreLogsLogGroupTags restores the old desired set after a later in-place
+// operation fails. This keeps an update failure reversible instead of leaving
+// a partial tag mutation for CloudFormation to report as cleanly rolled back.
+func restoreLogsLogGroupTags(ctx context.Context, router http.Handler, region, logGroupName string, oldTags, newTags map[string]string) error {
+	upserts, removals := logsLogGroupTagChanges(oldTags, newTags)
+	if err := putLogsLogGroupTags(ctx, router, region, logGroupName, upserts); err != nil {
+		return fmt.Errorf("restore TagLogGroup: %w", err)
+	}
+	if err := untagLogsLogGroup(ctx, router, region, logGroupName, removals); err != nil {
+		return fmt.Errorf("restore UntagLogGroup: %w", err)
+	}
+	return nil
+}
+
 func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["LogGroupName"].(string)
 	if name == "" {
 		name = "/aws/cloudformation/" + rCtx.generatedName()
 	}
+	tags, err := logsLogGroupTagMap(props["Tags"])
+	if err != nil {
+		return "", nil, err
+	}
 
 	body := map[string]any{"logGroupName": name}
-	_, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.CreateLogGroup", body)
+	_, err = internalJSON(ctx, router, rCtx.Region, "Logs_20140328.CreateLogGroup", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("logs CreateLogGroup: %w", err)
+	}
+	cleanup := func(operation string, operationErr error) (string, map[string]string, error) {
+		cleanupBody := map[string]any{"logGroupName": name}
+		if _, cleanupErr := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteLogGroup", cleanupBody); cleanupErr != nil {
+			return "", nil, fmt.Errorf("logs %s: %w; cleanup DeleteLogGroup: %v", operation, operationErr, cleanupErr)
+		}
+		return "", nil, fmt.Errorf("logs %s: %w", operation, operationErr)
 	}
 	if rd, ok := props["RetentionInDays"]; ok && rd != nil {
 		body := map[string]any{
@@ -3935,12 +4031,11 @@ func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _
 			"retentionInDays": rd,
 		}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
-			cleanupBody := map[string]any{"logGroupName": name}
-			if _, cleanupErr := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteLogGroup", cleanupBody); cleanupErr != nil {
-				return "", nil, fmt.Errorf("logs PutRetentionPolicy: %w; cleanup DeleteLogGroup: %v", err, cleanupErr)
-			}
-			return "", nil, fmt.Errorf("logs PutRetentionPolicy: %w", err)
+			return cleanup("PutRetentionPolicy", err)
 		}
+	}
+	if err := putLogsLogGroupTags(ctx, router, rCtx.Region, name, tags); err != nil {
+		return cleanup("TagLogGroup", err)
 	}
 	arn := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:*", rCtx.Region, rCtx.AccountID, name)
 	attrs := map[string]string{
@@ -3961,19 +4056,50 @@ func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _
 	if n, ok := props["LogGroupName"].(string); ok && n != "" && n != physicalID {
 		return "", nil, errReplacementRequired
 	}
+	newTags, err := logsLogGroupTagMap(props["Tags"])
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	oldTags, err := logsLogGroupTagMap(oldProps["Tags"])
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	upserts, removals := logsLogGroupTagChanges(newTags, oldTags)
+	if err := putLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, upserts); err != nil {
+		return "", nil, failUpdate(fmt.Errorf("logs TagLogGroup: %w", err))
+	}
+	if err := untagLogsLogGroup(ctx, router, rCtx.Region, physicalID, removals); err != nil {
+		if restoreErr := restoreLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags); restoreErr != nil {
+			return "", nil, failDirtyUpdate(fmt.Errorf("logs UntagLogGroup: %w; tag compensation: %v", err, restoreErr))
+		}
+		return "", nil, failUpdate(fmt.Errorf("logs UntagLogGroup: %w", err))
+	}
+
+	retentionChanged, err := cfnPropertyChanged(props, oldProps, "RetentionInDays")
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
 	// Apply RetentionInDays in place. Logs themselves are preserved.
-	if rd, ok := props["RetentionInDays"]; ok && rd != nil {
-		body := map[string]any{
-			"logGroupName":    physicalID,
-			"retentionInDays": rd,
-		}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
-			return "", nil, fmt.Errorf("logs PutRetentionPolicy: %w", err)
-		}
-	} else if oldRetention, hadRetention := oldProps["RetentionInDays"]; hadRetention && oldRetention != nil {
-		body := map[string]any{"logGroupName": physicalID}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteRetentionPolicy", body); err != nil {
-			return "", nil, fmt.Errorf("logs DeleteRetentionPolicy: %w", err)
+	if retentionChanged {
+		if rd, ok := props["RetentionInDays"]; ok && rd != nil {
+			body := map[string]any{
+				"logGroupName":    physicalID,
+				"retentionInDays": rd,
+			}
+			if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
+				if restoreErr := restoreLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags); restoreErr != nil {
+					return "", nil, failDirtyUpdate(fmt.Errorf("logs PutRetentionPolicy: %w; tag compensation: %v", err, restoreErr))
+				}
+				return "", nil, failUpdate(fmt.Errorf("logs PutRetentionPolicy: %w", err))
+			}
+		} else if oldRetention, hadRetention := oldProps["RetentionInDays"]; hadRetention && oldRetention != nil {
+			body := map[string]any{"logGroupName": physicalID}
+			if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteRetentionPolicy", body); err != nil {
+				if restoreErr := restoreLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags); restoreErr != nil {
+					return "", nil, failDirtyUpdate(fmt.Errorf("logs DeleteRetentionPolicy: %w; tag compensation: %v", err, restoreErr))
+				}
+				return "", nil, failUpdate(fmt.Errorf("logs DeleteRetentionPolicy: %w", err))
+			}
 		}
 	}
 	arn := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:*", rCtx.Region, rCtx.AccountID, physicalID)

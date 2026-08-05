@@ -1,1 +1,1 @@
-* [cloudformation/cloudwatch-logs] Log group retention is applied when a stack first creates the group
+* [cloudformation/cloudwatch-logs] Log group retention and tags are applied when a stack creates or updates the group

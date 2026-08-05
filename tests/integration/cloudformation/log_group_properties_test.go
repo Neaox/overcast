@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -76,6 +78,71 @@ func TestUpdateStack_LogGroupRetentionInDaysRemoved(t *testing.T) {
 	}
 }
 
+func TestUpdateStack_LogGroupTags(t *testing.T) {
+	// Given: a stack log group with CloudFormation-owned tags
+	srv := helpers.NewTestServer(t)
+	const stackName = "log-group-tags-stack"
+	const logGroupName = "/cloudformation/tag-reconciliation"
+	const initialTemplate = `{
+  "Resources": {
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/cloudformation/tag-reconciliation",
+        "Tags": [
+          {"Key": "environment", "Value": "development"},
+          {"Key": "owner", "Value": "platform"}
+        ]
+      }
+    }
+  }
+}`
+	const updatedTemplate = `{
+  "Resources": {
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/cloudformation/tag-reconciliation",
+        "Tags": [
+          {"Key": "environment", "Value": "production"},
+          {"Key": "project", "Value": "overcast"}
+        ]
+      }
+    }
+  }
+}`
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {initialTemplate},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	if got := listLogGroupTags(t, srv, logGroupName); !reflect.DeepEqual(got, map[string]string{
+		"environment": "development",
+		"owner":       "platform",
+	}) {
+		t.Fatalf("initial tags = %#v", got)
+	}
+
+	// When: the resource tags are changed, added, and removed
+	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {updatedTemplate},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: the Logs tag set matches the updated CloudFormation tags
+	if got := listLogGroupTags(t, srv, logGroupName); !reflect.DeepEqual(got, map[string]string{
+		"environment": "production",
+		"project":     "overcast",
+	}) {
+		t.Fatalf("updated tags = %#v", got)
+	}
+}
+
 func describeLogGroupRetention(t *testing.T, srv *helpers.TestServer, logGroupName string) *int {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(`{"logGroupNamePrefix":"`+logGroupName+`"}`))
@@ -108,4 +175,29 @@ func describeLogGroupRetention(t *testing.T, srv *helpers.TestServer, logGroupNa
 		t.Errorf("logGroupName = %q, want %q", group.LogGroupName, logGroupName)
 	}
 	return group.RetentionInDays
+}
+
+func listLogGroupTags(t *testing.T, srv *helpers.TestServer, logGroupName string) map[string]string {
+	t.Helper()
+	body := `{"logGroupName":` + strconv.Quote(logGroupName) + `}`
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build ListTagsLogGroup request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "Logs_20140328.ListTagsLogGroup")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("ListTagsLogGroup: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var got struct {
+		Tags map[string]string `json:"tags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode ListTagsLogGroup response: %v", err)
+	}
+	return got.Tags
 }
