@@ -76,7 +76,8 @@ rpc-v2-cbor`.
 - **Versioning**: `PutSecretValue` honours `ClientRequestToken` (which becomes the version ID) and `VersionStages` (default `AWSCURRENT`). Taking `AWSCURRENT` off a version moves `AWSPREVIOUS` onto it. Versions carrying a staging label are never pruned. A version that exists but holds no value — the state a rotation leaves between staging `AWSPENDING` and the function writing to it — is listed by `DescribeSecret` but reported as `ResourceNotFoundException` by `GetSecretValue`, and `PutSecretValue` under that token fills it rather than answering `ResourceExistsException`.
 - **Deletion**: `ForceDeleteWithoutRecovery` is always treated as immediate deletion. Recovery window scheduling is not implemented, which is why `RestoreSecret` is still a 501.
 - **Lookup**: Secrets resolve by name, by full ARN, or by the partial ARN without the six-character random suffix — all three, as on AWS.
-- **Password generation**: `GetRandomPassword` honours `PasswordLength` (default 32), the `Exclude*` settings, `IncludeSpace`, and `RequireEachIncludedType` — which, as on AWS, defaults to true, so a generated password holds at least one character of every type the exclusions left available. CloudFormation's `AWS::SecretsManager::Secret` `GenerateSecretString` generates through this same operation rather than carrying its own generator; see [CloudFormation § Notes](./cloudformation.md).
+- **Password generation**: `GetRandomPassword` honours `PasswordLength` (default 32, modeled range 1–4096), the `Exclude*` settings, `IncludeSpace`, and `RequireEachIncludedType` — which, as on AWS, defaults to true, so a generated password holds at least one character of every type the exclusions left available. CloudFormation's `AWS::SecretsManager::Secret` `GenerateSecretString` generates through this same operation rather than carrying its own generator; see [CloudFormation § Notes](./cloudformation.md).
+- **KMS metadata**: `CreateSecret` and `UpdateSecret` persist `KmsKeyId`; `DescribeSecret` and `ListSecrets` return it. Overcast records the selected key as AWS-visible metadata but does not perform KMS encryption.
 
 ### Rotation
 
@@ -146,17 +147,17 @@ in AWS's shape but are not a stable identifier to branch on — read the
 
 ### Secret CRUD
 
-| Operation              | Status       | Notes                                    | AWS Docs                                                                                             |
-| ---------------------- | ------------ | ---------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `CreateSecret`         | ✅ Supported | String + binary, tags, description       | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_CreateSecret.html)         |
-| `GetSecretValue`       | ✅ Supported | By name, ARN, version ID, or stage       | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html)       |
-| `DescribeSecret`       | ✅ Supported | Metadata, tags, versions, rotation dates | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DescribeSecret.html)       |
-| `PutSecretValue`       | ✅ Supported | Staging labels + ClientRequestToken      | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html)       |
-| `UpdateSecret`         | ✅ Supported | Description + optional new value         | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_UpdateSecret.html)         |
-| `ListSecrets`          | ✅ Supported | Sorted by name, optional filters         | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecrets.html)          |
-| `ListSecretVersionIds` | ✅ Supported | All versions with staging labels         | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecretVersionIds.html) |
-| `DeleteSecret`         | ✅ Supported | Immediate (ForceDelete) only             | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html)         |
-| `BatchGetSecretValue`  | ✅ Supported | Partial results on missing secrets       | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_BatchGetSecretValue.html)  |
+| Operation              | Status       | Notes                                             | AWS Docs                                                                                             |
+| ---------------------- | ------------ | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `CreateSecret`         | ✅ Supported | String + binary, KMS key, tags, description       | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_CreateSecret.html)         |
+| `GetSecretValue`       | ✅ Supported | By name, ARN, version ID, or stage                | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html)       |
+| `DescribeSecret`       | ✅ Supported | Metadata, KMS key, tags, versions, rotation dates | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DescribeSecret.html)       |
+| `PutSecretValue`       | ✅ Supported | Staging labels + ClientRequestToken               | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_PutSecretValue.html)       |
+| `UpdateSecret`         | ✅ Supported | Description, KMS key + optional new value         | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_UpdateSecret.html)         |
+| `ListSecrets`          | ✅ Supported | Sorted by name, KMS metadata, optional filters    | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecrets.html)          |
+| `ListSecretVersionIds` | ✅ Supported | All versions with staging labels                  | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_ListSecretVersionIds.html) |
+| `DeleteSecret`         | ✅ Supported | Immediate (ForceDelete) only                      | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html)         |
+| `BatchGetSecretValue`  | ✅ Supported | Partial results on missing secrets                | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_BatchGetSecretValue.html)  |
 
 ### Rotation
 
@@ -175,9 +176,9 @@ in AWS's shape but are not a stable identifier to branch on — read the
 
 ### Password
 
-| Operation           | Status       | Notes                                       | AWS Docs                                                                                          |
-| ------------------- | ------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `GetRandomPassword` | ✅ Supported | Length, exclusions, RequireEachIncludedType | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetRandomPassword.html) |
+| Operation           | Status       | Notes                                                      | AWS Docs                                                                                          |
+| ------------------- | ------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `GetRandomPassword` | ✅ Supported | Modeled length bounds, exclusions, RequireEachIncludedType | [docs](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetRandomPassword.html) |
 
 ### Policy/Misc
 

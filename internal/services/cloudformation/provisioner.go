@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -918,7 +919,7 @@ func hashProps(props map[string]any) string {
 // merging here also avoids updates when they override a changed stack tag.
 func hashResourceProperties(resourceType string, props map[string]any, stackTags []Tag) string {
 	switch resourceType {
-	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::Logs::LogGroup":
+	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::Logs::LogGroup", "AWS::SecretsManager::Secret":
 		return hashProps(map[string]any{
 			"Properties":    props,
 			"EffectiveTags": mergeResourceTags(stackTags, props["Tags"]),
@@ -940,7 +941,7 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 	// Hashes written before propagated-tag tracking contained only the property
 	// map. Preserve their no-op behavior when effective tags did not change,
 	// while still reconciling a real stack-only tag delta.
-	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::Logs::LogGroup" && resourceType != "AWS::CloudFormation::Stack" {
+	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::Logs::LogGroup" && resourceType != "AWS::SecretsManager::Secret" && resourceType != "AWS::CloudFormation::Stack" {
 		return oldHash == ""
 	}
 	var currentTags, previousTags any
@@ -4181,7 +4182,7 @@ func (h *ssmParameterHandler) Update(ctx context.Context, router http.Handler, _
 
 type secretsManagerSecretHandler struct{}
 
-func (h *secretsManagerSecretHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *secretsManagerSecretHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, prior map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// Name is immutable. physicalID is the ARN; last segment after final ':'
 	// is `<name>-<suffix>`, but for emulator purposes the user-supplied Name
 	// is what we compare against. If it changed, replace.
@@ -4199,26 +4200,41 @@ func (h *secretsManagerSecretHandler) Update(ctx context.Context, router http.Ha
 		}
 	}
 
-	// GenerateSecretString is deliberately absent here: AWS generates the value
-	// once, at create, and an update that changes the generation settings does
-	// not re-roll the live secret out from under whatever is already using it.
-	body := map[string]any{"SecretId": physicalID}
-	haveMutable := false
-	if v, ok := props["Description"]; ok {
-		body["Description"] = v
-		haveMutable = true
+	// AWS re-generates the secret value when GenerateSecretString changes. That
+	// update behavior is tracked separately in #678.
+	updateBody, restoreBody, valueVersionChanged := secretsManagerUpdateBodies(physicalID, props, prior)
+	updateApplied := false
+	if len(updateBody) > 1 {
+		if _, err := internalJSON(ctx, router, rCtx.Region, "secretsmanager.UpdateSecret", updateBody); err != nil {
+			return "", nil, failUpdate(fmt.Errorf("secretsmanager UpdateSecret: %w", err))
+		}
+		updateApplied = true
 	}
-	if v, ok := props["SecretString"]; ok {
-		body["SecretString"] = v
-		haveMutable = true
-	}
-	if v, ok := props["KmsKeyId"]; ok {
-		body["KmsKeyId"] = v
-		haveMutable = true
-	}
-	if haveMutable {
-		if _, err := internalJSON(ctx, router, rCtx.Region, "secretsmanager.UpdateSecret", body); err != nil {
-			return "", nil, fmt.Errorf("secretsmanager UpdateSecret: %w", err)
+	newTags := mergeResourceTags(rCtx.StackTags, props["Tags"])
+	oldTags := mergeResourceTags(rCtx.PreviousStackTags, prior["Tags"])
+	if !reflect.DeepEqual(newTags, oldTags) {
+		tagsApplied, err := updateSecretsManagerTags(ctx, router, rCtx.Region, physicalID, newTags, oldTags)
+		if err != nil {
+			var compensationErr error
+			// Reverse the forward order: restore tags before metadata/KMS.
+			if tagsApplied {
+				_, compensationErr = updateSecretsManagerTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags)
+				if compensationErr != nil {
+					compensationErr = fmt.Errorf("restore Secrets Manager tags: %w", compensationErr)
+				}
+			}
+			if updateApplied && len(restoreBody) > 1 {
+				if _, restoreErr := internalJSON(ctx, router, rCtx.Region, "secretsmanager.UpdateSecret", restoreBody); restoreErr != nil {
+					compensationErr = errors.Join(compensationErr, fmt.Errorf("restore Secrets Manager metadata and KMS key: %w", restoreErr))
+				}
+			}
+			if valueVersionChanged {
+				compensationErr = errors.Join(compensationErr, errors.New("secret value version cannot be removed during compensation"))
+			}
+			if compensationErr != nil {
+				return "", nil, failDirtyUpdate(errors.Join(err, compensationErr))
+			}
+			return "", nil, failUpdate(err)
 		}
 	}
 	name, _ := props["Name"].(string)
@@ -4227,6 +4243,36 @@ func (h *secretsManagerSecretHandler) Update(ctx context.Context, router http.Ha
 		attrs["Name"] = name
 	}
 	return physicalID, attrs, nil
+}
+
+func secretsManagerUpdateBodies(secretID string, props, prior map[string]any) (update, restore map[string]any, valueVersionChanged bool) {
+	update = map[string]any{"SecretId": secretID}
+	restore = map[string]any{"SecretId": secretID}
+	for _, property := range []string{"Description", "KmsKeyId"} {
+		value, present := props[property]
+		oldValue, oldPresent := prior[property]
+		if present == oldPresent && reflect.DeepEqual(value, oldValue) {
+			continue
+		}
+		if present && value != nil {
+			update[property] = value
+		} else {
+			update[property] = ""
+		}
+		if oldPresent && oldValue != nil {
+			restore[property] = oldValue
+		} else {
+			restore[property] = ""
+		}
+	}
+	if value, present := props["SecretString"]; present && value != nil {
+		oldValue, oldPresent := prior["SecretString"]
+		if !oldPresent || !reflect.DeepEqual(value, oldValue) {
+			update["SecretString"] = value
+			valueVersionChanged = true
+		}
+	}
+	return update, restore, valueVersionChanged
 }
 
 func (h *secretsManagerSecretHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -4263,6 +4309,12 @@ func (h *secretsManagerSecretHandler) Create(ctx context.Context, router http.Ha
 	if desc, ok := props["Description"]; ok {
 		body["Description"] = desc
 	}
+	if kmsKeyID, ok := props["KmsKeyId"]; ok {
+		body["KmsKeyId"] = kmsKeyID
+	}
+	if tags := secretsManagerTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+		body["Tags"] = tags
+	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "secretsmanager.CreateSecret", body)
 	if err != nil {
@@ -4282,35 +4334,12 @@ func (h *secretsManagerSecretHandler) Create(ctx context.Context, router http.Ha
 // first version. The password itself comes from the service's own
 // GetRandomPassword, so the exclusion rules live in one place.
 func generatedSecretString(ctx context.Context, router http.Handler, rCtx *resolveContext, gen map[string]any) (string, error) {
-	tmpl, _ := gen["SecretStringTemplate"].(string)
-	key, _ := gen["GenerateStringKey"].(string)
-	if (tmpl == "") != (key == "") {
-		return "", fmt.Errorf("GenerateSecretString: SecretStringTemplate and GenerateStringKey must be specified together")
+	config, err := parseGeneratedSecretString(gen)
+	if err != nil {
+		return "", err
 	}
 
-	body := map[string]any{}
-	if length, ok := cfnFloatProp(gen, "PasswordLength"); ok {
-		body["PasswordLength"] = int64(length)
-	}
-	if excluded, ok := gen["ExcludeCharacters"].(string); ok {
-		body["ExcludeCharacters"] = excluded
-	}
-	// Template values may arrive as JSON booleans or as the strings a raw
-	// template writes, which is what asBool exists to smooth over.
-	for _, flag := range []string{
-		"ExcludeNumbers",
-		"ExcludePunctuation",
-		"ExcludeUppercase",
-		"ExcludeLowercase",
-		"IncludeSpace",
-		"RequireEachIncludedType",
-	} {
-		if v, ok := gen[flag]; ok {
-			body[flag] = asBool(v)
-		}
-	}
-
-	rec, err := internalJSON(ctx, router, rCtx.Region, "secretsmanager.GetRandomPassword", body)
+	rec, err := internalJSON(ctx, router, rCtx.Region, "secretsmanager.GetRandomPassword", config.passwordRequest)
 	if err != nil {
 		return "", fmt.Errorf("secretsmanager GetRandomPassword: %w", err)
 	}
@@ -4323,23 +4352,188 @@ func generatedSecretString(ctx context.Context, router http.Handler, rCtx *resol
 	if resp.RandomPassword == "" {
 		return "", fmt.Errorf("secretsmanager GetRandomPassword returned no password")
 	}
-	if tmpl == "" {
+	if config.template == nil {
 		return resp.RandomPassword, nil
 	}
 
 	// With a template the secret is that JSON object with the generated
 	// password added under GenerateStringKey, which is how the CDK's
 	// `{ username, password }` database credentials are built.
-	var fields map[string]any
-	if err := json.Unmarshal([]byte(tmpl), &fields); err != nil {
-		return "", fmt.Errorf("GenerateSecretString: SecretStringTemplate is not a JSON object: %w", err)
-	}
-	fields[key] = resp.RandomPassword
-	out, err := json.Marshal(fields)
+	config.template[config.key] = resp.RandomPassword
+	out, err := json.Marshal(config.template)
 	if err != nil {
 		return "", fmt.Errorf("GenerateSecretString: %w", err)
 	}
 	return string(out), nil
+}
+
+type generatedSecretStringConfig struct {
+	template        map[string]any
+	key             string
+	passwordRequest map[string]any
+}
+
+// parseGeneratedSecretString validates the CloudFormation-only composition
+// rules before GetRandomPassword is dispatched. Password policy validation
+// remains owned by Secrets Manager itself.
+func parseGeneratedSecretString(gen map[string]any) (*generatedSecretStringConfig, error) {
+	allowed := map[string]struct{}{
+		"SecretStringTemplate": {}, "GenerateStringKey": {}, "PasswordLength": {},
+		"ExcludeCharacters": {}, "ExcludeNumbers": {}, "ExcludePunctuation": {},
+		"ExcludeUppercase": {}, "ExcludeLowercase": {}, "IncludeSpace": {},
+		"RequireEachIncludedType": {},
+	}
+	for member := range gen {
+		if _, ok := allowed[member]; !ok {
+			return nil, fmt.Errorf("GenerateSecretString: unknown member %q", member)
+		}
+	}
+	config := &generatedSecretStringConfig{passwordRequest: map[string]any{}}
+	templateValue, haveTemplate := gen["SecretStringTemplate"]
+	keyValue, haveKey := gen["GenerateStringKey"]
+	if haveTemplate != haveKey {
+		return nil, fmt.Errorf("GenerateSecretString: SecretStringTemplate and GenerateStringKey must be specified together")
+	}
+	if haveTemplate {
+		template, ok := templateValue.(string)
+		if !ok || template == "" {
+			return nil, fmt.Errorf("GenerateSecretString: SecretStringTemplate must be a non-empty JSON object string")
+		}
+		key, ok := keyValue.(string)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("GenerateSecretString: GenerateStringKey must be a non-empty string")
+		}
+		if err := json.Unmarshal([]byte(template), &config.template); err != nil || config.template == nil {
+			if err == nil {
+				err = errors.New("decoded to null")
+			}
+			return nil, fmt.Errorf("GenerateSecretString: SecretStringTemplate is not a JSON object: %w", err)
+		}
+		if _, exists := config.template[key]; exists {
+			return nil, fmt.Errorf("GenerateSecretString: GenerateStringKey %q already exists in SecretStringTemplate", key)
+		}
+		config.key = key
+	}
+
+	if raw, ok := gen["PasswordLength"]; ok {
+		length, err := cfnInt64(raw)
+		if err != nil {
+			return nil, fmt.Errorf("GenerateSecretString: PasswordLength must be an integer: %w", err)
+		}
+		config.passwordRequest["PasswordLength"] = length
+	}
+	if raw, ok := gen["ExcludeCharacters"]; ok {
+		excluded, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("GenerateSecretString: ExcludeCharacters must be a string, got %T", raw)
+		}
+		config.passwordRequest["ExcludeCharacters"] = excluded
+	}
+	for _, flag := range []string{
+		"ExcludeNumbers",
+		"ExcludePunctuation",
+		"ExcludeUppercase",
+		"ExcludeLowercase",
+		"IncludeSpace",
+		"RequireEachIncludedType",
+	} {
+		if raw, ok := gen[flag]; ok {
+			value, err := cfnBool(raw)
+			if err != nil {
+				return nil, fmt.Errorf("GenerateSecretString: %s must be a boolean: %w", flag, err)
+			}
+			config.passwordRequest[flag] = value
+		}
+	}
+	return config, nil
+}
+
+func cfnInt64(value any) (int64, error) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), nil
+	case int64:
+		return typed, nil
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) || math.Trunc(typed) != typed || typed < math.MinInt64 || typed > math.MaxInt64 {
+			return 0, fmt.Errorf("got %v", typed)
+		}
+		return int64(typed), nil
+	case json.Number:
+		return typed.Int64()
+	case string:
+		return strconv.ParseInt(typed, 10, 64)
+	default:
+		return 0, fmt.Errorf("got %T", value)
+	}
+}
+
+func cfnBool(value any) (bool, error) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, nil
+	case string:
+		switch {
+		case strings.EqualFold(typed, "true"):
+			return true, nil
+		case strings.EqualFold(typed, "false"):
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("got %v", value)
+}
+
+func secretsManagerTags(stackTags []Tag, rawResourceTags any) []map[string]string {
+	return secretsManagerTagsFromMap(mergeResourceTags(stackTags, rawResourceTags))
+}
+
+func secretsManagerTagsFromMap(tags map[string]string) []map[string]string {
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]map[string]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, map[string]string{"Key": key, "Value": tags[key]})
+	}
+	return out
+}
+
+func updateSecretsManagerTags(ctx context.Context, router http.Handler, region, secretID string, tags, prior map[string]string) (bool, error) {
+	changed := make(map[string]string)
+	for key, value := range tags {
+		if prior[key] != value {
+			changed[key] = value
+		}
+	}
+	if len(changed) > 0 {
+		if _, err := internalJSON(ctx, router, region, "secretsmanager.TagResource", map[string]any{
+			"SecretId": secretID,
+			"Tags":     secretsManagerTagsFromMap(changed),
+		}); err != nil {
+			return false, fmt.Errorf("secretsmanager TagResource: %w", err)
+		}
+	}
+	tagsApplied := len(changed) > 0
+	removed := make([]string, 0)
+	for key := range prior {
+		if _, exists := tags[key]; !exists {
+			removed = append(removed, key)
+		}
+	}
+	sort.Strings(removed)
+	if len(removed) > 0 {
+		if _, err := internalJSON(ctx, router, region, "secretsmanager.UntagResource", map[string]any{
+			"SecretId": secretID,
+			"TagKeys":  removed,
+		}); err != nil {
+			// Reconcile the complete old tag set even when no TagResource call
+			// preceded this one: a failed request may have removed some keys.
+			return true, fmt.Errorf("secretsmanager UntagResource: %w", err)
+		}
+	}
+	return tagsApplied, nil
 }
 
 func (h *secretsManagerSecretHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {

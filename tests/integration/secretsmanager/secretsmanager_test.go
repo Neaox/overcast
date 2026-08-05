@@ -556,6 +556,68 @@ func TestUpdateSecret_notFound(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 }
 
+func TestSecretKMSKeyIdRoundTripsThroughCreateUpdateDescribeAndList(t *testing.T) {
+	// Given: a secret created with a customer-managed KMS key
+	srv := helpers.NewTestServer(t)
+	resp := smCall(t, srv, "CreateSecret", map[string]any{
+		"Name":         "kms-secret",
+		"SecretString": "value",
+		"KmsKeyId":     "arn:aws:kms:us-east-1:000000000000:key/first",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	assertKMSKeyID := func(t *testing.T, want string) {
+		t.Helper()
+		describe := smCall(t, srv, "DescribeSecret", map[string]any{"SecretId": "kms-secret"})
+		defer describe.Body.Close()
+		helpers.AssertStatus(t, describe, http.StatusOK)
+		var described struct {
+			KMSKeyID string `json:"KmsKeyId"`
+		}
+		helpers.DecodeJSON(t, describe, &described)
+		if described.KMSKeyID != want {
+			t.Errorf("DescribeSecret KmsKeyId = %q, want %q", described.KMSKeyID, want)
+		}
+
+		list := smCall(t, srv, "ListSecrets", map[string]any{})
+		defer list.Body.Close()
+		helpers.AssertStatus(t, list, http.StatusOK)
+		var listed struct {
+			SecretList []struct {
+				Name     string `json:"Name"`
+				KMSKeyID string `json:"KmsKeyId"`
+			} `json:"SecretList"`
+		}
+		helpers.DecodeJSON(t, list, &listed)
+		if len(listed.SecretList) != 1 || listed.SecretList[0].KMSKeyID != want {
+			t.Errorf("ListSecrets = %+v, want KmsKeyId %q", listed.SecretList, want)
+		}
+	}
+
+	assertKMSKeyID(t, "arn:aws:kms:us-east-1:000000000000:key/first")
+
+	// When: UpdateSecret selects another key
+	resp = smCall(t, srv, "UpdateSecret", map[string]any{
+		"SecretId": "kms-secret",
+		"KmsKeyId": "alias/second",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	// Then: both metadata APIs expose the updated value
+	assertKMSKeyID(t, "alias/second")
+
+	// And: an explicit empty value resets selection to the service default.
+	resp = smCall(t, srv, "UpdateSecret", map[string]any{
+		"SecretId": "kms-secret",
+		"KmsKeyId": "",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+	assertKMSKeyID(t, "")
+}
+
 // ─── ListSecrets ─────────────────────────────────────────────────────────────
 
 func TestListSecrets_empty(t *testing.T) {
@@ -835,6 +897,31 @@ func TestGetRandomPassword_withLength(t *testing.T) {
 	helpers.DecodeJSON(t, resp, &result)
 	if len(result.RandomPassword) != 16 {
 		t.Errorf("expected length 16, got %d", len(result.RandomPassword))
+	}
+}
+
+func TestGetRandomPassword_rejectsOutOfRangeLength(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{name: "length_0", body: map[string]any{"PasswordLength": 0}},
+		{name: "length_4097", body: map[string]any{"PasswordLength": 4097}},
+		{name: "excluded_characters_4097", body: map[string]any{"ExcludeCharacters": strings.Repeat("x", 4097)}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: no setup needed
+			srv := helpers.NewTestServer(t)
+
+			// When: a modeled length constraint is exceeded
+			resp := smCall(t, srv, "GetRandomPassword", tc.body)
+			defer resp.Body.Close()
+
+			// Then: Secrets Manager rejects the request instead of defaulting or allocating it
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterException")
+		})
 	}
 }
 
