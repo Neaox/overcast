@@ -104,24 +104,38 @@ type loggingConfig struct {
 	SystemLogLevel      string `json:"SystemLogLevel,omitempty"`
 }
 
+// loggingConfigRequest keeps nested member presence so an omitted member can
+// be distinguished from an explicitly empty value. Exact empty-object update
+// semantics still need an AWS capture and are tracked in #660.
+type loggingConfigRequest struct {
+	LogGroup            *string `json:"LogGroup"`
+	LogFormat           *string `json:"LogFormat"`
+	ApplicationLogLevel *string `json:"ApplicationLogLevel"`
+	SystemLogLevel      *string `json:"SystemLogLevel"`
+}
+
+func (c *loggingConfigRequest) empty() bool {
+	return c != nil && c.LogGroup == nil && c.LogFormat == nil && c.ApplicationLogLevel == nil && c.SystemLogLevel == nil
+}
+
 // createFunctionRequest matches the AWS CreateFunction request body.
 // https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
 type createFunctionRequest struct {
-	FunctionName  string            `json:"FunctionName"`
-	Runtime       string            `json:"Runtime"`
-	Handler       string            `json:"Handler"`
-	Role          string            `json:"Role"`
-	Description   string            `json:"Description,omitempty"`
-	Timeout       *int              `json:"Timeout,omitempty"`
-	MemorySize    *int              `json:"MemorySize,omitempty"`
-	Environment   *envVariables     `json:"Environment,omitempty"`
-	Code          *functionCode     `json:"Code,omitempty"`
-	PackageType   string            `json:"PackageType,omitempty"`
-	Architectures []string          `json:"Architectures,omitempty"`
-	Tags          map[string]string `json:"Tags,omitempty"`
-	LoggingConfig *loggingConfig    `json:"LoggingConfig,omitempty"`
-	VpcConfig     *vpcConfigRequest `json:"VpcConfig,omitempty"`
-	ImageConfig   *imageConfigWire  `json:"ImageConfig,omitempty"`
+	FunctionName  string                `json:"FunctionName"`
+	Runtime       string                `json:"Runtime"`
+	Handler       string                `json:"Handler"`
+	Role          string                `json:"Role"`
+	Description   string                `json:"Description,omitempty"`
+	Timeout       *int                  `json:"Timeout,omitempty"`
+	MemorySize    *int                  `json:"MemorySize,omitempty"`
+	Environment   *envVariables         `json:"Environment,omitempty"`
+	Code          *functionCode         `json:"Code,omitempty"`
+	PackageType   string                `json:"PackageType,omitempty"`
+	Architectures []string              `json:"Architectures,omitempty"`
+	Tags          map[string]string     `json:"Tags,omitempty"`
+	LoggingConfig *loggingConfigRequest `json:"LoggingConfig,omitempty"`
+	VpcConfig     *vpcConfigRequest     `json:"VpcConfig,omitempty"`
+	ImageConfig   *imageConfigWire      `json:"ImageConfig,omitempty"`
 	// FileSystemConfigs mount EFS access points into the execution environment.
 	FileSystemConfigs []FileSystemConfig `json:"FileSystemConfigs,omitempty"`
 	// Optional; AWS requires only FunctionName, Role and Code.
@@ -172,14 +186,14 @@ type updateFunctionCodeRequest struct {
 
 // updateFunctionConfigurationRequest matches AWS UpdateFunctionConfiguration body.
 type updateFunctionConfigurationRequest struct {
-	Description   *string        `json:"Description"`
-	Handler       *string        `json:"Handler"`
-	Role          *string        `json:"Role"`
-	Timeout       *int           `json:"Timeout"`
-	MemorySize    *int           `json:"MemorySize"`
-	Runtime       *string        `json:"Runtime"`
-	Environment   *envVariables  `json:"Environment,omitempty"`
-	LoggingConfig *loggingConfig `json:"LoggingConfig"`
+	Description   *string               `json:"Description"`
+	Handler       *string               `json:"Handler"`
+	Role          *string               `json:"Role"`
+	Timeout       *int                  `json:"Timeout"`
+	MemorySize    *int                  `json:"MemorySize"`
+	Runtime       *string               `json:"Runtime"`
+	Environment   *envVariables         `json:"Environment,omitempty"`
+	LoggingConfig *loggingConfigRequest `json:"LoggingConfig"`
 	// Layers is a list of layer version ARNs to attach. An empty slice clears all layers.
 	// A nil field means "no change".
 	Layers      []string          `json:"Layers,omitempty"`
@@ -299,6 +313,83 @@ func smithyStringMinimumLengthConstraint(member, value string, minimum int) *pro
 
 func smithyPatternConstraint(member, value, pattern string) *protocol.AWSError {
 	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must satisfy regular expression pattern: " + pattern)
+}
+
+var loggingConfigLogGroupPattern = regexp.MustCompile(`^[\.\-_/#A-Za-z0-9]+$`)
+
+const loggingConfigLogGroupConstraint = `[\.\-_/#A-Za-z0-9]+`
+
+func smithyEnumConstraint(member, value string, allowed ...string) *protocol.AWSError {
+	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must satisfy enum value set: [" + strings.Join(allowed, ", ") + "]")
+}
+
+func normalizeLoggingConfig(req *loggingConfigRequest, functionName string) (*loggingConfig, *protocol.AWSError) {
+	if req == nil {
+		return nil, nil
+	}
+	config := &loggingConfig{LogGroup: "/aws/lambda/" + functionName, LogFormat: "Text"}
+	if req.LogGroup != nil {
+		if len(*req.LogGroup) < 1 {
+			return nil, smithyStringMinimumLengthConstraint("loggingConfig.logGroup", *req.LogGroup, 1)
+		}
+		if len(*req.LogGroup) > 512 {
+			return nil, smithyStringLengthConstraint("loggingConfig.logGroup", *req.LogGroup, 512)
+		}
+		if !loggingConfigLogGroupPattern.MatchString(*req.LogGroup) {
+			return nil, smithyPatternConstraint("loggingConfig.logGroup", *req.LogGroup, loggingConfigLogGroupConstraint)
+		}
+		config.LogGroup = *req.LogGroup
+	}
+	if req.LogFormat != nil {
+		if *req.LogFormat != "JSON" && *req.LogFormat != "Text" {
+			return nil, smithyEnumConstraint("loggingConfig.logFormat", *req.LogFormat, "JSON", "Text")
+		}
+		config.LogFormat = *req.LogFormat
+	}
+	if req.ApplicationLogLevel != nil {
+		switch *req.ApplicationLogLevel {
+		case "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL":
+		default:
+			return nil, smithyEnumConstraint("loggingConfig.applicationLogLevel", *req.ApplicationLogLevel, "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL")
+		}
+		config.ApplicationLogLevel = *req.ApplicationLogLevel
+	}
+	if req.SystemLogLevel != nil {
+		switch *req.SystemLogLevel {
+		case "DEBUG", "INFO", "WARN":
+		default:
+			return nil, smithyEnumConstraint("loggingConfig.systemLogLevel", *req.SystemLogLevel, "DEBUG", "INFO", "WARN")
+		}
+		config.SystemLogLevel = *req.SystemLogLevel
+	}
+	if config.LogFormat != "JSON" && (req.ApplicationLogLevel != nil || req.SystemLogLevel != nil) {
+		// AWS documents that level filtering requires JSON, but does not publish
+		// the exact service-rendered cross-field message. Capture parity is #660.
+		return nil, lambdaInvalidParameter("ApplicationLogLevel and SystemLogLevel can only be set for functions configured to use JSON log format.")
+	}
+	if config.LogFormat == "JSON" {
+		if config.ApplicationLogLevel == "" {
+			config.ApplicationLogLevel = "INFO"
+		}
+		if config.SystemLogLevel == "" {
+			config.SystemLogLevel = "INFO"
+		}
+	}
+	return config, nil
+}
+
+func applyLoggingConfig(fn *Function, config *loggingConfig) {
+	if config == nil {
+		return
+	}
+	if config.LogGroup == "/aws/lambda/"+fn.Name {
+		fn.LogGroup = ""
+	} else {
+		fn.LogGroup = config.LogGroup
+	}
+	fn.LogFormat = config.LogFormat
+	fn.ApplicationLogLevel = config.ApplicationLogLevel
+	fn.SystemLogLevel = config.SystemLogLevel
 }
 
 func validateVpcConfig(config *vpcConfigRequest) *protocol.AWSError {
@@ -422,6 +513,14 @@ func functionToConfig(fn *Function) *functionConfiguration {
 	if cfg.LoggingConfig.LogFormat == "" {
 		cfg.LoggingConfig.LogFormat = "Text"
 	}
+	if cfg.LoggingConfig.LogFormat == "JSON" {
+		if cfg.LoggingConfig.ApplicationLogLevel == "" {
+			cfg.LoggingConfig.ApplicationLogLevel = "INFO"
+		}
+		if cfg.LoggingConfig.SystemLogLevel == "" {
+			cfg.LoggingConfig.SystemLogLevel = "INFO"
+		}
+	}
 	if len(fn.Environment) > 0 {
 		cfg.Environment = &functionEnvConf{Variables: fn.Environment}
 	}
@@ -525,6 +624,12 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	loggingConfig, aerr := normalizeLoggingConfig(req.LoggingConfig, req.FunctionName)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	loggingUnsupported := loggingConfig != nil && loggingConfig.LogFormat == "JSON"
 
 	ctx := r.Context()
 
@@ -603,6 +708,34 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		))
 		return
 	}
+	if req.CodeSigningConfigArn != "" && !codeSigningConfigARNPattern.MatchString(req.CodeSigningConfigArn) {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "InvalidParameterValueException",
+			Message:    "Invalid code signing config arn: " + req.CodeSigningConfigArn,
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	for _, arn := range req.Layers {
+		// Real AWS requires layers to be in the same region as the function.
+		if layerRegion := serviceutil.ARNRegion(arn); layerRegion != "" {
+			if fnRegion := middleware.RegionFromContext(ctx, h.cfg.Region); layerRegion != fnRegion {
+				protocol.WriteJSONError(w, r, &protocol.AWSError{
+					Code:       "InvalidParameterValueException",
+					Message:    "Layer ARN must be in the same region as the function.",
+					HTTPStatus: http.StatusBadRequest,
+				})
+				return
+			}
+		}
+	}
+	if loggingUnsupported {
+		// JSON format affects both application and platform records. Defer this
+		// honest emulator gap until modeled request validation has completed so
+		// it cannot mask an AWS validation error. Tracked in #660.
+		protocol.NotImplementedJSON(w, r)
+		return
+	}
 	// Modeled request validation runs before state-dependent service checks.
 	existing, aerr := h.ls.getFunction(ctx, req.FunctionName)
 	if aerr != nil {
@@ -648,21 +781,8 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		LastModified:    h.clk.Now().UTC().Format(time.RFC3339),
 		Tags:            copyTags(req.Tags),
 	}
-	if req.LoggingConfig != nil {
-		fn.LogGroup = req.LoggingConfig.LogGroup
-		fn.LogFormat = req.LoggingConfig.LogFormat
-		fn.ApplicationLogLevel = req.LoggingConfig.ApplicationLogLevel
-		fn.SystemLogLevel = req.LoggingConfig.SystemLogLevel
-	}
+	applyLoggingConfig(fn, loggingConfig)
 	if req.CodeSigningConfigArn != "" {
-		if !codeSigningConfigARNPattern.MatchString(req.CodeSigningConfigArn) {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{
-				Code:       "InvalidParameterValueException",
-				Message:    "Invalid code signing config arn: " + req.CodeSigningConfigArn,
-				HTTPStatus: http.StatusBadRequest,
-			})
-			return
-		}
 		exists, aerr := h.codeSigningConfigExists(r, req.CodeSigningConfigArn)
 		if aerr != nil {
 			protocol.WriteJSONError(w, r, aerr)
@@ -725,17 +845,6 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	if len(req.Layers) > 0 {
 		links := make([]LayerVersionLink, 0, len(req.Layers))
 		for _, arn := range req.Layers {
-			// Real AWS requires layers to be in the same region as the function.
-			if layerRegion := serviceutil.ARNRegion(arn); layerRegion != "" {
-				if fnRegion := middleware.RegionFromContext(ctx, h.cfg.Region); layerRegion != fnRegion {
-					protocol.WriteJSONError(w, r, &protocol.AWSError{
-						Code:       "InvalidParameterValueException",
-						Message:    "Layer ARN must be in the same region as the function.",
-						HTTPStatus: http.StatusBadRequest,
-					})
-					return
-				}
-			}
 			lv, aerr := h.ls.getLayerVersionByARN(ctx, arn)
 			if aerr != nil {
 				protocol.WriteJSONError(w, r, aerr)
@@ -1319,6 +1428,12 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
+	loggingConfig, aerr := normalizeLoggingConfig(req.LoggingConfig, name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	loggingUnsupported := req.LoggingConfig.empty() || (loggingConfig != nil && loggingConfig.LogFormat == "JSON")
 	if req.Runtime != nil {
 		if aerr := validateLambdaRuntime(*req.Runtime); aerr != nil {
 			protocol.WriteJSONError(w, r, aerr)
@@ -1363,11 +1478,7 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		protocol.WriteJSONError(w, r, smithyPatternConstraint("role", *req.Role, `arn:(aws[a-zA-Z-]*)?:iam::\d{12}:role/?[a-zA-Z_0-9+=,.@\-_/]+`))
 		return
 	}
-	// Resolve referenced resources before taking the function mutation lock.
-	// The callback below is deliberately store-only and cannot re-enter lambdaStore.
-	var layerLinks []LayerVersionLink
 	if req.Layers != nil {
-		layerLinks = make([]LayerVersionLink, 0, len(req.Layers))
 		for _, arn := range req.Layers {
 			// Real AWS requires layers to be in the same region as the function.
 			if layerRegion := serviceutil.ARNRegion(arn); layerRegion != "" {
@@ -1380,6 +1491,21 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 					return
 				}
 			}
+		}
+	}
+	if loggingUnsupported {
+		// Empty-object semantics are uncaptured, and JSON changes application
+		// and platform records. Defer the honest emulator gap until all modeled
+		// validation has passed, then reject before state mutation. Tracked in #660.
+		protocol.NotImplementedJSON(w, r)
+		return
+	}
+	// Resolve referenced resources before taking the function mutation lock.
+	// The callback below is deliberately store-only and cannot re-enter lambdaStore.
+	var layerLinks []LayerVersionLink
+	if req.Layers != nil {
+		layerLinks = make([]LayerVersionLink, 0, len(req.Layers))
+		for _, arn := range req.Layers {
 			lv, aerr := h.ls.getLayerVersionByARN(ctx, arn)
 			if aerr != nil {
 				protocol.WriteJSONError(w, r, aerr)
@@ -1425,10 +1551,7 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 			current.Environment = req.Environment.Variables
 		}
 		if req.LoggingConfig != nil {
-			current.LogGroup = req.LoggingConfig.LogGroup
-			current.LogFormat = req.LoggingConfig.LogFormat
-			current.ApplicationLogLevel = req.LoggingConfig.ApplicationLogLevel
-			current.SystemLogLevel = req.LoggingConfig.SystemLogLevel
+			applyLoggingConfig(current, loggingConfig)
 		}
 		if req.Layers != nil {
 			current.Layers = layerLinks

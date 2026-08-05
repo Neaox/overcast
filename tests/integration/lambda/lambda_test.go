@@ -5232,12 +5232,12 @@ func TestUpdateFunctionConfiguration_explicitEmptyValuesClearOptionals(t *testin
 		"Role": "arn:aws:iam::000000000000:role/lambda-role", "Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="},
 		"Description": "remove me", "Environment": map[string]any{"Variables": map[string]string{"A": "B"}},
 		"Layers":        []string{"arn:aws:lambda:us-east-1:000000000000:layer:test:1"},
-		"LoggingConfig": map[string]any{"LogGroup": "/custom/group", "LogFormat": "JSON", "ApplicationLogLevel": "INFO", "SystemLogLevel": "WARN"},
+		"LoggingConfig": map[string]any{"LogGroup": "/custom/group", "LogFormat": "Text"},
 	})
 	helpers.AssertStatus(t, create, http.StatusCreated)
 	create.Body.Close()
 	update := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/clear-optionals-fn/configuration"), map[string]any{
-		"Description": "", "Environment": map[string]any{"Variables": map[string]string{}}, "Layers": []string{}, "LoggingConfig": map[string]any{},
+		"Description": "", "Environment": map[string]any{"Variables": map[string]string{}}, "Layers": []string{},
 	})
 	helpers.AssertStatus(t, update, http.StatusOK)
 	var config map[string]any
@@ -5252,8 +5252,8 @@ func TestUpdateFunctionConfiguration_explicitEmptyValuesClearOptionals(t *testin
 		t.Error("Layers were not cleared")
 	}
 	logging, _ := config["LoggingConfig"].(map[string]any)
-	if logging["LogGroup"] != "/aws/lambda/clear-optionals-fn" || logging["LogFormat"] != "Text" {
-		t.Errorf("LoggingConfig after clear = %v", logging)
+	if logging["LogGroup"] != "/custom/group" || logging["LogFormat"] != "Text" {
+		t.Errorf("omitted LoggingConfig changed = %v", logging)
 	}
 }
 
