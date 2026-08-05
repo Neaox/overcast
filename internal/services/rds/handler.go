@@ -28,20 +28,22 @@ const rdsXMLNS = "http://rds.amazonaws.com/doc/2014-10-31/"
 
 // Handler handles RDS Query-protocol requests.
 type Handler struct {
-	cfg         *config.Config
-	store       *rdsStore
-	log         *serviceutil.ServiceLogger
-	clk         clock.Clock
-	bus         *events.Bus
-	scheduler   *lifecycle.Scheduler
-	docker      *docker.Client
-	dockerReady atomic.Bool
-	dockerWg    sync.WaitGroup
-	puller      *docker.ImagePuller
-	vpcResolver VPCNetworkResolver
-	gc          *docker.GC
-	ops         map[string]http.HandlerFunc
-	typedOp     map[string]op.Operation
+	cfg               *config.Config
+	store             *rdsStore
+	log               *serviceutil.ServiceLogger
+	clk               clock.Clock
+	bus               *events.Bus
+	scheduler         *lifecycle.Scheduler
+	docker            *docker.Client
+	dockerReady       atomic.Bool
+	shuttingDown      atomic.Bool
+	dockerLifecycleMu sync.Mutex
+	dockerWg          sync.WaitGroup
+	puller            *docker.ImagePuller
+	vpcResolver       VPCNetworkResolver
+	gc                *docker.GC
+	ops               map[string]http.HandlerFunc
+	typedOp           map[string]op.Operation
 
 	// One writer at a time per record — see locks.go.
 	instanceLocks serviceutil.RecordLocks
@@ -698,8 +700,15 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 			zap.String("network", network), zap.Error(err))
 	}
 
-	// Build engine-specific env vars.
-	env := []string{ecfg.PasswordVar + "=" + inst.MasterUserPassword}
+	// Build engine-specific env vars. MySQL 8 gets an entrypoint-safe temporary
+	// root password; a sourced init fragment installs the exact requested
+	// credential before the engine is exposed.
+	entrypointPassword := inst.MasterUserPassword
+	bootstrapMySQL8 := usesMySQL8CredentialBootstrap(inst.Engine, image)
+	if bootstrapMySQL8 {
+		entrypointPassword = mysql8BootstrapPassword(inst.MasterUserPassword)
+	}
+	env := []string{ecfg.PasswordVar + "=" + entrypointPassword}
 	dbName := inst.DBName
 	if dbName == "" {
 		dbName = "test"
@@ -713,7 +722,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 	// For MySQL/MariaDB, create an additional non-root user when MasterUsername
 	// is not "root". The root password is already set via MYSQL_ROOT_PASSWORD.
-	if (inst.Engine == "mysql" || inst.Engine == "aurora-mysql") && inst.MasterUsername != "root" {
+	if !bootstrapMySQL8 && (inst.Engine == "mysql" || inst.Engine == "aurora-mysql") && inst.MasterUsername != "root" {
 		env = append(env, "MYSQL_USER="+inst.MasterUsername, "MYSQL_PASSWORD="+inst.MasterUserPassword)
 	}
 	if inst.Engine == "mariadb" && inst.MasterUsername != "root" {
@@ -758,6 +767,20 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		}
 		h.store.releasePort(ctx, hostPort) //nolint:errcheck
 		return fmt.Errorf("create container: %w", err)
+	}
+
+	if bootstrapMySQL8 {
+		archive, archiveErr := mysql8CredentialArchive(inst.MasterUsername, inst.MasterUserPassword, dbName)
+		if archiveErr != nil {
+			h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+			h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+			return fmt.Errorf("build MySQL credential initializer: %w", archiveErr)
+		}
+		if copyErr := h.docker.CopyToContainer(ctx, containerID, "/docker-entrypoint-initdb.d", archive); copyErr != nil {
+			h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+			h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+			return fmt.Errorf("install MySQL credential initializer: %w", copyErr)
+		}
 	}
 
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {

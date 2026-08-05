@@ -477,6 +477,8 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 			return errInvalidDBInstanceState(id, "must be available to stop")
 		}
 		inst.DBInstanceStatus = "stopping"
+		inst.StoppedByUser = true
+		inst.DockerRecoveryPending = false
 		return nil
 	})
 	if aerr != nil {
@@ -523,6 +525,8 @@ func (h *Handler) startDBInstanceTyped(ctx context.Context, req *startDBInstance
 			return errInvalidDBInstanceState(id, "must be stopped to start")
 		}
 		inst.DBInstanceStatus = "starting"
+		inst.StoppedByUser = false
+		inst.DockerRecoveryPending = false
 		return nil
 	})
 	if aerr != nil {

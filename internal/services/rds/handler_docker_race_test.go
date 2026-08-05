@@ -119,6 +119,9 @@ func newFakeDockerDaemon(t *testing.T) *fakeDockerDaemon {
 		case strings.HasSuffix(p, "/containers/create"):
 			w.Write([]byte(`{"Id":"` + containerID + `"}`)) //nolint:errcheck
 
+		case r.Method == http.MethodPut && strings.HasSuffix(p, "/containers/"+containerID+"/archive"):
+			w.WriteHeader(http.StatusOK)
+
 		case strings.HasSuffix(p, "/containers/"+containerID+"/start"):
 			startMu.Lock()
 			startCount++

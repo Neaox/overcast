@@ -1,12 +1,15 @@
 package rds
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +21,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -86,6 +90,11 @@ type lifecycleDaemon struct {
 	starts     int  // successful start requests
 	creates    int  // create-container requests
 	failCreate bool // reject creates, so a rebuild cannot succeed
+	failStart  bool // reject starts, as when the daemon is going away
+	resourceID string
+	createEnv  []string
+	archive    []byte
+	requests   []string
 
 	execCmds     [][]string // Cmd of every exec create, in order
 	execEnvs     [][]string // Env of every exec create, in order
@@ -203,6 +212,12 @@ func (d *lifecycleDaemon) refuseCreates() {
 	d.failCreate = true
 }
 
+func (d *lifecycleDaemon) setStartFailure(fail bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.failStart = fail
+}
+
 func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 	t.Helper()
 	d := &lifecycleDaemon{}
@@ -227,6 +242,30 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 		switch {
 		case strings.HasSuffix(p, "/images/create"), strings.HasSuffix(p, "/images/prune"):
 			w.WriteHeader(http.StatusOK)
+
+		case strings.HasSuffix(p, "/containers/json"):
+			d.mu.Lock()
+			exists := d.exists
+			running := d.running
+			resourceID := d.resourceID
+			d.mu.Unlock()
+			if !exists {
+				_, _ = w.Write([]byte("[]"))
+				return
+			}
+			state := "exited"
+			if running {
+				state = "running"
+			}
+			_ = json.NewEncoder(w).Encode([]docker.ContainerSummary{{
+				ID:    cid,
+				State: state,
+				Labels: map[string]string{
+					docker.LabelManaged:    "true",
+					docker.LabelService:    "rds",
+					docker.LabelResourceID: resourceID,
+				},
+			}})
 
 		// Exec create. Docker refuses to exec into a container that is not
 		// running, and so does this.
@@ -280,6 +319,9 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 			d.mu.Lock()
 			d.creates++
 			refuse := d.failCreate
+			d.resourceID = req.Labels[docker.LabelResourceID]
+			d.createEnv = append([]string(nil), req.Env...)
+			d.requests = append(d.requests, "create")
 			if req.HostConfig != nil {
 				d.autoRemove = req.HostConfig.AutoRemove
 			}
@@ -296,12 +338,30 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 
 		case strings.HasSuffix(p, "/containers/"+cid+"/start"):
 			d.mu.Lock()
+			d.requests = append(d.requests, "start")
+			fail := d.failStart
+			if fail {
+				d.mu.Unlock()
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			if !d.running {
 				d.starts++
 			}
 			d.running = true
 			d.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
+
+		case r.Method == http.MethodPut && strings.HasSuffix(p, "/containers/"+cid+"/archive"):
+			var body bytes.Buffer
+			if _, err := body.ReadFrom(r.Body); err != nil {
+				t.Errorf("read copied archive: %v", err)
+			}
+			d.mu.Lock()
+			d.archive = append([]byte(nil), body.Bytes()...)
+			d.requests = append(d.requests, "archive")
+			d.mu.Unlock()
+			w.WriteHeader(http.StatusOK)
 
 		case strings.HasSuffix(p, "/containers/"+cid+"/stop"):
 			d.mu.Lock()
@@ -333,6 +393,60 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 	}))
 	t.Cleanup(d.srv.Close)
 	return d
+}
+
+func TestCreateMySQL8Container_bootstrapsEscapedCachingSHA2CredentialsBeforeStart(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	const (
+		id       = "mysql-special-password"
+		password = `valid\password!`
+	)
+
+	createRunningInstanceWith(t, h, id, "mysql", "admin", password)
+
+	d.mu.Lock()
+	env := append([]string(nil), d.createEnv...)
+	archiveBytes := append([]byte(nil), d.archive...)
+	requests := append([]string(nil), d.requests...)
+	d.mu.Unlock()
+
+	if slices.Contains(env, "MYSQL_ROOT_PASSWORD="+password) {
+		t.Fatal("requested password was handed to the image entrypoint, whose SQL interpolation changes backslashes")
+	}
+	for _, value := range env {
+		if strings.HasPrefix(value, "MYSQL_PASSWORD=") || strings.HasPrefix(value, "MYSQL_USER=") {
+			t.Fatalf("custom user was delegated to the image entrypoint: %q", value)
+		}
+	}
+	if len(requests) < 3 || !slices.Equal(requests[:3], []string{"create", "archive", "start"}) {
+		t.Fatalf("container requests = %v, want create, archive, start", requests)
+	}
+
+	tr := tar.NewReader(bytes.NewReader(archiveBytes))
+	header, err := tr.Next()
+	if err != nil {
+		t.Fatalf("read credential init archive: %v", err)
+	}
+	if header.Name != "10-overcast-credentials.sh" {
+		t.Fatalf("init archive entry = %q", header.Name)
+	}
+	if header.Mode != 0o644 {
+		t.Fatalf("init archive mode = %#o, want readable but non-executable 0644", header.Mode)
+	}
+	var script bytes.Buffer
+	if _, err := script.ReadFrom(tr); err != nil {
+		t.Fatalf("read credential init script: %v", err)
+	}
+	for _, want := range []string{
+		"IDENTIFIED WITH caching_sha2_password",
+		`BY 'valid\\password!'`,
+		`export MYSQL_ROOT_PASSWORD='valid\password!'`,
+	} {
+		if !strings.Contains(script.String(), want) {
+			t.Errorf("credential init script does not contain %q:\n%s", want, script.String())
+		}
+	}
 }
 
 func (d *lifecycleDaemon) state() (autoRemove, exists bool, starts int) {
@@ -644,6 +758,424 @@ func TestStartDBInstance_rebuildsAContainerDockerNoLongerHas(t *testing.T) {
 	inst, _ := h.store.getDBInstance(ctx, id)
 	if inst.DBInstanceStatus == "failed" {
 		t.Errorf("instance failed despite the container being rebuildable: %s", inst.StatusReason)
+	}
+}
+
+// Stopping the engine container through Docker is an out-of-band runtime
+// mutation, not an RDS StopDBInstance request. The persisted RDS control-plane
+// state remains authoritative, so Overcast must immediately put the instance
+// back on its startup path instead of adopting Docker's stopped state.
+func TestHandleContainerEvent_recoversDockerLevelStop(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "docker-level-stop"
+
+	// Given: an available instance whose engine is deliberately stopped through
+	// Docker Desktop rather than through StopDBInstance.
+	createRunningInstance(t, h, id)
+	d.mu.Lock()
+	d.running = false
+	startsBefore := d.starts
+	d.mu.Unlock()
+
+	// When: Docker reports that the container process has died.
+	h.handleContainerEvent(ctx, events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: lifecycleContainerID,
+			Action:      "die",
+			Service:     "rds",
+			ResourceID:  id,
+		},
+	})
+	h.dockerWg.Wait()
+
+	// Then: Overcast restarts the engine and health-checks it as a starting
+	// instance. Only StopDBInstance is allowed to establish a durable stop.
+	d.mu.Lock()
+	startsAfter := d.starts
+	running := d.running
+	d.mu.Unlock()
+	if startsAfter <= startsBefore {
+		t.Error("Docker-level stop did not restart the engine container")
+	}
+	if !running {
+		t.Error("engine container remains stopped after Docker-level recovery")
+	}
+	if got := instanceStatus(t, h, ctx, id); got != "starting" {
+		t.Errorf("status = %q, want %q while the recovered engine is health-checked", got, "starting")
+	}
+}
+
+func TestHandleDockerDaemonConnected_reconcilesMissedStop(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "reconnect-stop"
+
+	// Given: Docker went away before Overcast received the container's die
+	// event, leaving the control-plane record available while the retained
+	// container is actually exited.
+	createRunningInstance(t, h, id)
+	d.mu.Lock()
+	d.running = false
+	startsBefore := d.starts
+	d.mu.Unlock()
+
+	// When: the Docker watcher reconnects after the daemon returns.
+	h.handleDockerDaemonConnected(ctx, events.Event{
+		Type:    events.DockerDaemonConnected,
+		Payload: docker.DaemonConnectedPayload{Client: h.docker, Reconnected: true},
+	})
+	h.dockerWg.Wait()
+
+	// Then: RDS lists the daemon's current state and restarts the missed exit.
+	d.mu.Lock()
+	startsAfter := d.starts
+	running := d.running
+	d.mu.Unlock()
+	if startsAfter <= startsBefore {
+		t.Error("Docker reconnect did not reconcile and restart the exited container")
+	}
+	if !running {
+		t.Error("engine remains stopped after Docker reconnect reconciliation")
+	}
+}
+
+func TestHandleDockerDaemonConnected_retriesRecoveryInterruptedByDaemonShutdown(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "reconnect-interrupted-recovery"
+
+	// Given: Docker emitted the engine's die event, then became unavailable
+	// before Overcast could restart it.
+	createRunningInstance(t, h, id)
+	d.mu.Lock()
+	d.running = false
+	d.mu.Unlock()
+	d.setStartFailure(true)
+	h.handleContainerEvent(ctx, events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: lifecycleContainerID,
+			Action:      "die",
+			Service:     "rds",
+			ResourceID:  id,
+		},
+	})
+	h.dockerWg.Wait()
+	inst, aerr := h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance: %s", aerr.Message)
+	}
+	if inst.DBInstanceStatus != "failed" || !inst.DockerRecoveryPending {
+		t.Fatalf("interrupted recovery = status %q, pending %v; want failed, true",
+			inst.DBInstanceStatus, inst.DockerRecoveryPending)
+	}
+
+	// When: Docker returns and its event watcher reconnects.
+	d.setStartFailure(false)
+	h.handleDockerDaemonConnected(ctx, events.Event{
+		Type:    events.DockerDaemonConnected,
+		Payload: docker.DaemonConnectedPayload{Client: h.docker, Reconnected: true},
+	})
+	h.dockerWg.Wait()
+
+	// Then: only that infrastructure-recovery failure is retried.
+	d.mu.Lock()
+	running := d.running
+	d.mu.Unlock()
+	if !running {
+		t.Error("daemon reconnect did not retry the interrupted engine recovery")
+	}
+	inst, aerr = h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance after reconnect: %s", aerr.Message)
+	}
+	if inst.DBInstanceStatus != "starting" || inst.DockerRecoveryPending {
+		t.Errorf("recovered instance = status %q, pending %v; want starting, false",
+			inst.DBInstanceStatus, inst.DockerRecoveryPending)
+	}
+}
+
+func TestHandleContainerStarted_preservesExplicitStop(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "docker-start-after-api-stop"
+
+	// Given: the instance was explicitly stopped through RDS, then its engine
+	// was started directly through Docker Desktop.
+	createRunningInstance(t, h, id)
+	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	waitForStatus(t, h, id, "stopped")
+	d.mu.Lock()
+	d.running = true
+	d.mu.Unlock()
+
+	// When: Docker reports the out-of-band start.
+	h.handleContainerStarted(ctx, events.Event{
+		Type: events.DockerContainerStarted,
+		Payload: events.DockerContainerPayload{
+			ContainerID: lifecycleContainerID,
+			Action:      "start",
+			Service:     "rds",
+			ResourceID:  id,
+		},
+	})
+
+	// Then: Overcast stops the engine again and preserves StopDBInstance.
+	d.mu.Lock()
+	running := d.running
+	d.mu.Unlock()
+	if running {
+		t.Error("Docker start overrode an explicit StopDBInstance")
+	}
+	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
+		t.Errorf("status = %q, want %q", got, "stopped")
+	}
+}
+
+func TestHandleContainerEvent_ignoresOvercastShutdown(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "overcast-shutdown"
+
+	// Given: Overcast is shutting down and its cleanup stopped the engine.
+	createRunningInstance(t, h, id)
+	d.mu.Lock()
+	d.running = false
+	startsBefore := d.starts
+	d.mu.Unlock()
+	h.shuttingDown.Store(true)
+
+	// When: Docker emits the resulting die event.
+	h.handleContainerEvent(ctx, events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: lifecycleContainerID,
+			Action:      "die",
+			Service:     "rds",
+			ResourceID:  id,
+		},
+	})
+
+	// Then: shutdown cleanup is not fought by a new recovery goroutine. The
+	// persisted desired state remains available for startup reconciliation.
+	d.mu.Lock()
+	startsAfter := d.starts
+	d.mu.Unlock()
+	if startsAfter != startsBefore {
+		t.Errorf("shutdown event restarted the container: starts %d -> %d", startsBefore, startsAfter)
+	}
+	if got := instanceStatus(t, h, ctx, id); got != "available" {
+		t.Errorf("status = %q, want %q for next-start reconciliation", got, "available")
+	}
+}
+
+// A persisted instance that was live when Overcast stopped is still meant to
+// be live when Overcast starts again. If its container disappeared during the
+// restart, startup reconciliation must rebuild it instead of silently turning
+// the instance into an explicitly stopped one.
+func TestReconcileContainers_rebuildsMissingAvailableInstance(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "reconcile-missing"
+
+	// Given: an available instance whose container disappeared while Overcast
+	// was not running.
+	createRunningInstance(t, h, id)
+	d.drop()
+	d.mu.Lock()
+	createsBefore := d.creates
+	d.mu.Unlock()
+
+	// When: startup reconciliation sees no managed container for the instance.
+	h.reconcileContainers(ctx, nil)
+	h.dockerWg.Wait()
+
+	// Then: it rebuilds the missing container and keeps the instance on its
+	// path back to available rather than declaring that the user stopped it.
+	d.mu.Lock()
+	createsAfter := d.creates
+	exists := d.exists
+	d.mu.Unlock()
+	if createsAfter <= createsBefore {
+		t.Error("startup reconciliation did not rebuild the missing container")
+	}
+	if !exists {
+		t.Error("instance still has no container after startup reconciliation")
+	}
+	inst, aerr := h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance: %s", aerr.Message)
+	}
+	if inst.DBInstanceStatus == "stopped" {
+		t.Error("startup reconciliation marked a previously available instance as explicitly stopped")
+	}
+}
+
+// A Docker-driven stop is not the same as StopDBInstance. The former records
+// runtime drift; the latter records user intent. Reconciliation must recover
+// the former even when the old process persisted "stopped" before exiting.
+func TestReconcileContainers_rebuildsMissingExternallyStoppedInstance(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "reconcile-external-stop"
+
+	// Given: a previously available instance was marked stopped because its
+	// container went away, not because StopDBInstance was called.
+	createRunningInstance(t, h, id)
+	inst, aerr := h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance: %s", aerr.Message)
+	}
+	inst.DBInstanceStatus = "stopped"
+	inst.StoppedByUser = false
+	if aerr := h.store.putDBInstance(ctx, inst); aerr != nil {
+		t.Fatalf("putDBInstance: %s", aerr.Message)
+	}
+	d.drop()
+	d.mu.Lock()
+	createsBefore := d.creates
+	d.mu.Unlock()
+
+	// When: startup reconciliation sees the stopped record and missing runtime.
+	h.reconcileContainers(ctx, nil)
+	h.dockerWg.Wait()
+
+	// Then: it rebuilds the runtime because no user requested the stop.
+	d.mu.Lock()
+	createsAfter := d.creates
+	exists := d.exists
+	d.mu.Unlock()
+	if createsAfter <= createsBefore {
+		t.Error("startup reconciliation did not rebuild the externally stopped instance")
+	}
+	if !exists {
+		t.Error("externally stopped instance still has no container after reconciliation")
+	}
+}
+
+func TestReconcileContainers_restartsExitedContainerForAvailableInstance(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "reconcile-exited"
+
+	// Given: the DB instance record remained available across an Overcast
+	// restart, but Docker reports that its retained container is exited.
+	createRunningInstance(t, h, id)
+	d.mu.Lock()
+	d.running = false
+	startsBefore := d.starts
+	d.mu.Unlock()
+
+	// When: startup reconciliation observes the stopped runtime.
+	h.reconcileContainers(ctx, []docker.ContainerSummary{{
+		ID:    lifecycleContainerID,
+		State: "exited",
+		Labels: map[string]string{
+			docker.LabelService:    "rds",
+			docker.LabelResourceID: id,
+		},
+	}})
+	h.dockerWg.Wait()
+
+	// Then: the existing container is restarted, not replaced or translated
+	// into an explicit StopDBInstance state.
+	d.mu.Lock()
+	startsAfter := d.starts
+	exists := d.exists
+	d.mu.Unlock()
+	if startsAfter <= startsBefore {
+		t.Error("startup reconciliation did not restart the exited container")
+	}
+	if !exists {
+		t.Error("reconciliation lost the retained container")
+	}
+	if got := instanceStatus(t, h, ctx, id); got == "stopped" {
+		t.Error("reconciliation marked the available instance as explicitly stopped")
+	}
+}
+
+func TestReconcileContainers_leavesExplicitlyStoppedInstanceStopped(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "reconcile-user-stop"
+
+	// Given: the user explicitly stopped the instance and its container later
+	// disappeared while Overcast was not running.
+	createRunningInstance(t, h, id)
+	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	waitForStatus(t, h, id, "stopped")
+	d.drop()
+	d.mu.Lock()
+	createsBefore := d.creates
+	d.mu.Unlock()
+
+	// When: startup reconciliation runs without the container.
+	h.reconcileContainers(ctx, nil)
+	h.dockerWg.Wait()
+
+	// Then: user intent wins; no engine is recreated or started.
+	d.mu.Lock()
+	createsAfter := d.creates
+	d.mu.Unlock()
+	if createsAfter != createsBefore {
+		t.Errorf("reconciliation rebuilt an explicitly stopped instance: creates %d -> %d", createsBefore, createsAfter)
+	}
+	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
+		t.Errorf("status = %q, want %q", got, "stopped")
+	}
+}
+
+func TestReconcileContainers_stopsDockerStartedExplicitlyStoppedInstance(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "reconcile-user-started-container"
+
+	// Given: StopDBInstance established a durable stopped state, but someone
+	// subsequently started its engine directly through Docker Desktop.
+	createRunningInstance(t, h, id)
+	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	waitForStatus(t, h, id, "stopped")
+	d.mu.Lock()
+	d.running = true
+	d.mu.Unlock()
+
+	// When: reconciliation observes a running container for that instance.
+	h.reconcileContainers(ctx, []docker.ContainerSummary{{
+		ID:    lifecycleContainerID,
+		State: "running",
+		Labels: map[string]string{
+			docker.LabelService:    "rds",
+			docker.LabelResourceID: id,
+		},
+	}})
+
+	// Then: the RDS control-plane stop wins and the engine is stopped again.
+	d.mu.Lock()
+	running := d.running
+	d.mu.Unlock()
+	if running {
+		t.Error("reconciliation left a Docker-started container running for an explicitly stopped instance")
+	}
+	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
+		t.Errorf("status = %q, want %q", got, "stopped")
 	}
 }
 

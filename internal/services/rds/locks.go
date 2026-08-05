@@ -93,32 +93,6 @@ func (h *Handler) transitionInstance(ctx context.Context, instanceID, from, to s
 	}
 }
 
-// stopInstanceWithLogs records a container that has gone away: the instance
-// moves to "stopped", carrying whatever output was captured from the container
-// before it went. captured is the snapshot the caller read the logs onto —
-// only the log fields travel from it, because everything else on it is older
-// than what is stored.
-//
-// A container that died is not a reason to undo an API call: an instance the
-// caller has since stopped, deleted or modified keeps the status that call gave
-// it, which is what the from-status guard here enforces.
-func (h *Handler) stopInstanceWithLogs(ctx context.Context, captured *DBInstance) {
-	instanceID := captured.DBInstanceIdentifier
-	from := captured.DBInstanceStatus
-	if _, aerr := h.mutateInstance(ctx, instanceID, func(inst *DBInstance) *protocol.AWSError {
-		if inst.DBInstanceStatus != from {
-			return errInstanceMovedOn
-		}
-		inst.DBInstanceStatus = "stopped"
-		inst.LastLogs = captured.LastLogs
-		inst.LastLogsAt = captured.LastLogsAt
-		return nil
-	}); aerr != nil && aerr != errInstanceMovedOn {
-		h.log.Warn("RDS: persist stopped instance",
-			zap.String("instance", instanceID), zap.String("error", aerr.Message))
-	}
-}
-
 // mutateCluster is mutateInstance for a DB cluster record.
 func (h *Handler) mutateCluster(ctx context.Context, clusterID string, edit func(cl *DBCluster) *protocol.AWSError) (*DBCluster, *protocol.AWSError) {
 	defer h.lockCluster(ctx, clusterID)()
