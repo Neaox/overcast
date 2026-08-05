@@ -918,10 +918,10 @@ func hashProps(props map[string]any) string {
 // merging here also avoids updates when they override a changed stack tag.
 func hashResourceProperties(resourceType string, props map[string]any, stackTags []Tag) string {
 	switch resourceType {
-	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping":
+	case "AWS::Lambda::Function", "AWS::Lambda::EventSourceMapping", "AWS::Logs::LogGroup":
 		return hashProps(map[string]any{
 			"Properties":    props,
-			"EffectiveTags": mergeLambdaTags(stackTags, props["Tags"]),
+			"EffectiveTags": mergeResourceTags(stackTags, props["Tags"]),
 		})
 	case "AWS::CloudFormation::Stack":
 		return hashProps(map[string]any{
@@ -940,7 +940,7 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 	// Hashes written before propagated-tag tracking contained only the property
 	// map. Preserve their no-op behavior when effective tags did not change,
 	// while still reconciling a real stack-only tag delta.
-	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::CloudFormation::Stack" {
+	if resourceType != "AWS::Lambda::Function" && resourceType != "AWS::Lambda::EventSourceMapping" && resourceType != "AWS::Logs::LogGroup" && resourceType != "AWS::CloudFormation::Stack" {
 		return oldHash == ""
 	}
 	var currentTags, previousTags any
@@ -948,8 +948,8 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 		currentTags = mergeNestedStackTags(stackTags, props["Tags"])
 		previousTags = mergeNestedStackTags(previousStackTags, props["Tags"])
 	} else {
-		currentTags = mergeLambdaTags(stackTags, props["Tags"])
-		previousTags = mergeLambdaTags(previousStackTags, props["Tags"])
+		currentTags = mergeResourceTags(stackTags, props["Tags"])
+		previousTags = mergeResourceTags(previousStackTags, props["Tags"])
 	}
 	effectiveTagsUnchanged := reflect.DeepEqual(currentTags, previousTags)
 	return effectiveTagsUnchanged && (oldHash == "" || oldHash == hashProps(props))
@@ -3242,7 +3242,7 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	if csc, ok := props["CodeSigningConfigArn"]; ok {
 		body["CodeSigningConfigArn"] = csc
 	}
-	if tagMap := mergeLambdaTags(rCtx.StackTags, props["Tags"]); len(tagMap) > 0 {
+	if tagMap := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tagMap) > 0 {
 		body["Tags"] = tagMap
 	}
 	if publish, _ := props["PublishToLatestPublished"].(bool); publish {
@@ -3563,8 +3563,8 @@ func validateRequiredPropertyRemovals(props, prior map[string]any, logicalID, re
 }
 
 func updateLambdaTags(ctx context.Context, router http.Handler, region, resourceARN string, stackTags, priorStackTags []Tag, rawTags, rawPrior any) (bool, error) {
-	tags := mergeLambdaTags(stackTags, rawTags)
-	prior := mergeLambdaTags(priorStackTags, rawPrior)
+	tags := mergeResourceTags(stackTags, rawTags)
+	prior := mergeResourceTags(priorStackTags, rawPrior)
 	added := make(map[string]string)
 	for key, value := range tags {
 		if prior[key] != value {
@@ -3788,24 +3788,12 @@ func (h *lambdaUrlHandler) Delete(ctx context.Context, router http.Handler, _ *c
 	return nil
 }
 
-func mergeLambdaTags(stackTags []Tag, rawResourceTags any) map[string]string {
-	if len(stackTags) == 0 && rawResourceTags == nil {
-		return nil
-	}
-	out := make(map[string]string, len(stackTags))
-	for _, t := range stackTags {
-		if strings.TrimSpace(t.Key) == "" {
-			continue
-		}
-		out[t.Key] = t.Value
-	}
+func mergeResourceTags(stackTags []Tag, rawResourceTags any) map[string]string {
 	tags, ok := rawResourceTags.([]any)
 	if !ok {
-		if len(out) == 0 {
-			return nil
-		}
-		return out
+		return mergeStackTags(stackTags, nil)
 	}
+	resourceTags := make(map[string]string, len(tags))
 	for _, item := range tags {
 		kv, ok := item.(map[string]any)
 		if !ok {
@@ -3816,8 +3804,25 @@ func mergeLambdaTags(stackTags []Tag, rawResourceTags any) map[string]string {
 			continue
 		}
 		val, _ := kv["Value"].(string)
+		resourceTags[key] = val
+	}
+	return mergeStackTags(stackTags, resourceTags)
+}
+
+func mergeStackTags(stackTags []Tag, resourceTags map[string]string) map[string]string {
+	if len(stackTags) == 0 && len(resourceTags) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(stackTags)+len(resourceTags))
+	for _, tag := range stackTags {
+		if strings.TrimSpace(tag.Key) == "" {
+			continue
+		}
+		out[tag.Key] = tag.Value
+	}
+	for key, value := range resourceTags {
 		// Resource-level tags override stack-level tags on key collision.
-		out[key] = val
+		out[key] = value
 	}
 	if len(out) == 0 {
 		return nil
@@ -3918,16 +3923,128 @@ func (h *iamRoleHandler) Update(ctx context.Context, router http.Handler, _ *con
 
 type logsLogGroupHandler struct{}
 
+// logsLogGroupTagMap converts CloudFormation's [{Key, Value}] Tags shape to
+// CloudWatch Logs' string map used by TagLogGroup.
+func logsLogGroupTagMap(raw any) (map[string]string, error) {
+	tags := make(map[string]string)
+	if raw == nil {
+		return tags, nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("Logs::LogGroup Tags must be an array")
+	}
+	for i, item := range items {
+		tag, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("Logs::LogGroup Tags[%d] must be an object", i)
+		}
+		key, ok := tag["Key"].(string)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("Logs::LogGroup Tags[%d].Key must be a non-empty string", i)
+		}
+		value, ok := tag["Value"].(string)
+		if !ok {
+			return nil, fmt.Errorf("Logs::LogGroup Tags[%d].Value must be a string", i)
+		}
+		if _, duplicate := tags[key]; duplicate {
+			return nil, fmt.Errorf("Logs::LogGroup Tags contains duplicate key %q", key)
+		}
+		tags[key] = value
+	}
+	return tags, nil
+}
+
+func logsLogGroupTagChanges(want, have map[string]string) (map[string]string, []string) {
+	upserts := make(map[string]string)
+	for key, value := range want {
+		if old, ok := have[key]; !ok || old != value {
+			upserts[key] = value
+		}
+	}
+	removals := make([]string, 0)
+	for key := range have {
+		if _, ok := want[key]; !ok {
+			removals = append(removals, key)
+		}
+	}
+	sort.Strings(removals)
+	return upserts, removals
+}
+
+func putLogsLogGroupTags(ctx context.Context, router http.Handler, region, logGroupName string, tags map[string]string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	_, err := internalJSON(ctx, router, region, "Logs_20140328.TagLogGroup", map[string]any{
+		"logGroupName": logGroupName,
+		"tags":         tags,
+	})
+	return err
+}
+
+func untagLogsLogGroup(ctx context.Context, router http.Handler, region, logGroupName string, tags []string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	_, err := internalJSON(ctx, router, region, "Logs_20140328.UntagLogGroup", map[string]any{
+		"logGroupName": logGroupName,
+		"tags":         tags,
+	})
+	return err
+}
+
+// restoreLogsLogGroupTags restores the old desired set after a later in-place
+// operation fails. This keeps an update failure reversible instead of leaving
+// a partial tag mutation for CloudFormation to report as cleanly rolled back.
+func restoreLogsLogGroupTags(ctx context.Context, router http.Handler, region, logGroupName string, oldTags, newTags map[string]string) error {
+	upserts, removals := logsLogGroupTagChanges(oldTags, newTags)
+	if err := putLogsLogGroupTags(ctx, router, region, logGroupName, upserts); err != nil {
+		return fmt.Errorf("restore TagLogGroup: %w", err)
+	}
+	if err := untagLogsLogGroup(ctx, router, region, logGroupName, removals); err != nil {
+		return fmt.Errorf("restore UntagLogGroup: %w", err)
+	}
+	return nil
+}
+
 func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["LogGroupName"].(string)
 	if name == "" {
 		name = "/aws/cloudformation/" + rCtx.generatedName()
 	}
+	resourceTags, err := logsLogGroupTagMap(props["Tags"])
+	if err != nil {
+		return "", nil, err
+	}
+	tags := mergeStackTags(rCtx.StackTags, resourceTags)
 
 	body := map[string]any{"logGroupName": name}
-	_, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.CreateLogGroup", body)
+	_, err = internalJSON(ctx, router, rCtx.Region, "Logs_20140328.CreateLogGroup", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("logs CreateLogGroup: %w", err)
+	}
+	cleanup := func(operation string, operationErr error) (string, map[string]string, error) {
+		cleanupBody := map[string]any{"logGroupName": name}
+		if _, cleanupErr := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteLogGroup", cleanupBody); cleanupErr != nil {
+			return name, nil, errors.Join(
+				fmt.Errorf("logs %s: %w", operation, operationErr),
+				fmt.Errorf("logs cleanup DeleteLogGroup: %w", cleanupErr),
+			)
+		}
+		return "", nil, fmt.Errorf("logs %s: %w", operation, operationErr)
+	}
+	if rd, ok := props["RetentionInDays"]; ok && rd != nil {
+		body := map[string]any{
+			"logGroupName":    name,
+			"retentionInDays": rd,
+		}
+		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
+			return cleanup("PutRetentionPolicy", err)
+		}
+	}
+	if err := putLogsLogGroupTags(ctx, router, rCtx.Region, name, tags); err != nil {
+		return cleanup("TagLogGroup", err)
 	}
 	arn := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:*", rCtx.Region, rCtx.AccountID, name)
 	attrs := map[string]string{
@@ -3943,23 +4060,58 @@ func (h *logsLogGroupHandler) Delete(ctx context.Context, router http.Handler, _
 	return nil
 }
 
-func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+func (h *logsLogGroupHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// LogGroupName is immutable in AWS — a rename forces replacement.
 	if n, ok := props["LogGroupName"].(string); ok && n != "" && n != physicalID {
 		return "", nil, errReplacementRequired
 	}
+	newResourceTags, err := logsLogGroupTagMap(props["Tags"])
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	oldResourceTags, err := logsLogGroupTagMap(oldProps["Tags"])
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
+	newTags := mergeStackTags(rCtx.StackTags, newResourceTags)
+	oldTags := mergeStackTags(rCtx.PreviousStackTags, oldResourceTags)
+	upserts, removals := logsLogGroupTagChanges(newTags, oldTags)
+	if err := putLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, upserts); err != nil {
+		return "", nil, failUpdate(fmt.Errorf("logs TagLogGroup: %w", err))
+	}
+	if err := untagLogsLogGroup(ctx, router, rCtx.Region, physicalID, removals); err != nil {
+		if restoreErr := restoreLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags); restoreErr != nil {
+			return "", nil, failDirtyUpdate(fmt.Errorf("logs UntagLogGroup: %w; tag compensation: %v", err, restoreErr))
+		}
+		return "", nil, failUpdate(fmt.Errorf("logs UntagLogGroup: %w", err))
+	}
+
+	retentionChanged, err := cfnPropertyChanged(props, oldProps, "RetentionInDays")
+	if err != nil {
+		return "", nil, failUpdate(err)
+	}
 	// Apply RetentionInDays in place. Logs themselves are preserved.
-	if rd, ok := props["RetentionInDays"]; ok && rd != nil {
-		body := map[string]any{
-			"logGroupName":    physicalID,
-			"retentionInDays": rd,
+	if retentionChanged {
+		if rd, ok := props["RetentionInDays"]; ok && rd != nil {
+			body := map[string]any{
+				"logGroupName":    physicalID,
+				"retentionInDays": rd,
+			}
+			if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
+				if restoreErr := restoreLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags); restoreErr != nil {
+					return "", nil, failDirtyUpdate(fmt.Errorf("logs PutRetentionPolicy: %w; tag compensation: %v", err, restoreErr))
+				}
+				return "", nil, failUpdate(fmt.Errorf("logs PutRetentionPolicy: %w", err))
+			}
+		} else if oldRetention, hadRetention := oldProps["RetentionInDays"]; hadRetention && oldRetention != nil {
+			body := map[string]any{"logGroupName": physicalID}
+			if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteRetentionPolicy", body); err != nil {
+				if restoreErr := restoreLogsLogGroupTags(ctx, router, rCtx.Region, physicalID, oldTags, newTags); restoreErr != nil {
+					return "", nil, failDirtyUpdate(fmt.Errorf("logs DeleteRetentionPolicy: %w; tag compensation: %v", err, restoreErr))
+				}
+				return "", nil, failUpdate(fmt.Errorf("logs DeleteRetentionPolicy: %w", err))
+			}
 		}
-		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
-			return "", nil, fmt.Errorf("logs PutRetentionPolicy: %w", err)
-		}
-	} else {
-		body := map[string]any{"logGroupName": physicalID}
-		_, _ = internalJSON(ctx, router, rCtx.Region, "Logs_20140328.DeleteRetentionPolicy", body)
 	}
 	arn := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:*", rCtx.Region, rCtx.AccountID, physicalID)
 	return physicalID, map[string]string{"Arn": arn, "LogGroupName": physicalID}, nil
@@ -4486,7 +4638,7 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 }
 
 func mergeNestedStackTags(parent []Tag, raw any) []Tag {
-	merged := mergeLambdaTags(parent, raw)
+	merged := mergeResourceTags(parent, raw)
 	out := make([]Tag, 0, len(merged))
 	for key, value := range merged {
 		out = append(out, Tag{Key: key, Value: value})
