@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 import type { EcsTask } from "@/types"
-import { diagnosticLogExcerpt, findRecentServiceFailures, selectTasksForView } from "./diagnostics"
+import {
+  diagnosticLogExcerpt,
+  failedContainer,
+  findRecentServiceFailures,
+  selectTasksForView,
+} from "./diagnostics"
 
 const runningTask = task({ id: "running", lastStatus: "RUNNING" })
 const failedTask = task({
@@ -118,6 +123,79 @@ describe("findRecentServiceFailures", () => {
     // Then: only actionable recent failures remain, newest first.
     expect(failures.map((item) => item.taskArn.split("/").at(-1))).toEqual(["newest", "failed"])
   })
+
+  it("correlates diagnostics to the failed task instead of a later clean essential exit", () => {
+    // Given: an earlier entrypoint failure followed by a newer task that exited cleanly.
+    const tasks = [
+      failedTask,
+      task({
+        id: "clean-replacement",
+        lastStatus: "STOPPED",
+        stoppedAt: "2026-08-05T05:59:30.000Z",
+        group: "service:website",
+        exitCode: 0,
+        stopCode: "EssentialContainerExited",
+        stoppedReason: "Essential container in task exited",
+      }),
+    ]
+
+    // When: the service's recent failures are selected.
+    const failures = findRecentServiceFailures(
+      "website",
+      tasks,
+      Date.parse("2026-08-05T06:00:00.000Z"),
+    )
+
+    // Then: the clean replacement cannot steal the failed task's diagnostic banner or logs.
+    expect(failures.map((item) => item.taskArn.split("/").at(-1))).toEqual(["failed"])
+  })
+
+  it("keeps a failure reason from a second container when another exited cleanly", () => {
+    // Given: one clean sidecar and one container that failed before recording an exit code.
+    const mixedFailure: EcsTask = {
+      ...failedTask,
+      taskArn: failedTask.taskArn.replace("failed", "mixed-failure"),
+      containers: [
+        { name: "sidecar", lastStatus: "STOPPED", exitCode: 0 },
+        { name: "app", lastStatus: "STOPPED", reason: "CannotPullContainerError" },
+      ],
+    }
+
+    // When: recent service failures are selected.
+    const failures = findRecentServiceFailures(
+      "website",
+      [mixedFailure],
+      Date.parse("2026-08-05T06:00:00.000Z"),
+    )
+
+    // Then: clean evidence from one container cannot hide another container's failure.
+    expect(failures).toEqual([mixedFailure])
+  })
+
+  it("keeps a task startup failure when only a clean sidecar has an exit code", () => {
+    // Given: a sidecar exited cleanly while the main container failed before it could start.
+    const startupFailure: EcsTask = {
+      ...failedTask,
+      taskArn: failedTask.taskArn.replace("failed", "startup-failure"),
+      stopCode: "TaskFailedToStart",
+      stoppedReason: "ResourceInitializationError",
+      containers: [
+        { name: "sidecar", lastStatus: "STOPPED", exitCode: 0 },
+        { name: "app", lastStatus: "STOPPED" },
+      ],
+    }
+
+    // When: the failure and its diagnostic container are selected.
+    const failures = findRecentServiceFailures(
+      "website",
+      [startupFailure],
+      Date.parse("2026-08-05T06:00:00.000Z"),
+    )
+
+    // Then: a clean sidecar cannot suppress the startup failure or become its likely cause.
+    expect(failures).toEqual([startupFailure])
+    expect(failedContainer(startupFailure)?.name).toBe("app")
+  })
 })
 
 describe("diagnosticLogExcerpt", () => {
@@ -144,12 +222,16 @@ function task({
   stoppedAt,
   group,
   exitCode,
+  stopCode,
+  stoppedReason,
 }: {
   id: string
   lastStatus: string
   stoppedAt?: string
   group?: string
   exitCode?: number
+  stopCode?: string
+  stoppedReason?: string
 }): EcsTask {
   return {
     taskArn: `arn:aws:ecs:us-east-1:123456789012:task/demo/${id}`,
@@ -158,6 +240,8 @@ function task({
     lastStatus,
     desiredStatus: lastStatus,
     stoppedAt,
+    stopCode,
+    stoppedReason,
     group,
     containers: [{ name: "app", lastStatus, exitCode }],
   }

@@ -3,17 +3,26 @@
  * Validates that the cluster exists before rendering the detail page.
  */
 import { useEffect } from "react"
-import { useNavigate } from "@tanstack/react-router"
+import { Outlet, useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { ecsClusterDetailQueryOptions } from "@/features/ecs/data"
 import { useToast } from "@/components/ui/toast"
 import { Spinner } from "@/components/ui/primitives"
-import { ClusterDetail } from "@/features/ecs/components/cluster-detail"
+import { isClusterTab, type ClusterTab } from "@/features/ecs/diagnostics"
+
+type EcsClusterSearch = {
+  tab?: ClusterTab
+  service?: string
+}
 
 export const Route = createFileRoute("/ecs/$cluster")({
   head: ({ params }) => ({
     meta: [{ title: `${params.cluster} — ECS — Overcast` }],
+  }),
+  validateSearch: (search: Record<string, unknown>): EcsClusterSearch => ({
+    tab: isClusterTab(search.tab) ? search.tab : undefined,
+    service: typeof search.service === "string" ? search.service : undefined,
   }),
   component: ClusterLayout,
 })
@@ -48,5 +57,5 @@ function ClusterLayout() {
 
   if (isError) return null
 
-  return <ClusterDetail clusterName={cluster} />
+  return <Outlet />
 }

@@ -341,6 +341,9 @@ describe("ServiceNode ECS navigation", () => {
           ecsResourceType: "service",
           clusterName: "demo",
           region: "us-east-1",
+          desiredCount: 1,
+          runningCount: 1,
+          status: "ACTIVE",
         })}
       />,
     )
@@ -350,8 +353,10 @@ describe("ServiceNode ECS navigation", () => {
     expect(navigateMock).toHaveBeenCalledWith({
       to: "/ecs/$cluster",
       params: { cluster: "demo" },
-      search: undefined,
+      search: { tab: "services", service: "web" },
     })
+    expect(screen.getByText("ECS service")).toBeInTheDocument()
+    expect(screen.getByText("1/1 running")).toBeInTheDocument()
   })
 
   it("opens task detail from a task node", () => {
@@ -365,6 +370,7 @@ describe("ServiceNode ECS navigation", () => {
           clusterName: "demo",
           taskId: "task-1",
           region: "us-east-1",
+          status: "RUNNING",
         })}
       />,
     )
@@ -376,5 +382,7 @@ describe("ServiceNode ECS navigation", () => {
       params: { cluster: "demo", taskId: "task-1" },
       search: undefined,
     })
+    expect(screen.getByText("ECS task")).toBeInTheDocument()
+    expect(screen.getByText("RUNNING")).toBeInTheDocument()
   })
 })

@@ -5,6 +5,7 @@ import {
   ecsTaskDefinitionFamiliesQueryOptions,
   ecsTaskDefinitionsQueryOptions,
   ecsTaskLogsQueryOptions,
+  ecsServicesQueryOptions,
   ecsTasksQueryOptions,
 } from "@/features/ecs/data"
 import type { EcsCluster, EcsService, EcsTask, EcsTaskLogs } from "@/types"
@@ -12,7 +13,30 @@ import { ClusterDetail } from "./cluster-detail"
 import { ServiceFailureAlert } from "./service-failure-alert"
 
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children }: { children: React.ReactNode }) => <a href="#">{children}</a>,
+  Link: ({
+    children,
+    to,
+    params = {},
+    search = {},
+    onClick,
+  }: {
+    children: React.ReactNode
+    to: string
+    params?: Record<string, string>
+    search?: Record<string, string>
+    onClick?: React.MouseEventHandler<HTMLAnchorElement>
+  }) => {
+    const path = Object.entries(params).reduce(
+      (result, [key, value]) => result.replace(`$${key}`, value),
+      to,
+    )
+    const query = new URLSearchParams(search).toString()
+    return (
+      <a href={query ? `${path}?${query}` : path} onClick={onClick}>
+        {children}
+      </a>
+    )
+  },
 }))
 
 vi.mock("@/components/application-ownership-banner", () => ({
@@ -30,7 +54,10 @@ describe("ClusterDetail tasks", () => {
       activeServicesCount: 1,
       registeredContainerInstancesCount: 0,
     }
-    const running = task("running-task", "RUNNING")
+    const running = {
+      ...task("running-task", "RUNNING"),
+      containers: [{ name: "app", lastStatus: "RUNNING", image: "example/app:latest" }],
+    }
     const stopped = task("stopped-task", "STOPPED")
 
     const { user } = renderWithData(<ClusterDetail clusterName="demo" />, [
@@ -44,10 +71,51 @@ describe("ClusterDetail tasks", () => {
     expect(screen.getByText("running-task")).toBeInTheDocument()
     expect(screen.queryByText("stopped-task")).not.toBeInTheDocument()
 
+    await user.click(screen.getByText("running-task").closest("tr")!)
+    expect(screen.getByRole("link", { name: "Open app logs" })).toHaveAttribute(
+      "href",
+      "/ecs/demo/tasks/running-task?container=app",
+    )
+
     await user.click(screen.getByRole("button", { name: /^Stopped/ }))
 
     expect(screen.getByText("stopped-task")).toBeInTheDocument()
     expect(screen.queryByText("running-task")).not.toBeInTheDocument()
+  })
+
+  it("opens a service selected by a topology deep link and connects it to its tasks", async () => {
+    const cluster: EcsCluster = {
+      clusterName: "demo",
+      clusterArn: "arn:aws:ecs:us-east-1:000000000000:cluster/demo",
+      status: "ACTIVE",
+      runningTasksCount: 1,
+      pendingTasksCount: 0,
+      activeServicesCount: 1,
+      registeredContainerInstancesCount: 0,
+    }
+
+    const running = {
+      ...task("website-task", "RUNNING"),
+      group: "service:website",
+    }
+    const { user } = renderWithData(
+      <ClusterDetail clusterName="demo" initialTab="services" initialService="website" />,
+      [
+        [ecsClusterDetailQueryOptions("demo").queryKey, cluster],
+        [ecsServicesQueryOptions("demo").queryKey, [failedService()]],
+        [ecsTasksQueryOptions("demo", "RUNNING").queryKey, [running]],
+        [ecsTasksQueryOptions("demo", "STOPPED").queryKey, []],
+        [ecsTaskDefinitionsQueryOptions().queryKey, []],
+      ],
+    )
+
+    expect(screen.getByText("Events")).toBeInTheDocument()
+    expect(screen.getByText(/unable to place a task/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "View active tasks" }))
+
+    expect(screen.getByText("website-task")).toBeInTheDocument()
+    expect(screen.getByText("website")).toBeInTheDocument()
   })
 })
 
@@ -64,13 +132,16 @@ describe("ServiceFailureAlert", () => {
       ].join("\n"),
     }
 
-    renderWithData(
-      <ServiceFailureAlert
-        clusterName="demo"
-        service={service}
-        tasks={[failed]}
-        onViewStoppedTasks={() => undefined}
-      />,
+    const parentClick = vi.fn()
+    const { user } = renderWithData(
+      <div onClick={parentClick}>
+        <ServiceFailureAlert
+          clusterName="demo"
+          service={service}
+          tasks={[failed]}
+          onViewStoppedTasks={() => undefined}
+        />
+      </div>,
       [[ecsTaskLogsQueryOptions(failed.taskArn, "app").queryKey, logs]],
     )
 
@@ -78,7 +149,32 @@ describe("ServiceFailureAlert", () => {
     expect(within(alert).getByText("Likely cause")).toBeInTheDocument()
     expect(within(alert).getByText(/syntax error near unexpected token/)).toBeInTheDocument()
     expect(within(alert).getByText("Scheduler context")).toBeInTheDocument()
-    expect(within(alert).getByRole("link", { name: "Open task and logs" })).toBeInTheDocument()
+    const logsLink = within(alert).getByRole("link", { name: "Open task and logs" })
+    expect(logsLink).toHaveAttribute("href", "/ecs/demo/tasks/failed-task?container=app")
+
+    await user.click(logsLink)
+    expect(parentClick).not.toHaveBeenCalled()
+  })
+
+  it("reports a recovered service without alarming on its later healthy task", async () => {
+    // Given: a healthy service whose current task recovered from one recent failed start.
+    const service = { ...failedService(), desiredCount: 1, runningCount: 1 }
+
+    // When: service diagnostics are rendered.
+    renderWithData(
+      <ServiceFailureAlert
+        clusterName="demo"
+        service={service}
+        tasks={[failedTask()]}
+        onViewStoppedTasks={() => undefined}
+      />,
+      [],
+    )
+
+    // Then: the failure stays discoverable but the current healthy state leads the message.
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Recovered after a recent task failure",
+    )
   })
 })
 

@@ -35,6 +35,16 @@ export function formatTimeOfDay(value: number | string | Date): string {
   })
 }
 
+/** Precise wall-clock time for closely-spaced events where seconds alone are ambiguous. */
+export function formatPreciseTimeOfDay(value: number | string | Date): string {
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+  })
+}
+
 export function formatStorageClass(sc: string): string {
   return sc
     .replace(/_/g, " ")

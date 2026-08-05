@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/config"
@@ -194,10 +195,12 @@ func TestBuildTopologyECSResourcesUseCurrentClusterOwnership(t *testing.T) {
 		"status":      "ACTIVE",
 	})
 	servicePayload, _ := json.Marshal(map[string]any{
-		"serviceName": "web",
-		"serviceArn":  "arn:aws:ecs:us-east-1:000000000000:service/demo/web",
-		"clusterArn":  "arn:aws:ecs:us-east-1:000000000000:cluster/demo",
-		"status":      "ACTIVE",
+		"serviceName":  "web",
+		"serviceArn":   "arn:aws:ecs:us-east-1:000000000000:service/demo/web",
+		"clusterArn":   "arn:aws:ecs:us-east-1:000000000000:cluster/demo",
+		"status":       "ACTIVE",
+		"desiredCount": 1,
+		"runningCount": 1,
 	})
 	runningTaskPayload, _ := json.Marshal(map[string]any{
 		"taskArn":    "arn:aws:ecs:us-east-1:000000000000:task/demo/running-task",
@@ -237,6 +240,10 @@ func TestBuildTopologyECSResourcesUseCurrentClusterOwnership(t *testing.T) {
 	if serviceNode.ClusterName != "demo" || serviceNode.ECSResourceType != "service" {
 		t.Fatalf("unexpected service navigation metadata: %#v", serviceNode)
 	}
+	serviceJSON, _ := json.Marshal(serviceNode)
+	if !strings.Contains(string(serviceJSON), `"runningCount":1`) || !strings.Contains(string(serviceJSON), `"desiredCount":1`) {
+		t.Fatalf("service node should explain its running capacity: %s", serviceJSON)
+	}
 	taskNode, ok := nodes["us-east-1::ecs-task::demo/running-task"]
 	if !ok {
 		t.Fatalf("expected running task node, got %#v", resp.Nodes)
@@ -257,6 +264,46 @@ func TestBuildTopologyECSResourcesUseCurrentClusterOwnership(t *testing.T) {
 	}
 	if _, ok := edges["ecs-task::us-east-1::ecs-service::demo/web→us-east-1::ecs-task::demo/running-task"]; !ok {
 		t.Fatalf("expected service to running task edge, got %#v", resp.Edges)
+	}
+}
+
+func TestBuildTopologyECSChildrenUseOwningClusterRegion(t *testing.T) {
+	// Given: a canonical cluster record and stale child-resource ARNs from another region.
+	clusterPayload, _ := json.Marshal(map[string]any{
+		"clusterName": "demo",
+		"clusterArn":  "arn:aws:ecs:ap-southeast-2:000000000000:cluster/demo",
+	})
+	servicePayload, _ := json.Marshal(map[string]any{
+		"serviceName": "web",
+		"serviceArn":  "arn:aws:ecs:us-east-1:000000000000:service/demo/web",
+		"clusterArn":  "arn:aws:ecs:ap-southeast-2:000000000000:cluster/demo",
+	})
+	taskPayload, _ := json.Marshal(map[string]any{
+		"taskArn":    "arn:aws:ecs:us-east-1:000000000000:task/demo/task-1",
+		"clusterArn": "arn:aws:ecs:ap-southeast-2:000000000000:cluster/demo",
+		"lastStatus": "RUNNING",
+		"group":      "service:web",
+	})
+
+	// When: the topology is built.
+	resp := buildTopology(&config.Config{Region: "us-east-1"}, map[string][]state.KV{
+		tNsClusters:    {{Key: "ap-southeast-2/demo", Value: string(clusterPayload)}},
+		tNsECSServices: {{Key: "ap-southeast-2/demo/web", Value: string(servicePayload)}},
+		tNsECSTasks:    {{Key: "ap-southeast-2/demo/task-1", Value: string(taskPayload)}},
+	}, "")
+
+	// Then: service and task navigation stay in the owning cluster's region.
+	nodes := map[string]topologyNode{}
+	for _, node := range resp.Nodes {
+		nodes[node.ID] = node
+	}
+	for _, id := range []string{
+		"ap-southeast-2::ecs-service::demo/web",
+		"ap-southeast-2::ecs-task::demo/task-1",
+	} {
+		if _, ok := nodes[id]; !ok {
+			t.Fatalf("expected canonical ECS child node %q, got %#v", id, resp.Nodes)
+		}
 	}
 }
 

@@ -2,6 +2,19 @@ import type { EcsContainer, EcsTask } from "@/types"
 
 export type TaskView = "auto" | "running" | "stopped"
 
+const clusterTabs = [
+  "tasks",
+  "services",
+  "container-instances",
+  "task-definitions",
+  "tags",
+] as const
+export type ClusterTab = (typeof clusterTabs)[number]
+
+export function isClusterTab(value: unknown): value is ClusterTab {
+  return typeof value === "string" && clusterTabs.some((tab) => tab === value)
+}
+
 export const RECENT_FAILURE_WINDOW_MS = 15 * 60 * 1000
 export const STOPPED_TASK_DISPLAY_LIMIT = 50
 
@@ -59,16 +72,23 @@ export function findRecentServiceFailures(
 }
 
 export function isFailedTask(task: EcsTask): boolean {
-  if (task.containers.some((container) => (container.exitCode ?? 0) !== 0 || container.reason)) {
+  if (task.containers.some((container) => container.exitCode != null && container.exitCode !== 0)) {
     return true
   }
-  return task.stopCode === "TaskFailedToStart" || task.stopCode === "EssentialContainerExited"
+  if (task.containers.some((container) => container.exitCode == null && container.reason))
+    return true
+  if (task.stopCode === "TaskFailedToStart") return true
+  if (task.containers.some((container) => container.exitCode != null)) return false
+  return task.stopCode === "EssentialContainerExited"
 }
 
 export function failedContainer(task: EcsTask): EcsContainer | undefined {
   return (
     task.containers.find((container) => (container.exitCode ?? 0) !== 0) ??
     task.containers.find((container) => container.reason) ??
+    (task.stopCode === "TaskFailedToStart"
+      ? task.containers.find((container) => container.exitCode == null)
+      : undefined) ??
     task.containers.at(0)
   )
 }

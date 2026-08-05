@@ -385,9 +385,9 @@ type PlacementItem struct {
 
 // ServiceEvent represents a timestamped event in a service's history.
 type ServiceEvent struct {
-	ID        string `json:"id"`
-	CreatedAt int64  `json:"createdAt"`
-	Message   string `json:"message"`
+	ID        string  `json:"id"`
+	CreatedAt float64 `json:"createdAt"`
+	Message   string  `json:"message"`
 }
 
 // Deployment represents a deployment within an ECS service.

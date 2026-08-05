@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Play, Square, Plus, RefreshCw, Trash2, Pencil } from "lucide-react"
+import { Play, Square, Plus, RefreshCw, Trash2, Pencil, ScrollText } from "lucide-react"
 import {
   ecsClusterDetailQueryOptions,
   ecsTaskDefinitionsQueryOptions,
@@ -48,17 +48,28 @@ import { ServiceFailureAlert } from "@/features/ecs/components/service-failure-a
 import { emptyAwsvpcNetworking, type AwsvpcNetworking } from "@/features/ecs/awsvpc"
 import type { EcsTask, EcsTaskDefinition, EcsService, EcsContainerInstance } from "@/types"
 import { fieldLabel } from "@/lib/typography"
+import { formatPreciseTimeOfDay } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import {
   failedContainer,
   isSecondaryServiceFailureEvent,
   isServiceFailureEvent,
+  isClusterTab,
   selectTasksForView,
+  type ClusterTab,
   type TaskView,
 } from "@/features/ecs/diagnostics"
 
-export function ClusterDetail({ clusterName }: { clusterName: string }) {
-  const [activeTab, setActiveTab] = useState("tasks")
+export function ClusterDetail({
+  clusterName,
+  initialTab = "tasks",
+  initialService,
+}: {
+  clusterName: string
+  initialTab?: ClusterTab
+  initialService?: string
+}) {
+  const [activeTab, setActiveTab] = useState(initialTab)
   const [taskView, setTaskView] = useState<TaskView>("auto")
   const [taskServiceFilter, setTaskServiceFilter] = useState<string>()
 
@@ -91,7 +102,12 @@ export function ClusterDetail({ clusterName }: { clusterName: string }) {
 
       <ApplicationOwnershipBanner candidates={[cluster.clusterArn, cluster.clusterName]} />
 
-      <Tabs selectedKey={activeTab} onSelectionChange={setActiveTab}>
+      <Tabs
+        selectedKey={activeTab}
+        onSelectionChange={(key) => {
+          if (isClusterTab(key)) setActiveTab(key)
+        }}
+      >
         <TabList>
           <Tab id="tasks">Tasks</Tab>
           <Tab id="services">Services</Tab>
@@ -113,8 +129,9 @@ export function ClusterDetail({ clusterName }: { clusterName: string }) {
         <TabPanel id="services" className="pt-4">
           <ServicesPanel
             clusterName={clusterName}
-            onViewStoppedTasks={(serviceName) => {
-              setTaskView("stopped")
+            initialService={initialService}
+            onViewTasks={(serviceName, view) => {
+              setTaskView(view)
               setTaskServiceFilter(serviceName)
               setActiveTab("tasks")
             }}
@@ -308,7 +325,7 @@ function TasksPanel({
                   {isExpanded && (
                     <TableRow key={`${t.taskArn}-containers`}>
                       <TableCell colSpan={7} className="bg-bg-muted p-4">
-                        <ContainersList containers={t.containers} />
+                        <ContainersList clusterName={clusterName} task={t} />
                       </TableCell>
                     </TableRow>
                   )}
@@ -340,14 +357,15 @@ function TasksPanel({
   )
 }
 
-function ContainersList({ containers }: { containers: EcsTask["containers"] }) {
-  if (containers.length === 0) {
+function ContainersList({ clusterName, task }: { clusterName: string; task: EcsTask }) {
+  if (task.containers.length === 0) {
     return <p className="text-sm text-fg-muted">No containers</p>
   }
+  const taskId = task.taskArn.split("/").at(-1) ?? task.taskArn
   return (
     <div className="space-y-2">
       <p className="font-mono text-xs font-medium text-fg-muted">Containers</p>
-      {containers.map((c) => (
+      {task.containers.map((c) => (
         <div
           key={c.name}
           className="flex items-center gap-3 rounded border border-border bg-bg p-2 text-sm"
@@ -358,6 +376,17 @@ function ContainersList({ containers }: { containers: EcsTask["containers"] }) {
           {c.exitCode != null && (
             <Badge variant={c.exitCode === 0 ? "default" : "danger"}>exit: {c.exitCode}</Badge>
           )}
+          <Button asChild size="sm" variant="secondary" className="ml-auto">
+            <Link
+              to="/ecs/$cluster/tasks/$taskId"
+              params={{ cluster: clusterName, taskId }}
+              search={{ container: c.name }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <ScrollText className="h-3.5 w-3.5" aria-hidden="true" />
+              Open {c.name} logs
+            </Link>
+          </Button>
         </div>
       ))}
     </div>
@@ -556,15 +585,17 @@ function TaskDefinitionsPanel() {
 
 function ServicesPanel({
   clusterName,
-  onViewStoppedTasks,
+  initialService,
+  onViewTasks,
 }: {
   clusterName: string
-  onViewStoppedTasks: (serviceName: string) => void
+  initialService?: string
+  onViewTasks: (serviceName: string, view: Exclude<TaskView, "auto">) => void
 }) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [updateTarget, setUpdateTarget] = useState<EcsService>()
-  const [expandedService, setExpandedService] = useState<string>()
+  const [expandedService, setExpandedService] = useState<string | undefined>(initialService)
 
   const {
     data: services = [],
@@ -640,15 +671,13 @@ function ServicesPanel({
           </TableHeader>
           <TableBody>
             {services.map((svc) => {
-              const isExpanded = expandedService === svc.serviceArn
+              const isExpanded = expandedService === svc.serviceName
               const primary = svc.deployments.find((d) => d.status === "PRIMARY")
               return (
                 <Fragment key={svc.serviceArn}>
                   <TableRow
                     className="cursor-pointer"
-                    onClick={() =>
-                      setExpandedService(isExpanded ? undefined : svc.serviceArn)
-                    }
+                    onClick={() => setExpandedService(isExpanded ? undefined : svc.serviceName)}
                   >
                     <TableCell className="font-medium">{svc.serviceName}</TableCell>
                     <TableCell>
@@ -714,7 +743,7 @@ function ServicesPanel({
                           clusterName={clusterName}
                           service={svc}
                           tasks={tasks}
-                          onViewStoppedTasks={() => onViewStoppedTasks(svc.serviceName)}
+                          onViewTasks={(view) => onViewTasks(svc.serviceName, view)}
                         />
                       </TableCell>
                     </TableRow>
@@ -807,12 +836,12 @@ function ServiceDetailPanel({
   clusterName,
   service,
   tasks,
-  onViewStoppedTasks,
+  onViewTasks,
 }: {
   clusterName: string
   service: EcsService
   tasks: EcsTask[]
-  onViewStoppedTasks: () => void
+  onViewTasks: (view: Exclude<TaskView, "auto">) => void
 }) {
   const primary = service.deployments.find((d) => d.status === "PRIMARY")
   const [showAllEvents, setShowAllEvents] = useState(false)
@@ -824,8 +853,16 @@ function ServiceDetailPanel({
         clusterName={clusterName}
         service={service}
         tasks={tasks}
-        onViewStoppedTasks={onViewStoppedTasks}
+        onViewStoppedTasks={() => onViewTasks("stopped")}
       />
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" onClick={() => onViewTasks("running")}>
+          View active tasks
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => onViewTasks("stopped")}>
+          View stopped tasks
+        </Button>
+      </div>
       {primary && (
         <div>
           <h4 className={cn(fieldLabel, "mb-1.5 text-fg")}>Primary deployment</h4>
@@ -872,7 +909,13 @@ function ServiceDetailPanel({
             {visibleEvents.map((e) => (
               <li key={e.id} className="flex gap-3 text-sm">
                 <span className="shrink-0 text-xs text-fg-muted tabular-nums">
-                  {e.createdAt ? new Date(e.createdAt).toLocaleTimeString() : "—"}
+                  {e.createdAt ? (
+                    <time dateTime={e.createdAt} title={new Date(e.createdAt).toLocaleString()}>
+                      {formatPreciseTimeOfDay(e.createdAt)}
+                    </time>
+                  ) : (
+                    "—"
+                  )}
                 </span>
                 <span
                   className={cn(
