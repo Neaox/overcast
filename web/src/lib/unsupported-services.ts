@@ -55,7 +55,8 @@ export interface CatalogEntry {
   reason: string
   /**
    * Current tier from Overcast's perspective.
-   * "stub" = registered in backend but returns 501.
+   * "stub" = registered with only a minimal discovery or control-plane subset;
+   * unsupported operations return 501.
    * "unsupported" = not in Overcast at all.
    */
   tier: "stub" | "unsupported"
@@ -67,21 +68,9 @@ export interface CatalogEntry {
 }
 
 export const CATALOG: CatalogEntry[] = [
-  // ── Stub services (registered in backend, return 501) ─────────────────
-  // (WAF and Shield are backend stubs that have been folded into this catalog
-  //  so their service pages are rendered by the same mechanism as unsupported services)
-  {
-    id: "waf",
-    label: "WAF",
-    category: "security",
-    description:
-      "Web Application Firewall — protect web applications with managed rules, IP sets, and rate limiting.",
-    awsDocsUrl: "https://docs.aws.amazon.com/waf/latest/developerguide/",
-    reason:
-      "WAF is registered in Overcast and accepts API calls, but all operations currently return 501. Configuration-only support is planned for a future release.",
-    tier: "stub",
-    goalTier: "stub",
-  },
+  // ── Minimal backend stubs ─────────────────────────────────────────────
+  // Shield has a small metadata/probe subset and uses the same generic service
+  // page as services that are wholly unsupported.
   {
     id: "shield",
     label: "Shield",
@@ -90,7 +79,7 @@ export const CATALOG: CatalogEntry[] = [
       "DDoS protection — Shield Standard (free) and Shield Advanced subscriptions protect against distributed denial-of-service attacks.",
     awsDocsUrl: "https://docs.aws.amazon.com/waf/latest/developerguide/shield-chapter.html",
     reason:
-      "Shield is registered in Overcast and accepts API calls, but all operations currently return 501. There is limited value in emulating DDoS protection locally.",
+      "Shield provides a minimal active-subscription response and protection metadata CRUD for SDK and CloudFormation workflows. It does not emulate DDoS protection; unsupported operations return 501.",
     tier: "stub",
     goalTier: "stub",
   },

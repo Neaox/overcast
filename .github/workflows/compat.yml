@@ -252,6 +252,17 @@ jobs:
       # torn down with it.
       - uses: ./.github/actions/docker-hub-mirror
 
+      # ECS task definitions intentionally use the public-ECR nginx reference,
+      # but Docker daemon registry mirrors only apply to Docker Hub. Seed a
+      # compatible nginx image through mirror.gcr.io and tag it with the
+      # exact task image name. These tests exercise task lifecycle, not image
+      # contents. ImagePuller still tries the configured reference, then safely
+      # falls back to this local copy when public ECR throttles the request.
+      - name: Pre-pull the ECS task image through the Docker Hub mirror
+        run: |
+          docker pull --quiet nginx:latest
+          docker tag nginx:latest public.ecr.aws/nginx/nginx:latest
+
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         if: contains(fromJson('["go-sdk", "cli"]'), matrix.suite)
         with:

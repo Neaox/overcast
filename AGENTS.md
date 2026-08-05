@@ -228,6 +228,15 @@ The full checklists are in CONTRIBUTING.md:
 7. Widen to `go build ./...` and `go vet ./...` — these work on a bare checkout; see [Generated files](#generated-files) for the one thing they don't cover (a real `web/dist`)
 8. Run **`make lint-go`** (golangci-lint). Build, vet and tests do **not** cover it: CI runs `Lint` as its own required job, and staticcheck findings it reports (unused variables, redundant declarations, merged decl/assign) pass all three of the above. If you touched `web/`, run **`make lint-web`** and **`pnpm run typecheck`** there too.
 
+If the host has no Go toolchain, use `scripts/docker-go.sh` (Git Bash/macOS/Linux)
+or `scripts/docker-go.ps1` (PowerShell) for every `go` command; both work from
+linked worktrees. On Windows hosts that block local PowerShell scripts, invoke
+the wrapper with `powershell -ExecutionPolicy Bypass -File
+scripts\docker-go.ps1 <go-subcommand> ...`. For a `make` target that is only a
+Go invocation (for example `docs-index`), read the target in `Makefile` and run
+its underlying `go` command through the wrapper. Do not hand-edit generated
+files because the host lacks `go` or `make`.
+
 `make check` runs `fmt vet lint test` in one go and is the safest final gate — prefer it over assembling your own subset. Every command CI runs is in [.github/workflows/test.yml](./.github/workflows/test.yml); if your final check is narrower than that file, you have not verified the change.
 
 A `git push` from Claude Code or Codex runs [scripts/verify-changed.sh](./scripts/verify-changed.sh) first (wired as a `PreToolUse` hook in [.claude/settings.json](./.claude/settings.json) and [.codex/hooks.json](./.codex/hooks.json)) and blocks the push if it fails. It scopes to what the branch changed: golangci-lint when any `.go` file changed, `pnpm run typecheck` and `pnpm run lint` when `web/` changed. It takes a couple of minutes and it is a backstop, not a substitute for running the checks yourself — it deliberately does not run the test suite, and it stays out of the way (exit 0, with a warning) when a toolchain is unavailable. Run it directly any time: `make verify` (or `bash scripts/verify-changed.sh`).

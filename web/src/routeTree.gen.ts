@@ -20,6 +20,7 @@ import { Route as DocsRouteImport } from './routes/docs'
 import { Route as DebugRouteImport } from './routes/debug'
 import { Route as ServiceRouteImport } from './routes/$service'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WafIndexRouteImport } from './routes/waf/index'
 import { Route as StsIndexRouteImport } from './routes/sts/index'
 import { Route as StepfunctionsIndexRouteImport } from './routes/stepfunctions/index'
 import { Route as SsmIndexRouteImport } from './routes/ssm/index'
@@ -93,6 +94,7 @@ import { Route as CloudwatchLogsEventsRouteImport } from './routes/cloudwatch/lo
 import { Route as ApigatewayRestApiIdRouteImport } from './routes/apigateway/rest.$apiId'
 import { Route as ApigatewayHttpApiIdRouteImport } from './routes/apigateway/http.$apiId'
 import { Route as CloudwatchLogsGroupNameIndexRouteImport } from './routes/cloudwatch/logs/$groupName/index'
+import { Route as WafScopeWebAclIdNameRouteImport } from './routes/waf/$scope/$webAclId/$name'
 import { Route as StepfunctionsExecutionNameExecutionRouteImport } from './routes/stepfunctions/execution.$name.$execution'
 import { Route as EcsClusterTasksTaskIdRouteImport } from './routes/ecs/$cluster.tasks.$taskId'
 import { Route as CloudwatchLogsGroupNameStreamNameRouteImport } from './routes/cloudwatch/logs/$groupName/$streamName'
@@ -150,6 +152,11 @@ const ServiceRoute = ServiceRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WafIndexRoute = WafIndexRouteImport.update({
+  id: '/waf/',
+  path: '/waf/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StsIndexRoute = StsIndexRouteImport.update({
@@ -524,6 +531,11 @@ const CloudwatchLogsGroupNameIndexRoute =
     path: '/cloudwatch/logs/$groupName/',
     getParentRoute: () => rootRouteImport,
   } as any)
+const WafScopeWebAclIdNameRoute = WafScopeWebAclIdNameRouteImport.update({
+  id: '/waf/$scope/$webAclId/$name',
+  path: '/waf/$scope/$webAclId/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StepfunctionsExecutionNameExecutionRoute =
   StepfunctionsExecutionNameExecutionRouteImport.update({
     id: '/stepfunctions/execution/$name/$execution',
@@ -611,6 +623,7 @@ export interface FileRoutesByFullPath {
   '/ssm/': typeof SsmIndexRoute
   '/stepfunctions/': typeof StepfunctionsIndexRoute
   '/sts/': typeof StsIndexRoute
+  '/waf/': typeof WafIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
   '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
@@ -629,6 +642,7 @@ export interface FileRoutesByFullPath {
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
   '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
+  '/waf/$scope/$webAclId/$name': typeof WafScopeWebAclIdNameRoute
   '/cloudwatch/logs/$groupName/': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRoutesByTo {
@@ -696,6 +710,7 @@ export interface FileRoutesByTo {
   '/ssm': typeof SsmIndexRoute
   '/stepfunctions': typeof StepfunctionsIndexRoute
   '/sts': typeof StsIndexRoute
+  '/waf': typeof WafIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
   '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
@@ -714,6 +729,7 @@ export interface FileRoutesByTo {
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
   '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
+  '/waf/$scope/$webAclId/$name': typeof WafScopeWebAclIdNameRoute
   '/cloudwatch/logs/$groupName': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRoutesById {
@@ -786,6 +802,7 @@ export interface FileRoutesById {
   '/ssm/': typeof SsmIndexRoute
   '/stepfunctions/': typeof StepfunctionsIndexRoute
   '/sts/': typeof StsIndexRoute
+  '/waf/': typeof WafIndexRoute
   '/apigateway/http/$apiId': typeof ApigatewayHttpApiIdRoute
   '/apigateway/rest/$apiId': typeof ApigatewayRestApiIdRoute
   '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
@@ -804,6 +821,7 @@ export interface FileRoutesById {
   '/cloudwatch/logs/$groupName/$streamName': typeof CloudwatchLogsGroupNameStreamNameRoute
   '/ecs/$cluster/tasks/$taskId': typeof EcsClusterTasksTaskIdRoute
   '/stepfunctions/execution/$name/$execution': typeof StepfunctionsExecutionNameExecutionRoute
+  '/waf/$scope/$webAclId/$name': typeof WafScopeWebAclIdNameRoute
   '/cloudwatch/logs/$groupName/': typeof CloudwatchLogsGroupNameIndexRoute
 }
 export interface FileRouteTypes {
@@ -877,6 +895,7 @@ export interface FileRouteTypes {
     | '/ssm/'
     | '/stepfunctions/'
     | '/sts/'
+    | '/waf/'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
     | '/cloudwatch/logs/events'
@@ -895,6 +914,7 @@ export interface FileRouteTypes {
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
     | '/stepfunctions/execution/$name/$execution'
+    | '/waf/$scope/$webAclId/$name'
     | '/cloudwatch/logs/$groupName/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -962,6 +982,7 @@ export interface FileRouteTypes {
     | '/ssm'
     | '/stepfunctions'
     | '/sts'
+    | '/waf'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
     | '/cloudwatch/logs/events'
@@ -980,6 +1001,7 @@ export interface FileRouteTypes {
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
     | '/stepfunctions/execution/$name/$execution'
+    | '/waf/$scope/$webAclId/$name'
     | '/cloudwatch/logs/$groupName'
   id:
     | '__root__'
@@ -1051,6 +1073,7 @@ export interface FileRouteTypes {
     | '/ssm/'
     | '/stepfunctions/'
     | '/sts/'
+    | '/waf/'
     | '/apigateway/http/$apiId'
     | '/apigateway/rest/$apiId'
     | '/cloudwatch/logs/events'
@@ -1069,6 +1092,7 @@ export interface FileRouteTypes {
     | '/cloudwatch/logs/$groupName/$streamName'
     | '/ecs/$cluster/tasks/$taskId'
     | '/stepfunctions/execution/$name/$execution'
+    | '/waf/$scope/$webAclId/$name'
     | '/cloudwatch/logs/$groupName/'
   fileRoutesById: FileRoutesById
 }
@@ -1141,6 +1165,7 @@ export interface RootRouteChildren {
   SsmIndexRoute: typeof SsmIndexRoute
   StepfunctionsIndexRoute: typeof StepfunctionsIndexRoute
   StsIndexRoute: typeof StsIndexRoute
+  WafIndexRoute: typeof WafIndexRoute
   ApigatewayHttpApiIdRoute: typeof ApigatewayHttpApiIdRoute
   ApigatewayRestApiIdRoute: typeof ApigatewayRestApiIdRoute
   CloudwatchLogsEventsRoute: typeof CloudwatchLogsEventsRoute
@@ -1152,6 +1177,7 @@ export interface RootRouteChildren {
   LambdaLayersIndexRoute: typeof LambdaLayersIndexRoute
   CloudwatchLogsGroupNameStreamNameRoute: typeof CloudwatchLogsGroupNameStreamNameRoute
   StepfunctionsExecutionNameExecutionRoute: typeof StepfunctionsExecutionNameExecutionRoute
+  WafScopeWebAclIdNameRoute: typeof WafScopeWebAclIdNameRoute
   CloudwatchLogsGroupNameIndexRoute: typeof CloudwatchLogsGroupNameIndexRoute
 }
 
@@ -1232,6 +1258,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/waf/': {
+      id: '/waf/'
+      path: '/waf'
+      fullPath: '/waf/'
+      preLoaderRoute: typeof WafIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sts/': {
@@ -1745,6 +1778,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CloudwatchLogsGroupNameIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/waf/$scope/$webAclId/$name': {
+      id: '/waf/$scope/$webAclId/$name'
+      path: '/waf/$scope/$webAclId/$name'
+      fullPath: '/waf/$scope/$webAclId/$name'
+      preLoaderRoute: typeof WafScopeWebAclIdNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/stepfunctions/execution/$name/$execution': {
       id: '/stepfunctions/execution/$name/$execution'
       path: '/stepfunctions/execution/$name/$execution'
@@ -1905,6 +1945,7 @@ const rootRouteChildren: RootRouteChildren = {
   SsmIndexRoute: SsmIndexRoute,
   StepfunctionsIndexRoute: StepfunctionsIndexRoute,
   StsIndexRoute: StsIndexRoute,
+  WafIndexRoute: WafIndexRoute,
   ApigatewayHttpApiIdRoute: ApigatewayHttpApiIdRoute,
   ApigatewayRestApiIdRoute: ApigatewayRestApiIdRoute,
   CloudwatchLogsEventsRoute: CloudwatchLogsEventsRoute,
@@ -1918,6 +1959,7 @@ const rootRouteChildren: RootRouteChildren = {
     CloudwatchLogsGroupNameStreamNameRoute,
   StepfunctionsExecutionNameExecutionRoute:
     StepfunctionsExecutionNameExecutionRoute,
+  WafScopeWebAclIdNameRoute: WafScopeWebAclIdNameRoute,
   CloudwatchLogsGroupNameIndexRoute: CloudwatchLogsGroupNameIndexRoute,
 }
 export const routeTree = rootRouteImport

@@ -290,6 +290,12 @@ export const EventType = {
     RepositoryDeleted: "ecr:RepositoryDeleted",
     ImagePushed: "ecr:ImagePushed",
   },
+
+  // ── WAF ──────────────────────────────────────────────────────────────────
+  waf: {
+    WebACLCreated: "waf:WebACLCreated",
+    WebACLDeleted: "waf:WebACLDeleted",
+  },
 } as const
 
 /**

@@ -1,9 +1,15 @@
 package waf
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 func TestTypedOps_matchLegacyOperationRegistry(t *testing.T) {
@@ -27,5 +33,49 @@ func TestTypedOps_matchLegacyOperationRegistry(t *testing.T) {
 		if _, ok := operation.(*op.Raw); ok {
 			t.Fatalf("%s registered as raw operation", name)
 		}
+	}
+}
+
+func TestTypedWebACLLifecyclePublishesEvents(t *testing.T) {
+	bus := events.NewBus()
+	t.Cleanup(bus.Stop)
+	h := newHandler(&config.Config{Region: "us-east-1", AccountID: "000000000000"}, state.NewMemoryStore(), clock.New())
+	h.bus = bus
+
+	created := make(chan events.Event, 1)
+	deleted := make(chan events.Event, 1)
+	bus.Subscribe(events.WAFWebACLCreated, func(_ context.Context, event events.Event) { created <- event })
+	bus.Subscribe(events.WAFWebACLDeleted, func(_ context.Context, event events.Event) { deleted <- event })
+
+	response, aerr := h.createWebACLTyped(context.Background(), &createWebACLRequest{
+		Name:  "edge-acl",
+		Scope: "REGIONAL",
+	})
+	if aerr != nil {
+		t.Fatalf("createWebACLTyped returned error: %v", aerr)
+	}
+	assertWAFEvent(t, created, "edge-acl")
+
+	_, aerr = h.deleteWebACLTyped(context.Background(), &deleteWebACLRequest{
+		ID:    response.Summary.Id,
+		Name:  response.Summary.Name,
+		Scope: "REGIONAL",
+	})
+	if aerr != nil {
+		t.Fatalf("deleteWebACLTyped returned error: %v", aerr)
+	}
+	assertWAFEvent(t, deleted, "edge-acl")
+}
+
+func assertWAFEvent(t *testing.T, eventsCh <-chan events.Event, wantName string) {
+	t.Helper()
+	select {
+	case event := <-eventsCh:
+		payload, ok := event.Payload.(events.ResourcePayload)
+		if !ok || payload.Name != wantName || payload.ARN == "" {
+			t.Fatalf("unexpected WAF event payload: %#v", event.Payload)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for WAF lifecycle event")
 	}
 }

@@ -645,6 +645,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// through the same handlers an SDK call would.
 	sfnSvc.InitBus(bus)
 	sfnSvc.InitRouter(r)
+	// WAF: keep Web ACL lists and topology nodes fresh for SDK and UI mutations.
+	wafSvc.InitBus(bus)
 	// AppSync: wire bus for API lifecycle events.
 	appsyncSvc.InitBus(bus)
 	appsyncSvc.InitLambdaInvoker(lambdaSvc.SyncInvoker())
