@@ -900,7 +900,7 @@ func (h *lambdaEventSourceMappingHandler) Create(ctx context.Context, router htt
 		}
 	}
 	copyAnyProp(body, props, "KmsKeyArn", "KMSKeyArn")
-	if tags := mergeLambdaTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
 		body["Tags"] = tags
 	}
 

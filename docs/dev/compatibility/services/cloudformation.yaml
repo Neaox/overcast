@@ -78,8 +78,9 @@ operations:
         tests:
           - tests/integration/cloudformation/log_group_properties_test.go::TestCreateStack_LogGroupRetentionInDays
           - tests/integration/cloudformation/log_group_properties_test.go::TestUpdateStack_LogGroupTags
+          - tests/integration/cloudformation/log_group_properties_test.go::TestUpdateStack_LogGroupStackTags
           - internal/services/cloudformation/provisioner_logs_test.go::TestLogsLogGroupHandlerUpdate_omittedOrEmptyTagsRemovePreviousTags
-        notes: AWS::Logs::LogGroup applies RetentionInDays with PutRetentionPolicy immediately after CreateLogGroup and tags through TagLogGroup. Updates upsert changed tag values, remove deleted tag keys with UntagLogGroup, and compensate a partial tag update before reporting a service failure. Removing RetentionInDays dispatches DeleteRetentionPolicy and reports service failures instead of silently completing the update.
+        notes: AWS::Logs::LogGroup applies RetentionInDays with PutRetentionPolicy immediately after CreateLogGroup and effective resource-plus-stack tags through TagLogGroup, with resource tags taking precedence. Updates hash and reconcile effective tags so stack-only additions, changes, and removals dispatch; partial tag updates are compensated before reporting a service failure. A failed post-create cleanup preserves the physical ID for stack rollback. Removing RetentionInDays dispatches DeleteRetentionPolicy and reports service failures instead of silently completing the update.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -120,7 +121,7 @@ findings:
     - AWS::S3::Bucket create/update/removal dispatches seven sub-resource property families through S3 instead of silently dropping them.
     - AWS::Lambda::Function no longer drops priority configuration properties, and AWS::Lambda::Permission now mutates the function's Lambda-owned resource policy.
     - AWS::DynamoDB::Table forwards LocalSecondaryIndexes through CreateTable and reconciles TimeToLiveSpecification through DynamoDB's TTL API, including create/update compensation.
-    - AWS::Logs::LogGroup applies RetentionInDays and Tags when created, then reconciles tag additions, changes, and removals during stack updates.
+    - AWS::Logs::LogGroup applies RetentionInDays, resource Tags, and propagated stack tags when created, then reconciles effective tag additions, changes, and removals during stack updates.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.

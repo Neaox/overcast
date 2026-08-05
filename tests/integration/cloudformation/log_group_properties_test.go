@@ -143,6 +143,85 @@ func TestUpdateStack_LogGroupTags(t *testing.T) {
 	}
 }
 
+func TestUpdateStack_LogGroupStackTags(t *testing.T) {
+	// Given: a log group with stack tags and a colliding resource tag
+	srv := helpers.NewTestServer(t)
+	const stackName = "log-group-stack-tags"
+	const logGroupName = "/cloudformation/stack-tag-reconciliation"
+	const template = `{
+  "Resources": {
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/cloudformation/stack-tag-reconciliation",
+        "Tags": [
+          {"Key": "environment", "Value": "resource"},
+          {"Key": "project", "Value": "overcast"}
+        ]
+      }
+    }
+  }
+}`
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":           {stackName},
+		"TemplateBody":        {template},
+		"Tags.member.1.Key":   {"environment"},
+		"Tags.member.1.Value": {"stack"},
+		"Tags.member.2.Key":   {"team"},
+		"Tags.member.2.Value": {"platform"},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	if got := listLogGroupTags(t, srv, logGroupName); !reflect.DeepEqual(got, map[string]string{
+		"environment": "resource",
+		"project":     "overcast",
+		"team":        "platform",
+	}) {
+		t.Fatalf("initial effective tags = %#v", got)
+	}
+
+	// When: only stack tags change while the template remains identical
+	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":           {stackName},
+		"TemplateBody":        {template},
+		"Tags.member.1.Key":   {"environment"},
+		"Tags.member.1.Value": {"updated-stack"},
+		"Tags.member.2.Key":   {"owner"},
+		"Tags.member.2.Value": {"operations"},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: additions and removals propagate while the resource tag keeps precedence
+	if got := listLogGroupTags(t, srv, logGroupName); !reflect.DeepEqual(got, map[string]string{
+		"environment": "resource",
+		"owner":       "operations",
+		"project":     "overcast",
+	}) {
+		t.Fatalf("updated effective tags = %#v", got)
+	}
+
+	// When: stack tags are explicitly cleared
+	clearResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {template},
+		"Tags":         {""},
+	})
+	defer clearResp.Body.Close()
+	helpers.AssertStatus(t, clearResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: only resource-level tags remain
+	if got := listLogGroupTags(t, srv, logGroupName); !reflect.DeepEqual(got, map[string]string{
+		"environment": "resource",
+		"project":     "overcast",
+	}) {
+		t.Fatalf("tags after clearing stack tags = %#v", got)
+	}
+}
+
 func describeLogGroupRetention(t *testing.T, srv *helpers.TestServer, logGroupName string) *int {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(`{"logGroupNamePrefix":"`+logGroupName+`"}`))
