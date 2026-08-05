@@ -373,7 +373,10 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 				ExposedPorts: exposedPorts,
 				Labels:       mergeDockerLabels(docker.ManagedLabels("ecs", resourceID), cd.DockerLabels),
 			},
-			HostConfig: &docker.HostConfig{AutoRemove: true,
+			// Keep the container through Docker's die event so the final bounded
+			// log tail can be retained for post-mortem diagnostics. The exit
+			// notifier schedules removal immediately after capturing it.
+			HostConfig: &docker.HostConfig{AutoRemove: false,
 				Privileged:   cd.Privileged != nil && *cd.Privileged,
 				Mounts:       h.efsMountsForContainer(ctx, td, &td.ContainerDefinitions[i]),
 				NetworkMode:  h.cfg.ECSNetwork,

@@ -1,6 +1,7 @@
+import { describe, expect, it, vi } from "vitest"
 import { renderWithData, screen } from "@/test/render"
-import { ecsTaskQueryOptions } from "@/features/ecs/data"
-import type { EcsTask } from "@/types"
+import { ecsTaskLogsQueryOptions, ecsTaskQueryOptions } from "@/features/ecs/data"
+import type { EcsTask, EcsTaskLogs } from "@/types"
 import { TaskDetail } from "./task-detail"
 
 vi.mock("@/components/application-ownership-banner", () => ({
@@ -29,4 +30,36 @@ describe("TaskDetail", () => {
     expect(screen.getByText("ServiceSchedulerInitiated")).toBeInTheDocument()
     expect(screen.getByText("Task stopped by a newer service deployment")).toBeInTheDocument()
   })
+
+  it("opens retained output automatically for a container with a non-zero exit", () => {
+    const failed = failedTask()
+    const logs: EcsTaskLogs = {
+      taskArn: failed.taskArn,
+      containerName: "app",
+      logs: "entrypoint.sh: line 18: syntax error near unexpected token `fi'",
+    }
+
+    renderWithData(<TaskDetail clusterName="demo" taskId="failed-task" />, [
+      [ecsTaskQueryOptions("demo", "failed-task").queryKey, failed],
+      [ecsTaskLogsQueryOptions(failed.taskArn, "app").queryKey, logs],
+    ])
+
+    expect(screen.getByText("exit: 2")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Hide logs" })).toBeInTheDocument()
+    expect(screen.getByText("Container output")).toBeInTheDocument()
+  })
 })
+
+function failedTask(): EcsTask {
+  return {
+    taskArn: "arn:aws:ecs:us-east-1:123456789012:task/demo/failed-task",
+    taskDefinitionArn: "arn:aws:ecs:us-east-1:123456789012:task-definition/app:2",
+    clusterArn: "arn:aws:ecs:us-east-1:123456789012:cluster/demo",
+    lastStatus: "STOPPED",
+    desiredStatus: "STOPPED",
+    stopCode: "EssentialContainerExited",
+    stoppedReason: "Essential container in task exited",
+    stoppedAt: "2026-08-05T06:00:00.000Z",
+    containers: [{ name: "app", lastStatus: "STOPPED", exitCode: 2 }],
+  }
+}

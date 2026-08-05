@@ -24,6 +24,8 @@ export const ecsKeys = {
   taskDefinitionFamilies: () => [...ecsKeys.all(), "task-definition-families"] as const,
   tasks: (cluster: string) => [...ecsKeys.all(), "tasks", cluster] as const,
   task: (cluster: string, taskId: string) => [...ecsKeys.tasks(cluster), "detail", taskId] as const,
+  taskLogs: (taskArn: string, container: string) =>
+    [...ecsKeys.all(), "task-logs", taskArn, container] as const,
   services: (cluster: string) => [...ecsKeys.all(), "services", cluster] as const,
   containerInstances: (cluster: string) =>
     [...ecsKeys.all(), "container-instances", cluster] as const,
@@ -72,6 +74,15 @@ export function ecsTaskQueryOptions(cluster: string, taskId: string) {
     queryKey: ecsKeys.task(cluster, taskId),
     queryFn: () => ecs.describeTask(cluster, taskId),
     staleTime: 5_000,
+  })
+}
+
+export function ecsTaskLogsQueryOptions(taskArn: string, container: string, enabled = true) {
+  return queryOptions({
+    queryKey: ecsKeys.taskLogs(taskArn, container),
+    queryFn: () => ecs.getTaskLogs(taskArn, container),
+    enabled: enabled && taskArn.length > 0 && container.length > 0,
+    staleTime: Infinity,
   })
 }
 

@@ -44,13 +44,23 @@ import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Link } from "@tanstack/react-router"
 import { AwsvpcFields } from "@/features/ecs/components/awsvpc-fields"
+import { ServiceFailureAlert } from "@/features/ecs/components/service-failure-alert"
 import { emptyAwsvpcNetworking, type AwsvpcNetworking } from "@/features/ecs/awsvpc"
 import type { EcsTask, EcsTaskDefinition, EcsService, EcsContainerInstance } from "@/types"
 import { fieldLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
+import {
+  failedContainer,
+  isSecondaryServiceFailureEvent,
+  isServiceFailureEvent,
+  selectTasksForView,
+  type TaskView,
+} from "@/features/ecs/diagnostics"
 
 export function ClusterDetail({ clusterName }: { clusterName: string }) {
   const [activeTab, setActiveTab] = useState("tasks")
+  const [taskView, setTaskView] = useState<TaskView>("auto")
+  const [taskServiceFilter, setTaskServiceFilter] = useState<string>()
 
   const { data: cluster, isLoading } = useQuery(ecsClusterDetailQueryOptions(clusterName))
 
@@ -91,11 +101,24 @@ export function ClusterDetail({ clusterName }: { clusterName: string }) {
         </TabList>
 
         <TabPanel id="tasks" className="pt-4">
-          <TasksPanel clusterName={clusterName} />
+          <TasksPanel
+            clusterName={clusterName}
+            view={taskView}
+            serviceFilter={taskServiceFilter}
+            onViewChange={setTaskView}
+            onClearServiceFilter={() => setTaskServiceFilter(undefined)}
+          />
         </TabPanel>
 
         <TabPanel id="services" className="pt-4">
-          <ServicesPanel clusterName={clusterName} />
+          <ServicesPanel
+            clusterName={clusterName}
+            onViewStoppedTasks={(serviceName) => {
+              setTaskView("stopped")
+              setTaskServiceFilter(serviceName)
+              setActiveTab("tasks")
+            }}
+          />
         </TabPanel>
 
         <TabPanel id="container-instances" className="pt-4">
@@ -116,18 +139,29 @@ export function ClusterDetail({ clusterName }: { clusterName: string }) {
 
 // ─── Tasks panel ──────────────────────────────────────────────────────────
 
-function TasksPanel({ clusterName }: { clusterName: string }) {
+function TasksPanel({
+  clusterName,
+  view,
+  serviceFilter,
+  onViewChange,
+  onClearServiceFilter,
+}: {
+  clusterName: string
+  view: TaskView
+  serviceFilter?: string
+  onViewChange: (view: TaskView) => void
+  onClearServiceFilter: () => void
+}) {
   const [showRunTask, setShowRunTask] = useState(false)
   const [expandedTask, setExpandedTask] = useState<string>()
-  const [desiredStatus, setDesiredStatus] = useState<"RUNNING" | "STOPPED">("RUNNING")
-
-  const {
-    data: tasks = [],
-    isLoading,
-    isFetching,
-    refetch,
-  } = useQuery(ecsTasksQueryOptions(clusterName, desiredStatus))
+  const runningQuery = useQuery(ecsTasksQueryOptions(clusterName, "RUNNING"))
+  const stoppedQuery = useQuery(ecsTasksQueryOptions(clusterName, "STOPPED"))
+  const tasks = [...(runningQuery.data ?? []), ...(stoppedQuery.data ?? [])]
+  const isLoading = runningQuery.isLoading || stoppedQuery.isLoading
+  const isFetching = runningQuery.isFetching || stoppedQuery.isFetching
+  const refetch = () => Promise.all([runningQuery.refetch(), stoppedQuery.refetch()])
   const { data: taskDefs = [] } = useQuery(ecsTaskDefinitionsQueryOptions())
+  const selection = selectTasksForView(tasks, view, serviceFilter)
 
   const runMut = useResourceMutation({
     options: runTaskMutationOptions(),
@@ -145,23 +179,7 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <div className="flex rounded border border-border p-0.5">
-          <Button
-            size="sm"
-            variant={desiredStatus === "RUNNING" ? "secondary" : "ghost"}
-            onClick={() => setDesiredStatus("RUNNING")}
-          >
-            Running
-          </Button>
-          <Button
-            size="sm"
-            variant={desiredStatus === "STOPPED" ? "secondary" : "ghost"}
-            onClick={() => setDesiredStatus("STOPPED")}
-          >
-            Stopped
-          </Button>
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="ghost" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} />
           Refresh
@@ -170,27 +188,61 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
           <Play className="mr-1.5 h-3.5 w-3.5" />
           Run Task
         </Button>
+        <div className="ml-auto flex items-center gap-1 rounded border border-border bg-bg p-0.5">
+          <Button
+            size="sm"
+            variant={selection.effectiveView === "running" ? "secondary" : "ghost"}
+            aria-pressed={selection.effectiveView === "running"}
+            onClick={() => onViewChange("running")}
+          >
+            Active {selection.activeCount}
+          </Button>
+          <Button
+            size="sm"
+            variant={selection.effectiveView === "stopped" ? "secondary" : "ghost"}
+            aria-pressed={selection.effectiveView === "stopped"}
+            onClick={() => onViewChange("stopped")}
+          >
+            Stopped {selection.stoppedCount}
+          </Button>
+        </div>
       </div>
+
+      {serviceFilter && (
+        <div className="flex items-center gap-2 text-xs text-fg-muted">
+          <span>
+            Showing tasks for <span className="font-medium text-fg">{serviceFilter}</span>
+          </span>
+          <Button size="sm" variant="link" onClick={onClearServiceFilter}>
+            Clear filter
+          </Button>
+        </div>
+      )}
+
+      {selection.isStoppedFallback && (
+        <p className="rounded border border-border bg-bg-muted px-3 py-2 text-sm text-fg-muted">
+          No tasks are running. Showing the most recently stopped tasks to help diagnose startup
+          failures.
+        </p>
+      )}
+
+      {selection.isTruncated && (
+        <p className="text-xs text-fg-muted">
+          Showing the 50 most recently stopped tasks out of {selection.stoppedCount}.
+        </p>
+      )}
 
       {isLoading ? (
         <div className="flex justify-center py-12">
           <Spinner className="h-6 w-6" />
         </div>
-      ) : tasks.length === 0 ? (
+      ) : selection.tasks.length === 0 ? (
         <EmptyState
-          title={desiredStatus === "STOPPED" ? "No stopped tasks" : "No running tasks"}
+          title={`No ${selection.effectiveView} tasks`}
           description={
-            desiredStatus === "STOPPED"
-              ? "Stopped tasks remain available for one hour."
-              : "Run a task to get started."
-          }
-          action={
-            desiredStatus === "RUNNING" ? (
-              <Button size="sm" onClick={() => setShowRunTask(true)}>
-                <Play className="mr-1.5 h-3.5 w-3.5" />
-                Run Task
-              </Button>
-            ) : undefined
+            selection.effectiveView === "stopped"
+              ? "No stopped tasks are retained for this view."
+              : "No tasks are currently running."
           }
         />
       ) : (
@@ -200,13 +252,14 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
               <TableHead>Task ID</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Task Definition</TableHead>
+              <TableHead>Outcome</TableHead>
               <TableHead>Launch Type</TableHead>
-              <TableHead>Created</TableHead>
+              <TableHead>{selection.effectiveView === "stopped" ? "Stopped" : "Created"}</TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {tasks.map((t) => {
+            {selection.tasks.map((t) => {
               const shortId = t.taskArn.split("/").pop() ?? t.taskArn
               const isExpanded = expandedTask === t.taskArn
               return (
@@ -231,9 +284,10 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
                     <TableCell className="max-w-xs truncate text-fg-muted">
                       {shortTaskDef(t.taskDefinitionArn)}
                     </TableCell>
+                    <TableCell>{taskOutcome(t)}</TableCell>
                     <TableCell>{t.launchType ?? "—"}</TableCell>
                     <TableCell className="text-fg-muted">
-                      {t.createdAt ? new Date(t.createdAt).toLocaleString() : "—"}
+                      {taskDisplayTime(t, selection.effectiveView)}
                     </TableCell>
                     <TableCell>
                       {t.lastStatus !== "STOPPED" && (
@@ -253,7 +307,7 @@ function TasksPanel({ clusterName }: { clusterName: string }) {
                   </TableRow>
                   {isExpanded && (
                     <TableRow key={`${t.taskArn}-containers`}>
-                      <TableCell colSpan={6} className="bg-bg-muted p-4">
+                      <TableCell colSpan={7} className="bg-bg-muted p-4">
                         <ContainersList containers={t.containers} />
                       </TableCell>
                     </TableRow>
@@ -500,7 +554,13 @@ function TaskDefinitionsPanel() {
 
 // ─── Services panel ───────────────────────────────────────────────────────
 
-function ServicesPanel({ clusterName }: { clusterName: string }) {
+function ServicesPanel({
+  clusterName,
+  onViewStoppedTasks,
+}: {
+  clusterName: string
+  onViewStoppedTasks: (serviceName: string) => void
+}) {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [updateTarget, setUpdateTarget] = useState<EcsService>()
@@ -513,6 +573,7 @@ function ServicesPanel({ clusterName }: { clusterName: string }) {
     refetch,
   } = useQuery(ecsServicesQueryOptions(clusterName))
   const { data: taskDefs = [] } = useQuery(ecsTaskDefinitionsQueryOptions())
+  const { data: tasks = [] } = useQuery(ecsTasksQueryOptions(clusterName, "STOPPED"))
 
   const createMut = useResourceMutation({
     options: createServiceMutationOptions(),
@@ -649,7 +710,12 @@ function ServicesPanel({ clusterName }: { clusterName: string }) {
                   {isExpanded && (
                     <TableRow key={`${svc.serviceArn}-detail`}>
                       <TableCell colSpan={7} className="bg-bg-muted p-4">
-                        <ServiceDetailPanel service={svc} />
+                        <ServiceDetailPanel
+                          clusterName={clusterName}
+                          service={svc}
+                          tasks={tasks}
+                          onViewStoppedTasks={() => onViewStoppedTasks(svc.serviceName)}
+                        />
                       </TableCell>
                     </TableRow>
                   )}
@@ -734,16 +800,32 @@ function ServicesPanel({ clusterName }: { clusterName: string }) {
 // ─── Service detail ───────────────────────────────────────────────────────
 
 /**
- * The deployment and event view ECS surfaces for a service. The event log is
- * where a service that cannot place its tasks explains itself — a service can
- * sit ACTIVE and healthy-looking while every task it tries to start fails, and
- * these messages are the only place that says so.
+ * Deployment health plus a compact event history. Recent stopped-task
+ * diagnostics lead this view; scheduler events remain available as context.
  */
-function ServiceDetailPanel({ service }: { service: EcsService }) {
+function ServiceDetailPanel({
+  clusterName,
+  service,
+  tasks,
+  onViewStoppedTasks,
+}: {
+  clusterName: string
+  service: EcsService
+  tasks: EcsTask[]
+  onViewStoppedTasks: () => void
+}) {
   const primary = service.deployments.find((d) => d.status === "PRIMARY")
+  const [showAllEvents, setShowAllEvents] = useState(false)
+  const visibleEvents = showAllEvents ? service.events : service.events.slice(0, 5)
 
   return (
     <div className="flex flex-col gap-4">
+      <ServiceFailureAlert
+        clusterName={clusterName}
+        service={service}
+        tasks={tasks}
+        onViewStoppedTasks={onViewStoppedTasks}
+      />
       {primary && (
         <div>
           <h4 className={cn(fieldLabel, "mb-1.5 text-fg")}>Primary deployment</h4>
@@ -787,30 +869,57 @@ function ServiceDetailPanel({ service }: { service: EcsService }) {
           <p className="text-sm text-fg-muted">No events yet.</p>
         ) : (
           <ul className="flex flex-col gap-1">
-            {service.events.map((e) => (
+            {visibleEvents.map((e) => (
               <li key={e.id} className="flex gap-3 text-sm">
-                <span className="shrink-0 tabular-nums text-xs text-fg-muted">
+                <span className="shrink-0 text-xs text-fg-muted tabular-nums">
                   {e.createdAt ? new Date(e.createdAt).toLocaleTimeString() : "—"}
                 </span>
-                <span className={cn(isFailureEvent(e.message) ? "text-danger" : "text-fg")}>
+                <span
+                  className={cn(
+                    isSecondaryServiceFailureEvent(e.message)
+                      ? "text-fg-muted"
+                      : isServiceFailureEvent(e.message)
+                        ? "text-danger"
+                        : "text-fg",
+                  )}
+                >
                   {e.message}
                 </span>
               </li>
             ))}
           </ul>
         )}
+        {service.events.length > 5 && (
+          <Button
+            size="sm"
+            variant="link"
+            className="mt-1"
+            onClick={() => setShowAllEvents((shown) => !shown)}
+          >
+            {showAllEvents ? "Show recent events" : `Show all ${service.events.length} events`}
+          </Button>
+        )}
       </div>
     </div>
   )
 }
 
-/** Highlights the service events that report a task the scheduler could not place. */
-function isFailureEvent(message: string) {
-  return (
-    message.includes("unable to place") ||
-    message.includes("unable to consistently start") ||
-    message.includes("deployment failed")
-  )
+function taskOutcome(task: EcsTask) {
+  const container = failedContainer(task)
+  if (container?.exitCode != null) {
+    return (
+      <Badge variant={container.exitCode === 0 ? "default" : "danger"}>
+        exit: {container.exitCode}
+      </Badge>
+    )
+  }
+  if (task.stopCode) return <span className="text-xs text-fg-muted">{task.stopCode}</span>
+  return <span className="text-fg-muted">{"\u2014"}</span>
+}
+
+function taskDisplayTime(task: EcsTask, view: "running" | "stopped") {
+  const timestamp = view === "stopped" ? task.stoppedAt : task.createdAt
+  return timestamp ? new Date(timestamp).toLocaleString() : "\u2014"
 }
 
 function RolloutStateBadge({ state }: { state: string }) {
