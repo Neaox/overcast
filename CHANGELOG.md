@@ -76,6 +76,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [cloudformation/rds/ecs] CloudFormation waits for asynchronous resources to become usable before completing them and preserves their physical IDs through stabilisation failures so rollback can delete what it created. `AWS::RDS::DBInstance` and `AWS::RDS::DBCluster` now remain in progress until the database reports `available`, or fail with RDS's recorded reason and roll the stack back; `cdk deploy` no longer returns green while the engine is still initialising. Failed RDS databases and ECS services are now removed during rollback instead of being leaked under names that collide with the next deployment.
 
+- [cloudformation/s3] `AWS::S3::Bucket` now applies lifecycle, versioning, notification, encryption, tag, CORS, and website properties through S3, including in-place updates, removals, and rollback restoration. S3 lifecycle configuration now validates and round-trips `NoncurrentVersionExpiration` while true version-history execution remains tracked separately.
+
 - [sns/cloudformation] CloudFormation SNS topics and subscriptions now forward configured SNS attributes, including subscription filtering and raw SQS delivery (#522)
 
 - [ecs/web] cluster summaries and topology reflect current resources, while stopped tasks remain inspectable with AWS-compatible status, reason, and one-hour retention metadata
