@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -32,10 +33,14 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	clusterName, taskID := parts[0], parts[1]
 
 	region, task, allStopped := h.recordContainerExit(clusterName, taskID, p)
-	if task == nil || !allStopped {
+	if task == nil {
 		return
 	}
 	ctx := middleware.ContextWithRegion(context.Background(), region)
+	h.retainContainerLogs(ctx, task, p.ContainerID)
+	if !allStopped {
+		return
+	}
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
@@ -53,6 +58,47 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	}
 	h.recordServiceTaskDeath(ctx, clusterName, serviceName, task)
 	h.scheduleServiceReplacement(ctx, region, clusterName, serviceName)
+}
+
+// retainContainerLogs snapshots the last 200 lines before the exited Docker
+// container is removed. The snapshot is deliberately bounded by ContainerLogs
+// and stored outside the AWS task model for emulator-only diagnostics.
+func (h *Handler) retainContainerLogs(ctx context.Context, task *Task, dockerID string) {
+	if !h.dockerReady.Load() || dockerID == "" {
+		return
+	}
+
+	containerName := ""
+	for _, container := range task.Containers {
+		if container.DockerID == dockerID {
+			containerName = container.Name
+			break
+		}
+	}
+	if containerName == "" {
+		return
+	}
+
+	logCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	raw, err := h.docker.ContainerLogs(logCtx, dockerID, "200")
+	cancel()
+	if err != nil {
+		h.log.Debug("ecs: capture stopped container logs",
+			zap.String("container", dockerID), zap.Error(err))
+	} else if aerr := h.store.putTaskContainerLogs(ctx,
+		extractClusterName(task.ClusterArn), extractTaskID(task.TaskArn), containerName,
+		string(stripDockerLogHeaders(raw))); aerr != nil {
+		h.log.Warn("ecs: persist stopped container logs",
+			zap.String("container", dockerID), zap.String("error", aerr.Message))
+	}
+
+	if h.gc != nil {
+		h.gc.ScheduleRemove(dockerID)
+		return
+	}
+	if h.cfg == nil || !h.cfg.ECSKeepContainers {
+		_ = h.docker.RemoveContainerForce(dockerID)
+	}
 }
 
 // recordContainerExit records one container's exit on its task's record, and
@@ -84,6 +130,9 @@ func (h *Handler) recordContainerExit(clusterName, taskID string, p events.Docke
 		if task.Containers[i].DockerID == p.ContainerID {
 			task.Containers[i].LastStatus = "STOPPED"
 			task.Containers[i].ExitCode = &exitCode
+			if p.Reason != "" {
+				task.Containers[i].Reason = p.Reason
+			}
 			break
 		}
 	}

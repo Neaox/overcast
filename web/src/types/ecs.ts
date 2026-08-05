@@ -60,6 +60,12 @@ export interface EcsContainer {
   networkBindings?: Array<{ hostPort?: number; containerPort?: number; protocol?: string }>
 }
 
+export interface EcsTaskLogs {
+  containerName: string
+  taskArn: string
+  logs: string
+}
+
 export interface EcsService {
   serviceName: string
   serviceArn: string

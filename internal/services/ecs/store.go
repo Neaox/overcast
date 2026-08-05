@@ -19,6 +19,7 @@ const (
 	nsTaskDefs           = "ecs:task-definitions"
 	nsTaskDefFamilies    = "ecs:task-def-families"
 	nsTasks              = "ecs:tasks"
+	nsTaskContainerLogs  = "ecs:task-container-logs"
 	nsServices           = "ecs:services"
 	nsTags               = "ecs:tags"
 	nsCapacityProviders  = "ecs:capacity-providers"
@@ -669,6 +670,26 @@ func (s *ecsStore) listAllTasks(ctx context.Context) ([]Task, *protocol.AWSError
 		tasks = append(tasks, t)
 	}
 	return tasks, nil
+}
+
+// putTaskContainerLogs retains the bounded final log tail captured when a
+// container exits. It lives outside Task so the emulator-only diagnostic data
+// can never leak into DescribeTasks' AWS response shape.
+func (s *ecsStore) putTaskContainerLogs(ctx context.Context, cluster, taskID, container, logs string) *protocol.AWSError {
+	key := serviceutil.RegionKey(s.region(ctx), cluster+"/"+taskID+"/"+container)
+	if err := s.store.Set(ctx, nsTaskContainerLogs, key, logs); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+func (s *ecsStore) getTaskContainerLogs(ctx context.Context, cluster, taskID, container string) (string, bool, *protocol.AWSError) {
+	key := serviceutil.RegionKey(s.region(ctx), cluster+"/"+taskID+"/"+container)
+	logs, found, err := s.store.Get(ctx, nsTaskContainerLogs, key)
+	if err != nil {
+		return "", false, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return logs, found, nil
 }
 
 // ---- Service operations -------------------------------------------------------
