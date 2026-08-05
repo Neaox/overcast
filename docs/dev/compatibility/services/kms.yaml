@@ -1,5 +1,5 @@
 service: kms
-status: not_started
+status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
 last_updated: 2026-08-06
@@ -17,11 +17,24 @@ findings:
       evidence:
         aws_docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-key.html
         tests: [tests/integration/cloudformation/cloudformation_test.go, internal/services/cloudformation/provisioner_resources_test.go]
+    - operation: CreateKey, PutKeyPolicy
+      scenario: Caller-aware key-policy schema, principal, and lockout-safety validation is consistent across AWS JSON and RPC v2 CBOR; bypass skips only lockout safety and rejected requests do not mutate state.
+      evidence:
+        aws_docs:
+          - https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateKey.html
+          - https://docs.aws.amazon.com/kms/latest/APIReference/API_PutKeyPolicy.html
+          - https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-overview.html
+        tests: [tests/integration/kms/policy_test.go, internal/iampolicy/policy_options_test.go]
+    - operation: AWS::KMS::Key
+      scenario: CloudFormation serializes and forwards KeyPolicy and BypassPolicyLockoutSafetyCheck to KMS; rejected creates and updates reach rollback without leaking or mutating a key.
+      evidence:
+        aws_docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-key.html
+        tests: [tests/integration/cloudformation/kms_policy_test.go, internal/services/cloudformation/provisioner_resources_test.go]
   remaining_gaps:
-    - Implement caller-aware key-policy lockout-safety validation before forwarding CloudFormation KeyPolicy and BypassPolicyLockoutSafetyCheck (#669).
     - Align docs note for JSON 1.0 if intentional.
+    - Principal existence is not checked against remote AWS accounts; syntactically valid cross-account principals are accepted.
   intentionally_partial: []
 handoff:
   start_with: [Encrypt, Decrypt, CreateGrant, key policies]
-  do_not_redo: []
+  do_not_redo: [CreateKey and PutKeyPolicy lockout-safety validation (#669), CloudFormation KeyPolicy forwarding]
   commands: [go test -count=1 ./internal/services/kms/... ./tests/integration/kms/...]

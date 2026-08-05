@@ -725,6 +725,16 @@ func (h *kmsKeyHandler) Create(ctx context.Context, router http.Handler, cfg *co
 	if v, _ := props["KeyUsage"].(string); v != "" {
 		body["KeyUsage"] = v
 	}
+	if keyPolicy, ok := props["KeyPolicy"]; ok {
+		policy, err := json.Marshal(keyPolicy)
+		if err != nil {
+			return "", nil, fmt.Errorf("CreateKey: serialize KeyPolicy: %w", err)
+		}
+		body["Policy"] = string(policy)
+	}
+	if bypass, ok := props["BypassPolicyLockoutSafetyCheck"]; ok {
+		body["BypassPolicyLockoutSafetyCheck"] = asBool(bypass)
+	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "TrentService.CreateKey", body)
 	if err != nil {
@@ -786,15 +796,38 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 		}
 	}
 
+	var previousPolicy string
+	policyApplied := false
 	if keyPolicy, ok := props["KeyPolicy"]; ok {
+		policy, err := json.Marshal(keyPolicy)
+		if err != nil {
+			return physicalID, nil, failUpdate(fmt.Errorf("PutKeyPolicy: serialize KeyPolicy: %w", err))
+		}
+		getRec, err := internalJSON(ctx, router, rCtx.Region, "TrentService.GetKeyPolicy", map[string]any{
+			"KeyId": physicalID, "PolicyName": "default",
+		})
+		if err != nil {
+			return physicalID, nil, failUpdate(fmt.Errorf("GetKeyPolicy before update: %w", err))
+		}
+		var current struct {
+			Policy string `json:"Policy"`
+		}
+		if err := json.Unmarshal(getRec.Body.Bytes(), &current); err != nil {
+			return physicalID, nil, failUpdate(fmt.Errorf("GetKeyPolicy before update: parse response: %w", err))
+		}
+		previousPolicy = current.Policy
 		body := map[string]any{
 			"KeyId":      physicalID,
 			"PolicyName": "default",
-			"Policy":     keyPolicy,
+			"Policy":     string(policy),
+		}
+		if bypass, ok := props["BypassPolicyLockoutSafetyCheck"]; ok {
+			body["BypassPolicyLockoutSafetyCheck"] = asBool(bypass)
 		}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.PutKeyPolicy", body); err != nil {
-			return "", nil, fmt.Errorf("PutKeyPolicy: %w", err)
+			return physicalID, nil, failUpdate(fmt.Errorf("PutKeyPolicy: %w", err))
 		}
+		policyApplied = true
 	}
 
 	newEnabledBool := true
@@ -807,14 +840,28 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 	}
 	if newEnabledBool != oldEnabledBool {
 		kb := map[string]any{"KeyId": physicalID}
+		var transitionErr error
 		if newEnabledBool {
 			if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.EnableKey", kb); err != nil {
-				return "", nil, fmt.Errorf("EnableKey: %w", err)
+				transitionErr = fmt.Errorf("EnableKey: %w", err)
 			}
 		} else {
 			if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.DisableKey", kb); err != nil {
-				return "", nil, fmt.Errorf("DisableKey: %w", err)
+				transitionErr = fmt.Errorf("DisableKey: %w", err)
 			}
+		}
+		if transitionErr != nil {
+			if policyApplied {
+				_, restoreErr := internalJSON(ctx, router, rCtx.Region, "TrentService.PutKeyPolicy", map[string]any{
+					"KeyId": physicalID, "PolicyName": "default", "Policy": previousPolicy,
+					"BypassPolicyLockoutSafetyCheck": true,
+				})
+				if restoreErr != nil {
+					return physicalID, nil, failDirtyUpdate(errors.Join(transitionErr,
+						fmt.Errorf("restore KMS key policy: %w", restoreErr)))
+				}
+			}
+			return physicalID, nil, failUpdate(transitionErr)
 		}
 	}
 

@@ -17,6 +17,7 @@ func KMS(c *clients.Clients) ServiceGroup {
 		Impls: map[string]harness.TestFn{
 			"CreateKey":                       g.CreateKey,
 			"DescribeKey":                     g.DescribeKey,
+			"PutKeyPolicy":                    g.PutKeyPolicy,
 			"ListKeys":                        g.ListKeys,
 			"EnableKey":                       g.EnableKey,
 			"DisableKey":                      g.DisableKey,
@@ -105,6 +106,28 @@ func (g *kmsGroup) DescribeKey(ctx context.Context, t *harness.TestContext) erro
 	}
 	if resp.KeyMetadata == nil {
 		return fmt.Errorf("DescribeKey: nil metadata")
+	}
+	return nil
+}
+
+func (g *kmsGroup) PutKeyPolicy(ctx context.Context, t *harness.TestContext) error {
+	keyID := t.GetString("kms_key_id")
+	initial, err := g.cl().GetKeyPolicy(ctx, &kms.GetKeyPolicyInput{KeyId: aws.String(keyID), PolicyName: aws.String("default")})
+	if err != nil {
+		return fmt.Errorf("PutKeyPolicy: GetKeyPolicy setup failed: %w", err)
+	}
+	policy := aws.ToString(initial.Policy)
+	if _, err := g.cl().PutKeyPolicy(ctx, &kms.PutKeyPolicyInput{
+		KeyId: aws.String(keyID), PolicyName: aws.String("default"), Policy: aws.String(policy),
+	}); err != nil {
+		return err
+	}
+	got, err := g.cl().GetKeyPolicy(ctx, &kms.GetKeyPolicyInput{KeyId: aws.String(keyID), PolicyName: aws.String("default")})
+	if err != nil {
+		return fmt.Errorf("PutKeyPolicy: GetKeyPolicy verify failed: %w", err)
+	}
+	if aws.ToString(got.Policy) != policy {
+		return fmt.Errorf("PutKeyPolicy: stored policy mismatch")
 	}
 	return nil
 }

@@ -87,6 +87,50 @@ impl ServiceGroup for KmsGroup {
 
         let clients = self.clients.clone();
         impls.insert(
+            "PutKeyPolicy".to_string(),
+            Arc::new(move |ctx: TestContext| {
+                let clients = clients.clone();
+                Box::pin(async move {
+                    let key_id = ctx
+                        .get("keyId")
+                        .ok_or_else(|| "keyId not set".to_string())?;
+                    let initial = clients
+                        .kms()
+                        .get_key_policy()
+                        .key_id(&key_id)
+                        .policy_name("default")
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    let policy = initial
+                        .policy()
+                        .ok_or_else(|| "PutKeyPolicy: initial policy missing".to_string())?;
+                    clients
+                        .kms()
+                        .put_key_policy()
+                        .key_id(&key_id)
+                        .policy_name("default")
+                        .policy(policy)
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    let got = clients
+                        .kms()
+                        .get_key_policy()
+                        .key_id(&key_id)
+                        .policy_name("default")
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?;
+                    (got.policy() == Some(policy))
+                        .then_some(())
+                        .ok_or_else(|| "PutKeyPolicy: stored policy mismatch".to_string())
+                })
+            }),
+        );
+
+        let clients = self.clients.clone();
+        impls.insert(
             "CreateKmsAlias".to_string(),
             Arc::new(move |ctx: TestContext| {
                 let clients = clients.clone();

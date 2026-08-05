@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
@@ -26,9 +27,11 @@ type keyIDRequest struct {
 }
 
 type createKeyRequest struct {
-	Description string `json:"Description" cbor:"Description"`
-	KeySpec     string `json:"KeySpec" cbor:"KeySpec"`
-	KeyUsage    string `json:"KeyUsage" cbor:"KeyUsage"`
+	Description                    string  `json:"Description" cbor:"Description"`
+	KeySpec                        string  `json:"KeySpec" cbor:"KeySpec"`
+	KeyUsage                       string  `json:"KeyUsage" cbor:"KeyUsage"`
+	Policy                         *string `json:"Policy" cbor:"Policy"`
+	BypassPolicyLockoutSafetyCheck bool    `json:"BypassPolicyLockoutSafetyCheck" cbor:"BypassPolicyLockoutSafetyCheck"`
 }
 
 type keyMetadataResponse struct {
@@ -181,15 +184,26 @@ func (h *Handler) createKeyTyped(ctx context.Context, req *createKeyRequest) (*k
 	}
 
 	keyID := uuid.NewString()
+	arn := fmt.Sprintf("arn:aws:kms:%s:%s:key/%s", middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, keyID)
+	if req.Policy != nil {
+		if aerr := h.validateKeyPolicy(ctx, *req.Policy, arn, req.BypassPolicyLockoutSafetyCheck); aerr != nil {
+			return nil, aerr
+		}
+	}
+	policy := ""
+	if req.Policy != nil {
+		policy = *req.Policy
+	}
 	k := &Key{
 		KeyID:       keyID,
-		ARN:         fmt.Sprintf("arn:aws:kms:%s:%s:key/%s", h.cfg.Region, h.cfg.AccountID, keyID),
+		ARN:         arn,
 		Description: req.Description,
 		KeySpec:     req.KeySpec,
 		KeyUsage:    req.KeyUsage,
 		Enabled:     true,
 		KeyState:    "Enabled",
 		CreatedAt:   h.clk.Now(),
+		Policy:      policy,
 	}
 	if err := generateKeyMaterial(k); err != nil {
 		h.log.Warn("kms: generate key material", zap.Error(err))
@@ -790,15 +804,16 @@ func (h *Handler) getKeyPolicyTyped(ctx context.Context, req *keyPolicyRequest) 
 	}
 	policy := k.Policy
 	if policy == "" {
-		policy = fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"Enable IAM User Permissions","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::%s:root"},"Action":"kms:*","Resource":"%s"}]}`, h.cfg.AccountID, k.ARN)
+		policy = defaultKeyPolicy(h.cfg.AccountID)
 	}
 	return &getKeyPolicyResponse{Policy: policy, PolicyName: req.PolicyName}, nil
 }
 
 type putKeyPolicyRequest struct {
-	KeyId      string `json:"KeyId" cbor:"KeyId"`
-	PolicyName string `json:"PolicyName" cbor:"PolicyName"`
-	Policy     string `json:"Policy" cbor:"Policy"`
+	KeyId                          string `json:"KeyId" cbor:"KeyId"`
+	PolicyName                     string `json:"PolicyName" cbor:"PolicyName"`
+	Policy                         string `json:"Policy" cbor:"Policy"`
+	BypassPolicyLockoutSafetyCheck bool   `json:"BypassPolicyLockoutSafetyCheck" cbor:"BypassPolicyLockoutSafetyCheck"`
 }
 
 func (h *Handler) putKeyPolicyTyped(ctx context.Context, req *putKeyPolicyRequest) (*struct{}, *protocol.AWSError) {
@@ -807,6 +822,9 @@ func (h *Handler) putKeyPolicyTyped(ctx context.Context, req *putKeyPolicyReques
 	}
 	k, aerr := h.resolveKeyForTyped(ctx, req.KeyId)
 	if aerr != nil {
+		return nil, aerr
+	}
+	if aerr := h.validateKeyPolicy(ctx, req.Policy, k.ARN, req.BypassPolicyLockoutSafetyCheck); aerr != nil {
 		return nil, aerr
 	}
 	k.Policy = req.Policy

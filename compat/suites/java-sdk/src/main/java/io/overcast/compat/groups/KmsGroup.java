@@ -30,6 +30,7 @@ public final class KmsGroup implements ServiceGroup {
         return Map.ofEntries(
                 Map.entry("CreateKey",                      this::createKey),
                 Map.entry("DescribeKey",                    this::describeKey),
+                Map.entry("PutKeyPolicy",                   this::putKeyPolicy),
                 Map.entry("CreateKmsAlias",                 this::createKmsAlias),
                 Map.entry("ListKmsAliases",                 this::listKmsAliases),
                 Map.entry("ListKeys",                       this::listKeys),
@@ -93,6 +94,14 @@ public final class KmsGroup implements ServiceGroup {
         var resp = kms().describeKey(r -> r.keyId(keyId));
         Assertions.assertEquals(keyId, resp.keyMetadata().keyId(), "DescribeKey: keyId mismatch");
         Assertions.assertEquals(KeyState.ENABLED, resp.keyMetadata().keyState(), "DescribeKey: key not ENABLED");
+    }
+
+    private void putKeyPolicy(TestContext ctx) throws Exception {
+        String keyId = ctx.getString("kmsKeyId");
+        String policy = kms().getKeyPolicy(r -> r.keyId(keyId).policyName("default")).policy();
+        kms().putKeyPolicy(r -> r.keyId(keyId).policyName("default").policy(policy));
+        String got = kms().getKeyPolicy(r -> r.keyId(keyId).policyName("default")).policy();
+        Assertions.assertEquals(policy, got, "PutKeyPolicy: stored policy mismatch");
     }
 
     private void createKmsAlias(TestContext ctx) throws Exception {

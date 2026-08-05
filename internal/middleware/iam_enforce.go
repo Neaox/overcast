@@ -1193,6 +1193,65 @@ func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Sto
 	return appendRoleSessionPolicyDocumentsWithContext(ctx, st, accessKeyID)
 }
 
+// PrincipalIdentity is the caller identity resolved from an IAM or STS access
+// key. It intentionally contains no authorization decision.
+type PrincipalIdentity struct {
+	ARN     string
+	Account string
+}
+
+// ResolvePrincipalIdentity resolves the principal represented by an access
+// key using the same IAM and STS records as request-time enforcement.
+func ResolvePrincipalIdentity(ctx context.Context, st state.Store, accessKeyID string) (PrincipalIdentity, bool) {
+	if st == nil || strings.TrimSpace(accessKeyID) == "" {
+		return PrincipalIdentity{}, false
+	}
+	_, principalCtx := collectPrincipalPolicyDocumentsAndContext(ctx, st, accessKeyID)
+	arn := strings.TrimSpace(principalCtx["aws:principalarn"])
+	account := strings.TrimSpace(principalCtx["aws:principalaccount"])
+	if arn == "" {
+		return PrincipalIdentity{}, false
+	}
+	return PrincipalIdentity{ARN: arn, Account: account}, true
+}
+
+// LocalIAMPrincipalExists reports whether an IAM user or role ARN resolves to
+// a record in the local account. Callers remain responsible for deciding how
+// to handle account roots, STS sessions, service principals, and remote
+// accounts, none of which this local IAM store can authoritatively validate.
+func LocalIAMPrincipalExists(ctx context.Context, st state.Store, principalARN string) (bool, error) {
+	if st == nil {
+		return false, nil
+	}
+	parts := strings.SplitN(strings.TrimSpace(principalARN), ":", 6)
+	if len(parts) != 6 || parts[0] != "arn" || parts[2] != "iam" {
+		return false, nil
+	}
+	resource := parts[5]
+	var namespace, name string
+	switch {
+	case strings.HasPrefix(resource, "user/"):
+		namespace = iamUsersNamespace
+		name = resource[strings.LastIndex(resource, "/")+1:]
+	case strings.HasPrefix(resource, "role/"):
+		namespace = iamRolesNamespace
+		name = resource[strings.LastIndex(resource, "/")+1:]
+	default:
+		return false, nil
+	}
+	raw, found, err := st.Get(ctx, namespace, name)
+	if err != nil || !found {
+		return false, err
+	}
+	var record struct {
+		ARN string `json:"Arn"`
+	}
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		return false, nil
+	}
+	return strings.TrimSpace(record.ARN) == strings.TrimSpace(principalARN), nil
+}
+
 func appendGroupPolicyDocuments(ctx context.Context, st state.Store, docs []iampolicy.SourcedDocument, userName string) []iampolicy.SourcedDocument {
 	if strings.TrimSpace(userName) == "" {
 		return docs

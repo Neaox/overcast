@@ -146,9 +146,11 @@ func (h *Handler) publish(r *http.Request, t events.Type, payload any) {
 // CreateKey creates a new KMS key with optional crypto material.
 func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Description string `json:"Description"`
-		KeySpec     string `json:"KeySpec"`
-		KeyUsage    string `json:"KeyUsage"`
+		Description                    string  `json:"Description"`
+		KeySpec                        string  `json:"KeySpec"`
+		KeyUsage                       string  `json:"KeyUsage"`
+		Policy                         *string `json:"Policy"`
+		BypassPolicyLockoutSafetyCheck bool    `json:"BypassPolicyLockoutSafetyCheck"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -162,7 +164,17 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 
 	keyID := uuid.NewString()
 	arn := fmt.Sprintf("arn:aws:kms:%s:%s:key/%s", middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, keyID)
+	if req.Policy != nil {
+		if aerr := h.validateKeyPolicy(r.Context(), *req.Policy, arn, req.BypassPolicyLockoutSafetyCheck); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+	}
 
+	policy := ""
+	if req.Policy != nil {
+		policy = *req.Policy
+	}
 	k := &Key{
 		KeyID:       keyID,
 		ARN:         arn,
@@ -172,6 +184,7 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 		Enabled:     true,
 		KeyState:    "Enabled",
 		CreatedAt:   h.clk.Now(),
+		Policy:      policy,
 	}
 
 	// Generate crypto material
@@ -1024,7 +1037,7 @@ func (h *Handler) GetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	policy := k.Policy
 	if policy == "" {
-		policy = defaultKeyPolicy(k.ARN, h.cfg.AccountID)
+		policy = defaultKeyPolicy(h.cfg.AccountID)
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Policy":     policy,
@@ -1035,9 +1048,10 @@ func (h *Handler) GetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 // PutKeyPolicy attaches a key policy to a KMS key.
 func (h *Handler) PutKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		KeyId      string `json:"KeyId"`
-		PolicyName string `json:"PolicyName"`
-		Policy     string `json:"Policy"`
+		KeyId                          string `json:"KeyId"`
+		PolicyName                     string `json:"PolicyName"`
+		Policy                         string `json:"Policy"`
+		BypassPolicyLockoutSafetyCheck bool   `json:"BypassPolicyLockoutSafetyCheck"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -1053,6 +1067,10 @@ func (h *Handler) PutKeyPolicy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	if aerr := h.validateKeyPolicy(ctx, req.Policy, k.ARN, req.BypassPolicyLockoutSafetyCheck); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	k.Policy = req.Policy
@@ -1090,8 +1108,8 @@ func (h *Handler) ListKeyPolicies(w http.ResponseWriter, r *http.Request) {
 }
 
 // defaultKeyPolicy returns a minimal key policy granting full access to the account.
-func defaultKeyPolicy(keyARN, accountID string) string {
-	return fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"Enable IAM User Permissions","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::%s:root"},"Action":"kms:*","Resource":"%s"}]}`, accountID, keyARN)
+func defaultKeyPolicy(accountID string) string {
+	return fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"Enable IAM User Permissions","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::%s:root"},"Action":"kms:*","Resource":"*"}]}`, accountID)
 }
 
 // ── Crypto helpers ────────────────────────────────────────────────────────────
