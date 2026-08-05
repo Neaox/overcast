@@ -53,6 +53,8 @@ operations:
         - Image CreateFunction requests with Runtime were accepted; now rejected.
       remaining_gaps:
         - Review Publish=true version creation and additional optional configuration fields before marking CreateFunction reviewed.
+        - S3 Files FileSystemConfigs validate and round-trip, but execution-environment mounts require #647.
+        - Real-AWS captures for exact collection validation values and empty ImageConfigResponse omission semantics are tracked in #648.
   AddPermission:
     status: intentionally_partial
     aws_docs:
@@ -106,6 +108,7 @@ findings:
     - Finish CreateFunction Publish=true and advanced optional configuration review.
     - Review runtime invocation fidelity, error shapes, layers, and event source mappings.
     - Review Docker-unavailable fallback compatibility.
+    - Implement S3 Files execution-environment mounts (#647) and close the remaining exact-wire capture questions (#648).
   intentionally_partial:
     - Resource policies are stored and observable but are not an authorization boundary for invocation.
 handoff:

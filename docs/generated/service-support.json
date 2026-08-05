@@ -566,7 +566,7 @@
           "operation": "CreateFunction",
           "category": "Function management",
           "status": "✅ Supported",
-          "notes": "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig, ImageConfig, and FileSystemConfigs supported (EFS volumes mounted in live mode)"
+          "notes": "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647)"
         },
         {
           "operation": "DeleteFunction",

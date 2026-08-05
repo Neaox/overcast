@@ -29,7 +29,7 @@ const lambdaPriorityOnePropertiesTemplate = `{
           "Ipv6AllowedForDualStack": true
         },
         "FileSystemConfigs": [{
-          "Arn": "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-cfn0001",
+          "Arn": "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-0123456789abcdef0",
           "LocalMountPath": "/mnt/shared"
         }],
         "ReservedConcurrentExecutions": 0
@@ -84,7 +84,7 @@ func TestCreateStack_LambdaFunctionForwardsPriorityOneProperties(t *testing.T) {
 	if !config.VpcConfig.Ipv6AllowedForDualStack {
 		t.Error("VpcConfig.Ipv6AllowedForDualStack = false, want true")
 	}
-	if len(config.FileSystemConfigs) != 1 || config.FileSystemConfigs[0].Arn != "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-cfn0001" || config.FileSystemConfigs[0].LocalMountPath != "/mnt/shared" {
+	if len(config.FileSystemConfigs) != 1 || config.FileSystemConfigs[0].Arn != "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-0123456789abcdef0" || config.FileSystemConfigs[0].LocalMountPath != "/mnt/shared" {
 		t.Errorf("FileSystemConfigs = %+v", config.FileSystemConfigs)
 	}
 
@@ -140,7 +140,7 @@ const lambdaUpdatedPriorityOnePropertiesTemplate = `{
           "Ipv6AllowedForDualStack": false
         },
         "FileSystemConfigs": [{
-          "Arn": "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-cfn0002",
+          "Arn": "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-123456789abcdef01",
           "LocalMountPath": "/mnt/updated"
         }],
         "ReservedConcurrentExecutions": 2
@@ -194,7 +194,7 @@ func TestUpdateStack_LambdaFunctionForwardsPriorityOneProperties(t *testing.T) {
 	if config.VpcConfig.Ipv6AllowedForDualStack {
 		t.Error("VpcConfig.Ipv6AllowedForDualStack = true, want false")
 	}
-	if len(config.FileSystemConfigs) != 1 || config.FileSystemConfigs[0].Arn != "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-cfn0002" || config.FileSystemConfigs[0].LocalMountPath != "/mnt/updated" {
+	if len(config.FileSystemConfigs) != 1 || config.FileSystemConfigs[0].Arn != "arn:aws:elasticfilesystem:us-east-1:000000000000:access-point/fsap-123456789abcdef01" || config.FileSystemConfigs[0].LocalMountPath != "/mnt/updated" {
 		t.Errorf("FileSystemConfigs = %+v", config.FileSystemConfigs)
 	}
 
@@ -289,25 +289,28 @@ func TestCreateStack_LambdaImageFunctionForwardsPackageAndImageConfig(t *testing
 	defer configResp.Body.Close()
 	helpers.AssertStatus(t, configResp, http.StatusOK)
 	var config struct {
-		PackageType string `json:"PackageType"`
-		ImageConfig struct {
-			EntryPoint       []string `json:"EntryPoint"`
-			Command          []string `json:"Command"`
-			WorkingDirectory string   `json:"WorkingDirectory"`
-		} `json:"ImageConfig"`
+		PackageType         string `json:"PackageType"`
+		ImageConfigResponse struct {
+			ImageConfig struct {
+				EntryPoint       []string `json:"EntryPoint"`
+				Command          []string `json:"Command"`
+				WorkingDirectory string   `json:"WorkingDirectory"`
+			} `json:"ImageConfig"`
+		} `json:"ImageConfigResponse"`
 	}
 	helpers.DecodeJSON(t, configResp, &config)
 	if config.PackageType != "Image" {
 		t.Errorf("PackageType = %q, want Image", config.PackageType)
 	}
-	if len(config.ImageConfig.EntryPoint) != 1 || config.ImageConfig.EntryPoint[0] != "/entry.sh" {
-		t.Errorf("ImageConfig.EntryPoint = %v", config.ImageConfig.EntryPoint)
+	imageConfig := config.ImageConfigResponse.ImageConfig
+	if len(imageConfig.EntryPoint) != 1 || imageConfig.EntryPoint[0] != "/entry.sh" {
+		t.Errorf("ImageConfigResponse.ImageConfig.EntryPoint = %v", imageConfig.EntryPoint)
 	}
-	if len(config.ImageConfig.Command) != 1 || config.ImageConfig.Command[0] != "app.handler" {
-		t.Errorf("ImageConfig.Command = %v", config.ImageConfig.Command)
+	if len(imageConfig.Command) != 1 || imageConfig.Command[0] != "app.handler" {
+		t.Errorf("ImageConfigResponse.ImageConfig.Command = %v", imageConfig.Command)
 	}
-	if config.ImageConfig.WorkingDirectory != "/var/task" {
-		t.Errorf("ImageConfig.WorkingDirectory = %q, want /var/task", config.ImageConfig.WorkingDirectory)
+	if imageConfig.WorkingDirectory != "/var/task" {
+		t.Errorf("ImageConfigResponse.ImageConfig.WorkingDirectory = %q, want /var/task", imageConfig.WorkingDirectory)
 	}
 }
 
