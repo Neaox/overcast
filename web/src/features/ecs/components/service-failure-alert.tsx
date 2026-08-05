@@ -11,8 +11,9 @@ import {
   isServiceFailureEvent,
 } from "@/features/ecs/diagnostics"
 import { fieldLabel } from "@/lib/typography"
+import { formatPreciseTimeOfDay } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import type { EcsService, EcsTask } from "@/types"
+import type { EcsService, EcsServiceEvent, EcsTask } from "@/types"
 
 export function ServiceFailureAlert({
   clusterName,
@@ -35,7 +36,9 @@ export function ServiceFailureAlert({
 
   const excerpt = diagnosticLogExcerpt(logsQuery.data?.logs ?? "")
   const taskId = latestTask.taskArn.split("/").at(-1) ?? latestTask.taskArn
-  const schedulerContext = service.events.find((event) => isServiceFailureEvent(event.message))
+  const schedulerContext = nearestSchedulerContext(service.events, latestTask)
+  const recovered = service.desiredCount > 0 && service.runningCount >= service.desiredCount
+  const stoppedAt = latestTask.stoppedAt ?? latestTask.createdAt
   const fallbackCause =
     container.reason ??
     (container.exitCode != null
@@ -45,19 +48,33 @@ export function ServiceFailureAlert({
     schedulerContext?.message
 
   return (
-    <Card role="alert" className="border-danger/40 bg-danger-muted shadow-none">
+    <Card
+      role={recovered ? "status" : "alert"}
+      className={cn(
+        "shadow-none",
+        recovered ? "border-warning/40 bg-warning/10" : "border-danger/40 bg-danger-muted",
+      )}
+    >
       <CardContent className="space-y-3">
         <div className="flex items-start gap-3">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
+          <TriangleAlert
+            className={cn("mt-0.5 h-4 w-4 shrink-0", recovered ? "text-warning" : "text-danger")}
+            aria-hidden="true"
+          />
           <div className="min-w-0 flex-1 space-y-1">
             <p className="text-sm font-semibold text-fg">
-              {failures.length === 1
-                ? "A task failed in the last 15 minutes"
-                : `${failures.length} tasks failed in the last 15 minutes`}
+              {recovered
+                ? failures.length === 1
+                  ? "Recovered after a recent task failure"
+                  : `Recovered after ${failures.length} recent task failures`
+                : failures.length === 1
+                  ? "A task failed in the last 15 minutes"
+                  : `${failures.length} tasks failed in the last 15 minutes`}
             </p>
             <p className="text-xs text-fg-muted">
-              Latest: {container.name}
+              Failed task {taskId.slice(0, 12)}: {container.name}
               {container.exitCode != null ? ` exited ${container.exitCode}` : " stopped"}
+              {stoppedAt ? ` at ${formatPreciseTimeOfDay(stoppedAt)}` : ""}
             </p>
           </div>
         </div>
@@ -87,7 +104,12 @@ export function ServiceFailureAlert({
 
         <div className="flex flex-wrap gap-2">
           <Button asChild size="sm" variant="secondary">
-            <Link to="/ecs/$cluster/tasks/$taskId" params={{ cluster: clusterName, taskId }}>
+            <Link
+              to="/ecs/$cluster/tasks/$taskId"
+              params={{ cluster: clusterName, taskId }}
+              search={{ container: container.name }}
+              onClick={(event) => event.stopPropagation()}
+            >
               Open task and logs
             </Link>
           </Button>
@@ -98,4 +120,19 @@ export function ServiceFailureAlert({
       </CardContent>
     </Card>
   )
+}
+
+function nearestSchedulerContext(
+  events: EcsServiceEvent[],
+  task: EcsTask,
+): EcsServiceEvent | undefined {
+  const taskTime = Date.parse(task.stoppedAt ?? task.createdAt ?? "")
+  if (Number.isNaN(taskTime)) return undefined
+
+  return events
+    .filter((event) => isServiceFailureEvent(event.message))
+    .map((event) => ({ event, distance: Math.abs(Date.parse(event.createdAt) - taskTime) }))
+    .filter(({ distance }) => !Number.isNaN(distance) && distance <= 2 * 60 * 1000)
+    .toSorted((left, right) => left.distance - right.distance)
+    .at(0)?.event
 }

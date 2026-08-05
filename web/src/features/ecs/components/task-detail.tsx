@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { ChevronDown, ChevronRight, ScrollText } from "lucide-react"
 import { ecsTaskLogsQueryOptions, ecsTaskQueryOptions } from "@/features/ecs/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
@@ -11,7 +12,15 @@ import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { LogViewer } from "@/components/logs/log-viewer"
 import type { EcsContainer } from "@/types"
 
-export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskId: string }) {
+export function TaskDetail({
+  clusterName,
+  taskId,
+  initialContainerName,
+}: {
+  clusterName: string
+  taskId: string
+  initialContainerName?: string
+}) {
   const { data: task, isLoading } = useQuery(ecsTaskQueryOptions(clusterName, taskId))
 
   if (isLoading) {
@@ -31,6 +40,9 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
   }
 
   const shortId = taskId.slice(0, 12)
+  const serviceName = task.group?.startsWith("service:")
+    ? task.group.slice("service:".length)
+    : undefined
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -59,7 +71,25 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
             label="Started At"
             value={task.startedAt ? new Date(task.startedAt).toLocaleString() : null}
           />
-          {task.group && <Definition label="Group" value={task.group} />}
+          {task.group && (
+            <Definition
+              label="Group"
+              value={
+                serviceName ? (
+                  <Link
+                    to="/ecs/$cluster"
+                    params={{ cluster: clusterName }}
+                    search={{ tab: "services", service: serviceName }}
+                    className="text-accent hover:underline"
+                  >
+                    {serviceName}
+                  </Link>
+                ) : (
+                  task.group
+                )
+              }
+            />
+          )}
           {task.startedBy && <Definition label="Started By" value={task.startedBy} />}
           {task.stoppedAt && (
             <Definition label="Stopped At" value={new Date(task.stoppedAt).toLocaleString()} />
@@ -79,7 +109,14 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
         ) : (
           <div className="space-y-3">
             {task.containers.map((c) => (
-              <ContainerCard key={c.name} taskArn={task.taskArn} container={c} />
+              <ContainerCard
+                key={c.name}
+                taskArn={task.taskArn}
+                container={c}
+                initiallyShowLogs={
+                  c.name === initialContainerName || (c.exitCode != null && c.exitCode !== 0)
+                }
+              />
             ))}
           </div>
         )}
@@ -88,9 +125,17 @@ export function TaskDetail({ clusterName, taskId }: { clusterName: string; taskI
   )
 }
 
-function ContainerCard({ taskArn, container }: { taskArn: string; container: EcsContainer }) {
+function ContainerCard({
+  taskArn,
+  container,
+  initiallyShowLogs,
+}: {
+  taskArn: string
+  container: EcsContainer
+  initiallyShowLogs: boolean
+}) {
   const [envExpanded, setEnvExpanded] = useState(false)
-  const [logsExpanded, setLogsExpanded] = useState(() => (container.exitCode ?? 0) !== 0)
+  const [logsExpanded, setLogsExpanded] = useState(initiallyShowLogs)
   const logsQuery = useQuery(ecsTaskLogsQueryOptions(taskArn, container.name, logsExpanded))
   const logEvents = (logsQuery.data?.logs ?? "")
     .split(/\r?\n/)

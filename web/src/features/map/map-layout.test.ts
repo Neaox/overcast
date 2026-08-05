@@ -91,6 +91,30 @@ function overridesFor(nodes: TopologyNode[], lambdaInstanceCounts: Record<string
 }
 
 describe("buildLayoutNodes", () => {
+  it("preserves ECS identity and health metadata for rendering and navigation", () => {
+    const ecsService: TopologyNode = {
+      id: "ecs-service",
+      service: "ecs",
+      label: "website",
+      region: "ap-southeast-2",
+      ecsResourceType: "service",
+      clusterName: "demo",
+      desiredCount: 2,
+      runningCount: 1,
+    }
+
+    const result = buildLayoutNodes([ecsService])
+
+    expect(result.find((node) => node.id === ecsService.id)?.data).toEqual(
+      expect.objectContaining({
+        ecsResourceType: "service",
+        clusterName: "demo",
+        desiredCount: 2,
+        runningCount: 1,
+      }),
+    )
+  })
+
   it("does not overlap nodes of mixed types with very different heights", () => {
     const region = "us-east-1"
     const nodes: TopologyNode[] = [

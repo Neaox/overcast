@@ -56,6 +56,10 @@ export interface TopologyNode {
   clusterName?: string
   /** ECS task only — task UUID used by the task detail route. */
   taskId?: string
+  /** ECS service only — configured task count. */
+  desiredCount?: number
+  /** ECS service only — currently running task count. */
+  runningCount?: number
 }
 
 export interface TopologyEdge {
