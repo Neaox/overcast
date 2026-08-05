@@ -37,6 +37,47 @@ func TestCreateStack_LogGroupRetentionInDays(t *testing.T) {
 	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
 
 	// Then: the log group reports retention without requiring a stack update
+	retention := describeLogGroupRetention(t, srv, logGroupName)
+	if retention == nil {
+		t.Fatal("retentionInDays is absent after stack creation")
+	}
+	if *retention != 7 {
+		t.Errorf("retentionInDays = %d, want 7", *retention)
+	}
+}
+
+func TestUpdateStack_LogGroupRetentionInDaysRemoved(t *testing.T) {
+	// Given: a stack whose log group has a retention policy
+	srv := helpers.NewTestServer(t)
+	const stackName = "log-group-remove-retention-stack"
+	const logGroupName = "/cloudformation/remove-retention"
+	const initialTemplate = `{"Resources":{"LogGroup":{"Type":"AWS::Logs::LogGroup","Properties":{"LogGroupName":"/cloudformation/remove-retention","RetentionInDays":7}}}}`
+	const updatedTemplate = `{"Resources":{"LogGroup":{"Type":"AWS::Logs::LogGroup","Properties":{"LogGroupName":"/cloudformation/remove-retention"}}}}`
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {initialTemplate},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// When: the updated template omits RetentionInDays
+	updateResp := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {updatedTemplate},
+	})
+	defer updateResp.Body.Close()
+	helpers.AssertStatus(t, updateResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: the service reports no retention policy
+	if retention := describeLogGroupRetention(t, srv, logGroupName); retention != nil {
+		t.Fatalf("retentionInDays = %d after removal, want omitted", *retention)
+	}
+}
+
+func describeLogGroupRetention(t *testing.T, srv *helpers.TestServer, logGroupName string) *int {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(`{"logGroupNamePrefix":"`+logGroupName+`"}`))
 	if err != nil {
 		t.Fatalf("build DescribeLogGroups request: %v", err)
@@ -66,10 +107,5 @@ func TestCreateStack_LogGroupRetentionInDays(t *testing.T) {
 	if group.LogGroupName != logGroupName {
 		t.Errorf("logGroupName = %q, want %q", group.LogGroupName, logGroupName)
 	}
-	if group.RetentionInDays == nil {
-		t.Fatal("retentionInDays is absent after stack creation")
-	}
-	if *group.RetentionInDays != 7 {
-		t.Errorf("retentionInDays = %d, want 7", *group.RetentionInDays)
-	}
+	return group.RetentionInDays
 }
