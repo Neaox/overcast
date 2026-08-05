@@ -163,9 +163,16 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	fn.ReservedConcurrency = req.ReservedConcurrentExecutions
-	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		current.ReservedConcurrency = req.ReservedConcurrentExecutions
+		return true, nil
+	})
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !changed || fn == nil {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(name))
 		return
 	}
 
@@ -228,9 +235,16 @@ func (h *Handler) DeleteFunctionConcurrency(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	fn.ReservedConcurrency = nil
-	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		current.ReservedConcurrency = nil
+		return true, nil
+	})
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !changed || fn == nil {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(name))
 		return
 	}
 

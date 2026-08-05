@@ -585,6 +585,12 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	if req.Runtime != "" {
+		if aerr := validateLambdaRuntime(req.Runtime); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+	}
 	// Reject deprecated runtimes after modeled request-shape validation. The
 	// check applies only when a runtime is specified (image functions omit it).
 	if req.Runtime != "" && deprecatedRuntimes[req.Runtime] {
@@ -593,7 +599,6 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		))
 		return
 	}
-
 	// Modeled request validation runs before state-dependent service checks.
 	existing, aerr := h.ls.getFunction(ctx, req.FunctionName)
 	if aerr != nil {
@@ -601,12 +606,16 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceConflictException",
-			Message:    "Function already exist: " + req.FunctionName,
-			HTTPStatus: http.StatusConflict,
-		})
+		protocol.WriteJSONError(w, r, lambdaFunctionAlreadyExists(req.FunctionName))
 		return
+	}
+	if packageType == "Zip" {
+		if !lambdaRuntimeExecutionSupported(req.Runtime) {
+			// The runtime is valid in AWS's model, but Overcast cannot execute it
+			// yet. Report an honest emulator gap without persisting a function.
+			protocol.NotImplementedJSON(w, r)
+			return
+		}
 	}
 
 	// Build the function domain object.
@@ -631,6 +640,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		StateReason:     "The function is being created.",
 		StateReasonCode: "Creating",
 		RevisionId:      uuid.NewString(),
+		CreationID:      uuid.NewString(),
 		LastModified:    h.clk.Now().UTC().Format(time.RFC3339),
 		Tags:            copyTags(req.Tags),
 	}
@@ -736,8 +746,19 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		fn.Layers = links
 	}
 
-	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+	pullGeneration, err := imagePullGenerationForFunction(fn)
+	if err != nil {
+		h.log.Error("lambda: create function: resolve prewarm generation", zap.Error(err))
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+		return
+	}
+	created, aerr := h.ls.createFunction(ctx, fn)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !created {
+		protocol.WriteJSONError(w, r, lambdaFunctionAlreadyExists(req.FunctionName))
 		return
 	}
 
@@ -746,55 +767,20 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	// flips to "Active" — matching AWS semantics and keeping the cold-pull
 	// cost off the first Invoke. If the runtime isn't wired (tests, or
 	// Docker still initialising), mark Active immediately.
-	if h.prewarmer != nil {
-		h.prewarmer(fn, func(pullErr error) {
-			bgCtx := middleware.ContextWithRegion(context.Background(), serviceutil.ARNRegion(fn.ARN))
-			nextState, nextReason, nextReasonCode := "Active", "", ""
-			if pullErr != nil {
-				nextState = "Failed"
-				nextReason = "Failed to pull container image: " + pullErr.Error()
-				nextReasonCode = "ImagePullError"
-				h.log.Warn("lambda: background image pull failed",
-					zap.String("function", fn.Name), zap.Error(pullErr))
+	if !h.startFunctionPrewarm(fn) {
+		active, changed, _ := h.ls.mutateFunction(ctx, fn.Name, func(current *Function) (bool, *protocol.AWSError) {
+			if !pullGeneration.matches(current) {
+				return false, nil
 			}
-			// The pull outlives the request that started it, so the function may
-			// have been deleted or revised meanwhile. Persisting the create-time
-			// snapshot would resurrect a deleted record (the compat
-			// lambda-crud/DeleteFunction flake, #414) or clobber a concurrent
-			// revision, so the transition is merged into a fresh read instead —
-			// the same rule RDS applies when a container start outlives its
-			// instance. Retried because the store may be contended during CDK
-			// deploy (many concurrent S3 PutObject calls).
-			const maxAttempts = 5
-			for i := range maxAttempts {
-				fresh, aerr := h.ls.getFunction(bgCtx, fn.Name)
-				if aerr == nil {
-					if fresh == nil || fresh.State != "Pending" {
-						return // deleted mid-pull, or already transitioned
-					}
-					fresh.State = nextState
-					fresh.StateReason = nextReason
-					fresh.StateReasonCode = nextReasonCode
-					if err := h.ls.putFunction(bgCtx, fresh); err == nil {
-						if fresh.State == "Active" {
-							h.proactive.NoteFunctionChanged(fresh)
-						}
-						return
-					}
-				}
-				if i < maxAttempts-1 {
-					time.Sleep(time.Duration(i+1) * 200 * time.Millisecond)
-				}
-			}
-			h.log.Warn("lambda: failed to persist state transition after image pull",
-				zap.String("function", fn.Name))
+			current.State = "Active"
+			current.StateReason = ""
+			current.StateReasonCode = ""
+			return true, nil
 		})
-	} else {
-		fn.State = "Active"
-		fn.StateReason = ""
-		fn.StateReasonCode = ""
-		_ = h.ls.putFunction(ctx, fn)
-		h.proactive.NoteFunctionChanged(fn)
+		if changed {
+			fn = active
+			h.proactive.NoteFunctionChanged(active)
+		}
 	}
 
 	// Auto-create CloudWatch Logs log group (idempotent). The log stream is
@@ -822,6 +808,90 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+}
+
+func (h *Handler) startFunctionPrewarm(fn *Function) bool {
+	if fn == nil {
+		return false
+	}
+	h.prewarmMu.Lock()
+	prewarmer := h.prewarmer
+	h.prewarmMu.Unlock()
+	if prewarmer == nil {
+		return false
+	}
+	generation, err := imagePullGenerationForFunction(fn)
+	if err != nil {
+		h.log.Warn("lambda: cannot resolve function image for prewarm",
+			zap.String("function", fn.Name), zap.Error(err))
+		return true
+	}
+	key := generation.arn
+	h.prewarmMu.Lock()
+	if h.prewarming == nil {
+		h.prewarming = make(map[string]functionImagePullGeneration)
+	}
+	if active, ok := h.prewarming[key]; ok && active == generation {
+		h.prewarmMu.Unlock()
+		return true
+	}
+	h.prewarming[key] = generation
+	h.prewarmMu.Unlock()
+
+	prewarmer(fn, func(pullErr error) {
+		h.completeFunctionPrewarm(fn.Name, serviceutil.ARNRegion(fn.ARN), generation, pullErr)
+	})
+	return true
+}
+
+func (h *Handler) completeFunctionPrewarm(name, region string, generation functionImagePullGeneration, pullErr error) {
+	key := generation.arn
+	defer func() {
+		h.prewarmMu.Lock()
+		if active, ok := h.prewarming[key]; ok && active == generation {
+			delete(h.prewarming, key)
+		}
+		h.prewarmMu.Unlock()
+	}()
+
+	nextState, nextReason, nextReasonCode := "Active", "", ""
+	if pullErr != nil {
+		nextState = "Failed"
+		nextReason = "Failed to pull container image: " + pullErr.Error()
+		nextReasonCode = "ImagePullError"
+		h.log.Warn("lambda: background image pull failed", zap.String("function", name), zap.Error(pullErr))
+	}
+	ctx := middleware.ContextWithRegion(context.Background(), region)
+	const maxAttempts = 5
+	for i := range maxAttempts {
+		fresh, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+			if !generation.matches(current) {
+				return false, nil
+			}
+			current.State = nextState
+			current.StateReason = nextReason
+			current.StateReasonCode = nextReasonCode
+			return true, nil
+		})
+		if aerr == nil {
+			if changed {
+				if fresh.State == "Active" {
+					h.proactive.NoteFunctionChanged(fresh)
+				}
+				return
+			}
+			// The pulled generation was replaced. Arrange the current Pending
+			// generation's pull only after mutateFunction released its mutex.
+			if fresh != nil && fresh.State == "Pending" {
+				h.startFunctionPrewarm(fresh)
+			}
+			return
+		}
+		if i < maxAttempts-1 {
+			time.Sleep(time.Duration(i+1) * 200 * time.Millisecond)
+		}
+	}
+	h.log.Warn("lambda: failed to persist state transition after image pull", zap.String("function", name))
 }
 
 // ─── Code signing config association ─────────────────────────────────────────
@@ -936,9 +1006,16 @@ func (h *Handler) PutFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	fn.CodeSigningConfigArn = req.CodeSigningConfigArn
-	if aerr := h.ls.putFunction(r.Context(), fn); aerr != nil {
+	fn, changed, aerr := h.ls.mutateFunction(r.Context(), name, func(current *Function) (bool, *protocol.AWSError) {
+		current.CodeSigningConfigArn = req.CodeSigningConfigArn
+		return true, nil
+	})
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !changed || fn == nil {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(name))
 		return
 	}
 	writeCodeSigningConfig(w, r, fn.CodeSigningConfigArn, name)
@@ -948,16 +1025,24 @@ func (h *Handler) PutFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Re
 // Returns 204 with an empty body, and is idempotent: removing an association
 // that is not there is not an error.
 func (h *Handler) DeleteFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Request) {
-	fn, _ := h.functionForCodeSigning(w, r)
+	fn, name := h.functionForCodeSigning(w, r)
 	if fn == nil {
 		return
 	}
-	if fn.CodeSigningConfigArn != "" {
-		fn.CodeSigningConfigArn = ""
-		if aerr := h.ls.putFunction(r.Context(), fn); aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
-			return
+	fn, _, aerr := h.ls.mutateFunction(r.Context(), name, func(current *Function) (bool, *protocol.AWSError) {
+		if current.CodeSigningConfigArn == "" {
+			return false, nil
 		}
+		current.CodeSigningConfigArn = ""
+		return true, nil
+	})
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if fn == nil {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(name))
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1115,6 +1200,8 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 				current.CodeS3Key = req.S3Key
 			}
 		}
+		current.SourceCode = ""
+		current.SourceFilename = ""
 		if len(req.Architectures) > 0 {
 			current.Architectures = req.Architectures
 		}
@@ -1228,11 +1315,21 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
-	if req.Runtime != nil && deprecatedRuntimes[*req.Runtime] {
-		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
-			"The runtime "+*req.Runtime+" is no longer supported.",
-		))
-		return
+	if req.Runtime != nil {
+		if aerr := validateLambdaRuntime(*req.Runtime); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		if deprecatedRuntimes[*req.Runtime] {
+			protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
+				"The runtime "+*req.Runtime+" is no longer supported.",
+			))
+			return
+		}
+		if !lambdaRuntimeExecutionSupported(*req.Runtime) {
+			protocol.NotImplementedJSON(w, r)
+			return
+		}
 	}
 	if req.Timeout != nil && (*req.Timeout < 1 || *req.Timeout > 900) {
 		protocol.WriteJSONError(w, r, smithyIntegerConstraint("timeout", *req.Timeout, 1, 900))
@@ -1262,38 +1359,11 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		protocol.WriteJSONError(w, r, smithyPatternConstraint("role", *req.Role, `arn:(aws[a-zA-Z-]*)?:iam::\d{12}:role/?[a-zA-Z_0-9+=,.@\-_/]+`))
 		return
 	}
-	previousIdentity := functionInstanceIdentity(fn)
-
-	// Pointer members distinguish omission (no change) from explicit zero values.
-	if req.Description != nil {
-		fn.Description = *req.Description
-	}
-	if req.Handler != nil {
-		fn.Handler = *req.Handler
-	}
-	if req.Role != nil {
-		fn.Role = *req.Role
-	}
-	if req.Timeout != nil {
-		fn.Timeout = *req.Timeout
-	}
-	if req.MemorySize != nil {
-		fn.MemorySize = *req.MemorySize
-	}
-	if req.Runtime != nil {
-		fn.Runtime = *req.Runtime
-	}
-	if req.Environment != nil {
-		fn.Environment = req.Environment.Variables
-	}
-	if req.LoggingConfig != nil {
-		fn.LogGroup = req.LoggingConfig.LogGroup
-		fn.LogFormat = req.LoggingConfig.LogFormat
-		fn.ApplicationLogLevel = req.LoggingConfig.ApplicationLogLevel
-		fn.SystemLogLevel = req.LoggingConfig.SystemLogLevel
-	}
+	// Resolve referenced resources before taking the function mutation lock.
+	// The callback below is deliberately store-only and cannot re-enter lambdaStore.
+	var layerLinks []LayerVersionLink
 	if req.Layers != nil {
-		links := make([]LayerVersionLink, 0, len(req.Layers))
+		layerLinks = make([]LayerVersionLink, 0, len(req.Layers))
 		for _, arn := range req.Layers {
 			// Real AWS requires layers to be in the same region as the function.
 			if layerRegion := serviceutil.ARNRegion(arn); layerRegion != "" {
@@ -1312,52 +1382,95 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 				return
 			}
 			if lv != nil {
-				links = append(links, LayerVersionLink{ARN: arn, CodeSize: lv.CodeSize})
+				layerLinks = append(layerLinks, LayerVersionLink{ARN: arn, CodeSize: lv.CodeSize})
 			} else {
-				links = append(links, LayerVersionLink{ARN: arn})
+				layerLinks = append(layerLinks, LayerVersionLink{ARN: arn})
 			}
 		}
-		fn.Layers = links
 	}
+	var resolvedVpcID string
 	if req.VpcConfig != nil {
-		if len(req.VpcConfig.SubnetIds) == 0 && len(req.VpcConfig.SecurityGroupIds) == 0 && !req.VpcConfig.Ipv6AllowedForDualStack {
-			fn.VpcConfig = nil
-		} else {
-			fn.VpcConfig = &VpcConfig{
-				SubnetIds:               req.VpcConfig.SubnetIds,
-				SecurityGroupIds:        req.VpcConfig.SecurityGroupIds,
-				Ipv6AllowedForDualStack: req.VpcConfig.Ipv6AllowedForDualStack,
-			}
-			if resolver := h.getVPCResolver(); resolver != nil && len(req.VpcConfig.SubnetIds) > 0 {
-				fn.VpcConfig.VpcId = resolver.VpcIDForSubnet(ctx, req.VpcConfig.SubnetIds[0])
-			}
+		if resolver := h.getVPCResolver(); resolver != nil && len(req.VpcConfig.SubnetIds) > 0 {
+			resolvedVpcID = resolver.VpcIDForSubnet(ctx, req.VpcConfig.SubnetIds[0])
 		}
 	}
-	if req.FileSystemConfigs != nil {
-		// An empty list clears the mounts; a populated one replaces them.
-		if len(req.FileSystemConfigs) == 0 {
-			fn.FileSystemConfigs = nil
-		} else {
-			fn.FileSystemConfigs = req.FileSystemConfigs
-		}
-	}
-	if req.ImageConfig != nil {
-		// An empty ImageConfig object clears all overrides.
-		if len(req.ImageConfig.EntryPoint) == 0 && len(req.ImageConfig.Command) == 0 && req.ImageConfig.WorkingDirectory == "" {
-			fn.ImageConfig = nil
-		} else {
-			fn.ImageConfig = &ImageConfig{
-				EntryPoint:       req.ImageConfig.EntryPoint,
-				Command:          req.ImageConfig.Command,
-				WorkingDirectory: req.ImageConfig.WorkingDirectory,
-			}
-		}
-	}
-	fn.RevisionId = uuid.NewString()
-	fn.LastModified = h.clk.Now().UTC().Format(time.RFC3339)
 
-	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+	var previousIdentity string
+	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		previousIdentity = functionInstanceIdentity(current)
+		// Pointer members distinguish omission (no change) from explicit zero values.
+		if req.Description != nil {
+			current.Description = *req.Description
+		}
+		if req.Handler != nil {
+			current.Handler = *req.Handler
+		}
+		if req.Role != nil {
+			current.Role = *req.Role
+		}
+		if req.Timeout != nil {
+			current.Timeout = *req.Timeout
+		}
+		if req.MemorySize != nil {
+			current.MemorySize = *req.MemorySize
+		}
+		if req.Runtime != nil {
+			current.Runtime = *req.Runtime
+		}
+		if req.Environment != nil {
+			current.Environment = req.Environment.Variables
+		}
+		if req.LoggingConfig != nil {
+			current.LogGroup = req.LoggingConfig.LogGroup
+			current.LogFormat = req.LoggingConfig.LogFormat
+			current.ApplicationLogLevel = req.LoggingConfig.ApplicationLogLevel
+			current.SystemLogLevel = req.LoggingConfig.SystemLogLevel
+		}
+		if req.Layers != nil {
+			current.Layers = layerLinks
+		}
+		if req.VpcConfig != nil {
+			if len(req.VpcConfig.SubnetIds) == 0 && len(req.VpcConfig.SecurityGroupIds) == 0 && !req.VpcConfig.Ipv6AllowedForDualStack {
+				current.VpcConfig = nil
+			} else {
+				current.VpcConfig = &VpcConfig{
+					SubnetIds:               req.VpcConfig.SubnetIds,
+					SecurityGroupIds:        req.VpcConfig.SecurityGroupIds,
+					Ipv6AllowedForDualStack: req.VpcConfig.Ipv6AllowedForDualStack,
+					VpcId:                   resolvedVpcID,
+				}
+			}
+		}
+		if req.FileSystemConfigs != nil {
+			// An empty list clears the mounts; a populated one replaces them.
+			if len(req.FileSystemConfigs) == 0 {
+				current.FileSystemConfigs = nil
+			} else {
+				current.FileSystemConfigs = req.FileSystemConfigs
+			}
+		}
+		if req.ImageConfig != nil {
+			// An empty ImageConfig object clears all overrides.
+			if len(req.ImageConfig.EntryPoint) == 0 && len(req.ImageConfig.Command) == 0 && req.ImageConfig.WorkingDirectory == "" {
+				current.ImageConfig = nil
+			} else {
+				current.ImageConfig = &ImageConfig{
+					EntryPoint:       req.ImageConfig.EntryPoint,
+					Command:          req.ImageConfig.Command,
+					WorkingDirectory: req.ImageConfig.WorkingDirectory,
+				}
+			}
+		}
+		current.RevisionId = uuid.NewString()
+		current.LastModified = h.clk.Now().UTC().Format(time.RFC3339)
+		return true, nil
+	})
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !changed || fn == nil {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(name))
 		return
 	}
 

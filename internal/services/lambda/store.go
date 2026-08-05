@@ -109,10 +109,29 @@ func (s *lambdaStore) putFunction(ctx context.Context, fn *Function) *protocol.A
 	return nil
 }
 
+// createFunction commits a new function only while its name is still absent.
+// CreateFunction performs an early read for fast conflict responses, but all
+// validation and external lookups happen after it; this locked recheck is the
+// authority that prevents two concurrent creates from both succeeding.
+func (s *lambdaStore) createFunction(ctx context.Context, fn *Function) (bool, *protocol.AWSError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, aerr := s.getFunction(ctx, fn.Name)
+	if aerr != nil || existing != nil {
+		return false, aerr
+	}
+	if aerr := s.putFunction(ctx, fn); aerr != nil {
+		return false, aerr
+	}
+	return true, nil
+}
+
 // mutateFunction serializes a function read-modify-write cycle. Callers do
 // any slow external work before entering the callback, then re-check the
-// current function state inside it. UpdateFunctionCode and S3 sync use this
-// shared path so stale snapshots cannot restore superseded source metadata.
+// current function state inside it. Every update to an existing function
+// record uses this path so a stale writer cannot restore superseded code,
+// source metadata, configuration, or lifecycle state.
 func (s *lambdaStore) mutateFunction(ctx context.Context, name string, mutate func(*Function) (bool, *protocol.AWSError)) (*Function, bool, *protocol.AWSError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

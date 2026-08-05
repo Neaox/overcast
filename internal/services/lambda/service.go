@@ -34,6 +34,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -190,6 +191,7 @@ type Function struct {
 	StateReason         string             `json:"state_reason,omitempty"`
 	StateReasonCode     string             `json:"state_reason_code,omitempty"` // e.g. "Creating", "Idle", "ImagePullError"
 	RevisionId          string             `json:"revision_id,omitempty"`
+	CreationID          string             `json:"creation_id,omitempty"`
 	LastModified        string             `json:"last_modified,omitempty"`
 	LogGroup            string             `json:"log_group,omitempty"` // Custom log group; defaults to /aws/lambda/{name}
 	LogFormat           string             `json:"log_format,omitempty"`
@@ -223,6 +225,37 @@ type Function struct {
 	// ReservedConcurrency is the reserved concurrency limit. nil = unreserved,
 	// 0 = throttled (no executions).
 	ReservedConcurrency *int `json:"reserved_concurrency,omitempty"`
+}
+
+// functionImagePullGeneration identifies the exact deployment generation a
+// background image pull prepared. State alone is insufficient: a function can
+// remain Pending while its image, platform, or entire creation changes.
+type functionImagePullGeneration struct {
+	arn        string
+	creationID string
+	image      string
+	platform   string
+}
+
+func imagePullGenerationForFunction(fn *Function) (functionImagePullGeneration, error) {
+	image, err := imageForFunction(fn)
+	if err != nil {
+		return functionImagePullGeneration{}, err
+	}
+	return functionImagePullGeneration{
+		arn:        fn.ARN,
+		creationID: fn.CreationID,
+		image:      image,
+		platform:   dockerPlatformForLambdaArchitectures(fn.Architectures),
+	}, nil
+}
+
+func (g functionImagePullGeneration) matches(fn *Function) bool {
+	if fn == nil || fn.State != "Pending" || fn.ARN != g.arn || fn.CreationID != g.creationID {
+		return false
+	}
+	current, err := imagePullGenerationForFunction(fn)
+	return err == nil && current.image == g.image && current.platform == g.platform
 }
 
 // ImageConfig overrides for container image Lambda functions.
@@ -655,7 +688,7 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 
 	// Wire the image prewarmer so CreateFunction can kick off image pulls
 	// in the background instead of paying the cost on the first Invoke.
-	s.handler.prewarmer = containerRuntime.PrewarmFunction
+	s.handler.setPrewarmer(containerRuntime.PrewarmFunction)
 
 	// Cold starts materialize the deployment package from its own store key —
 	// function records travel without the bytes (see lambdaStore.putFunction).
@@ -759,18 +792,18 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 		return
 	}
 	for _, fn := range fns {
-		image, err := imageForFunction(fn)
+		pullGeneration, err := imagePullGenerationForFunction(fn)
 		if err != nil {
 			s.log.Debug("skip seed: cannot resolve image for persisted function",
 				zap.String("function", fn.Name),
 				zap.Error(err))
 			continue
 		}
-		pullErr := cr.ensureImage(ctx, image, dockerPlatformForLambdaArchitectures(fn.Architectures))
+		pullErr := cr.ensureImage(ctx, pullGeneration.image, pullGeneration.platform)
 		if pullErr != nil {
 			s.log.Warn("seed pull failed for persisted function",
 				zap.String("function", fn.Name),
-				zap.String("image", image),
+				zap.String("image", pullGeneration.image),
 				zap.Error(pullErr))
 		}
 
@@ -784,35 +817,38 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 		if fn.State == "Pending" {
 			// Use the function's own region for the store key.
 			fnCtx := middleware.ContextWithRegion(ctx, regionFromFunctionARN(fn.ARN))
-			fresh, aerr := s.ls.getFunction(fnCtx, fn.Name)
+			fresh, changed, aerr := s.ls.mutateFunction(fnCtx, fn.Name, func(current *Function) (bool, *protocol.AWSError) {
+				if !pullGeneration.matches(current) {
+					return false, nil
+				}
+				if pullErr != nil {
+					current.State = "Failed"
+					current.StateReason = "Failed to pull container image: " + pullErr.Error()
+					current.StateReasonCode = "ImagePullError"
+				} else {
+					current.State = "Active"
+					current.StateReason = ""
+					current.StateReasonCode = ""
+				}
+				return true, nil
+			})
 			if aerr != nil {
 				s.log.Warn("failed to re-read pending function for reconciliation",
 					zap.String("function", fn.Name),
 					zap.String("error", aerr.Message))
 				continue
 			}
-			if fresh == nil || fresh.State != "Pending" {
-				continue // deleted or transitioned while the pulls ran
+			if !changed {
+				// A different Pending generation replaced the startup snapshot.
+				// Arrange its own pull outside mutateFunction's lock.
+				if fresh != nil && fresh.State == "Pending" && s.handler != nil {
+					s.handler.startFunctionPrewarm(fresh)
+				}
+				continue
 			}
-			if pullErr != nil {
-				fresh.State = "Failed"
-				fresh.StateReason = "Failed to pull container image: " + pullErr.Error()
-				fresh.StateReasonCode = "ImagePullError"
-			} else {
-				fresh.State = "Active"
-				fresh.StateReason = ""
-				fresh.StateReasonCode = ""
-			}
-			if serr := s.ls.putFunction(fnCtx, fresh); serr != nil {
-				s.log.Warn("failed to reconcile pending function state",
-					zap.String("function", fn.Name),
-					zap.String("target_state", fresh.State),
-					zap.String("error", serr.Message))
-			} else {
-				s.log.Info("reconciled pending function",
-					zap.String("function", fn.Name),
-					zap.String("state", fresh.State))
-			}
+			s.log.Info("reconciled pending function",
+				zap.String("function", fn.Name),
+				zap.String("state", fresh.State))
 		}
 	}
 }

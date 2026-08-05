@@ -498,6 +498,7 @@ func (h *Handler) PutFunctionSource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	snapshotRevision := fn.RevisionId
 
 	// Patching a single file needs the existing archive's other entries.
 	if aerr := h.ls.loadFunctionCode(ctx, fn); aerr != nil {
@@ -539,14 +540,32 @@ func (h *Handler) PutFunctionSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fn.SourceCode = req.Source
-	fn.SourceFilename = req.Filename
-	fn.setCode(zipBytes)
-	fn.RevisionId = uuid.NewString()
-	fn.LastModified = h.clk.Now().UTC().Format(time.RFC3339)
-
-	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		// The zip was prepared from snapshotRevision. Never apply it to a newer
+		// deployment package, where it would restore stale bytes and metadata.
+		if current.RevisionId != snapshotRevision {
+			return false, &protocol.AWSError{
+				Code:       "ResourceConflictException",
+				Message:    "The function was modified while its source was being updated.",
+				HTTPStatus: http.StatusConflict,
+			}
+		}
+		current.SourceCode = req.Source
+		current.SourceFilename = req.Filename
+		current.setCode(zipBytes)
+		current.CodeS3Bucket = ""
+		current.CodeS3Key = ""
+		current.ImageUri = ""
+		current.RevisionId = uuid.NewString()
+		current.LastModified = h.clk.Now().UTC().Format(time.RFC3339)
+		return true, nil
+	})
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !changed || fn == nil {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(name))
 		return
 	}
 
