@@ -12,6 +12,11 @@ current_support_level: Strong table, item, query, transaction, index, and stream
 operations: {}
 findings:
   fixed:
+    - scenario: CloudFormation forwards AWS::DynamoDB::Table LocalSecondaryIndexes to CreateTable, so a newly stack-provisioned LSI is immediately queryable.
+      evidence:
+        aws_docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-table.html
+        tests:
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableLocalSecondaryIndex
     - scenario: CreateTable rejects invalid table names outside the documented 3..255 character alphanumeric, hyphen, underscore, and period rules.
       evidence:
         aws_docs: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.NamingRulesDataTypes.html

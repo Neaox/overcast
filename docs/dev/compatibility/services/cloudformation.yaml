@@ -2,7 +2,7 @@ service: cloudformation
 status: implementation_mismatch
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-05
+last_updated: 2026-08-06
 protocols: [query]
 implementation: [internal/services/cloudformation]
 integration_tests: [tests/integration/cloudformation]
@@ -17,6 +17,7 @@ operations:
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-s3-bucket.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-function.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-permission.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-table.html
     tests:
       - tests/integration/cloudformation/cloudformation_test.go
     scenarios:
@@ -57,6 +58,11 @@ operations:
         tests:
           - tests/integration/cloudformation/lambda_properties_test.go
         notes: AWS::Lambda::Function forwards every reviewed Function property and applies configuration, code, then reserved concurrency transactionally; unsupported advanced fields fail at Lambda before mutation, and a failed sub-operation triggers immediate compensation. EventSourceMapping forwards every reviewed property so Lambda either stores supported fields or rejects unsupported semantics. AWS::Lambda::Permission calls race-safe Lambda policy APIs rather than succeeding as a no-op stub. Shared reverse-update rollback restores successful in-place changes when a later stack resource fails.
+      - name: dynamodb table local secondary indexes on create
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/dynamodb_table_properties_test.go::TestCreateStack_DynamoDBTableLocalSecondaryIndex
+        notes: AWS::DynamoDB::Table forwards LocalSecondaryIndexes to CreateTable, so an LSI declared in a new stack is immediately available to Query.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -96,6 +102,7 @@ findings:
     - AWS::SNS::Topic and AWS::SNS::Subscription forward supported configuration through SNS during stack provisioning, including raw delivery and message-body filtering.
     - AWS::S3::Bucket create/update/removal dispatches seven sub-resource property families through S3 instead of silently dropping them.
     - AWS::Lambda::Function no longer drops priority configuration properties, and AWS::Lambda::Permission now mutates the function's Lambda-owned resource policy.
+    - AWS::DynamoDB::Table forwards LocalSecondaryIndexes through CreateTable on initial stack provisioning.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.

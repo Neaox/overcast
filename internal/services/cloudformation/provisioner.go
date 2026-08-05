@@ -2941,6 +2941,9 @@ func (h *dynamodbTableHandler) Create(ctx context.Context, router http.Handler, 
 	if gsi, ok := props["GlobalSecondaryIndexes"]; ok {
 		reqBody["GlobalSecondaryIndexes"] = gsi
 	}
+	if lsi, ok := props["LocalSecondaryIndexes"]; ok {
+		reqBody["LocalSecondaryIndexes"] = lsi
+	}
 	if ss, ok := props["StreamSpecification"].(map[string]any); ok {
 		// CloudFormation templates set StreamViewType without an explicit StreamEnabled.
 		// Enable the stream whenever StreamViewType is provided.
