@@ -3082,6 +3082,9 @@ func (h *lambdaFunctionHandler) applyUpdate(ctx context.Context, router http.Han
 		if v, ok := code["S3Key"]; ok {
 			body["S3Key"] = v
 		}
+		if v, ok := code["S3ObjectVersion"]; ok {
+			body["S3ObjectVersion"] = v
+		}
 		if v, ok := code["ImageUri"]; ok {
 			body["ImageUri"] = v
 		}
