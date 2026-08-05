@@ -1436,6 +1436,12 @@
           ]
         },
         {
+          "name": "PutKeyPolicy",
+          "depends": [
+            "CreateKey"
+          ]
+        },
+        {
           "name": "CreateKmsAlias",
           "depends": [
             "CreateKey"

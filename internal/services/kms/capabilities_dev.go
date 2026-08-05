@@ -6,7 +6,7 @@ import "github.com/Neaox/overcast/internal/capabilities"
 
 func init() {
 	capabilities.Default.Register(
-		capabilities.Capability{Service: "kms", Operation: "CreateKey", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "`SYMMETRIC_DEFAULT` (AES-256-GCM) and `RSA_2048` key specs supported"},
+		capabilities.Capability{Service: "kms", Operation: "CreateKey", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed"},
 		capabilities.Capability{Service: "kms", Operation: "DescribeKey", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Lookup by UUID, ARN, or alias"},
 		capabilities.Capability{Service: "kms", Operation: "ListKeys", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Excludes `PendingDeletion` keys; no pagination (Truncated=false)"},
 		capabilities.Capability{Service: "kms", Operation: "EnableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
@@ -36,7 +36,7 @@ func init() {
 		capabilities.Capability{Service: "kms", Operation: "ListResourceTags", Category: "Tags", Status: capabilities.StatusSupported, Notes: "List tags for a KMS key"},
 
 		capabilities.Capability{Service: "kms", Operation: "GetKeyPolicy", Category: "Key policies", Status: capabilities.StatusSupported, Notes: "Returns default or custom key policy"},
-		capabilities.Capability{Service: "kms", Operation: "PutKeyPolicy", Category: "Key policies", Status: capabilities.StatusSupported, Notes: "Attaches a key policy document"},
+		capabilities.Capability{Service: "kms", Operation: "PutKeyPolicy", Category: "Key policies", Status: capabilities.StatusSupported, Notes: "Validates policy structure, principals, and caller lockout safety before mutation"},
 		capabilities.Capability{Service: "kms", Operation: "ListKeyPolicies", Category: "Key policies", Status: capabilities.StatusSupported, Notes: "Returns list of policy names"},
 
 		capabilities.Capability{Service: "kms", Operation: "CreateGrant", Category: "Grants", Status: capabilities.StatusSupported, Notes: "Creates a grant with optional constraints and retiring principal"},

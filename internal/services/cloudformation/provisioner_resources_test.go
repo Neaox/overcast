@@ -2,10 +2,61 @@ package cloudformation
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 )
+
+func TestKMSKeyHandler_forwardsSerializedPolicyAndLockoutBypass(t *testing.T) {
+	// Given: a CloudFormation key policy object and explicit bypass setting
+	policy := map[string]any{
+		"Version": "2012-10-17",
+		"Statement": []any{map[string]any{
+			"Effect": "Allow", "Principal": map[string]any{"AWS": "arn:aws:iam::000000000000:root"},
+			"Action": "kms:*", "Resource": "*",
+		}},
+	}
+	var requests []map[string]any
+	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode %s request: %v", r.Header.Get("X-Amz-Target"), err)
+		}
+		requests = append(requests, body)
+		if r.Header.Get("X-Amz-Target") == "TrentService.CreateKey" {
+			_, _ = w.Write([]byte(`{"KeyMetadata":{"KeyId":"key-id","Arn":"arn:aws:kms:us-east-1:000000000000:key/key-id"}}`))
+		}
+	})
+	h := &kmsKeyHandler{}
+	props := map[string]any{"KeyPolicy": policy, "BypassPolicyLockoutSafetyCheck": true}
+
+	// When: CloudFormation creates and updates the key
+	if _, _, err := h.Create(context.Background(), router, nil, props, &resolveContext{Region: "us-east-1"}); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, _, err := h.Update(context.Background(), router, nil, "key-id", props, props, &resolveContext{Region: "us-east-1"}); err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+
+	// Then: both service calls receive a JSON policy string and the bypass flag
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(requests))
+	}
+	for i, body := range requests {
+		policyString, ok := body["Policy"].(string)
+		if !ok {
+			t.Fatalf("request %d Policy = %#v, want string", i, body["Policy"])
+		}
+		var roundTrip map[string]any
+		if err := json.Unmarshal([]byte(policyString), &roundTrip); err != nil {
+			t.Fatalf("request %d Policy is not JSON: %v", i, err)
+		}
+		if body["BypassPolicyLockoutSafetyCheck"] != true {
+			t.Fatalf("request %d bypass = %#v, want true", i, body["BypassPolicyLockoutSafetyCheck"])
+		}
+	}
+}
 
 func TestKMSKeyHandlerCreate_disableFailureSchedulesDeletion(t *testing.T) {
 	// Given: CreateKey succeeds but applying Enabled=false fails

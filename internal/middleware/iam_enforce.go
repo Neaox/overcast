@@ -1193,6 +1193,28 @@ func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Sto
 	return appendRoleSessionPolicyDocumentsWithContext(ctx, st, accessKeyID)
 }
 
+// PrincipalIdentity is the caller identity resolved from an IAM or STS access
+// key. It intentionally contains no authorization decision.
+type PrincipalIdentity struct {
+	ARN     string
+	Account string
+}
+
+// ResolvePrincipalIdentity resolves the principal represented by an access
+// key using the same IAM and STS records as request-time enforcement.
+func ResolvePrincipalIdentity(ctx context.Context, st state.Store, accessKeyID string) (PrincipalIdentity, bool) {
+	if st == nil || strings.TrimSpace(accessKeyID) == "" {
+		return PrincipalIdentity{}, false
+	}
+	_, principalCtx := collectPrincipalPolicyDocumentsAndContext(ctx, st, accessKeyID)
+	arn := strings.TrimSpace(principalCtx["aws:principalarn"])
+	account := strings.TrimSpace(principalCtx["aws:principalaccount"])
+	if arn == "" {
+		return PrincipalIdentity{}, false
+	}
+	return PrincipalIdentity{ARN: arn, Account: account}, true
+}
+
 func appendGroupPolicyDocuments(ctx context.Context, st state.Store, docs []iampolicy.SourcedDocument, userName string) []iampolicy.SourcedDocument {
 	if strings.TrimSpace(userName) == "" {
 		return docs

@@ -60,6 +60,16 @@ def DescribeKey(ctx: TestContext) -> None:
         raise AssertionError(f"DescribeKey: wrong KeyId {resp['KeyMetadata']['KeyId']!r}")
 
 
+def PutKeyPolicy(ctx: TestContext) -> None:
+    key_id = ctx["kms_key_id"]
+    kms = _kms(ctx)
+    policy = kms.get_key_policy(KeyId=key_id, PolicyName="default")["Policy"]
+    kms.put_key_policy(KeyId=key_id, PolicyName="default", Policy=policy)
+    got = kms.get_key_policy(KeyId=key_id, PolicyName="default")["Policy"]
+    if got != policy:
+        raise AssertionError("PutKeyPolicy: stored policy mismatch")
+
+
 def CreateAlias(ctx: TestContext) -> None:
     kms = _kms(ctx)
     key_id = ctx["kms_key_id"]
@@ -273,6 +283,7 @@ def Verify(ctx: TestContext) -> None:
 IMPLS = {
     "CreateKey": CreateKey,
     "DescribeKey": DescribeKey,
+    "PutKeyPolicy": PutKeyPolicy,
     "CreateKmsAlias": CreateAlias,
     "ListKmsAliases": ListAliases,
     "ListKeys": ListKeys,

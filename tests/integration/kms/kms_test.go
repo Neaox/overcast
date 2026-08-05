@@ -6,6 +6,7 @@ package kms_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -1042,7 +1043,7 @@ func TestPutKeyPolicy_andGet(t *testing.T) {
 	// Given: a key
 	srv := helpers.NewTestServer(t)
 	keyID := createKey(t, srv, "put-policy-key")
-	customPolicy := `{"Version":"2012-10-17","Statement":[]}`
+	customPolicy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::%s:root"},"Action":"kms:PutKeyPolicy","Resource":"*"}]}`, srv.Config.AccountID)
 
 	// When: putting a custom key policy
 	resp := kmsCall(t, srv, "PutKeyPolicy", map[string]any{

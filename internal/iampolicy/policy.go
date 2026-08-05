@@ -48,6 +48,16 @@ type SourcedDocument struct {
 	Document string
 }
 
+// ParseOptions selects the service-specific structural checks applied while
+// parsing a policy document. The zero value preserves IAM policy behavior.
+type ParseOptions struct {
+	AllowMissingAction  bool
+	RequireVersion      bool
+	RequireStatements   bool
+	RequirePrincipal    bool
+	RejectEmptyElements bool
+}
+
 // Statement is a compiled policy statement. Wildcard patterns are compiled by
 // [Compile]; a zero-valued Statement built by hand will not match anything.
 type Statement struct {
@@ -127,12 +137,21 @@ func Compile(docs []SourcedDocument) ([]Statement, error) {
 
 // ParseDocument parses a single policy document into compiled statements.
 func ParseDocument(raw string, src SourceRef) ([]Statement, error) {
+	return ParseDocumentWithOptions(raw, src, ParseOptions{})
+}
+
+// ParseDocumentWithOptions parses a policy document with additional
+// resource-policy constraints supplied by the owning service.
+func ParseDocumentWithOptions(raw string, src SourceRef, opts ParseOptions) ([]Statement, error) {
 	var wd wireDocument
 	if err := json.Unmarshal([]byte(raw), &wd); err != nil {
 		return nil, fmt.Errorf("policy %s: document is not valid JSON: %w", sourceName(src), err)
 	}
 	if len(wd.Statement) == 0 {
 		return nil, fmt.Errorf("policy %s: document has no Statement element", sourceName(src))
+	}
+	if opts.RequireVersion && strings.TrimSpace(wd.Version) == "" {
+		return nil, fmt.Errorf("policy %s: document has no Version element", sourceName(src))
 	}
 
 	var wires []wireStatement
@@ -150,6 +169,9 @@ func ParseDocument(raw string, src SourceRef) ([]Statement, error) {
 		// to reporting no positions rather than failing the whole policy.
 		rawStmts = nil
 	}
+	if opts.RequireStatements && len(wires) == 0 {
+		return nil, fmt.Errorf("policy %s: Statement list is empty", sourceName(src))
+	}
 
 	var positions []positionPair
 	if len(rawStmts) == len(wires) {
@@ -158,7 +180,7 @@ func ParseDocument(raw string, src SourceRef) ([]Statement, error) {
 
 	out := make([]Statement, 0, len(wires))
 	for i, ws := range wires {
-		stmt, err := compileStatement(ws, src, i)
+		stmt, err := compileStatement(ws, src, i, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -171,7 +193,7 @@ func ParseDocument(raw string, src SourceRef) ([]Statement, error) {
 	return out, nil
 }
 
-func compileStatement(ws wireStatement, src SourceRef, index int) (Statement, error) {
+func compileStatement(ws wireStatement, src SourceRef, index int, opts ParseOptions) (Statement, error) {
 	where := fmt.Sprintf("policy %s statement %d", sourceName(src), index+1)
 
 	effect := strings.TrimSpace(ws.Effect)
@@ -199,10 +221,26 @@ func compileStatement(ws wireStatement, src SourceRef, index int) (Statement, er
 	switch {
 	case hasAction && hasNotAction:
 		return Statement{}, fmt.Errorf("%s: has both Action and NotAction", where)
-	case !hasAction && !hasNotAction:
+	case !hasAction && !hasNotAction && !opts.AllowMissingAction:
 		return Statement{}, fmt.Errorf("%s: has neither Action nor NotAction", where)
 	case hasResource && hasNotResource:
 		return Statement{}, fmt.Errorf("%s: has both Resource and NotResource", where)
+	}
+	if opts.RejectEmptyElements {
+		for _, element := range []struct {
+			field   string
+			values  []Pattern
+			present bool
+		}{
+			{field: "Action", values: actions, present: hasAction},
+			{field: "NotAction", values: notActions, present: hasNotAction},
+			{field: "Resource", values: resources, present: hasResource},
+			{field: "NotResource", values: notResources, present: hasNotResource},
+		} {
+			if element.present && !patternsHaveValues(element.values) {
+				return Statement{}, fmt.Errorf("%s: %s has no values", where, element.field)
+			}
+		}
 	}
 
 	principal, err := parsePrincipal(ws.Principal, where, "Principal")
@@ -212,6 +250,12 @@ func compileStatement(ws wireStatement, src SourceRef, index int) (Statement, er
 	notPrincipal, err := parsePrincipal(ws.NotPrincipal, where, "NotPrincipal")
 	if err != nil {
 		return Statement{}, err
+	}
+	if opts.RequirePrincipal && principal == nil {
+		return Statement{}, fmt.Errorf("%s: has no Principal", where)
+	}
+	if opts.RequirePrincipal && !principalHasValues(principal) {
+		return Statement{}, fmt.Errorf("%s: Principal has no values", where)
 	}
 
 	cond, err := parseConditionBlock(ws.Condition, where)
@@ -232,6 +276,22 @@ func compileStatement(ws wireStatement, src SourceRef, index int) (Statement, er
 		NotPrincipal: notPrincipal,
 		Condition:    cond,
 	}, nil
+}
+
+func principalHasValues(set *PrincipalSet) bool {
+	return set != nil && (set.Anonymous || len(set.AWS) > 0 || len(set.Service) > 0 || len(set.Unsupported) > 0)
+}
+
+func patternsHaveValues(patterns []Pattern) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	for _, pattern := range patterns {
+		if strings.TrimSpace(pattern.String()) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func canonicalEffect(effect string) string {

@@ -41,15 +41,15 @@ TrentService.<OperationName>` and Smithy RPC v2 CBOR requests at
 
 ### Key lifecycle
 
-| Operation             | Status       | Notes                                                                | AWS Docs                                                                                 |
-| --------------------- | ------------ | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `CreateKey`           | ✅ Supported | `SYMMETRIC_DEFAULT` (AES-256-GCM) and `RSA_2048` key specs supported | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateKey.html)           |
-| `DescribeKey`         | ✅ Supported | Lookup by UUID, ARN, or alias                                        | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DescribeKey.html)         |
-| `ListKeys`            | ✅ Supported | Excludes `PendingDeletion` keys; no pagination (Truncated=false)     | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListKeys.html)            |
-| `EnableKey`           | ✅ Supported |                                                                      | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_EnableKey.html)           |
-| `DisableKey`          | ✅ Supported |                                                                      | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DisableKey.html)          |
-| `ScheduleKeyDeletion` | ✅ Supported | `PendingWindowInDays` honoured; defaults to 30 days                  | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html) |
-| `CancelKeyDeletion`   | ✅ Supported | Restores key to `Disabled` state                                     | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CancelKeyDeletion.html)   |
+| Operation             | Status       | Notes                                                                              | AWS Docs                                                                                 |
+| --------------------- | ------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `CreateKey`           | ✅ Supported | Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateKey.html)           |
+| `DescribeKey`         | ✅ Supported | Lookup by UUID, ARN, or alias                                                      | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DescribeKey.html)         |
+| `ListKeys`            | ✅ Supported | Excludes `PendingDeletion` keys; no pagination (Truncated=false)                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListKeys.html)            |
+| `EnableKey`           | ✅ Supported |                                                                                    | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_EnableKey.html)           |
+| `DisableKey`          | ✅ Supported |                                                                                    | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_DisableKey.html)          |
+| `ScheduleKeyDeletion` | ✅ Supported | `PendingWindowInDays` honoured; defaults to 30 days                                | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ScheduleKeyDeletion.html) |
+| `CancelKeyDeletion`   | ✅ Supported | Restores key to `Disabled` state                                                   | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_CancelKeyDeletion.html)   |
 
 ### Aliases
 
@@ -90,11 +90,11 @@ TrentService.<OperationName>` and Smithy RPC v2 CBOR requests at
 
 ### Key policies
 
-| Operation         | Status       | Notes                                | AWS Docs                                                                             |
-| ----------------- | ------------ | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| `GetKeyPolicy`    | ✅ Supported | Returns default or custom key policy | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GetKeyPolicy.html)    |
-| `PutKeyPolicy`    | ✅ Supported | Attaches a key policy document       | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_PutKeyPolicy.html)    |
-| `ListKeyPolicies` | ✅ Supported | Returns list of policy names         | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListKeyPolicies.html) |
+| Operation         | Status       | Notes                                                                             | AWS Docs                                                                             |
+| ----------------- | ------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `GetKeyPolicy`    | ✅ Supported | Returns default or custom key policy                                              | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_GetKeyPolicy.html)    |
+| `PutKeyPolicy`    | ✅ Supported | Validates policy structure, principals, and caller lockout safety before mutation | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_PutKeyPolicy.html)    |
+| `ListKeyPolicies` | ✅ Supported | Returns list of policy names                                                      | [docs](https://docs.aws.amazon.com/kms/latest/APIReference/API_ListKeyPolicies.html) |
 
 ### Grants
 

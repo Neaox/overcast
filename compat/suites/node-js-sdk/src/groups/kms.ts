@@ -11,6 +11,8 @@
 import {
   CreateKeyCommand,
   DescribeKeyCommand,
+  GetKeyPolicyCommand,
+  PutKeyPolicyCommand,
   DisableKeyCommand,
   EnableKeyCommand,
   ListKeysCommand,
@@ -74,6 +76,18 @@ export function makeKMSGroups(suite: string): TestGroup[] {
               resp.KeyMetadata?.Enabled,
               "DescribeKey: key not enabled",
             );
+          },
+        },
+        {
+          name: "PutKeyPolicy",
+          fn: async (ctx) => {
+            const keyId = (ctx as Record<string, unknown>)["_keyId"] as string;
+            const { kms } = makeClients(ctx);
+            const policy = (await kms.send(new GetKeyPolicyCommand({ KeyId: keyId, PolicyName: "default" }))).Policy;
+            assert.ok(policy, "PutKeyPolicy: initial policy missing");
+            await kms.send(new PutKeyPolicyCommand({ KeyId: keyId, PolicyName: "default", Policy: policy }));
+            const got = await kms.send(new GetKeyPolicyCommand({ KeyId: keyId, PolicyName: "default" }));
+            assert.equal(got.Policy, policy, "PutKeyPolicy: stored policy mismatch");
           },
         },
         {

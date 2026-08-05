@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -20,6 +21,15 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
 )
+
+type sigV4AccessKeyContextKey struct{}
+
+// SigV4AccessKeyFromContext returns the credential access key attached to a
+// signed request. It is available even when signature validation is disabled.
+func SigV4AccessKeyFromContext(ctx context.Context) string {
+	accessKey, _ := ctx.Value(sigV4AccessKeyContextKey{}).(string)
+	return accessKey
+}
 
 const (
 	defaultSigV4Secret = "test"
@@ -69,6 +79,9 @@ func SigV4(validate bool, secretResolver SecretResolver, logger *zap.Logger, clk
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if parts, signed, _ := extractSigV4Parts(r); signed && strings.TrimSpace(parts.AccessKey) != "" {
+				r = r.WithContext(context.WithValue(r.Context(), sigV4AccessKeyContextKey{}, parts.AccessKey))
+			}
 			if validate {
 				signed, err := validateSigV4Request(r, clk, secretResolver)
 				if err != nil {

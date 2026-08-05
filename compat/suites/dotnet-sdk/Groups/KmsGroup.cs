@@ -12,6 +12,7 @@ public sealed class KmsGroup(AwsClients clients) : IServiceGroup
     {
         ["CreateKey"] = CreateKeyAsync,
         ["DescribeKey"] = DescribeKeyAsync,
+        ["PutKeyPolicy"] = PutKeyPolicyAsync,
         ["CreateKmsAlias"] = CreateKmsAliasAsync,
         ["ListKmsAliases"] = ListKmsAliasesAsync,
         ["ListKeys"] = ListKeysAsync,
@@ -75,6 +76,15 @@ public sealed class KmsGroup(AwsClients clients) : IServiceGroup
         var response = await clients.KMS().DescribeKeyAsync(new DescribeKeyRequest { KeyId = keyId });
         Assertions.Equal(keyId, response.KeyMetadata.KeyId, "DescribeKey: KeyId mismatch");
         Assertions.NotBlank(response.KeyMetadata.Arn, "DescribeKey: Arn");
+    }
+
+    private async Task PutKeyPolicyAsync(TestContext context)
+    {
+        var keyId = RequireKeyId(context, "KmsKeyId");
+        var policy = (await clients.KMS().GetKeyPolicyAsync(new GetKeyPolicyRequest { KeyId = keyId, PolicyName = "default" })).Policy;
+        await clients.KMS().PutKeyPolicyAsync(new PutKeyPolicyRequest { KeyId = keyId, PolicyName = "default", Policy = policy });
+        var got = await clients.KMS().GetKeyPolicyAsync(new GetKeyPolicyRequest { KeyId = keyId, PolicyName = "default" });
+        Assertions.Equal(policy, got.Policy, "PutKeyPolicy: stored policy mismatch");
     }
 
     private async Task CreateKmsAliasAsync(TestContext context)

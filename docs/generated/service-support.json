@@ -4186,7 +4186,7 @@
           "operation": "CreateKey",
           "category": "Key lifecycle",
           "status": "✅ Supported",
-          "notes": "`SYMMETRIC_DEFAULT` (AES-256-GCM) and `RSA_2048` key specs supported"
+          "notes": "Symmetric and RSA key specs; validates caller-safe custom policies unless bypassed"
         },
         {
           "operation": "DescribeKey",
@@ -4333,7 +4333,7 @@
           "operation": "PutKeyPolicy",
           "category": "Key policies",
           "status": "✅ Supported",
-          "notes": "Attaches a key policy document"
+          "notes": "Validates policy structure, principals, and caller lockout safety before mutation"
         },
         {
           "operation": "ListKeyPolicies",

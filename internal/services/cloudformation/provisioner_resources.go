@@ -725,6 +725,16 @@ func (h *kmsKeyHandler) Create(ctx context.Context, router http.Handler, cfg *co
 	if v, _ := props["KeyUsage"].(string); v != "" {
 		body["KeyUsage"] = v
 	}
+	if keyPolicy, ok := props["KeyPolicy"]; ok {
+		policy, err := json.Marshal(keyPolicy)
+		if err != nil {
+			return "", nil, fmt.Errorf("CreateKey: serialize KeyPolicy: %w", err)
+		}
+		body["Policy"] = string(policy)
+	}
+	if bypass, ok := props["BypassPolicyLockoutSafetyCheck"]; ok {
+		body["BypassPolicyLockoutSafetyCheck"] = asBool(bypass)
+	}
 
 	rec, err := internalJSON(ctx, router, rCtx.Region, "TrentService.CreateKey", body)
 	if err != nil {
@@ -787,10 +797,17 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 	}
 
 	if keyPolicy, ok := props["KeyPolicy"]; ok {
+		policy, err := json.Marshal(keyPolicy)
+		if err != nil {
+			return "", nil, fmt.Errorf("PutKeyPolicy: serialize KeyPolicy: %w", err)
+		}
 		body := map[string]any{
 			"KeyId":      physicalID,
 			"PolicyName": "default",
-			"Policy":     keyPolicy,
+			"Policy":     string(policy),
+		}
+		if bypass, ok := props["BypassPolicyLockoutSafetyCheck"]; ok {
+			body["BypassPolicyLockoutSafetyCheck"] = asBool(bypass)
 		}
 		if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.PutKeyPolicy", body); err != nil {
 			return "", nil, fmt.Errorf("PutKeyPolicy: %w", err)

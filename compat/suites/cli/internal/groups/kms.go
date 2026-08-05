@@ -16,6 +16,7 @@ func KMS() ServiceGroup {
 			// kms-keys
 			"CreateKey":           g.CreateKey,
 			"DescribeKey":         g.DescribeKey,
+			"PutKeyPolicy":        g.PutKeyPolicy,
 			"CreateKmsAlias":      g.CreateAlias,
 			"ListKmsAliases":      g.ListAliases,
 			"ListKeys":            g.ListKeys,
@@ -86,6 +87,30 @@ func (g *kmsGroup) DescribeKey(_ context.Context, t *harness.TestContext) error 
 	meta, _ := out["KeyMetadata"].(map[string]any)
 	if state, _ := meta["KeyState"].(string); state == "" {
 		return fmt.Errorf("kms DescribeKey: missing KeyState")
+	}
+	return nil
+}
+
+func (g *kmsGroup) PutKeyPolicy(_ context.Context, t *harness.TestContext) error {
+	keyID := t.GetString("key_id")
+	initial, err := awscli.RunOutput(t.Endpoint, t.Region, "kms", "get-key-policy",
+		"--key-id", keyID, "--policy-name", "default")
+	if err != nil {
+		return fmt.Errorf("kms PutKeyPolicy: initial get-key-policy failed: %w", err)
+	}
+	policy, _ := initial["Policy"].(string)
+	if err := awscli.Run(t.Endpoint, t.Region, "kms", "put-key-policy",
+		"--key-id", keyID, "--policy-name", "default", "--policy", policy,
+	); err != nil {
+		return err
+	}
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, "kms", "get-key-policy",
+		"--key-id", keyID, "--policy-name", "default")
+	if err != nil {
+		return fmt.Errorf("kms PutKeyPolicy: get-key-policy failed: %w", err)
+	}
+	if out["Policy"] != policy {
+		return fmt.Errorf("kms PutKeyPolicy: stored policy mismatch")
 	}
 	return nil
 }
