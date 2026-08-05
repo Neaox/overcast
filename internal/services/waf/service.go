@@ -14,6 +14,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -64,6 +65,9 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 func (s *Service) Name() string                { return serviceName }
 func (s *Service) RegisterRoutes(_ chi.Router) {}
 func (s *Service) TargetPrefix() string        { return targetPrefix }
+
+// InitBus wires Web ACL lifecycle events to connected clients.
+func (s *Service) InitBus(bus *events.Bus) { s.handler.bus = bus }
 
 func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {

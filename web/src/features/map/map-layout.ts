@@ -194,6 +194,8 @@ function toFlowNode(
       dataSourceCount: p.node.dataSourceCount,
       resolverCount: p.node.resolverCount,
       repositoryUri: p.node.repositoryUri,
+      scope: p.node.scope,
+      ruleCount: p.node.ruleCount,
       esmId: p.node.esmId,
       functionName: p.node.functionName,
       eventSource: p.node.eventSource,

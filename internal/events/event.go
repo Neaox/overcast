@@ -487,6 +487,13 @@ const (
 	// ECRImagePushed fires when an image manifest is stored via PutImage.
 	ECRImagePushed Type = "ecr:ImagePushed"
 
+	// ---- WAFv2 resource lifecycle events ---------------------------------------.
+
+	// WAFWebACLCreated fires after Web ACL metadata is stored.
+	WAFWebACLCreated Type = "waf:WebACLCreated"
+	// WAFWebACLDeleted fires after Web ACL metadata is deleted.
+	WAFWebACLDeleted Type = "waf:WebACLDeleted"
+
 	// ---- Request event --------------------------------------------------------.
 	// Published by middleware for every incoming HTTP request so SDK callers
 	// can see their API calls appear live in the event stream.

@@ -201,7 +201,7 @@ describe("computeSqsVisualMessages", () => {
   })
 })
 
-describe("ServiceNode ECR interactions", () => {
+describe("ServiceNode resource interactions", () => {
   beforeEach(() => {
     navigateMock.mockReset()
     setEndpointMock.mockReset()
@@ -209,12 +209,42 @@ describe("ServiceNode ECR interactions", () => {
     receiveMessagesMock.mockResolvedValue([])
     clipboardWriteTextMock.mockReset()
     clipboardWriteTextMock.mockResolvedValue(undefined)
+    nodeIdMock.value = "us-east-1::ecr::backend/api"
 
     Object.defineProperty(globalThis.navigator, "clipboard", {
       value: {
         writeText: clipboardWriteTextMock,
       },
       configurable: true,
+    })
+  })
+
+  it("navigates from a WAF node to the Web ACL detail page", () => {
+    nodeIdMock.value = "us-east-1::waf::acl-123"
+    render(
+      <ServiceNode
+        {...makeServiceNodeProps({
+          service: "waf",
+          label: "edge-acl",
+          region: "us-east-1",
+          scope: "REGIONAL",
+          ruleCount: 2,
+        })}
+      />,
+    )
+
+    const nodeButton = screen.getByText("edge-acl").closest('[role="button"]')
+    if (!nodeButton) throw new Error("expected WAF node button wrapper")
+    fireEvent.click(nodeButton)
+
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/waf/$scope/$webAclId/$name",
+      params: {
+        scope: "REGIONAL",
+        webAclId: "acl-123",
+        name: "edge-acl",
+      },
+      search: undefined,
     })
   })
 

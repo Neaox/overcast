@@ -5,7 +5,8 @@ package router
 //   - "full"        — P1+P2 operations implemented; real SDK clients can use it.
 //   - "partial"     — P1 operations implemented; basic workflows work.
 //   - "inert"       — Full CRUD works, resources exist, but no side-effects or enforcement.
-//   - "stub"        — Registered; all endpoints return 501 Not Implemented.
+//   - "stub"        — Registered with only a minimal discovery or control-plane subset;
+//     unsupported endpoints return 501 Not Implemented.
 //   - "unsupported" — Not registered in Overcast; no backend handler exists.
 type EmulationTier = string
 
@@ -70,7 +71,8 @@ var ServiceTiers = map[string]EmulationTier{
 	"appsync":     TierInert,
 	"cloudfront":  TierInert,
 
-	// Stub — all 501, bar the odd hardcoded response that unblocks a bootstrap
+	// Stub — minimal metadata/probe responses that unblock SDK or IaC workflows;
+	// unsupported operations return 501.
 	"waf":    TierStub,
 	"shield": TierStub,
 	// organizations answers exactly one op — DescribeOrganization, from a

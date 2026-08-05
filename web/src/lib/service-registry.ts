@@ -147,7 +147,7 @@ export interface ServiceEntry {
   nav?: boolean
   /**
    * Show on the dashboard.
-   * Set to false for stub/info-only services (waf, shield) that don't warrant a card.
+   * Set to false for stub/info-only services (for example, Shield) that don't warrant a card.
    * @default true - when {@see ServiceEntry.to} is set, otherwise false
    */
   dashboardCard?: boolean
@@ -547,8 +547,9 @@ export const SERVICES = {
     to: "/waf",
     category: "security",
     description: "Web application firewall",
-    favouritable: false,
-    dashboardCard: false,
+    dashboardDescription:
+      "Metadata-only Web ACL CRUD for SDK and CloudFormation workflows; rules are not enforced.",
+    docKey: "waf",
   },
   shield: {
     label: "Shield",

@@ -56,6 +56,7 @@ import { sfnKeys } from "@/features/stepfunctions/data"
 import { stsKeys } from "@/features/sts/data"
 import { kinesisKeys } from "@/features/kinesis/data"
 import { ecrKeys } from "@/features/ecr/data"
+import { wafKeys } from "@/features/waf/data"
 import { topologyKey } from "@/features/map/use-topology"
 import { lambdaInstanceKeys } from "@/hooks/use-lambda-instances"
 import { appendEvents } from "@/workers/event-buffer"
@@ -528,6 +529,9 @@ function getEventQueryMap(): Record<string, QueryKey[] | undefined> {
     [EventType.ecr.RepositoryCreated]: [ecrKeys.repositories(), topologyKey],
     [EventType.ecr.RepositoryDeleted]: [ecrKeys.repositories(), topologyKey],
     [EventType.ecr.ImagePushed]: [ecrKeys.repository()],
+    // ── WAF ────────────────────────────────────────────────────────────
+    [EventType.waf.WebACLCreated]: [wafKeys.webACLs(), topologyKey],
+    [EventType.waf.WebACLDeleted]: [wafKeys.webACLs(), topologyKey],
   }
 }
 

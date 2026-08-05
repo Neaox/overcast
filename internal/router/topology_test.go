@@ -8,6 +8,37 @@ import (
 	"github.com/Neaox/overcast/internal/state"
 )
 
+func TestBuildTopologyIncludesWAFWebACLs(t *testing.T) {
+	// Given: a metadata-only WAFv2 Web ACL is stored in the service namespace.
+	webACLPayload, _ := json.Marshal(map[string]any{
+		"ID":    "acl-123",
+		"Name":  "edge-acl",
+		"Scope": "REGIONAL",
+		"ARN":   "arn:aws:wafv2:us-west-2:000000000000:regional/webacl/edge-acl/acl-123",
+		"Rules": []any{
+			map[string]any{"Name": "block-bots"},
+			map[string]any{"Name": "rate-limit"},
+		},
+	})
+
+	// When: topology is built from the WAF namespace.
+	resp := buildTopology(&config.Config{Region: "us-east-1"}, map[string][]state.KV{
+		"waf:webacls": {{Key: "us-west-2/REGIONAL/acl-123", Value: string(webACLPayload)}},
+	}, "")
+
+	// Then: the Web ACL appears as a WAF node with useful metadata.
+	if len(resp.Nodes) != 1 {
+		t.Fatalf("expected one WAF node, got %#v", resp.Nodes)
+	}
+	node := resp.Nodes[0]
+	if node.ID != "us-west-2::waf::acl-123" || node.Service != "waf" || node.Label != "edge-acl" {
+		t.Fatalf("unexpected WAF node identity: %#v", node)
+	}
+	if node.Scope != "REGIONAL" || node.RuleCount == nil || *node.RuleCount != 2 {
+		t.Fatalf("unexpected WAF node metadata: %#v", node)
+	}
+}
+
 func TestBuildTopologyESMEdgesFromLambdaESMNamespace(t *testing.T) {
 	// Given: an SQS queue, a Lambda function, and an ESM linking them.
 	queuePayload, _ := json.Marshal(map[string]any{
@@ -344,6 +375,7 @@ func TestCfnResourceNodeIDMapsNonDefaultTypes(t *testing.T) {
 		{"AWS::Cognito::UserPool", "us-east-1_A1B2C3D4", "us-east-1::cognito::us-east-1_A1B2C3D4"},
 		{"AWS::AppSync::GraphQLApi", "abc123def456", "us-east-1::appsync::abc123def456"},
 		{"AWS::CloudFront::Distribution", "E1234567890ABC", "us-east-1::cloudfront::E1234567890ABC"},
+		{"AWS::WAFv2::WebACL", "REGIONAL/acl-123", "us-east-1::waf::acl-123"},
 		{"AWS::ElastiCache::CacheCluster", "cache-1", "us-east-1::elasticache::cache-1"},
 		{"AWS::ElastiCache::ServerlessCache", "cache-2", "us-east-1::elasticache::cache-2"},
 		{"AWS::ElastiCache::ReplicationGroup", "rg-1", "us-east-1::elasticache::rg-1"},

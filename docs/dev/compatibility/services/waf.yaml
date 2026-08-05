@@ -2,21 +2,24 @@ service: waf
 status: not_started
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-08-05
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/waf]
 integration_tests: [tests/integration/waf]
 capability_docs: docs/services/waf.md
 operation_count_estimate: 4 supported
-current_support_level: WAFv2 WebACL CRUD subset only.
+current_support_level: Metadata-only WAFv2 WebACL Create/Get/List/Delete; no rule evaluation or request enforcement.
 operations: {}
 findings:
   fixed: []
   remaining_gaps:
     - Review service naming and scope compatibility for WAFv2.
     - Expand tracking beyond WebACL basics if SDK coverage is desired.
-  intentionally_partial: []
+  intentionally_partial:
+    - Web ACL default actions and rules are persisted and returned as metadata, but are not evaluated or enforced against API Gateway, CloudFront, or Application Load Balancer requests.
+    - All WAFv2 operations outside CreateWebACL, GetWebACL, ListWebACLs, and DeleteWebACL return 501 Not Implemented.
+    - WAF Classic (AWSWAF_20150824) is unsupported and returns 501 Not Implemented.
 handoff:
-  start_with: [CreateWebACL, GetWebACL, ListWebACLs]
+  start_with: [CreateWebACL, GetWebACL, ListWebACLs, DeleteWebACL]
   do_not_redo: []
   commands: [go test -count=1 ./internal/services/waf/... ./tests/integration/waf/...]

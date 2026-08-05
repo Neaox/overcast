@@ -11,6 +11,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/op"
@@ -25,6 +26,16 @@ type Handler struct {
 	store   state.Store
 	cfg     *config.Config
 	clk     clock.Clock
+	bus     *events.Bus
+}
+
+func (h *Handler) publish(ctx context.Context, eventType events.Type, acl *WebACL) {
+	if h.bus != nil {
+		h.bus.Publish(ctx, events.Event{
+			Type:    eventType,
+			Payload: events.ResourcePayload{Name: acl.Name, ARN: acl.ARN},
+		})
+	}
 }
 
 func newHandler(cfg *config.Config, store state.Store, clk clock.Clock) *Handler {
@@ -133,6 +144,7 @@ func (h *Handler) createWebACL(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
+	h.publish(r.Context(), events.WAFWebACLCreated, acl)
 
 	h.writeJSON(w, r, http.StatusOK, map[string]any{
 		"Summary": map[string]any{
@@ -219,7 +231,8 @@ func (h *Handler) deleteWebACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, aerr := h.getACL(r.Context(), req.Scope, req.ID); aerr != nil {
+	acl, aerr := h.getACL(r.Context(), req.Scope, req.ID)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -228,6 +241,7 @@ func (h *Handler) deleteWebACL(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
+	h.publish(r.Context(), events.WAFWebACLDeleted, acl)
 
 	h.writeJSON(w, r, http.StatusOK, map[string]any{})
 }

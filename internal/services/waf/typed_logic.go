@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -95,6 +96,7 @@ func (h *Handler) createWebACLTyped(ctx context.Context, req *createWebACLReques
 	if err := h.store.Set(ctx, nsWebACLs, h.storeKey(req.Scope, id), string(raw)); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	h.publish(ctx, events.WAFWebACLCreated, acl)
 
 	return &createWebACLResponse{
 		Summary: webACLSummaryWire{
@@ -153,13 +155,15 @@ func (h *Handler) listWebACLsTyped(ctx context.Context, req *listWebACLsRequest)
 }
 
 func (h *Handler) deleteWebACLTyped(ctx context.Context, req *deleteWebACLRequest) (*struct{}, *protocol.AWSError) {
-	if _, aerr := h.getACL(ctx, req.Scope, req.ID); aerr != nil {
+	acl, aerr := h.getACL(ctx, req.Scope, req.ID)
+	if aerr != nil {
 		return nil, aerr
 	}
 
 	if err := h.store.Delete(ctx, nsWebACLs, h.storeKey(req.Scope, req.ID)); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	h.publish(ctx, events.WAFWebACLDeleted, acl)
 
 	return &struct{}{}, nil
 }
