@@ -12,8 +12,8 @@ import (
 func TestGetEventSourceMapping_storeFailure(t *testing.T) {
 	// Given: the state store fails while reading a named event source mapping.
 	store := helpers.NewMockStore()
-	srv := helpers.NewTestServer(t, helpers.WithStore(store))
 	store.GetError = errors.New("injected get failure")
+	srv := helpers.NewTestServer(t, helpers.WithStore(store))
 
 	// When: the mapping is requested by UUID.
 	resp := doJSON(t, http.MethodGet, esmURL(srv)+"/b4eeec4d-62be-4a60-b005-c8ffbe1c1214", nil)
@@ -25,8 +25,8 @@ func TestGetEventSourceMapping_storeFailure(t *testing.T) {
 func TestListEventSourceMappings_storeFailure(t *testing.T) {
 	// Given: the state store fails while scanning event source mappings.
 	store := helpers.NewMockStore()
-	srv := helpers.NewTestServer(t, helpers.WithStore(store))
 	store.ScanError = errors.New("injected scan failure")
+	srv := helpers.NewTestServer(t, helpers.WithStore(store))
 
 	// When: event source mappings are listed.
 	resp := doJSON(t, http.MethodGet, esmURL(srv), nil)
