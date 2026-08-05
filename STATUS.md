@@ -14,7 +14,7 @@
 
 | Service     | Ops | Highlights                                                                                                       |
 | ----------- | --- | ---------------------------------------------------------------------------------------------------------------- |
-| S3          | 47  | Bucket CRUD, object CRUD, list, copy, multipart, notifications                                                   |
+| S3          | 53  | Bucket CRUD, object CRUD, list, copy, multipart, notifications                                                   |
 | SQS         | 21  | Queue + message CRUD, batches, purge, attributes, visibility, DLQ, FIFO, long polling                            |
 | DynamoDB    | 19  | Table/item CRUD, Scan, Query, Streams, TTL, batch ops, transactions                                              |
 | Lambda      | 48  | Function CRUD, Invoke (Docker), versions, aliases, layers, event source mappings, function URLs (Host-routed invoke) |
@@ -65,7 +65,7 @@
 
 | Service         | Ops |
 | --------------- | --- |
-| S3              | 47  |
+| S3              | 53  |
 | SQS             | 21  |
 | DynamoDB        | 19  |
 | Lambda          | 48  |

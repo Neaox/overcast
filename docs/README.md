@@ -96,7 +96,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 
 | Service          | Doc                                                 | Ops | Coverage tier                 |
 | ---------------- | --------------------------------------------------- | --- | ----------------------------- |
-| S3               | [s3.md](./services/s3.md)                           | 47  | Comprehensive / broad support |
+| S3               | [s3.md](./services/s3.md)                           | 53  | Comprehensive / broad support |
 | SQS              | [sqs.md](./services/sqs.md)                         | 21  | Comprehensive / broad support |
 | DynamoDB         | [dynamodb.md](./services/dynamodb.md)               | 19  | Comprehensive / broad support |
 | Lambda           | [lambda.md](./services/lambda.md)                   | 48  | Comprehensive / broad support |

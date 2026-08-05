@@ -153,6 +153,12 @@ func (s *s3Store) deleteBucket(ctx context.Context, name string) *protocol.AWSEr
 	if err := s.store.Delete(ctx, nsLifecycle, name); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	// Notification configuration is stored separately from the bucket record.
+	// Remove it as part of the same logical deletion so recreating a bucket name
+	// cannot resurrect destinations owned by the previous bucket.
+	if err := s.store.Delete(ctx, nsNotifications, name); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
 	// Remove the on-disk body directory for the bucket (and any remaining
 	// body files). Ignore errors — the directory may not exist.
 	_ = os.RemoveAll(filepath.Join(s.bodyDir, name))

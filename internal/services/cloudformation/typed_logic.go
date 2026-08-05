@@ -801,7 +801,7 @@ func (h *Handler) getTemplateSummaryTyped(ctx context.Context, req *getTemplateS
 		paramDecls = append(paramDecls, templateParameterXML{
 			ParameterKey:  name,
 			ParameterType: p.Type,
-			DefaultValue:  p.Default,
+			DefaultValue:  string(p.Default),
 			Description:   p.Description,
 		})
 	}
@@ -838,7 +838,7 @@ func (h *Handler) validateTemplateTyped(ctx context.Context, req *validateTempla
 		paramDecls = append(paramDecls, templateParameterXML{
 			ParameterKey:  name,
 			ParameterType: p.Type,
-			DefaultValue:  p.Default,
+			DefaultValue:  string(p.Default),
 			Description:   p.Description,
 		})
 	}

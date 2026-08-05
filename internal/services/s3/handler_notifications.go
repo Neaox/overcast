@@ -32,21 +32,21 @@ type xmlNotificationConfiguration struct {
 }
 
 type xmlQueueConfiguration struct {
-	ID     string     `xml:"Id"`
+	ID     string     `xml:"Id,omitempty"`
 	Queue  string     `xml:"Queue"`
 	Events []string   `xml:"Event"`
 	Filter *xmlFilter `xml:"Filter"`
 }
 
 type xmlTopicConfiguration struct {
-	ID     string     `xml:"Id"`
+	ID     string     `xml:"Id,omitempty"`
 	Topic  string     `xml:"Topic"`
 	Events []string   `xml:"Event"`
 	Filter *xmlFilter `xml:"Filter"`
 }
 
 type xmlLambdaFunctionConfiguration struct {
-	ID       string     `xml:"Id"`
+	ID       string     `xml:"Id,omitempty"`
 	Function string     `xml:"CloudFunction"`
 	Events   []string   `xml:"Event"`
 	Filter   *xmlFilter `xml:"Filter"`

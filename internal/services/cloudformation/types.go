@@ -1,6 +1,11 @@
 package cloudformation
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 // ── Stack ──────────────────────────────────────────────────────────────────
 
@@ -235,10 +240,45 @@ type Template struct {
 
 // TemplateParameter describes a declared parameter.
 type TemplateParameter struct {
-	Type          string   `json:"Type"`
-	Default       string   `json:"Default"`
-	Description   string   `json:"Description"`
-	AllowedValues []string `json:"AllowedValues"`
+	Type          string                   `json:"Type"`
+	Default       templateParameterValue   `json:"Default"`
+	Description   string                   `json:"Description"`
+	AllowedValues []templateParameterValue `json:"AllowedValues"`
+}
+
+// templateParameterValue preserves CloudFormation's string parameter model
+// while accepting JSON/YAML numeric and boolean scalar defaults, which AWS
+// accepts for Number and String parameters and resolves to strings for Ref.
+type templateParameterValue string
+
+func (v *templateParameterValue) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, []byte("null")) {
+		*v = ""
+		return nil
+	}
+	var text string
+	if len(data) > 0 && data[0] == '"' {
+		if err := json.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		*v = templateParameterValue(text)
+		return nil
+	}
+	var scalar any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&scalar); err != nil {
+		return err
+	}
+	switch value := scalar.(type) {
+	case json.Number:
+		*v = templateParameterValue(value.String())
+	case bool:
+		*v = templateParameterValue(fmt.Sprintf("%t", value))
+	default:
+		return fmt.Errorf("parameter default must be a scalar")
+	}
+	return nil
 }
 
 // TemplateResource describes a declared resource.

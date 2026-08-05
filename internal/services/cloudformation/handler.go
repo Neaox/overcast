@@ -870,7 +870,7 @@ func (h *Handler) GetTemplateSummary(w http.ResponseWriter, r *http.Request) {
 		paramDecls = append(paramDecls, templateParameterXML{
 			ParameterKey:  name,
 			ParameterType: p.Type,
-			DefaultValue:  p.Default,
+			DefaultValue:  string(p.Default),
 			Description:   p.Description,
 		})
 	}
@@ -909,7 +909,7 @@ func (h *Handler) ValidateTemplate(w http.ResponseWriter, r *http.Request) {
 		paramDecls = append(paramDecls, templateParameterXML{
 			ParameterKey:  name,
 			ParameterType: p.Type,
-			DefaultValue:  p.Default,
+			DefaultValue:  string(p.Default),
 			Description:   p.Description,
 		})
 	}
