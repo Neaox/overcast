@@ -417,6 +417,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previou
 			now := p.clk.Now()
 			if updErr != nil {
 				resourceDirty := isDirtyUpdateFailure(updErr)
+				resourceStateChanged := resourceDirty || outcome.UpdatedInPlace
 				if resourceDirty {
 					dirtyUpdates[logicalID] = true
 				}
@@ -428,15 +429,18 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previou
 					StatusReason: updErr.Error(),
 					Timestamp:    now,
 				}
-				if resourceDirty {
-					failedResource.Attributes = old.Attributes
+				if resourceStateChanged {
+					if outcome.PhysicalID != "" {
+						failedResource.PhysicalID = outcome.PhysicalID
+					}
+					failedResource.Attributes = rCtx.Attributes[logicalID]
 					failedResource.PropertiesHash = propsHash
 					failedResource.Properties = recordedProps
 					failedResource.DeletionPolicy = res.DeletionPolicy
 					failedResource.UpdateReplacePolicy = res.UpdateReplacePolicy
 				}
 				newResources = append(newResources, failedResource)
-				p.recordEvent(ctx, stack, logicalID, old.PhysicalID, res.Type, ResourceUpdateFailed, updErr.Error())
+				p.recordEvent(ctx, stack, logicalID, failedResource.PhysicalID, res.Type, ResourceUpdateFailed, updErr.Error())
 				if stack.DisableRollback {
 					p.failStack(ctx, stack, StatusUpdateFailed,
 						fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
@@ -782,22 +786,24 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 			if physID == "" {
 				physID = oldPhysicalID
 			}
-			// The change has been applied; the resource may still be settling
-			// into it — see resourceStabilizer. Failing to settle is terminal
-			// for the resource rather than a reason to replace it, so it takes
-			// the same updateFailure path a handler's own failure does.
-			if stabilizer, ok := handler.(resourceStabilizer); ok {
-				if stErr := stabilizer.Stabilize(ctx, router, p.cfg, p.clk, physID, rCtx); stErr != nil {
-					return resourceUpdateOutcome{}, failUpdate(stErr)
-				}
-			}
+			outcome := resourceUpdateOutcome{PhysicalID: physID, UpdatedInPlace: true}
 			if len(attrs) > 0 {
 				if rCtx.Attributes == nil {
 					rCtx.Attributes = make(map[string]map[string]string)
 				}
 				rCtx.Attributes[logicalID] = attrs
 			}
-			return resourceUpdateOutcome{PhysicalID: physID, UpdatedInPlace: true}, nil
+			// The change has been applied; the resource may still be settling
+			// into it — see resourceStabilizer. Failing to settle is terminal
+			// for the resource rather than a reason to replace it, so it takes
+			// the same updateFailure path a handler's own failure does. The
+			// successful outcome still travels back so rollback can reverse it.
+			if stabilizer, ok := handler.(resourceStabilizer); ok {
+				if stErr := stabilizer.Stabilize(ctx, router, p.cfg, p.clk, physID, rCtx); stErr != nil {
+					return outcome, failUpdate(stErr)
+				}
+			}
+			return outcome, nil
 		}
 		// An update that applied and then failed is terminal — replacing the
 		// resource would neither fix it nor be what AWS does. See updateFailure.
@@ -1192,8 +1198,9 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 //     replacement leaves the resource intact rather than destroying it.
 //   - Resources successfully updated in place are passed back through their
 //     resourceUpdater with the previous properties.
-//   - Resources whose updater could not compensate an applied mutation are
-//     retained as UPDATE_FAILED and make the rollback fail truthfully.
+//   - Resources whose updater could not compensate an applied mutation, or
+//     whose reverse update fails here, are retained as UPDATE_FAILED and make
+//     the rollback fail truthfully.
 //
 // replacedBy maps a logical ID to the physical ID of the replacement created
 // for it, for exactly that second case.
@@ -1266,10 +1273,14 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 				dirtyResources[r.LogicalID] = r
 				continue
 			}
-			if inPlaceUpdated[r.LogicalID] && r.Status == ResourceUpdateComplete && r.PhysicalID == old.PhysicalID {
+			if inPlaceUpdated[r.LogicalID] && r.PhysicalID == old.PhysicalID {
 				if err := p.rollbackInPlaceUpdate(ctx, stack, r, old, rCtx); err != nil {
 					rollbackFailed = true
 					rollbackErr = errors.Join(rollbackErr, err)
+					r.Status = ResourceUpdateFailed
+					r.StatusReason = err.Error()
+					r.Timestamp = p.clk.Now()
+					dirtyResources[r.LogicalID] = r
 				}
 			}
 			continue
@@ -1340,22 +1351,22 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 // before a later resource failed. Reusing the resourceUpdater in reverse keeps
 // validation, persistence, and service behavior out of CloudFormation.
 func (p *provisioner) rollbackInPlaceUpdate(ctx context.Context, stack *Stack, attempted, previous StackResource, rCtx *resolveContext) error {
+	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateInProgress, "Update rollback initiated")
 	handler, ok := p.resolveHandler(previous.Type)
 	if !ok {
-		return fmt.Errorf("restore %s: resource handler is unavailable", previous.LogicalID)
+		return p.failRollbackInPlaceUpdate(ctx, stack, previous, errors.New("resource handler is unavailable"))
 	}
 	updater, ok := handler.(resourceUpdater)
 	if !ok {
-		return fmt.Errorf("restore %s: resource handler cannot update in place", previous.LogicalID)
+		return p.failRollbackInPlaceUpdate(ctx, stack, previous, errors.New("resource handler cannot update in place"))
 	}
 	p.mu.Lock()
 	router := p.router
 	p.mu.Unlock()
 	if router == nil {
-		return fmt.Errorf("restore %s: router not initialised", previous.LogicalID)
+		return p.failRollbackInPlaceUpdate(ctx, stack, previous, errors.New("router not initialised"))
 	}
 
-	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateInProgress, "Update rollback initiated")
 	rollbackCtx := *rCtx
 	rollbackCtx.StackTags = append([]Tag(nil), rCtx.PreviousStackTags...)
 	rollbackCtx.PreviousStackTags = append([]Tag(nil), rCtx.StackTags...)
@@ -1369,8 +1380,7 @@ func (p *provisioner) rollbackInPlaceUpdate(ctx context.Context, stack *Stack, a
 		}
 	}
 	if err != nil {
-		p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateFailed, err.Error())
-		return fmt.Errorf("restore %s: %w", previous.LogicalID, err)
+		return p.failRollbackInPlaceUpdate(ctx, stack, previous, err)
 	}
 	if rCtx.Attributes == nil {
 		rCtx.Attributes = make(map[string]map[string]string)
@@ -1379,6 +1389,12 @@ func (p *provisioner) rollbackInPlaceUpdate(ctx context.Context, stack *Stack, a
 	rCtx.Resources[previous.LogicalID] = previous.PhysicalID
 	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateComplete, "")
 	return nil
+}
+
+func (p *provisioner) failRollbackInPlaceUpdate(ctx context.Context, stack *Stack, previous StackResource, err error) error {
+	rollbackErr := fmt.Errorf("restore %s: %w", previous.LogicalID, err)
+	p.recordEvent(ctx, stack, previous.LogicalID, previous.PhysicalID, previous.Type, ResourceUpdateFailed, rollbackErr.Error())
+	return rollbackErr
 }
 
 // ── Rollback stack (async) ─────────────────────────────────────────────────
