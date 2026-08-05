@@ -1,6 +1,6 @@
 ---
 name: pull-request
-description: "Prepare Overcast pull requests with digestible commit hygiene, concise PR summaries, changelog fragment management, and AWS compatibility and visual evidence. Use when: creating a PR, preparing a branch for review, splitting commits, writing PR descriptions, screenshotting a visual change for reviewers, or deciding whether a change needs a changelog fragment under .changelog/."
+description: "Prepare and own Overcast pull requests through green required checks and merge readiness, with digestible commit hygiene, concise PR summaries, changelog fragment management, and AWS compatibility and visual evidence. Use when: creating or monitoring a PR, preparing a branch for review, fixing checks on an owned PR, splitting commits, writing PR descriptions, screenshotting a visual change for reviewers, or deciding whether a change needs a changelog fragment under .changelog/."
 compatibility: opencode
 metadata:
   audience: contributors
@@ -432,14 +432,44 @@ When creating a PR with `gh pr create`, use a heredoc for the body so markdown s
 
 ---
 
+## Completion Contract
+
+Opening the PR is not completion. Pushing a branch is not completion. An agent that creates or
+updates a PR owns it until it is green and ready to merge.
+
+- Start the repository PR waiter immediately after opening the PR and after every subsequent push.
+- On the first failure, inspect the annotations and failing-step logs, identify whether it is caused
+  by the branch, and establish who owns the PR's implementation before changing it.
+- If the agent authored the majority of the PR's code, proactively fix every actionable branch
+  failure in the same task worktree. The user has already delegated ownership of that work; do not
+  stop to ask again for ordinary CI repairs within its scope.
+- If the agent authored little or none of the PR's code, report the failing check and root cause,
+  then ask the user whether to fix it before modifying another author's work. Continue monitoring
+  while waiting when useful, but do not infer write authority from a request to watch CI.
+- Run the relevant local verification, self-review the resulting diff, commit or amend coherently,
+  push, and restart the waiter against the new head. Repeat until the required checks pass.
+- Do not stop at "CI is running", "most checks passed", or "the PR was created". Completion means
+  required checks are green, the PR is not draft, it has no conflicts, and GitHub reports it ready
+  to merge. A required human review or external service outage is a blocker to report, not a green
+  result to imply.
+- Do not merge or enable auto-merge unless the user explicitly authorized merging. The default
+  handoff is a green, merge-ready PR for the user or reviewer to merge.
+
+While waiting, report only a failure that requires action or the final green, merge-ready result.
+
 ## After Opening — Waiting on CI
 
-Enable auto-merge as a separate step right after opening, then **wait with one
-command**:
+If the user explicitly authorized merging, enable auto-merge as a separate step after opening.
+Whether or not auto-merge is authorized, **wait with one command**:
+
+```sh
+scripts/pr-wait.sh <n>            # or scripts\pr-wait.ps1 <n>
+```
+
+Only when merging was explicitly authorized, run this separately before the waiter:
 
 ```sh
 gh pr merge <n> --squash --auto
-scripts/pr-wait.sh <n>            # or scripts\pr-wait.ps1 <n>
 ```
 
 `scripts/pr-wait.sh` wraps `gh pr checks --watch --fail-fast` and exits
