@@ -24,6 +24,22 @@ func init() {
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketEncryption", Category: "Buckets",
 			Status: capabilities.StatusSupported},
 
+		// CORS
+		capabilities.Capability{Service: "s3", Operation: "GetBucketCors", Category: "CORS",
+			Status: capabilities.StatusPartial, Notes: "CORS rules; rule Id is not yet preserved"},
+		capabilities.Capability{Service: "s3", Operation: "PutBucketCors", Category: "CORS",
+			Status: capabilities.StatusPartial, Notes: "CORS rules; rule Id is not yet preserved"},
+		capabilities.Capability{Service: "s3", Operation: "DeleteBucketCors", Category: "CORS",
+			Status: capabilities.StatusSupported},
+
+		// Website
+		capabilities.Capability{Service: "s3", Operation: "GetBucketWebsite", Category: "Website",
+			Status: capabilities.StatusPartial, Notes: "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"},
+		capabilities.Capability{Service: "s3", Operation: "PutBucketWebsite", Category: "Website",
+			Status: capabilities.StatusPartial, Notes: "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"},
+		capabilities.Capability{Service: "s3", Operation: "DeleteBucketWebsite", Category: "Website",
+			Status: capabilities.StatusSupported},
+
 		// Objects
 		capabilities.Capability{Service: "s3", Operation: "PutObject", Category: "Objects",
 			Status: capabilities.StatusSupported, Notes: "Stores body + x-amz-meta-* headers"},
@@ -106,7 +122,7 @@ func init() {
 		capabilities.Capability{Service: "s3", Operation: "GetBucketLifecycleConfiguration", Category: "Lifecycle",
 			Status: capabilities.StatusSupported, Notes: "NoSuchLifecycleConfiguration when none is set"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketLifecycleConfiguration", Category: "Lifecycle",
-			Status: capabilities.StatusSupported, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters, applied by an hourly sweeper; version-dependent rules (NoncurrentVersion*, ExpiredObjectDeleteMarker) are rejected rather than stored"},
+			Status: capabilities.StatusPartial, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketLifecycle", Category: "Lifecycle",
 			Status: capabilities.StatusSupported},
 

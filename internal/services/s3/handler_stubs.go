@@ -266,8 +266,9 @@ func (h *Handler) UpdateBucketMetadataTableConfiguration(w http.ResponseWriter, 
 
 // DeleteBucketCors handles DELETE /{bucket}?cors
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketCors.html
+// Implemented in handler_bucket.go.
 func (h *Handler) DeleteBucketCors(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.deleteBucketCors(w, r)
 }
 
 // DeleteBucketLifecycle handles DELETE /{bucket}?lifecycle
@@ -279,8 +280,9 @@ func (h *Handler) DeleteBucketLifecycle(w http.ResponseWriter, r *http.Request) 
 
 // DeleteBucketWebsite handles DELETE /{bucket}?website
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketWebsite.html
+// Implemented in handler_bucket.go.
 func (h *Handler) DeleteBucketWebsite(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedXML(w, r)
+	h.deleteBucketWebsite(w, r)
 }
 
 // DeleteBucketReplication handles DELETE /{bucket}?replication
