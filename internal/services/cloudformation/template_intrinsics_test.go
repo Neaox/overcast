@@ -120,6 +120,18 @@ func TestResolveIntrinsics_base64(t *testing.T) {
 	}
 }
 
+func TestResolveIntrinsics_subResolvesResourceAttribute(t *testing.T) {
+	ctx := testCtx()
+	ctx.Attributes = make(map[string]map[string]string)
+	ctx.Attributes["PublishingRole"] = map[string]string{
+		"Arn": "arn:aws:iam::000000000000:role/publishing-role",
+	}
+	got := resolveJSON(t, `{"Fn::Sub":"${PublishingRole.Arn}"}`, ctx)
+	if got != "arn:aws:iam::000000000000:role/publishing-role" {
+		t.Fatalf("Fn::Sub resource attribute = %#v", got)
+	}
+}
+
 // Fn::Cidr splits a block into equally sized subnets, as AWS documents.
 func TestResolveIntrinsics_cidr(t *testing.T) {
 	got, ok := resolveJSON(t, `{"Fn::Cidr": ["10.0.0.0/16", 2, 8]}`, testCtx()).([]any)

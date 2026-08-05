@@ -3,6 +3,7 @@ package cloudformation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -24,8 +25,11 @@ func TestKMSKeyHandler_forwardsSerializedPolicyAndLockoutBypass(t *testing.T) {
 			t.Fatalf("decode %s request: %v", r.Header.Get("X-Amz-Target"), err)
 		}
 		requests = append(requests, body)
-		if r.Header.Get("X-Amz-Target") == "TrentService.CreateKey" {
+		switch r.Header.Get("X-Amz-Target") {
+		case "TrentService.CreateKey":
 			_, _ = w.Write([]byte(`{"KeyMetadata":{"KeyId":"key-id","Arn":"arn:aws:kms:us-east-1:000000000000:key/key-id"}}`))
+		case "TrentService.GetKeyPolicy":
+			_, _ = w.Write([]byte(`{"Policy":"{\"Version\":\"2012-10-17\",\"Statement\":[]}"}`))
 		}
 	})
 	h := &kmsKeyHandler{}
@@ -40,10 +44,11 @@ func TestKMSKeyHandler_forwardsSerializedPolicyAndLockoutBypass(t *testing.T) {
 	}
 
 	// Then: both service calls receive a JSON policy string and the bypass flag
-	if len(requests) != 2 {
-		t.Fatalf("requests = %d, want 2", len(requests))
+	if len(requests) != 3 {
+		t.Fatalf("requests = %d, want 3", len(requests))
 	}
-	for i, body := range requests {
+	for _, i := range []int{0, 2} {
+		body := requests[i]
 		policyString, ok := body["Policy"].(string)
 		if !ok {
 			t.Fatalf("request %d Policy = %#v, want string", i, body["Policy"])
@@ -55,6 +60,97 @@ func TestKMSKeyHandler_forwardsSerializedPolicyAndLockoutBypass(t *testing.T) {
 		if body["BypassPolicyLockoutSafetyCheck"] != true {
 			t.Fatalf("request %d bypass = %#v, want true", i, body["BypassPolicyLockoutSafetyCheck"])
 		}
+	}
+}
+
+func TestKMSKeyHandlerUpdate_compensatesPolicyWhenEnabledTransitionFails(t *testing.T) {
+	oldPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"kms:*","Resource":"*"}]}`
+	newPolicy := map[string]any{"Version": "2012-10-17", "Statement": []any{map[string]any{
+		"Effect": "Allow", "Principal": "*", "Action": "kms:PutKeyPolicy", "Resource": "*",
+	}}}
+	var putBodies []map[string]any
+	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode %s request: %v", r.Header.Get("X-Amz-Target"), err)
+		}
+		switch r.Header.Get("X-Amz-Target") {
+		case "TrentService.GetKeyPolicy":
+			encoded, _ := json.Marshal(map[string]any{"Policy": oldPolicy})
+			_, _ = w.Write(encoded)
+		case "TrentService.PutKeyPolicy":
+			putBodies = append(putBodies, body)
+			_, _ = w.Write([]byte(`{}`))
+		case "TrentService.DisableKey":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"__type":"InternalError","message":"failed"}`))
+		default:
+			t.Fatalf("unexpected target %q", r.Header.Get("X-Amz-Target"))
+		}
+	})
+
+	physicalID, _, err := (&kmsKeyHandler{}).Update(context.Background(), router, nil, "key-id", map[string]any{
+		"KeyPolicy": newPolicy, "Enabled": false,
+	}, map[string]any{"Enabled": true}, &resolveContext{Region: "us-east-1"})
+
+	if physicalID != "key-id" {
+		t.Fatalf("physical ID = %q, want key-id", physicalID)
+	}
+	var failed updateFailure
+	if !errors.As(err, &failed) || failed.dirty || errors.Is(err, errReplacementRequired) {
+		t.Fatalf("Update error = %#v, want clean terminal update failure", err)
+	}
+	if len(putBodies) != 2 {
+		t.Fatalf("PutKeyPolicy calls = %d, want apply and compensation", len(putBodies))
+	}
+	if putBodies[1]["Policy"] != oldPolicy || putBodies[1]["BypassPolicyLockoutSafetyCheck"] != true {
+		t.Fatalf("compensation body = %#v, want exact old policy with bypass", putBodies[1])
+	}
+}
+
+func TestKMSKeyHandlerUpdate_failedPolicyCompensationIsDirty(t *testing.T) {
+	putCalls := 0
+	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("X-Amz-Target") {
+		case "TrentService.GetKeyPolicy":
+			_, _ = w.Write([]byte(`{"Policy":"old-policy"}`))
+		case "TrentService.PutKeyPolicy":
+			putCalls++
+			if putCalls == 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"__type":"InternalError","message":"restore failed"}`))
+			}
+		case "TrentService.DisableKey":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"__type":"InternalError","message":"disable failed"}`))
+		}
+	})
+
+	physicalID, _, err := (&kmsKeyHandler{}).Update(context.Background(), router, nil, "key-id", map[string]any{
+		"KeyPolicy": map[string]any{"Version": "2012-10-17"}, "Enabled": false,
+	}, map[string]any{"Enabled": true}, &resolveContext{Region: "us-east-1"})
+
+	if physicalID != "key-id" {
+		t.Fatalf("physical ID = %q, want key-id", physicalID)
+	}
+	if !isDirtyUpdateFailure(err) || errors.Is(err, errReplacementRequired) {
+		t.Fatalf("Update error = %#v, want dirty terminal update failure", err)
+	}
+}
+
+func TestKMSKeyHandlerUpdate_enabledFailureIsCleanAndPreservesPhysicalID(t *testing.T) {
+	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"__type":"InternalError","message":"disable failed"}`))
+	})
+
+	physicalID, _, err := (&kmsKeyHandler{}).Update(context.Background(), router, nil, "key-id", map[string]any{
+		"Enabled": false,
+	}, map[string]any{"Enabled": true}, &resolveContext{Region: "us-east-1"})
+
+	var failed updateFailure
+	if physicalID != "key-id" || !errors.As(err, &failed) || failed.dirty || errors.Is(err, errReplacementRequired) {
+		t.Fatalf("Update result = (%q, %#v), want key-id and clean terminal failure", physicalID, err)
 	}
 }
 

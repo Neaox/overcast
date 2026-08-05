@@ -1037,7 +1037,7 @@ func (h *Handler) GetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	policy := k.Policy
 	if policy == "" {
-		policy = defaultKeyPolicy(k.ARN, h.cfg.AccountID)
+		policy = defaultKeyPolicy(h.cfg.AccountID)
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Policy":     policy,
@@ -1108,8 +1108,8 @@ func (h *Handler) ListKeyPolicies(w http.ResponseWriter, r *http.Request) {
 }
 
 // defaultKeyPolicy returns a minimal key policy granting full access to the account.
-func defaultKeyPolicy(keyARN, accountID string) string {
-	return fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"Enable IAM User Permissions","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::%s:root"},"Action":"kms:*","Resource":"%s"}]}`, accountID, keyARN)
+func defaultKeyPolicy(accountID string) string {
+	return fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"Enable IAM User Permissions","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::%s:root"},"Action":"kms:*","Resource":"*"}]}`, accountID)
 }
 
 // ── Crypto helpers ────────────────────────────────────────────────────────────

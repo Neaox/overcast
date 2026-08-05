@@ -1037,6 +1037,17 @@ func TestGetKeyPolicy_default(t *testing.T) {
 	if out.PolicyName != "default" {
 		t.Errorf("PolicyName = %q, want default", out.PolicyName)
 	}
+	var policy struct {
+		Statement []struct {
+			Resource string `json:"Resource"`
+		} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(out.Policy), &policy); err != nil {
+		t.Fatalf("default Policy is not JSON: %v", err)
+	}
+	if len(policy.Statement) != 1 || policy.Statement[0].Resource != "*" {
+		t.Fatalf("default policy statements = %#v, want Resource *", policy.Statement)
+	}
 }
 
 func TestPutKeyPolicy_andGet(t *testing.T) {

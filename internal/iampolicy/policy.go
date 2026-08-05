@@ -53,6 +53,7 @@ type SourcedDocument struct {
 type ParseOptions struct {
 	AllowMissingAction  bool
 	RequireVersion      bool
+	AllowedVersions     []string
 	RequireStatements   bool
 	RequirePrincipal    bool
 	RejectEmptyElements bool
@@ -78,6 +79,10 @@ type Statement struct {
 	NotAction   []Pattern
 	Resource    []Pattern
 	NotResource []Pattern
+	// ResourceSpecified records whether Resource or NotResource appeared on
+	// the wire. Some resource-policy consumers distinguish an omitted element
+	// from an element that happens not to match.
+	ResourceSpecified bool
 
 	// Principal / NotPrincipal apply to resource-based policies only.
 	Principal    *PrincipalSet
@@ -150,8 +155,12 @@ func ParseDocumentWithOptions(raw string, src SourceRef, opts ParseOptions) ([]S
 	if len(wd.Statement) == 0 {
 		return nil, fmt.Errorf("policy %s: document has no Statement element", sourceName(src))
 	}
-	if opts.RequireVersion && strings.TrimSpace(wd.Version) == "" {
+	version := strings.TrimSpace(wd.Version)
+	if opts.RequireVersion && version == "" {
 		return nil, fmt.Errorf("policy %s: document has no Version element", sourceName(src))
+	}
+	if version != "" && len(opts.AllowedVersions) > 0 && !containsString(opts.AllowedVersions, version) {
+		return nil, fmt.Errorf("policy %s: unsupported Version %q", sourceName(src), wd.Version)
 	}
 
 	var wires []wireStatement
@@ -264,18 +273,28 @@ func compileStatement(ws wireStatement, src SourceRef, index int, opts ParseOpti
 	}
 
 	return Statement{
-		Sid:          strings.TrimSpace(ws.Sid),
-		Effect:       canonicalEffect(effect),
-		Source:       src,
-		Index:        index,
-		Action:       actions,
-		NotAction:    notActions,
-		Resource:     resources,
-		NotResource:  notResources,
-		Principal:    principal,
-		NotPrincipal: notPrincipal,
-		Condition:    cond,
+		Sid:               strings.TrimSpace(ws.Sid),
+		Effect:            canonicalEffect(effect),
+		Source:            src,
+		Index:             index,
+		Action:            actions,
+		NotAction:         notActions,
+		Resource:          resources,
+		NotResource:       notResources,
+		ResourceSpecified: hasResource || hasNotResource,
+		Principal:         principal,
+		NotPrincipal:      notPrincipal,
+		Condition:         cond,
 	}, nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func principalHasValues(set *PrincipalSet) bool {

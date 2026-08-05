@@ -1,6 +1,7 @@
 package cloudformation_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,19 @@ import (
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
+func seedKMSPolicyUser(t *testing.T, srv *helpers.TestServer, userName string) string {
+	t.Helper()
+	arn := "arn:aws:iam::" + srv.Config.AccountID + ":user/" + userName
+	raw, err := json.Marshal(map[string]string{"UserName": userName, "Arn": arn})
+	if err != nil {
+		t.Fatalf("marshal IAM user: %v", err)
+	}
+	if err := srv.Store.Set(context.Background(), "iam:users", userName, string(raw)); err != nil {
+		t.Fatalf("seed IAM user: %v", err)
+	}
+	return arn
+}
+
 func kmsPolicyTemplate(principal string, bypass bool) string {
 	return fmt.Sprintf(`{"Resources":{"Key":{"Type":"AWS::KMS::Key","Properties":{"BypassPolicyLockoutSafetyCheck":%t,"KeyPolicy":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":%q},"Action":"kms:PutKeyPolicy","Resource":"*"}]}}}}}`, bypass, principal)
 }
@@ -17,7 +31,7 @@ func kmsPolicyTemplate(principal string, bypass bool) string {
 func TestCreateStack_KMSKeyPolicyLockoutRollsBackWithoutLeakingKey(t *testing.T) {
 	// Given: a key policy that excludes CloudFormation's effective local caller
 	srv := helpers.NewTestServer(t)
-	template := kmsPolicyTemplate("arn:aws:iam::"+srv.Config.AccountID+":user/other", false)
+	template := kmsPolicyTemplate(seedKMSPolicyUser(t, srv, "other"), false)
 
 	// When: CloudFormation creates the stack
 	resp := cfnQuery(t, srv, "CreateStack", url.Values{
@@ -46,7 +60,8 @@ func TestCreateStack_KMSKeyPolicyBypassPreservesUnsafePolicy(t *testing.T) {
 	// Given: a key policy that excludes the caller but explicitly opts out of the safety check
 	srv := helpers.NewTestServer(t)
 	stackName := "kms-policy-create-bypass"
-	template := kmsPolicyTemplate("arn:aws:iam::"+srv.Config.AccountID+":user/other", true)
+	otherARN := seedKMSPolicyUser(t, srv, "other")
+	template := kmsPolicyTemplate(otherARN, true)
 
 	// When: CloudFormation creates the stack
 	resp := cfnQuery(t, srv, "CreateStack", url.Values{
@@ -66,7 +81,7 @@ func TestCreateStack_KMSKeyPolicyBypassPreservesUnsafePolicy(t *testing.T) {
 	if err := json.Unmarshal([]byte(kmsPolicyDocument(t, srv, keyID)), &policy); err != nil {
 		t.Fatalf("decode stored policy: %v", err)
 	}
-	want := "arn:aws:iam::" + srv.Config.AccountID + ":user/other"
+	want := otherARN
 	if len(policy.Statement) != 1 || policy.Statement[0].Principal["AWS"] != want {
 		t.Fatalf("stored policy principal = %#v, want %q", policy.Statement, want)
 	}
@@ -75,6 +90,7 @@ func TestCreateStack_KMSKeyPolicyBypassPreservesUnsafePolicy(t *testing.T) {
 func TestUpdateStack_KMSKeyPolicyLockoutRollsBackWithoutMutation(t *testing.T) {
 	// Given: a stack whose policy permits the local account caller
 	srv := helpers.NewTestServer(t)
+	otherARN := seedKMSPolicyUser(t, srv, "other")
 	stackName := "kms-policy-update-rollback"
 	originalTemplate := kmsPolicyTemplate("arn:aws:iam::"+srv.Config.AccountID+":root", false)
 	create := cfnQuery(t, srv, "CreateStack", url.Values{
@@ -87,7 +103,7 @@ func TestUpdateStack_KMSKeyPolicyLockoutRollsBackWithoutMutation(t *testing.T) {
 	originalPolicy := kmsPolicyDocument(t, srv, keyID)
 
 	// When: an update replaces it with a policy that excludes the caller
-	unsafeTemplate := kmsPolicyTemplate("arn:aws:iam::"+srv.Config.AccountID+":user/other", false)
+	unsafeTemplate := kmsPolicyTemplate(otherARN, false)
 	update := cfnQuery(t, srv, "UpdateStack", url.Values{
 		"StackName": {stackName}, "TemplateBody": {unsafeTemplate},
 	})

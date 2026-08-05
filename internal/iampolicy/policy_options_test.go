@@ -31,7 +31,7 @@ func TestParseDocumentWithOptions_allowsKMSIneffectiveStatement(t *testing.T) {
 func TestParseDocumentWithOptions_requiresKMSPolicyStructure(t *testing.T) {
 	opts := ParseOptions{
 		AllowMissingAction:  true,
-		RequireVersion:      true,
+		AllowedVersions:     []string{"2008-10-17", "2012-10-17"},
 		RequireStatements:   true,
 		RequirePrincipal:    true,
 		RejectEmptyElements: true,
@@ -40,7 +40,7 @@ func TestParseDocumentWithOptions_requiresKMSPolicyStructure(t *testing.T) {
 		name string
 		raw  string
 	}{
-		{name: "version", raw: `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"kms:*"}]}`},
+		{name: "unsupported version", raw: `{"Version":"2026-08-06","Statement":[{"Effect":"Allow","Principal":"*","Action":"kms:*"}]}`},
 		{name: "statements", raw: `{"Version":"2012-10-17","Statement":[]}`},
 		{name: "principal", raw: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"kms:*"}]}`},
 		{name: "action values", raw: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":[]}]}`},
@@ -50,5 +50,28 @@ func TestParseDocumentWithOptions_requiresKMSPolicyStructure(t *testing.T) {
 				t.Fatalf("accepted policy missing required %s", tc.name)
 			}
 		})
+	}
+}
+
+func TestParseDocumentWithOptions_allowsAbsentVersionButRejectsBogusVersion(t *testing.T) {
+	opts := ParseOptions{AllowedVersions: []string{"2008-10-17", "2012-10-17"}}
+	withoutVersion := `{"Statement":[{"Effect":"Allow","Action":"kms:*","Resource":"*"}]}`
+	if _, err := ParseDocumentWithOptions(withoutVersion, SourceRef{ID: "key"}, opts); err != nil {
+		t.Fatalf("policy without Version returned error: %v", err)
+	}
+	bogusVersion := `{"Version":"2026-08-06","Statement":[{"Effect":"Allow","Action":"kms:*","Resource":"*"}]}`
+	if _, err := ParseDocumentWithOptions(bogusVersion, SourceRef{ID: "key"}, opts); err == nil {
+		t.Fatal("policy with bogus Version was accepted")
+	}
+}
+
+func TestParseDocument_zeroOptionsStillAcceptUnknownVersion(t *testing.T) {
+	raw := `{"Version":"custom-version","Statement":[{"Effect":"Allow","Principal":{"Federated":"example.com"},"Action":"kms:*","Resource":"*"}]}`
+	statements, err := ParseDocument(raw, SourceRef{ID: "resource-policy"})
+	if err != nil {
+		t.Fatalf("ParseDocument returned error: %v", err)
+	}
+	if len(statements) != 1 || len(statements[0].Principal.Unsupported) != 1 {
+		t.Fatalf("statements = %#v, want unsupported principal preserved for evaluation", statements)
 	}
 }

@@ -52,7 +52,7 @@ func (h *Handler) validateKeyPolicy(ctx context.Context, policy, keyARN string, 
 		Type: iampolicy.SourceTypeResourcePolicy,
 	}, iampolicy.ParseOptions{
 		AllowMissingAction:  true,
-		RequireVersion:      true,
+		AllowedVersions:     []string{"2008-10-17", "2012-10-17"},
 		RequireStatements:   true,
 		RequirePrincipal:    true,
 		RejectEmptyElements: true,
@@ -63,14 +63,20 @@ func (h *Handler) validateKeyPolicy(ctx context.Context, policy, keyARN string, 
 		}
 		return protocol.Wrap(errMalformedKeyPolicy, err)
 	}
-	if !validKeyPolicyPrincipals(statements) {
-		return errInvalidKeyPolicyPrincipal
+	if aerr := h.validateKeyPolicyPrincipals(ctx, statements); aerr != nil {
+		return aerr
 	}
 	if bypass {
 		return nil
 	}
 
 	principal := h.callerIdentity(ctx)
+	effectiveStatements := make([]iampolicy.Statement, 0, len(statements))
+	for _, statement := range statements {
+		if statement.ResourceSpecified {
+			effectiveStatements = append(effectiveStatements, statement)
+		}
+	}
 	result := iampolicy.Evaluate(iampolicy.Input{
 		Request: iampolicy.Request{
 			Action:           "kms:PutKeyPolicy",
@@ -81,9 +87,10 @@ func (h *Handler) validateKeyPolicy(ctx context.Context, policy, keyARN string, 
 				"aws:principalarn":     principal.ARN,
 				"aws:principalaccount": principal.Account,
 				"aws:requestedregion":  middleware.RegionFromContext(ctx, h.cfg.Region),
+				"kms:calleraccount":    principal.Account,
 			},
 		},
-		ResourcePolicy: statements,
+		ResourcePolicy: effectiveStatements,
 	})
 	if result.Decision != iampolicy.DecisionAllowed {
 		return errPolicyLockout
@@ -91,30 +98,45 @@ func (h *Handler) validateKeyPolicy(ctx context.Context, policy, keyARN string, 
 	return nil
 }
 
-func validKeyPolicyPrincipals(statements []iampolicy.Statement) bool {
+func (h *Handler) validateKeyPolicyPrincipals(ctx context.Context, statements []iampolicy.Statement) *protocol.AWSError {
 	for i := range statements {
 		principal := statements[i].Principal
 		if principal == nil {
-			return false
+			return errInvalidKeyPolicyPrincipal
+		}
+		if len(principal.Unsupported) > 0 {
+			return errInvalidKeyPolicyPrincipal
 		}
 		for _, pattern := range principal.AWS {
 			value := strings.TrimSpace(pattern.String())
 			if isAccountID(value) {
 				continue
 			}
-			parts := strings.Split(value, ":")
+			parts := strings.SplitN(value, ":", 6)
 			if len(parts) < 6 || parts[0] != "arn" || (parts[2] != "iam" && parts[2] != "sts") ||
 				!isAccountID(parts[4]) || strings.TrimSpace(parts[5]) == "" || strings.ContainsAny(value, "*?") {
-				return false
+				return errInvalidKeyPolicyPrincipal
+			}
+			if parts[2] == "iam" && parts[4] == h.cfg.AccountID && parts[5] != "root" {
+				// Overcast can prove existence only for principals in its own IAM
+				// account. Remote-account principals remain syntax-validated because
+				// their IAM state is intentionally unavailable to this emulator.
+				exists, err := middleware.LocalIAMPrincipalExists(ctx, h.store.s, value)
+				if err != nil {
+					return protocol.Wrap(protocol.ErrInternalError, err)
+				}
+				if !exists {
+					return errInvalidKeyPolicyPrincipal
+				}
 			}
 		}
 		for _, service := range principal.Service {
 			if !strings.Contains(strings.TrimSpace(service), ".") {
-				return false
+				return errInvalidKeyPolicyPrincipal
 			}
 		}
 	}
-	return true
+	return nil
 }
 
 func isAccountID(value string) bool {

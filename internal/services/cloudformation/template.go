@@ -455,6 +455,9 @@ func resolveSub(sub any, ctx *resolveContext) any {
 		}
 		varName := result[start+2 : start+end]
 		resolved := resolveRef(varName, ctx)
+		if strings.Contains(varName, ".") {
+			resolved = resolveGetAtt(varName, ctx)
+		}
 		result = result[:start] + fmt.Sprintf("%v", resolved) + result[start+end+1:]
 	}
 

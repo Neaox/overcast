@@ -804,7 +804,7 @@ func (h *Handler) getKeyPolicyTyped(ctx context.Context, req *keyPolicyRequest) 
 	}
 	policy := k.Policy
 	if policy == "" {
-		policy = fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"Enable IAM User Permissions","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::%s:root"},"Action":"kms:*","Resource":"%s"}]}`, h.cfg.AccountID, k.ARN)
+		policy = defaultKeyPolicy(h.cfg.AccountID)
 	}
 	return &getKeyPolicyResponse{Policy: policy, PolicyName: req.PolicyName}, nil
 }
