@@ -128,7 +128,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Auto Scaling     | [autoscaling.md](./services/autoscaling.md)         | 25  | Core CRUD + common workflows  |
 | Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 11  | Minimal / targeted support    |
 | Pipes            | [pipes.md](./services/pipes.md)                     | 5   | Minimal / targeted support    |
-| WAF v2           | [waf.md](./services/waf.md)                         | 4   | Metadata-only Web ACL CRUD    |
+| WAF v2           | [waf.md](./services/waf.md)                         | 4   | Minimal / targeted support    |
 | Shield           | [shield.md](./services/shield.md)                   | 5   | Minimal / targeted support    |
 | ACM              | [acm.md](./services/acm.md)                         | 7   | Minimal / targeted support    |
 | Athena           | [athena.md](./services/athena.md)                   | 8   | Minimal / targeted support    |
