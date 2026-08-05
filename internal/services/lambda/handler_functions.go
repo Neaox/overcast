@@ -1027,8 +1027,6 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	previousIdentity := functionInstanceIdentity(fn)
-
 	var req updateFunctionCodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
@@ -1044,42 +1042,76 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
-	fn.setCode(req.ZipFile)
-	if req.S3Bucket != "" {
-		fn.CodeS3Bucket = req.S3Bucket
-		fn.CodeS3Key = req.S3Key
-	}
-	if req.ImageUri != "" {
-		fn.ImageUri = req.ImageUri
-	}
 	if len(req.Architectures) > 0 {
 		if aerr := validateArchitectures(req.Architectures); aerr != nil {
 			protocol.WriteJSONError(w, r, aerr)
 			return
 		}
-		fn.Architectures = req.Architectures
 	}
-
-	// Eagerly fetch from S3 when the caller passed only S3Bucket/S3Key (no
-	// inline ZipFile). See CreateFunction for the same rationale.
-	if len(fn.CodeZip) == 0 && fn.CodeS3Bucket != "" && fn.CodeS3Key != "" && h.s3Fetch != nil {
-		if zip, err := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key); err == nil {
-			fn.setCode(zip)
-		} else {
-			h.log.Warn("lambda: update function code: s3 fetch failed",
-				zap.String("function", fn.Name),
-				zap.String("bucket", fn.CodeS3Bucket),
-				zap.String("key", fn.CodeS3Key),
-				zap.Error(err),
-			)
-		}
-	}
-	fn.RevisionId = uuid.NewString()
-	fn.LastModified = h.clk.Now().UTC().Format(time.RFC3339)
-
-	if aerr := h.ls.putFunction(ctx, fn); aerr != nil {
+	if aerr, unsupported := validateUpdateFunctionCodeSource(fn.PackageType, req); unsupported {
+		protocol.NotImplementedJSON(w, r)
+		return
+	} else if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	// Download S3 code before entering the store mutation. A failed GetObject
+	// must leave the package, source metadata, and RevisionId untouched.
+	var s3Code []byte
+	if req.S3Bucket != "" {
+		if h.s3Fetch == nil {
+			protocol.NotImplementedJSON(w, r)
+			return
+		}
+		zip, err := h.s3Fetch(ctx, req.S3Bucket, req.S3Key)
+		if err != nil {
+			protocol.WriteJSONError(w, r, lambdaS3CodeFetchError(err))
+			return
+		}
+		s3Code = zip
+	}
+
+	var previousIdentity string
+	fn, changed, aerr := h.ls.mutateFunction(ctx, name, func(current *Function) (bool, *protocol.AWSError) {
+		previousIdentity = functionInstanceIdentity(current)
+		// PackageType is immutable. Within that type, a successful update
+		// replaces the previous source instead of layering fields onto it.
+		switch current.PackageType {
+		case "Image":
+			current.setCode(nil)
+			current.CodeS3Bucket = ""
+			current.CodeS3Key = ""
+			current.ImageUri = req.ImageUri
+		default:
+			current.ImageUri = ""
+			if len(req.ZipFile) > 0 {
+				current.setCode(req.ZipFile)
+				current.CodeS3Bucket = ""
+				current.CodeS3Key = ""
+			} else {
+				current.setCode(s3Code)
+				current.CodeS3Bucket = req.S3Bucket
+				current.CodeS3Key = req.S3Key
+			}
+		}
+		if len(req.Architectures) > 0 {
+			current.Architectures = req.Architectures
+		}
+		current.RevisionId = uuid.NewString()
+		current.LastModified = h.clk.Now().UTC().Format(time.RFC3339)
+		return true, nil
+	})
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if !changed || fn == nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code:       "ResourceNotFoundException",
+			Message:    "Function not found: " + name,
+			HTTPStatus: http.StatusNotFound,
+		})
 		return
 	}
 
@@ -1097,6 +1129,48 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+}
+
+func validateUpdateFunctionCodeSource(packageType string, req updateFunctionCodeRequest) (*protocol.AWSError, bool) {
+	hasZip := len(req.ZipFile) > 0
+	hasS3Bucket := req.S3Bucket != ""
+	hasS3Key := req.S3Key != ""
+	hasImage := req.ImageUri != ""
+
+	if packageType == "Image" {
+		if hasImage && (hasZip || hasS3Bucket || hasS3Key) {
+			return nil, true
+		}
+		if !hasImage {
+			return lambdaInvalidParameter("Please provide ImageUri when PackageType is Image."), false
+		}
+		return nil, false
+	}
+
+	if hasImage {
+		return nil, true
+	}
+	if hasZip && (hasS3Bucket || hasS3Key) {
+		return nil, true
+	}
+	if hasS3Bucket != hasS3Key {
+		return nil, true
+	}
+	if !hasZip && !hasS3Bucket {
+		return lambdaInvalidParameter("Please provide a source for function code."), false
+	}
+	return nil, false
+}
+
+func lambdaS3CodeFetchError(s3Err *protocol.AWSError) *protocol.AWSError {
+	if s3Err.Code == protocol.ErrInternalError.Code {
+		return protocol.Wrap(protocol.ErrInternalError, s3Err)
+	}
+	return &protocol.AWSError{
+		Code:       "InvalidParameterValueException",
+		Message:    "Error occurred while GetObject. S3 Error Code: " + s3Err.Code + ". S3 Error Message: " + s3Err.Message,
+		HTTPStatus: http.StatusBadRequest,
+	}
 }
 
 // UpdateFunctionConfiguration handles PUT /2015-03-31/functions/{name}/configuration.

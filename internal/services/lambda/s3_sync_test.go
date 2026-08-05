@@ -7,13 +7,14 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/state"
 	"go.uber.org/zap"
 )
 
 // testFetch returns a deterministic zip payload for the given bucket/key.
 func testFetch(data []byte) S3FetchFunc {
-	return func(_ context.Context, _, _ string) ([]byte, error) {
+	return func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
 		return data, nil
 	}
 }
@@ -106,8 +107,8 @@ func TestS3SyncWatcher_nonMatchingObjectLeavesCodeZipUnchanged(t *testing.T) {
 
 func TestS3SyncWatcher_fetchErrorLeavesCodeZipUnchanged(t *testing.T) {
 	// Given: a fetch func that always fails.
-	failFetch := func(_ context.Context, _, _ string) ([]byte, error) {
-		return nil, errors.New("s3: connection refused")
+	failFetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		return nil, protocol.Wrap(protocol.ErrInternalError, errors.New("s3: connection refused"))
 	}
 	w, ls := testWatcher(t, failFetch)
 	seedFunction(t, ls, "my-fn", "my-bucket", "fn.zip")
@@ -125,6 +126,134 @@ func TestS3SyncWatcher_fetchErrorLeavesCodeZipUnchanged(t *testing.T) {
 	fn, _ := ls.getFunction(context.Background(), "my-fn")
 	if len(fn.CodeZip) != 0 {
 		t.Errorf("expected CodeZip unchanged (nil), got %d bytes", len(fn.CodeZip))
+	}
+}
+
+func TestS3SyncWatcher_inlineDetachDuringFetchWins(t *testing.T) {
+	// Given: an S3-backed function and a watcher blocked in its object fetch.
+	fetchStarted := make(chan struct{})
+	releaseFetch := make(chan struct{})
+	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		close(fetchStarted)
+		<-releaseFetch
+		return []byte("stale-s3-code"), nil
+	}
+	w, ls := testWatcher(t, fetch)
+	seeded := seedFunction(t, ls, "detach-race-fn", "my-bucket", "fn.zip")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.syncFunctionCode(context.Background(), seeded)
+	}()
+	<-fetchStarted
+
+	// When: UpdateFunctionCode atomically installs inline code and detaches the
+	// S3 source before the watcher's old fetch completes.
+	inlineCode := []byte("current-inline-code")
+	_, changed, aerr := ls.mutateFunction(context.Background(), seeded.Name, func(current *Function) (bool, *protocol.AWSError) {
+		current.setCode(inlineCode)
+		current.CodeS3Bucket = ""
+		current.CodeS3Key = ""
+		current.RevisionId = "inline-revision"
+		return true, nil
+	})
+	if aerr != nil {
+		t.Fatalf("detach S3 source: %v", aerr)
+	}
+	if !changed {
+		t.Fatal("detach S3 source reported no mutation")
+	}
+	close(releaseFetch)
+	<-done
+
+	// Then: the stale watcher cannot restore the old S3 binding or package.
+	got, aerr := ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("getFunction: %v", aerr)
+	}
+	if aerr := ls.loadFunctionCode(context.Background(), got); aerr != nil {
+		t.Fatalf("loadFunctionCode: %v", aerr)
+	}
+	if string(got.CodeZip) != string(inlineCode) {
+		t.Fatalf("CodeZip after race = %q, want inline code %q", got.CodeZip, inlineCode)
+	}
+	if got.CodeS3Bucket != "" || got.CodeS3Key != "" {
+		t.Fatalf("S3 binding restored after detach: bucket=%q key=%q", got.CodeS3Bucket, got.CodeS3Key)
+	}
+	if got.RevisionId != "inline-revision" {
+		t.Fatalf("RevisionId after race = %q, want inline-revision", got.RevisionId)
+	}
+}
+
+func TestS3SyncWatcher_newerSameBindingUpdateDuringFetchWins(t *testing.T) {
+	// Given: an S3-backed function and a watcher blocked while fetching an old
+	// object generation.
+	fetchStarted := make(chan struct{})
+	releaseFetch := make(chan struct{})
+	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+		close(fetchStarted)
+		<-releaseFetch
+		return []byte("stale-s3-code"), nil
+	}
+	w, ls := testWatcher(t, fetch)
+	seeded := seedFunction(t, ls, "same-binding-race-fn", "my-bucket", "fn.zip")
+	initialCode := []byte("initial-s3-code")
+	_, changed, aerr := ls.mutateFunction(context.Background(), seeded.Name, func(current *Function) (bool, *protocol.AWSError) {
+		current.setCode(initialCode)
+		return true, nil
+	})
+	if aerr != nil {
+		t.Fatalf("seed initial code: %v", aerr)
+	}
+	if !changed {
+		t.Fatal("seed initial code reported no mutation")
+	}
+	seeded, aerr = ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("get seeded function: %v", aerr)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.syncFunctionCode(context.Background(), seeded)
+	}()
+	<-fetchStarted
+
+	// When: a newer code update commits different bytes while retaining the
+	// same S3 bucket/key before the old fetch completes.
+	newerCode := []byte("newer-s3-code")
+	_, changed, aerr = ls.mutateFunction(context.Background(), seeded.Name, func(current *Function) (bool, *protocol.AWSError) {
+		current.setCode(newerCode)
+		current.RevisionId = "newer-revision"
+		return true, nil
+	})
+	if aerr != nil {
+		t.Fatalf("install newer same-binding code: %v", aerr)
+	}
+	if !changed {
+		t.Fatal("newer same-binding update reported no mutation")
+	}
+	close(releaseFetch)
+	<-done
+
+	// Then: the stale watcher loses its compare-and-swap and cannot overwrite
+	// the newer package or revision.
+	got, aerr := ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("getFunction: %v", aerr)
+	}
+	if aerr := ls.loadFunctionCode(context.Background(), got); aerr != nil {
+		t.Fatalf("loadFunctionCode: %v", aerr)
+	}
+	if string(got.CodeZip) != string(newerCode) {
+		t.Fatalf("CodeZip after race = %q, want newer code %q", got.CodeZip, newerCode)
+	}
+	if got.CodeS3Bucket != "my-bucket" || got.CodeS3Key != "fn.zip" {
+		t.Fatalf("S3 binding changed after race: bucket=%q key=%q", got.CodeS3Bucket, got.CodeS3Key)
+	}
+	if got.RevisionId != "newer-revision" {
+		t.Fatalf("RevisionId after race = %q, want newer-revision", got.RevisionId)
 	}
 }
 
@@ -176,7 +305,7 @@ func TestS3SyncWatcher_register_cancelRemovesSubscription(t *testing.T) {
 func TestS3SyncWatcher_wrongPayloadTypeIgnored(t *testing.T) {
 	// Given: a watcher and a function in the store.
 	called := false
-	fetchSpy := func(_ context.Context, _, _ string) ([]byte, error) {
+	fetchSpy := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
 		called = true
 		return nil, nil
 	}
@@ -204,9 +333,9 @@ func TestS3SyncWatcher_functionDeletedDuringFetch_staysDeleted(t *testing.T) {
 	// Given: a watcher whose S3 fetch deletes the function mid-flight — the
 	// deterministic stand-in for a delete racing a slow download.
 	var ls *lambdaStore
-	fetch := func(ctx context.Context, _, _ string) ([]byte, error) {
+	fetch := func(ctx context.Context, _, _ string) ([]byte, *protocol.AWSError) {
 		if aerr := ls.deleteFunction(ctx, "sync-del-fn"); aerr != nil {
-			return nil, errors.New("delete mid-fetch: " + aerr.Message)
+			return nil, protocol.Wrap(protocol.ErrInternalError, errors.New("delete mid-fetch: "+aerr.Message))
 		}
 		return []byte("fresh-zip"), nil
 	}

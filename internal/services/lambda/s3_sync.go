@@ -9,12 +9,13 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // S3FetchFunc retrieves the raw bytes of an S3 object from the emulated S3
 // service. Provided by the router as a closure over the S3 service so that the
 // lambda package does not import the s3 package directly.
-type S3FetchFunc func(ctx context.Context, bucket, key string) ([]byte, error)
+type S3FetchFunc func(ctx context.Context, bucket, key string) ([]byte, *protocol.AWSError)
 
 // s3SyncWatcher subscribes to S3ObjectCreated events on the shared bus and,
 // when the updated object matches the code location of a Lambda function,
@@ -69,6 +70,7 @@ func (w *s3SyncWatcher) onS3ObjectCreated(ctx context.Context, e events.Event) {
 // syncFunctionCode fetches the zip from S3, stores it in the function record,
 // bumps the revision, and retires the warm instance still running the old code.
 func (w *s3SyncWatcher) syncFunctionCode(ctx context.Context, fn *Function) {
+	expectedCodeHash := fn.CodeHash
 	zip, err := w.fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key)
 	if err != nil {
 		w.log.Warn("s3 sync: fetch zip failed",
@@ -80,30 +82,34 @@ func (w *s3SyncWatcher) syncFunctionCode(ctx context.Context, fn *Function) {
 		return
 	}
 
-	// The fetch may be slow, and fn was read before it started. Merge the new
-	// code into a fresh read: writing the pre-fetch snapshot back would
-	// resurrect a function deleted meanwhile (the #414 stale-snapshot family)
-	// or clobber a concurrent revision — and skip entirely when the function
-	// is gone or no longer bound to this object.
-	fresh, aerr := w.ls.getFunction(ctx, fn.Name)
+	// The fetch may be slow, and fn was read before it started. Re-read and
+	// mutate under the code-source lock. The source binding prevents an inline
+	// update from being undone; the code hash fences the exact code generation
+	// observed before the fetch, so an older watcher cannot overwrite a newer
+	// package fetched from the same S3 location. Unrelated configuration updates
+	// deliberately do not invalidate the refresh.
+	var previousIdentity string
+	fresh, changed, aerr := w.ls.mutateFunction(ctx, fn.Name, func(current *Function) (bool, *protocol.AWSError) {
+		if current.CodeS3Bucket != fn.CodeS3Bucket || current.CodeS3Key != fn.CodeS3Key {
+			return false, nil
+		}
+		if current.CodeHash != expectedCodeHash {
+			return false, nil
+		}
+		previousIdentity = functionInstanceIdentity(current)
+		current.setCode(zip)
+		current.RevisionId = uuid.NewString()
+		current.LastModified = w.clk.Now().UTC().Format(time.RFC3339)
+		return true, nil
+	})
 	if aerr != nil {
-		w.log.Warn("s3 sync: re-read function", zap.String("function", fn.Name), zap.Error(aerr))
-		return
-	}
-	if fresh == nil || fresh.CodeS3Bucket != fn.CodeS3Bucket || fresh.CodeS3Key != fn.CodeS3Key {
-		return
-	}
-	previousIdentity := functionInstanceIdentity(fresh)
-
-	fresh.setCode(zip)
-	fresh.RevisionId = uuid.NewString()
-	fresh.LastModified = w.clk.Now().UTC().Format(time.RFC3339)
-
-	if aerr := w.ls.putFunction(ctx, fresh); aerr != nil {
 		w.log.Warn("s3 sync: persist updated function",
-			zap.String("function", fresh.Name),
+			zap.String("function", fn.Name),
 			zap.Error(aerr),
 		)
+		return
+	}
+	if !changed {
 		return
 	}
 

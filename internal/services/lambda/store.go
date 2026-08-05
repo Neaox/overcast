@@ -109,6 +109,28 @@ func (s *lambdaStore) putFunction(ctx context.Context, fn *Function) *protocol.A
 	return nil
 }
 
+// mutateFunction serializes a function read-modify-write cycle. Callers do
+// any slow external work before entering the callback, then re-check the
+// current function state inside it. UpdateFunctionCode and S3 sync use this
+// shared path so stale snapshots cannot restore superseded source metadata.
+func (s *lambdaStore) mutateFunction(ctx context.Context, name string, mutate func(*Function) (bool, *protocol.AWSError)) (*Function, bool, *protocol.AWSError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	fn, aerr := s.getFunction(ctx, name)
+	if aerr != nil || fn == nil {
+		return fn, false, aerr
+	}
+	changed, aerr := mutate(fn)
+	if aerr != nil || !changed {
+		return fn, false, aerr
+	}
+	if aerr := s.putFunction(ctx, fn); aerr != nil {
+		return nil, false, aerr
+	}
+	return fn, true, nil
+}
+
 // loadFunctionCode populates fn.CodeZip from the stored package. Call it on
 // the paths that need the actual bytes — cold start, source viewing and
 // patching — never on the invoke path, which reads CodeHash alone. A record
