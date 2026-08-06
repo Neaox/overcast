@@ -124,6 +124,7 @@ func (h *Handler) resolveAwsvpcPlacement(
 // share the task's one reported address on AWS and cannot be given it here.
 func (h *Handler) attachTaskENI(ctx context.Context, task *Task, placement awsvpcPlacement, dockerID string, carriesENI bool) error {
 	wanted := ""
+	log := h.log.WithRecorder(ctx)
 	if carriesENI && !placement.remapped {
 		wanted = taskTargetAddress(task)
 	}
@@ -137,7 +138,7 @@ func (h *Handler) attachTaskENI(ctx context.Context, task *Task, placement awsvp
 		}
 		// Docker refuses an address outside the network's subnet or already in
 		// use. Neither is fatal: connect on its terms and record what it gave.
-		h.log.Debug("ecs: could not pin the task's ENI address; using Docker's",
+		log.Debug("ecs: could not pin the task's ENI address; using Docker's",
 			zap.String("network", placement.networkID),
 			zap.String("requested", wanted),
 			zap.Error(err))

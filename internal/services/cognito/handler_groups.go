@@ -13,6 +13,7 @@ import (
 
 // createGroup — CreateGroup.
 func (s *Service) createGroup(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID  string `json:"UserPoolId"`
 		GroupName   string `json:"GroupName"`
@@ -60,7 +61,7 @@ func (s *Service) createGroup(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("group created",
+	log.Info("group created",
 		zap.String("poolId", req.UserPoolID), zap.String("group", req.GroupName))
 	s.publish(r, events.CognitoGroupCreated, events.ResourcePayload{Name: req.GroupName})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"Group": toGroupWire(g)})
@@ -90,6 +91,7 @@ func (s *Service) getGroup(w http.ResponseWriter, r *http.Request) {
 
 // deleteGroup — DeleteGroup.
 func (s *Service) deleteGroup(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID string `json:"UserPoolId"`
 		GroupName  string `json:"GroupName"`
@@ -110,7 +112,7 @@ func (s *Service) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("group deleted",
+	log.Info("group deleted",
 		zap.String("poolId", req.UserPoolID), zap.String("group", req.GroupName))
 	s.publish(r, events.CognitoGroupDeleted, events.ResourcePayload{Name: req.GroupName})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})

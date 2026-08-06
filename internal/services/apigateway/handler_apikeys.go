@@ -36,6 +36,7 @@ type createAuthorizerRequest struct {
 
 // CreateAuthorizer handles POST /restapis/{restApiId}/authorizers.
 func (h *Handler) CreateAuthorizer(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	apiID := chi.URLParam(r, "restApiId")
 
 	// Verify the REST API exists.
@@ -74,7 +75,7 @@ func (h *Handler) CreateAuthorizer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("authorizer created",
+	log.Info("authorizer created",
 		zap.String("api_id", apiID),
 		zap.String("authorizer_id", auth.ID),
 		zap.String("name", auth.Name),
@@ -179,6 +180,7 @@ type createAPIKeyRequest struct {
 
 // CreateApiKey handles POST /apikeys.
 func (h *Handler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	var req createAPIKeyRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -210,7 +212,7 @@ func (h *Handler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("API key created", zap.String("key_id", key.ID), zap.String("name", key.Name))
+	log.Info("API key created", zap.String("key_id", key.ID), zap.String("name", key.Name))
 
 	protocol.WriteJSON(w, r, http.StatusCreated, toAPIKeyResponse(key))
 }
@@ -277,6 +279,7 @@ type createUsagePlanRequest struct {
 // behaviour of CDK's `RestApi.addUsagePlan({ apiStages: [...] })`, which
 // does not set a name.
 func (h *Handler) CreateUsagePlan(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	var req createUsagePlanRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -303,7 +306,7 @@ func (h *Handler) CreateUsagePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("usage plan created", zap.String("plan_id", plan.ID), zap.String("name", plan.Name))
+	log.Info("usage plan created", zap.String("plan_id", plan.ID), zap.String("name", plan.Name))
 
 	protocol.WriteJSON(w, r, http.StatusCreated, plan)
 }
@@ -576,6 +579,7 @@ type createV2AuthorizerRequest struct {
 
 // CreateV2Authorizer handles POST /v2/apis/{apiId}/authorizers.
 func (h *Handler) CreateV2Authorizer(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	apiID := chi.URLParam(r, "apiId")
 
 	// Verify the API exists.
@@ -613,7 +617,7 @@ func (h *Handler) CreateV2Authorizer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("v2 authorizer created",
+	log.Info("v2 authorizer created",
 		zap.String("api_id", apiID),
 		zap.String("authorizer_id", auth.AuthorizerID),
 		zap.String("name", auth.Name),

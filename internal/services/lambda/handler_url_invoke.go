@@ -81,6 +81,7 @@ type functionURLProxyResponse struct {
 // InvokeFunctionURL handles Host-routed Lambda function URL invocations —
 // see the file doc above.
 func (h *Handler) InvokeFunctionURL(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	urlID := chi.URLParam(r, "urlId")
 	rawPath := "/" + strings.TrimPrefix(chi.URLParam(r, "*"), "/")
 	ctx := r.Context()
@@ -119,7 +120,7 @@ func (h *Handler) InvokeFunctionURL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if rt == nil {
-		h.log.Warn("function url invoke: no runtime available",
+		log.Warn("function url invoke: no runtime available",
 			zap.String("function", fn.Name), zap.String("runtime", fn.Runtime))
 		writeFunctionURLPlainError(w, http.StatusInternalServerError,
 			"No runtime available for "+fn.Runtime+". Only Node.js runtimes with inline source code can be invoked in the emulator.")
@@ -138,7 +139,7 @@ func (h *Handler) InvokeFunctionURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.ls.addInvocation(ctx, fn, payload); err != nil {
-		h.log.Warn("function url invoke: record invocation", zap.String("function", fn.Name), zap.Error(err))
+		log.Warn("function url invoke: record invocation", zap.String("function", fn.Name), zap.Error(err))
 	}
 
 	// A function URL response has no X-Amz-Log-Result field, so no tail.

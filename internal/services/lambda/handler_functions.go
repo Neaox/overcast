@@ -552,10 +552,11 @@ func functionToConfig(fn *Function) *functionConfiguration {
 
 // ListFunctions handles GET /2015-03-31/functions.
 func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
-	h.log.Debug("list functions")
+	log := h.log.WithRecorder(r.Context())
+	log.Debug("list functions")
 	fns, aerr := h.ls.listFunctions(r.Context())
 	if aerr != nil {
-		h.log.Error("list functions: store error", zap.Error(aerr.Unwrap()))
+		log.Error("list functions: store error", zap.Error(aerr.Unwrap()))
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -584,6 +585,7 @@ func (h *Handler) ListRuntimes(w http.ResponseWriter, _ *http.Request) {
 
 // CreateFunction handles POST /2015-03-31/functions.
 func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	var req createFunctionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
@@ -633,7 +635,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	h.log.Debug("create function", zap.String("function", req.FunctionName), zap.String("runtime", req.Runtime))
+	log.Debug("create function", zap.String("function", req.FunctionName), zap.String("runtime", req.Runtime))
 
 	// Apply AWS defaults.
 	timeout := 3
@@ -812,7 +814,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 			if zip, err := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key); err == nil {
 				fn.setCode(zip)
 			} else {
-				h.log.Warn("lambda: create function: s3 fetch failed",
+				log.Warn("lambda: create function: s3 fetch failed",
 					zap.String("function", fn.Name),
 					zap.String("bucket", fn.CodeS3Bucket),
 					zap.String("key", fn.CodeS3Key),
@@ -861,7 +863,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 
 	pullGeneration, err := imagePullGenerationForFunction(fn)
 	if err != nil {
-		h.log.Error("lambda: create function: resolve prewarm generation", zap.Error(err))
+		log.Error("lambda: create function: resolve prewarm generation", zap.Error(err))
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
@@ -900,7 +902,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 	// created per-invocation with an AWS-style name, not here at create time.
 	if h.logWriter != nil {
 		if err := h.logWriter.EnsureLogGroup(ctx, fn.logGroupName()); err != nil {
-			h.log.Warn("lambda: create function: failed to ensure CWL log group",
+			log.Warn("lambda: create function: failed to ensure CWL log group",
 				zap.String("function", fn.Name),
 				zap.Error(err),
 			)
@@ -1163,8 +1165,9 @@ func (h *Handler) DeleteFunctionCodeSigningConfig(w http.ResponseWriter, r *http
 // GetFunction handles GET /2015-03-31/functions/{name}.
 // Returns FunctionConfiguration + Code location block.
 func (h *Handler) GetFunction(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("get function", zap.String("function", name))
+	log.Debug("get function", zap.String("function", name))
 	fn, aerr := h.ls.getFunction(r.Context(), name)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -1200,8 +1203,9 @@ func (h *Handler) GetFunction(w http.ResponseWriter, r *http.Request) {
 // GetFunctionConfiguration handles GET /2015-03-31/functions/{name}/configuration.
 // Returns FunctionConfiguration only (no Code block), matching AWS behaviour.
 func (h *Handler) GetFunctionConfiguration(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("get function configuration", zap.String("function", name))
+	log.Debug("get function configuration", zap.String("function", name))
 	fn, aerr := h.ls.getFunction(r.Context(), name)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -1223,8 +1227,9 @@ func (h *Handler) GetFunctionConfiguration(w http.ResponseWriter, r *http.Reques
 
 // UpdateFunctionCode handles PUT /2015-03-31/functions/{name}/code.
 func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("update function code", zap.String("function", name))
+	log.Debug("update function code", zap.String("function", name))
 	ctx := r.Context()
 
 	fn, aerr := h.ls.getFunction(ctx, name)
@@ -1395,8 +1400,9 @@ func lambdaS3CodeFetchError(s3Err *protocol.AWSError) *protocol.AWSError {
 
 // UpdateFunctionConfiguration handles PUT /2015-03-31/functions/{name}/configuration.
 func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("update function configuration", zap.String("function", name))
+	log.Debug("update function configuration", zap.String("function", name))
 	ctx := r.Context()
 
 	fn, aerr := h.ls.getFunction(ctx, name)
@@ -1649,8 +1655,9 @@ func (h *Handler) retireExecutionEnvironment(fn *Function, previousIdentity stri
 
 // DeleteFunction handles DELETE /2015-03-31/functions/{name}.
 func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("delete function", zap.String("function", name))
+	log.Debug("delete function", zap.String("function", name))
 	ctx := r.Context()
 
 	fn, aerr := h.ls.getFunction(ctx, name)
@@ -1697,6 +1704,7 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 // InvokeFunction handles POST /2015-03-31/functions/{name}/invocations.
 // https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html
 func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	ctx := r.Context()
 
@@ -1726,7 +1734,7 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	if invocationType == "" {
 		invocationType = "RequestResponse"
 	}
-	h.log.Debug("invoke function", zap.String("function", name),
+	log.Debug("invoke function", zap.String("function", name),
 		zap.String("invocation_type", invocationType))
 
 	// DryRun: validate function exists and return 204 — no execution.
@@ -1739,7 +1747,7 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	// Read the event payload (may be empty for no-payload invocations).
 	payload, err := io.ReadAll(io.LimitReader(r.Body, 6*1024*1024)) // 6 MB sync limit
 	if err != nil {
-		h.log.Error("invoke: read payload", zap.String("function", name), zap.Error(err))
+		log.Error("invoke: read payload", zap.String("function", name), zap.Error(err))
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidRequestContentException", Message: "Could not read request body.", HTTPStatus: http.StatusBadRequest})
 		return
 	}
@@ -1749,7 +1757,7 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 
 	// Record invocation.
 	if err := h.ls.addInvocation(ctx, fn, payload); err != nil {
-		h.log.Warn("invoke: record invocation", zap.String("function", name), zap.Error(err))
+		log.Warn("invoke: record invocation", zap.String("function", name), zap.Error(err))
 	}
 
 	// Find a runtime that can handle this function.
@@ -1761,7 +1769,7 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if rt == nil {
-		h.log.Warn("invoke: no runtime available", zap.String("function", name), zap.String("runtime", fn.Runtime))
+		log.Warn("invoke: no runtime available", zap.String("function", name), zap.String("runtime", fn.Runtime))
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidRuntimeException",
 			Message:    "No runtime available for " + fn.Runtime + ". Only Node.js runtimes with inline source code can be invoked in the emulator.",
 			HTTPStatus: http.StatusBadRequest})
@@ -1865,6 +1873,7 @@ func invokableStateMessage(state string) string {
 // corresponds to a stored layer version. Returns the ARN of the first missing
 // layer, or "" when all layers exist.
 func (h *Handler) checkLayerVersionsExist(ctx context.Context, fn *Function) string {
+	log := h.log.WithRecorder(ctx)
 	for _, layer := range fn.Layers {
 		arn := strings.TrimSpace(layer.ARN)
 		if arn == "" {
@@ -1872,7 +1881,7 @@ func (h *Handler) checkLayerVersionsExist(ctx context.Context, fn *Function) str
 		}
 		lv, aerr := h.getLayerVersionByARNOrCachedExternal(ctx, arn)
 		if aerr != nil {
-			h.log.Error("invoke: check layer version", zap.String("arn", arn), zap.Error(aerr))
+			log.Error("invoke: check layer version", zap.String("arn", arn), zap.Error(aerr))
 			return arn
 		}
 		if lv == nil {
@@ -1940,6 +1949,7 @@ func writeInvokeError(w http.ResponseWriter, layerARN, errorType string) {
 // invokeSync acquires a runtime instance, invokes the function, and returns the
 // result, writing an error response and returning nil on failure.
 func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string, opts InvokeOptions) *InvokeResult {
+	log := h.log.WithRecorder(ctx)
 	inv := h.tracker.Begin(name, payload)
 	releaseSuccess := false
 	releaseReason := ""
@@ -1989,7 +1999,7 @@ func (h *Handler) invokeSync(ctx context.Context, fn *Function, rt Runtime, payl
 		if !result.acquireFailed {
 			return result
 		}
-		h.log.Warn("invoke: Docker acquire failed, retrying",
+		log.Warn("invoke: Docker acquire failed, retrying",
 			zap.String("function", name),
 			zap.Int("attempt", attempt),
 		)
@@ -2074,6 +2084,7 @@ func (h *Handler) awaitRuntimeReady(ctx context.Context, fn *Function, rt Runtim
 
 // invokeSyncOnce performs a single acquire → invoke → release cycle.
 func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte, name string, inv *trackedInvocation, opts InvokeOptions) *InvokeResult {
+	log := h.log.WithRecorder(ctx)
 	acquireTimeout := 30 * time.Second
 	// For very short function timeouts, keep acquire tighter.
 	if fn.Timeout > 0 && fn.Timeout <= 5 {
@@ -2087,7 +2098,7 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 		if t, ok := asThrottle(err); ok {
 			return &InvokeResult{StatusCode: 429, throttle: t}
 		}
-		h.log.Error("invoke: acquire instance", zap.String("function", name), zap.Error(err))
+		log.Error("invoke: acquire instance", zap.String("function", name), zap.Error(err))
 		return &InvokeResult{
 			StatusCode:    200,
 			Payload:       []byte(fmt.Sprintf(`{"errorMessage":%q,"errorType":"Runtime.InitError"}`, err.Error())),
@@ -2099,7 +2110,7 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 	inv.Ready()
 	if err := h.awaitRuntimeReady(ctx, fn, rt, inst); err != nil {
 		rt.Release(ctx, inst, false)
-		h.log.Error("invoke: runtime init", zap.String("function", name), zap.Error(err))
+		log.Error("invoke: runtime init", zap.String("function", name), zap.Error(err))
 		return &InvokeResult{
 			StatusCode:    200,
 			Payload:       []byte(fmt.Sprintf(`{"errorMessage":%q,"errorType":"Runtime.InitError"}`, err.Error())),
@@ -2125,7 +2136,7 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 		}
 		fnCtx := middleware.ContextWithRegion(ctx, fnRegion)
 		if lsErr := h.logWriter.EnsureLogStream(fnCtx, fn.logGroupName(), logStreamName); lsErr != nil {
-			h.log.Debug("invoke: ensure log stream", zap.String("function", name), zap.Error(lsErr))
+			log.Debug("invoke: ensure log stream", zap.String("function", name), zap.Error(lsErr))
 		}
 	}
 
@@ -2135,13 +2146,13 @@ func (h *Handler) invokeSyncOnce(ctx context.Context, fn *Function, rt Runtime, 
 	invokeCtx, cancel := context.WithTimeout(ctx, functionTimeout(fn))
 	defer cancel()
 
-	h.log.Debug("invoke function: dispatching", zap.String("function", name), zap.Int("payload_bytes", len(payload)))
+	log.Debug("invoke function: dispatching", zap.String("function", name), zap.Int("payload_bytes", len(payload)))
 	result, invokeErr := inst.Invoke(invokeCtx, payload, opts)
 	healthy := invokeErr == nil
 	rt.Release(invokeCtx, inst, healthy)
 
 	if invokeErr != nil {
-		h.log.Error("invoke: execution error", zap.String("function", name), zap.Error(invokeErr))
+		log.Error("invoke: execution error", zap.String("function", name), zap.Error(invokeErr))
 		return &InvokeResult{
 			StatusCode:    200,
 			Payload:       invokeFailurePayload(invokeErr),
@@ -2169,6 +2180,7 @@ const (
 // while the function is throttled rather than dropping the event on the first
 // refusal.
 func (h *Handler) acquireForAsync(ctx context.Context, fn *Function, rt Runtime) (RuntimeInstance, error) {
+	log := h.log.WithRecorder(ctx)
 	var err error
 	for attempt := 0; ; attempt++ {
 		var inst RuntimeInstance
@@ -2179,7 +2191,7 @@ func (h *Handler) acquireForAsync(ctx context.Context, fn *Function, rt Runtime)
 		if _, throttled := asThrottle(err); !throttled || attempt >= asyncThrottleRetries {
 			return nil, err
 		}
-		h.log.Debug("invokeAsync: throttled, retrying",
+		log.Debug("invokeAsync: throttled, retrying",
 			zap.String("function", fn.Name),
 			zap.Int("attempt", attempt+1),
 		)
@@ -2214,6 +2226,8 @@ func (h *Handler) startAsync(fn *Function, rt Runtime, payload []byte) bool {
 
 	go func() {
 		defer h.asyncWg.Done()
+		log := h.log.WithRecorder(context.Background())
+		_ = log
 		h.invokeAsync(fn, rt, payload)
 	}()
 	return true
@@ -2285,6 +2299,7 @@ const sseKeepaliveInterval = 15 * time.Second
 // Emulator-only endpoint that streams lifecycle progress events as SSE, then
 // sends the final invoke result. Used by the web UI Test tab.
 func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	ctx := r.Context()
 
@@ -2343,7 +2358,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 
 	// Record invocation.
 	if err := h.ls.addInvocation(ctx, fn, payload); err != nil {
-		h.log.Warn("invoke-sse: record invocation", zap.String("function", name), zap.Error(err))
+		log.Warn("invoke-sse: record invocation", zap.String("function", name), zap.Error(err))
 	}
 
 	// Find runtime.
@@ -2380,7 +2395,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		inv.Abandon(err.Error())
-		h.log.Error("invoke-sse: acquire instance", zap.String("function", name), zap.Error(err))
+		log.Error("invoke-sse: acquire instance", zap.String("function", name), zap.Error(err))
 		sendEvent("error", err.Error())
 		return
 	}
@@ -2389,7 +2404,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 	if err := h.awaitRuntimeReady(ctx, fn, rt, inst); err != nil {
 		rt.Release(ctx, inst, false)
 		inv.Abandon(err.Error())
-		h.log.Error("invoke-sse: runtime init", zap.String("function", name), zap.Error(err))
+		log.Error("invoke-sse: runtime init", zap.String("function", name), zap.Error(err))
 		sendEvent("error", err.Error())
 		return
 	}
@@ -2407,7 +2422,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 		}
 		fnCtx := middleware.ContextWithRegion(ctx, fnRegion)
 		if lsErr := h.logWriter.EnsureLogStream(fnCtx, fn.logGroupName(), logStreamName); lsErr != nil {
-			h.log.Debug("invoke-sse: ensure log stream", zap.String("function", name), zap.Error(lsErr))
+			log.Debug("invoke-sse: ensure log stream", zap.String("function", name), zap.Error(lsErr))
 		}
 	}
 
@@ -2448,7 +2463,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 	inv.Finish(invocationOutcome(invokeErr, result))
 
 	if invokeErr != nil {
-		h.log.Error("invoke-sse: execution error", zap.String("function", name), zap.Error(invokeErr))
+		log.Error("invoke-sse: execution error", zap.String("function", name), zap.Error(invokeErr))
 		errResult := InvokeResult{
 			StatusCode:    200,
 			Payload:       invokeFailurePayload(invokeErr),
@@ -2490,12 +2505,13 @@ func invokeResultToJSON(r *InvokeResult) map[string]interface{} {
 // ListTestEvents handles GET /2015-03-31/functions/{name}/test-events.
 // Emulator-only endpoint for the web UI's Test tab.
 func (h *Handler) ListTestEvents(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	ctx := r.Context()
 
 	events, err := h.ls.listTestEvents(ctx, name)
 	if err != nil {
-		h.log.Error("list test events", zap.String("function", name), zap.Error(err))
+		log.Error("list test events", zap.String("function", name), zap.Error(err))
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
@@ -2516,6 +2532,7 @@ func (h *Handler) ListTestEvents(w http.ResponseWriter, r *http.Request) {
 // PutTestEvent handles PUT /2015-03-31/functions/{name}/test-events/{eventName}.
 // Emulator-only endpoint for creating or updating saved test events.
 func (h *Handler) PutTestEvent(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	eventName := chi.URLParam(r, "eventName")
 	ctx := r.Context()
@@ -2533,7 +2550,7 @@ func (h *Handler) PutTestEvent(w http.ResponseWriter, r *http.Request) {
 		Body:         req.Body,
 	}
 	if err := h.ls.putTestEvent(ctx, te); err != nil {
-		h.log.Error("put test event", zap.String("function", name), zap.String("event", eventName), zap.Error(err))
+		log.Error("put test event", zap.String("function", name), zap.String("event", eventName), zap.Error(err))
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
@@ -2546,12 +2563,13 @@ func (h *Handler) PutTestEvent(w http.ResponseWriter, r *http.Request) {
 // DeleteTestEvent handles DELETE /2015-03-31/functions/{name}/test-events/{eventName}.
 // Emulator-only endpoint for removing saved test events.
 func (h *Handler) DeleteTestEvent(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	eventName := chi.URLParam(r, "eventName")
 	ctx := r.Context()
 
 	if err := h.ls.deleteTestEvent(ctx, name, eventName); err != nil {
-		h.log.Error("delete test event", zap.String("function", name), zap.String("event", eventName), zap.Error(err))
+		log.Error("delete test event", zap.String("function", name), zap.String("event", eventName), zap.Error(err))
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}

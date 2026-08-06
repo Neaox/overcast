@@ -89,6 +89,7 @@ type createDeploymentRequest struct {
 }
 
 func (h *Handler) CreateDeployment(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	apiID := chi.URLParam(r, "restApiId")
 
 	if _, aerr := h.store.getRestAPI(r.Context(), apiID); aerr != nil {
@@ -135,7 +136,7 @@ func (h *Handler) CreateDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.log.Info("deployment created",
+	log.Info("deployment created",
 		zap.String("api_id", apiID),
 		zap.String("deployment_id", dep.ID),
 	)

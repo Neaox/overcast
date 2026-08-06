@@ -210,11 +210,12 @@ func (h *Handler) reportThrottle(
 	plan *UsagePlan, key *APIKey, apiID, stageName string,
 	d usageDecision, enforced bool,
 ) {
+	log := h.log.WithRecorder(r.Context())
 	if !h.usage.shouldReport(usageKey{planID: plan.ID, keyID: key.ID}, now) {
 		return
 	}
 
-	h.log.Warn("usage plan limit reached",
+	log.Warn("usage plan limit reached",
 		zap.String("reason", string(d.Reason)),
 		zap.Bool("enforced", enforced),
 		zap.String("usage_plan_id", plan.ID),

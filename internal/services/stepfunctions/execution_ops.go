@@ -53,6 +53,7 @@ const (
 //
 // depth is the nesting level for `states:startExecution` children.
 func (h *Handler) startExecution(ctx context.Context, smARN, execName, input string, depth int, mode executionMode) (*Execution, *protocol.AWSError) {
+	log := h.log.WithRecorder(ctx)
 	region := middleware.RegionFromContext(ctx, h.cfg.Region)
 	smName := extractSMName(smARN)
 	sm, err := h.store.GetStateMachine(ctx, smName)
@@ -139,7 +140,7 @@ func (h *Handler) startExecution(ctx context.Context, smARN, execName, input str
 		defer h.releaseRun(execARN)
 		defer h.recoverExecution(runCtx, &running)
 		if err := h.completeExecution(runCtx, sm, &running, region, depth, run); err != nil {
-			h.log.Logger().Error("stepfunctions: could not persist execution result",
+			log.Logger().Error("stepfunctions: could not persist execution result",
 				zap.String("execution", execARN), zap.Error(err))
 		}
 	}()
@@ -176,11 +177,12 @@ func (h *Handler) completeExecution(ctx context.Context, sm *StateMachine, exec 
 // process down — the HTTP recovery middleware does not cover a goroutine — and
 // leaves the execution FAILED rather than RUNNING forever.
 func (h *Handler) recoverExecution(ctx context.Context, exec *Execution) {
+	log := h.log.WithRecorder(ctx)
 	r := recover()
 	if r == nil {
 		return
 	}
-	h.log.Logger().Error("stepfunctions: execution panicked",
+	log.Logger().Error("stepfunctions: execution panicked",
 		zap.String("execution", exec.ExecutionArn), zap.Any("panic", r))
 	stopped := h.clk.Now()
 	exec.Status = statusFailed
@@ -188,7 +190,7 @@ func (h *Handler) recoverExecution(ctx context.Context, exec *Execution) {
 	exec.Error = errRuntime
 	exec.Cause = fmt.Sprintf("the execution panicked inside Overcast's interpreter: %v", r)
 	if err := h.store.PutExecution(ctx, exec); err != nil {
-		h.log.Logger().Error("stepfunctions: could not persist panicked execution",
+		log.Logger().Error("stepfunctions: could not persist panicked execution",
 			zap.String("execution", exec.ExecutionArn), zap.Error(err))
 	}
 }

@@ -131,8 +131,9 @@ func qualifiedFunctionARN(fn *Function, qualifier string) string {
 
 // PutFunctionConcurrency handles PUT /2017-10-31/functions/{name}/concurrency.
 func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("put function concurrency", zap.String("function", name))
+	log.Debug("put function concurrency", zap.String("function", name))
 	ctx := r.Context()
 
 	fn, aerr := h.ls.getFunction(ctx, name)
@@ -183,8 +184,9 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 
 // GetFunctionConcurrency handles GET /2019-09-30/functions/{name}/concurrency.
 func (h *Handler) GetFunctionConcurrency(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("get function concurrency", zap.String("function", name))
+	log.Debug("get function concurrency", zap.String("function", name))
 
 	fn, aerr := h.ls.getFunction(r.Context(), name)
 	if aerr != nil {
@@ -217,8 +219,9 @@ func (h *Handler) GetFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 
 // DeleteFunctionConcurrency handles DELETE /2017-10-31/functions/{name}/concurrency.
 func (h *Handler) DeleteFunctionConcurrency(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("delete function concurrency", zap.String("function", name))
+	log.Debug("delete function concurrency", zap.String("function", name))
 	ctx := r.Context()
 
 	fn, aerr := h.ls.getFunction(ctx, name)
@@ -263,9 +266,10 @@ const (
 // PutProvisionedConcurrencyConfig handles PUT /2015-03-31/functions/{name}/provisioned-concurrency.
 // The Qualifier query parameter is required (version number or alias name).
 func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	qualifier := r.URL.Query().Get("Qualifier")
-	h.log.Debug("put provisioned concurrency", zap.String("function", name), zap.String("qualifier", qualifier))
+	log.Debug("put provisioned concurrency", zap.String("function", name), zap.String("qualifier", qualifier))
 	ctx := r.Context()
 
 	if qualifier == "" {
@@ -326,7 +330,7 @@ func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 	if pool := h.pool(); pool != nil {
 		pool.SetProvisionedConcurrency(fn, req.ProvisionedConcurrentExecutions)
 	} else {
-		h.log.Warn("provisioned concurrency configured but Docker is unavailable — no environments will be allocated",
+		log.Warn("provisioned concurrency configured but Docker is unavailable — no environments will be allocated",
 			zap.String("function", name))
 	}
 
@@ -337,9 +341,10 @@ func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 
 // DeleteProvisionedConcurrencyConfig handles DELETE /2015-03-31/functions/{name}/provisioned-concurrency.
 func (h *Handler) DeleteProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	qualifier := r.URL.Query().Get("Qualifier")
-	h.log.Debug("delete provisioned concurrency", zap.String("function", name), zap.String("qualifier", qualifier))
+	log.Debug("delete provisioned concurrency", zap.String("function", name), zap.String("qualifier", qualifier))
 	ctx := r.Context()
 
 	if qualifier == "" {
@@ -388,8 +393,9 @@ func (h *Handler) GetOrListProvisionedConcurrency(w http.ResponseWriter, r *http
 // ListProvisionedConcurrencyConfigs handles
 // GET /2019-09-30/functions/{name}/provisioned-concurrency?List=ALL.
 func (h *Handler) ListProvisionedConcurrencyConfigs(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("list provisioned concurrency", zap.String("function", name))
+	log.Debug("list provisioned concurrency", zap.String("function", name))
 	ctx := r.Context()
 
 	fn, aerr := h.ls.getFunction(ctx, name)
@@ -428,9 +434,10 @@ func (h *Handler) ListProvisionedConcurrencyConfigs(w http.ResponseWriter, r *ht
 
 // GetProvisionedConcurrencyConfig handles GET /2015-03-31/functions/{name}/provisioned-concurrency.
 func (h *Handler) GetProvisionedConcurrencyConfig(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	qualifier := r.URL.Query().Get("Qualifier")
-	h.log.Debug("get provisioned concurrency", zap.String("function", name), zap.String("qualifier", qualifier))
+	log.Debug("get provisioned concurrency", zap.String("function", name), zap.String("qualifier", qualifier))
 	ctx := r.Context()
 
 	if qualifier == "" {

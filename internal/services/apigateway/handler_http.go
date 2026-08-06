@@ -33,6 +33,7 @@ type createV2APIRequest struct {
 }
 
 func (h *Handler) CreateV2Api(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	var req createV2APIRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -48,7 +49,7 @@ func (h *Handler) CreateV2Api(w http.ResponseWriter, r *http.Request) {
 
 	// TODO(priority:P3): implement WEBSOCKET protocol type — currently only HTTP is fully supported
 	if req.ProtocolType == "WEBSOCKET" {
-		h.log.Debug("CreateApi: WEBSOCKET protocol type stored but execution not implemented")
+		log.Debug("CreateApi: WEBSOCKET protocol type stored but execution not implemented")
 	}
 
 	apiID := generateAPIID()
@@ -77,7 +78,7 @@ func (h *Handler) CreateV2Api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("HTTP API created",
+	log.Info("HTTP API created",
 		zap.String("api_id", apiID),
 		zap.String("name", req.Name),
 		zap.String("protocol", req.ProtocolType),
@@ -187,6 +188,7 @@ func (h *Handler) UpdateV2Api(w http.ResponseWriter, r *http.Request) {
 // ---- DeleteApi (v2) -------------------------------------------------------
 
 func (h *Handler) DeleteV2Api(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	apiID := chi.URLParam(r, "apiId")
 
 	api, aerr := h.store.getV2API(r.Context(), apiID)
@@ -206,7 +208,7 @@ func (h *Handler) DeleteV2Api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("HTTP API deleted",
+	log.Info("HTTP API deleted",
 		zap.String("api_id", apiID),
 		zap.String("name", api.Name),
 	)

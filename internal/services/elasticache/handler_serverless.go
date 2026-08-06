@@ -181,12 +181,13 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 		go func(cacheName string) {
 			defer h.dockerWg.Done()
 			bgCtx := middleware.ContextWithRegion(context.Background(), region)
+			log := h.log.WithRecorder(bgCtx)
 			got, aerr := h.store.getServerlessCache(bgCtx, cacheName)
 			if aerr != nil || got == nil {
 				return
 			}
 			if err := h.startServerlessCacheContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for serverless cache — falling back to metadata-only",
+				log.Warn("failed to start Docker container for serverless cache — falling back to metadata-only",
 					zap.String("cache", cacheName), zap.Error(err))
 				h.serverlessFallbackAvailable(region, cacheName)
 				return
@@ -207,7 +208,7 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 				return nil
 			}); aerr != nil {
 				if aerr != errRecordMovedOn {
-					h.log.Warn("ElastiCache: persist post-start serverless cache",
+					log.Warn("ElastiCache: persist post-start serverless cache",
 						zap.String("cache", cacheName), zap.String("error", aerr.Message))
 				}
 				h.teardownOrphanedContainer(bgCtx, "serverless cache", cacheName, got.DockerContainerID, got.HostPort)
@@ -378,13 +379,15 @@ func (h *Handler) DeleteServerlessCache(w http.ResponseWriter, r *http.Request) 
 		_ = h.store.releasePort(r.Context(), hostPort) //nolint:errcheck
 	}
 	h.scheduler.AfterScoped(h.store.region(r.Context()), name, "serverless-delete", 50*time.Millisecond, func(ctx context.Context) {
+		log := h.log.WithRecorder(ctx)
 		if aerr := h.store.deleteServerlessCache(ctx, name); aerr != nil {
-			h.log.Warn("failed to delete serverless cache record", zap.String("cache", name), zap.Error(aerr))
+			log.Warn("failed to delete serverless cache record", zap.String("cache", name), zap.Error(aerr))
 		}
 	})
 }
 
 func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *ServerlessCache) error {
+	log := h.log.WithRecorder(ctx)
 	image := engineImage(c.Engine, c.FullEngineVersion)
 	port := enginePort(c.Engine)
 	containerName := "overcast-elasticache-serverless-" + c.ServerlessCacheName
@@ -430,7 +433,7 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 	}
 	network := h.network()
 	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
-		h.log.Warn("ElastiCache: failed to create network (may already exist)", zap.String("network", network), zap.Error(err))
+		log.Warn("ElastiCache: failed to create network (may already exist)", zap.String("network", network), zap.Error(err))
 	}
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
@@ -516,6 +519,7 @@ func (h *Handler) scheduleServerlessHealthCheck(region, name, host string, port 
 	var attempt int
 	var check func(ctx context.Context)
 	check = func(ctx context.Context) {
+		log := h.log.WithRecorder(ctx)
 		attempt++
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
@@ -527,7 +531,7 @@ func (h *Handler) scheduleServerlessHealthCheck(region, name, host string, port 
 			h.scheduler.AfterScoped(region, name, "serverless-health", 2*time.Second, check)
 			return
 		}
-		h.log.Warn("ElastiCache serverless health check timed out", zap.String("cache", name), zap.Int("attempts", attempt))
+		log.Warn("ElastiCache serverless health check timed out", zap.String("cache", name), zap.Int("attempts", attempt))
 		h.serverlessFallbackAvailable(region, name)
 	}
 	h.scheduler.AfterScoped(region, name, "serverless-health", 1*time.Second, check)

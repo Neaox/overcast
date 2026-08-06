@@ -28,6 +28,7 @@ import (
 // InvokeWithResponseStream handles
 // POST /2021-11-15/functions/{name}/response-streaming-invocations.
 func (h *Handler) InvokeWithResponseStream(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	ctx := r.Context()
 
@@ -74,7 +75,7 @@ func (h *Handler) InvokeWithResponseStream(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.ls.addInvocation(ctx, fn, payload); err != nil {
-		h.log.Warn("invoke-stream: record invocation", zap.String("function", name), zap.Error(err))
+		log.Warn("invoke-stream: record invocation", zap.String("function", name), zap.Error(err))
 	}
 
 	var rt Runtime

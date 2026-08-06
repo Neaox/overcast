@@ -156,6 +156,7 @@ var eventSeq atomic.Uint64
 func (h *Handler) recordInstanceEvent(ctx context.Context, instanceID, message string, categories ...string) {
 	now := h.clk.Now().UTC()
 	region := h.store.region(ctx)
+	log := h.log.WithRecorder(ctx)
 	e := &DBEvent{
 		SourceIdentifier: instanceID,
 		SourceType:       sourceTypeDBInstance,
@@ -166,7 +167,7 @@ func (h *Handler) recordInstanceEvent(ctx context.Context, instanceID, message s
 	}
 	key := fmt.Sprintf("%019d-%010d", now.UnixNano(), eventSeq.Add(1))
 	if aerr := h.store.putEvent(ctx, key, e); aerr != nil {
-		h.log.Warn("RDS: record event",
+		log.Warn("RDS: record event",
 			zap.String("instance", instanceID), zap.String("error", aerr.Message))
 		return
 	}

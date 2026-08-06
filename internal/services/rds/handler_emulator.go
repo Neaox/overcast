@@ -146,12 +146,13 @@ func logsExplanation(inst *DBInstance, out *logsResponse, dockerReady bool, live
 // the caller persists. Best-effort by design — a database that will not start
 // must still reach "failed" when its logs cannot be read.
 func (h *Handler) captureContainerLogs(ctx context.Context, inst *DBInstance) {
+	log := h.log.WithRecorder(ctx)
 	if inst == nil || !h.dockerReady.Load() || inst.DockerContainerID == "" || h.docker == nil {
 		return
 	}
 	raw, err := h.docker.ContainerLogs(ctx, inst.DockerContainerID, "200")
 	if err != nil {
-		h.log.Debug("RDS: could not capture container logs",
+		log.Debug("RDS: could not capture container logs",
 			zap.String("instance", inst.DBInstanceIdentifier), zap.Error(err))
 		return
 	}

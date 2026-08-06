@@ -59,6 +59,7 @@ func (s *Service) checkSecretHash(w http.ResponseWriter, r *http.Request, c *Use
 // Registers a new user with UNCONFIRMED status. If the user provides an email
 // attribute, a verification code is sent via the configured SMTP mailer.
 func (s *Service) signUp(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		ClientID       string          `json:"ClientId"`
 		Username       string          `json:"Username"`
@@ -158,7 +159,7 @@ func (s *Service) signUp(w http.ResponseWriter, r *http.Request) {
 		s.sendVerificationSMS(pool, phone, u.Username, code)
 	}
 
-	s.log.Info("user signed up",
+	log.Info("user signed up",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoUserCreated, events.ResourcePayload{Name: req.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
@@ -169,6 +170,7 @@ func (s *Service) signUp(w http.ResponseWriter, r *http.Request) {
 
 // confirmSignUp — ConfirmSignUp.
 func (s *Service) confirmSignUp(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		ClientID           string `json:"ClientId"`
 		Username           string `json:"Username"`
@@ -246,7 +248,7 @@ func (s *Service) confirmSignUp(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user confirmed signup",
+	log.Info("user confirmed signup",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoUserConfirmed, events.ResourcePayload{Name: req.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"Session": session})
@@ -557,6 +559,7 @@ func (s *Service) checkCustomAuthFlowAllowed(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Service) handleUserAuthWithConfirmSession(w http.ResponseWriter, r *http.Request, client *UserPoolClient, params map[string]string, session string) {
+	log := s.log.WithRecorder(r.Context())
 	username := params["USERNAME"]
 	if username == "" {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
@@ -669,7 +672,7 @@ func (s *Service) handleUserAuthWithConfirmSession(w http.ResponseWriter, r *htt
 		return
 	}
 	_ = s.removeToken(r.Context(), session)
-	s.log.Info("user authenticated from confirm signup session",
+	log.Info("user authenticated from confirm signup session",
 		zap.String("poolId", client.UserPoolID), zap.String("username", username))
 	s.publish(r, events.CognitoSignIn, events.ResourcePayload{Name: username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"AuthenticationResult": result})
@@ -968,6 +971,7 @@ func (s *Service) completeSRPVerifierChallenge(w http.ResponseWriter, r *http.Re
 
 // handlePasswordAuth is the shared USER_PASSWORD_AUTH / ADMIN_USER_PASSWORD_AUTH logic.
 func (s *Service) handlePasswordAuth(w http.ResponseWriter, r *http.Request, client *UserPoolClient, params map[string]string) {
+	log := s.log.WithRecorder(r.Context())
 	poolID := client.UserPoolID
 	username := params["USERNAME"]
 	password := params["PASSWORD"]
@@ -1063,7 +1067,7 @@ func (s *Service) handlePasswordAuth(w http.ResponseWriter, r *http.Request, cli
 		return
 	}
 	s.attachNewDeviceMetadata(r.Context(), pool, result, params)
-	s.log.Info("user authenticated",
+	log.Info("user authenticated",
 		zap.String("poolId", poolID), zap.String("username", username))
 	s.publish(r, events.CognitoSignIn, events.ResourcePayload{Name: username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"AuthenticationResult": result})
@@ -1291,6 +1295,7 @@ func (s *Service) adminRespondToAuthChallenge(w http.ResponseWriter, r *http.Req
 
 // handleNewPasswordChallenge resolves a NEW_PASSWORD_REQUIRED challenge.
 func (s *Service) handleNewPasswordChallenge(w http.ResponseWriter, r *http.Request, client *UserPoolClient, session string, responses map[string]string) {
+	log := s.log.WithRecorder(r.Context())
 	poolID := client.UserPoolID
 	if session == "" {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
@@ -1360,7 +1365,7 @@ func (s *Service) handleNewPasswordChallenge(w http.ResponseWriter, r *http.Requ
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user completed new-password challenge",
+	log.Info("user completed new-password challenge",
 		zap.String("poolId", poolID), zap.String("username", u.Username))
 	s.publish(r, events.CognitoUserConfirmed, events.ResourcePayload{Name: u.Username})
 	s.publish(r, events.CognitoPasswordChanged, events.ResourcePayload{Name: u.Username})
@@ -1369,6 +1374,7 @@ func (s *Service) handleNewPasswordChallenge(w http.ResponseWriter, r *http.Requ
 
 // handleMFAChallenge resolves a SOFTWARE_TOKEN_MFA challenge.
 func (s *Service) handleMFAChallenge(w http.ResponseWriter, r *http.Request, client *UserPoolClient, session string, responses map[string]string) {
+	log := s.log.WithRecorder(r.Context())
 	poolID := client.UserPoolID
 	if session == "" {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
@@ -1420,7 +1426,7 @@ func (s *Service) handleMFAChallenge(w http.ResponseWriter, r *http.Request, cli
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user completed MFA challenge",
+	log.Info("user completed MFA challenge",
 		zap.String("poolId", poolID), zap.String("username", u.Username))
 	s.publish(r, events.CognitoSignIn, events.ResourcePayload{Name: u.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"AuthenticationResult": result})
@@ -1505,6 +1511,7 @@ func (s *Service) forgotPassword(w http.ResponseWriter, r *http.Request) {
 
 // confirmForgotPassword — ConfirmForgotPassword.
 func (s *Service) confirmForgotPassword(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		ClientID         string `json:"ClientId"`
 		Username         string `json:"Username"`
@@ -1574,7 +1581,7 @@ func (s *Service) confirmForgotPassword(w http.ResponseWriter, r *http.Request) 
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user confirmed password reset",
+	log.Info("user confirmed password reset",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoPasswordChanged, events.ResourcePayload{Name: req.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})

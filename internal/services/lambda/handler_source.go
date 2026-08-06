@@ -482,6 +482,7 @@ func (h *Handler) GetFunctionSource(w http.ResponseWriter, r *http.Request) {
 // PutFunctionSource handles PUT /2015-03-31/functions/{name}/source.
 // Stores the source text, packs it into a zip, and updates the function.
 func (h *Handler) PutFunctionSource(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	ctx := r.Context()
 
@@ -534,7 +535,7 @@ func (h *Handler) PutFunctionSource(w http.ResponseWriter, r *http.Request) {
 		return packSourceAsZip(req.Filename, req.Source)
 	}()
 	if err != nil {
-		h.log.Error("put function source: zip packaging failed",
+		log.Error("put function source: zip packaging failed",
 			zap.String("function", name), zap.Error(err))
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
