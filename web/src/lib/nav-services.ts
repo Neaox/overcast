@@ -16,6 +16,7 @@ import {
   Activity,
   Bug,
   BookOpen,
+  Workflow,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -117,6 +118,14 @@ export const BOTTOM_ITEMS: BottomNavItem[] = [
     label: "Debug",
     icon: Bug,
     color: "text-rose-400",
+    debugOnly: true,
+  },
+  {
+    key: "/debug/traces",
+    to: "/debug/traces",
+    label: "Traces",
+    icon: Workflow,
+    color: "text-purple-400",
     debugOnly: true,
   },
   { key: "/inbox", to: "/inbox", label: "Inbox", icon: Inbox, color: "text-amber-400" },

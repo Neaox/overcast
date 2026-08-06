@@ -5,6 +5,10 @@ import type {
   TopologyResponse,
   CapturedMessage,
   DebugMetricsResponse,
+  TraceEntry,
+  TraceListResponse,
+  TraceCountResponse,
+  TraceListParams,
 } from "@/types"
 
 export const metrics = {
@@ -108,4 +112,24 @@ export const debugState = {
     }
     return res.text()
   },
+}
+
+export const debugTrace = {
+  get: (requestId: string) =>
+    apiFetch<TraceEntry>(`/debug/trace/${encodeURIComponent(requestId)}`),
+
+  list: (params?: TraceListParams): Promise<TraceListResponse> => {
+    const q = new URLSearchParams()
+    if (params?.service) q.set("service", params.service)
+    if (params?.method) q.set("method", params.method)
+    if (params?.path) q.set("path", params.path)
+    if (params?.status) q.set("status", params.status)
+    if (params?.search) q.set("search", params.search)
+    if (params?.after) q.set("after", params.after)
+    if (params?.limit) q.set("limit", String(params.limit))
+    const query = q.toString()
+    return apiFetch<TraceListResponse>(`/debug/traces${query ? `?${query}` : ""}`)
+  },
+
+  count: () => apiFetch<TraceCountResponse>("/debug/traces/count"),
 }
