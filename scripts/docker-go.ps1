@@ -55,7 +55,7 @@ $entrypoint = @("sh", "-c", $safeDir, "--")
 if ($args[0] -eq "shell") {
     $entrypoint += "bash"
 } elseif ($args[0] -eq "run") {
-    # `docker-go.ps1 run <pkg>` — runs the Go binary at the given package
+    # `docker-go.ps1 run <pkg>` -- runs the Go binary at the given package
     # path (e.g. `docker-go.ps1 run ./cmd/verify`).
     $entrypoint += "go"
     $entrypoint += "run"

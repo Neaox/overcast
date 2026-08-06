@@ -41,6 +41,23 @@ type Key struct {
 	RSAPrivKey []byte `json:"RSAPrivKey,omitempty"` // PEM-encoded private key for RSA
 }
 
+// GetTags returns the key's tags as a map for handler convenience.
+func (k *Key) GetTags() map[string]string {
+	tags := make(map[string]string, len(k.Tags))
+	for _, t := range k.Tags {
+		tags[t.TagKey] = t.TagValue
+	}
+	return tags
+}
+
+// SetTags replaces the key's tags from a map.
+func (k *Key) SetTags(tags map[string]string) {
+	k.Tags = make([]Tag, 0, len(tags))
+	for key, value := range tags {
+		k.Tags = append(k.Tags, Tag{TagKey: key, TagValue: value})
+	}
+}
+
 // Alias represents a KMS alias.
 type Alias struct {
 	AliasName   string    `json:"AliasName"`
