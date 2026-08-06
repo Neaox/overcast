@@ -2,7 +2,9 @@ package trace
 
 import (
 	"math"
+	"time"
 
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -49,4 +51,54 @@ func ZapFieldValue(f zapcore.Field) any {
 		}
 		return f.String
 	}
+}
+
+// recorderCore wraps a zapcore.Core, capturing every log entry into a
+// per-request Recorder before delegating to the inner core. Unlike the
+// removed TracingCore, there is no shared global state: each *zap.Logger
+// that wants trace capture creates its own recorderCore via
+// zap.WrapCore, and that core holds a direct *Recorder reference
+// (not a context). This is safe for concurrent use because the *Recorder
+// is per-request and the core is per-logger.
+type recorderCore struct {
+	zapcore.Core
+	rec *Recorder
+}
+
+// NewRecorderCore returns a zap.Option that wraps inner with a core that
+// captures log entries into rec. When rec is nil the original core is
+// returned unchanged — use this as a no-op guard at the call site.
+func NewRecorderCore(rec *Recorder) func(zapcore.Core) zapcore.Core {
+	if rec == nil {
+		return func(c zapcore.Core) zapcore.Core { return c }
+	}
+	return func(inner zapcore.Core) zapcore.Core {
+		return &recorderCore{Core: inner, rec: rec}
+	}
+}
+
+func (c *recorderCore) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(entry.Level) {
+		return ce.AddCore(entry, c)
+	}
+	return ce
+}
+
+func (c *recorderCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	c.rec.AddLog(LogEntry{
+		Level:     entry.Level.String(),
+		Message:   entry.Message,
+		Timestamp: time.Now(),
+		Fields:    ZapFieldsToMap(fields),
+	})
+	return c.Core.Write(entry, fields)
+}
+
+// WithRecorder returns a zap.Logger that captures log entries into rec.
+// When rec is nil the original logger is returned unchanged.
+func WithRecorder(base *zap.Logger, rec *Recorder) *zap.Logger {
+	if rec == nil {
+		return base
+	}
+	return base.WithOptions(zap.WrapCore(NewRecorderCore(rec)))
 }

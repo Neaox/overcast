@@ -1,6 +1,7 @@
 package serviceutil
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/logging"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 // ── Trace level ──────────────────────────────────────────────────────────────
@@ -283,4 +285,22 @@ func (l *ServiceLogger) WithOperation(op string) *ServiceLogger {
 // Logger returns the underlying zap.Logger for cases where raw zap is needed.
 func (l *ServiceLogger) Logger() *zap.Logger {
 	return l.log
+}
+
+// WithRecorder returns a ServiceLogger whose log calls are captured into the
+// trace Recorder (when one is present in the caller's context). When called
+// with nil the original logger is returned unchanged. Services opt into
+// per-handler log capture by calling this once at the top of a handler:
+//
+//	log := h.log.WithRecorder(r.Context())
+//	log.Info("creating function", zap.String("name", name))
+func (l *ServiceLogger) WithRecorder(ctx context.Context) *ServiceLogger {
+	rec := trace.RecorderFromContext(ctx)
+	if rec == nil {
+		return l
+	}
+	return &ServiceLogger{
+		log:     trace.WithRecorder(l.log, rec),
+		service: l.service,
+	}
 }
