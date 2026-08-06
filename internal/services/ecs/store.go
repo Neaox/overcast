@@ -770,14 +770,6 @@ func (s *ecsStore) getTags(ctx context.Context, arn string) (map[string]string, 
 	}
 	return tags, nil
 }
-
-func (s *ecsStore) deleteTags(ctx context.Context, arn string) *protocol.AWSError {
-	if err := s.store.Delete(ctx, nsTags, serviceutil.RegionKey(s.region(ctx), arn)); err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	return nil
-}
-
 // ---- Task definition family listing -------------------------------------------
 
 // listTaskDefinitionFamilies returns the distinct family names that have registered task definitions.

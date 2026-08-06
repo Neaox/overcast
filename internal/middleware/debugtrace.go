@@ -18,9 +18,6 @@ import (
 // entry. Bodies exceeding this are truncated.
 const maxTraceBody = 1 << 20 // 1 MiB
 
-// maxTraceLogFields is the per-entry cap on structured log field sizes.
-const maxTraceLogFields = 16 << 10 // 16 KiB
-
 // DebugTrace returns middleware that captures full request/response traces into
 // a ring buffer when cfg.Debug is true. When debug is off the middleware is an
 // identity function — chi calls it once at startup and the handler chain is
