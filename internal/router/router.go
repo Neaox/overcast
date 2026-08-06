@@ -81,6 +81,7 @@ import (
 	"github.com/Neaox/overcast/internal/services/waf"
 	"github.com/Neaox/overcast/internal/smtp"
 	"github.com/Neaox/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 // New builds and returns the root HTTP handler for the emulator, plus a
@@ -119,6 +120,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// creation since http.Server.Serve is not called until New returns).
 	var bus *events.Bus
 
+	// Trace buffer — created here so the middleware can capture it at
+	// construction time. When cfg.Debug is false the middleware is identity
+	// and the buffer is never accessed.
+	traceBuf := trace.NewBuffer(1000)
+
 	// ---- Middleware chain --------------------------------------------------
 	r.Use(chimiddleware.RealIP)
 	r.Use(middleware.CORS)
@@ -139,6 +145,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Use(middleware.HostAddressing(cfg.Hostname, &hostRoutes, logger))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recovery(logger))
+	r.Use(middleware.DebugTrace(cfg, traceBuf, clk))
 	r.Use(middleware.Logger(logger, clk))
 	// NotReady short-circuits with a 503 while the storage backend is still
 	// completing a one-time startup migration (storage-plan.md item — see
@@ -255,7 +262,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	prof.mark("  new: logs")
 	if cfg.Debug {
 		debugProviders := []DebugStateProvider{ddbSvc, logsSvc, sqsSvc}
-		r.Route("/_debug", debugHandlers(cfg, store, ec2Svc, debugProviders))
+		r.Route("/_debug", debugHandlers(cfg, store, ec2Svc, debugProviders, traceBuf))
 	}
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
 	prof.mark("  new: lambda")

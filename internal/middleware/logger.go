@@ -9,10 +9,12 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 // detectService infers the AWS service from a request using the same signals
@@ -420,6 +422,15 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 				}
 			}
 
+			if rec := trace.RecorderFromContext(r.Context()); rec != nil {
+				rec.AddLog(trace.LogEntry{
+					Level:     logLevel(rw.status),
+					Message:   "request",
+					Timestamp: start,
+					Fields:    zapFieldsToMap(fields),
+				})
+			}
+
 			switch {
 			case rw.status >= 500:
 				log.Error("request failed", fields...)
@@ -429,5 +440,33 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 				log.Info("request", fields...)
 			}
 		})
+	}
+}
+
+func logLevel(status int) string {
+	if status >= 500 {
+		return "ERROR"
+	}
+	return "INFO"
+}
+
+func zapFieldsToMap(fields []zap.Field) map[string]any {
+	m := make(map[string]any, len(fields))
+	for _, f := range fields {
+		m[f.Key] = fieldValue(f)
+	}
+	return m
+}
+
+func fieldValue(f zap.Field) any {
+	switch f.Type {
+	case zapcore.StringType:
+		return f.String
+	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Int16Type, zapcore.Int8Type:
+		return f.Integer
+	case zapcore.DurationType:
+		return f.Integer
+	default:
+		return f.String
 	}
 }

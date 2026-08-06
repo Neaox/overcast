@@ -18,6 +18,7 @@ import (
 	"github.com/Neaox/overcast/internal/boottime"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/state"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 // debugEC2Provider is the subset of the EC2 service needed by the debug
@@ -59,7 +60,7 @@ type DebugStateProvider interface {
 //   - Verifying configuration is what you expect
 //
 // A web UI for these endpoints is planned. For now they return JSON.
-func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, providers []DebugStateProvider) func(chi.Router) {
+func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, providers []DebugStateProvider, traceBuf *trace.Buffer) func(chi.Router) {
 	return func(r chi.Router) {
 		r.Get("/health", debugHealth(cfg, store))
 		r.Get("/config", debugConfig(cfg))
@@ -68,6 +69,11 @@ func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, 
 		r.Post("/reset", debugReset(store, providers))
 		r.Post("/reset/{service}", debugResetService(store, providers))
 		r.Get("/metrics", debugMetrics(cfg, store))
+
+		// ---- Request tracing --------------------------------------------------
+		r.Get("/trace/{requestId}", debugTraceGet(traceBuf))
+		r.Get("/traces", debugTraceList(traceBuf))
+		r.Get("/traces/count", debugTraceCount(traceBuf))
 
 		// ---- Service-specific debug endpoints ---------------------------------
 		if ec2 != nil {
@@ -627,5 +633,62 @@ func resetAllNamespaces(ctx context.Context, store state.Store) {
 		for _, k := range keys {
 			_ = store.Delete(ctx, ns, k)
 		}
+	}
+}
+
+// ---- Trace handlers ---------------------------------------------------------
+
+func debugTraceGet(buf *trace.Buffer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if buf == nil {
+			writeDebugJSON(w, http.StatusNotFound, map[string]string{"error": "trace buffer not available"})
+			return
+		}
+		requestID := chi.URLParam(r, "requestId")
+		entry, found := buf.Get(requestID)
+		if !found {
+			writeDebugJSON(w, http.StatusNotFound, map[string]string{"error": "trace not found", "requestId": requestID})
+			return
+		}
+		writeDebugJSON(w, http.StatusOK, entry)
+	}
+}
+
+func debugTraceList(buf *trace.Buffer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if buf == nil {
+			writeDebugJSON(w, http.StatusNotFound, map[string]string{"error": "trace buffer not available"})
+			return
+		}
+		filter := trace.ListFilter{
+			Service: r.URL.Query().Get("service"),
+			Method:  r.URL.Query().Get("method"),
+			Path:    r.URL.Query().Get("path"),
+			Status:  r.URL.Query().Get("status"),
+			Search:  r.URL.Query().Get("search"),
+			After:   r.URL.Query().Get("after"),
+			Limit:   parseDebugStateLimit(r.URL.Query().Get("limit")),
+		}
+		entries, nextCursor := buf.List(filter)
+		if entries == nil {
+			entries = []*trace.Entry{}
+		}
+		writeDebugJSON(w, http.StatusOK, map[string]any{
+			"traces":     entries,
+			"nextCursor": nextCursor,
+		})
+	}
+}
+
+func debugTraceCount(buf *trace.Buffer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if buf == nil {
+			writeDebugJSON(w, http.StatusNotFound, map[string]string{"error": "trace buffer not available"})
+			return
+		}
+		writeDebugJSON(w, http.StatusOK, map[string]any{
+			"count":    buf.Len(),
+			"capacity": buf.Capacity(),
+		})
 	}
 }
