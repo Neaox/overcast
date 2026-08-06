@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"fmt"
 	"math"
 
 	"go.uber.org/zap"
@@ -46,12 +47,32 @@ func ZapFieldValue(f zapcore.Field) any {
 			return f.Interface
 		}
 		return f.Integer
-	default:
+	case zapcore.ByteStringType:
+		return string(f.Interface.([]byte))
+	case zapcore.ErrorType:
+		if f.Interface != nil {
+			return f.Interface.(error).Error()
+		}
+		return nil
+	case zapcore.StringerType:
+		if f.Interface != nil {
+			return f.Interface.(fmt.Stringer).String()
+		}
+		return nil
+	case zapcore.ArrayMarshalerType:
+		return f.Interface
+	case zapcore.ObjectMarshalerType:
+		return f.Interface
+	case zapcore.BinaryType:
+		return f.Interface
+	case zapcore.ReflectType, zapcore.InlineMarshalerType, zapcore.Complex128Type, zapcore.Complex64Type,
+		zapcore.NamespaceType, zapcore.SkipType, zapcore.UnknownType:
 		if f.Interface != nil {
 			return f.Interface
 		}
 		return f.String
 	}
+	return nil
 }
 
 // recorderCore wraps a zapcore.Core, capturing every log entry into a

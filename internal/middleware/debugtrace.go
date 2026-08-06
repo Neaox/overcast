@@ -78,9 +78,9 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 				respHeaders[k] = vv
 			}
 			rec.SetResponse(respHeaders, trw.tee.Bytes(), trw.status, maxTraceBody, trw.streaming)
-		if trw.truncated && !trw.streaming {
-			rec.SetResponseBodyTruncated()
-		}
+			if trw.truncated && !trw.streaming {
+				rec.SetResponseBodyTruncated()
+			}
 			rec.SetDuration(clk.Since(start))
 
 			if buf != nil {

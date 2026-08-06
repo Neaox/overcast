@@ -173,6 +173,7 @@ func wrapTag(l *zap.Logger, tag string) *zap.Logger {
 //	        ...
 //	    }
 //	}
+//
 // ServiceLogger wraps a *zap.Logger with a "service" field and console-mode
 // tag. Every service creates one at construction time and stores it on its
 // Handler. Handlers that perform structured logging must opt into per-request
