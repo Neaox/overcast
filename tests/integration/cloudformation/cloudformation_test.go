@@ -4062,3 +4062,99 @@ func TestCreateStack_S3BucketDomainsAreServableByThisEmulator(t *testing.T) {
 		}
 	}
 }
+
+// ─── SNS Topic Tags via CloudFormation ─────────────────────────────
+
+func TestSNSTopicWithTags_cloudformationEndToEnd(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	const snsTagTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "MyTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "cfn-tag-test-topic",
+        "Tags": [
+          {"Key": "env", "Value": "prod"},
+          {"Key": "team", "Value": "platform"}
+        ]
+      }
+    }
+  }
+}`
+
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{"sns-tag-stack"},
+		"TemplateBody": []string{snsTagTemplate},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	descResp := cfnQuery(t, srv, "DescribeStackResources", url.Values{
+		"StackName": []string{"sns-tag-stack"},
+	})
+	defer descResp.Body.Close()
+	helpers.AssertStatus(t, descResp, http.StatusOK)
+
+	body := readBody(t, descResp)
+	type drMember struct {
+		ResourceType       string `xml:"ResourceType"`
+		PhysicalResourceId string `xml:"PhysicalResourceId"`
+	}
+	type drResult struct {
+		Resources []drMember `xml:"StackResources>member"`
+	}
+	type drRoot struct {
+		Result drResult `xml:"DescribeStackResourcesResult"`
+	}
+	var parsed drRoot
+	if err := xml.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("XML parse: %v\n%s", err, body)
+	}
+	var topicARN string
+	for _, r := range parsed.Result.Resources {
+		if r.ResourceType == "AWS::SNS::Topic" {
+			topicARN = r.PhysicalResourceId
+			break
+		}
+	}
+	if topicARN == "" {
+		t.Fatal("did not find SNS topic in stack resources")
+	}
+
+	tagsResp := snsQuery(t, srv, "ListTagsForResource", url.Values{
+		"ResourceArn": {topicARN},
+	})
+	defer tagsResp.Body.Close()
+	helpers.AssertStatus(t, tagsResp, http.StatusOK)
+
+	type tagMember struct {
+		Key   string `xml:"Key"`
+		Value string `xml:"Value"`
+	}
+	type ltrResult struct {
+		Tags []tagMember `xml:"Tags>member"`
+	}
+	type ltrRoot struct {
+		Result ltrResult `xml:"ListTagsForResourceResult"`
+	}
+	var tagParsed ltrRoot
+	body = readBody(t, tagsResp)
+	if err := xml.Unmarshal(body, &tagParsed); err != nil {
+		t.Fatalf("XML parse: %v\n%s", err, body)
+	}
+	if len(tagParsed.Result.Tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d: %s", len(tagParsed.Result.Tags), body)
+	}
+	tagMap := map[string]string{}
+	for _, t := range tagParsed.Result.Tags {
+		tagMap[t.Key] = t.Value
+	}
+	if tagMap["env"] != "prod" {
+		t.Errorf("tag env: want prod, got %q", tagMap["env"])
+	}
+	if tagMap["team"] != "platform" {
+		t.Errorf("tag team: want platform, got %q", tagMap["team"])
+	}
+}

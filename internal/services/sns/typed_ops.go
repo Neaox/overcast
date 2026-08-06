@@ -21,6 +21,9 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"ConfirmSubscription":       op.NewTyped[confirmSubscriptionReq, confirmSubscriptionResp]("ConfirmSubscription", h.confirmSubscriptionTyped),
 		"Publish":                   op.NewTyped[publishReq, publishResp]("Publish", h.publishTyped),
 		"PublishBatch":              op.NewTyped[publishBatchReq, publishBatchResp]("PublishBatch", h.publishBatchTyped),
+		"TagResource":               op.NewTyped[tagResourceReq, tagResourceResp]("TagResource", h.tagResourceTyped),
+		"UntagResource":             op.NewTyped[untagResourceReq, untagResourceResp]("UntagResource", h.untagResourceTyped),
+		"ListTagsForResource":       op.NewTyped[listTagsForResourceReq, listTagsForResourceResp]("ListTagsForResource", h.listTagsForResourceTyped),
 	}
 }
 

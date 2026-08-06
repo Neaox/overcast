@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1359,
+  "total_ops": 1362,
   "services": [
     {
       "service": "s3",
@@ -3268,8 +3268,8 @@
     {
       "service": "sns",
       "display_name": "SNS",
-      "total_ops": 26,
-      "implemented_ops": 18,
+      "total_ops": 29,
+      "implemented_ops": 21,
       "operations": [
         {
           "operation": "CreateTopic",
@@ -3294,6 +3294,22 @@
         },
         {
           "operation": "ListTopics",
+          "category": "Topics",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Topics",
+          "status": "✅ Supported",
+          "notes": "Tags are stored on the topic; member-indexed form encoding"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Topics",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListTagsForResource",
           "category": "Topics",
           "status": "✅ Supported"
         },

@@ -1,18 +1,28 @@
 package sns
 
 // handler_topic.go contains SNS topic lifecycle handlers:
-// CreateTopic, DeleteTopic, ListTopics, GetTopicAttributes, SetTopicAttributes.
+// CreateTopic, DeleteTopic, ListTopics, GetTopicAttributes, SetTopicAttributes,
+// TagResource, UntagResource, ListTagsForResource.
 //
 // Wire protocol: AWS Query (form-encoded POST body, XML responses).
 
 import (
 	"encoding/xml"
+	"fmt"
 	"net/http"
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+// snsTagCfg tunes shared tag validation to return SNS-specific error codes.
+var snsTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "TagLimitExceeded",
+	InvalidCode:     "InvalidParameter",
+	ExceededMessage: "Can't add more than 50 tags to a topic.",
+}
 
 // ---- XML response types ----------------------------------------------------
 
@@ -221,6 +231,141 @@ func (h *Handler) SetTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlSetTopicAttributesResponse{
 		Xmlns:            snsXMLNS,
+		ResponseMetadata: protocol.QueryResponseMetadata(r),
+	})
+}
+
+// ---- Tag XML response types -------------------------------------------------
+
+type xmlTagMember struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
+type xmlTagResourceResponse struct {
+	XMLName          xml.Name                  `xml:"TagResourceResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlUntagResourceResponse struct {
+	XMLName          xml.Name                  `xml:"UntagResourceResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlListTagsForResourceResponse struct {
+	XMLName          xml.Name                     `xml:"ListTagsForResourceResponse"`
+	Xmlns            string                       `xml:"xmlns,attr"`
+	Result           xmlListTagsForResourceResult `xml:"ListTagsForResourceResult"`
+	ResponseMetadata protocol.ResponseMetadata    `xml:"ResponseMetadata"`
+}
+
+type xmlListTagsForResourceResult struct {
+	Tags []xmlTagMember `xml:"Tags>member"`
+}
+
+// ---- Tag handlers -----------------------------------------------------------
+
+// TagResource handles SNS TagResource.
+// Tags arrive as Tags.Tag.N.Key / Tags.Tag.N.Value (1-indexed, the member
+// locationName is "Tag" in the SNS model).
+func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
+	resourceArn, ok := h.requireForm(w, r, "ResourceArn")
+	if !ok {
+		return
+	}
+
+	topic, aerr := h.snsStore.getTopicByARN(r.Context(), resourceArn)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	if topic.Tags == nil {
+		topic.Tags = make(map[string]string)
+	}
+
+	for i := 1; ; i++ {
+		key := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Key", i))
+		if key == "" {
+			break
+		}
+		topic.Tags[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
+	}
+
+	if aerr := serviceutil.ValidateTags(snsTagCfg, topic.Tags); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	if aerr := h.snsStore.putTopic(r.Context(), topic); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlTagResourceResponse{
+		Xmlns:            snsXMLNS,
+		ResponseMetadata: protocol.QueryResponseMetadata(r),
+	})
+}
+
+// UntagResource handles SNS UntagResource.
+// Tag keys arrive as TagKeys.member.N (1-indexed).
+func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
+	resourceArn, ok := h.requireForm(w, r, "ResourceArn")
+	if !ok {
+		return
+	}
+
+	topic, aerr := h.snsStore.getTopicByARN(r.Context(), resourceArn)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	for i := 1; ; i++ {
+		key := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
+		if key == "" {
+			break
+		}
+		delete(topic.Tags, key)
+	}
+
+	if aerr := h.snsStore.putTopic(r.Context(), topic); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlUntagResourceResponse{
+		Xmlns:            snsXMLNS,
+		ResponseMetadata: protocol.QueryResponseMetadata(r),
+	})
+}
+
+// ListTagsForResource handles SNS ListTagsForResource.
+func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	resourceArn, ok := h.requireForm(w, r, "ResourceArn")
+	if !ok {
+		return
+	}
+
+	topic, aerr := h.snsStore.getTopicByARN(r.Context(), resourceArn)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
+	members := make([]xmlTagMember, 0, len(topic.Tags))
+	for k, v := range topic.Tags {
+		members = append(members, xmlTagMember{Key: k, Value: v})
+	}
+
+	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlListTagsForResourceResponse{
+		Xmlns: snsXMLNS,
+		Result: xmlListTagsForResourceResult{
+			Tags: members,
+		},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
 }

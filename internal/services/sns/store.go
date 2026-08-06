@@ -24,6 +24,7 @@ type Topic struct {
 	Name             string            `json:"name"`
 	ARN              string            `json:"arn"`
 	Attributes       map[string]string `json:"attributes,omitempty"`
+	Tags             map[string]string `json:"tags,omitempty"`
 	CreatedTimestamp int64             `json:"created_timestamp"`
 }
 

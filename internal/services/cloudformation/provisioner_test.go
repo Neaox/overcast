@@ -230,12 +230,12 @@ func TestSNSTopicTagParams(t *testing.T) {
 		t.Fatalf("snsTopicTagParams() error = %v", err)
 	}
 	want := map[string]string{
-		"Action":              "TagResource",
-		"ResourceArn":         "arn:aws:sns:us-east-1:000000000000:topic",
-		"Version":             "2010-03-31",
-		"Tags.member.1.Key":   "environment",
-		"Tags.member.1.Value": "test",
-		"Tags.member.2.Key":   "owner",
+		"Action":           "TagResource",
+		"ResourceArn":      "arn:aws:sns:us-east-1:000000000000:topic",
+		"Version":          "2010-03-31",
+		"Tags.Tag.1.Key":   "environment",
+		"Tags.Tag.1.Value": "test",
+		"Tags.Tag.2.Key":   "owner",
 	}
 	if !reflect.DeepEqual(params, want) {
 		t.Errorf("snsTopicTagParams() = %#v, want %#v", params, want)

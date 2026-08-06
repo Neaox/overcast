@@ -2518,10 +2518,9 @@ func applySNSAttributes(ctx context.Context, router http.Handler, region, action
 	return nil
 }
 
-// applySNSTopicTags deliberately dispatches to SNS rather than treating tags
-// as CloudFormation metadata. TagResource is not implemented by SNS yet, so a
-// template that uses non-empty Tags fails through the service instead of
-// deploying a topic with silently discarded configuration.
+// applySNSTopicTags dispatches to SNS rather than treating tags as
+// CloudFormation metadata, so CDK tag updates and drift detection work
+// against the authoritative SNS state.
 func applySNSTopicTags(ctx context.Context, router http.Handler, region, topicARN string, props map[string]any) error {
 	rawTags, ok := props["Tags"]
 	if !ok || rawTags == nil {
@@ -2559,7 +2558,7 @@ func snsTopicTagParams(topicARN string, rawTags any) (map[string]string, error) 
 		if !ok || key == nil {
 			return nil, fmt.Errorf("SNS Topic Tags entry must contain Key")
 		}
-		prefix := fmt.Sprintf("Tags.member.%d", i+1)
+		prefix := fmt.Sprintf("Tags.Tag.%d", i+1)
 		params[prefix+".Key"] = cfnScalarString(key)
 		if value, ok := tag["Value"]; ok && value != nil {
 			params[prefix+".Value"] = cfnScalarString(value)

@@ -55,8 +55,7 @@ completes to subscribers, matching the behaviour of real SNS.
   SNS after subscribing. The topic's inline `Subscription` list creates the
   listed SNS subscriptions during creation. Updating that list or removing a
   previously configured SNS attribute fails the stack update rather than leaving
-  stale SNS configuration. Topic `Tags` fail the stack because SNS `TagResource`
-  is not implemented. Cross-region `AWS::SNS::Subscription` `Region` is not
+  stale SNS configuration. Cross-region `AWS::SNS::Subscription` `Region` is not
   implemented and fails the stack rather than being ignored. FIFO topic
   attributes round-trip, but FIFO publish semantics remain unsupported (tracked
   in #183).
@@ -67,7 +66,7 @@ completes to subscribers, matching the behaviour of real SNS.
 
 | Category                            | ✅ Supported | ❌ Unsupported |
 | ----------------------------------- | ------------ | -------------- |
-| Topics                              | 5            |                |
+| Topics                              | 8            |                |
 | Subscriptions                       | 7            |                |
 | Publishing                          | 5            |                |
 | Platform applications (mobile push) |              | 5              |
@@ -79,13 +78,16 @@ completes to subscribers, matching the behaviour of real SNS.
 
 ### Topics
 
-| Operation            | Status       | Notes                         | AWS Docs                                                                       |
-| -------------------- | ------------ | ----------------------------- | ------------------------------------------------------------------------------ |
-| `CreateTopic`        | ✅ Supported | Idempotent; attributes stored | [docs](https://docs.aws.amazon.com/sns/latest/api/API_CreateTopic.html)        |
-| `DeleteTopic`        | ✅ Supported |                               | [docs](https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html)        |
-| `GetTopicAttributes` | ✅ Supported |                               | [docs](https://docs.aws.amazon.com/sns/latest/api/API_GetTopicAttributes.html) |
-| `SetTopicAttributes` | ✅ Supported |                               | [docs](https://docs.aws.amazon.com/sns/latest/api/API_SetTopicAttributes.html) |
-| `ListTopics`         | ✅ Supported |                               | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListTopics.html)         |
+| Operation             | Status       | Notes                                                      | AWS Docs                                                                        |
+| --------------------- | ------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `CreateTopic`         | ✅ Supported | Idempotent; attributes stored                              | [docs](https://docs.aws.amazon.com/sns/latest/api/API_CreateTopic.html)         |
+| `DeleteTopic`         | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html)         |
+| `GetTopicAttributes`  | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_GetTopicAttributes.html)  |
+| `SetTopicAttributes`  | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_SetTopicAttributes.html)  |
+| `ListTopics`          | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListTopics.html)          |
+| `TagResource`         | ✅ Supported | Tags are stored on the topic; member-indexed form encoding | [docs](https://docs.aws.amazon.com/sns/latest/api/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListTagsForResource.html) |
 
 ### Subscriptions
 
