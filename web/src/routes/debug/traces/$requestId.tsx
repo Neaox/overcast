@@ -200,9 +200,46 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
               />
             )}
             {hopView === "flow" && (
-              <FlowMap trace={trace} />
+              <FlowMap trace={trace} onSelectHop={setSelectedHopId} selectedHopId={selectedHopId} />
             )}
           </div>
+        </div>
+      )}
+      {selectedHopId && (
+        <HopDetailPanel hopId={selectedHopId} hops={hops} onClose={() => setSelectedHopId(null)} />
+      )}
+    </div>
+  )
+}
+
+function HopDetailPanel({ hopId, hops, onClose }: { hopId: string; hops: TraceHop[]; onClose: () => void }) {
+  const hop = hops.find((h) => h.id === hopId)
+  if (!hop) return null
+
+  return (
+    <div className="rounded-lg border border-accent/40 bg-bg-elevated p-4 mt-3">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-medium text-accent">
+          {hop.callerService} → {hop.service}.{hop.operation}
+        </h4>
+        <button onClick={onClose} className="text-xs text-fg-muted hover:text-fg">✕</button>
+      </div>
+      <div className="grid grid-cols-3 gap-3 text-xs mb-3">
+        <div><span className="text-fg-muted">Status: </span><span className={cn("font-mono", statusColor(hop.responseStatus))}>{hop.responseStatus}</span></div>
+        <div><span className="text-fg-muted">Duration: </span><span className="font-mono">{nsToHuman(hop.duration)}</span></div>
+        {hop.targetUri && <div className="col-span-3"><span className="text-fg-muted">Target: </span><span className="font-mono">{hop.targetUri}</span></div>}
+        {hop.error && <div className="col-span-3 text-red-400 font-mono">{hop.error}</div>}
+      </div>
+      {hop.requestBody && (
+        <div className="mb-2">
+          <div className="text-xs text-fg-muted mb-1">Request Body</div>
+          <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-32">{tryFormatJSON(String(hop.requestBody))}</pre>
+        </div>
+      )}
+      {hop.responseBody && (
+        <div>
+          <div className="text-xs text-fg-muted mb-1">Response Body</div>
+          <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-32">{tryFormatJSON(String(hop.responseBody))}</pre>
         </div>
       )}
     </div>

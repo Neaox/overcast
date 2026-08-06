@@ -4,7 +4,8 @@ import type { TraceHop } from "@/types"
 
 interface SequenceDiagramProps {
   hops: TraceHop[]
-  entryService: string
+  totalDuration: number
+  startTime?: string
   onSelectHop?: (hopId: string) => void
   selectedHopId?: string | null
 }
@@ -20,14 +21,16 @@ const topPad = 10
  */
 export function SequenceDiagram({
   hops,
-  entryService,
+  totalDuration: _totalDuration,
+  startTime: _startTime,
   onSelectHop,
   selectedHopId,
 }: SequenceDiagramProps) {
   const [hideNoisy, setHideNoisy] = useState(true)
 
-  const { services, arrows } = useMemo(() => {
-    const svcSet = new Set<string>([entryService])
+  const { services, arrows, entryService } = useMemo(() => {
+    const entrySvc = hops[0]?.callerService ?? ""
+    const svcSet = new Set<string>([entrySvc])
     for (const h of hops) {
       svcSet.add(h.callerService)
       svcSet.add(h.service)
@@ -47,8 +50,8 @@ export function SequenceDiagram({
       return { ...hop, fromIdx, toIdx, color, row: i }
     })
 
-    return { services: svcList, arrows: arrs }
-  }, [hops, entryService, hideNoisy])
+    return { services: svcList, arrows: arrs, entryService: entrySvc }
+  }, [hops, hideNoisy])
 
   if (hops.length === 0) {
     return <div className="text-center text-fg-muted py-8 text-sm">No hops to display.</div>
