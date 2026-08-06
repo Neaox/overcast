@@ -23,6 +23,9 @@ import (
 
 const serviceName = "shield"
 
+func (p *Protection) GetTags() map[string]string { return p.Tags }
+func (p *Protection) SetTags(t map[string]string)  { p.Tags = t }
+
 // Protection represents a Shield protection resource.
 type Protection struct {
 	ID          string            `json:"Id"`

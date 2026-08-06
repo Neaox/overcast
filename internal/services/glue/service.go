@@ -29,6 +29,9 @@ const serviceName = "glue"
 
 // ─── Types ────────────────────────────────────────────────────
 
+func (d *Database) GetTags() map[string]string { return d.Tags }
+func (d *Database) SetTags(t map[string]string)  { d.Tags = t }
+
 // Database represents a Glue database.
 type Database struct {
 	Name        string            `json:"Name"`
@@ -36,6 +39,9 @@ type Database struct {
 	CatalogId   string            `json:"CatalogId,omitempty"`
 	Tags        map[string]string `json:"Tags,omitempty"`
 }
+
+func (t *Table) GetTags() map[string]string { return t.Tags }
+func (t *Table) SetTags(tags map[string]string)  { t.Tags = tags }
 
 // Table represents a Glue table.
 type Table struct {

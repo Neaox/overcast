@@ -755,23 +755,15 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceReq) (*t
 		return nil, protocol.ErrMissingParameter("ResourceArn")
 	}
 
-	topic, aerr := h.snsStore.getTopicByARN(ctx, req.ResourceArn)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	if topic.Tags == nil {
-		topic.Tags = make(map[string]string)
-	}
+	incoming := make(map[string]string, len(req.Tags))
 	for _, t := range req.Tags {
-		topic.Tags[t.Key] = t.Value
+		incoming[t.Key] = t.Value
 	}
 
-	if aerr := serviceutil.ValidateTags(snsTagCfg, topic.Tags); aerr != nil {
-		return nil, aerr
-	}
-
-	if aerr := h.snsStore.putTopic(ctx, topic); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(ctx, req.ResourceArn, incoming, snsTagCfg,
+		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) { return h.snsStore.getTopicByARN(ctx, arn) },
+		func(ctx context.Context, t *Topic) *protocol.AWSError { return h.snsStore.putTopic(ctx, t) },
+	); aerr != nil {
 		return nil, aerr
 	}
 
@@ -786,16 +778,10 @@ func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceReq)
 		return nil, protocol.ErrMissingParameter("ResourceArn")
 	}
 
-	topic, aerr := h.snsStore.getTopicByARN(ctx, req.ResourceArn)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	for _, k := range req.TagKeys {
-		delete(topic.Tags, k)
-	}
-
-	if aerr := h.snsStore.putTopic(ctx, topic); aerr != nil {
+	if aerr := serviceutil.RemoveInlineTags(ctx, req.ResourceArn, req.TagKeys,
+		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) { return h.snsStore.getTopicByARN(ctx, arn) },
+		func(ctx context.Context, t *Topic) *protocol.AWSError { return h.snsStore.putTopic(ctx, t) },
+	); aerr != nil {
 		return nil, aerr
 	}
 
@@ -810,13 +796,15 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 		return nil, protocol.ErrMissingParameter("ResourceArn")
 	}
 
-	topic, aerr := h.snsStore.getTopicByARN(ctx, req.ResourceArn)
+	tags, aerr := serviceutil.ListInlineTags(ctx, req.ResourceArn,
+		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) { return h.snsStore.getTopicByARN(ctx, arn) },
+	)
 	if aerr != nil {
 		return nil, aerr
 	}
 
-	members := make([]xmlTagMemberTyped, 0, len(topic.Tags))
-	for k, v := range topic.Tags {
+	members := make([]xmlTagMemberTyped, 0, len(tags))
+	for k, v := range tags {
 		members = append(members, xmlTagMemberTyped{Key: k, Value: v})
 	}
 

@@ -3360,57 +3360,48 @@ type ListTagsForResourceResp struct {
 
 func (s *Service) TagResourceTyped(ctx context.Context, req *TagResourceReq) (*struct{}, *protocol.AWSError) {
 	poolID := extractPoolIDFromARN(req.ResourceArn)
-	pool, aerr := s.requirePoolTyped(ctx, poolID)
-	if aerr != nil {
+
+	if aerr := serviceutil.ApplyInlineTags(ctx, poolID, req.Tags, cognitoTagCfg,
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) { return s.requirePoolTyped(ctx, id) },
+		func(ctx context.Context, pool *UserPool) *protocol.AWSError {
+			if err := s.savePool(ctx, pool); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			return nil
+		},
+	); aerr != nil {
 		return nil, aerr
-	}
-
-	if pool.Tags == nil {
-		pool.Tags = make(map[string]string)
-	}
-	for k, v := range req.Tags {
-		pool.Tags[k] = v
-	}
-
-	if aerr := serviceutil.ValidateTags(cognitoTagCfg, pool.Tags); aerr != nil {
-		return nil, aerr
-	}
-
-	if err := s.savePool(ctx, pool); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return &struct{}{}, nil
 }
 
 func (s *Service) UntagResourceTyped(ctx context.Context, req *UntagResourceReq) (*struct{}, *protocol.AWSError) {
 	poolID := extractPoolIDFromARN(req.ResourceArn)
-	pool, aerr := s.requirePoolTyped(ctx, poolID)
-	if aerr != nil {
+
+	if aerr := serviceutil.RemoveInlineTags(ctx, poolID, req.TagKeys,
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) { return s.requirePoolTyped(ctx, id) },
+		func(ctx context.Context, pool *UserPool) *protocol.AWSError {
+			if err := s.savePool(ctx, pool); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			return nil
+		},
+	); aerr != nil {
 		return nil, aerr
-	}
-
-	for _, k := range req.TagKeys {
-		delete(pool.Tags, k)
-	}
-
-	if err := s.savePool(ctx, pool); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return &struct{}{}, nil
 }
 
 func (s *Service) ListTagsForResourceTyped(ctx context.Context, req *ListTagsForResourceReq) (*ListTagsForResourceResp, *protocol.AWSError) {
 	poolID := extractPoolIDFromARN(req.ResourceArn)
-	pool, aerr := s.requirePoolTyped(ctx, poolID)
+
+	tags, aerr := serviceutil.ListInlineTags(ctx, poolID,
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) { return s.requirePoolTyped(ctx, id) },
+	)
 	if aerr != nil {
 		return nil, aerr
 	}
-
-	out := pool.Tags
-	if out == nil {
-		out = make(map[string]string)
-	}
-	return &ListTagsForResourceResp{Tags: out}, nil
+	return &ListTagsForResourceResp{Tags: tags}, nil
 }
 
 func extractPoolIDFromARN(arn string) string {

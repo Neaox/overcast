@@ -41,20 +41,17 @@ type Key struct {
 	RSAPrivKey []byte `json:"RSAPrivKey,omitempty"` // PEM-encoded private key for RSA
 }
 
-// GetTags returns the key's tags as a map for handler convenience.
 func (k *Key) GetTags() map[string]string {
-	tags := make(map[string]string, len(k.Tags))
+	out := make(map[string]string, len(k.Tags))
 	for _, t := range k.Tags {
-		tags[t.TagKey] = t.TagValue
+		out[t.TagKey] = t.TagValue
 	}
-	return tags
+	return out
 }
-
-// SetTags replaces the key's tags from a map.
 func (k *Key) SetTags(tags map[string]string) {
 	k.Tags = make([]Tag, 0, len(tags))
-	for key, value := range tags {
-		k.Tags = append(k.Tags, Tag{TagKey: key, TagValue: value})
+	for kk, v := range tags {
+		k.Tags = append(k.Tags, Tag{TagKey: kk, TagValue: v})
 	}
 }
 

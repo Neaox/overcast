@@ -192,12 +192,14 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if p.Tags == nil {
-		p.Tags = map[string]string{}
+	tags := p.GetTags()
+	if tags == nil {
+		tags = map[string]string{}
 	}
 	for _, t := range req.Tags {
-		p.Tags[t.Key] = t.Value
+		tags[t.Key] = t.Value
 	}
+	p.SetTags(tags)
 	if err := h.store.putProtection(ctx, p); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -234,10 +236,12 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if p.Tags != nil {
+	tags := p.GetTags()
+	if tags != nil {
 		for _, k := range req.TagKeys {
-			delete(p.Tags, k)
+			delete(tags, k)
 		}
+		p.SetTags(tags)
 	}
 	if err := h.store.putProtection(ctx, p); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
@@ -274,7 +278,7 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	tagList := shieldTagsToList(p.Tags)
+	tagList := shieldTagsToList(p.GetTags())
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tagList})
 }
 

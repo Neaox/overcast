@@ -6,7 +6,14 @@ import (
 	"net/http"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+var ecsTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidParameterException",
+	InvalidCode:     "InvalidParameterException",
+	ExceededMessage: "Tag key list exceeds maximum tag limit",
+}
 
 // TagResource handles AmazonEC2ContainerServiceV20141113.TagResource.
 func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
@@ -26,18 +33,13 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, aerr := h.store.getTags(r.Context(), req.ResourceArn)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
+	ctx := r.Context()
+	region := h.store.region(ctx)
+	pairs := make([]serviceutil.TagPair, len(req.Tags))
+	for i, t := range req.Tags {
+		pairs[i] = serviceutil.TagPair{Key: t.Key, Value: t.Value}
 	}
-	if existing == nil {
-		existing = make(map[string]string)
-	}
-	for _, t := range req.Tags {
-		existing[t.Key] = t.Value
-	}
-	if aerr := h.store.putTags(r.Context(), req.ResourceArn, existing); aerr != nil {
+	if _, aerr := serviceutil.ApplyTagsToStore(ctx, ecsTagCfg, nsTags, serviceutil.RegionKey(region, req.ResourceArn), pairs, h.store.store); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -62,19 +64,11 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, aerr := h.store.getTags(r.Context(), req.ResourceArn)
-	if aerr != nil {
+	ctx := r.Context()
+	region := h.store.region(ctx)
+	if _, aerr := serviceutil.RemoveTagsFromStore(ctx, nsTags, serviceutil.RegionKey(region, req.ResourceArn), req.TagKeys, h.store.store); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
-	}
-	if existing != nil {
-		for _, k := range req.TagKeys {
-			delete(existing, k)
-		}
-		if aerr := h.store.putTags(r.Context(), req.ResourceArn, existing); aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
-			return
-		}
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
@@ -96,7 +90,9 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, aerr := h.store.getTags(r.Context(), req.ResourceArn)
+	ctx := r.Context()
+	region := h.store.region(ctx)
+	existing, aerr := serviceutil.TagsFromStore(ctx, h.store.store, nsTags, serviceutil.RegionKey(region, req.ResourceArn))
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return

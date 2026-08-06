@@ -46,6 +46,9 @@ type QueryExecution struct {
 	} `json:"ResultConfiguration,omitempty"`
 }
 
+func (wg *WorkGroup) GetTags() map[string]string { return wg.Tags }
+func (wg *WorkGroup) SetTags(t map[string]string)  { wg.Tags = t }
+
 // WorkGroup represents an Athena workgroup.
 type WorkGroup struct {
 	Name        string            `json:"Name"`

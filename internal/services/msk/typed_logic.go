@@ -370,14 +370,15 @@ type tagResourceRequest struct {
 }
 
 func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
-	tags, aerr := s.handler.store.getTags(ctx, req.ResourceArn)
+	tagStore := &serviceutil.NSStore{Store: s.handler.store.store, NS: nsTags}
+	tags, aerr := tagStore.Load(ctx, req.ResourceArn)
 	if aerr != nil {
 		return nil, aerr
 	}
 	for k, v := range req.Tags {
 		tags[k] = v
 	}
-	if aerr := s.handler.store.setTags(ctx, req.ResourceArn, tags); aerr != nil {
+	if aerr := tagStore.Save(ctx, req.ResourceArn, tags); aerr != nil {
 		return nil, aerr
 	}
 	return &struct{}{}, nil
@@ -391,14 +392,15 @@ type untagResourceRequest struct {
 }
 
 func (s *Service) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
-	tags, aerr := s.handler.store.getTags(ctx, req.ResourceArn)
+	tagStore := &serviceutil.NSStore{Store: s.handler.store.store, NS: nsTags}
+	tags, aerr := tagStore.Load(ctx, req.ResourceArn)
 	if aerr != nil {
 		return nil, aerr
 	}
 	for _, k := range req.TagKeys {
 		delete(tags, k)
 	}
-	if aerr := s.handler.store.setTags(ctx, req.ResourceArn, tags); aerr != nil {
+	if aerr := tagStore.Save(ctx, req.ResourceArn, tags); aerr != nil {
 		return nil, aerr
 	}
 	return &struct{}{}, nil
@@ -415,7 +417,8 @@ type listTagsForResourceResponse struct {
 }
 
 func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
-	tags, aerr := s.handler.store.getTags(ctx, req.ResourceArn)
+	tagStore := &serviceutil.NSStore{Store: s.handler.store.store, NS: nsTags}
+	tags, aerr := tagStore.Load(ctx, req.ResourceArn)
 	if aerr != nil {
 		return nil, aerr
 	}

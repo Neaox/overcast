@@ -207,59 +207,72 @@ type firehoseTag struct {
 }
 
 func (s *Service) tagDeliveryStreamTyped(ctx context.Context, req *tagDeliveryStreamReq) (*struct{}, *protocol.AWSError) {
-	ds, found := s.store.getStream(ctx, req.DeliveryStreamName)
-	if !found {
-		return nil, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", req.DeliveryStreamName),
-			HTTPStatus: http.StatusNotFound,
-		}
-	}
-	if ds.Tags == nil {
-		ds.Tags = make(map[string]string)
-	}
-	for k, v := range req.Tags {
-		ds.Tags[k] = v
-	}
-	if aerr := serviceutil.ValidateTags(firehoseTagCfg, ds.Tags); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(ctx, req.DeliveryStreamName, req.Tags, firehoseTagCfg,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+		func(ctx context.Context, ds *DeliveryStream) *protocol.AWSError {
+			if err := s.store.putStream(ctx, ds); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
 		return nil, aerr
-	}
-	if err := s.store.putStream(ctx, ds); err != nil {
-		return nil, protocol.ErrInternalError
 	}
 	return &struct{}{}, nil
 }
 
 func (s *Service) untagDeliveryStreamTyped(ctx context.Context, req *untagDeliveryStreamReq) (*struct{}, *protocol.AWSError) {
-	ds, found := s.store.getStream(ctx, req.DeliveryStreamName)
-	if !found {
-		return nil, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", req.DeliveryStreamName),
-			HTTPStatus: http.StatusNotFound,
-		}
-	}
-	for _, k := range req.TagKeys {
-		delete(ds.Tags, k)
-	}
-	if err := s.store.putStream(ctx, ds); err != nil {
-		return nil, protocol.ErrInternalError
+	if aerr := serviceutil.RemoveInlineTags(ctx, req.DeliveryStreamName, req.TagKeys,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+		func(ctx context.Context, ds *DeliveryStream) *protocol.AWSError {
+			if err := s.store.putStream(ctx, ds); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
+		return nil, aerr
 	}
 	return &struct{}{}, nil
 }
 
 func (s *Service) listTagsForDeliveryStreamTyped(ctx context.Context, req *listTagsForDeliveryStreamReq) (*listTagsForDeliveryStreamResp, *protocol.AWSError) {
-	ds, found := s.store.getStream(ctx, req.DeliveryStreamName)
-	if !found {
-		return nil, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", req.DeliveryStreamName),
-			HTTPStatus: http.StatusNotFound,
-		}
+	tags, aerr := serviceutil.ListInlineTags(ctx, req.DeliveryStreamName,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+	)
+	if aerr != nil {
+		return nil, aerr
 	}
-	if ds.Tags == nil {
-		ds.Tags = make(map[string]string)
+	tagList := make([]firehoseTag, 0, len(tags))
+	for k, v := range tags {
+		tagList = append(tagList, firehoseTag{Key: k, Value: v})
 	}
-	tags := make([]firehoseTag, 0, len(ds.Tags))
-	for k, v := range ds.Tags {
-		tags = append(tags, firehoseTag{Key: k, Value: v})
-	}
-	return &listTagsForDeliveryStreamResp{Tags: tags, HasMoreTags: false}, nil
+	return &listTagsForDeliveryStreamResp{Tags: tagList, HasMoreTags: false}, nil
 }

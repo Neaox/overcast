@@ -565,12 +565,14 @@ func (h *Handler) tagQueueTyped(ctx context.Context, in *tagQueueRequest) (*stru
 		return nil, aerr
 	}
 
-	if q.Tags == nil {
-		q.Tags = make(map[string]string)
+	tags := q.GetTags()
+	if tags == nil {
+		tags = make(map[string]string)
 	}
 	for k, v := range in.Tags {
-		q.Tags[k] = v
+		tags[k] = v
 	}
+	q.SetTags(tags)
 
 	if aerr := h.store.putQueue(ctx, q); aerr != nil {
 		return nil, aerr
@@ -586,9 +588,11 @@ func (h *Handler) untagQueueTyped(ctx context.Context, in *untagQueueRequest) (*
 		return nil, aerr
 	}
 
+	tags := q.GetTags()
 	for _, k := range in.TagKeys {
-		delete(q.Tags, k)
+		delete(tags, k)
 	}
+	q.SetTags(tags)
 
 	if aerr := h.store.putQueue(ctx, q); aerr != nil {
 		return nil, aerr
@@ -604,7 +608,7 @@ func (h *Handler) listQueueTagsTyped(ctx context.Context, in *listQueueTagsReque
 		return nil, aerr
 	}
 
-	tags := q.Tags
+	tags := q.GetTags()
 	if tags == nil {
 		tags = map[string]string{}
 	}
@@ -627,12 +631,14 @@ func (h *Handler) TagQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if q.Tags == nil {
-		q.Tags = make(map[string]string)
+	tags := q.GetTags()
+	if tags == nil {
+		tags = make(map[string]string)
 	}
 	for k, v := range req.Tags {
-		q.Tags[k] = v
+		tags[k] = v
 	}
+	q.SetTags(tags)
 
 	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -657,9 +663,11 @@ func (h *Handler) UntagQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tags := q.GetTags()
 	for _, k := range req.TagKeys {
-		delete(q.Tags, k)
+		delete(tags, k)
 	}
+	q.SetTags(tags)
 
 	if aerr := h.store.putQueue(r.Context(), q); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -684,7 +692,7 @@ func (h *Handler) ListQueueTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tags := q.Tags
+	tags := q.GetTags()
 	if tags == nil {
 		tags = map[string]string{}
 	}

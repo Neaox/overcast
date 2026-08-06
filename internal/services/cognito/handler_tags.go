@@ -1,6 +1,7 @@
 package cognito
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/Neaox/overcast/internal/protocol"
@@ -24,25 +25,26 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	poolID := extractPoolIDFromARN(req.ResourceArn)
-	pool, ok := s.requirePool(r.Context(), w, r, poolID)
-	if !ok {
-		return
-	}
 
-	if pool.Tags == nil {
-		pool.Tags = make(map[string]string)
-	}
-	for k, v := range req.Tags {
-		pool.Tags[k] = v
-	}
-
-	if aerr := serviceutil.ValidateTags(cognitoTagCfg, pool.Tags); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), poolID, req.Tags, cognitoTagCfg,
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) {
+			pool, err := s.loadPool(ctx, id)
+			if err != nil {
+				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			if pool == nil {
+				return nil, errPoolNotFound(id)
+			}
+			return pool, nil
+		},
+		func(ctx context.Context, pool *UserPool) *protocol.AWSError {
+			if err := s.savePool(ctx, pool); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			return nil
+		},
+	); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	if err := s.savePool(r.Context(), pool); err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
 
@@ -60,17 +62,26 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	poolID := extractPoolIDFromARN(req.ResourceArn)
-	pool, ok := s.requirePool(r.Context(), w, r, poolID)
-	if !ok {
-		return
-	}
 
-	for _, k := range req.TagKeys {
-		delete(pool.Tags, k)
-	}
-
-	if err := s.savePool(r.Context(), pool); err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	if aerr := serviceutil.RemoveInlineTags(r.Context(), poolID, req.TagKeys,
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) {
+			pool, err := s.loadPool(ctx, id)
+			if err != nil {
+				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			if pool == nil {
+				return nil, errPoolNotFound(id)
+			}
+			return pool, nil
+		},
+		func(ctx context.Context, pool *UserPool) *protocol.AWSError {
+			if err := s.savePool(ctx, pool); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			return nil
+		},
+	); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -87,15 +98,23 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	poolID := extractPoolIDFromARN(req.ResourceArn)
-	pool, ok := s.requirePool(r.Context(), w, r, poolID)
-	if !ok {
+
+	tags, aerr := serviceutil.ListInlineTags(r.Context(), poolID,
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) {
+			pool, err := s.loadPool(ctx, id)
+			if err != nil {
+				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			if pool == nil {
+				return nil, errPoolNotFound(id)
+			}
+			return pool, nil
+		},
+	)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
-	out := pool.Tags
-	if out == nil {
-		out = make(map[string]string)
-	}
-
-	s.writeJSON(w, r, http.StatusOK, map[string]any{"Tags": out})
+	s.writeJSON(w, r, http.StatusOK, map[string]any{"Tags": tags})
 }

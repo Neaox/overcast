@@ -68,6 +68,28 @@ type deleteWebACLRequest struct {
 	LockToken string `json:"LockToken"`
 }
 
+type tagResourceRequest struct {
+	ResourceARN string            `json:"ResourceARN"`
+	Tags        map[string]string `json:"Tags"`
+}
+type tagResourceResponse struct{}
+
+type untagResourceRequest struct {
+	ResourceARN string   `json:"ResourceARN"`
+	TagKeys     []string `json:"TagKeys"`
+}
+type untagResourceResponse struct{}
+
+type listTagsForResourceRequest struct {
+	ResourceARN string `json:"ResourceARN"`
+}
+type listTagsForResourceResponse struct {
+	TagInfoForResource struct {
+		ResourceARN string            `json:"ResourceARN"`
+		TagList     map[string]string `json:"TagList"`
+	} `json:"TagInfoForResource"`
+}
+
 func (h *Handler) createWebACLTyped(ctx context.Context, req *createWebACLRequest) (*createWebACLResponse, *protocol.AWSError) {
 	if req.Name == "" {
 		return nil, protocol.ErrMissingParameter("Name")
@@ -166,4 +188,57 @@ func (h *Handler) deleteWebACLTyped(ctx context.Context, req *deleteWebACLReques
 	h.publish(ctx, events.WAFWebACLDeleted, acl)
 
 	return &struct{}{}, nil
+}
+
+func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*tagResourceResponse, *protocol.AWSError) {
+	scope, id, aerr := h.parseWAFARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	getter := func(ctx context.Context, _ string) (*WebACL, *protocol.AWSError) {
+		return h.getACL(ctx, scope, id)
+	}
+	incoming := make([]serviceutil.TagPair, 0, len(req.Tags))
+	for k, v := range req.Tags {
+		incoming = append(incoming, serviceutil.TagPair{Key: k, Value: v})
+	}
+	if aerr := serviceutil.ApplyTags(ctx, wafTagCfg, scope+"/"+id, incoming, getter, h.putACL); aerr != nil {
+		return nil, aerr
+	}
+	return &tagResourceResponse{}, nil
+}
+
+func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*untagResourceResponse, *protocol.AWSError) {
+	scope, id, aerr := h.parseWAFARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	getter := func(ctx context.Context, _ string) (*WebACL, *protocol.AWSError) {
+		return h.getACL(ctx, scope, id)
+	}
+	if aerr := serviceutil.RemoveTags(ctx, scope+"/"+id, req.TagKeys, getter, h.putACL); aerr != nil {
+		return nil, aerr
+	}
+	return &untagResourceResponse{}, nil
+}
+
+func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
+	scope, id, aerr := h.parseWAFARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	acl, aerr := h.getACL(ctx, scope, id)
+	if aerr != nil {
+		return nil, aerr
+	}
+	tags := acl.Tags
+	if tags == nil {
+		tags = make(map[string]string)
+	}
+	return &listTagsForResourceResponse{
+		TagInfoForResource: struct {
+			ResourceARN string            `json:"ResourceARN"`
+			TagList     map[string]string `json:"TagList"`
+		}{ResourceARN: req.ResourceARN, TagList: tags},
+	}, nil
 }

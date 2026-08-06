@@ -63,23 +63,21 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
-	tags, aerr := h.store.getTags(r.Context(), arn)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
+	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	incoming := map[string]string{}
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Key", i))
 		if key == "" {
 			break
 		}
-		tags[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
+		incoming[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
 	}
-	if aerr := serviceutil.ValidateTags(rdsTagCfg, tags); aerr != nil {
+	if aerr := serviceutil.ApplyStoreTags(r.Context(), tagStore, arn, incoming, rdsTagCfg); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if aerr := h.store.setTags(r.Context(), arn, tags); aerr != nil {
+	tags, aerr := tagStore.Load(r.Context(), arn)
+	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -100,7 +98,8 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
-	tags, aerr := h.store.getTags(r.Context(), arn)
+	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	tags, aerr := serviceutil.ListStoreTags(r.Context(), tagStore, arn)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -122,19 +121,16 @@ func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request)
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
-	tags, aerr := h.store.getTags(r.Context(), arn)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
+	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	var keys []string
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
 		if key == "" {
 			break
 		}
-		delete(tags, key)
+		keys = append(keys, key)
 	}
-	if aerr := h.store.setTags(r.Context(), arn, tags); aerr != nil {
+	if aerr := serviceutil.RemoveStoreTags(r.Context(), tagStore, arn, keys); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}

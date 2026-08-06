@@ -201,12 +201,14 @@ func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceReq) (*s
 			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName), HTTPStatus: http.StatusNotFound,
 		}
 	}
-	if wg.Tags == nil {
-		wg.Tags = map[string]string{}
+	tags := wg.GetTags()
+	if tags == nil {
+		tags = map[string]string{}
 	}
 	for _, t := range req.Tags {
-		wg.Tags[t.Key] = t.Value
+		tags[t.Key] = t.Value
 	}
+	wg.SetTags(tags)
 	if err := s.store.putWorkGroup(ctx, wg); err != nil {
 		return nil, protocol.ErrInternalError
 	}
@@ -229,10 +231,12 @@ func (s *Service) untagResourceTyped(ctx context.Context, req *untagResourceReq)
 			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName), HTTPStatus: http.StatusNotFound,
 		}
 	}
-	if wg.Tags != nil {
+	tags := wg.GetTags()
+	if tags != nil {
 		for _, k := range req.TagKeys {
-			delete(wg.Tags, k)
+			delete(tags, k)
 		}
+		wg.SetTags(tags)
 	}
 	if err := s.store.putWorkGroup(ctx, wg); err != nil {
 		return nil, protocol.ErrInternalError
@@ -256,5 +260,5 @@ func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName), HTTPStatus: http.StatusNotFound,
 		}
 	}
-	return &listTagsForResourceResp{Tags: tagsToList(wg.Tags)}, nil
+	return &listTagsForResourceResp{Tags: tagsToList(wg.GetTags())}, nil
 }

@@ -18,6 +18,9 @@ type UserAttribute struct {
 	Value string `json:"Value"`
 }
 
+func (p *UserPool) GetTags() map[string]string { return p.Tags }
+func (p *UserPool) SetTags(t map[string]string)  { p.Tags = t }
+
 // UserPool is the stored representation of a Cognito User Pool.
 type UserPool struct {
 	ID        string    `json:"Id"`

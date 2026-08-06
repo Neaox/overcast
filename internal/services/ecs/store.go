@@ -743,34 +743,6 @@ func (s *ecsStore) listServices(ctx context.Context, clusterName string) ([]ecsS
 	return services, nil
 }
 
-// ---- Tag operations -----------------------------------------------------------
-
-func (s *ecsStore) putTags(ctx context.Context, arn string, tags map[string]string) *protocol.AWSError {
-	raw, err := json.Marshal(tags)
-	if err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	if err := s.store.Set(ctx, nsTags, serviceutil.RegionKey(s.region(ctx), arn), string(raw)); err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	return nil
-}
-
-func (s *ecsStore) getTags(ctx context.Context, arn string) (map[string]string, *protocol.AWSError) {
-	raw, found, err := s.store.Get(ctx, nsTags, serviceutil.RegionKey(s.region(ctx), arn))
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	if !found {
-		return nil, nil
-	}
-	var tags map[string]string
-	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	return tags, nil
-}
-
 // ---- Task definition family listing -------------------------------------------
 
 // listTaskDefinitionFamilies returns the distinct family names that have registered task definitions.

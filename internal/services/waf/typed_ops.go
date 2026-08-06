@@ -19,6 +19,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"DeleteWebACL": op.NewTyped[deleteWebACLRequest, struct{}](
 			"DeleteWebACL", h.deleteWebACLTyped,
 		),
+		"TagResource": op.NewTyped[tagResourceRequest, tagResourceResponse](
+			"TagResource", h.tagResourceTyped,
+		),
+		"UntagResource": op.NewTyped[untagResourceRequest, untagResourceResponse](
+			"UntagResource", h.untagResourceTyped,
+		),
+		"ListTagsForResource": op.NewTyped[listTagsForResourceRequest, listTagsForResourceResponse](
+			"ListTagsForResource", h.listTagsForResourceTyped,
+		),
 	}
 }
 

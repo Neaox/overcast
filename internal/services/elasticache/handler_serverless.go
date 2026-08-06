@@ -17,6 +17,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type xmlCreateServerlessCacheResponse struct {
@@ -170,7 +171,12 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if tags := formTags(r); len(tags) > 0 {
-		h.store.setTags(r.Context(), arn, tags) //nolint:errcheck
+		tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+		existing, _ := tagStore.Load(r.Context(), arn)
+		for k, v := range tags {
+			existing[k] = v
+		}
+		tagStore.Save(r.Context(), arn, existing) //nolint:errcheck
 	}
 
 	if h.dockerReady.Load() {

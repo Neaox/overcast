@@ -393,7 +393,8 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	tags, aerr := h.store.getTags(r.Context(), resourceArn)
+	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	tags, aerr := tagStore.Load(r.Context(), resourceArn)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -401,7 +402,7 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 	for k, v := range req.Tags {
 		tags[k] = v
 	}
-	if aerr := h.store.setTags(r.Context(), resourceArn, tags); aerr != nil {
+	if aerr := tagStore.Save(r.Context(), resourceArn, tags); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -418,7 +419,8 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	tags, aerr := h.store.getTags(r.Context(), resourceArn)
+	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	tags, aerr := tagStore.Load(r.Context(), resourceArn)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -438,13 +440,13 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// tagKeys is comma-separated in the query param
 	tagKeysParam := r.URL.Query().Get("tagKeys")
 	var tagKeys []string
 	if tagKeysParam != "" {
 		tagKeys = strings.Split(tagKeysParam, ",")
 	}
-	tags, aerr := h.store.getTags(r.Context(), resourceArn)
+	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	tags, aerr := tagStore.Load(r.Context(), resourceArn)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -452,7 +454,7 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 	for _, k := range tagKeys {
 		delete(tags, strings.TrimSpace(k))
 	}
-	if aerr := h.store.setTags(r.Context(), resourceArn, tags); aerr != nil {
+	if aerr := tagStore.Save(r.Context(), resourceArn, tags); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}

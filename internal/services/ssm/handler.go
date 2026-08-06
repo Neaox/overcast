@@ -452,12 +452,14 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errParameterNotFound(req.ResourceId))
 		return
 	}
-	if rec.Tags == nil {
-		rec.Tags = map[string]string{}
+	tags := rec.GetTags()
+	if tags == nil {
+		tags = map[string]string{}
 	}
 	for _, t := range req.Tags {
-		rec.Tags[t.Key] = t.Value
+		tags[t.Key] = t.Value
 	}
+	rec.SetTags(tags)
 	if err := h.store.Put(ctx, rec); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -489,9 +491,11 @@ func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, errParameterNotFound(req.ResourceId))
 		return
 	}
+	tags := rec.GetTags()
 	for _, k := range req.TagKeys {
-		delete(rec.Tags, k)
+		delete(tags, k)
 	}
+	rec.SetTags(tags)
 	if err := h.store.Put(ctx, rec); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -522,8 +526,8 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errParameterNotFound(req.ResourceId))
 		return
 	}
-	tags := make([]map[string]string, 0, len(rec.Tags))
-	for k, v := range rec.Tags {
+	tags := make([]map[string]string, 0, len(rec.GetTags()))
+	for k, v := range rec.GetTags() {
 		tags = append(tags, map[string]string{"Key": k, "Value": v})
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{"TagList": tags}, "application/x-amz-json-1.1")

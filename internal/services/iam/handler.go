@@ -1496,8 +1496,9 @@ func (h *Handler) TagRole(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if role.Tags == nil {
-		role.Tags = make(map[string]string)
+	tags := role.GetTags()
+	if tags == nil {
+		tags = make(map[string]string)
 	}
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
@@ -1505,8 +1506,9 @@ func (h *Handler) TagRole(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		value := r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
-		role.Tags[key] = value
+		tags[key] = value
 	}
+	role.SetTags(tags)
 	if aerr := h.store.putRole(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1526,13 +1528,15 @@ func (h *Handler) UntagRole(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
+	tags := role.GetTags()
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
 		if key == "" {
 			break
 		}
-		delete(role.Tags, key)
+		delete(tags, key)
 	}
+	role.SetTags(tags)
 	if aerr := h.store.putRole(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1552,8 +1556,9 @@ func (h *Handler) ListRoleTags(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tags := make([]tagXML, 0, len(role.Tags))
-	for k, v := range role.Tags {
+	tagMap := role.GetTags()
+	tags := make([]tagXML, 0, len(tagMap))
+	for k, v := range tagMap {
 		tags = append(tags, tagXML{Key: k, Value: v})
 	}
 	writeIAMXML(w, r, "ListRoleTagsResponse", "ListRoleTagsResult", struct {
@@ -1579,8 +1584,9 @@ func (h *Handler) TagUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if u.Tags == nil {
-		u.Tags = make(map[string]string)
+	tags := u.GetTags()
+	if tags == nil {
+		tags = make(map[string]string)
 	}
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
@@ -1588,8 +1594,9 @@ func (h *Handler) TagUser(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		value := r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
-		u.Tags[key] = value
+		tags[key] = value
 	}
+	u.SetTags(tags)
 	if aerr := h.store.putUser(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1609,13 +1616,15 @@ func (h *Handler) UntagUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
+	tags := u.GetTags()
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
 		if key == "" {
 			break
 		}
-		delete(u.Tags, key)
+		delete(tags, key)
 	}
+	u.SetTags(tags)
 	if aerr := h.store.putUser(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1635,8 +1644,9 @@ func (h *Handler) ListUserTags(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tags := make([]tagXML, 0, len(u.Tags))
-	for k, v := range u.Tags {
+	tagMap := u.GetTags()
+	tags := make([]tagXML, 0, len(tagMap))
+	for k, v := range tagMap {
 		tags = append(tags, tagXML{Key: k, Value: v})
 	}
 	writeIAMXML(w, r, "ListUserTagsResponse", "ListUserTagsResult", struct {

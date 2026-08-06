@@ -172,12 +172,14 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid), HTTPStatus: http.StatusNotFound,
 		}
 	}
-	if p.Tags == nil {
-		p.Tags = map[string]string{}
+	tags := p.GetTags()
+	if tags == nil {
+		tags = map[string]string{}
 	}
 	for _, t := range req.Tags {
-		p.Tags[t.Key] = t.Value
+		tags[t.Key] = t.Value
 	}
+	p.SetTags(tags)
 	if err := h.store.putProtection(ctx, p); err != nil {
 		return nil, protocol.ErrInternalError
 	}
@@ -200,10 +202,12 @@ func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequ
 			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid), HTTPStatus: http.StatusNotFound,
 		}
 	}
-	if p.Tags != nil {
+	tags := p.GetTags()
+	if tags != nil {
 		for _, k := range req.TagKeys {
-			delete(p.Tags, k)
+			delete(tags, k)
 		}
+		p.SetTags(tags)
 	}
 	if err := h.store.putProtection(ctx, p); err != nil {
 		return nil, protocol.ErrInternalError
@@ -227,5 +231,5 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid), HTTPStatus: http.StatusNotFound,
 		}
 	}
-	return &listTagsForResourceResponse{Tags: shieldTagsToList(p.Tags)}, nil
+	return &listTagsForResourceResponse{Tags: shieldTagsToList(p.GetTags())}, nil
 }

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
+	"strings"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
@@ -46,10 +46,13 @@ func newHandler(cfg *config.Config, store state.Store, clk clock.Clock) *Handler
 
 func (h *Handler) initOps() {
 	h.ops = map[string]http.HandlerFunc{
-		"CreateWebACL": h.createWebACL,
-		"GetWebACL":    h.getWebACL,
-		"ListWebACLs":  h.listWebACLs,
-		"DeleteWebACL": h.deleteWebACL,
+		"CreateWebACL":        h.createWebACL,
+		"GetWebACL":           h.getWebACL,
+		"ListWebACLs":         h.listWebACLs,
+		"DeleteWebACL":        h.deleteWebACL,
+		"TagResource":         h.tagResource,
+		"UntagResource":       h.untagResource,
+		"ListTagsForResource": h.listTagsForResource,
 	}
 	h.typedOp = h.typedOps()
 }
@@ -246,4 +249,127 @@ func (h *Handler) deleteWebACL(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, r, http.StatusOK, map[string]any{})
 }
 
-var _ = time.Now
+func (h *Handler) parseWAFARN(arn string) (scope, id string, aerr *protocol.AWSError) {
+	if !strings.HasPrefix(arn, "arn:aws:wafv2:") {
+		return "", "", &protocol.AWSError{
+			Code: "WAFInvalidParameterException", Message: "Invalid ARN", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return "", "", &protocol.AWSError{
+			Code: "WAFInvalidParameterException", Message: "Invalid ARN", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	resource := parts[5]
+	idx := strings.LastIndex(resource, "/")
+	if idx < 0 {
+		return "", "", &protocol.AWSError{
+			Code: "WAFInvalidParameterException", Message: "Invalid ARN", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	resourceType := resource[:idx]
+	id = resource[idx+1:]
+	scope = "REGIONAL"
+	if resourceType == "global/webacl" {
+		scope = "CLOUDFRONT"
+	}
+	if resourceType != "regional/webacl" && resourceType != "global/webacl" {
+		return "", "", &protocol.AWSError{
+			Code: "WAFInvalidParameterException", Message: "Unsupported resource type in ARN", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return scope, id, nil
+}
+
+var wafTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "WAFLimitsExceededException",
+	InvalidCode:     "WAFInvalidParameterException",
+	ExceededMessage: "Tag key list exceeds maximum tag limit",
+}
+
+func (h *Handler) putACL(ctx context.Context, acl *WebACL) *protocol.AWSError {
+	raw, _ := json.Marshal(acl)
+	if err := h.store.Set(ctx, nsWebACLs, h.storeKey(acl.Scope, acl.ID), string(raw)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	h.publish(ctx, events.WAFWebACLCreated, acl)
+	return nil
+}
+
+func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string            `json:"ResourceARN"`
+		Tags        map[string]string `json:"Tags"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	scope, id, aerr := h.parseWAFARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	ctx := r.Context()
+	getter := func(ctx context.Context, _ string) (*WebACL, *protocol.AWSError) {
+		return h.getACL(ctx, scope, id)
+	}
+	incoming := make([]serviceutil.TagPair, 0, len(req.Tags))
+	for k, v := range req.Tags {
+		incoming = append(incoming, serviceutil.TagPair{Key: k, Value: v})
+	}
+	if aerr := serviceutil.ApplyTags(ctx, wafTagCfg, scope+"/"+id, incoming, getter, h.putACL); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	h.writeJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string   `json:"ResourceARN"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	scope, id, aerr := h.parseWAFARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	ctx := r.Context()
+	getter := func(ctx context.Context, _ string) (*WebACL, *protocol.AWSError) {
+		return h.getACL(ctx, scope, id)
+	}
+	if aerr := serviceutil.RemoveTags(ctx, scope+"/"+id, req.TagKeys, getter, h.putACL); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	h.writeJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	scope, id, aerr := h.parseWAFARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	ctx := r.Context()
+	acl, aerr := h.getACL(ctx, scope, id)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	tags := acl.Tags
+	if tags == nil {
+		tags = make(map[string]string)
+	}
+	h.writeJSON(w, r, http.StatusOK, map[string]any{"TagInfoForResource": map[string]any{"ResourceARN": req.ResourceARN, "TagList": tags}})
+}
