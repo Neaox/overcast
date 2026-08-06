@@ -66,7 +66,7 @@ function TracesPage() {
   })
 
   const allTraces = useMemo(() => {
-    return data?.pages.flatMap((p) => (p as { traces: TraceSummary[] }).traces ?? []) ?? []
+    return (data?.pages ?? []).flatMap((p) => (p as { traces: TraceSummary[] }).traces)
   }, [data])
 
   const applyFilters = () => {

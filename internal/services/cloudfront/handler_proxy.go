@@ -225,10 +225,10 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	resp, originURL, err := h.dispatchToOrigins(ctx, r, reqPath, candidates, failoverCodes)
 	if err != nil {
-			log.Error("origin request failed",
-				zap.String("originURL", originURL),
-				zap.Error(err),
-			)
+		log.Error("origin request failed",
+			zap.String("originURL", originURL),
+			zap.Error(err),
+		)
 		http.Error(w, "Origin request failed", http.StatusBadGateway)
 		return
 	}
