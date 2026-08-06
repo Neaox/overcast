@@ -6,18 +6,23 @@ import {
   MarkerType,
   type Node,
   type Edge,
+  type NodeMouseHandler,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
-import type { TraceEntry } from "@/types"
+import type { TraceEntry, TraceHop } from "@/types"
+import { nsToHuman } from "@/features/debug-traces/utils"
 
 interface FlowMapProps {
   trace: TraceEntry
   aggregateThreshold?: number
+  onSelectHop?: (hopId: string | null) => void
+  selectedHopId?: string | null
 }
 
-export function FlowMap({ trace, aggregateThreshold = 5 }: FlowMapProps) {
+export function FlowMap({ trace, aggregateThreshold = 5, onSelectHop, selectedHopId }: FlowMapProps) {
   const [hideNoisy, setHideNoisy] = useState(true)
   const [errorsOnly, setErrorsOnly] = useState(false)
+  const [minDurationMs, setMinDurationMs] = useState(0)
   const hops = trace.hops ?? []
 
   const { nodes, edges } = useMemo(() => {
@@ -44,15 +49,43 @@ export function FlowMap({ trace, aggregateThreshold = 5 }: FlowMapProps) {
         filteredEdges = result.edges.filter((e) => e.source === "entry" && errorIds.has(e.target))
       }
     }
+    if (minDurationMs > 0) {
+      const durNs = minDurationMs * 1_000_000
+      const slowIds = new Set(
+        result.nodes.filter((n) => n.data.duration >= durNs && !n.data.isEntry).map((n) => n.id),
+      )
+      if (slowIds.size > 0) {
+        filteredNodes = result.nodes.filter((n) => n.data.isEntry || slowIds.has(n.id))
+        filteredEdges = result.edges.filter((e) => e.source === "entry" && slowIds.has(e.target))
+      }
+    }
+    // Style selected node
+    if (selectedHopId) {
+      filteredNodes = filteredNodes.map((n) => {
+        if (n.id === selectedHopId) {
+          return { ...n, style: { ...n.style, border: "2px solid var(--color-accent)", boxShadow: "0 0 8px var(--color-accent)" } }
+        }
+        return { ...n, style: { ...n.style, opacity: 0.5 } }
+      })
+    }
     return { nodes: filteredNodes, edges: filteredEdges }
-  }, [trace, aggregateThreshold, hideNoisy, errorsOnly])
+  }, [trace, aggregateThreshold, hideNoisy, errorsOnly, minDurationMs, selectedHopId, hops])
+
+  const handleNodeClick: NodeMouseHandler = (_event, node) => {
+    if (node.id === "entry") {
+      onSelectHop?.(null)
+    } else if (!node.data.aggregateCount) {
+      onSelectHop?.(node.id === selectedHopId ? null : node.id)
+    }
+  }
 
   const noisyCount = hops.filter((h) => h.noisy).length
   const errorCount = hops.filter((h) => h.responseStatus >= 400 || !!h.error).length
+  const slowCount = hops.filter((h) => h.duration > 100_000_000).length
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex gap-3 text-xs">
+      <div className="flex flex-wrap gap-3 text-xs">
         {noisyCount > 0 && (
           <label className="flex items-center gap-1 cursor-pointer select-none text-fg-muted">
             <input type="checkbox" checked={!hideNoisy} onChange={(e) => setHideNoisy(!e.target.checked)} className="rounded" />
@@ -65,6 +98,20 @@ export function FlowMap({ trace, aggregateThreshold = 5 }: FlowMapProps) {
             Errors only ({errorCount})
           </label>
         )}
+        {slowCount > 0 && (
+          <label className="flex items-center gap-1 cursor-pointer select-none text-fg-muted">
+            <input type="checkbox" checked={minDurationMs >= 100} onChange={(e) => setMinDurationMs(e.target.checked ? 100 : 0)} className="rounded" />
+            ≥100ms ({slowCount})
+          </label>
+        )}
+        {selectedHopId && (
+          <button
+            onClick={() => onSelectHop?.(null)}
+            className="text-accent hover:underline ml-auto"
+          >
+            Clear selection
+          </button>
+        )}
       </div>
       <div className="h-[500px] w-full rounded-lg border border-border">
         <ReactFlow
@@ -75,6 +122,7 @@ export function FlowMap({ trace, aggregateThreshold = 5 }: FlowMapProps) {
           nodesDraggable={false}
           nodesConnectable={false}
           proOptions={{ hideAttribution: true }}
+          onNodeClick={handleNodeClick}
         >
           <Background gap={20} color="var(--color-border)" />
           <Controls className="!bg-bg-elevated !border-border !text-fg" />
@@ -91,6 +139,7 @@ interface FlowNodeData extends Record<string, unknown> {
   aggregateCount: number
   responseStatus: number
   duration: number
+  tooltip: string
 }
 
 function buildGraph(trace: TraceEntry, threshold: number): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
@@ -104,6 +153,7 @@ function buildGraph(trace: TraceEntry, threshold: number): { nodes: Node<FlowNod
       label: trace.service + (trace.operation ? "." + trace.operation : ""),
       service: trace.service, isEntry: true, aggregateCount: 0,
       responseStatus: trace.statusCode, duration: trace.duration,
+      tooltip: `${trace.service}.${trace.operation ?? "request"}\nStatus: ${trace.statusCode}\nDuration: ${nsToHuman(trace.duration)}`,
     },
     style: { background: "var(--color-bg-elevated)", border: `2px solid ${serviceColor(trace.service)}`, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", color: "var(--color-fg)" },
   })
@@ -112,10 +162,21 @@ function buildGraph(trace: TraceEntry, threshold: number): { nodes: Node<FlowNod
   const aggregated = aggregateHops(trace.hops ?? [], threshold)
 
   for (const hop of aggregated.kept) {
+    const statusLabel = hop.error ? "Error" : hop.responseStatus
     nodes.push({
       id: hop.id, type: "default", position: { x: 200, y },
-      data: { label: hop.service + "." + hop.operation, service: hop.service, isEntry: false, aggregateCount: 0, responseStatus: hop.responseStatus, duration: hop.duration },
-      style: { background: "var(--color-bg-elevated)", border: `2px solid ${serviceColor(hop.service)}`, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", color: "var(--color-fg)" },
+      data: {
+        label: hop.service + "." + hop.operation,
+        service: hop.service, isEntry: false, aggregateCount: 0,
+        responseStatus: hop.responseStatus, duration: hop.duration,
+        tooltip: `${hop.callerService} → ${hop.service}.${hop.operation}\n${hop.targetUri ?? ""}\nStatus: ${statusLabel}\nDuration: ${nsToHuman(hop.duration)}`,
+      },
+      style: {
+        background: "var(--color-bg-elevated)",
+        border: `2px solid ${serviceColor(hop.service)}`,
+        borderRadius: "8px", padding: "8px 16px", fontSize: "12px", color: "var(--color-fg)",
+        cursor: "pointer",
+      },
     })
     edges.push({ id: `${rootId}→${hop.id}`, source: rootId, target: hop.id, label: hop.operation, style: { stroke: serviceColor(hop.service) }, markerEnd: { type: MarkerType.ArrowClosed, color: serviceColor(hop.service) } })
     y += 80
@@ -123,8 +184,8 @@ function buildGraph(trace: TraceEntry, threshold: number): { nodes: Node<FlowNod
   for (const agg of aggregated.aggregates) {
     nodes.push({
       id: agg.id, type: "default", position: { x: 200, y },
-      data: { label: `${agg.service}.${agg.operation} ×${agg.count}`, service: agg.service, isEntry: false, aggregateCount: agg.count, responseStatus: 0, duration: 0 },
-      style: { background: "var(--color-bg-elevated)", border: `2px dashed ${serviceColor(agg.service)}`, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", color: "var(--color-fg-muted)" },
+      data: { label: `${agg.service}.${agg.operation} ×${agg.count}`, service: agg.service, isEntry: false, aggregateCount: agg.count, responseStatus: 0, duration: 0, tooltip: `${agg.count} hops: ${agg.service}.${agg.operation}` },
+      style: { background: "var(--color-bg-elevated)", border: `2px dashed ${serviceColor(agg.service)}`, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", color: "var(--color-fg-muted)", cursor: "default" },
     })
     edges.push({ id: `${rootId}→${agg.id}`, source: rootId, target: agg.id, label: `${agg.operation} ×${agg.count}`, style: { stroke: serviceColor(agg.service), strokeDasharray: "4 2" }, markerEnd: { type: MarkerType.ArrowClosed, color: serviceColor(agg.service) } })
     y += 80
@@ -154,6 +215,6 @@ function aggregateHops(hops: NonNullable<TraceEntry["hops"]>, threshold: number)
 }
 
 function serviceColor(service: string): string {
-  const colors: Record<string, string> = { cloudformation: "#f59e0b", lambda: "#f97316", sqs: "#8b5cf6", sns: "#ec4899", s3: "#22c55e", dynamodb: "#3b82f6", iam: "#ef4444", ecs: "#06b6d4", ec2: "#f97316", kms: "#a855f7", ssm: "#6366f1", logs: "#14b8a6", stepfunctions: "#84cc16", events: "#e11d48", secretsmanager: "#d946ef", apigateway: "#0ea5e9", appsync: "#f43f5e", cognito: "#8b5cf6", waf: "#e11d48", cloudfront: "#06b6d4", pipes: "#f59e0b", kinesis: "#3b82f6" }
+  const colors: Record<string, string> = { cloudformation: "#f59e0b", lambda: "#f97316", sqs: "#8b5cf6", sns: "#ec4899", s3: "#22c55e", dynamodb: "#3b82f6", iam: "#ef4444", ecs: "#06b6d4", ec2: "#f97316", kms: "#a855f7", ssm: "#6366f1", logs: "#14b8a6", stepfunctions: "#84cc16", events: "#e11d48", secretsmanager: "#d946ef", apigateway: "#0ea5e9", appsync: "#f43f5e", cognito: "#8b5cf6", waf: "#e11d48", cloudfront: "#06b6d4", pipes: "#f59e0b", kinesis: "#3b82f6", elasticache: "#eab308", rds: "#3b82f6", elbv2: "#06b6d4", autoscaling: "#f97316", route53: "#8b5cf6", ssm: "#6366f1", acm: "#22c55e", sts: "#ef4444", transfer: "#a855f7", shield: "#e11d48", backup: "#14b8a6", firehose: "#f59e0b", athena: "#3b82f6", glue: "#84cc16", msk: "#ec4899", eks: "#f97316", efs: "#06b6d4", opensearch: "#8b5cf6", appconfig: "#22c55e", bedrock: "#f43f5e", scheduler: "#a855f7", cloudtrail: "#f59e0b", organizations: "#ef4444", ses: "#6366f1" }
   return colors[service] ?? "var(--color-accent)"
 }
