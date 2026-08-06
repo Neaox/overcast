@@ -2,6 +2,7 @@ package trace
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -64,6 +65,9 @@ func (b *Buffer) Get(requestID string) (*Entry, bool) {
 
 // Len returns the number of entries currently stored.
 func (b *Buffer) Len() int {
+	if b == nil {
+		return 0
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return len(b.index)
@@ -71,6 +75,9 @@ func (b *Buffer) Len() int {
 
 // Capacity returns the maximum number of entries the buffer can hold.
 func (b *Buffer) Capacity() int {
+	if b == nil {
+		return 0
+	}
 	return b.capacity
 }
 
@@ -191,6 +198,9 @@ func statusMatches(code int, filter string) bool {
 	case "5xx":
 		return code >= 500 && code < 600
 	default:
-		return false
+		if n, err := strconv.Atoi(filter); err == nil {
+			return code == n
+		}
+		return true
 	}
 }
