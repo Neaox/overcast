@@ -2,10 +2,11 @@ package trace
 
 import (
 	"math"
-	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/Neaox/overcast/internal/clock"
 )
 
 // ZapFieldsToMap converts a slice of zapcore.Field into a plain map, making
@@ -63,17 +64,18 @@ func ZapFieldValue(f zapcore.Field) any {
 type recorderCore struct {
 	zapcore.Core
 	rec *Recorder
+	clk clock.Clock
 }
 
 // NewRecorderCore returns a zap.Option that wraps inner with a core that
 // captures log entries into rec. When rec is nil the original core is
 // returned unchanged — use this as a no-op guard at the call site.
-func NewRecorderCore(rec *Recorder) func(zapcore.Core) zapcore.Core {
+func NewRecorderCore(rec *Recorder, clk clock.Clock) func(zapcore.Core) zapcore.Core {
 	if rec == nil {
 		return func(c zapcore.Core) zapcore.Core { return c }
 	}
 	return func(inner zapcore.Core) zapcore.Core {
-		return &recorderCore{Core: inner, rec: rec}
+		return &recorderCore{Core: inner, rec: rec, clk: clk}
 	}
 }
 
@@ -88,7 +90,7 @@ func (c *recorderCore) Write(entry zapcore.Entry, fields []zapcore.Field) error 
 	c.rec.AddLog(LogEntry{
 		Level:     entry.Level.String(),
 		Message:   entry.Message,
-		Timestamp: time.Now(),
+		Timestamp: c.clk.Now(),
 		Fields:    ZapFieldsToMap(fields),
 	})
 	return c.Core.Write(entry, fields)
@@ -96,9 +98,9 @@ func (c *recorderCore) Write(entry zapcore.Entry, fields []zapcore.Field) error 
 
 // WithRecorder returns a zap.Logger that captures log entries into rec.
 // When rec is nil the original logger is returned unchanged.
-func WithRecorder(base *zap.Logger, rec *Recorder) *zap.Logger {
+func WithRecorder(base *zap.Logger, rec *Recorder, clk clock.Clock) *zap.Logger {
 	if rec == nil {
 		return base
 	}
-	return base.WithOptions(zap.WrapCore(NewRecorderCore(rec)))
+	return base.WithOptions(zap.WrapCore(NewRecorderCore(rec, clk)))
 }

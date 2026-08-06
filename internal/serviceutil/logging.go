@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/logging"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/trace"
@@ -300,7 +301,7 @@ func (l *ServiceLogger) WithRecorder(ctx context.Context) *ServiceLogger {
 		return l
 	}
 	return &ServiceLogger{
-		log:     trace.WithRecorder(l.log, rec),
+		log:     trace.WithRecorder(l.log, rec, clock.New()),
 		service: l.service,
 	}
 }

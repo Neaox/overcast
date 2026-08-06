@@ -9,7 +9,7 @@ import {
   type NodeMouseHandler,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
-import type { TraceEntry, TraceHop } from "@/types"
+import type { TraceEntry } from "@/types"
 import { nsToHuman } from "@/features/debug-traces/utils"
 
 interface FlowMapProps {
@@ -30,34 +30,40 @@ export function FlowMap({ trace, aggregateThreshold = 5, onSelectHop, selectedHo
     let filteredNodes = result.nodes
     let filteredEdges = result.edges
 
+    // Collect matching IDs from active filters
+    const noisyIds = new Set(
+      hops.filter((h) => h.noisy).map((h) => h.id),
+    )
+    result.nodes.forEach((n) => {
+      if (n.data.aggregateCount > 0) noisyIds.add(n.id)
+    })
+    const errorIds = new Set(
+      result.nodes.filter((n) => n.data.responseStatus >= 400 && !n.data.isEntry).map((n) => n.id),
+    )
+    const durNs = minDurationMs * 1_000_000
+    const slowIds = new Set(
+      result.nodes.filter((n) => n.data.duration >= durNs && !n.data.isEntry).map((n) => n.id),
+    )
+
+    // Build filtered sets as union of IDs excluded by active filters
+    const exclude = new Set<string>()
+    if (hideNoisy) for (const id of noisyIds) exclude.add(id)
+    if (errorsOnly && errorIds.size > 0) {
+      // Keep only: entry + node in errorIds
+      filteredNodes = result.nodes.filter((n) => n.data.isEntry || errorIds.has(n.id))
+      filteredEdges = result.edges.filter((e) => e.source === "entry" && errorIds.has(e.target))
+    }
+    if (minDurationMs > 0 && slowIds.size > 0) {
+      // Intersect with slow: keep nodes that are in the current set AND also slow
+      const currentIds = new Set(filteredNodes.map((n) => n.id))
+      filteredNodes = filteredNodes.filter((n) => n.data.isEntry || (slowIds.has(n.id) && currentIds.has(n.id)))
+      filteredEdges = filteredEdges.filter((e) => e.source === "entry" && slowIds.has(e.target))
+    }
+
+    // Apply hideNoisy last — remove noisy nodes from whatever remains
     if (hideNoisy) {
-      const noisyIds = new Set(
-        hops.filter((h) => h.noisy).map((h) => h.id),
-      )
-      result.nodes.forEach((n) => {
-        if (n.data.aggregateCount > 0) noisyIds.add(n.id)
-      })
-      filteredNodes = result.nodes.filter((n) => !noisyIds.has(n.id))
-      filteredEdges = result.edges.filter((e) => !noisyIds.has(e.target))
-    }
-    if (errorsOnly) {
-      const errorIds = new Set(
-        result.nodes.filter((n) => n.data.responseStatus >= 400 && !n.data.isEntry).map((n) => n.id),
-      )
-      if (errorIds.size > 0) {
-        filteredNodes = result.nodes.filter((n) => n.data.isEntry || errorIds.has(n.id))
-        filteredEdges = result.edges.filter((e) => e.source === "entry" && errorIds.has(e.target))
-      }
-    }
-    if (minDurationMs > 0) {
-      const durNs = minDurationMs * 1_000_000
-      const slowIds = new Set(
-        result.nodes.filter((n) => n.data.duration >= durNs && !n.data.isEntry).map((n) => n.id),
-      )
-      if (slowIds.size > 0) {
-        filteredNodes = result.nodes.filter((n) => n.data.isEntry || slowIds.has(n.id))
-        filteredEdges = result.edges.filter((e) => e.source === "entry" && slowIds.has(e.target))
-      }
+      filteredNodes = filteredNodes.filter((n) => !noisyIds.has(n.id))
+      filteredEdges = filteredEdges.filter((e) => !noisyIds.has(e.target))
     }
     // Style selected node
     if (selectedHopId) {

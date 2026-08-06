@@ -184,8 +184,6 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
             {hopView === "sequence" && (
               <SequenceDiagram
                 hops={hops}
-                totalDuration={trace.duration}
-                startTime={trace.timestamp}
                 onSelectHop={setSelectedHopId}
                 selectedHopId={selectedHopId}
               />

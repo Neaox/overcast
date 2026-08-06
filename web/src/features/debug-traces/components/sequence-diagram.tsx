@@ -4,8 +4,6 @@ import type { TraceHop } from "@/types"
 
 interface SequenceDiagramProps {
   hops: TraceHop[]
-  totalDuration: number
-  startTime?: string
   onSelectHop?: (hopId: string) => void
   selectedHopId?: string | null
 }
@@ -21,8 +19,6 @@ const topPad = 10
  */
 export function SequenceDiagram({
   hops,
-  totalDuration: _totalDuration,
-  startTime: _startTime,
   onSelectHop,
   selectedHopId,
 }: SequenceDiagramProps) {

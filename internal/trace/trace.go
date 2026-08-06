@@ -148,6 +148,18 @@ func (r *Recorder) SetResponse(headers http.Header, body []byte, status int, max
 	}
 }
 
+// SetResponseBodyTruncated marks the response body as truncated. Called by
+// the middleware when the traceResponseWriter detects truncation at write
+// time (before the final response body is available).
+func (r *Recorder) SetResponseBodyTruncated() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entry.ResponseBodyTruncated = true
+}
+
 // SetServiceInfo records the detected service, operation, and region.
 func (r *Recorder) SetServiceInfo(service, operation, region string) {
 	if r == nil {

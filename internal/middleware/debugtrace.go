@@ -78,6 +78,9 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 				respHeaders[k] = vv
 			}
 			rec.SetResponse(respHeaders, trw.tee.Bytes(), trw.status, maxTraceBody, trw.streaming)
+		if trw.truncated && !trw.streaming {
+			rec.SetResponseBodyTruncated()
+		}
 			rec.SetDuration(clk.Since(start))
 
 			if buf != nil {
@@ -97,6 +100,7 @@ type traceResponseWriter struct {
 	cap       int64
 	status    int
 	streaming bool
+	truncated bool
 }
 
 func (w *traceResponseWriter) Write(b []byte) (int, error) {
@@ -106,8 +110,11 @@ func (w *traceResponseWriter) Write(b []byte) (int, error) {
 			n := int64(len(b))
 			if n > remaining {
 				n = remaining
+				w.truncated = true
 			}
 			w.tee.Write(b[:n])
+		} else {
+			w.truncated = true
 		}
 	}
 	return w.ResponseWriter.Write(b)
