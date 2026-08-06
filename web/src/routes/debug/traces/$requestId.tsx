@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useState, Fragment } from "react"
 import { ArrowLeft, Clock, Server, AlertCircle } from "lucide-react"
 import { traceDetailQueryOptions } from "@/features/debug-traces/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
-import { msToHuman, statusColor, tryFormatJSON } from "@/features/debug-traces/utils"
+import { nsToHuman, statusColor, tryFormatJSON } from "@/features/debug-traces/utils"
 import { Waterfall } from "@/features/debug-traces/components/waterfall"
 import type { TraceEntry, TraceHop, TraceLogEntry } from "@/types"
 
@@ -65,7 +65,7 @@ function TraceDetailPage() {
               <span>·</span>
               <span className="flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                {msToHuman(trace.duration)}
+                {nsToHuman(trace.duration)}
               </span>
               <span>·</span>
               <span className="flex items-center gap-1">
@@ -120,7 +120,7 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <Field label="Request ID" value={trace.requestId} copyable />
         <Field label="Timestamp" value={new Date(trace.timestamp).toISOString()} />
-        <Field label="Duration" value={msToHuman(trace.duration)} />
+        <Field label="Duration" value={nsToHuman(trace.duration)} />
         <Field label="Method" value={trace.method} />
         <Field label="Path" value={trace.path} />
         <Field label="Host" value={trace.host} />
@@ -249,9 +249,8 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
         </thead>
         <tbody>
           {hops.map((hop) => (
-            <>
+            <Fragment key={hop.id}>
               <tr
-                key={hop.id}
                 className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors"
                 onClick={() => setExpanded(expanded === hop.id ? null : hop.id)}
               >
@@ -267,7 +266,7 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
                   {hop.responseStatus}
                 </td>
                 <td className="px-3 py-2 font-mono text-xs text-fg-muted">
-                  {msToHuman(hop.duration)}
+                  {nsToHuman(hop.duration)}
                 </td>
               </tr>
               {expanded === hop.id && (
@@ -303,7 +302,7 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -334,9 +333,8 @@ function LogsTab({ entries }: { entries: TraceLogEntry[] }) {
         </thead>
         <tbody>
           {entries.map((entry, i) => (
-            <>
+            <Fragment key={i}>
               <tr
-                key={i}
                 className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors"
                 onClick={() => setExpanded(expanded === i ? null : i)}
               >
@@ -369,7 +367,7 @@ function LogsTab({ entries }: { entries: TraceLogEntry[] }) {
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           ))}
         </tbody>
       </table>

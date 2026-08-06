@@ -16,7 +16,6 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
@@ -29,7 +28,6 @@ import (
 	"github.com/Neaox/overcast/internal/router"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
-	"github.com/Neaox/overcast/internal/trace"
 )
 
 const defaultUIPort = 4567
@@ -99,15 +97,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		zcfg.EncoderConfig.EncodeLevel = serviceutil.WrapLevelEncoder(zcfg.EncoderConfig.EncodeLevel, "trace")
 	}
 	zcfg.Level = zap.NewAtomicLevelAt(logLevel)
-	var traceCore *trace.TracingCore
-	var zopts []zap.Option
-	if cfg.Debug {
-		traceCore = trace.NewTracingCore()
-		zopts = append(zopts, zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-			return traceCore.Wrap(c)
-		}))
-	}
-	logger, err := zcfg.Build(zopts...)
+	logger, err := zcfg.Build()
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
@@ -216,7 +206,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	prof.mark("serverTLSConfig")
 
 	// ---- HTTP server -------------------------------------------------------
-	handler, preShutdown, cleanup, _ := router.New(cfg, store, logger, clock.New(), traceCore, hookRunner)
+	handler, preShutdown, cleanup, _ := router.New(cfg, store, logger, clock.New(), nil, hookRunner)
 	prof.mark("router.New (full)")
 
 	// When TLS is enabled the standard library automatically negotiates HTTP/2

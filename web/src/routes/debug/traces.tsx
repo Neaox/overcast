@@ -3,7 +3,7 @@ import { useMemo, useState } from "react"
 import { Search } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { traceListQueryOptions, traceCountQueryOptions } from "@/features/debug-traces/data"
-import { msToHuman, statusColor } from "@/features/debug-traces/utils"
+import { nsToHuman, statusColor } from "@/features/debug-traces/utils"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -156,7 +156,7 @@ function TracesPage() {
                       <td className="px-3 py-2"><Badge variant="outline" className="text-xs">{t.service}</Badge></td>
                       <td className="px-3 py-2 text-fg-muted text-xs">{t.operation ?? "—"}</td>
                       <td className={cn("px-3 py-2 font-mono text-xs", statusColor(t.statusCode))}>{t.statusCode}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-fg-muted">{msToHuman(t.duration)}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-fg-muted">{nsToHuman(t.duration)}</td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
                           <Link to="/debug/traces/$requestId" params={{ requestId: t.requestId }} className="font-mono text-xs text-accent hover:underline truncate max-w-[200px]" onClick={(e) => e.stopPropagation()}>{t.requestId.slice(0, 12)}…</Link>

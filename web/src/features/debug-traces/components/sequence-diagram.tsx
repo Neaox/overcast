@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { msToHuman } from "@/features/debug-traces/utils"
+import { nsToHuman } from "@/features/debug-traces/utils"
 import type { TraceHop } from "@/types"
 
 interface SequenceDiagramProps {
@@ -163,7 +163,7 @@ export function SequenceDiagram({
                   fontSize={9}
                   fontFamily="monospace"
                 >
-                  {msToHuman(a.duration)}
+                  {nsToHuman(a.duration)}
                 </text>
               </g>
             )
@@ -174,4 +174,4 @@ export function SequenceDiagram({
   )
 }
 
-// No local msToHuman — imported from shared utils.
+// No local nsToHuman — imported from shared utils.

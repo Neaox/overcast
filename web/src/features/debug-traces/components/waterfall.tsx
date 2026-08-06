@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { msToHuman } from "@/features/debug-traces/utils"
+import { nsToHuman } from "@/features/debug-traces/utils"
 import type { TraceHop } from "@/types"
 
 interface WaterfallProps {
@@ -49,7 +49,7 @@ export function Waterfall({ hops, totalDuration, startTime, onSelectHop, selecte
         return (
           <g key={pct}>
             <line x1={x} y1={0} x2={x} y2={totalHeight} stroke="var(--color-border)" strokeWidth={0.5} />
-            <text x={x} y={totalHeight + 14} textAnchor="middle" fill="var(--color-fg-muted)" fontSize={10}>{msToHuman(totalDuration * pct)}</text>
+            <text x={x} y={totalHeight + 14} textAnchor="middle" fill="var(--color-fg-muted)" fontSize={10}>{nsToHuman(totalDuration * pct)}</text>
           </g>
         )
       })}
@@ -58,7 +58,7 @@ export function Waterfall({ hops, totalDuration, startTime, onSelectHop, selecte
           <rect x={labelWidth} y={bar.y} width={chartWidth} height={barHeight} rx={3} fill="var(--color-bg-elevated)" stroke="var(--color-border)" strokeWidth={0.5} />
           <rect x={labelWidth + bar.left} y={bar.y} width={bar.widthPx} height={barHeight} rx={3} fill={bar.color} opacity={0.7} />
           <text x={labelWidth - 4} y={bar.y + barHeight / 2 + 1} textAnchor="end" fill="var(--color-fg)" fontSize={11} fontFamily="monospace">{bar.service}.{bar.operation}</text>
-          <text x={labelWidth + bar.left + bar.widthPx + 4} y={bar.y + barHeight / 2 + 1} fill="var(--color-fg-muted)" fontSize={10} fontFamily="monospace">{msToHuman(bar.duration)}</text>
+          <text x={labelWidth + bar.left + bar.widthPx + 4} y={bar.y + barHeight / 2 + 1} fill="var(--color-fg-muted)" fontSize={10} fontFamily="monospace">{nsToHuman(bar.duration)}</text>
         </g>
       ))}
     </svg>
