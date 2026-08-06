@@ -615,6 +615,7 @@ and the environment ages out through the normal idle sweep.
 | Event source mappings       | 5            |                |
 | Layers                      | 5            |                |
 | Concurrency & configuration | 7            |                |
+| Tags                        | 3            |                |
 
 ---
 
@@ -715,5 +716,13 @@ and the environment ages out through the normal idle sweep.
 | `GetProvisionedConcurrencyConfig`    | ✅ Supported | Reports live Allocated/Available; ProvisionedConcurrencyConfigNotFoundException if not set                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetProvisionedConcurrencyConfig.html)    |
 | `DeleteProvisionedConcurrencyConfig` | ✅ Supported | Releases the reservation; the environments age out on the idle TTL rather than being killed                                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteProvisionedConcurrencyConfig.html) |
 | `ListProvisionedConcurrencyConfigs`  | ✅ Supported | Single page; NextMarker is always null                                                                                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListProvisionedConcurrencyConfigs.html)  |
+
+### Tags
+
+| Operation       | Status       | Notes                                              | AWS Docs                                                                    |
+| --------------- | ------------ | -------------------------------------------------- | --------------------------------------------------------------------------- |
+| `TagResource`   | ✅ Supported | Merges tags; max 50; validates key/value lengths   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_TagResource.html)   |
+| `UntagResource` | ✅ Supported | Removes specified keys; idempotent on missing keys | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UntagResource.html) |
+| `ListTags`      | ✅ Supported | Returns all tags for the function                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListTags.html)      |
 
 <!-- END overcast:capabilities -->

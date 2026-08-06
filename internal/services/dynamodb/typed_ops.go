@@ -69,6 +69,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 	ops["TransactGetItems"] = op.NewTyped[transactGetItemsRequest, transactGetItemsResponse](
 		"TransactGetItems", h.transactGetItemsTyped,
 	)
+	ops["TagResource"] = op.NewTyped[tagResourceRequest, struct{}](
+		"TagResource", h.tagResourceTyped,
+	)
+	ops["ListTagsOfResource"] = op.NewTyped[listTagsOfResourceRequest, listTagsOfResourceResponse](
+		"ListTagsOfResource", h.listTagsOfResourceTyped,
+	)
+	ops["UntagResource"] = op.NewTyped[untagResourceRequest, struct{}](
+		"UntagResource", h.untagResourceTyped,
+	)
 	return ops
 }
 

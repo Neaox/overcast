@@ -2389,6 +2389,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Tags",
+        "id": "tags"
+      },
+      {
+        "depth": 3,
         "text": "Streams interoperability",
         "id": "streams-interoperability"
       }
@@ -3556,6 +3561,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Concurrency \u0026 configuration",
         "id": "concurrency-configuration"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },

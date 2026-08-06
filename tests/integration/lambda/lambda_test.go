@@ -6083,3 +6083,77 @@ func TestGetFunction_doesNotExposeCodeSigningConfigArn(t *testing.T) {
 		t.Error("FunctionConfiguration exposed CodeSigningConfigArn; AWS's shape has no such member")
 	}
 }
+
+// ---- Lambda TagResource / ListTags / UntagResource ----------------------------
+
+func TestLambda_tagResourceAndList(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	fn := createFunction(t, srv, "tag-test-fn")
+
+	tagURL := srv.URL + "/2017-03-31/tags/" + url.PathEscape(fn.FunctionArn)
+	tagBody := map[string]map[string]string{
+		"Tags": {"env": "prod", "team": "platform"},
+	}
+	resp := doJSON(t, http.MethodPost, tagURL, tagBody)
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNoContent)
+
+	listResp := doJSON(t, http.MethodGet, tagURL, nil)
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+
+	var list struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	decodeJSON(t, listResp, &list)
+	if list.Tags["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %q", list.Tags["env"])
+	}
+	if list.Tags["team"] != "platform" {
+		t.Errorf("expected tag team=platform, got %q", list.Tags["team"])
+	}
+}
+
+func TestLambda_untagResource(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	fn := createFunction(t, srv, "untag-test-fn")
+
+	tagURL := srv.URL + "/2017-03-31/tags/" + url.PathEscape(fn.FunctionArn)
+	resp := doJSON(t, http.MethodPost, tagURL, map[string]map[string]string{
+		"Tags": {"env": "prod", "team": "platform"},
+	})
+	resp.Body.Close()
+
+	delResp, err := http.NewRequest(http.MethodDelete, tagURL+"?tagKeys=env&tagKeys=team", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	delHTTPResp, err := http.DefaultClient.Do(delResp)
+	if err != nil {
+		t.Fatalf("untag: %v", err)
+	}
+	defer delHTTPResp.Body.Close()
+	helpers.AssertStatus(t, delHTTPResp, http.StatusNoContent)
+
+	listResp := doJSON(t, http.MethodGet, tagURL, nil)
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+
+	var list struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	decodeJSON(t, listResp, &list)
+	if len(list.Tags) != 0 {
+		t.Errorf("expected 0 tags after untag, got %d", len(list.Tags))
+	}
+}
+
+func TestLambda_tagResource_notFound(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	tagURL := srv.URL + "/2017-03-31/tags/" + url.PathEscape("arn:aws:lambda:us-east-1:000000000000:function:nonexistent")
+	resp := doJSON(t, http.MethodPost, tagURL, map[string]map[string]string{
+		"Tags": {"env": "prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}

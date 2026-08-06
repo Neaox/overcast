@@ -125,5 +125,13 @@ func init() {
 			Status: capabilities.StatusSupported, Notes: "Releases the reservation; the environments age out on the idle TTL rather than being killed"},
 		capabilities.Capability{Service: "lambda", Operation: "ListProvisionedConcurrencyConfigs", Category: "Concurrency & configuration",
 			Status: capabilities.StatusSupported, Notes: "Single page; NextMarker is always null"},
+
+		// Tags
+		capabilities.Capability{Service: "lambda", Operation: "TagResource", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Merges tags; max 50; validates key/value lengths"},
+		capabilities.Capability{Service: "lambda", Operation: "UntagResource", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Removes specified keys; idempotent on missing keys"},
+		capabilities.Capability{Service: "lambda", Operation: "ListTags", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Returns all tags for the function"},
 	)
 }
