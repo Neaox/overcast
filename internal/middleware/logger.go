@@ -468,6 +468,8 @@ func fieldValue(f zap.Field) any {
 		return f.String
 	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Int16Type, zapcore.Int8Type:
 		return f.Integer
+	case zapcore.Uint64Type, zapcore.Uint32Type, zapcore.Uint16Type, zapcore.Uint8Type, zapcore.UintptrType:
+		return f.Integer
 	case zapcore.DurationType:
 		return f.Integer
 	case zapcore.BoolType:
@@ -476,7 +478,15 @@ func fieldValue(f zap.Field) any {
 		return math.Float64frombits(uint64(f.Integer))
 	case zapcore.Float32Type:
 		return float32(math.Float64frombits(uint64(f.Integer)))
+	case zapcore.TimeType, zapcore.TimeFullType:
+		if f.Interface != nil {
+			return f.Interface
+		}
+		return f.Integer
 	default:
+		if f.Interface != nil {
+			return f.Interface
+		}
 		return f.String
 	}
 }
