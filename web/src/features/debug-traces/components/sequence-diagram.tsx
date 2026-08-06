@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { msToHuman } from "@/features/debug-traces/utils"
 import type { TraceHop } from "@/types"
 
 interface SequenceDiagramProps {
@@ -11,9 +12,6 @@ interface SequenceDiagramProps {
 
 const colWidth = 150
 const colGap = 40
-const headerHeight = 36
-const topPad = 10
-const arrowMinLen = 8
 
 /**
  * SVG sequence diagram showing services as vertical lifelines and hops as
@@ -165,7 +163,7 @@ export function SequenceDiagram({
                   fontSize={9}
                   fontFamily="monospace"
                 >
-                  {msLabel(a.duration)} {a.responseStatus}
+                  {msToHuman(a.duration)}
                 </text>
               </g>
             )
@@ -176,8 +174,4 @@ export function SequenceDiagram({
   )
 }
 
-function msLabel(ns: number): string {
-  if (ns < 1_000_000) return `${(ns / 1000).toFixed(0)}µs`
-  if (ns < 1_000_000_000) return `${(ns / 1_000_000).toFixed(1)}ms`
-  return `${(ns / 1_000_000_000).toFixed(2)}s`
-}
+// No local msToHuman — imported from shared utils.

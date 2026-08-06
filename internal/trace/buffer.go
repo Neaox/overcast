@@ -74,6 +74,17 @@ func (b *Buffer) Capacity() int {
 	return b.capacity
 }
 
+// ListSummaries is like List but returns lightweight Summary objects instead of
+// full Entry pointers.
+func (b *Buffer) ListSummaries(filter ListFilter) ([]Summary, string) {
+	entries, cursor := b.List(filter)
+	summaries := make([]Summary, len(entries))
+	for i, e := range entries {
+		summaries[i] = e.ToSummary()
+	}
+	return summaries, cursor
+}
+
 // ListFilter controls which entries List returns.
 type ListFilter struct {
 	Service string

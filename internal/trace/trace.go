@@ -266,6 +266,39 @@ func RecorderFromContext(ctx context.Context) *Recorder {
 	return rec
 }
 
+// Summary is a lightweight trace entry for list endpoints — no bodies, headers,
+// hops, or log entries.
+type Summary struct {
+	RequestID  string        `json:"requestId"`
+	Timestamp  time.Time     `json:"timestamp"`
+	Method     string        `json:"method"`
+	Path       string        `json:"path"`
+	Service    string        `json:"service"`
+	Operation  string        `json:"operation,omitempty"`
+	StatusCode int           `json:"statusCode"`
+	Duration   time.Duration `json:"duration"`
+	Region     string        `json:"region,omitempty"`
+	HopCount   int           `json:"hopCount,omitempty"`
+	LogCount   int           `json:"logCount,omitempty"`
+}
+
+// ToSummary returns a lightweight summary of this entry.
+func (e Entry) ToSummary() Summary {
+	return Summary{
+		RequestID:  e.RequestID,
+		Timestamp:  e.Timestamp,
+		Method:     e.Method,
+		Path:       e.Path,
+		Service:    e.Service,
+		Operation:  e.Operation,
+		StatusCode: e.StatusCode,
+		Duration:   e.Duration,
+		Region:     e.Region,
+		HopCount:   len(e.Hops),
+		LogCount:   len(e.LogEntries),
+	}
+}
+
 // MarshalJSON overrides the default []byte → base64 encoding so that body
 // fields appear as plain strings in the JSON output.
 func (e Entry) MarshalJSON() ([]byte, error) {

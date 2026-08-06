@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
+import { msToHuman, statusColor, tryFormatJSON } from "@/features/debug-traces/utils"
+import { Waterfall } from "@/features/debug-traces/components/waterfall"
 import type { TraceEntry, TraceHop, TraceLogEntry } from "@/types"
 
 export const Route = createFileRoute("/debug/traces/$requestId")({
@@ -19,18 +21,6 @@ export const Route = createFileRoute("/debug/traces/$requestId")({
 
 const tabs = ["Overview", "Request", "Response", "Hops", "Logs"] as const
 type Tab = (typeof tabs)[number]
-
-function statusColor(code: number): string {
-  if (code >= 500) return "text-red-400"
-  if (code >= 400) return "text-amber-400"
-  return "text-emerald-400"
-}
-
-function msToHuman(ns: number): string {
-  if (ns < 1_000_000) return `${(ns / 1000).toFixed(0)}µs`
-  if (ns < 1_000_000_000) return `${(ns / 1_000_000).toFixed(1)}ms`
-  return `${(ns / 1_000_000_000).toFixed(2)}s`
-}
 
 function TraceDetailPage() {
   const { requestId } = Route.useParams()
@@ -126,23 +116,37 @@ function TraceDetailPage() {
 
 function OverviewTab({ trace }: { trace: TraceEntry }) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-      <Field label="Request ID" value={trace.requestId} copyable />
-      <Field label="Timestamp" value={new Date(trace.timestamp).toISOString()} />
-      <Field label="Duration" value={msToHuman(trace.duration)} />
-      <Field label="Method" value={trace.method} />
-      <Field label="Path" value={trace.path} />
-      <Field label="Host" value={trace.host} />
-      <Field label="Service" value={trace.service} />
-      <Field label="Operation" value={trace.operation ?? "—"} />
-      <Field label="Region" value={trace.region} />
-      <Field label="Status" value={String(trace.statusCode)} />
-      <Field label="Remote Addr" value={trace.remoteAddr ?? "—"} />
-      <Field label="User Agent" value={trace.userAgent ?? "—"} />
-      {trace.awsErrorCode && (
-        <Field label="AWS Error" value={`${trace.awsErrorCode}: ${trace.awsErrorMessage ?? ""}`} />
+    <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <Field label="Request ID" value={trace.requestId} copyable />
+        <Field label="Timestamp" value={new Date(trace.timestamp).toISOString()} />
+        <Field label="Duration" value={msToHuman(trace.duration)} />
+        <Field label="Method" value={trace.method} />
+        <Field label="Path" value={trace.path} />
+        <Field label="Host" value={trace.host} />
+        <Field label="Service" value={trace.service} />
+        <Field label="Operation" value={trace.operation ?? "—"} />
+        <Field label="Region" value={trace.region} />
+        <Field label="Status" value={String(trace.statusCode)} />
+        <Field label="Remote Addr" value={trace.remoteAddr ?? "—"} />
+        <Field label="User Agent" value={trace.userAgent ?? "—"} />
+        {trace.awsErrorCode && (
+          <Field label="AWS Error" value={`${trace.awsErrorCode}: ${trace.awsErrorMessage ?? ""}`} />
+        )}
+        {trace.streaming && <Field label="Streaming" value="Yes" />}
+      </div>
+      {(trace.hops?.length ?? 0) > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-fg-muted mb-2">Timeline</h3>
+          <div className="overflow-x-auto">
+            <Waterfall
+              hops={trace.hops ?? []}
+              totalDuration={trace.duration}
+              startTime={trace.timestamp}
+            />
+          </div>
+        </div>
       )}
-      {trace.streaming && <Field label="Streaming" value="Yes" />}
     </div>
   )
 }
@@ -217,14 +221,6 @@ function HeadersBodyView({
       )}
     </div>
   )
-}
-
-function tryFormatJSON(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
-  } catch {
-    return raw
-  }
 }
 
 function HopsTab({ hops }: { hops: TraceHop[] }) {

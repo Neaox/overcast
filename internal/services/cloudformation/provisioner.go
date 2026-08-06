@@ -2371,6 +2371,48 @@ func serviceFromTarget(target string) (service, operation string) {
 			service = "kinesis"
 		case strings.HasPrefix(prefix, "AWSWAF_"):
 			service = "waf"
+		case strings.HasPrefix(prefix, "EKS"):
+			service = "eks"
+		case strings.HasPrefix(prefix, "Kafka"):
+			service = "msk"
+		case strings.HasPrefix(prefix, "EFS_"):
+			service = "efs"
+		case strings.HasPrefix(prefix, "CertificateManager"):
+			service = "acm"
+		case strings.HasPrefix(prefix, "AWSBackup"):
+			service = "backup"
+		case strings.HasPrefix(prefix, "TransferService"):
+			service = "transfer"
+		case strings.HasPrefix(prefix, "AWSShield_"):
+			service = "shield"
+		case strings.HasPrefix(prefix, "Firehose_"):
+			service = "firehose"
+		case strings.HasPrefix(prefix, "AmazonAthena"):
+			service = "athena"
+		case strings.HasPrefix(prefix, "AWSGlue"):
+			service = "glue"
+		case strings.HasPrefix(prefix, "GraniteServiceVersion"):
+			service = "cloudwatch"
+		case strings.HasPrefix(prefix, "Scheduler"):
+			service = "scheduler"
+		case strings.HasPrefix(prefix, "AWSCognitoIdentityProviderService"):
+			service = "cognito"
+		case strings.HasPrefix(prefix, "com.amazonaws.cloudtrail"):
+			service = "cloudtrail"
+		case strings.HasPrefix(prefix, "AWSAppSync"):
+			service = "appsync"
+		case strings.HasPrefix(prefix, "AmazonElastiCache"):
+			service = "elasticache"
+		case strings.HasPrefix(prefix, "AWSSecurityTokenService"):
+			service = "sts"
+		case strings.HasPrefix(prefix, "AmazonEC2"):
+			service = "ec2"
+		case strings.HasPrefix(prefix, "ElasticLoadBalancing"):
+			service = "elbv2"
+		case strings.HasPrefix(prefix, "AutoScaling_"):
+			service = "autoscaling"
+		case strings.HasPrefix(prefix, "AmazonRDS"):
+			service = "rds"
 		default:
 			service = prefix
 		}
@@ -2380,10 +2422,47 @@ func serviceFromTarget(target string) (service, operation string) {
 
 func serviceFromAction(action string) string {
 	switch {
-	case strings.HasPrefix(action, "Create") && strings.Contains(action, "Vpc"):
-		return "ec2"
-	case strings.Contains(action, "Role") || strings.Contains(action, "Policy") || strings.Contains(action, "User") || strings.Contains(action, "InstanceProfile"):
+	case strings.Contains(action, "Role") || strings.Contains(action, "Policy") || strings.Contains(action, "User") || strings.Contains(action, "InstanceProfile") || strings.Contains(action, "AccessKey") || strings.Contains(action, "ServiceLinkedRole"):
 		return "iam"
+	case strings.Contains(action, "Vpc") || strings.Contains(action, "Subnet") || strings.Contains(action, "SecurityGroup") ||
+		strings.Contains(action, "Route") || strings.Contains(action, "InternetGateway") || strings.Contains(action, "NatGateway") ||
+		strings.Contains(action, "Address") || strings.Contains(action, "NetworkInterface") || strings.Contains(action, "NetworkAcl") ||
+		strings.Contains(action, "VpcEndpoint") || strings.Contains(action, "VpcPeering") || strings.Contains(action, "Volume") ||
+		strings.Contains(action, "Instance") || strings.Contains(action, "Image") || strings.Contains(action, "Snapshot") ||
+		strings.Contains(action, "KeyPair") || strings.Contains(action, "PlacementGroup") || strings.Contains(action, "Eip") ||
+		strings.Contains(action, "EgressOnly"):
+		return "ec2"
+	case strings.HasPrefix(action, "Create") && strings.Contains(action, "Topic") || strings.HasPrefix(action, "Delete") && strings.Contains(action, "Topic") ||
+		strings.Contains(action, "Subscribe") || strings.Contains(action, "Unsubscribe") || strings.Contains(action, "TagResource") && strings.HasPrefix(action, "Tag"):
+		return "sns"
+	case strings.Contains(action, "LoadBalancer") || strings.Contains(action, "TargetGroup") || strings.Contains(action, "Listener") || strings.Contains(action, "Rule"):
+		return "elbv2"
+	case strings.Contains(action, "DB") || strings.Contains(action, "Db"):
+		return "rds"
+	case strings.Contains(action, "Cache") || strings.Contains(action, "ReplicationGroup"):
+		return "elasticache"
+	case strings.Contains(action, "AutoScaling") || strings.Contains(action, "LaunchConfiguration"):
+		return "autoscaling"
+	case strings.Contains(action, "HostedZone") || strings.Contains(action, "RecordSet") || strings.Contains(action, "HealthCheck"):
+		return "route53"
+	case strings.Contains(action, "Parameter") || strings.Contains(action, "MaintenanceWindow") || strings.Contains(action, "Association"):
+		return "ssm"
+	case strings.Contains(action, "Key") || strings.Contains(action, "Alias") || strings.Contains(action, "Grant"):
+		return "kms"
+	case strings.Contains(action, "Template") || strings.Contains(action, "Identity") || strings.Contains(action, "Receipt"):
+		return "ses"
+	case strings.Contains(action, "Alarm") || strings.Contains(action, "Metric"):
+		return "cloudwatch"
+	case strings.Contains(action, "LogGroup") || strings.Contains(action, "LogStream"):
+		return "logs"
+	case strings.Contains(action, "UserPool") || strings.Contains(action, "IdentityPool") || strings.Contains(action, "UserPoolClient") || strings.Contains(action, "UserPoolDomain"):
+		return "cognito"
+	case strings.Contains(action, "Function") || strings.Contains(action, "EventSourceMapping"):
+		return "lambda"
+	case strings.Contains(action, "Queue"):
+		return "sqs"
+	case strings.Contains(action, "StateMachine") || strings.Contains(action, "Execution") || strings.Contains(action, "Activity"):
+		return "stepfunctions"
 	default:
 		return ""
 	}
@@ -2391,12 +2470,24 @@ func serviceFromAction(action string) string {
 
 func serviceFromPath(path string) string {
 	switch {
-	case strings.HasPrefix(path, "/restapis"), strings.HasPrefix(path, "/v2/apis"):
+	case strings.HasPrefix(path, "/restapis"), strings.HasPrefix(path, "/v2/apis"), strings.HasPrefix(path, "/apikeys"), strings.HasPrefix(path, "/usageplans"), strings.HasPrefix(path, "/tags/"):
 		return "apigateway"
 	case strings.Contains(path, "/2015-03-31/"):
 		return "lambda"
 	case strings.HasPrefix(path, "/v1/pipes"):
 		return "pipes"
+	case strings.HasPrefix(path, "/2020-05-31/"):
+		return "cloudfront"
+	case strings.HasPrefix(path, "/2013-04-01/"):
+		return "route53"
+	case strings.HasPrefix(path, "/v1/apis"), strings.HasPrefix(path, "/v1/domainnames"), strings.HasPrefix(path, "/v1/sourceApis"), strings.HasPrefix(path, "/v1/mergedApis"):
+		return "appsync"
+	case strings.HasPrefix(path, "/v2/email/"):
+		return "ses"
+	case strings.HasPrefix(path, "/2015-02-01/"):
+		return "efs"
+	case strings.HasPrefix(path, "/applications"):
+		return "appregistry"
 	default:
 		return ""
 	}

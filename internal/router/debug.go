@@ -669,9 +669,9 @@ func debugTraceList(buf *trace.Buffer) http.HandlerFunc {
 			After:   r.URL.Query().Get("after"),
 			Limit:   parseDebugStateLimit(r.URL.Query().Get("limit")),
 		}
-		entries, nextCursor := buf.List(filter)
+		entries, nextCursor := buf.ListSummaries(filter)
 		if entries == nil {
-			entries = []*trace.Entry{}
+			entries = []trace.Summary{}
 		}
 		writeDebugJSON(w, http.StatusOK, map[string]any{
 			"traces":     entries,
