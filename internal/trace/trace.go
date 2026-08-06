@@ -205,12 +205,16 @@ func hopID(order int) string {
 }
 
 // AddLog appends a structured log entry. Safe to call from any goroutine.
+// Entries beyond 500 are dropped to prevent unbounded growth from polling loops.
 func (r *Recorder) AddLog(le LogEntry) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if len(r.entry.LogEntries) >= 500 {
+		return
+	}
 	r.entry.LogEntries = append(r.entry.LogEntries, le)
 }
 

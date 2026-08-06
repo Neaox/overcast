@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
@@ -16,6 +17,9 @@ import (
 // maxTraceBody is the largest request or response body captured into a trace
 // entry. Bodies exceeding this are truncated.
 const maxTraceBody = 1 << 20 // 1 MiB
+
+// maxTraceLogFields is the per-entry cap on structured log field sizes.
+const maxTraceLogFields = 16 << 10 // 16 KiB
 
 // DebugTrace returns middleware that captures full request/response traces into
 // a ring buffer when cfg.Debug is true. When debug is off the middleware is an
@@ -45,9 +49,18 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 			rec := trace.NewRecorder(reqID, start, r.Method, r.URL.Path, r.Host, r.URL.RawQuery, requestHeaders)
 			rec.SetRequestBody(requestBody, maxTraceBody)
 			rec.SetMeta(r.RemoteAddr, r.UserAgent(), "", "")
+			rec.SetServiceInfo(detectService(r), detectOperation(r), RegionFromContext(r.Context(), cfg.Region))
 
 			ctx := trace.ContextWithRecorder(r.Context(), rec)
 			r = r.WithContext(ctx)
+
+			// Early push: store a partial entry before the handler runs so the
+			// trace is visible (with StatusCode=0, no duration) while the
+			// request is still being processed.
+			if buf != nil {
+				e := rec.Entry()
+				buf.Store(&e)
+			}
 
 			trw := &traceResponseWriter{
 				ResponseWriter: w,
@@ -56,16 +69,15 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 			}
 			next.ServeHTTP(trw, r)
 
+			if ct := trw.Header().Get("Content-Type"); strings.HasPrefix(ct, "text/event-stream") {
+				trw.streaming = true
+			}
+
 			respHeaders := make(http.Header)
 			for k, vv := range trw.Header() {
 				respHeaders[k] = vv
 			}
 			rec.SetResponse(respHeaders, trw.tee.Bytes(), trw.status, maxTraceBody, trw.streaming)
-
-			svc := detectService(r)
-			op := detectOperation(r)
-			region := RegionFromContext(r.Context(), cfg.Region)
-			rec.SetServiceInfo(svc, op, region)
 			rec.SetDuration(clk.Since(start))
 
 			if buf != nil {

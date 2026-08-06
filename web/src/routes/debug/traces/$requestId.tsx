@@ -1,15 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { useState, Fragment } from "react"
-import { ArrowLeft, Clock, Server, AlertCircle } from "lucide-react"
+import { ArrowLeft, Clock, Server, AlertCircle, Loader2 } from "lucide-react"
 import { traceDetailQueryOptions } from "@/features/debug-traces/data"
-import { PageHeader, Spinner } from "@/components/ui/primitives"
+import { Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
 import { nsToHuman, statusColor, tryFormatJSON } from "@/features/debug-traces/utils"
 import { Waterfall } from "@/features/debug-traces/components/waterfall"
+import { SequenceDiagram } from "@/features/debug-traces/components/sequence-diagram"
+import { FlowMap } from "@/features/debug-traces/components/flow-map"
 import type { TraceEntry, TraceHop, TraceLogEntry } from "@/types"
 
 export const Route = createFileRoute("/debug/traces/$requestId")({
@@ -19,15 +21,23 @@ export const Route = createFileRoute("/debug/traces/$requestId")({
   component: TraceDetailPage,
 })
 
-const tabs = ["Overview", "Request", "Response", "Hops", "Logs"] as const
+const tabs = ["Overview", "Request", "Response", "Hops", "Logs", "Errors"] as const
 type Tab = (typeof tabs)[number]
+type HopView = "sequence" | "waterfall" | "flow"
 
 function TraceDetailPage() {
   const { requestId } = Route.useParams()
   const navigate = Route.useNavigate()
   const [tab, setTab] = useState<Tab>("Overview")
 
-  const { data: trace, isLoading, error } = useQuery(traceDetailQueryOptions(requestId))
+  const { data: trace, isLoading, error } = useQuery({
+    ...traceDetailQueryOptions(requestId),
+    refetchInterval: (query) => {
+      const t = query.state.data
+      if (!t) return false
+      return t.statusCode === 0 || t.duration === 0 ? 1000 : false
+    },
+  })
 
   if (isLoading) return <Spinner />
   if (error || !trace) {
@@ -45,6 +55,8 @@ function TraceDetailPage() {
     )
   }
 
+  const inFlight = trace.statusCode === 0 || trace.duration === 0
+
   return (
     <div className="flex flex-col gap-4 p-6">
       <div className="flex items-center gap-3">
@@ -55,27 +67,32 @@ function TraceDetailPage() {
         >
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <PageHeader
-          title={`${trace.method} ${trace.path}`}
-          description={
-            <span className="flex items-center gap-2">
+        <div className="flex flex-col gap-0.5">
+          <h2 className="text-lg font-semibold">{trace.method} {trace.path}</h2>
+          <span className="flex items-center gap-2 text-sm text-fg-muted">
+            {inFlight ? (
+              <span className="flex items-center gap-1 text-amber-400">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Processing…
+              </span>
+            ) : (
               <span className={cn("font-mono", statusColor(trace.statusCode))}>
                 {trace.statusCode}
               </span>
-              <span>·</span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {nsToHuman(trace.duration)}
-              </span>
-              <span>·</span>
-              <span className="flex items-center gap-1">
-                <Server className="h-3 w-3" />
-                {trace.service}
-                {trace.operation ? ` / ${trace.operation}` : ""}
-              </span>
+            )}
+            <span>·</span>
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {trace.duration > 0 ? nsToHuman(trace.duration) : "…"}
             </span>
-          }
-        />
+            <span>·</span>
+            <span className="flex items-center gap-1">
+              <Server className="h-3 w-3" />
+              {trace.service}
+              {trace.operation ? ` / ${trace.operation}` : ""}
+            </span>
+          </span>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -109,25 +126,32 @@ function TraceDetailPage() {
         {tab === "Response" && <HeadersBodyView headers={trace.responseHeaders} body={trace.responseBody} truncated={trace.responseBodyTruncated} streaming={trace.streaming} />}
         {tab === "Hops" && <HopsTab hops={trace.hops ?? []} />}
         {tab === "Logs" && <LogsTab entries={trace.logEntries ?? []} />}
+        {tab === "Errors" && <ErrorsTab trace={trace} />}
       </div>
     </div>
   )
 }
 
 function OverviewTab({ trace }: { trace: TraceEntry }) {
+  const [hopView, setHopView] = useState<HopView>("sequence")
+  const [selectedHopId, setSelectedHopId] = useState<string | null>(null)
+
+  const hops = trace.hops ?? []
+  const hasHops = hops.length > 0
+
   return (
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <Field label="Request ID" value={trace.requestId} copyable />
         <Field label="Timestamp" value={new Date(trace.timestamp).toISOString()} />
-        <Field label="Duration" value={nsToHuman(trace.duration)} />
+        <Field label="Duration" value={trace.duration > 0 ? nsToHuman(trace.duration) : "…"} />
         <Field label="Method" value={trace.method} />
         <Field label="Path" value={trace.path} />
         <Field label="Host" value={trace.host} />
         <Field label="Service" value={trace.service} />
         <Field label="Operation" value={trace.operation ?? "—"} />
         <Field label="Region" value={trace.region} />
-        <Field label="Status" value={String(trace.statusCode)} />
+        <Field label="Status" value={trace.statusCode === 0 ? "…" : String(trace.statusCode)} />
         <Field label="Remote Addr" value={trace.remoteAddr ?? "—"} />
         <Field label="User Agent" value={trace.userAgent ?? "—"} />
         {trace.awsErrorCode && (
@@ -135,15 +159,49 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
         )}
         {trace.streaming && <Field label="Streaming" value="Yes" />}
       </div>
-      {(trace.hops?.length ?? 0) > 0 && (
+      {hasHops && (
         <div>
-          <h3 className="text-sm font-medium text-fg-muted mb-2">Timeline</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <h3 className="text-sm font-medium text-fg-muted">Call Graph</h3>
+            <div className="flex gap-0.5 ml-auto">
+              {(["sequence", "waterfall", "flow"] as HopView[]).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setHopView(v)}
+                  className={cn(
+                    "px-2 py-1 text-xs rounded border transition-colors",
+                    hopView === v
+                      ? "border-accent text-accent bg-accent/10"
+                      : "border-border text-fg-muted hover:text-fg",
+                  )}
+                >
+                  {v === "sequence" ? "Sequence" : v === "waterfall" ? "Waterfall" : "Flow"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="overflow-x-auto">
-            <Waterfall
-              hops={trace.hops ?? []}
-              totalDuration={trace.duration}
-              startTime={trace.timestamp}
-            />
+            {hopView === "sequence" && (
+              <SequenceDiagram
+                hops={hops}
+                totalDuration={trace.duration}
+                startTime={trace.timestamp}
+                onSelectHop={setSelectedHopId}
+                selectedHopId={selectedHopId}
+              />
+            )}
+            {hopView === "waterfall" && (
+              <Waterfall
+                hops={hops}
+                totalDuration={trace.duration}
+                startTime={trace.timestamp}
+                onSelectHop={setSelectedHopId}
+                selectedHopId={selectedHopId}
+              />
+            )}
+            {hopView === "flow" && (
+              <FlowMap trace={trace} />
+            )}
           </div>
         </div>
       )}
@@ -358,7 +416,7 @@ function LogsTab({ entries }: { entries: TraceLogEntry[] }) {
                 </td>
                 <td className="px-3 py-2 text-xs">{entry.message}</td>
               </tr>
-              {expanded === i && entry.fields && Object.keys(entry.fields).length > 0 && (
+                {expanded === i && entry.fields && Object.keys(entry.fields).length > 0 && (
                 <tr key={`${i}-detail`} className="bg-bg-elevated">
                   <td colSpan={3} className="px-4 py-3">
                     <pre className="text-xs font-mono overflow-x-auto">
@@ -371,6 +429,50 @@ function LogsTab({ entries }: { entries: TraceLogEntry[] }) {
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function ErrorsTab({ trace }: { trace: TraceEntry }) {
+  const hopErrors = (trace.hops ?? []).filter((h) => h.error || h.responseStatus >= 400)
+  const hasEntryError = !!trace.awsErrorCode
+  const hasHopErrors = hopErrors.length > 0
+
+  if (!hasEntryError && !hasHopErrors) {
+    return <div className="text-center text-fg-muted py-8">No errors recorded.</div>
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      {hasEntryError && (
+        <div>
+          <h3 className="text-sm font-medium text-fg-muted mb-2">Request Error</h3>
+          <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertCircle className="h-4 w-4 text-red-400" />
+              <span className="font-mono text-sm text-red-400">{trace.awsErrorCode}</span>
+            </div>
+            {trace.awsErrorMessage && <p className="text-sm text-fg-muted">{trace.awsErrorMessage}</p>}
+          </div>
+        </div>
+      )}
+      {hasHopErrors && (
+        <div>
+          <h3 className="text-sm font-medium text-fg-muted mb-2">Hop Errors ({hopErrors.length})</h3>
+          <div className="flex flex-col gap-3">
+            {hopErrors.map((hop) => (
+              <div key={hop.id} className="rounded-lg border border-border bg-bg-elevated p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Badge variant="outline" className="text-xs">{hop.callerService} → {hop.service}</Badge>
+                  <span className="text-xs font-mono text-fg-muted">{hop.operation}</span>
+                  <span className={cn("text-xs font-mono", statusColor(hop.responseStatus))}>{hop.responseStatus}</span>
+                </div>
+                {hop.error && <pre className="text-xs font-mono text-red-400 mt-1 overflow-x-auto max-h-32">{hop.error}</pre>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

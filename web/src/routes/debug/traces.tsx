@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { useMemo, useState } from "react"
-import { Search } from "lucide-react"
-import { useQuery } from "@tanstack/react-query"
+import { Search, RefreshCw } from "lucide-react"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { traceListQueryOptions, traceCountQueryOptions } from "@/features/debug-traces/data"
 import { nsToHuman, statusColor } from "@/features/debug-traces/utils"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
 import { useDebugEnabled } from "@/hooks/use-server-info"
-import type { TraceListParams } from "@/types"
+import type { TraceListParams, TraceSummary } from "@/types"
 
 type TracesSearch = {
   service?: string
@@ -31,17 +31,18 @@ export const Route = createFileRoute("/debug/traces")({
   component: TracesPage,
 })
 
+const COL_COUNT = 8
+
 function TracesPage() {
   const { service, method, status, search } = Route.useSearch()
   const navigate = Route.useNavigate()
   const debugEnabled = useDebugEnabled()
-  const COL_COUNT = 8
 
   const [searchInput, setSearchInput] = useState(search ?? "")
   const [serviceFilter, setServiceFilter] = useState(service ?? "")
   const [statusFilter, setStatusFilter] = useState(status ?? "")
   const [methodFilter, setMethodFilter] = useState(method ?? "")
-  const [cursorStack, setCursorStack] = useState<string[]>([])
+  const [autoRefresh, setAutoRefresh] = useState(false)
 
   const params: TraceListParams = useMemo(() => {
     const p: TraceListParams = { limit: 50 }
@@ -49,15 +50,33 @@ function TracesPage() {
     if (methodFilter) p.method = methodFilter
     if (statusFilter) p.status = statusFilter
     if (searchInput) p.search = searchInput
-    if (cursorStack.length > 0) p.after = cursorStack[cursorStack.length - 1]
     return p
-  }, [serviceFilter, methodFilter, statusFilter, searchInput, cursorStack])
+  }, [serviceFilter, methodFilter, statusFilter, searchInput])
 
-  const { data, isLoading, error } = useQuery(traceListQueryOptions(params, debugEnabled))
-  const { data: countData } = useQuery(traceCountQueryOptions())
+  const {
+    data,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    ...traceListQueryOptions(params, debugEnabled),
+    getNextPageParam: (lastPage: { nextCursor?: string }) => lastPage.nextCursor ?? undefined,
+    initialPageParam: undefined as string | undefined,
+    refetchInterval: autoRefresh ? 3000 : false,
+  })
+
+  const { data: countData } = useQuery({
+    ...traceCountQueryOptions(),
+    refetchInterval: autoRefresh ? 3000 : false,
+  })
+
+  const allTraces = useMemo(() => {
+    return data?.pages.flatMap((p) => p.traces ?? []) ?? []
+  }, [data])
 
   const applyFilters = () => {
-    setCursorStack([])
     void navigate({
       search: {
         service: serviceFilter || undefined,
@@ -67,17 +86,6 @@ function TracesPage() {
       },
       replace: true,
     })
-  }
-
-  const loadMore = () => {
-    const next = data?.nextCursor
-    if (next) {
-      setCursorStack((prev) => [...prev, next])
-    }
-  }
-
-  const pageBack = () => {
-    setCursorStack((prev) => prev.slice(0, -1))
   }
 
   if (!debugEnabled) {
@@ -91,10 +99,21 @@ function TracesPage() {
 
   return (
     <div className="flex flex-col gap-4 p-6">
-      <PageHeader
-        title="Request Traces"
-        description={countData ? `${countData.count} of ${countData.capacity} buffer slots used` : "Recent HTTP request traces"}
-      />
+      <div className="flex items-start justify-between">
+        <PageHeader
+          title="Request Traces"
+          description={countData ? `${countData.count} of ${countData.capacity} buffer slots used` : "Recent HTTP request traces"}
+        />
+        <Button
+          variant={autoRefresh ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setAutoRefresh((v) => !v)}
+          className="mt-1"
+        >
+          <RefreshCw className={cn("h-4 w-4 mr-1", autoRefresh && "animate-spin")} />
+          {autoRefresh ? "Live" : "Auto-refresh"}
+        </Button>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px] max-w-md">
@@ -141,10 +160,10 @@ function TracesPage() {
                 </tr>
               </thead>
               <tbody>
-                {(data?.traces ?? []).length === 0 ? (
+                {allTraces.length === 0 ? (
                   <tr><td colSpan={COL_COUNT} className="px-3 py-8 text-center text-fg-muted">No traces yet. Send a request to see it here.</td></tr>
                 ) : (
-                  (data?.traces ?? []).map((t) => (
+                  allTraces.map((t: TraceSummary) => (
                     <tr key={t.requestId} className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors" onClick={() => void navigate({ to: "/debug/traces/$requestId", params: { requestId: t.requestId } })}>
                       <td className="px-3 py-2 whitespace-nowrap text-fg-muted font-mono text-xs">{new Date(t.timestamp).toLocaleTimeString()}</td>
                       <td className="px-3 py-2"><Badge variant="outline" className="text-xs font-mono">{t.method}</Badge></td>
@@ -165,10 +184,13 @@ function TracesPage() {
               </tbody>
             </table>
           </div>
-          <div className="flex items-center gap-2">
-            {cursorStack.length > 0 && <Button variant="outline" size="sm" onClick={pageBack}>Previous page</Button>}
-            {data?.nextCursor && <Button variant="outline" size="sm" onClick={loadMore} disabled={isLoading}>Load more</Button>}
-          </div>
+          {hasNextPage && (
+            <div className="flex justify-center">
+              <Button variant="outline" size="sm" onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+                {isFetchingNextPage ? "Loading…" : "Load more"}
+              </Button>
+            </div>
+          )}
         </>
       )}
     </div>
