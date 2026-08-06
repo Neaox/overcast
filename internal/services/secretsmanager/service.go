@@ -237,6 +237,7 @@ func (s *Service) adminListSecrets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) adminCreateSecret(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		Name         string `json:"name"`
 		SecretString string `json:"secretString"`
@@ -275,7 +276,7 @@ func (s *Service) adminCreateSecret(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	s.log.Info("secret created (admin)", zap.String("name", req.Name))
+	log.Info("secret created (admin)", zap.String("name", req.Name))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -345,6 +346,7 @@ func (s *Service) adminUpdateSecretValue(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Service) adminDeleteSecret(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	raw := chi.URLParam(r, "secretId")
 	secretId, err := url.PathUnescape(raw)
 	if err != nil {
@@ -359,6 +361,6 @@ func (s *Service) adminDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	s.log.Info("secret deleted (admin)", zap.String("name", sec.Name))
+	log.Info("secret deleted (admin)", zap.String("name", sec.Name))
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -55,6 +55,8 @@ func (h *Handler) execute(ctx context.Context, p *Pipe, records []map[string]any
 // recording it, so a caller that retries reports the sequence once rather than
 // once per attempt. The returned record has a zero Outcome for an empty batch.
 func (h *Handler) attempt(ctx context.Context, p *Pipe, records []map[string]any) (deliveryRecord, error) {
+	log := h.log.WithRecorder(ctx)
+
 	if len(records) == 0 {
 		return deliveryRecord{}, nil
 	}
@@ -72,7 +74,7 @@ func (h *Handler) attempt(ctx context.Context, p *Pipe, records []map[string]any
 	case err != nil:
 		rec.Outcome = outcomeFailed
 		rec.Error = err.Error()
-		h.log.Warn("pipes: execution failed before delivery",
+		log.Warn("pipes: execution failed before delivery",
 			zap.String("pipe", p.Name), zap.Error(err))
 		return rec, err
 	case drop:
@@ -83,7 +85,7 @@ func (h *Handler) attempt(ctx context.Context, p *Pipe, records []map[string]any
 	if err := h.dispatch(ctx, p, batch); err != nil {
 		rec.Outcome = outcomeFailed
 		rec.Error = err.Error()
-		h.log.Warn("pipes: target delivery failed",
+		log.Warn("pipes: target delivery failed",
 			zap.String("pipe", p.Name), zap.String("target", p.TargetArn), zap.Error(err))
 		return rec, err
 	}
@@ -110,6 +112,8 @@ const maxStreamDeliveryAttempts = 6
 // MaximumRetryAttempts and DeadLetterConfig, which Overcast accepted, stored
 // and echoed back without ever reading. This is where they are read.
 func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[string]any) {
+	log := h.log.WithRecorder(ctx)
+
 	attempts := streamDeliveryAttempts(p)
 	var rec deliveryRecord
 	var err error
@@ -126,7 +130,7 @@ func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[stri
 
 	dlq := streamDeadLetterARN(p)
 	if dlq == "" {
-		h.log.Warn("pipes: stream batch dropped after retries — configure DeadLetterConfig to keep it",
+		log.Warn("pipes: stream batch dropped after retries — configure DeadLetterConfig to keep it",
 			zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
 			zap.Int("attempts", rec.Attempts), zap.Error(err))
 		h.recordDelivery(rec)
@@ -134,13 +138,13 @@ func (h *Handler) executeStream(ctx context.Context, p *Pipe, records []map[stri
 	}
 	if dlqErr := h.deadLetter(ctx, dlq, records); dlqErr != nil {
 		rec.Error = fmt.Sprintf("%v; dead-letter delivery also failed: %v", err, dlqErr)
-		h.log.Warn("pipes: dead-letter delivery failed",
+		log.Warn("pipes: dead-letter delivery failed",
 			zap.String("pipe", p.Name), zap.String("dlq", dlq), zap.Error(dlqErr))
 		h.recordDelivery(rec)
 		return
 	}
 	rec.Outcome = outcomeDLQ
-	h.log.Warn("pipes: stream batch dead-lettered",
+	log.Warn("pipes: stream batch dead-lettered",
 		zap.String("pipe", p.Name), zap.String("target", p.TargetArn),
 		zap.String("dlq", dlq), zap.Int("attempts", rec.Attempts), zap.Error(err))
 	h.recordDelivery(rec)

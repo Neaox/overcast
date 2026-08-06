@@ -189,7 +189,8 @@ func (h *Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 
 	// Generate crypto material
 	if err := generateKeyMaterial(k); err != nil {
-		h.log.Warn("kms: generate key material", zap.Error(err))
+		log := h.log.WithRecorder(r.Context())
+		log.Warn("kms: generate key material", zap.Error(err))
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
@@ -1245,19 +1246,11 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errNotFound(req.KeyId))
 		return
 	}
+	tags := k.GetTags()
 	for _, t := range req.Tags {
-		replaced := false
-		for i, existing := range k.Tags {
-			if existing.TagKey == t.TagKey {
-				k.Tags[i].TagValue = t.TagValue
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			k.Tags = append(k.Tags, t)
-		}
+		tags[t.TagKey] = t.TagValue
 	}
+	k.SetTags(tags)
 	if err := h.store.PutKey(ctx, k); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -1281,17 +1274,11 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errNotFound(req.KeyId))
 		return
 	}
-	remove := make(map[string]bool, len(req.TagKeys))
+	tags := k.GetTags()
 	for _, key := range req.TagKeys {
-		remove[key] = true
+		delete(tags, key)
 	}
-	filtered := k.Tags[:0]
-	for _, t := range k.Tags {
-		if !remove[t.TagKey] {
-			filtered = append(filtered, t)
-		}
-	}
-	k.Tags = filtered
+	k.SetTags(tags)
 	if err := h.store.PutKey(ctx, k); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return

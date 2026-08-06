@@ -626,7 +626,8 @@ func (s *Service) applyAlarmState(ctx context.Context, alarm *MetricAlarm, state
 	}
 
 	if err := s.store.putAlarm(ctx, alarm); err != nil {
-		s.log.Error("persist alarm state", zap.String("alarm", alarm.AlarmName), zap.Error(err))
+		log := s.log.WithRecorder(ctx)
+		log.Error("persist alarm state", zap.String("alarm", alarm.AlarmName), zap.Error(err))
 		return
 	}
 	if !changed {

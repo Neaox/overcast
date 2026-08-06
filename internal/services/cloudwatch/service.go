@@ -1770,7 +1770,8 @@ func (s *Service) applyActionsEnabled(ctx context.Context, name string, enabled 
 	}
 	alarm.ActionsEnabled = enabled
 	if err := s.store.putAlarm(ctx, alarm); err != nil {
-		s.log.Error("persist alarm actions-enabled flag", zap.String("alarm", name), zap.Error(err))
+		log := s.log.WithRecorder(ctx)
+		log.Error("persist alarm actions-enabled flag", zap.String("alarm", name), zap.Error(err))
 	}
 }
 

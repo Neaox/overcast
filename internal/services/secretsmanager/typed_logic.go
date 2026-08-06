@@ -223,6 +223,7 @@ func (h *Handler) publishCtx(ctx context.Context, t events.Type, payload any) {
 }
 
 func (h *Handler) createSecretTyped(ctx context.Context, req *createSecretRequest) (*createSecretResponse, *protocol.AWSError) {
+	log := h.log.WithRecorder(ctx)
 	if req.Name == "" {
 		return nil, errInvalidParameter("You must provide a value for the Name parameter.")
 	}
@@ -259,7 +260,7 @@ func (h *Handler) createSecretTyped(ctx context.Context, req *createSecretReques
 	}
 
 	h.publishCtx(ctx, events.SecretCreated, events.ResourcePayload{Name: req.Name, ARN: arn})
-	h.log.Info("secret created", zap.String("name", req.Name))
+	log.Info("secret created", zap.String("name", req.Name))
 	return &createSecretResponse{ARN: arn, Name: req.Name, VersionId: versionId}, nil
 }
 
@@ -554,6 +555,7 @@ func (h *Handler) listSecretVersionIdsTyped(ctx context.Context, req *secretIDRe
 }
 
 func (h *Handler) deleteSecretTyped(ctx context.Context, req *deleteSecretRequest) (*deleteSecretResponse, *protocol.AWSError) {
+	log := h.log.WithRecorder(ctx)
 	sec, aerr := h.store.resolveSecret(ctx, req.SecretId)
 	if aerr != nil {
 		return nil, aerr
@@ -562,7 +564,7 @@ func (h *Handler) deleteSecretTyped(ctx context.Context, req *deleteSecretReques
 		return nil, aerr
 	}
 	h.publishCtx(ctx, events.SecretDeleted, events.ResourcePayload{Name: sec.Name, ARN: sec.ARN})
-	h.log.Info("secret deleted", zap.String("name", sec.Name))
+	log.Info("secret deleted", zap.String("name", sec.Name))
 	return &deleteSecretResponse{
 		ARN:          sec.ARN,
 		Name:         sec.Name,
@@ -576,18 +578,11 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 		return nil, aerr
 	}
 
-	tagMap := make(map[string]string, len(sec.Tags)+len(req.Tags))
-	for _, t := range sec.Tags {
-		tagMap[t.Key] = t.Value
-	}
+	tags := sec.GetTags()
 	for _, t := range req.Tags {
-		tagMap[t.Key] = t.Value
+		tags[t.Key] = t.Value
 	}
-	merged := make([]Tag, 0, len(tagMap))
-	for k, v := range tagMap {
-		merged = append(merged, Tag{Key: k, Value: v})
-	}
-	sec.Tags = merged
+	sec.SetTags(tags)
 	if aerr := h.store.putSecret(ctx, sec); aerr != nil {
 		return nil, aerr
 	}

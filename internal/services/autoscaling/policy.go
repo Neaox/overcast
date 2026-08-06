@@ -111,7 +111,8 @@ func (s *Service) executePolicy(ctx context.Context, p *ScalingPolicy, metricVal
 	if honorCooldown && p.PolicyType != policyStepScaling &&
 		!g.CooldownUntil.IsZero() && now.Before(g.CooldownUntil) {
 		s.mu.Unlock()
-		s.log.Debug("autoscaling: policy suppressed by cooldown",
+		log := s.log.WithRecorder(ctx)
+		log.Debug("autoscaling: policy suppressed by cooldown",
 			zap.String("group", p.AutoScalingGroupName), zap.String("policy", p.PolicyName))
 		return nil
 	}
@@ -120,7 +121,8 @@ func (s *Service) executePolicy(ctx context.Context, p *ScalingPolicy, metricVal
 	adjustment, applies := policyAdjustment(p, metricValue)
 	if !applies {
 		s.mu.Unlock()
-		s.log.Debug("autoscaling: no step adjustment matched the breach",
+		log := s.log.WithRecorder(ctx)
+		log.Debug("autoscaling: no step adjustment matched the breach",
 			zap.String("group", p.AutoScalingGroupName), zap.String("policy", p.PolicyName),
 			zap.Float64("metric_value", metricValue))
 		return nil

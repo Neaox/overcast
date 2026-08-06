@@ -222,6 +222,7 @@ func (h *Handler) CreateTable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest) (*createTableResponse, *protocol.AWSError) {
+	log := h.log.WithRecorder(ctx)
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -286,7 +287,7 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 		return nil, aerr
 	}
 
-	h.log.Info("table created", zap.String("table", req.TableName))
+	log.Info("table created", zap.String("table", req.TableName))
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.DynamoDBTableCreated,
@@ -898,6 +899,7 @@ func (h *Handler) DeleteTable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteTableTyped(ctx context.Context, req *deleteTableRequest) (*describeTableResponse, *protocol.AWSError) {
+	log := h.log.WithRecorder(ctx)
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -911,7 +913,7 @@ func (h *Handler) deleteTableTyped(ctx context.Context, req *deleteTableRequest)
 		return nil, aerr
 	}
 
-	h.log.Info("table deleted", zap.String("table", req.TableName))
+	log.Info("table deleted", zap.String("table", req.TableName))
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.DynamoDBTableDeleted,
@@ -1247,6 +1249,7 @@ func (h *Handler) UpdateTable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest) (*createTableResponse, *protocol.AWSError) {
+	log := h.log.WithRecorder(ctx)
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -1346,7 +1349,7 @@ func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest)
 		if aerr := h.store.putTable(ctx, table); aerr != nil {
 			return nil, aerr
 		}
-		h.log.Info("table updated", zap.String("table", req.TableName))
+		log.Info("table updated", zap.String("table", req.TableName))
 		if h.bus != nil {
 			h.bus.Publish(ctx, events.Event{
 				Type:    events.DynamoDBStreamUpdated,
@@ -1438,6 +1441,7 @@ func (h *Handler) UpdateTimeToLive(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateTimeToLiveTyped(ctx context.Context, req *updateTimeToLiveRequest) (*updateTimeToLiveResponse, *protocol.AWSError) {
+	log := h.log.WithRecorder(ctx)
 	if req.TableName == "" {
 		return nil, protocol.ErrMissingParameter("TableName")
 	}
@@ -1479,7 +1483,7 @@ func (h *Handler) updateTimeToLiveTyped(ctx context.Context, req *updateTimeToLi
 		return nil, aerr
 	}
 
-	h.log.Info("table TTL updated",
+	log.Info("table TTL updated",
 		zap.String("table", req.TableName),
 		zap.Bool("enabled", req.TimeToLiveSpecification.Enabled),
 		zap.String("attribute", req.TimeToLiveSpecification.AttributeName),
@@ -1561,6 +1565,7 @@ func buildStreamImages(viewType string, newItem, oldItem Item) (newImage, oldIma
 
 // publishPutStreamRecord publishes an INSERT or MODIFY stream record and events bus event.
 func (h *Handler) publishPutStreamRecord(ctx context.Context, table *Table, newItem, oldItem Item) {
+	log := h.log.WithRecorder(ctx)
 	eventName := "INSERT"
 	if oldItem != nil {
 		eventName = "MODIFY"
@@ -1577,7 +1582,7 @@ func (h *Handler) publishPutStreamRecord(ctx context.Context, table *Table, newI
 		CreatedAt: h.clk.Now().UnixMilli(),
 	}
 	if aerr := h.store.appendStreamRecord(ctx, table.TableName, rec); aerr != nil {
-		h.log.Error("stream: append record", zap.String("table", table.TableName), zap.String("event", eventName))
+		log.Error("stream: append record", zap.String("table", table.TableName), zap.String("event", eventName))
 		return
 	}
 
@@ -1626,6 +1631,7 @@ func (h *Handler) publishPutStreamRecord(ctx context.Context, table *Table, newI
 
 // publishDeleteStreamRecord publishes a REMOVE stream record and events bus event.
 func (h *Handler) publishDeleteStreamRecord(ctx context.Context, table *Table, _, oldItem Item) {
+	log := h.log.WithRecorder(ctx)
 	keys := extractKeys(table, oldItem)
 	_, oldImage := buildStreamImages(table.streamViewType(), nil, oldItem)
 
@@ -1636,7 +1642,7 @@ func (h *Handler) publishDeleteStreamRecord(ctx context.Context, table *Table, _
 		CreatedAt: h.clk.Now().UnixMilli(),
 	}
 	if aerr := h.store.appendStreamRecord(ctx, table.TableName, rec); aerr != nil {
-		h.log.Error("stream: append remove record", zap.String("table", table.TableName))
+		log.Error("stream: append remove record", zap.String("table", table.TableName))
 		return
 	}
 
