@@ -69,11 +69,14 @@ func (h *Handler) Stop(ctx context.Context) {
 func (h *Handler) initOps() {
 	h.ops = map[string]http.HandlerFunc{
 		// Topic lifecycle — handler_topic.go
-		"CreateTopic":        h.CreateTopic,
-		"DeleteTopic":        h.DeleteTopic,
-		"ListTopics":         h.ListTopics,
-		"GetTopicAttributes": h.GetTopicAttributes,
-		"SetTopicAttributes": h.SetTopicAttributes,
+		"CreateTopic":         h.CreateTopic,
+		"DeleteTopic":         h.DeleteTopic,
+		"ListTopics":          h.ListTopics,
+		"GetTopicAttributes":  h.GetTopicAttributes,
+		"SetTopicAttributes":  h.SetTopicAttributes,
+		"TagResource":         h.TagResource,
+		"UntagResource":       h.UntagResource,
+		"ListTagsForResource": h.ListTagsForResource,
 		// Subscriptions — handler_subscription.go
 		"Subscribe":                 h.Subscribe,
 		"Unsubscribe":               h.Unsubscribe,

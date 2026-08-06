@@ -1271,6 +1271,167 @@ func TestPublish_unsubscribeURLContainsSubscriptionArn(t *testing.T) {
 	}
 }
 
+// ---- TagResource ------------------------------------------------------------
+
+func TestTagResource_success(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := createTopic(t, srv, "tag-test-topic")
+
+	resp := snsCall(t, srv, "TagResource", url.Values{
+		"ResourceArn":      {arn},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+		"Tags.Tag.2.Key":   {"team"},
+		"Tags.Tag.2.Value": {"platform"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	listResp := snsCall(t, srv, "ListTagsForResource", url.Values{
+		"ResourceArn": {arn},
+	})
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+
+	var list struct {
+		Result struct {
+			Tags []struct {
+				Key   string `xml:"Key"`
+				Value string `xml:"Value"`
+			} `xml:"Tags>member"`
+		} `xml:"ListTagsForResourceResult"`
+	}
+	decodeXML(t, listResp, &list)
+
+	tagMap := make(map[string]string)
+	for _, tag := range list.Result.Tags {
+		tagMap[tag.Key] = tag.Value
+	}
+	if tagMap["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %q", tagMap["env"])
+	}
+	if tagMap["team"] != "platform" {
+		t.Errorf("expected tag team=platform, got %q", tagMap["team"])
+	}
+}
+
+func TestTagResource_notFound(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := snsCall(t, srv, "TagResource", url.Values{
+		"ResourceArn":      {"arn:aws:sns:us-east-1:000000000000:nonexistent"},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestTagResource_missingArn(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := snsCall(t, srv, "TagResource", url.Values{
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
+
+// ---- UntagResource -----------------------------------------------------------
+
+func TestUntagResource_success(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := createTopic(t, srv, "untag-test-topic")
+
+	tagResp := snsCall(t, srv, "TagResource", url.Values{
+		"ResourceArn":      {arn},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+		"Tags.Tag.2.Key":   {"team"},
+		"Tags.Tag.2.Value": {"platform"},
+	})
+	tagResp.Body.Close()
+
+	untagResp := snsCall(t, srv, "UntagResource", url.Values{
+		"ResourceArn":      {arn},
+		"TagKeys.member.1": {"env"},
+	})
+	defer untagResp.Body.Close()
+	helpers.AssertStatus(t, untagResp, http.StatusOK)
+
+	listResp := snsCall(t, srv, "ListTagsForResource", url.Values{
+		"ResourceArn": {arn},
+	})
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+
+	var list struct {
+		Result struct {
+			Tags []struct {
+				Key   string `xml:"Key"`
+				Value string `xml:"Value"`
+			} `xml:"Tags>member"`
+		} `xml:"ListTagsForResourceResult"`
+	}
+	decodeXML(t, listResp, &list)
+
+	tagMap := make(map[string]string)
+	for _, tag := range list.Result.Tags {
+		tagMap[tag.Key] = tag.Value
+	}
+	if _, exists := tagMap["env"]; exists {
+		t.Error("expected tag 'env' to be removed")
+	}
+	if tagMap["team"] != "platform" {
+		t.Errorf("expected tag team=platform, got %q", tagMap["team"])
+	}
+}
+
+func TestUntagResource_notFound(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := snsCall(t, srv, "UntagResource", url.Values{
+		"ResourceArn":      {"arn:aws:sns:us-east-1:000000000000:nonexistent"},
+		"TagKeys.member.1": {"env"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+// ---- ListTagsForResource -----------------------------------------------------
+
+func TestListTagsForResource_empty(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := createTopic(t, srv, "no-tags-topic")
+
+	resp := snsCall(t, srv, "ListTagsForResource", url.Values{
+		"ResourceArn": {arn},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var list struct {
+		Result struct {
+			Tags []struct {
+				Key   string `xml:"Key"`
+				Value string `xml:"Value"`
+			} `xml:"Tags>member"`
+		} `xml:"ListTagsForResourceResult"`
+	}
+	decodeXML(t, resp, &list)
+
+	if len(list.Result.Tags) != 0 {
+		t.Errorf("expected 0 tags, got %d", len(list.Result.Tags))
+	}
+}
+
+func TestListTagsForResource_notFound(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := snsCall(t, srv, "ListTagsForResource", url.Values{
+		"ResourceArn": {"arn:aws:sns:us-east-1:000000000000:nonexistent"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
 // ---- Test helpers ----------------------------------------------------------
 
 // snsCall sends an AWS Query-protocol SNS request (form-encoded POST body).

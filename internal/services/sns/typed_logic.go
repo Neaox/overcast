@@ -81,6 +81,25 @@ type publishBatchReq struct {
 	Entries  []publishBatchEntry `json:"PublishBatchRequestEntries"`
 }
 
+type tagResourceReq struct {
+	ResourceArn string     `json:"ResourceArn"`
+	Tags        []tagEntry `json:"Tags"`
+}
+
+type tagEntry struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+type untagResourceReq struct {
+	ResourceArn string   `json:"ResourceArn"`
+	TagKeys     []string `json:"TagKeys"`
+}
+
+type listTagsForResourceReq struct {
+	ResourceArn string `json:"ResourceArn"`
+}
+
 // ---- Response types (xml tags for QueryXML codec WriteResponse) ----
 
 type snsRespMeta struct {
@@ -233,6 +252,36 @@ type publishBatchResp struct {
 type publishBatchResult struct {
 	Successful []xmlPublishBatchSuccess `xml:"Successful>member"`
 	Failed     []xmlPublishBatchFailed  `xml:"Failed>member"`
+}
+
+// Tag responses
+
+type tagResourceResp struct {
+	XMLName struct{}    `xml:"TagResourceResponse"`
+	Xmlns   string      `xml:"xmlns,attr"`
+	Meta    snsRespMeta `xml:"ResponseMetadata"`
+}
+
+type untagResourceResp struct {
+	XMLName struct{}    `xml:"UntagResourceResponse"`
+	Xmlns   string      `xml:"xmlns,attr"`
+	Meta    snsRespMeta `xml:"ResponseMetadata"`
+}
+
+type listTagsForResourceResp struct {
+	XMLName struct{}                  `xml:"ListTagsForResourceResponse"`
+	Xmlns   string                    `xml:"xmlns,attr"`
+	Result  listTagsForResourceResult `xml:"ListTagsForResourceResult"`
+	Meta    snsRespMeta               `xml:"ResponseMetadata"`
+}
+
+type listTagsForResourceResult struct {
+	Tags []xmlTagMemberTyped `xml:"Tags>member"`
+}
+
+type xmlTagMemberTyped struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
 }
 
 // ---- Typed handler functions ----
@@ -698,3 +747,84 @@ func (h *Handler) publishBatchTyped(ctx context.Context, req *publishBatchReq) (
 
 var _ = xml.Marshal       // keep xml import
 var _ = smtp.BuildMessage // keep smtp import via handler_publish use
+
+// ---- Tag typed handlers -----------------------------------------------------
+
+func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceReq) (*tagResourceResp, *protocol.AWSError) {
+	if req.ResourceArn == "" {
+		return nil, protocol.ErrMissingParameter("ResourceArn")
+	}
+
+	topic, aerr := h.snsStore.getTopicByARN(ctx, req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	if topic.Tags == nil {
+		topic.Tags = make(map[string]string)
+	}
+	for _, t := range req.Tags {
+		topic.Tags[t.Key] = t.Value
+	}
+
+	if aerr := serviceutil.ValidateTags(snsTagCfg, topic.Tags); aerr != nil {
+		return nil, aerr
+	}
+
+	if aerr := h.snsStore.putTopic(ctx, topic); aerr != nil {
+		return nil, aerr
+	}
+
+	return &tagResourceResp{
+		Xmlns: snsXMLNS,
+		Meta:  snsMetaFromCtx(ctx),
+	}, nil
+}
+
+func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceReq) (*untagResourceResp, *protocol.AWSError) {
+	if req.ResourceArn == "" {
+		return nil, protocol.ErrMissingParameter("ResourceArn")
+	}
+
+	topic, aerr := h.snsStore.getTopicByARN(ctx, req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	for _, k := range req.TagKeys {
+		delete(topic.Tags, k)
+	}
+
+	if aerr := h.snsStore.putTopic(ctx, topic); aerr != nil {
+		return nil, aerr
+	}
+
+	return &untagResourceResp{
+		Xmlns: snsXMLNS,
+		Meta:  snsMetaFromCtx(ctx),
+	}, nil
+}
+
+func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceReq) (*listTagsForResourceResp, *protocol.AWSError) {
+	if req.ResourceArn == "" {
+		return nil, protocol.ErrMissingParameter("ResourceArn")
+	}
+
+	topic, aerr := h.snsStore.getTopicByARN(ctx, req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	members := make([]xmlTagMemberTyped, 0, len(topic.Tags))
+	for k, v := range topic.Tags {
+		members = append(members, xmlTagMemberTyped{Key: k, Value: v})
+	}
+
+	return &listTagsForResourceResp{
+		Xmlns: snsXMLNS,
+		Result: listTagsForResourceResult{
+			Tags: members,
+		},
+		Meta: snsMetaFromCtx(ctx),
+	}, nil
+}

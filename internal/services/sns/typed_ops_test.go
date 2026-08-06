@@ -15,6 +15,7 @@ var snsOps = []string{
 	"Subscribe", "Unsubscribe", "ListSubscriptionsByTopic", "ListSubscriptions",
 	"GetSubscriptionAttributes", "SetSubscriptionAttributes", "ConfirmSubscription",
 	"Publish", "PublishBatch",
+	"TagResource", "UntagResource", "ListTagsForResource",
 }
 
 func TestTypedOps_matchLegacyRegistry(t *testing.T) {

@@ -12,6 +12,9 @@ func init() {
 		capabilities.Capability{Service: "sns", Operation: "GetTopicAttributes", Category: "Topics", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "sns", Operation: "SetTopicAttributes", Category: "Topics", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "sns", Operation: "ListTopics", Category: "Topics", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "sns", Operation: "TagResource", Category: "Topics", Status: capabilities.StatusSupported, Notes: "Tags are stored on the topic; member-indexed form encoding"},
+		capabilities.Capability{Service: "sns", Operation: "UntagResource", Category: "Topics", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "sns", Operation: "ListTagsForResource", Category: "Topics", Status: capabilities.StatusSupported},
 		// Subscriptions
 		capabilities.Capability{Service: "sns", Operation: "Subscribe", Category: "Subscriptions", Status: capabilities.StatusSupported, Notes: "Protocols: `sqs`, `sms`, `email`, `email-json`, `http`, `https`, `lambda`. `application` and `firehose` return 400."},
 		capabilities.Capability{Service: "sns", Operation: "ConfirmSubscription", Category: "Subscriptions", Status: capabilities.StatusSupported, Notes: "Emulator auto-confirms; any token accepted"},

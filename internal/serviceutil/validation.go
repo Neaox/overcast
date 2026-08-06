@@ -244,3 +244,71 @@ func ValidateAndRespond(w http.ResponseWriter, r *http.Request, aerr *protocol.A
 func isAlphanumeric(c rune) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
+
+// ---- Tag validation ---------------------------------------------------------
+
+// MaxTags is the upper limit for resource tags across most AWS services.
+const MaxTags = 50
+
+// TagValidationConfig tunes the error codes a service returns for tag-
+// validation violations so that every handler stays faithful to its own
+// AWS wire form while sharing the common checks.
+type TagValidationConfig struct {
+	// ExceededCode is the error code returned when len(tags) > limit.
+	ExceededCode string
+	// ExceededMessage is the error message for exceeding the limit.
+	ExceededMessage string
+	// InvalidCode is the error code returned when a tag key or value
+	// does not meet the length or character constraints.
+	InvalidCode string
+	// Limit overrides MaxTags for this service. Zero means use MaxTags.
+	Limit int
+}
+
+// ValidateTags checks standard AWS tag constraints and returns an AWSError
+// that carries the service's own error codes via cfg. Each service should
+// define its own exported TagValidationConfig var so callers can see them.
+func ValidateTags(cfg TagValidationConfig, tags map[string]string) *protocol.AWSError {
+	limit := cfg.Limit
+	if limit == 0 {
+		limit = MaxTags
+	}
+	if len(tags) > limit {
+		return &protocol.AWSError{
+			Code:       cfg.ExceededCode,
+			Message:    cfg.ExceededMessage,
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	for k, v := range tags {
+		if k == "" {
+			return &protocol.AWSError{
+				Code:       cfg.InvalidCode,
+				Message:    "Tag key cannot be empty.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		if len(k) > 128 {
+			return &protocol.AWSError{
+				Code:       cfg.InvalidCode,
+				Message:    "Tag key must be 128 characters or fewer.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		if strings.HasPrefix(k, "aws:") {
+			return &protocol.AWSError{
+				Code:       cfg.InvalidCode,
+				Message:    "Tag keys must not start with aws:.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		if len(v) > 256 {
+			return &protocol.AWSError{
+				Code:       cfg.InvalidCode,
+				Message:    "Tag value must be 256 characters or fewer.",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+	}
+	return nil
+}
