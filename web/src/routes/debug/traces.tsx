@@ -53,17 +53,10 @@ function TracesPage() {
     return p
   }, [serviceFilter, methodFilter, statusFilter, searchInput])
 
-  const {
-    data,
-    isLoading,
-    error,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery({
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     ...traceListQueryOptions(params, debugEnabled),
-    getNextPageParam: (lastPage: { nextCursor?: string }) => lastPage.nextCursor ?? undefined,
-    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage: { nextCursor?: string }) => lastPage.nextCursor ?? (null as string | null),
+    initialPageParam: "" as string,
     refetchInterval: autoRefresh ? 3000 : false,
   })
 
@@ -73,7 +66,7 @@ function TracesPage() {
   })
 
   const allTraces = useMemo(() => {
-    return data?.pages.flatMap((p) => p.traces ?? []) ?? []
+    return data?.pages.flatMap((p) => (p as { traces: TraceSummary[] }).traces ?? []) ?? []
   }, [data])
 
   const applyFilters = () => {

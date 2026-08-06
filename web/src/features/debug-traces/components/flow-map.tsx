@@ -23,9 +23,9 @@ export function FlowMap({ trace, aggregateThreshold = 5, onSelectHop, selectedHo
   const [hideNoisy, setHideNoisy] = useState(true)
   const [errorsOnly, setErrorsOnly] = useState(false)
   const [minDurationMs, setMinDurationMs] = useState(0)
-  const hops = trace.hops ?? []
 
-  const { nodes, edges } = useMemo(() => {
+  const { nodes, edges, hops } = useMemo(() => {
+    const h = trace.hops ?? []
     const result = buildGraph(trace, aggregateThreshold)
     let filteredNodes = result.nodes
     let filteredEdges = result.edges
@@ -74,8 +74,8 @@ export function FlowMap({ trace, aggregateThreshold = 5, onSelectHop, selectedHo
         return { ...n, style: { ...n.style, opacity: 0.5 } }
       })
     }
-    return { nodes: filteredNodes, edges: filteredEdges }
-  }, [trace, aggregateThreshold, hideNoisy, errorsOnly, minDurationMs, selectedHopId, hops])
+    return { nodes: filteredNodes, edges: filteredEdges, hops: h }
+  }, [trace, aggregateThreshold, hideNoisy, errorsOnly, minDurationMs, selectedHopId])
 
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
     if (node.id === "entry") {
