@@ -26,7 +26,7 @@ func BenchmarkRouterConstruction(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		handler, _, cleanup, waitReady := New(cfg, state.NewMemoryStore(), logger, clock.New())
+		handler, _, cleanup, waitReady := New(cfg, state.NewMemoryStore(), logger, clock.New(), nil)
 		waitReady()
 		cleanup(context.Background())
 		runtime.KeepAlive(handler)
@@ -40,7 +40,7 @@ func BenchmarkOperationCoverageRoutes(b *testing.B) {
 	}
 	cfg.DataDir = b.TempDir()
 	cfg.LambdaDockerSocket = ""
-	handler, _, cleanup, waitReady := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
+	handler, _, cleanup, waitReady := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New(), nil)
 	waitReady()
 	b.Cleanup(func() { cleanup(context.Background()) })
 
