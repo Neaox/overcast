@@ -429,6 +429,9 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 					Timestamp: start,
 					Fields:    zapFieldsToMap(fields),
 				})
+				if rw.awsErrorCode != "" {
+					rec.SetMeta(r.RemoteAddr, r.UserAgent(), rw.awsErrorCode, rw.awsErrorMessage)
+				}
 			}
 
 			switch {
