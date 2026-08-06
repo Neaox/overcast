@@ -206,7 +206,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	prof.mark("serverTLSConfig")
 
 	// ---- HTTP server -------------------------------------------------------
-	handler, preShutdown, cleanup, _ := router.New(cfg, store, logger, clock.New(), nil, hookRunner)
+	handler, preShutdown, cleanup, _ := router.New(cfg, store, logger, clock.New(), hookRunner)
 	prof.mark("router.New (full)")
 
 	// When TLS is enabled the standard library automatically negotiates HTTP/2

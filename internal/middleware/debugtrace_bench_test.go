@@ -24,15 +24,11 @@ func BenchmarkMiddlewareOverhead(b *testing.B) {
 	runBench := func(b *testing.B, debug bool) {
 		cfg := &config.Config{Debug: debug, Region: "us-east-1", LogLevel: "warn"}
 		buf := trace.NewBuffer(1000)
-		var traceCore *trace.TracingCore
-		if debug {
-			traceCore = trace.NewTracingCore()
-		}
 		logger := zap.NewNop()
 
 		r := chi.NewRouter()
 		r.Use(middleware.RequestID)
-		r.Use(middleware.DebugTrace(cfg, buf, clock.New(), traceCore))
+		r.Use(middleware.DebugTrace(cfg, buf, clock.New()))
 		r.Use(middleware.Logger(logger, clock.New()))
 		r.Post("/", func(w http.ResponseWriter, r *http.Request) {
 			_ = protocol.RequestIDFromContext(r.Context())

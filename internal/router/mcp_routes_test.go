@@ -42,7 +42,7 @@ func newMCPRouterTestServer(t *testing.T, mutateCfg ...func(*config.Config)) *ht
 	}
 
 	store := state.NewMemoryStore()
-	handler, preShutdown, cleanup, _ := New(cfg, store, zap.NewNop(), clock.New(), nil)
+	handler, preShutdown, cleanup, _ := New(cfg, store, zap.NewNop(), clock.New())
 	srv := httptest.NewServer(handler)
 	t.Cleanup(func() {
 		preShutdown()

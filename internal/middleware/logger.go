@@ -4,13 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"strings"
 
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -428,7 +426,7 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 					Level:     logLevel(rw.status),
 					Message:   "request",
 					Timestamp: start,
-					Fields:    zapFieldsToMap(fields),
+					Fields:    trace.ZapFieldsToMap(fields),
 				})
 				if rw.awsErrorCode != "" {
 					rec.SetMeta(r.RemoteAddr, r.UserAgent(), rw.awsErrorCode, rw.awsErrorMessage)
@@ -452,41 +450,4 @@ func logLevel(status int) string {
 		return "ERROR"
 	}
 	return "INFO"
-}
-
-func zapFieldsToMap(fields []zap.Field) map[string]any {
-	m := make(map[string]any, len(fields))
-	for _, f := range fields {
-		m[f.Key] = fieldValue(f)
-	}
-	return m
-}
-
-func fieldValue(f zap.Field) any {
-	switch f.Type {
-	case zapcore.StringType:
-		return f.String
-	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Int16Type, zapcore.Int8Type:
-		return f.Integer
-	case zapcore.Uint64Type, zapcore.Uint32Type, zapcore.Uint16Type, zapcore.Uint8Type, zapcore.UintptrType:
-		return f.Integer
-	case zapcore.DurationType:
-		return f.Integer
-	case zapcore.BoolType:
-		return f.Integer == 1
-	case zapcore.Float64Type:
-		return math.Float64frombits(uint64(f.Integer))
-	case zapcore.Float32Type:
-		return float32(math.Float64frombits(uint64(f.Integer)))
-	case zapcore.TimeType, zapcore.TimeFullType:
-		if f.Interface != nil {
-			return f.Interface
-		}
-		return f.Integer
-	default:
-		if f.Interface != nil {
-			return f.Interface
-		}
-		return f.String
-	}
 }

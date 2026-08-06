@@ -608,7 +608,10 @@ func (p *provisioner) deleteStack(stack *Stack) {
 // DELETE_COMPLETE. Both top-level deleteStack (async) and nestedStackHandler
 // (inline) use this method.
 func (p *provisioner) deleteStackResources(stack *Stack) {
-	ctx := p.regionCtx(stack.Region)
+	p.deleteStackResourcesCtx(p.regionCtx(stack.Region), stack)
+}
+
+func (p *provisioner) deleteStackResourcesCtx(ctx context.Context, stack *Stack) {
 
 	rCtx := &resolveContext{
 		Region:    stack.Region,
@@ -2238,6 +2241,10 @@ func internalRequest(ctx context.Context, router http.Handler, region, method, p
 
 	if r := trace.RecorderFromContext(ctx); r != nil {
 		svc := serviceFromPath(path)
+		var hopErr string
+		if rec.Code >= 400 {
+			hopErr = rec.Body.String()
+		}
 		r.AddHop(trace.Hop{
 			CallerService:  "cloudformation",
 			Service:        svc,
@@ -2248,6 +2255,7 @@ func internalRequest(ctx context.Context, router http.Handler, region, method, p
 			ResponseBody:   rec.Body.Bytes(),
 			Duration:       duration,
 			Timestamp:      start,
+			Error:          hopErr,
 		})
 	}
 
@@ -2279,6 +2287,10 @@ func internalJSON(ctx context.Context, router http.Handler, region, target strin
 
 	if r := trace.RecorderFromContext(ctx); r != nil {
 		svc, op := serviceFromTarget(target)
+		var hopErr string
+		if rec.Code >= 400 {
+			hopErr = rec.Body.String()
+		}
 		r.AddHop(trace.Hop{
 			CallerService:  "cloudformation",
 			Service:        svc,
@@ -2289,6 +2301,7 @@ func internalJSON(ctx context.Context, router http.Handler, region, target strin
 			ResponseBody:   rec.Body.Bytes(),
 			Duration:       duration,
 			Timestamp:      start,
+			Error:          hopErr,
 		})
 	}
 
@@ -2321,6 +2334,10 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 	if r := trace.RecorderFromContext(ctx); r != nil {
 		action := params["Action"]
 		svc := serviceFromAction(action)
+		var hopErr string
+		if rec.Code >= 400 {
+			hopErr = rec.Body.String()
+		}
 		r.AddHop(trace.Hop{
 			CallerService:  "cloudformation",
 			Service:        svc,
@@ -2331,6 +2348,7 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 			ResponseBody:   rec.Body.Bytes(),
 			Duration:       duration,
 			Timestamp:      start,
+			Error:          hopErr,
 		})
 	}
 
@@ -4953,7 +4971,7 @@ func (h *nestedStackHandler) Create(ctx context.Context, router http.Handler, cf
 	}
 
 	// Provision child resources synchronously — no new goroutine.
-	h.p.provisionStackResources(childStack, tmpl)
+	h.p.provisionStackResourcesCtx(ctx, childStack, tmpl)
 
 	if childStack.Status != StatusCreateComplete {
 		return "", nil, fmt.Errorf("nested stack %s failed: %s", childName, childStack.StatusReason)
@@ -4984,7 +5002,7 @@ func (h *nestedStackHandler) Delete(ctx context.Context, _ http.Handler, _ *conf
 	}
 
 	childStack.Status = StatusDeleteInProgress
-	h.p.deleteStackResources(childStack)
+	h.p.deleteStackResourcesCtx(ctx, childStack)
 	return nil
 }
 
@@ -5037,7 +5055,7 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 		return "", nil, fmt.Errorf("nested stack update store: %w", err)
 	}
 
-	h.p.updateStackResources(childStack, tmpl, previousChildTags)
+	h.p.updateStackResourcesCtx(ctx, childStack, tmpl, previousChildTags)
 
 	if childStack.Status != StatusUpdateComplete {
 		return "", nil, fmt.Errorf("nested stack %s update failed: %s", childName, childStack.StatusReason)

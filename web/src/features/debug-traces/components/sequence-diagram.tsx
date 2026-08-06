@@ -5,13 +5,14 @@ import type { TraceHop } from "@/types"
 interface SequenceDiagramProps {
   hops: TraceHop[]
   entryService: string
-  totalDuration: number
   onSelectHop?: (hopId: string) => void
   selectedHopId?: string | null
 }
 
 const colWidth = 150
 const colGap = 40
+const headerHeight = 36
+const topPad = 10
 
 /**
  * SVG sequence diagram showing services as vertical lifelines and hops as
@@ -20,7 +21,6 @@ const colGap = 40
 export function SequenceDiagram({
   hops,
   entryService,
-  totalDuration,
   onSelectHop,
   selectedHopId,
 }: SequenceDiagramProps) {
@@ -173,5 +173,3 @@ export function SequenceDiagram({
     </div>
   )
 }
-
-// No local nsToHuman — imported from shared utils.

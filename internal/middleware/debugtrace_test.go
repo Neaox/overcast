@@ -16,7 +16,7 @@ import (
 
 func TestDebugTraceMiddlewareDisabled(t *testing.T) {
 	cfg := &config.Config{Debug: false}
-	mw := DebugTrace(cfg, nil, clock.New(), nil)
+	mw := DebugTrace(cfg, nil, clock.New())
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -38,7 +38,7 @@ func TestDebugTraceMiddlewareDisabled(t *testing.T) {
 func TestDebugTraceMiddlewareEnabled(t *testing.T) {
 	cfg := &config.Config{Debug: true, Region: "us-east-1"}
 	buf := trace.NewBuffer(100)
-	mw := DebugTrace(cfg, buf, clock.New(), nil)
+	mw := DebugTrace(cfg, buf, clock.New())
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rec := trace.RecorderFromContext(r.Context()); rec == nil {
@@ -95,7 +95,7 @@ func TestDebugTraceMiddlewareEnabled(t *testing.T) {
 func TestDebugTraceMiddlewareRequestBodyCapture(t *testing.T) {
 	cfg := &config.Config{Debug: true}
 	buf := trace.NewBuffer(100)
-	mw := DebugTrace(cfg, buf, clock.New(), nil)
+	mw := DebugTrace(cfg, buf, clock.New())
 
 	var handlerBody []byte
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

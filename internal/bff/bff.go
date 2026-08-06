@@ -403,7 +403,7 @@ func handleDebugMetrics(w http.ResponseWriter, r *http.Request) {
 
 func handleDebugTrace(w http.ResponseWriter, r *http.Request) {
 	requestID := chi.URLParam(r, "requestId")
-	proxyDebugJSON(w, r, "/_debug/trace/"+requestID)
+	proxyDebugJSON(w, r, "/_debug/trace/"+url.PathEscape(requestID))
 }
 
 func handleDebugTraces(w http.ResponseWriter, r *http.Request) {

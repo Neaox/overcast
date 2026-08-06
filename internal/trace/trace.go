@@ -236,7 +236,14 @@ func (r *Recorder) Entry() Entry {
 	defer r.mu.Unlock()
 	e := r.entry
 	e.Hops = make([]Hop, len(r.entry.Hops))
-	copy(e.Hops, r.entry.Hops)
+	for i := range r.entry.Hops {
+		e.Hops[i] = r.entry.Hops[i]
+		e.Hops[i].RequestBody = append([]byte(nil), r.entry.Hops[i].RequestBody...)
+		e.Hops[i].ResponseBody = append([]byte(nil), r.entry.Hops[i].ResponseBody...)
+		if r.entry.Hops[i].RequestHeaders != nil {
+			e.Hops[i].RequestHeaders = r.entry.Hops[i].RequestHeaders.Clone()
+		}
+	}
 	e.LogEntries = make([]LogEntry, len(r.entry.LogEntries))
 	copy(e.LogEntries, r.entry.LogEntries)
 	if r.entry.Metadata != nil {

@@ -43,7 +43,8 @@ export function Waterfall({ hops, totalDuration, startTime, onSelectHop, selecte
   }
 
   return (
-    <svg width={width} height={Math.max(totalHeight, 40)} className="text-xs">
+    <svg width={width} height={Math.max(totalHeight, 40)} className="text-xs" role="img" aria-label={`Waterfall chart showing ${hops.length} service calls`}>
+      <title>Waterfall chart — {hops.length} calls over {nsToHuman(totalDuration)}</title>
       {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
         const x = labelWidth + pct * chartWidth
         return (

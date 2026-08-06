@@ -35,6 +35,7 @@ function TracesPage() {
   const { service, method, status, search } = Route.useSearch()
   const navigate = Route.useNavigate()
   const debugEnabled = useDebugEnabled()
+  const COL_COUNT = 8
 
   const [searchInput, setSearchInput] = useState(search ?? "")
   const [serviceFilter, setServiceFilter] = useState(service ?? "")
@@ -52,14 +53,8 @@ function TracesPage() {
     return p
   }, [serviceFilter, methodFilter, statusFilter, searchInput, cursorStack])
 
-  const { data, isLoading, error } = useQuery({
-    ...traceListQueryOptions(params),
-    enabled: debugEnabled,
-  })
-  const { data: countData } = useQuery({
-    ...traceCountQueryOptions(),
-    enabled: debugEnabled,
-  })
+  const { data, isLoading, error } = useQuery(traceListQueryOptions(params, debugEnabled))
+  const { data: countData } = useQuery(traceCountQueryOptions())
 
   const applyFilters = () => {
     setCursorStack([])
@@ -75,8 +70,9 @@ function TracesPage() {
   }
 
   const loadMore = () => {
-    if (data?.nextCursor) {
-      setCursorStack((prev) => [...prev, data.nextCursor!])
+    const next = data?.nextCursor
+    if (next) {
+      setCursorStack((prev) => [...prev, next])
     }
   }
 
@@ -146,7 +142,7 @@ function TracesPage() {
               </thead>
               <tbody>
                 {(data?.traces ?? []).length === 0 ? (
-                  <tr><td colSpan={8} className="px-3 py-8 text-center text-fg-muted">No traces yet. Send a request to see it here.</td></tr>
+                  <tr><td colSpan={COL_COUNT} className="px-3 py-8 text-center text-fg-muted">No traces yet. Send a request to see it here.</td></tr>
                 ) : (
                   (data?.traces ?? []).map((t) => (
                     <tr key={t.requestId} className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors" onClick={() => void navigate({ to: "/debug/traces/$requestId", params: { requestId: t.requestId } })}>

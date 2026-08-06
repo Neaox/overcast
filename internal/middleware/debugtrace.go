@@ -21,7 +21,7 @@ const maxTraceBody = 1 << 20 // 1 MiB
 // a ring buffer when cfg.Debug is true. When debug is off the middleware is an
 // identity function — chi calls it once at startup and the handler chain is
 // unchanged.
-func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock, tc *trace.TracingCore) func(http.Handler) http.Handler {
+func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(http.Handler) http.Handler {
 	if !cfg.Debug {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -33,9 +33,13 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock, tc *trac
 			requestHeaders := r.Header.Clone()
 			var requestBody []byte
 			if r.Body != nil {
-				requestBody, _ = io.ReadAll(r.Body)
+				var readErr error
+				requestBody, readErr = io.ReadAll(r.Body)
 				r.Body.Close()
 				r.Body = io.NopCloser(bytes.NewReader(requestBody))
+				if readErr != nil {
+					requestBody = nil
+				}
 			}
 
 			rec := trace.NewRecorder(reqID, start, r.Method, r.URL.Path, r.Host, r.URL.RawQuery, requestHeaders)
@@ -44,10 +48,6 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock, tc *trac
 
 			ctx := trace.ContextWithRecorder(r.Context(), rec)
 			r = r.WithContext(ctx)
-			if tc != nil {
-				tc.SetContext(ctx)
-				defer tc.ClearContext()
-			}
 
 			trw := &traceResponseWriter{
 				ResponseWriter: w,
@@ -122,4 +122,11 @@ func (w *traceResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return hj.Hijack()
 	}
 	return nil, nil, http.ErrNotSupported
+}
+
+func (w *traceResponseWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := w.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return http.ErrNotSupported
 }

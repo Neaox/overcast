@@ -125,11 +125,16 @@ func (b *Buffer) List(filter ListFilter) ([]*Entry, string) {
 
 	start := 0
 	if filter.After != "" {
+		found := false
 		for i, e := range candidates {
 			if e.RequestID == filter.After {
 				start = i + 1
+				found = true
 				break
 			}
+		}
+		if !found {
+			return nil, ""
 		}
 	}
 	if start >= len(candidates) {

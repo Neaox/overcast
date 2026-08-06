@@ -18,6 +18,7 @@ interface FlowMapProps {
 export function FlowMap({ trace, aggregateThreshold = 5 }: FlowMapProps) {
   const [hideNoisy, setHideNoisy] = useState(true)
   const [errorsOnly, setErrorsOnly] = useState(false)
+  const hops = trace.hops ?? []
 
   const { nodes, edges } = useMemo(() => {
     const result = buildGraph(trace, aggregateThreshold)
@@ -26,7 +27,7 @@ export function FlowMap({ trace, aggregateThreshold = 5 }: FlowMapProps) {
 
     if (hideNoisy) {
       const noisyIds = new Set(
-        (trace.hops ?? []).filter((h) => h.noisy).map((h) => h.id),
+        hops.filter((h) => h.noisy).map((h) => h.id),
       )
       result.nodes.forEach((n) => {
         if (n.data.aggregateCount > 0) noisyIds.add(n.id)
@@ -46,8 +47,8 @@ export function FlowMap({ trace, aggregateThreshold = 5 }: FlowMapProps) {
     return { nodes: filteredNodes, edges: filteredEdges }
   }, [trace, aggregateThreshold, hideNoisy, errorsOnly])
 
-  const noisyCount = (trace.hops ?? []).filter((h) => h.noisy).length
-  const errorCount = (trace.hops ?? []).filter((h) => h.responseStatus >= 400 || !!h.error).length
+  const noisyCount = hops.filter((h) => h.noisy).length
+  const errorCount = hops.filter((h) => h.responseStatus >= 400 || !!h.error).length
 
   return (
     <div className="flex flex-col gap-2">

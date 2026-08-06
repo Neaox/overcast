@@ -1,11 +1,13 @@
-import { queryOptions, useQuery } from "@tanstack/react-query"
+import { queryOptions } from "@tanstack/react-query"
 import { debugTrace } from "@/services/api/misc"
 import type { TraceListParams } from "@/types"
+
+const EMPTY_PARAMS: TraceListParams = {}
 
 export const debugTraceKeys = {
   all: ["debug-trace"] as const,
   detail: (requestId: string) => [...debugTraceKeys.all, "detail", requestId] as const,
-  list: (params?: TraceListParams) => [...debugTraceKeys.all, "list", params ?? {}] as const,
+  list: (params?: TraceListParams) => [...debugTraceKeys.all, "list", params ?? EMPTY_PARAMS] as const,
   count: () => [...debugTraceKeys.all, "count"] as const,
 }
 
@@ -14,22 +16,16 @@ export function traceDetailQueryOptions(requestId: string) {
     queryKey: debugTraceKeys.detail(requestId),
     queryFn: () => debugTrace.get(requestId),
     enabled: !!requestId,
+    retry: false,
   })
 }
 
-export function useTraceDetail(requestId: string) {
-  return useQuery(traceDetailQueryOptions(requestId))
-}
-
-export function traceListQueryOptions(params?: TraceListParams) {
+export function traceListQueryOptions(params?: TraceListParams, enabled = true) {
   return queryOptions({
     queryKey: debugTraceKeys.list(params),
     queryFn: () => debugTrace.list(params),
+    enabled,
   })
-}
-
-export function useTraceList(params?: TraceListParams) {
-  return useQuery(traceListQueryOptions(params))
 }
 
 export function traceCountQueryOptions() {
@@ -37,8 +33,4 @@ export function traceCountQueryOptions() {
     queryKey: debugTraceKeys.count(),
     queryFn: () => debugTrace.count(),
   })
-}
-
-export function useTraceCount() {
-  return useQuery(traceCountQueryOptions())
 }

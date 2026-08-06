@@ -333,7 +333,7 @@ function LogsTab({ entries }: { entries: TraceLogEntry[] }) {
         </thead>
         <tbody>
           {entries.map((entry, i) => (
-            <Fragment key={i}>
+            <Fragment key={`${entry.timestamp}-${entry.level}-${i}`}>
               <tr
                 className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors"
                 onClick={() => setExpanded(expanded === i ? null : i)}
