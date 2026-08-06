@@ -22,6 +22,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"DescribeProtection": op.NewTyped[describeProtectionRequest, describeProtectionResponse](
 			"DescribeProtection", h.describeProtectionTyped,
 		),
+		"TagResource": op.NewTyped[tagResourceRequest, struct{}](
+			"TagResource", h.tagResourceTyped,
+		),
+		"UntagResource": op.NewTyped[untagResourceRequest, struct{}](
+			"UntagResource", h.untagResourceTyped,
+		),
+		"ListTagsForResource": op.NewTyped[listTagsForResourceRequest, listTagsForResourceResponse](
+			"ListTagsForResource", h.listTagsForResourceTyped,
+		),
 	}
 }
 

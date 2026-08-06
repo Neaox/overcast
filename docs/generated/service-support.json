@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1368,
+  "total_ops": 1392,
   "services": [
     {
       "service": "s3",
@@ -2457,8 +2457,8 @@
     {
       "service": "cognito",
       "display_name": "Cognito",
-      "total_ops": 67,
-      "implemented_ops": 67,
+      "total_ops": 70,
+      "implemented_ops": 70,
       "operations": [
         {
           "operation": "CreateUserPool",
@@ -2861,6 +2861,21 @@
           "category": "User Pool Domain operations",
           "status": "✅ Supported",
           "notes": "Accepted; SSL certificate updates are inert in the emulator"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported"
         }
       ]
     },
@@ -4534,7 +4549,7 @@
       "service": "eventbridge",
       "display_name": "EventBridge",
       "total_ops": 28,
-      "implemented_ops": 16,
+      "implemented_ops": 17,
       "operations": [
         {
           "operation": "CreateEventBus",
@@ -4632,9 +4647,8 @@
         {
           "operation": "UntagResource",
           "category": "Tags",
-          "status": "❌ Unsupported",
-          "notes": "Returns 501",
-          "doc_only": true
+          "status": "✅ Supported",
+          "notes": "Removes tags from a resource"
         },
         {
           "operation": "CreateArchive",
@@ -5130,7 +5144,7 @@
       "service": "rds",
       "display_name": "RDS",
       "total_ops": 34,
-      "implemented_ops": 21,
+      "implemented_ops": 24,
       "operations": [
         {
           "operation": "CreateDBInstance",
@@ -5319,20 +5333,20 @@
         {
           "operation": "AddTagsToResource",
           "category": "General",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
+          "status": "✅ Supported",
+          "notes": "Tags stored per-ARN in `rds:tags` namespace; shared tag validation"
         },
         {
           "operation": "ListTagsForResource",
           "category": "General",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
+          "status": "✅ Supported",
+          "notes": "Returns tag list for any RDS resource ARN"
         },
         {
           "operation": "RemoveTagsFromResource",
           "category": "General",
-          "status": "❌ Unsupported",
-          "notes": "stub; returns 501"
+          "status": "✅ Supported",
+          "notes": "Removes specified tag keys from a resource"
         }
       ]
     },
@@ -5672,8 +5686,8 @@
     {
       "service": "appconfig",
       "display_name": "AppConfig",
-      "total_ops": 16,
-      "implemented_ops": 16,
+      "total_ops": 19,
+      "implemented_ops": 19,
       "operations": [
         {
           "operation": "CreateApplication",
@@ -5770,6 +5784,24 @@
           "category": "Hosted Configuration Versions",
           "status": "✅ Supported",
           "notes": "Deletes a single version; other versions of the profile are untouched"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Adds or overwrites tags on applications, environments, and configuration profiles"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes tags by key from applications, environments, and configuration profiles"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Returns tags for applications, environments, and configuration profiles"
         }
       ]
     },
@@ -5947,7 +5979,7 @@
       "service": "ssm",
       "display_name": "SSM",
       "total_ops": 18,
-      "implemented_ops": 10,
+      "implemented_ops": 11,
       "operations": [
         {
           "operation": "AddTagsToResource",
@@ -6016,9 +6048,8 @@
         {
           "operation": "RemoveTagsFromResource",
           "category": "Tags",
-          "status": "❌ Unsupported",
-          "notes": "Returns 501",
-          "doc_only": true
+          "status": "✅ Supported",
+          "notes": "Removes tags from a parameter"
         },
         {
           "operation": "GetServiceSetting",
@@ -6778,8 +6809,8 @@
     {
       "service": "stepfunctions",
       "display_name": "Step Functions",
-      "total_ops": 11,
-      "implemented_ops": 11,
+      "total_ops": 14,
+      "implemented_ops": 14,
       "operations": [
         {
           "operation": "CreateStateMachine",
@@ -6842,6 +6873,21 @@
           "category": "Executions",
           "status": "✅ Supported",
           "notes": "Interrupts a running execution; it reaches ABORTED asynchronously"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported"
         }
       ]
     },
@@ -6916,8 +6962,8 @@
     {
       "service": "shield",
       "display_name": "Shield",
-      "total_ops": 5,
-      "implemented_ops": 5,
+      "total_ops": 8,
+      "implemented_ops": 8,
       "operations": [
         {
           "operation": "DescribeSubscription",
@@ -6948,6 +6994,24 @@
           "category": "Protections",
           "status": "✅ Supported",
           "notes": "Deletes a protection by ID"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Adds/updates tags on a protection"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes tag keys from a protection"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Lists tags on a protection"
         }
       ]
     },
@@ -7004,8 +7068,8 @@
     {
       "service": "athena",
       "display_name": "Athena",
-      "total_ops": 8,
-      "implemented_ops": 8,
+      "total_ops": 11,
+      "implemented_ops": 11,
       "operations": [
         {
           "operation": "StartQueryExecution",
@@ -7054,6 +7118,24 @@
           "category": "WorkGroups",
           "status": "✅ Supported",
           "notes": "Deletes a workgroup"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Adds/updates tags on a workgroup"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes tag keys from a workgroup"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Lists tags on a workgroup"
         }
       ]
     },
@@ -7220,8 +7302,8 @@
     {
       "service": "firehose",
       "display_name": "Firehose",
-      "total_ops": 6,
-      "implemented_ops": 6,
+      "total_ops": 9,
+      "implemented_ops": 9,
       "operations": [
         {
           "operation": "CreateDeliveryStream",
@@ -7258,14 +7340,32 @@
           "category": "Records",
           "status": "✅ Supported",
           "notes": "Writes multiple records to the stream"
+        },
+        {
+          "operation": "TagDeliveryStream",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Adds or overwrites tags on a delivery stream"
+        },
+        {
+          "operation": "UntagDeliveryStream",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes tags by key from a delivery stream"
+        },
+        {
+          "operation": "ListTagsForDeliveryStream",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Returns tags for a delivery stream"
         }
       ]
     },
     {
       "service": "glue",
       "display_name": "Glue",
-      "total_ops": 8,
-      "implemented_ops": 8,
+      "total_ops": 11,
+      "implemented_ops": 11,
       "operations": [
         {
           "operation": "CreateDatabase",
@@ -7314,6 +7414,24 @@
           "category": "Tables",
           "status": "✅ Supported",
           "notes": "Deletes a table"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Adds or overwrites tags on databases and tables"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes tags by key from databases and tables"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Returns tags for databases and tables"
         }
       ]
     },
@@ -7917,8 +8035,8 @@
     {
       "service": "elbv2",
       "display_name": "ELBv2",
-      "total_ops": 15,
-      "implemented_ops": 12,
+      "total_ops": 18,
+      "implemented_ops": 15,
       "operations": [
         {
           "operation": "CreateLoadBalancer",
@@ -7994,6 +8112,24 @@
           "operation": "ModifyLoadBalancerAttributes",
           "category": "Load Balancers",
           "status": "❌ Unsupported"
+        },
+        {
+          "operation": "AddTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Adds tags to load balancers and target groups"
+        },
+        {
+          "operation": "RemoveTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes tags from load balancers and target groups"
+        },
+        {
+          "operation": "DescribeTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Describes tags for load balancers and target groups"
         }
       ]
     },

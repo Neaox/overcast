@@ -19,6 +19,9 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"RegisterTargets":       op.NewTyped("RegisterTargets", h.registerTargetsTyped),
 		"DeregisterTargets":     op.NewTyped("DeregisterTargets", h.deregisterTargetsTyped),
 		"DescribeTargetHealth":  op.NewTyped("DescribeTargetHealth", h.describeTargetHealthTyped),
+		"AddTags":               op.NewTyped("AddTags", h.addTagsTyped),
+		"RemoveTags":            op.NewTyped("RemoveTags", h.removeTagsTyped),
+		"DescribeTags":          op.NewTyped("DescribeTags", h.describeTagsTyped),
 	}
 }
 

@@ -7,12 +7,15 @@ import (
 
 func (s *Service) typedOps() map[string]op.Operation {
 	return map[string]op.Operation{
-		"CreateDeliveryStream":   op.NewTyped[createDeliveryStreamReq, createDeliveryStreamResp]("CreateDeliveryStream", s.createDeliveryStreamTyped),
-		"DescribeDeliveryStream": op.NewTyped[describeDeliveryStreamReq, describeDeliveryStreamResp]("DescribeDeliveryStream", s.describeDeliveryStreamTyped),
-		"ListDeliveryStreams":    op.NewTyped[struct{}, listDeliveryStreamsResp]("ListDeliveryStreams", s.listDeliveryStreamsTyped),
-		"DeleteDeliveryStream":   op.NewTyped[deleteDeliveryStreamReq, struct{}]("DeleteDeliveryStream", s.deleteDeliveryStreamTyped),
-		"PutRecord":              op.NewTyped[putRecordReq, putRecordResp]("PutRecord", s.putRecordTyped),
-		"PutRecordBatch":         op.NewTyped[putRecordBatchReq, putRecordBatchResp]("PutRecordBatch", s.putRecordBatchTyped),
+		"CreateDeliveryStream":      op.NewTyped[createDeliveryStreamReq, createDeliveryStreamResp]("CreateDeliveryStream", s.createDeliveryStreamTyped),
+		"DescribeDeliveryStream":    op.NewTyped[describeDeliveryStreamReq, describeDeliveryStreamResp]("DescribeDeliveryStream", s.describeDeliveryStreamTyped),
+		"ListDeliveryStreams":       op.NewTyped[struct{}, listDeliveryStreamsResp]("ListDeliveryStreams", s.listDeliveryStreamsTyped),
+		"DeleteDeliveryStream":      op.NewTyped[deleteDeliveryStreamReq, struct{}]("DeleteDeliveryStream", s.deleteDeliveryStreamTyped),
+		"PutRecord":                 op.NewTyped[putRecordReq, putRecordResp]("PutRecord", s.putRecordTyped),
+		"PutRecordBatch":            op.NewTyped[putRecordBatchReq, putRecordBatchResp]("PutRecordBatch", s.putRecordBatchTyped),
+		"TagDeliveryStream":         op.NewTyped[tagDeliveryStreamReq, struct{}]("TagDeliveryStream", s.tagDeliveryStreamTyped),
+		"UntagDeliveryStream":       op.NewTyped[untagDeliveryStreamReq, struct{}]("UntagDeliveryStream", s.untagDeliveryStreamTyped),
+		"ListTagsForDeliveryStream": op.NewTyped[listTagsForDeliveryStreamReq, listTagsForDeliveryStreamResp]("ListTagsForDeliveryStream", s.listTagsForDeliveryStreamTyped),
 	}
 }
 

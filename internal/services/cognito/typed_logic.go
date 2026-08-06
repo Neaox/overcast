@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -3335,4 +3336,87 @@ func (s *Service) RevokeTokenTyped(ctx context.Context, req *RevokeTokenReq) (*s
 	_ = s.removeToken(ctx, req.Token)
 	s.publishTyped(ctx, events.CognitoSignOut, events.ResourcePayload{Name: req.Token})
 	return &struct{}{}, nil
+}
+
+// ─── tag types ─────────────────────────────────────────────────────────────────
+
+type TagResourceReq struct {
+	ResourceArn string            `json:"ResourceArn" cbor:"ResourceArn"`
+	Tags        map[string]string `json:"Tags" cbor:"Tags"`
+}
+
+type UntagResourceReq struct {
+	ResourceArn string   `json:"ResourceArn" cbor:"ResourceArn"`
+	TagKeys     []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
+type ListTagsForResourceReq struct {
+	ResourceArn string `json:"ResourceArn" cbor:"ResourceArn"`
+}
+
+type ListTagsForResourceResp struct {
+	Tags map[string]string `json:"Tags" cbor:"Tags"`
+}
+
+func (s *Service) TagResourceTyped(ctx context.Context, req *TagResourceReq) (*struct{}, *protocol.AWSError) {
+	poolID := extractPoolIDFromARN(req.ResourceArn)
+	pool, aerr := s.requirePoolTyped(ctx, poolID)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	if pool.Tags == nil {
+		pool.Tags = make(map[string]string)
+	}
+	for k, v := range req.Tags {
+		pool.Tags[k] = v
+	}
+
+	if aerr := serviceutil.ValidateTags(cognitoTagCfg, pool.Tags); aerr != nil {
+		return nil, aerr
+	}
+
+	if err := s.savePool(ctx, pool); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) UntagResourceTyped(ctx context.Context, req *UntagResourceReq) (*struct{}, *protocol.AWSError) {
+	poolID := extractPoolIDFromARN(req.ResourceArn)
+	pool, aerr := s.requirePoolTyped(ctx, poolID)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	for _, k := range req.TagKeys {
+		delete(pool.Tags, k)
+	}
+
+	if err := s.savePool(ctx, pool); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) ListTagsForResourceTyped(ctx context.Context, req *ListTagsForResourceReq) (*ListTagsForResourceResp, *protocol.AWSError) {
+	poolID := extractPoolIDFromARN(req.ResourceArn)
+	pool, aerr := s.requirePoolTyped(ctx, poolID)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	out := pool.Tags
+	if out == nil {
+		out = make(map[string]string)
+	}
+	return &ListTagsForResourceResp{Tags: out}, nil
+}
+
+func extractPoolIDFromARN(arn string) string {
+	idx := strings.LastIndex(arn, "userpool/")
+	if idx < 0 {
+		return ""
+	}
+	return arn[idx+len("userpool/"):]
 }

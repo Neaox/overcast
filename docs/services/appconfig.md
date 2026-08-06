@@ -34,6 +34,7 @@ AWS AppConfig uses the REST JSON protocol. Routes are served under the
 | Environments                  | 4            |
 | Configuration Profiles        | 4            |
 | Hosted Configuration Versions | 4            |
+| Tags                          | 3            |
 
 ---
 
@@ -74,5 +75,13 @@ AWS AppConfig uses the REST JSON protocol. Routes are served under the
 | `GetHostedConfigurationVersion`    | ✅ Supported | Returns the raw content as the response body with the `AppConfig-*` metadata headers                                                                                                                | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_GetHostedConfigurationVersion.html)    |
 | `ListHostedConfigurationVersions`  | ✅ Supported | Returns version metadata without content; no pagination (`NextToken` never returned)                                                                                                                | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_ListHostedConfigurationVersions.html)  |
 | `DeleteHostedConfigurationVersion` | ✅ Supported | Deletes a single version; other versions of the profile are untouched                                                                                                                               | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_DeleteHostedConfigurationVersion.html) |
+
+### Tags
+
+| Operation             | Status       | Notes                                                                             | AWS Docs                                                                                           |
+| --------------------- | ------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported | Adds or overwrites tags on applications, environments, and configuration profiles | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | Removes tags by key from applications, environments, and configuration profiles   | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | Returns tags for applications, environments, and configuration profiles           | [docs](https://docs.aws.amazon.com/appconfig/2019-10-09/APIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

@@ -131,6 +131,11 @@ type putEventsRequest struct {
 	Entries []map[string]any `json:"Entries" cbor:"Entries"`
 }
 
+type untagResourceRequest struct {
+	ResourceARN string   `json:"ResourceARN" cbor:"ResourceARN"`
+	TagKeys     []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
 type putEventsEntryResponse struct {
 	EventId string `json:"EventId" cbor:"EventId"`
 }
@@ -190,6 +195,19 @@ func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	}
 	for _, t := range req.Tags {
 		existing[t.Key] = t.Value
+	}
+	b, _ := json.Marshal(existing)
+	s.store.Set(ctx, nsTags, req.ResourceARN, string(b)) //nolint:errcheck
+	return &struct{}{}, nil
+}
+
+func (s *Service) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	existing := map[string]string{}
+	if raw, found, _ := s.store.Get(ctx, nsTags, req.ResourceARN); found {
+		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
+	}
+	for _, k := range req.TagKeys {
+		delete(existing, k)
 	}
 	b, _ := json.Marshal(existing)
 	s.store.Set(ctx, nsTags, req.ResourceARN, string(b)) //nolint:errcheck

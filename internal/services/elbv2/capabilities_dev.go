@@ -21,5 +21,8 @@ func init() {
 		capabilities.Capability{Operation: "CreateRule", Category: "Listener Rules", Status: capabilities.StatusUnsupported},
 		capabilities.Capability{Operation: "DescribeRules", Category: "Listener Rules", Status: capabilities.StatusUnsupported},
 		capabilities.Capability{Operation: "ModifyLoadBalancerAttributes", Category: "Load Balancers", Status: capabilities.StatusUnsupported},
+		capabilities.Capability{Operation: "AddTags", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Adds tags to load balancers and target groups"},
+		capabilities.Capability{Operation: "RemoveTags", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Removes tags from load balancers and target groups"},
+		capabilities.Capability{Operation: "DescribeTags", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Describes tags for load balancers and target groups"},
 	)
 }

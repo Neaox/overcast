@@ -177,6 +177,8 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, op stri
 		s.tagResource(w, r)
 	case "ListTagsForResource":
 		s.listTagsForResource(w, r)
+	case "UntagResource":
+		s.untagResource(w, r)
 	case "DeleteEventBus":
 		s.deleteEventBus(w, r)
 	case "PutRule":
@@ -362,6 +364,26 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		tags = append(tags, map[string]string{"Key": k, "Value": v})
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tags})
+}
+
+func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string   `json:"ResourceARN"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	existing := map[string]string{}
+	if raw, found, _ := s.store.Get(r.Context(), nsTags, req.ResourceARN); found {
+		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
+	}
+	for _, k := range req.TagKeys {
+		delete(existing, k)
+	}
+	b, _ := json.Marshal(existing)
+	s.store.Set(r.Context(), nsTags, req.ResourceARN, string(b)) //nolint:errcheck
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 
 func (s *Service) deleteEventBus(w http.ResponseWriter, r *http.Request) {

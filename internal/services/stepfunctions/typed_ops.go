@@ -40,6 +40,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"DeleteStateMachine": op.NewTyped[deleteStateMachineRequest, struct{}](
 			"DeleteStateMachine", h.deleteStateMachineTyped,
 		),
+		"TagResource": op.NewTyped[tagResourceRequest, struct{}](
+			"TagResource", h.tagResourceTyped,
+		),
+		"UntagResource": op.NewTyped[untagResourceRequest, struct{}](
+			"UntagResource", h.untagResourceTyped,
+		),
+		"ListTagsForResource": op.NewTyped[listTagsForResourceRequest, listTagsForResourceTypedResponse](
+			"ListTagsForResource", h.listTagsForResourceTyped,
+		),
 	}
 }
 

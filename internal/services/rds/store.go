@@ -22,6 +22,7 @@ const (
 	nsSubnetGroups    = "rds:subnet-groups"
 	nsParameterGroups = "rds:parameter-groups"
 	nsEvents          = "rds:events"
+	nsTags            = "rds:tags"
 )
 
 // DBInstance represents a stored RDS DB instance.
@@ -544,6 +545,34 @@ func (s *rdsStore) listDBParameterGroups(ctx context.Context) ([]*DBParameterGro
 func (s *rdsStore) deleteDBParameterGroup(ctx context.Context, name string) *protocol.AWSError {
 	key := serviceutil.RegionKey(s.region(ctx), name)
 	if err := s.store.Delete(ctx, nsParameterGroups, key); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// ── Tags store ────────────────────────────────────────────────────────────────
+
+func (s *rdsStore) getTags(ctx context.Context, arn string) (map[string]string, *protocol.AWSError) {
+	raw, ok, err := s.store.Get(ctx, nsTags, arn)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !ok {
+		return map[string]string{}, nil
+	}
+	var tags map[string]string
+	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return tags, nil
+}
+
+func (s *rdsStore) setTags(ctx context.Context, arn string, tags map[string]string) *protocol.AWSError {
+	raw, err := json.Marshal(tags)
+	if err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if err := s.store.Set(ctx, nsTags, arn, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil

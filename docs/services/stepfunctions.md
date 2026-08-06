@@ -116,6 +116,7 @@ history.
 | -------------- | ------------ |
 | State machines | 5            |
 | Executions     | 6            |
+| Tags           | 3            |
 
 ---
 
@@ -141,5 +142,13 @@ history.
 | `ListExecutions`      | ✅ Supported | statusFilter and maxResults honoured; no pagination token                | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListExecutions.html)      |
 | `GetExecutionHistory` | ✅ Supported | Real state-transition events in AWS's vocabulary; readable while RUNNING | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_GetExecutionHistory.html) |
 | `StopExecution`       | ✅ Supported | Interrupts a running execution; it reaches ABORTED asynchronously        | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_StopExecution.html)       |
+
+### Tags
+
+| Operation             | Status       | Notes | AWS Docs                                                                                            |
+| --------------------- | ------------ | ----- | --------------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported |       | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/step-functions/latest/apireference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

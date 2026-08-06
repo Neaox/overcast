@@ -166,3 +166,95 @@ func (s *Service) deleteWorkGroupTyped(ctx context.Context, req *workGroupNameRe
 	}
 	return &struct{}{}, nil
 }
+
+type tagResourceReq struct {
+	ResourceARN string      `json:"ResourceARN" cbor:"ResourceARN"`
+	Tags        []athenaTag `json:"Tags" cbor:"Tags"`
+}
+
+type untagResourceReq struct {
+	ResourceARN string   `json:"ResourceARN" cbor:"ResourceARN"`
+	TagKeys     []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
+type listTagsForResourceReq struct {
+	ResourceARN string `json:"ResourceARN" cbor:"ResourceARN"`
+}
+
+type listTagsForResourceResp struct {
+	Tags []athenaTag `json:"Tags" cbor:"Tags"`
+}
+
+func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceReq) (*struct{}, *protocol.AWSError) {
+	if req.ResourceARN == "" {
+		return nil, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: "ResourceARN is required", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	wgName, aerr := workGroupNameFromARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	wg, found := s.store.getWorkGroup(ctx, wgName)
+	if !found {
+		return nil, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName), HTTPStatus: http.StatusNotFound,
+		}
+	}
+	if wg.Tags == nil {
+		wg.Tags = map[string]string{}
+	}
+	for _, t := range req.Tags {
+		wg.Tags[t.Key] = t.Value
+	}
+	if err := s.store.putWorkGroup(ctx, wg); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) untagResourceTyped(ctx context.Context, req *untagResourceReq) (*struct{}, *protocol.AWSError) {
+	if req.ResourceARN == "" {
+		return nil, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: "ResourceARN is required", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	wgName, aerr := workGroupNameFromARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	wg, found := s.store.getWorkGroup(ctx, wgName)
+	if !found {
+		return nil, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName), HTTPStatus: http.StatusNotFound,
+		}
+	}
+	if wg.Tags != nil {
+		for _, k := range req.TagKeys {
+			delete(wg.Tags, k)
+		}
+	}
+	if err := s.store.putWorkGroup(ctx, wg); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceReq) (*listTagsForResourceResp, *protocol.AWSError) {
+	if req.ResourceARN == "" {
+		return nil, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: "ResourceARN is required", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	wgName, aerr := workGroupNameFromARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	wg, found := s.store.getWorkGroup(ctx, wgName)
+	if !found {
+		return nil, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName), HTTPStatus: http.StatusNotFound,
+		}
+	}
+	return &listTagsForResourceResp{Tags: tagsToList(wg.Tags)}, nil
+}

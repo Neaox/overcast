@@ -25,6 +25,7 @@ var allCognitoOps = []string{
 	"CreateGroup", "GetGroup", "DeleteGroup", "UpdateGroup", "ListGroups",
 	"AdminAddUserToGroup", "AdminRemoveUserFromGroup", "AdminListGroupsForUser", "ListUsersInGroup",
 	"GetUser", "UpdateUserAttributes", "VerifyUserAttribute", "GetUserAttributeVerificationCode", "DeleteUserAttributes", "GlobalSignOut", "RevokeToken",
+	"TagResource", "UntagResource", "ListTagsForResource",
 }
 
 func TestTypedOps_matchAllOperations(t *testing.T) {

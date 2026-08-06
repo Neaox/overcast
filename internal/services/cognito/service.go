@@ -311,6 +311,13 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, suffix 
 		s.globalSignOut(w, r)
 	case "RevokeToken":
 		s.revokeToken(w, r)
+	// ── Tags ────────────────────────────────────────────────────────────────────
+	case "TagResource":
+		s.tagResource(w, r)
+	case "UntagResource":
+		s.untagResource(w, r)
+	case "ListTagsForResource":
+		s.listTagsForResource(w, r)
 	default:
 		protocol.NotImplementedJSON(w, r)
 	}

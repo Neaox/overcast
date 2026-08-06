@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
@@ -40,27 +42,45 @@ const serviceName = "appconfig"
 
 // Application represents an AppConfig application.
 type Application struct {
-	ID          string `json:"Id"`
-	Name        string `json:"Name"`
-	Description string `json:"Description,omitempty"`
+	ID          string            `json:"Id"`
+	Name        string            `json:"Name"`
+	Description string            `json:"Description,omitempty"`
+	Tags        map[string]string `json:"Tags,omitempty"`
+	ARN         string            `json:"Arn,omitempty"`
+}
+
+func appARN(region, accountID, appID string) string {
+	return fmt.Sprintf("arn:aws:appconfig:%s:%s:application/%s", region, accountID, appID)
+}
+
+func envARN(region, accountID, appID, envID string) string {
+	return fmt.Sprintf("arn:aws:appconfig:%s:%s:application/%s/environment/%s", region, accountID, appID, envID)
+}
+
+func profileARN(region, accountID, appID, profID string) string {
+	return fmt.Sprintf("arn:aws:appconfig:%s:%s:application/%s/configurationprofile/%s", region, accountID, appID, profID)
 }
 
 // Environment represents an AppConfig environment.
 type Environment struct {
-	ApplicationId string `json:"ApplicationId"`
-	ID            string `json:"Id"`
-	Name          string `json:"Name"`
-	Description   string `json:"Description,omitempty"`
-	State         string `json:"State"`
+	ApplicationId string            `json:"ApplicationId"`
+	ID            string            `json:"Id"`
+	Name          string            `json:"Name"`
+	Description   string            `json:"Description,omitempty"`
+	State         string            `json:"State"`
+	Tags          map[string]string `json:"Tags,omitempty"`
+	ARN           string            `json:"Arn,omitempty"`
 }
 
 // ConfigurationProfile represents an AppConfig configuration profile.
 type ConfigurationProfile struct {
-	ApplicationId string `json:"ApplicationId"`
-	ID            string `json:"Id"`
-	Name          string `json:"Name"`
-	LocationUri   string `json:"LocationUri,omitempty"`
-	Type          string `json:"Type,omitempty"`
+	ApplicationId string            `json:"ApplicationId"`
+	ID            string            `json:"Id"`
+	Name          string            `json:"Name"`
+	LocationUri   string            `json:"LocationUri,omitempty"`
+	Type          string            `json:"Type,omitempty"`
+	Tags          map[string]string `json:"Tags,omitempty"`
+	ARN           string            `json:"Arn,omitempty"`
 }
 
 // HostedConfigurationVersion represents a stored configuration payload.
@@ -405,6 +425,10 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Get("/applications/{appId}/configurationprofiles/{profId}/hostedconfigurationversions", s.listHostedConfigurationVersions)
 		r.Get("/applications/{appId}/configurationprofiles/{profId}/hostedconfigurationversions/{version}", s.getHostedConfigurationVersion)
 		r.Delete("/applications/{appId}/configurationprofiles/{profId}/hostedconfigurationversions/{version}", s.deleteHostedConfigurationVersion)
+		// Tags
+		r.Post("/tags/*", s.tagResource)
+		r.Delete("/tags/*", s.untagResource)
+		r.Get("/tags/*", s.listTagsForResource)
 	})
 }
 
@@ -425,7 +449,13 @@ func (s *Service) createApplication(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	app := &Application{ID: shortID(), Name: req.Name, Description: req.Description}
+	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
+	id := shortID()
+	app := &Application{
+		ID: id, Name: req.Name, Description: req.Description,
+		Tags: make(map[string]string),
+		ARN:  appARN(region, s.cfg.AccountID, id),
+	}
 	if err := s.store.putApp(r.Context(), app); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -476,12 +506,16 @@ func (s *Service) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
+	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
+	id := shortID()
 	env := &Environment{
 		ApplicationId: appID,
-		ID:            shortID(),
+		ID:            id,
 		Name:          req.Name,
 		Description:   req.Description,
 		State:         "READY_FOR_DEPLOYMENT",
+		Tags:          make(map[string]string),
+		ARN:           envARN(region, s.cfg.AccountID, appID, id),
 	}
 	if err := s.store.putEnv(r.Context(), env); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
@@ -535,12 +569,16 @@ func (s *Service) createConfigurationProfile(w http.ResponseWriter, r *http.Requ
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
+	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
+	id := shortID()
 	prof := &ConfigurationProfile{
 		ApplicationId: appID,
-		ID:            shortID(),
+		ID:            id,
 		Name:          req.Name,
 		LocationUri:   req.LocationUri,
 		Type:          req.Type,
+		Tags:          make(map[string]string),
+		ARN:           profileARN(region, s.cfg.AccountID, appID, id),
 	}
 	if err := s.store.putProfile(r.Context(), prof); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
@@ -738,4 +776,202 @@ func (s *Service) deleteHostedConfigurationVersion(w http.ResponseWriter, r *htt
 	}
 	_ = s.store.deleteHCV(r.Context(), appID, profID, version)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Tag helpers ─────────────────────────────────────────────────
+
+// appTagCfg tunes tag-validation error codes to match AppConfig.
+var appConfigTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "BadRequestException",
+	InvalidCode:     "BadRequestException",
+	ExceededMessage: "Too many tags.",
+}
+
+type arnParts struct {
+	ResourceType string
+	AppID        string
+	EnvID        string
+	ProfID       string
+	Version      string
+}
+
+// parseAppConfigARN splits an AppConfig resource ARN into its parts.
+func parseAppConfigARN(arn string) *arnParts {
+	parts := strings.Split(arn, ":")
+	if len(parts) < 6 {
+		return nil
+	}
+	resource := parts[5]
+	segs := strings.Split(resource, "/")
+	if len(segs) < 2 {
+		return nil
+	}
+	if segs[0] != "application" {
+		return nil
+	}
+	p := &arnParts{ResourceType: "application", AppID: segs[1]}
+	if len(segs) < 3 {
+		return p
+	}
+	switch segs[2] {
+	case "environment":
+		p.ResourceType = "environment"
+		if len(segs) >= 4 {
+			p.EnvID = segs[3]
+		}
+	case "configurationprofile":
+		p.ResourceType = "configurationprofile"
+		if len(segs) >= 4 {
+			p.ProfID = segs[3]
+		}
+		if len(segs) >= 5 && segs[4] == "hostedconfigurationversion" && len(segs) >= 6 {
+			p.ResourceType = "hostedconfigurationversion"
+			p.Version = segs[5]
+		}
+	}
+	return p
+}
+
+// resolveTagTarget loads the resource identified by an ARN and returns its
+// tags map (nil when the resource is not found).
+func (s *Service) resolveTagTarget(ctx context.Context, arn string) (*arnParts, map[string]string, *protocol.AWSError) {
+	p := parseAppConfigARN(arn)
+	if p == nil || p.AppID == "" {
+		return nil, nil, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: "Resource not found",
+			HTTPStatus: http.StatusNotFound,
+		}
+	}
+	switch p.ResourceType {
+	case "application":
+		if app, ok := s.store.getApp(ctx, p.AppID); ok {
+			return p, app.Tags, nil
+		}
+	case "environment":
+		if p.EnvID == "" {
+			return nil, nil, &protocol.AWSError{
+				Code: "ResourceNotFoundException", Message: "Resource not found",
+				HTTPStatus: http.StatusNotFound,
+			}
+		}
+		if env, ok := s.store.getEnv(ctx, p.AppID, p.EnvID); ok {
+			return p, env.Tags, nil
+		}
+	case "configurationprofile":
+		if p.ProfID == "" {
+			return nil, nil, &protocol.AWSError{
+				Code: "ResourceNotFoundException", Message: "Resource not found",
+				HTTPStatus: http.StatusNotFound,
+			}
+		}
+		if prof, ok := s.store.getProfile(ctx, p.AppID, p.ProfID); ok {
+			return p, prof.Tags, nil
+		}
+	case "hostedconfigurationversion":
+		return nil, nil, &protocol.AWSError{
+			Code: "BadRequestException", Message: "Tagging hosted configuration versions is not supported",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return nil, nil, &protocol.AWSError{
+		Code: "ResourceNotFoundException", Message: "Resource not found",
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+// persistTags writes updated tags back to the identified resource.
+func (s *Service) persistTags(ctx context.Context, p *arnParts, tags map[string]string) *protocol.AWSError {
+	switch p.ResourceType {
+	case "application":
+		app, ok := s.store.getApp(ctx, p.AppID)
+		if !ok {
+			return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Resource not found", HTTPStatus: http.StatusNotFound}
+		}
+		app.Tags = tags
+		if err := s.store.putApp(ctx, app); err != nil {
+			return protocol.ErrInternalError
+		}
+	case "environment":
+		env, ok := s.store.getEnv(ctx, p.AppID, p.EnvID)
+		if !ok {
+			return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Resource not found", HTTPStatus: http.StatusNotFound}
+		}
+		env.Tags = tags
+		if err := s.store.putEnv(ctx, env); err != nil {
+			return protocol.ErrInternalError
+		}
+	case "configurationprofile":
+		prof, ok := s.store.getProfile(ctx, p.AppID, p.ProfID)
+		if !ok {
+			return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Resource not found", HTTPStatus: http.StatusNotFound}
+		}
+		prof.Tags = tags
+		if err := s.store.putProfile(ctx, prof); err != nil {
+			return protocol.ErrInternalError
+		}
+	}
+	return nil
+}
+
+// ─── REST tag handlers ─────────────────────────────────────────
+
+func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
+	arn := chi.URLParam(r, "*")
+	var req struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	p, existing, aerr := s.resolveTagTarget(r.Context(), arn)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if existing == nil {
+		existing = make(map[string]string)
+	}
+	for k, v := range req.Tags {
+		existing[k] = v
+	}
+	if aerr := serviceutil.ValidateTags(appConfigTagCfg, existing); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := s.persistTags(r.Context(), p, existing); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
+	arn := chi.URLParam(r, "*")
+	keys := r.URL.Query()["tagKeys"]
+	p, existing, aerr := s.resolveTagTarget(r.Context(), arn)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	for _, k := range keys {
+		delete(existing, k)
+	}
+	if aerr := s.persistTags(r.Context(), p, existing); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+	arn := chi.URLParam(r, "*")
+	_, existing, aerr := s.resolveTagTarget(r.Context(), arn)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if existing == nil {
+		existing = make(map[string]string)
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": existing})
 }

@@ -44,8 +44,8 @@ func init() {
 		capabilities.Capability{Service: "rds", Operation: "DescribeDBParameterGroups", Category: "Parameter groups", Status: capabilities.StatusSupported, Notes: "List all or filter by name"},
 		capabilities.Capability{Service: "rds", Operation: "DeleteDBParameterGroup", Category: "Parameter groups", Status: capabilities.StatusSupported},
 		// General
-		capabilities.Capability{Service: "rds", Operation: "AddTagsToResource", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
-		capabilities.Capability{Service: "rds", Operation: "ListTagsForResource", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
-		capabilities.Capability{Service: "rds", Operation: "RemoveTagsFromResource", Category: "General", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
+		capabilities.Capability{Service: "rds", Operation: "AddTagsToResource", Category: "General", Status: capabilities.StatusSupported, Notes: "Tags stored per-ARN in `rds:tags` namespace; shared tag validation"},
+		capabilities.Capability{Service: "rds", Operation: "ListTagsForResource", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns tag list for any RDS resource ARN"},
+		capabilities.Capability{Service: "rds", Operation: "RemoveTagsFromResource", Category: "General", Status: capabilities.StatusSupported, Notes: "Removes specified tag keys from a resource"},
 	)
 }

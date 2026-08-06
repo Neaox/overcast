@@ -25,9 +25,10 @@ const serviceName = "shield"
 
 // Protection represents a Shield protection resource.
 type Protection struct {
-	ID          string `json:"Id"`
-	Name        string `json:"Name"`
-	ResourceArn string `json:"ResourceArn"`
+	ID          string            `json:"Id"`
+	Name        string            `json:"Name"`
+	ResourceArn string            `json:"ResourceArn"`
+	Tags        map[string]string `json:"Tags,omitempty"`
 }
 
 // shieldStore provides state access for the Shield service.

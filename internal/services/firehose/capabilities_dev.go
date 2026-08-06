@@ -16,5 +16,13 @@ func init() {
 
 		capabilities.Capability{Service: "firehose", Operation: "PutRecord", Category: "Records", Status: capabilities.StatusSupported, Notes: "Writes a single record to the stream"},
 		capabilities.Capability{Service: "firehose", Operation: "PutRecordBatch", Category: "Records", Status: capabilities.StatusSupported, Notes: "Writes multiple records to the stream"},
+
+		// Tags
+		capabilities.Capability{Service: "firehose", Operation: "TagDeliveryStream", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Adds or overwrites tags on a delivery stream"},
+		capabilities.Capability{Service: "firehose", Operation: "UntagDeliveryStream", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Removes tags by key from a delivery stream"},
+		capabilities.Capability{Service: "firehose", Operation: "ListTagsForDeliveryStream", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Returns tags for a delivery stream"},
 	)
 }

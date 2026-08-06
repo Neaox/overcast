@@ -31,18 +31,20 @@ const serviceName = "glue"
 
 // Database represents a Glue database.
 type Database struct {
-	Name        string `json:"Name"`
-	Description string `json:"Description,omitempty"`
-	CatalogId   string `json:"CatalogId,omitempty"`
+	Name        string            `json:"Name"`
+	Description string            `json:"Description,omitempty"`
+	CatalogId   string            `json:"CatalogId,omitempty"`
+	Tags        map[string]string `json:"Tags,omitempty"`
 }
 
 // Table represents a Glue table.
 type Table struct {
-	Name         string `json:"Name"`
-	DatabaseName string `json:"DatabaseName"`
-	Description  string `json:"Description,omitempty"`
-	TableType    string `json:"TableType,omitempty"`
-	CatalogId    string `json:"CatalogId,omitempty"`
+	Name         string            `json:"Name"`
+	DatabaseName string            `json:"DatabaseName"`
+	Description  string            `json:"Description,omitempty"`
+	TableType    string            `json:"TableType,omitempty"`
+	CatalogId    string            `json:"CatalogId,omitempty"`
+	Tags         map[string]string `json:"Tags,omitempty"`
 }
 
 // ─── Store ────────────────────────────────────────────────────
@@ -160,14 +162,17 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, _ clock.Clock) 
 		cfg:   cfg,
 	}
 	s.ops = map[string]http.HandlerFunc{
-		"CreateDatabase": s.createDatabase,
-		"GetDatabase":    s.getDatabase,
-		"GetDatabases":   s.getDatabases,
-		"DeleteDatabase": s.deleteDatabase,
-		"CreateTable":    s.createTable,
-		"GetTable":       s.getTable,
-		"GetTables":      s.getTables,
-		"DeleteTable":    s.deleteTable,
+		"CreateDatabase":      s.createDatabase,
+		"GetDatabase":         s.getDatabase,
+		"GetDatabases":        s.getDatabases,
+		"DeleteDatabase":      s.deleteDatabase,
+		"CreateTable":         s.createTable,
+		"GetTable":            s.getTable,
+		"GetTables":           s.getTables,
+		"DeleteTable":         s.deleteTable,
+		"TagResource":         s.tagResource,
+		"UntagResource":       s.untagResource,
+		"ListTagsForResource": s.listTagsForResource,
 	}
 	s.typedOp = s.typedOps()
 	return s
@@ -375,4 +380,197 @@ func (s *Service) deleteTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+// ─── Tag handlers ───────────────────────────────────────────────
+
+var glueTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidInputException",
+	InvalidCode:     "InvalidInputException",
+	ExceededMessage: "Too many tags.",
+}
+
+func glueARNToDBAndTable(arn string) (dbName, tableName string) {
+	parts := strings.Split(arn, ":")
+	if len(parts) < 6 {
+		return "", ""
+	}
+	resource := parts[5]
+	if segs := strings.SplitN(resource, "/", 2); len(segs) == 2 {
+		rType := segs[0]
+		rest := segs[1]
+		switch rType {
+		case "database":
+			return rest, ""
+		case "table":
+			if s := strings.SplitN(rest, "/", 2); len(s) == 2 {
+				return s[0], s[1]
+			}
+		}
+	}
+	return "", ""
+}
+
+func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string            `json:"ResourceArn"`
+		TagsToAdd   map[string]string `json:"TagsToAdd"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
+	if tableName != "" {
+		t, found := s.store.getTable(r.Context(), dbName, tableName)
+		if !found {
+			protocol.WriteJSONError(w, r, &protocol.AWSError{
+				Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName),
+				HTTPStatus: http.StatusNotFound,
+			})
+			return
+		}
+		if t.Tags == nil {
+			t.Tags = make(map[string]string)
+		}
+		for k, v := range req.TagsToAdd {
+			t.Tags[k] = v
+		}
+		if aerr := serviceutil.ValidateTags(glueTagCfg, t.Tags); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		if err := s.store.putTable(r.Context(), t); err != nil {
+			protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+			return
+		}
+		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+		return
+	}
+	if dbName == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: "Resource not found",
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	db, found := s.store.getDatabase(r.Context(), dbName)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	if db.Tags == nil {
+		db.Tags = make(map[string]string)
+	}
+	for k, v := range req.TagsToAdd {
+		db.Tags[k] = v
+	}
+	if aerr := serviceutil.ValidateTags(glueTagCfg, db.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if err := s.store.putDatabase(r.Context(), db); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn  string   `json:"ResourceArn"`
+		TagsToRemove []string `json:"TagsToRemove"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
+	if tableName != "" {
+		t, found := s.store.getTable(r.Context(), dbName, tableName)
+		if !found {
+			protocol.WriteJSONError(w, r, &protocol.AWSError{
+				Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName),
+				HTTPStatus: http.StatusNotFound,
+			})
+			return
+		}
+		for _, k := range req.TagsToRemove {
+			delete(t.Tags, k)
+		}
+		if err := s.store.putTable(r.Context(), t); err != nil {
+			protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+			return
+		}
+		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+		return
+	}
+	if dbName == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: "Resource not found",
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	db, found := s.store.getDatabase(r.Context(), dbName)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	for _, k := range req.TagsToRemove {
+		delete(db.Tags, k)
+	}
+	if err := s.store.putDatabase(r.Context(), db); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string `json:"ResourceArn"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
+	if tableName != "" {
+		t, found := s.store.getTable(r.Context(), dbName, tableName)
+		if !found {
+			protocol.WriteJSONError(w, r, &protocol.AWSError{
+				Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName),
+				HTTPStatus: http.StatusNotFound,
+			})
+			return
+		}
+		if t.Tags == nil {
+			t.Tags = make(map[string]string)
+		}
+		protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": t.Tags})
+		return
+	}
+	if dbName == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: "Resource not found",
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	db, found := s.store.getDatabase(r.Context(), dbName)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	if db.Tags == nil {
+		db.Tags = make(map[string]string)
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": db.Tags})
 }

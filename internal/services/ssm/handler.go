@@ -38,16 +38,17 @@ func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger
 // Adding a new operation: add an entry here, implement in handler.go.
 func (h *Handler) initOps() {
 	h.ops = map[string]http.HandlerFunc{
-		"PutParameter":        h.PutParameter,
-		"GetParameter":        h.GetParameter,
-		"GetParameters":       h.GetParameters,
-		"GetParametersByPath": h.GetParametersByPath,
-		"DescribeParameters":  h.DescribeParameters,
-		"GetParameterHistory": h.GetParameterHistory,
-		"AddTagsToResource":   h.AddTagsToResource,
-		"ListTagsForResource": h.ListTagsForResource,
-		"DeleteParameter":     h.DeleteParameter,
-		"DeleteParameters":    h.DeleteParameters,
+		"PutParameter":           h.PutParameter,
+		"GetParameter":           h.GetParameter,
+		"GetParameters":          h.GetParameters,
+		"GetParametersByPath":    h.GetParametersByPath,
+		"DescribeParameters":     h.DescribeParameters,
+		"GetParameterHistory":    h.GetParameterHistory,
+		"AddTagsToResource":      h.AddTagsToResource,
+		"RemoveTagsFromResource": h.RemoveTagsFromResource,
+		"ListTagsForResource":    h.ListTagsForResource,
+		"DeleteParameter":        h.DeleteParameter,
+		"DeleteParameters":       h.DeleteParameters,
 	}
 	h.typedOp = h.typedOps()
 }
@@ -456,6 +457,40 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range req.Tags {
 		rec.Tags[t.Key] = t.Value
+	}
+	if err := h.store.Put(ctx, rec); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
+}
+
+// RemoveTagsFromResource removes tags from a parameter.
+func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceType string   `json:"ResourceType"`
+		ResourceId   string   `json:"ResourceId"`
+		TagKeys      []string `json:"TagKeys"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ResourceId == "" {
+		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("ResourceId"))
+		return
+	}
+	ctx := r.Context()
+	rec, err := h.store.Get(ctx, req.ResourceId)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	if rec == nil {
+		protocol.WriteJSONError(w, r, errParameterNotFound(req.ResourceId))
+		return
+	}
+	for _, k := range req.TagKeys {
+		delete(rec.Tags, k)
 	}
 	if err := h.store.Put(ctx, rec); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)

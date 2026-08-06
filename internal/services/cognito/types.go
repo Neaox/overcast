@@ -67,6 +67,9 @@ type UserPool struct {
 
 	// Policies holds pool-level policy settings, including PasswordPolicy.
 	Policies *UserPoolPolicies `json:"Policies,omitempty"`
+
+	// Tags are resource tags on the user pool.
+	Tags map[string]string `json:"Tags,omitempty"`
 }
 
 // UserPoolPolicies holds the password and other policy settings for a user pool.

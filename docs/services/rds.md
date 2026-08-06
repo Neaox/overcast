@@ -269,7 +269,7 @@ is fully supported. Docker containers are started when instances are added to th
 | Engine metadata  | 2            |                |
 | Subnet groups    | 3            |                |
 | Parameter groups | 3            |                |
-| General          |              | 3              |
+| General          | 3            |                |
 
 ---
 
@@ -338,10 +338,10 @@ is fully supported. Docker containers are started when instances are added to th
 
 ### General
 
-| Operation                | Status         | Notes             | AWS Docs                                                                                          |
-| ------------------------ | -------------- | ----------------- | ------------------------------------------------------------------------------------------------- |
-| `AddTagsToResource`      | ❌ Unsupported | stub; returns 501 | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_AddTagsToResource.html)      |
-| `ListTagsForResource`    | ❌ Unsupported | stub; returns 501 | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ListTagsForResource.html)    |
-| `RemoveTagsFromResource` | ❌ Unsupported | stub; returns 501 | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_RemoveTagsFromResource.html) |
+| Operation                | Status       | Notes                                                              | AWS Docs                                                                                          |
+| ------------------------ | ------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `AddTagsToResource`      | ✅ Supported | Tags stored per-ARN in `rds:tags` namespace; shared tag validation | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_AddTagsToResource.html)      |
+| `ListTagsForResource`    | ✅ Supported | Returns tag list for any RDS resource ARN                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ListTagsForResource.html)    |
+| `RemoveTagsFromResource` | ✅ Supported | Removes specified tag keys from a resource                         | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_RemoveTagsFromResource.html) |
 
 <!-- END overcast:capabilities -->

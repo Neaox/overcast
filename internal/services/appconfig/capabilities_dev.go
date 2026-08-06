@@ -45,5 +45,13 @@ func init() {
 			Status: capabilities.StatusSupported, Notes: "Returns version metadata without content; no pagination (`NextToken` never returned)"},
 		capabilities.Capability{Service: "appconfig", Operation: "DeleteHostedConfigurationVersion", Category: "Hosted Configuration Versions",
 			Status: capabilities.StatusSupported, Notes: "Deletes a single version; other versions of the profile are untouched"},
+
+		// Tags
+		capabilities.Capability{Service: "appconfig", Operation: "TagResource", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Adds or overwrites tags on applications, environments, and configuration profiles"},
+		capabilities.Capability{Service: "appconfig", Operation: "UntagResource", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Removes tags by key from applications, environments, and configuration profiles"},
+		capabilities.Capability{Service: "appconfig", Operation: "ListTagsForResource", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Returns tags for applications, environments, and configuration profiles"},
 	)
 }

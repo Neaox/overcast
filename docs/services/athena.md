@@ -33,6 +33,7 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 | ---------- | ------------ |
 | Queries    | 4            |
 | WorkGroups | 4            |
+| Tags       | 3            |
 
 ---
 
@@ -55,5 +56,13 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 | `GetWorkGroup`    | ✅ Supported | Returns workgroup details | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_GetWorkGroup.html)    |
 | `ListWorkGroups`  | ✅ Supported | Lists all workgroups      | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_ListWorkGroups.html)  |
 | `DeleteWorkGroup` | ✅ Supported | Deletes a workgroup       | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_DeleteWorkGroup.html) |
+
+### Tags
+
+| Operation             | Status       | Notes                             | AWS Docs                                                                                    |
+| --------------------- | ------------ | --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported | Adds/updates tags on a workgroup  | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | Removes tag keys from a workgroup | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | Lists tags on a workgroup         | [docs](https://docs.aws.amazon.com/athena/latest/APIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

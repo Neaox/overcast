@@ -13,6 +13,7 @@ import (
 var allGlueOps = []string{
 	"CreateDatabase", "GetDatabase", "GetDatabases", "DeleteDatabase",
 	"CreateTable", "GetTable", "GetTables", "DeleteTable",
+	"TagResource", "UntagResource", "ListTagsForResource",
 }
 
 func TestTypedOps_matchAllOperations(t *testing.T) {

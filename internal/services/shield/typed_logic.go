@@ -137,3 +137,95 @@ func (h *Handler) describeProtectionTyped(ctx context.Context, req *describeProt
 		HTTPStatus: http.StatusNotFound,
 	}
 }
+
+type tagResourceRequest struct {
+	ResourceARN string      `json:"ResourceARN" cbor:"ResourceARN"`
+	Tags        []shieldTag `json:"Tags" cbor:"Tags"`
+}
+
+type untagResourceRequest struct {
+	ResourceARN string   `json:"ResourceARN" cbor:"ResourceARN"`
+	TagKeys     []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
+type listTagsForResourceRequest struct {
+	ResourceARN string `json:"ResourceARN" cbor:"ResourceARN"`
+}
+
+type listTagsForResourceResponse struct {
+	Tags []shieldTag `json:"Tags" cbor:"Tags"`
+}
+
+func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
+	if req.ResourceARN == "" {
+		return nil, &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "ResourceARN is required", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	pid, aerr := protectionIDFromARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	p, found := h.store.getProtection(ctx, pid)
+	if !found {
+		return nil, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid), HTTPStatus: http.StatusNotFound,
+		}
+	}
+	if p.Tags == nil {
+		p.Tags = map[string]string{}
+	}
+	for _, t := range req.Tags {
+		p.Tags[t.Key] = t.Value
+	}
+	if err := h.store.putProtection(ctx, p); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &struct{}{}, nil
+}
+
+func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	if req.ResourceARN == "" {
+		return nil, &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "ResourceARN is required", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	pid, aerr := protectionIDFromARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	p, found := h.store.getProtection(ctx, pid)
+	if !found {
+		return nil, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid), HTTPStatus: http.StatusNotFound,
+		}
+	}
+	if p.Tags != nil {
+		for _, k := range req.TagKeys {
+			delete(p.Tags, k)
+		}
+	}
+	if err := h.store.putProtection(ctx, p); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &struct{}{}, nil
+}
+
+func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
+	if req.ResourceARN == "" {
+		return nil, &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "ResourceARN is required", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	pid, aerr := protectionIDFromARN(req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	p, found := h.store.getProtection(ctx, pid)
+	if !found {
+		return nil, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid), HTTPStatus: http.StatusNotFound,
+		}
+	}
+	return &listTagsForResourceResponse{Tags: shieldTagsToList(p.Tags)}, nil
+}

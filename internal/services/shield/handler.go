@@ -3,6 +3,7 @@ package shield
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -32,6 +33,9 @@ func (h *Handler) initOps() {
 		"ListProtections":      h.listProtections,
 		"DeleteProtection":     h.deleteProtection,
 		"DescribeProtection":   h.describeProtection,
+		"TagResource":          h.tagResource,
+		"UntagResource":        h.untagResource,
+		"ListTagsForResource":  h.listTagsForResource,
 	}
 	h.typedOp = h.typedOps()
 }
@@ -157,4 +161,150 @@ func (h *Handler) describeProtection(w http.ResponseWriter, r *http.Request) {
 		Message:    "Protection not found",
 		HTTPStatus: http.StatusNotFound,
 	})
+}
+
+func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string      `json:"ResourceARN"`
+		Tags        []shieldTag `json:"Tags"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ResourceARN == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "ResourceARN is required",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	pid, aerr := protectionIDFromARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	ctx := r.Context()
+	p, found := h.store.getProtection(ctx, pid)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	if p.Tags == nil {
+		p.Tags = map[string]string{}
+	}
+	for _, t := range req.Tags {
+		p.Tags[t.Key] = t.Value
+	}
+	if err := h.store.putProtection(ctx, p); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string   `json:"ResourceARN"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ResourceARN == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "ResourceARN is required",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	pid, aerr := protectionIDFromARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	ctx := r.Context()
+	p, found := h.store.getProtection(ctx, pid)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	if p.Tags != nil {
+		for _, k := range req.TagKeys {
+			delete(p.Tags, k)
+		}
+	}
+	if err := h.store.putProtection(ctx, p); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ResourceARN == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "ResourceARN is required",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	pid, aerr := protectionIDFromARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	ctx := r.Context()
+	p, found := h.store.getProtection(ctx, pid)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	tagList := shieldTagsToList(p.Tags)
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tagList})
+}
+
+type shieldTag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+func protectionIDFromARN(arn string) (string, *protocol.AWSError) {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return "", &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "Invalid ResourceARN format",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	resource := parts[5]
+	if !strings.HasPrefix(resource, "protection/") {
+		return "", &protocol.AWSError{
+			Code: "InvalidParameterException", Message: "ResourceARN must be a protection ARN",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return strings.TrimPrefix(resource, "protection/"), nil
+}
+
+func shieldTagsToList(tags map[string]string) []shieldTag {
+	list := make([]shieldTag, 0, len(tags))
+	for k, v := range tags {
+		list = append(list, shieldTag{Key: k, Value: v})
+	}
+	return list
 }
