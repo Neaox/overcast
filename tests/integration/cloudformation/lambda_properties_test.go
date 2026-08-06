@@ -439,21 +439,21 @@ const lambdaTaggedFunctionTemplate = `{
 var lambdaRetaggedFunctionTemplate = strings.Replace(lambdaTaggedFunctionTemplate,
 	`"Value": "old"`, `"Value": "new"`, 1)
 
-func TestUpdateStack_LambdaFunctionTagsUnsupported(t *testing.T) {
+func TestUpdateStack_LambdaFunctionTagsSupported(t *testing.T) {
 	// Given: CloudFormation created a function with its initial resource tags.
 	srv := helpers.NewTestServer(t)
 	createLambdaStack(t, srv, "lambda-tag-update-stack", lambdaTaggedFunctionTemplate)
 
-	// When: a stack update changes the tags while Lambda TagResource is unsupported.
+	// When: a stack update changes the tags.
 	resp := cfnQuery(t, srv, "UpdateStack", url.Values{
 		"StackName":    []string{"lambda-tag-update-stack"},
 		"TemplateBody": []string{lambdaRetaggedFunctionTemplate},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
-	waitForStackStatus(t, srv, "lambda-tag-update-stack", "UPDATE_ROLLBACK_COMPLETE")
+	waitForStackStatus(t, srv, "lambda-tag-update-stack", "UPDATE_COMPLETE")
 
-	// Then: CloudFormation failed loudly before changing the function or unrelated configuration.
+	// Then: the tags reflect the new values.
 	get := lambdaRequest(t, srv, http.MethodGet, "/2015-03-31/functions/cfn-lambda-tagged", nil)
 	defer get.Body.Close()
 	helpers.AssertStatus(t, get, http.StatusOK)
@@ -461,8 +461,8 @@ func TestUpdateStack_LambdaFunctionTagsUnsupported(t *testing.T) {
 		Tags map[string]string `json:"Tags"`
 	}
 	helpers.DecodeJSON(t, get, &function)
-	if function.Tags["stage"] != "old" {
-		t.Errorf("stage tag = %q, want old", function.Tags["stage"])
+	if function.Tags["stage"] != "new" {
+		t.Errorf("stage tag = %q, want new", function.Tags["stage"])
 	}
 }
 

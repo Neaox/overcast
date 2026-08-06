@@ -29,6 +29,10 @@ func init() {
 
 		capabilities.Capability{Service: "dynamodb", Operation: "TransactGetItems", Category: "Transactions", Status: capabilities.StatusSupported, Notes: "Up to 100 items across tables"},
 		capabilities.Capability{Service: "dynamodb", Operation: "TransactWriteItems", Category: "Transactions", Status: capabilities.StatusSupported, Notes: "Put, Update, Delete, ConditionCheck; all-or-nothing"},
+		// Tags
+		capabilities.Capability{Service: "dynamodb", Operation: "TagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Merges tags; max 50; validates key/value lengths"},
+		capabilities.Capability{Service: "dynamodb", Operation: "ListTagsOfResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Returns tags as Key/Value array"},
+		capabilities.Capability{Service: "dynamodb", Operation: "UntagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Removes specified keys; idempotent on missing keys"},
 		// Compatibility notes previously documented in manual tables.
 		capabilities.Capability{Service: "dynamodb", Operation: "GetShardIterator", Category: "Streams interoperability", Status: capabilities.StatusSupported, Notes: "TRIM_HORIZON, LATEST, AT/AFTER_SEQUENCE_NUMBER", DocOnly: true,
 			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_streams_GetShardIterator.html)"},

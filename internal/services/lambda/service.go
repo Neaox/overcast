@@ -962,6 +962,7 @@ func (s *Service) Name() string { return "lambda" }
 func (s *Service) PathPrefixes() []string {
 	return []string{
 		"/2015-03-31",
+		"/2017-03-31",
 		"/2017-10-31",
 		"/2018-10-31",
 		"/2019-09-30",
@@ -1078,6 +1079,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(urlBase+"/functions/{name}/url", s.handler.UpdateFunctionUrlConfig)
 	r.Delete(urlBase+"/functions/{name}/url", s.handler.DeleteFunctionUrlConfig)
 	r.Get(urlBase+"/functions/{name}/urls", s.handler.ListFunctionUrlConfigs)
+
+	// Tags — introduced 2017-03-31.
+	const tagBase = "/2017-03-31"
+	r.Post(tagBase+"/tags/{ResourceARN}", s.handler.tagResource)
+	r.Get(tagBase+"/tags/{ResourceARN}", s.handler.listTags)
+	r.Delete(tagBase+"/tags/{ResourceARN}", s.handler.untagResource)
 
 	// Emulator-specific: list warm/running instances for the topology map UI.
 	r.Get("/_lambda/instances", s.handler.ListInstances)

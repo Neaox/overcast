@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -66,6 +67,10 @@ func (h *Handler) initOps() {
 		// Transactions
 		"TransactWriteItems": h.TransactWriteItems,
 		"TransactGetItems":   h.TransactGetItems,
+		// Tags
+		"TagResource":        h.TagResource,
+		"ListTagsOfResource": h.ListTagsOfResource,
+		"UntagResource":      h.UntagResource,
 	}
 }
 
@@ -80,6 +85,10 @@ type createTableRequest struct {
 	StreamSpecification    *StreamSpecification   `json:"StreamSpecification,omitempty"`
 	GlobalSecondaryIndexes []SecondaryIndex       `json:"GlobalSecondaryIndexes,omitempty"`
 	LocalSecondaryIndexes  []SecondaryIndex       `json:"LocalSecondaryIndexes,omitempty"`
+	Tags                   []struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	} `json:"Tags,omitempty"`
 }
 
 type createTableResponse struct {
@@ -264,6 +273,13 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 	if req.StreamSpecification != nil && (req.StreamSpecification.StreamEnabled || req.StreamSpecification.StreamViewType != "") {
 		req.StreamSpecification.StreamEnabled = true
 		h.applyStreamSpec(table, req.StreamSpecification, region)
+	}
+
+	if len(req.Tags) > 0 {
+		table.Tags = make(map[string]string, len(req.Tags))
+		for _, t := range req.Tags {
+			table.Tags[t.Key] = t.Value
+		}
 	}
 
 	if aerr := h.store.putTable(ctx, table); aerr != nil {
@@ -1957,4 +1973,248 @@ func extractItemKeysWithIndex(item Item, table *Table, idx *SecondaryIndex) Item
 		}
 	}
 	return keys
+}
+
+// ---- Tag request / response types -------------------------------------------
+
+type tagResourceRequest struct {
+	ResourceArn string `json:"ResourceArn"`
+	Tags        []struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	} `json:"Tags"`
+}
+
+type listTagsOfResourceRequest struct {
+	ResourceArn string `json:"ResourceArn"`
+}
+
+type listTagsOfResourceResponse struct {
+	Tags []struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	} `json:"Tags"`
+}
+
+type untagResourceRequest struct {
+	ResourceArn string   `json:"ResourceArn"`
+	TagKeys     []string `json:"TagKeys"`
+}
+
+// ---- Tag handlers ------------------------------------------------------------
+
+var dynamoTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "LimitExceededException",
+	InvalidCode:     "ValidationException",
+	ExceededMessage: "Tag count exceeded the maximum of 50 tags per resource.",
+}
+
+func tableNameFromARN(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) < 6 {
+		return ""
+	}
+	resource := parts[5]
+	if !strings.HasPrefix(resource, "table/") {
+		return ""
+	}
+	rest := strings.TrimPrefix(resource, "table/")
+	if i := strings.Index(rest, "/"); i >= 0 {
+		return rest[:i]
+	}
+	return rest
+}
+
+func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
+	var req tagResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tableName := tableNameFromARN(req.ResourceArn)
+	if tableName == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: "Table not found: " + req.ResourceArn,
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+
+	table, aerr := h.store.getTable(r.Context(), tableName)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	if table.Tags == nil {
+		table.Tags = make(map[string]string)
+	}
+	for _, t := range req.Tags {
+		table.Tags[t.Key] = t.Value
+	}
+
+	if aerr := serviceutil.ValidateTags(dynamoTagCfg, table.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	if aerr := h.store.putTable(r.Context(), table); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
+}
+
+func (h *Handler) ListTagsOfResource(w http.ResponseWriter, r *http.Request) {
+	var req listTagsOfResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tableName := tableNameFromARN(req.ResourceArn)
+	if tableName == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: "Table not found: " + req.ResourceArn,
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+
+	table, aerr := h.store.getTable(r.Context(), tableName)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	tags := make([]struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	}, 0, len(table.Tags))
+	for k, v := range table.Tags {
+		tags = append(tags, struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		}{Key: k, Value: v})
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, &listTagsOfResourceResponse{Tags: tags})
+}
+
+func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
+	var req untagResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tableName := tableNameFromARN(req.ResourceArn)
+	if tableName == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: "Table not found: " + req.ResourceArn,
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+
+	table, aerr := h.store.getTable(r.Context(), tableName)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	for _, k := range req.TagKeys {
+		delete(table.Tags, k)
+	}
+
+	if aerr := h.store.putTable(r.Context(), table); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
+}
+
+func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
+	tableName := tableNameFromARN(req.ResourceArn)
+	if tableName == "" {
+		return nil, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: "Table not found: " + req.ResourceArn,
+			HTTPStatus: http.StatusNotFound,
+		}
+	}
+
+	table, aerr := h.store.getTable(ctx, tableName)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	if table.Tags == nil {
+		table.Tags = make(map[string]string)
+	}
+	for _, t := range req.Tags {
+		table.Tags[t.Key] = t.Value
+	}
+
+	if aerr := serviceutil.ValidateTags(dynamoTagCfg, table.Tags); aerr != nil {
+		return nil, aerr
+	}
+
+	if aerr := h.store.putTable(ctx, table); aerr != nil {
+		return nil, aerr
+	}
+
+	return &struct{}{}, nil
+}
+
+func (h *Handler) listTagsOfResourceTyped(ctx context.Context, req *listTagsOfResourceRequest) (*listTagsOfResourceResponse, *protocol.AWSError) {
+	tableName := tableNameFromARN(req.ResourceArn)
+	if tableName == "" {
+		return nil, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: "Table not found: " + req.ResourceArn,
+			HTTPStatus: http.StatusNotFound,
+		}
+	}
+
+	table, aerr := h.store.getTable(ctx, tableName)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	tags := make([]struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	}, 0, len(table.Tags))
+	for k, v := range table.Tags {
+		tags = append(tags, struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		}{Key: k, Value: v})
+	}
+
+	return &listTagsOfResourceResponse{Tags: tags}, nil
+}
+
+func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	tableName := tableNameFromARN(req.ResourceArn)
+	if tableName == "" {
+		return nil, &protocol.AWSError{
+			Code: "ResourceNotFoundException", Message: "Table not found: " + req.ResourceArn,
+			HTTPStatus: http.StatusNotFound,
+		}
+	}
+
+	table, aerr := h.store.getTable(ctx, tableName)
+	if aerr != nil {
+		return nil, aerr
+	}
+
+	for _, k := range req.TagKeys {
+		delete(table.Tags, k)
+	}
+
+	if aerr := h.store.putTable(ctx, table); aerr != nil {
+		return nil, aerr
+	}
+
+	return &struct{}{}, nil
 }

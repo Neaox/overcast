@@ -62,6 +62,7 @@ type Table struct {
 	TTL                    *TimeToLiveSpecification `json:"TTL,omitempty"`
 	GlobalSecondaryIndexes []SecondaryIndex         `json:"GlobalSecondaryIndexes,omitempty"`
 	LocalSecondaryIndexes  []SecondaryIndex         `json:"LocalSecondaryIndexes,omitempty"`
+	Tags                   map[string]string        `json:"Tags,omitempty"`
 }
 
 // Projection describes which attributes are projected into a secondary index.

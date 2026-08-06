@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1362,
+  "total_ops": 1368,
   "services": [
     {
       "service": "s3",
@@ -431,8 +431,8 @@
     {
       "service": "dynamodb",
       "display_name": "DynamoDB",
-      "total_ops": 19,
-      "implemented_ops": 18,
+      "total_ops": 22,
+      "implemented_ops": 21,
       "operations": [
         {
           "operation": "CreateTable",
@@ -534,6 +534,24 @@
           "notes": "Put, Update, Delete, ConditionCheck; all-or-nothing"
         },
         {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Merges tags; max 50; validates key/value lengths"
+        },
+        {
+          "operation": "ListTagsOfResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Returns tags as Key/Value array"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes specified keys; idempotent on missing keys"
+        },
+        {
           "operation": "GetShardIterator",
           "category": "Streams interoperability",
           "status": "✅ Supported",
@@ -553,8 +571,8 @@
     {
       "service": "lambda",
       "display_name": "Lambda",
-      "total_ops": 51,
-      "implemented_ops": 49,
+      "total_ops": 54,
+      "implemented_ops": 52,
       "operations": [
         {
           "operation": "ListFunctions",
@@ -848,6 +866,24 @@
           "category": "Concurrency \u0026 configuration",
           "status": "✅ Supported",
           "notes": "Single page; NextMarker is always null"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Merges tags; max 50; validates key/value lengths"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes specified keys; idempotent on missing keys"
+        },
+        {
+          "operation": "ListTags",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Returns all tags for the function"
         }
       ]
     },

@@ -39,6 +39,7 @@ serialisation round-trip issues.
 | Item operations          | 6            |                |
 | Query & scan             | 2            |                |
 | Transactions             | 2            |                |
+| Tags                     | 3            |                |
 | Streams interoperability | 1            |                |
 
 ---
@@ -82,6 +83,14 @@ serialisation round-trip issues.
 | -------------------- | ------------ | --------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `TransactGetItems`   | ✅ Supported | Up to 100 items across tables                       | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactGetItems.html)   |
 | `TransactWriteItems` | ✅ Supported | Put, Update, Delete, ConditionCheck; all-or-nothing | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html) |
+
+### Tags
+
+| Operation            | Status       | Notes                                              | AWS Docs                                                                                           |
+| -------------------- | ------------ | -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `TagResource`        | ✅ Supported | Merges tags; max 50; validates key/value lengths   | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TagResource.html)        |
+| `ListTagsOfResource` | ✅ Supported | Returns tags as Key/Value array                    | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTagsOfResource.html) |
+| `UntagResource`      | ✅ Supported | Removes specified keys; idempotent on missing keys | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UntagResource.html)      |
 
 ### Streams interoperability
 

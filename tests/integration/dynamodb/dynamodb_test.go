@@ -4952,3 +4952,109 @@ func TestListTables_defaultLimit(t *testing.T) {
 		t.Errorf("expected no LastEvaluatedTableName, got %q", result.LastEvaluatedTableName)
 	}
 }
+
+// ---- TagResource / ListTagsOfResource / UntagResource ----------------------
+
+func TestDynamoDB_tagResourceAndList(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ddbCall(t, srv, "CreateTable", map[string]any{
+		"TableName":            "tag-test-table",
+		"KeySchema":            []map[string]any{{"AttributeName": "pk", "KeyType": "HASH"}},
+		"AttributeDefinitions": []map[string]any{{"AttributeName": "pk", "AttributeType": "S"}},
+		"BillingMode":          "PAY_PER_REQUEST",
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	tableARN := "arn:aws:dynamodb:us-east-1:000000000000:table/tag-test-table"
+
+	tagResp := ddbCall(t, srv, "TagResource", map[string]any{
+		"ResourceArn": tableARN,
+		"Tags": []map[string]any{
+			{"Key": "env", "Value": "prod"},
+			{"Key": "team", "Value": "platform"},
+		},
+	})
+	defer tagResp.Body.Close()
+	helpers.AssertStatus(t, tagResp, http.StatusOK)
+
+	listResp := ddbCall(t, srv, "ListTagsOfResource", map[string]any{
+		"ResourceArn": tableARN,
+	})
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+
+	var list struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, listResp, &list)
+
+	tagMap := map[string]string{}
+	for _, tg := range list.Tags {
+		tagMap[tg.Key] = tg.Value
+	}
+	if tagMap["env"] != "prod" {
+		t.Errorf("tag env: want prod, got %q", tagMap["env"])
+	}
+	if tagMap["team"] != "platform" {
+		t.Errorf("tag team: want platform, got %q", tagMap["team"])
+	}
+}
+
+func TestDynamoDB_untagResource(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ddbCall(t, srv, "CreateTable", map[string]any{
+		"TableName":            "untag-test-table",
+		"KeySchema":            []map[string]any{{"AttributeName": "pk", "KeyType": "HASH"}},
+		"AttributeDefinitions": []map[string]any{{"AttributeName": "pk", "AttributeType": "S"}},
+		"BillingMode":          "PAY_PER_REQUEST",
+	})
+	resp.Body.Close()
+
+	tableARN := "arn:aws:dynamodb:us-east-1:000000000000:table/untag-test-table"
+
+	ddbCall(t, srv, "TagResource", map[string]any{
+		"ResourceArn": tableARN,
+		"Tags":        []map[string]any{{"Key": "env", "Value": "prod"}},
+	}).Body.Close()
+
+	untagResp := ddbCall(t, srv, "UntagResource", map[string]any{
+		"ResourceArn": tableARN,
+		"TagKeys":     []string{"env"},
+	})
+	defer untagResp.Body.Close()
+	helpers.AssertStatus(t, untagResp, http.StatusOK)
+
+	listResp := ddbCall(t, srv, "ListTagsOfResource", map[string]any{
+		"ResourceArn": tableARN,
+	})
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+
+	var list struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, listResp, &list)
+	if len(list.Tags) != 0 {
+		t.Errorf("expected 0 tags, got %d", len(list.Tags))
+	}
+}
+
+func TestDynamoDB_tagResource_notFound(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := ddbCall(t, srv, "TagResource", map[string]any{
+		"ResourceArn": "arn:aws:dynamodb:us-east-1:000000000000:table/nonexistent",
+		"Tags":        []map[string]any{{"Key": "env", "Value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+}
