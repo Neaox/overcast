@@ -31,6 +31,7 @@ import (
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 // provisioner creates/updates/deletes resources asynchronously via the router.
@@ -44,10 +45,11 @@ type provisioner struct {
 	bus    *events.Bus
 	router http.Handler // the main emulator router
 
-	mu     sync.Mutex
-	wg     sync.WaitGroup
-	cancel context.CancelFunc
-	ctx    context.Context
+	mu          sync.Mutex
+	wg          sync.WaitGroup
+	cancel      context.CancelFunc
+	ctx         context.Context
+	hopRecorder *trace.Recorder
 }
 
 type stackCompletionFunc func(ctx context.Context, stack *Stack)
@@ -70,6 +72,27 @@ func (p *provisioner) initRouter(router http.Handler) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.router = router
+}
+
+// setHopRecorder stores the per-request trace Recorder so that internal
+// dispatch helpers can record hops. nil is a no-op (debug off / no trace).
+func (p *provisioner) setHopRecorder(rec *trace.Recorder) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.hopRecorder = rec
+	p.mu.Unlock()
+}
+
+// clearHopRecorder removes the stored recorder after provisioning completes.
+func (p *provisioner) clearHopRecorder() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.hopRecorder = nil
+	p.mu.Unlock()
 }
 
 // initBus sets the event bus after construction.
@@ -101,7 +124,14 @@ func (p *provisioner) regionCtx(region string) context.Context {
 	if region == "" {
 		region = p.cfg.Region
 	}
-	return middleware.ContextWithRegion(p.ctx, region)
+	ctx := middleware.ContextWithRegion(p.ctx, region)
+	p.mu.Lock()
+	rec := p.hopRecorder
+	p.mu.Unlock()
+	if rec != nil {
+		ctx = trace.ContextWithRecorder(ctx, rec)
+	}
+	return ctx
 }
 
 // ── Create stack (async) ───────────────────────────────────────────────────
@@ -115,6 +145,7 @@ func (p *provisioner) createStack(stack *Stack, tmpl *Template, onComplete stack
 	go func() {
 		defer p.wg.Done()
 		defer close(done)
+		defer p.clearHopRecorder()
 		p.provisionStackResources(stack, tmpl)
 		if onComplete != nil {
 			onComplete(p.regionCtx(stack.Region), stack)
@@ -291,6 +322,7 @@ func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previousStackTag
 	go func() {
 		defer p.wg.Done()
 		defer close(done)
+		defer p.clearHopRecorder()
 		p.updateStackResources(stack, tmpl, previousStackTags)
 		if onComplete != nil {
 			onComplete(p.regionCtx(stack.Region), stack)
@@ -2218,8 +2250,26 @@ func internalRequest(ctx context.Context, router http.Handler, region, method, p
 	if region != "" {
 		req.Header.Set("X-Overcast-Region", region)
 	}
+	start := time.Now()
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
+	duration := time.Since(start)
+
+	if r := trace.RecorderFromContext(ctx); r != nil {
+		svc := serviceFromPath(path)
+		r.AddHop(trace.Hop{
+			CallerService:  "cloudformation",
+			Service:        svc,
+			Operation:      method,
+			TargetURI:      method + " " + path,
+			RequestBody:    body,
+			ResponseStatus: rec.Code,
+			ResponseBody:   rec.Body.Bytes(),
+			Duration:       duration,
+			Timestamp:      start,
+		})
+	}
+
 	if rec.Code >= 400 {
 		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2241,8 +2291,26 @@ func internalJSON(ctx context.Context, router http.Handler, region, target strin
 	if region != "" {
 		req.Header.Set("X-Overcast-Region", region)
 	}
+	start := time.Now()
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
+	duration := time.Since(start)
+
+	if r := trace.RecorderFromContext(ctx); r != nil {
+		svc, op := serviceFromTarget(target)
+		r.AddHop(trace.Hop{
+			CallerService:  "cloudformation",
+			Service:        svc,
+			Operation:      op,
+			TargetURI:      "POST / (X-Amz-Target: " + target + ")",
+			RequestBody:    data,
+			ResponseStatus: rec.Code,
+			ResponseBody:   rec.Body.Bytes(),
+			Duration:       duration,
+			Timestamp:      start,
+		})
+	}
+
 	if rec.Code >= 400 {
 		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
 	}
@@ -2264,12 +2332,93 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 	if region != "" {
 		req.Header.Set("X-Overcast-Region", region)
 	}
+	start := time.Now()
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
+	duration := time.Since(start)
+
+	if r := trace.RecorderFromContext(ctx); r != nil {
+		action := params["Action"]
+		svc := serviceFromAction(action)
+		r.AddHop(trace.Hop{
+			CallerService:  "cloudformation",
+			Service:        svc,
+			Operation:      action,
+			TargetURI:      "POST /?Action=" + action,
+			RequestBody:    []byte(body),
+			ResponseStatus: rec.Code,
+			ResponseBody:   rec.Body.Bytes(),
+			Duration:       duration,
+			Timestamp:      start,
+		})
+	}
+
 	if rec.Code >= 400 {
 		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
 	}
 	return rec, nil
+}
+
+func serviceFromTarget(target string) (service, operation string) {
+	if idx := strings.LastIndex(target, "."); idx >= 0 {
+		operation = target[idx+1:]
+		prefix := target[:idx]
+		switch {
+		case strings.HasPrefix(prefix, "AmazonSQS"):
+			service = "sqs"
+		case strings.HasPrefix(prefix, "DynamoDB_"):
+			service = "dynamodb"
+		case strings.HasPrefix(prefix, "AWSLambda"):
+			service = "lambda"
+		case strings.HasPrefix(prefix, "AmazonEC2ContainerService"):
+			service = "ecs"
+		case strings.HasPrefix(prefix, "TrentService"):
+			service = "kms"
+		case strings.HasPrefix(prefix, "AmazonStates"), strings.HasPrefix(prefix, "AWSStepFunctions"):
+			service = "stepfunctions"
+		case strings.HasPrefix(prefix, "AmazonSSM"):
+			service = "ssm"
+		case strings.HasPrefix(prefix, "secretsmanager"):
+			service = "secretsmanager"
+		case strings.HasPrefix(prefix, "Logs_"):
+			service = "logs"
+		case strings.HasPrefix(prefix, "AmazonSNS"):
+			service = "sns"
+		case strings.HasPrefix(prefix, "AWSEvents"):
+			service = "events"
+		case strings.HasPrefix(prefix, "AmazonKinesis"):
+			service = "kinesis"
+		case strings.HasPrefix(prefix, "AWSWAF_"):
+			service = "waf"
+		default:
+			service = prefix
+		}
+	}
+	return
+}
+
+func serviceFromAction(action string) string {
+	switch {
+	case strings.HasPrefix(action, "Create") && strings.Contains(action, "Vpc"):
+		return "ec2"
+	case strings.Contains(action, "Role") || strings.Contains(action, "Policy") || strings.Contains(action, "User") || strings.Contains(action, "InstanceProfile"):
+		return "iam"
+	default:
+		return ""
+	}
+}
+
+func serviceFromPath(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/restapis"), strings.HasPrefix(path, "/v2/apis"):
+		return "apigateway"
+	case strings.Contains(path, "/2015-03-31/"):
+		return "lambda"
+	case strings.HasPrefix(path, "/v1/pipes"):
+		return "pipes"
+	default:
+		return ""
+	}
 }
 
 // ── SQS Queue handler ─────────────────────────────────────────────────────

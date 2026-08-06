@@ -18,6 +18,7 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 const cfnXMLNS = "http://cloudformation.amazonaws.com/doc/2010-05-15/"
@@ -198,6 +199,7 @@ func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.prov.setHopRecorder(trace.RecorderFromContext(r.Context()))
 	h.prov.createStack(stack, tmpl, nil)
 
 	writeCFNResponse(w, r, "CreateStackResponse", "CreateStackResult", stackIdResult{StackId: stackID})
@@ -252,6 +254,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.prov.setHopRecorder(trace.RecorderFromContext(r.Context()))
 	h.prov.updateStack(stack, tmpl, previousTags, nil)
 
 	writeCFNResponse(w, r, "UpdateStackResponse", "UpdateStackResult", stackIdResult{StackId: stack.StackID})
@@ -635,6 +638,7 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 		stack.Status = StatusCreateInProgress
 		stack.StatusReason = "User Initiated"
 		_ = h.store.putStack(ctx, stack)
+		h.prov.setHopRecorder(trace.RecorderFromContext(r.Context()))
 		h.prov.createStack(stack, tmpl, h.prov.completeChangeSet(cs))
 	} else {
 		stack.Status = StatusUpdateInProgress
@@ -642,6 +646,7 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
+		h.prov.setHopRecorder(trace.RecorderFromContext(r.Context()))
 		h.prov.updateStack(stack, tmpl, previousTags, h.prov.completeChangeSet(cs))
 	}
 
