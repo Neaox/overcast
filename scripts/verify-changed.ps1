@@ -1,17 +1,13 @@
-# verify-changed.ps1 — thin platform wrapper that delegates to the Go implementation.
-# All logic lives in cmd/verify/main.go so behaviour is identical on every OS.
-param(
-    [switch]$Force,
-    [string]$Record
-)
+# verify-changed.ps1 — thin platform wrapper. All logic lives in cmd/verify/main.go.
+param([switch]$Force, [string]$Record)
 
 $root = git rev-parse --show-toplevel 2>$null
 if (-not $root) { exit 0 }
 Set-Location -LiteralPath $root
 
-$args = @()
-if ($Force) { $args += '-force' }
-if ($Record) { $args += '-record'; $args += $Record }
+$verifyArgs = @('run', './cmd/verify')
+if ($Force) { $verifyArgs += '-force' }
+if ($Record) { $verifyArgs += '-record'; $verifyArgs += $Record }
 
-$proc = Start-Process go -ArgumentList (@('run', './cmd/verify') + $args) -NoNewWindow -Wait -PassThru
-exit $proc.ExitCode
+& powershell -ExecutionPolicy Bypass -File .\scripts\go.ps1 @verifyArgs
+exit $LASTEXITCODE
