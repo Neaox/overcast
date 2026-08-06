@@ -159,13 +159,14 @@ func (p *provisioner) completeChangeSet(cs *ChangeSet) stackCompletionFunc {
 		return nil
 	}
 	return func(ctx context.Context, stack *Stack) {
+		log := p.log.WithRecorder(ctx)
 		status := changeSetExecutionStatus(stack.Status)
 		if status == ExecStatusExecuteInProgress {
 			return
 		}
 		cs.ExecutionStatus = status
 		if err := p.store.putChangeSet(ctx, cs); err != nil {
-			p.log.Warn("cfn: failed to persist changeset execution status",
+			log.Warn("cfn: failed to persist changeset execution status",
 				zap.String("changeSet", cs.ChangeSetName),
 				zap.String("status", status),
 				zap.Error(err))
@@ -182,6 +183,7 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 }
 
 func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template) {
+	log := p.log.WithRecorder(ctx)
 	rCtx := p.buildResolveContext(stack, tmpl)
 
 	// Emit the initial stack CREATE_IN_PROGRESS event (the handler already
@@ -264,7 +266,7 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 		rCtx.Resources[logicalID] = physID
 		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, "")
 		p.publishResourceEvent(ctx, events.CFNResourceProvisioned, stack.StackName, logicalID, res.Type, physID)
-		p.log.Debug("cfn: resource provisioned",
+		log.Debug("cfn: resource provisioned",
 			zap.String("stack", stack.StackName),
 			zap.String("logicalId", logicalID),
 			zap.String("type", res.Type),
@@ -284,7 +286,7 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 		return
 	}
 	p.publishStackEvent(ctx, events.CFNStackCreated, stack)
-	p.log.Debug("cfn: stack provisioned",
+	log.Debug("cfn: stack provisioned",
 		zap.String("stack", stack.StackName),
 		zap.Int("resources", len(order)),
 		zap.Duration("elapsed", p.clk.Since(stackStart)))
@@ -315,6 +317,7 @@ func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previou
 }
 
 func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template, previousStackTags []Tag) {
+	log := p.log.WithRecorder(ctx)
 	rCtx := p.buildResolveContext(stack, tmpl)
 	rCtx.PreviousStackTags = append([]Tag(nil), previousStackTags...)
 
@@ -544,7 +547,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 	// Delete removed resources, honouring DeletionPolicy=Retain.
 	for logicalID, old := range existing {
 		if old.shouldRetainOnDelete() {
-			p.log.Info("cfn: retaining removed resource (DeletionPolicy=Retain)",
+			log.Info("cfn: retaining removed resource (DeletionPolicy=Retain)",
 				zap.String("type", old.Type),
 				zap.String("logicalId", logicalID),
 				zap.String("physicalId", old.PhysicalID))
@@ -612,6 +615,7 @@ func (p *provisioner) deleteStackResources(stack *Stack) {
 }
 
 func (p *provisioner) deleteStackResourcesCtx(ctx context.Context, stack *Stack) {
+	log := p.log.WithRecorder(ctx)
 
 	rCtx := &resolveContext{
 		Region:    stack.Region,
@@ -637,7 +641,7 @@ func (p *provisioner) deleteStackResourcesCtx(ctx context.Context, stack *Stack)
 			continue
 		}
 		if r.shouldRetainOnDelete() {
-			p.log.Info("cfn: retaining resource on stack delete (DeletionPolicy=Retain)",
+			log.Info("cfn: retaining resource on stack delete (DeletionPolicy=Retain)",
 				zap.String("type", r.Type),
 				zap.String("logicalId", r.LogicalID),
 				zap.String("physicalId", r.PhysicalID))
@@ -701,6 +705,7 @@ func (p *provisioner) resolveHandler(resType string) (resourceHandler, bool) {
 // props are the already-resolved properties (after Ref / Fn::GetAtt / etc.
 // substitution). Callers resolve once, hash, and pass in.
 func (p *provisioner) provisionResource(ctx context.Context, logicalID string, res TemplateResource, props map[string]any, rCtx *resolveContext) (string, error) {
+	log := p.log.WithRecorder(ctx)
 	p.mu.Lock()
 	router := p.router
 	p.mu.Unlock()
@@ -718,7 +723,7 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 		// Unknown resource type — generate a fake physical ID and succeed.
 		// This allows templates with unsupported resources to partially deploy.
 		physID := fmt.Sprintf("%s-%s-stub", rCtx.StackName, logicalID)
-		p.log.Warn("cfn: unsupported resource type, creating stub",
+		log.Warn("cfn: unsupported resource type, creating stub",
 			zap.String("type", res.Type),
 			zap.String("logicalId", logicalID),
 			zap.String("physicalId", physID))
@@ -776,6 +781,7 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 // orphaned rather than deleted, so it outlives the stack. It is still reported
 // as replaced, because rollback must remove the replacement regardless.
 func (p *provisioner) updateResource(ctx context.Context, logicalID string, res TemplateResource, props map[string]any, oldPhysicalID string, oldResource *StackResource, rCtx *resolveContext) (resourceUpdateOutcome, error) {
+	log := p.log.WithRecorder(ctx)
 	p.mu.Lock()
 	router := p.router
 	p.mu.Unlock()
@@ -832,7 +838,7 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 		// Sentinel: fall through to replacement (mirrors AWS "Replacement: Yes"
 		// for properties like resource Name or DynamoDB KeySchema).
 		if !errors.Is(err, errReplacementRequired) {
-			p.log.Warn("cfn: in-place update failed, falling back to replace",
+			log.Warn("cfn: in-place update failed, falling back to replace",
 				zap.String("type", res.Type),
 				zap.String("logicalId", logicalID),
 				zap.Error(err))
@@ -878,7 +884,7 @@ func (p *provisioner) updateResource(ctx context.Context, logicalID string, res 
 		// UpdateReplacePolicy=Retain orphans the original instead of deleting
 		// it. Still a replacement, so rollback removes the replacement.
 		outcome.RetainReplaced = true
-		p.log.Info("cfn: retaining old resource on replacement (UpdateReplacePolicy=Retain)",
+		log.Info("cfn: retaining old resource on replacement (UpdateReplacePolicy=Retain)",
 			zap.String("type", res.Type),
 			zap.String("logicalId", logicalID),
 			zap.String("orphanedPhysicalId", oldPhysicalID))
@@ -978,6 +984,7 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 // other teardown error is logged and swallowed, so a resource that has already
 // gone cannot wedge a stack teardown.
 func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, physicalID string, rCtx *resolveContext) error {
+	log := p.log.WithRecorder(ctx)
 	p.mu.Lock()
 	router := p.router
 	p.mu.Unlock()
@@ -994,7 +1001,7 @@ func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, ph
 	if err == nil {
 		return nil
 	}
-	p.log.Warn("cfn: failed to delete resource",
+	log.Warn("cfn: failed to delete resource",
 		zap.String("type", resType),
 		zap.String("logicalId", logicalID),
 		zap.String("physicalId", physicalID),
@@ -1126,11 +1133,12 @@ func (p *provisioner) resolveOutputs(tmpl *Template, rCtx *resolveContext) []Out
 }
 
 func (p *provisioner) failStack(ctx context.Context, stack *Stack, status, reason string) {
+	log := p.log.WithRecorder(ctx)
 	stack.Status = status
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", status, reason)
 	if err := p.flushCriticalState(ctx); err != nil {
-		p.log.Warn("cfn: failed to flush terminal stack state", zap.String("stack", stack.StackName), zap.Error(err))
+		log.Warn("cfn: failed to flush terminal stack state", zap.String("stack", stack.StackName), zap.Error(err))
 	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
 }
@@ -1146,6 +1154,7 @@ func (p *provisioner) flushCriticalState(ctx context.Context) error {
 // created resource in reverse order, then mark the stack ROLLBACK_COMPLETE.
 // If a delete fails the stack is marked ROLLBACK_FAILED instead.
 func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *resolveContext, reason string) {
+	log := p.log.WithRecorder(ctx)
 	stack.Status = StatusRollbackInProgress
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusRollbackInProgress, reason)
@@ -1174,7 +1183,7 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 		router := p.router
 		p.mu.Unlock()
 		if err := handler.Delete(ctx, router, p.cfg, r.PhysicalID, rCtx); err != nil {
-			p.log.Warn("cfn: rollback: failed to delete resource",
+			log.Warn("cfn: rollback: failed to delete resource",
 				zap.String("logicalId", r.LogicalID),
 				zap.String("type", r.Type),
 				zap.Error(err))
@@ -1197,7 +1206,7 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 	}
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", stack.Status, stack.StatusReason)
 	if err := p.flushCriticalState(ctx); err != nil {
-		p.log.Warn("cfn: failed to flush rollback state", zap.String("stack", stack.StackName), zap.Error(err))
+		log.Warn("cfn: failed to flush rollback state", zap.String("stack", stack.StackName), zap.Error(err))
 	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
 }
@@ -1223,6 +1232,7 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 // replacedBy maps a logical ID to the physical ID of the replacement created
 // for it, for exactly that second case.
 func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated, dirtyUpdates map[string]bool, rCtx *resolveContext, reason string) {
+	log := p.log.WithRecorder(ctx)
 	stack.Status = StatusUpdateRollbackInProgress
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
@@ -1269,7 +1279,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 			p.mu.Unlock()
 			p.recordEvent(ctx, stack, r.LogicalID, newPhysID, r.Type, ResourceDeleteInProgress, "")
 			if err := handler.Delete(ctx, router, p.cfg, newPhysID, rCtx); err != nil {
-				p.log.Warn("cfn: update rollback: failed to delete replacement",
+				log.Warn("cfn: update rollback: failed to delete replacement",
 					zap.String("logicalId", r.LogicalID),
 					zap.String("type", r.Type),
 					zap.String("physicalId", newPhysID),
@@ -1315,7 +1325,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		router := p.router
 		p.mu.Unlock()
 		if err := handler.Delete(ctx, router, p.cfg, r.PhysicalID, rCtx); err != nil {
-			p.log.Warn("cfn: update rollback: failed to delete new resource",
+			log.Warn("cfn: update rollback: failed to delete new resource",
 				zap.String("logicalId", r.LogicalID),
 				zap.String("type", r.Type),
 				zap.Error(err))
@@ -1360,7 +1370,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 	}
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", stack.Status, stack.StatusReason)
 	if err := p.flushCriticalState(ctx); err != nil {
-		p.log.Warn("cfn: failed to flush update rollback state", zap.String("stack", stack.StackName), zap.Error(err))
+		log.Warn("cfn: failed to flush update rollback state", zap.String("stack", stack.StackName), zap.Error(err))
 	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
 }
@@ -1471,6 +1481,7 @@ func (p *provisioner) rollbackStackResources(stack *Stack, createPath bool) {
 // UPDATE_FAILED — is retire the resources the failed attempt left in a failed
 // state and drive the stack to a terminal UPDATE_ROLLBACK_COMPLETE.
 func (p *provisioner) rollbackToStable(ctx context.Context, stack *Stack, rCtx *resolveContext, reason string) {
+	log := p.log.WithRecorder(ctx)
 	stack.Status = StatusUpdateRollbackInProgress
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
@@ -1537,7 +1548,7 @@ func (p *provisioner) rollbackToStable(ctx context.Context, stack *Stack, rCtx *
 	}
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", stack.Status, stack.StatusReason)
 	if err := p.flushCriticalState(ctx); err != nil {
-		p.log.Warn("cfn: failed to flush rollback state", zap.String("stack", stack.StackName), zap.Error(err))
+		log.Warn("cfn: failed to flush rollback state", zap.String("stack", stack.StackName), zap.Error(err))
 	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
 }
@@ -1547,6 +1558,7 @@ func (p *provisioner) rollbackToStable(ctx context.Context, stack *Stack, rCtx *
 // DescribeStackEvents surfaces. A resource type with no registered handler is
 // treated as already gone — the same allowance rollbackCreate makes.
 func (p *provisioner) deleteRollbackResource(ctx context.Context, stack *Stack, r StackResource, rCtx *resolveContext) error {
+	log := p.log.WithRecorder(ctx)
 	p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteInProgress, "")
 
 	handler, ok := p.resolveHandler(r.Type)
@@ -1560,7 +1572,7 @@ func (p *provisioner) deleteRollbackResource(ctx context.Context, stack *Stack, 
 	p.mu.Unlock()
 
 	if err := handler.Delete(ctx, router, p.cfg, r.PhysicalID, rCtx); err != nil {
-		p.log.Warn("cfn: rollback: failed to delete resource",
+		log.Warn("cfn: rollback: failed to delete resource",
 			zap.String("logicalId", r.LogicalID),
 			zap.String("type", r.Type),
 			zap.Error(err))
@@ -1611,6 +1623,7 @@ func (p *provisioner) publishResourceEvent(ctx context.Context, t events.Type, s
 // transitions call this so that DescribeStackEvents always returns accurate,
 // ordered history without embedding the growing event list in the stack blob.
 func (p *provisioner) recordEvent(ctx context.Context, stack *Stack, logicalID, physicalID, resType, status, reason string) {
+	log := p.log.WithRecorder(ctx)
 	event := StackEvent{
 		EventID:              uuid.New().String(),
 		StackID:              stack.StackID,
@@ -1623,10 +1636,10 @@ func (p *provisioner) recordEvent(ctx context.Context, stack *Stack, logicalID, 
 		Timestamp:            p.clk.Now(),
 	}
 	if err := p.store.appendStackEvent(ctx, stack.StackName, event); err != nil {
-		p.log.Error("cfn: failed to persist stack event", zap.Error(err))
+		log.Error("cfn: failed to persist stack event", zap.Error(err))
 	}
 	if err := p.store.putStack(ctx, stack); err != nil {
-		p.log.Error("cfn: failed to persist stack state", zap.Error(err))
+		log.Error("cfn: failed to persist stack state", zap.Error(err))
 	}
 }
 
@@ -4826,6 +4839,7 @@ func (h *customResourceHandler) Update(ctx context.Context, router http.Handler,
 }
 
 func (h *customResourceHandler) invoke(ctx context.Context, router http.Handler, _ *config.Config, reqType, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	log := h.p.log.WithRecorder(ctx)
 	serviceToken, _ := props["ServiceToken"].(string)
 	if serviceToken == "" {
 		return "", nil, fmt.Errorf("custom resource missing ServiceToken")
@@ -4864,7 +4878,7 @@ func (h *customResourceHandler) invoke(ctx context.Context, router http.Handler,
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, path, "application/json", data)
 	if err != nil {
 		// Lambda function not found or invocation failed — degrade to stub.
-		h.p.log.Warn("cfn: custom resource invoke failed, creating stub",
+		log.Warn("cfn: custom resource invoke failed, creating stub",
 			zap.String("serviceToken", serviceToken),
 			zap.Error(err))
 		return stubResult()
@@ -4873,7 +4887,7 @@ func (h *customResourceHandler) invoke(ctx context.Context, router http.Handler,
 	// If the Lambda runtime returned a function error (e.g. Docker unavailable),
 	// degrade gracefully — treat as a no-op stub so the stack can still deploy.
 	if funcErr := rec.Header().Get("X-Amz-Function-Error"); funcErr != "" {
-		h.p.log.Warn("cfn: custom resource Lambda returned function error, creating stub",
+		log.Warn("cfn: custom resource Lambda returned function error, creating stub",
 			zap.String("serviceToken", serviceToken),
 			zap.String("functionError", funcErr))
 		return stubResult()
