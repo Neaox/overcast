@@ -11,6 +11,7 @@ import (
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 // ── Request types (json tags used by codec.Decode for form mapping) ───
@@ -279,7 +280,7 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 		return nil, cfnerr("InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 	}
 
-	h.prov.createStack(stack, tmpl, nil)
+	h.prov.createStack(stack, tmpl, nil, trace.RecorderFromContext(ctx))
 
 	return &createStackResp{
 		Xmlns:  cfnXMLNS,
@@ -335,7 +336,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 	}
 
-	h.prov.updateStack(stack, tmpl, previousTags, nil)
+	h.prov.updateStack(stack, tmpl, previousTags, nil, trace.RecorderFromContext(ctx))
 
 	return &updateStackResp{
 		Xmlns:  cfnXMLNS,
@@ -604,14 +605,14 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 		stack.Status = StatusCreateInProgress
 		stack.StatusReason = "User Initiated"
 		_ = h.store.putStack(ctx, stack)
-		h.prov.createStack(stack, tmpl, h.prov.completeChangeSet(cs))
+		h.prov.createStack(stack, tmpl, h.prov.completeChangeSet(cs), trace.RecorderFromContext(ctx))
 	} else {
 		stack.Status = StatusUpdateInProgress
 		stack.StatusReason = "User Initiated"
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
-		h.prov.updateStack(stack, tmpl, previousTags, h.prov.completeChangeSet(cs))
+		h.prov.updateStack(stack, tmpl, previousTags, h.prov.completeChangeSet(cs), trace.RecorderFromContext(ctx))
 	}
 
 	return &struct{}{}, nil

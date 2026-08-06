@@ -26,8 +26,11 @@ export function FlowMap({ trace, aggregateThreshold = 5 }: FlowMapProps) {
 
     if (hideNoisy) {
       const noisyIds = new Set(
-        result.nodes.filter((n) => n.data.aggregateCount > 0).map((n) => n.id),
+        (trace.hops ?? []).filter((h) => h.noisy).map((h) => h.id),
       )
+      result.nodes.forEach((n) => {
+        if (n.data.aggregateCount > 0) noisyIds.add(n.id)
+      })
       filteredNodes = result.nodes.filter((n) => !noisyIds.has(n.id))
       filteredEdges = result.edges.filter((e) => !noisyIds.has(e.target))
     }

@@ -45,11 +45,10 @@ type provisioner struct {
 	bus    *events.Bus
 	router http.Handler // the main emulator router
 
-	mu          sync.Mutex
-	wg          sync.WaitGroup
-	cancel      context.CancelFunc
-	ctx         context.Context
-	hopRecorder *trace.Recorder
+	mu     sync.Mutex
+	wg     sync.WaitGroup
+	cancel context.CancelFunc
+	ctx    context.Context
 }
 
 type stackCompletionFunc func(ctx context.Context, stack *Stack)
@@ -72,27 +71,6 @@ func (p *provisioner) initRouter(router http.Handler) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.router = router
-}
-
-// setHopRecorder stores the per-request trace Recorder so that internal
-// dispatch helpers can record hops. nil is a no-op (debug off / no trace).
-func (p *provisioner) setHopRecorder(rec *trace.Recorder) {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	p.hopRecorder = rec
-	p.mu.Unlock()
-}
-
-// clearHopRecorder removes the stored recorder after provisioning completes.
-func (p *provisioner) clearHopRecorder() {
-	if p == nil {
-		return
-	}
-	p.mu.Lock()
-	p.hopRecorder = nil
-	p.mu.Unlock()
 }
 
 // initBus sets the event bus after construction.
@@ -124,14 +102,7 @@ func (p *provisioner) regionCtx(region string) context.Context {
 	if region == "" {
 		region = p.cfg.Region
 	}
-	ctx := middleware.ContextWithRegion(p.ctx, region)
-	p.mu.Lock()
-	rec := p.hopRecorder
-	p.mu.Unlock()
-	if rec != nil {
-		ctx = trace.ContextWithRecorder(ctx, rec)
-	}
-	return ctx
+	return middleware.ContextWithRegion(p.ctx, region)
 }
 
 // ── Create stack (async) ───────────────────────────────────────────────────
@@ -139,14 +110,17 @@ func (p *provisioner) regionCtx(region string) context.Context {
 // createStack provisions all resources in a template asynchronously, but waits
 // briefly for fast stacks so SDK waiters can observe the terminal status on
 // their immediate first DescribeStacks call.
-func (p *provisioner) createStack(stack *Stack, tmpl *Template, onComplete stackCompletionFunc) {
+func (p *provisioner) createStack(stack *Stack, tmpl *Template, onComplete stackCompletionFunc, rec *trace.Recorder) {
 	done := make(chan struct{})
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		defer close(done)
-		defer p.clearHopRecorder()
-		p.provisionStackResources(stack, tmpl)
+		ctx := p.regionCtx(stack.Region)
+		if rec != nil {
+			ctx = trace.ContextWithRecorder(ctx, rec)
+		}
+		p.provisionStackResourcesCtx(ctx, stack, tmpl)
 		if onComplete != nil {
 			onComplete(p.regionCtx(stack.Region), stack)
 		}
@@ -204,8 +178,10 @@ func (p *provisioner) completeChangeSet(cs *ChangeSet) stackCompletionFunc {
 // resolves outputs, and sets the final stack status. Both top-level createStack
 // (async) and nestedStackHandler (inline) use this method.
 func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
-	ctx := p.regionCtx(stack.Region)
+	p.provisionStackResourcesCtx(p.regionCtx(stack.Region), stack, tmpl)
+}
 
+func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template) {
 	rCtx := p.buildResolveContext(stack, tmpl)
 
 	// Emit the initial stack CREATE_IN_PROGRESS event (the handler already
@@ -316,14 +292,17 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 
 // ── Update stack (async) ───────────────────────────────────────────────────
 
-func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previousStackTags []Tag, onComplete stackCompletionFunc) {
+func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previousStackTags []Tag, onComplete stackCompletionFunc, rec *trace.Recorder) {
 	done := make(chan struct{})
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		defer close(done)
-		defer p.clearHopRecorder()
-		p.updateStackResources(stack, tmpl, previousStackTags)
+		ctx := p.regionCtx(stack.Region)
+		if rec != nil {
+			ctx = trace.ContextWithRecorder(ctx, rec)
+		}
+		p.updateStackResourcesCtx(ctx, stack, tmpl, previousStackTags)
 		if onComplete != nil {
 			onComplete(p.regionCtx(stack.Region), stack)
 		}
@@ -332,8 +311,10 @@ func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previousStackTag
 }
 
 func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previousStackTags []Tag) {
-	ctx := p.regionCtx(stack.Region)
+	p.updateStackResourcesCtx(p.regionCtx(stack.Region), stack, tmpl, previousStackTags)
+}
 
+func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template, previousStackTags []Tag) {
 	rCtx := p.buildResolveContext(stack, tmpl)
 	rCtx.PreviousStackTags = append([]Tag(nil), previousStackTags...)
 

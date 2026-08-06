@@ -10,6 +10,7 @@ package trace
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"sync"
@@ -263,4 +264,108 @@ func ContextWithRecorder(ctx context.Context, rec *Recorder) context.Context {
 func RecorderFromContext(ctx context.Context) *Recorder {
 	rec, _ := ctx.Value(recorderKey).(*Recorder)
 	return rec
+}
+
+// MarshalJSON overrides the default []byte → base64 encoding so that body
+// fields appear as plain strings in the JSON output.
+func (e Entry) MarshalJSON() ([]byte, error) {
+	type shadow struct {
+		RequestID             string         `json:"requestId"`
+		Timestamp             time.Time      `json:"timestamp"`
+		Duration              time.Duration  `json:"duration"`
+		Method                string         `json:"method"`
+		Path                  string         `json:"path"`
+		Host                  string         `json:"host"`
+		Query                 string         `json:"query,omitempty"`
+		Service               string         `json:"service"`
+		Operation             string         `json:"operation,omitempty"`
+		Region                string         `json:"region"`
+		RequestHeaders        http.Header    `json:"requestHeaders"`
+		RequestBody           string         `json:"requestBody,omitempty"`
+		RequestBodyTruncated  bool           `json:"requestBodyTruncated,omitempty"`
+		RequestSize           int64          `json:"requestSize,omitempty"`
+		ResponseHeaders       http.Header    `json:"responseHeaders"`
+		ResponseBody          string         `json:"responseBody,omitempty"`
+		ResponseBodyTruncated bool           `json:"responseBodyTruncated,omitempty"`
+		StatusCode            int            `json:"statusCode"`
+		Streaming             bool           `json:"streaming,omitempty"`
+		Hops                  []Hop          `json:"hops,omitempty"`
+		LogEntries            []LogEntry     `json:"logEntries,omitempty"`
+		AWSErrorCode          string         `json:"awsErrorCode,omitempty"`
+		AWSErrorMessage       string         `json:"awsErrorMessage,omitempty"`
+		RemoteAddr            string         `json:"remoteAddr,omitempty"`
+		UserAgent             string         `json:"userAgent,omitempty"`
+		XRayTraceID           string         `json:"xrayTraceId,omitempty"`
+		Metadata              map[string]any `json:"metadata,omitempty"`
+	}
+	return json.Marshal(shadow{
+		RequestID:             e.RequestID,
+		Timestamp:             e.Timestamp,
+		Duration:              e.Duration,
+		Method:                e.Method,
+		Path:                  e.Path,
+		Host:                  e.Host,
+		Query:                 e.Query,
+		Service:               e.Service,
+		Operation:             e.Operation,
+		Region:                e.Region,
+		RequestHeaders:        e.RequestHeaders,
+		RequestBody:           string(e.RequestBody),
+		RequestBodyTruncated:  e.RequestBodyTruncated,
+		RequestSize:           e.RequestSize,
+		ResponseHeaders:       e.ResponseHeaders,
+		ResponseBody:          string(e.ResponseBody),
+		ResponseBodyTruncated: e.ResponseBodyTruncated,
+		StatusCode:            e.StatusCode,
+		Streaming:             e.Streaming,
+		Hops:                  e.Hops,
+		LogEntries:            e.LogEntries,
+		AWSErrorCode:          e.AWSErrorCode,
+		AWSErrorMessage:       e.AWSErrorMessage,
+		RemoteAddr:            e.RemoteAddr,
+		UserAgent:             e.UserAgent,
+		XRayTraceID:           e.XRayTraceID,
+		Metadata:              e.Metadata,
+	})
+}
+
+// MarshalJSON overrides the default []byte → base64 encoding for Hop body
+// fields.
+func (h Hop) MarshalJSON() ([]byte, error) {
+	type shadow struct {
+		ID              string        `json:"id"`
+		Parent          string        `json:"parent,omitempty"`
+		Order           int           `json:"order"`
+		CallerService   string        `json:"callerService"`
+		CallerOperation string        `json:"callerOperation,omitempty"`
+		Service         string        `json:"service"`
+		Operation       string        `json:"operation"`
+		TargetURI       string        `json:"targetUri,omitempty"`
+		RequestHeaders  http.Header   `json:"requestHeaders,omitempty"`
+		RequestBody     string        `json:"requestBody,omitempty"`
+		ResponseStatus  int           `json:"responseStatus"`
+		ResponseBody    string        `json:"responseBody,omitempty"`
+		Duration        time.Duration `json:"duration"`
+		Error           string        `json:"error,omitempty"`
+		Timestamp       time.Time     `json:"timestamp"`
+		Noisy           bool          `json:"noisy,omitempty"`
+	}
+	return json.Marshal(shadow{
+		ID:              h.ID,
+		Parent:          h.Parent,
+		Order:           h.Order,
+		CallerService:   h.CallerService,
+		CallerOperation: h.CallerOperation,
+		Service:         h.Service,
+		Operation:       h.Operation,
+		TargetURI:       h.TargetURI,
+		RequestHeaders:  h.RequestHeaders,
+		RequestBody:     string(h.RequestBody),
+		ResponseStatus:  h.ResponseStatus,
+		ResponseBody:    string(h.ResponseBody),
+		Duration:        h.Duration,
+		Error:           h.Error,
+		Timestamp:       h.Timestamp,
+		Noisy:           h.Noisy,
+	})
 }

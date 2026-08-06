@@ -2,6 +2,7 @@ package trace
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 
 	"go.uber.org/zap/zapcore"
@@ -117,7 +118,9 @@ func coreFieldValue(f zapcore.Field) any {
 	case zapcore.BoolType:
 		return f.Integer == 1
 	case zapcore.Float64Type:
-		return nil
+		return math.Float64frombits(uint64(f.Integer))
+	case zapcore.Float32Type:
+		return float32(math.Float64frombits(uint64(f.Integer)))
 	default:
 		return f.String
 	}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -469,6 +470,12 @@ func fieldValue(f zap.Field) any {
 		return f.Integer
 	case zapcore.DurationType:
 		return f.Integer
+	case zapcore.BoolType:
+		return f.Integer == 1
+	case zapcore.Float64Type:
+		return math.Float64frombits(uint64(f.Integer))
+	case zapcore.Float32Type:
+		return float32(math.Float64frombits(uint64(f.Integer)))
 	default:
 		return f.String
 	}

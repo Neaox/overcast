@@ -2,7 +2,6 @@ package trace
 
 import (
 	"strconv"
-	"strings"
 )
 
 // FlowNode is a single node in a request flow graph, derived from a Hop or
@@ -137,10 +136,8 @@ func aggregateHops(hops []Hop, threshold int) hopAggregation {
 			kept = append(kept, group...)
 			continue
 		}
-		parts := strings.SplitN(group[0].Service+"/"+group[0].Operation, "/", 2)
 		svc := group[0].Service
 		op := group[0].Operation
-		_ = parts
 		aggs = append(aggs, aggregateGroup{
 			id:        "agg-" + svc + "-" + op,
 			service:   svc,
