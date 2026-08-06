@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, ScrollText } from "lucide-react"
 import { ecsTaskLogsQueryOptions, ecsTaskQueryOptions } from "@/features/ecs/data"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import { DockerBanner } from "@/components/docker-banner"
 import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/ui/copy-button"
 import { Button } from "@/components/ui/button"
@@ -57,6 +58,8 @@ export function TaskDetail({
       />
 
       <ApplicationOwnershipBanner candidates={[task.taskArn, task.taskDefinitionArn]} />
+
+      <DockerBanner forService="ecs" />
 
       {/* Overview */}
       <section className="space-y-3">

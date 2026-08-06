@@ -501,9 +501,8 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 				return
 			}
 			if err := h.startCacheContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for ElastiCache cluster — falling back to metadata-only",
+				h.log.Warn("failed to start Docker container for ElastiCache cluster — cluster stays in creating state",
 					zap.String("cluster", clusterID), zap.Error(err))
-				h.clusterFallbackAvailable(region, clusterID)
 				return
 			}
 			// The start took real time; the cluster may have been deleted
@@ -531,9 +530,8 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 			h.scheduleHealthCheck(region, clusterID, fresh.ConfigurationEndpoint.Address, fresh.ConfigurationEndpoint.Port)
 		}()
 	} else {
-		h.scheduler.AfterScoped(h.store.region(ctx), clusterID, "available", 0, func(bgCtx context.Context) {
-			h.transitionCacheCluster(bgCtx, clusterID, "available", "creating")
-		})
+		// Docker is not available — leave the cluster in "creating".
+		// The /_health endpoint and web UI banner tell the user why.
 	}
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheClusterCreated, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.CacheClusterId, ARN: arn}})
@@ -664,9 +662,8 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 				return
 			}
 			if err := h.startReplicationGroupContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for replication group — falling back to metadata-only",
+				h.log.Warn("failed to start Docker container for replication group — group stays in creating state",
 					zap.String("rg", rgID), zap.Error(err))
-				h.rgFallbackAvailable(region, rgID)
 				return
 			}
 			// The start took real time; the group may have been deleted
@@ -695,9 +692,8 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 			h.scheduleReplicationGroupHealthCheck(region, rgID, fresh.ConfigurationEndpoint.Address, fresh.ConfigurationEndpoint.Port)
 		}()
 	} else {
-		h.scheduler.AfterScoped(h.store.region(ctx), rgID, "rg-available", 0, func(bgCtx context.Context) {
-			h.transitionReplicationGroup(bgCtx, rgID, "available", "creating")
-		})
+		// Docker is not available — leave the group in "creating".
+		// The /_health endpoint and web UI banner tell the user why.
 	}
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheReplicationGroupCreated, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.ReplicationGroupId, ARN: arn}})

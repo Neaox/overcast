@@ -43,6 +43,8 @@ type Supervisor struct {
 	bus    *events.Bus
 	logger *zap.Logger
 
+	tracker *Tracker
+
 	mu      sync.Mutex
 	clients map[string]*Client // socket path → client (deduplicated)
 	done    chan struct{}      // closed by Close to signal shutdown
@@ -57,6 +59,14 @@ func NewSupervisor(bus *events.Bus, logger *zap.Logger) *Supervisor {
 		clients: make(map[string]*Client),
 		done:    make(chan struct{}),
 	}
+}
+
+// NewSupervisorWithTracker creates a Supervisor that also records
+// per-service Docker connectivity in the given Tracker for health reporting.
+func NewSupervisorWithTracker(bus *events.Bus, logger *zap.Logger, tracker *Tracker) *Supervisor {
+	s := NewSupervisor(bus, logger)
+	s.tracker = tracker
+	return s
 }
 
 // Probe probes Docker for each ServiceConfig. Configs sharing the same socket
@@ -106,6 +116,11 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig) []Servi
 			zap.String("socket", cfg.Socket),
 			zap.String("network", cfg.Network))
 	}
+
+	if s.tracker != nil {
+		s.tracker.RecordProbeResult(configs, results)
+	}
+
 	return results
 }
 
@@ -140,7 +155,12 @@ func (s *Supervisor) Run(ctx context.Context) {
 		wg.Add(1)
 		go func(socket string, dc *Client) {
 			defer wg.Done()
-			w := NewWatcher(dc, s.bus, s.logger.With(zap.String("socket", socket)))
+			var w *Watcher
+			if s.tracker != nil {
+				w = NewWatcherWithTracker(dc, s.bus, s.logger.With(zap.String("socket", socket)), s.tracker)
+			} else {
+				w = NewWatcher(dc, s.bus, s.logger.With(zap.String("socket", socket)))
+			}
 			w.Run(ctx)
 		}(socket, dc)
 	}
@@ -156,4 +176,14 @@ func (s *Supervisor) Close() {
 	default:
 		close(s.done)
 	}
+}
+
+// StatusSnapshot returns the aggregated Docker connectivity state recorded by
+// the tracker, or nil when no tracker was configured.
+func (s *Supervisor) StatusSnapshot() *Status {
+	if s.tracker == nil {
+		return nil
+	}
+	snap := s.tracker.Snapshot()
+	return &snap
 }

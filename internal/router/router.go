@@ -732,8 +732,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		dockerServices["efs"] = docker.ServiceConfig{Name: "efs", Socket: cfg.EFSDockerSocket, Network: efsNetwork}
 		dockerSetters["efs"] = efsSvc.SetDocker
 	}
+	var dockerStatusFn func() *docker.Status
 	if len(dockerServices) > 0 {
-		dockerSup := docker.NewSupervisor(bus, logger)
+		dockerTracker := docker.NewTracker()
+		dockerStatusFn = func() *docker.Status {
+			s := dockerTracker.Snapshot()
+			return &s
+		}
+		dockerSup := docker.NewSupervisorWithTracker(bus, logger, dockerTracker)
 		cleanups = append(cleanups, dockerSup.Close)
 
 		go func() {
@@ -842,7 +848,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 	}
 
-	r.Get("/_health", newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers))
+	r.Get("/_health", newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers, dockerStatusFn))
 
 	// GET /_topology — full cross-region resource graph for the system map.
 	r.Get("/_topology", newTopologyHandler(cfg, store))

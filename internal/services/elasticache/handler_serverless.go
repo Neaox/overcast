@@ -181,15 +181,13 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 		go func(cacheName string) {
 			defer h.dockerWg.Done()
 			bgCtx := middleware.ContextWithRegion(context.Background(), region)
-			log := h.log.WithRecorder(bgCtx)
 			got, aerr := h.store.getServerlessCache(bgCtx, cacheName)
 			if aerr != nil || got == nil {
 				return
 			}
 			if err := h.startServerlessCacheContainer(bgCtx, got); err != nil {
-				log.Warn("failed to start Docker container for serverless cache — falling back to metadata-only",
+				h.log.Warn("failed to start Docker container for serverless cache — cache stays in creating state",
 					zap.String("cache", cacheName), zap.Error(err))
-				h.serverlessFallbackAvailable(region, cacheName)
 				return
 			}
 			// The start took real time; the cache may have been deleted
@@ -208,7 +206,7 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 				return nil
 			}); aerr != nil {
 				if aerr != errRecordMovedOn {
-					log.Warn("ElastiCache: persist post-start serverless cache",
+					h.log.Warn("ElastiCache: persist post-start serverless cache",
 						zap.String("cache", cacheName), zap.String("error", aerr.Message))
 				}
 				h.teardownOrphanedContainer(bgCtx, "serverless cache", cacheName, got.DockerContainerID, got.HostPort)
@@ -217,9 +215,8 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 			h.scheduleServerlessHealthCheck(region, cacheName, got.Endpoint.Address, got.Endpoint.Port)
 		}(name)
 	} else {
-		h.scheduler.AfterScoped(h.store.region(r.Context()), name, "serverless-available", 0, func(ctx context.Context) {
-			h.transitionServerlessCache(ctx, name, "available", "creating")
-		})
+		// Docker is not available — leave the cache in "creating".
+		// The /_health endpoint and web UI banner tell the user why.
 	}
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateServerlessCacheResponse{
@@ -379,15 +376,13 @@ func (h *Handler) DeleteServerlessCache(w http.ResponseWriter, r *http.Request) 
 		_ = h.store.releasePort(r.Context(), hostPort) //nolint:errcheck
 	}
 	h.scheduler.AfterScoped(h.store.region(r.Context()), name, "serverless-delete", 50*time.Millisecond, func(ctx context.Context) {
-		log := h.log.WithRecorder(ctx)
 		if aerr := h.store.deleteServerlessCache(ctx, name); aerr != nil {
-			log.Warn("failed to delete serverless cache record", zap.String("cache", name), zap.Error(aerr))
+			h.log.Warn("failed to delete serverless cache record", zap.String("cache", name), zap.Error(aerr))
 		}
 	})
 }
 
 func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *ServerlessCache) error {
-	log := h.log.WithRecorder(ctx)
 	image := engineImage(c.Engine, c.FullEngineVersion)
 	port := enginePort(c.Engine)
 	containerName := "overcast-elasticache-serverless-" + c.ServerlessCacheName
@@ -433,7 +428,7 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 	}
 	network := h.network()
 	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
-		log.Warn("ElastiCache: failed to create network (may already exist)", zap.String("network", network), zap.Error(err))
+		h.log.Warn("ElastiCache: failed to create network (may already exist)", zap.String("network", network), zap.Error(err))
 	}
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
@@ -519,7 +514,6 @@ func (h *Handler) scheduleServerlessHealthCheck(region, name, host string, port 
 	var attempt int
 	var check func(ctx context.Context)
 	check = func(ctx context.Context) {
-		log := h.log.WithRecorder(ctx)
 		attempt++
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
@@ -531,15 +525,10 @@ func (h *Handler) scheduleServerlessHealthCheck(region, name, host string, port 
 			h.scheduler.AfterScoped(region, name, "serverless-health", 2*time.Second, check)
 			return
 		}
-		log.Warn("ElastiCache serverless health check timed out", zap.String("cache", name), zap.Int("attempts", attempt))
-		h.serverlessFallbackAvailable(region, name)
+		h.log.Warn("ElastiCache serverless health check timed out — cache stays in current state",
+			zap.String("cache", name), zap.Int("attempts", attempt))
 	}
 	h.scheduler.AfterScoped(region, name, "serverless-health", 1*time.Second, check)
-}
-
-func (h *Handler) serverlessFallbackAvailable(region, name string) {
-	ctx := middleware.ContextWithRegion(context.Background(), region)
-	h.transitionServerlessCache(ctx, name, "available", "creating", "starting")
 }
 
 func toXMLServerlessCache(c *ServerlessCache) xmlServerlessCache {

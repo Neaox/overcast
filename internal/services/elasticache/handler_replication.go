@@ -172,15 +172,13 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 		go func() {
 			defer h.dockerWg.Done()
 			bgCtx := middleware.ContextWithRegion(context.Background(), region)
-			log := h.log.WithRecorder(bgCtx)
 			got, aerr := h.store.getReplicationGroup(bgCtx, rgID)
 			if aerr != nil || got == nil {
 				return
 			}
 			if err := h.startReplicationGroupContainer(bgCtx, got); err != nil {
-				log.Warn("failed to start Docker container for replication group — falling back to metadata-only",
+				h.log.Warn("failed to start Docker container for replication group — group stays in creating state",
 					zap.String("rg", rgID), zap.Error(err))
-				h.rgFallbackAvailable(region, rgID)
 				return
 			}
 			// The start took real time; the group may have been deleted
@@ -198,7 +196,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 				return nil
 			}); aerr != nil {
 				if aerr != errRecordMovedOn {
-					log.Warn("ElastiCache: persist post-start replication group",
+					h.log.Warn("ElastiCache: persist post-start replication group",
 						zap.String("rg", rgID), zap.String("error", aerr.Message))
 				}
 				h.teardownOrphanedContainer(bgCtx, "replication group", rgID, got.DockerContainerID, got.HostPort)
@@ -207,10 +205,8 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 			h.scheduleReplicationGroupHealthCheck(region, rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
 		}()
 	} else {
-		// No Docker — metadata-only transition (0 delay = synchronous on real clock).
-		h.scheduler.AfterScoped(h.store.region(r.Context()), rgID, "rg-available", 0, func(ctx context.Context) {
-			h.transitionReplicationGroup(ctx, rgID, "available", "creating")
-		})
+		// Docker is not available — leave the group in "creating".
+		// The /_health endpoint and web UI banner tell the user why.
 	}
 
 	h.publish(r, events.ElastiCacheReplicationGroupCreated, events.ResourcePayload{Name: id, ARN: arn})
@@ -300,9 +296,8 @@ func (h *Handler) DeleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 	}
 
 	h.scheduler.AfterScoped(h.store.region(r.Context()), id, "rg-delete", 50*time.Millisecond, func(ctx context.Context) {
-		log := h.log.WithRecorder(ctx)
 		if aerr := h.store.deleteReplicationGroup(ctx, id); aerr != nil {
-			log.Warn("failed to delete replication group record", zap.String("rg", id), zap.Error(aerr))
+			h.log.Warn("failed to delete replication group record", zap.String("rg", id), zap.Error(aerr))
 		}
 	})
 }
