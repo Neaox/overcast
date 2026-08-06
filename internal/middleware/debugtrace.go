@@ -21,7 +21,7 @@ const maxTraceBody = 1 << 20 // 1 MiB
 // a ring buffer when cfg.Debug is true. When debug is off the middleware is an
 // identity function — chi calls it once at startup and the handler chain is
 // unchanged.
-func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(http.Handler) http.Handler {
+func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock, tc *trace.TracingCore) func(http.Handler) http.Handler {
 	if !cfg.Debug {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -44,6 +44,10 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 
 			ctx := trace.ContextWithRecorder(r.Context(), rec)
 			r = r.WithContext(ctx)
+			if tc != nil {
+				tc.SetContext(ctx)
+				defer tc.ClearContext()
+			}
 
 			trw := &traceResponseWriter{
 				ResponseWriter: w,

@@ -92,7 +92,7 @@ import (
 //
 // The returned preShutdown function must be called BEFORE http.Server.Shutdown
 // to unblock long-lived handlers (e.g. the SSE /_events endpoint).
-func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock, hookRunner ...*inithooks.Runner) (handler http.Handler, preShutdown func(), cleanup func(context.Context), waitReady func()) {
+func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock, traceCore *trace.TracingCore, hookRunner ...*inithooks.Runner) (handler http.Handler, preShutdown func(), cleanup func(context.Context), waitReady func()) {
 	prof := newStartupProfiler()
 
 	r := chi.NewRouter()
@@ -145,7 +145,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	r.Use(middleware.HostAddressing(cfg.Hostname, &hostRoutes, logger))
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Recovery(logger))
-	r.Use(middleware.DebugTrace(cfg, traceBuf, clk))
+	r.Use(middleware.DebugTrace(cfg, traceBuf, clk, traceCore))
 	r.Use(middleware.Logger(logger, clk))
 	// NotReady short-circuits with a 503 while the storage backend is still
 	// completing a one-time startup migration (storage-plan.md item — see

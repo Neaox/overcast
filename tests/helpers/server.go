@@ -140,7 +140,7 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		}
 	}
 
-	handler, _, cleanup, waitReady := router.New(so.cfg, store, logger, clk, so.initRunner)
+	handler, _, cleanup, waitReady := router.New(so.cfg, store, logger, clk, nil, so.initRunner)
 	srv.Config.Handler = handler
 	srv.Start()
 
