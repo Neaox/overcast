@@ -1,6 +1,9 @@
 coverage.out
 coverage.html
 
+# git worktrees
+.worktrees/
+
 # compiled binaries
 bin/
 # stray root-level binaries from `go build ./cmd/...` without -o
