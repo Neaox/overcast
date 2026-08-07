@@ -27,7 +27,7 @@ func detectService(r *http.Request, body ...[]byte) string {
 	// 1. X-Amz-Target — use the generated AWS operation registry for
 	// accurate service mapping across all JSON-protocol services.
 	if t := r.Header.Get("X-Amz-Target"); t != "" {
-		if claim, ok := awsapi.NewRegistry().ClaimTarget(t); ok {
+		if claim, ok := awsapi.NewRegistry().ClaimTarget(t); ok && claim.Service != "" {
 			return claim.Service
 		}
 	}
@@ -166,7 +166,7 @@ func serviceFromAuthCredential(r *http.Request) string {
 func detectOperation(r *http.Request, body ...[]byte) string {
 	// 1. Target-based (all JSON-protocol services).
 	if t := r.Header.Get("X-Amz-Target"); t != "" {
-		if claim, ok := awsapi.NewRegistry().ClaimTarget(t); ok {
+		if claim, ok := awsapi.NewRegistry().ClaimTarget(t); ok && claim.Operation != "" {
 			return claim.Operation
 		}
 	}

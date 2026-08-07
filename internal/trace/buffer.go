@@ -125,6 +125,7 @@ type ListFilter struct {
 	Search  string
 	After   string // cursor for older entries (next page)
 	Before  string // cursor for newer entries (polling for fresh data)
+	HopsFor string // filter to entries whose hops contain this request ID (upstream)
 	Limit   int
 }
 
@@ -221,6 +222,18 @@ func matchFilter(e *Entry, f ListFilter) bool {
 		if !strings.Contains(strings.ToLower(e.RequestID), s) &&
 			!strings.Contains(strings.ToLower(e.Path), s) &&
 			!strings.Contains(strings.ToLower(e.Service), s) {
+			return false
+		}
+	}
+	if f.HopsFor != "" {
+		found := false
+		for _, h := range e.Hops {
+			if h.RequestID == f.HopsFor {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return false
 		}
 	}

@@ -98,5 +98,6 @@ export interface TraceListParams {
   search?: string
   after?: string
   before?: string
+  hopsFor?: string
   limit?: number
 }

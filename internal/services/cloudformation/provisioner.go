@@ -2247,6 +2247,10 @@ func internalRequest(ctx context.Context, router http.Handler, region, method, p
 	if region != "" {
 		req.Header.Set("X-Overcast-Region", region)
 	}
+	// Propagate the parent request ID so the child trace can link back.
+	if pr := trace.RecorderFromContext(ctx); pr != nil {
+		req.Header.Set("X-Overcast-Parent-Request-Id", pr.Entry().RequestID)
+	}
 	start := time.Now()
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { useState, Fragment } from "react"
+import { useState, Fragment, useMemo } from "react"
 import { ArrowLeft, Clock, Server, AlertCircle, Loader2, ChevronDown, ChevronRight, Terminal, Check } from "lucide-react"
-import { traceDetailQueryOptions } from "@/features/debug-traces/data"
+import { traceDetailQueryOptions, debugTraceKeys } from "@/features/debug-traces/data"
+import { debugTrace } from "@/services/api/misc"
 import { Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,12 +11,13 @@ import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
 import { useCopyToClipboard } from "@/hooks/use-clipboard"
 import { Link as RouterLink } from "@tanstack/react-router"
+import type { useNavigate } from "@tanstack/react-router"
 import { nsToHuman, statusColor, statusMessage, formatTimestamp, traceToCurl } from "@/features/debug-traces/utils"
 import { formatBodyForDisplay, bodyHintFromHeaders, formatStackTrace } from "@/lib/format-body"
 import { Waterfall } from "@/features/debug-traces/components/waterfall"
 import { SequenceDiagram } from "@/features/debug-traces/components/sequence-diagram"
 import { FlowMap } from "@/features/debug-traces/components/flow-map"
-import type { TraceEntry, TraceHop, TraceLogEntry } from "@/types"
+import type { TraceEntry, TraceHop, TraceLogEntry, TraceSummary } from "@/types"
 
 export const Route = createFileRoute("/debug/traces/$requestId")({
   head: ({ params }) => ({
@@ -128,7 +130,7 @@ function TraceDetailPage() {
       {/* Tab content */}
       <div className="min-h-0">
         {tab === "Overview" && <OverviewTab trace={trace} />}
-        {tab === "Hops" && <HopsTab hops={trace.hops ?? []} />}
+        {tab === "Hops" && <HopsTab hops={trace.hops ?? []} requestId={requestId} navigate={navigate} />}
         {tab === "Logs" && <LogsTab entries={trace.logEntries ?? []} />}
         {tab === "Errors" && <ErrorsTab trace={trace} />}
       </div>
@@ -342,13 +344,13 @@ function HopDetailPanel({ hopId, hops, onClose }: { hopId: string; hops: TraceHo
       {hop.requestBody && (
         <div className="mb-2">
           <div className="text-xs text-fg-muted mb-1">Request Body</div>
-          <HopBody raw={String(hop.requestBody)} />
+          <HopBody raw={String(hop.requestBody)} headers={hop.requestHeaders} />
         </div>
       )}
       {hop.responseBody && (
         <div>
           <div className="text-xs text-fg-muted mb-1">Response Body</div>
-          <HopBody raw={String(hop.responseBody)} />
+          <HopBody raw={String(hop.responseBody)} headers={hop.requestHeaders} />
         </div>
       )}
     </div>
@@ -452,20 +454,62 @@ function HeadersBodyView({
   )
 }
 
-function HopsTab({ hops }: { hops: TraceHop[] }) {
+function HopsTab({ hops, requestId, navigate }: { hops: TraceHop[]; requestId: string; navigate: ReturnType<typeof useNavigate> }) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const { copy, copied } = useCopyToClipboard()
 
-  if (hops.length === 0) {
+  const { data: upstream } = useQuery({
+    queryKey: [...debugTraceKeys.list(), "hopsFor", requestId],
+    queryFn: () => debugTrace.list({ hopsFor: requestId, limit: 50 }),
+  })
+  const upstreamTraces = useMemo(() => (upstream as unknown as { traces?: TraceSummary[] })?.traces ?? [], [upstream])
+
+  if (hops.length === 0 && upstreamTraces.length === 0) {
     return (
       <div className="text-center text-fg-muted py-8">
-        No internal service calls were made during this request.
+        No service calls recorded for this request.
       </div>
     )
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="flex flex-col gap-4">
+      {upstreamTraces.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-emerald-400 mb-2">↑ Called by ({upstreamTraces.length})</h3>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-fg-muted text-left">
+                  <th className="px-3 py-2 font-medium">Service</th>
+                  <th className="px-3 py-2 font-medium">Operation</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Duration</th>
+                  <th className="px-3 py-2 font-medium">Request ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {upstreamTraces.map((t) => (
+                  <tr key={t.requestId} className="border-b border-border hover:bg-bg-elevated cursor-pointer" onClick={() => navigate({ to: "/debug/traces/$requestId", params: { requestId: t.requestId } })}>
+                    <td className="px-3 py-2"><Badge variant="outline" className="text-xs">{t.service}</Badge></td>
+                    <td className="px-3 py-2 font-mono text-xs">{t.operation ?? "—"}</td>
+                    <td className={cn("px-3 py-2 font-mono text-xs", statusColor(t.statusCode))}>{t.statusCode > 0 ? `${t.statusCode}${statusMessage(t.statusCode) ? ` (${statusMessage(t.statusCode)})` : ""}` : "—"}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-fg-muted">{nsToHuman(t.duration)}</td>
+                    <td className="px-3 py-2">
+                      <RouterLink to="/debug/traces/$requestId" params={{ requestId: t.requestId }} className="font-mono text-xs text-accent hover:underline" onClick={(e) => e.stopPropagation()}>{t.requestId.slice(0, 12)}…</RouterLink>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {hops.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-amber-400 mb-2">↓ Called ({hops.length})</h3>
+          <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-fg-muted text-left">
@@ -548,13 +592,13 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
                         {hop.requestBody && (
                           <div>
                             <div className="text-fg-muted mb-1">Request Body:</div>
-                            <HopBody raw={String(hop.requestBody)} />
+          <HopBody raw={String(hop.requestBody)} headers={hop.requestHeaders} />
                           </div>
                         )}
                         {hop.responseBody && (
                           <div>
                             <div className="text-fg-muted mb-1">Response Body:</div>
-                            <HopBody raw={String(hop.responseBody)} />
+                            <HopBody raw={String(hop.responseBody)} headers={hop.requestHeaders} />
                           </div>
                         )}
                         {hop.error && (
@@ -575,6 +619,9 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
           })}
         </tbody>
       </table>
+    </div>
+      </div>
+      )}
     </div>
   )
 }
@@ -700,10 +747,16 @@ function ErrorsTab({ trace }: { trace: TraceEntry }) {
   )
 }
 
-function HopBody({ raw }: { raw: string }) {
-  const formatted = formatBodyForDisplay(raw, "text")
-  if (formatted.html) {
-    return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48" dangerouslySetInnerHTML={{ __html: formatted.html }} />
+function HopBody({ raw, headers }: { raw: string; headers?: Record<string, string[]> }) {
+  const ct = (headers?.["Content-Type"] ?? headers?.["content-type"] ?? [""])[0]
+  if (ct) {
+    const formatted = formatBodyForDisplay(raw, "text", ct)
+    if (formatted.html && formatted.html !== formatted.text) return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48" dangerouslySetInnerHTML={{ __html: formatted.html }} />
+  }
+  // Fallback: try to detect format from content.
+  for (const hint of ["text", "json", "xml"] as const) {
+    const formatted = formatBodyForDisplay(raw, hint)
+    if (formatted.html && formatted.html !== formatted.text) return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48" dangerouslySetInnerHTML={{ __html: formatted.html }} />
   }
   return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48">{raw}</pre>
 }

@@ -9,7 +9,7 @@ export interface FormattedBody {
 }
 
 export function formatBodyForDisplay(raw: string, hint: BodyLanguage, contentType?: string): FormattedBody {
-  if (isFormEncoded(contentType)) {
+  if (isFormEncoded(contentType) || (hint === "text" && looksLikeFormEncoded(raw))) {
     return formatFormBody(raw)
   }
   if (hint === "json" || (hint === "text" && looksLikeJSON(raw))) {
@@ -30,6 +30,10 @@ export function formatBodyForDisplay(raw: string, hint: BodyLanguage, contentTyp
 function looksLikeJSON(s: string): boolean {
   const t = s.trim()
   return (t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))
+}
+
+function looksLikeFormEncoded(s: string): boolean {
+  return /^[A-Za-z][\w.]*=[^&]*(&[A-Za-z][\w.]*=[^&]*)*$/.test(s.trim())
 }
 
 export function contentTypeToHint(contentType: string): BodyLanguage {

@@ -185,7 +185,7 @@ function buildGraph(trace: TraceEntry, threshold: number): { nodes: Node<FlowNod
       },
     })
     edges.push({ id: `${rootId}→${hop.id}`, source: rootId, target: hop.id, label: hop.operation, style: { stroke: serviceColor(hop.service) }, markerEnd: { type: MarkerType.ArrowClosed, color: serviceColor(hop.service) } })
-    y += 80
+    y += 100
   }
   for (const agg of aggregated.aggregates) {
     nodes.push({
@@ -194,7 +194,7 @@ function buildGraph(trace: TraceEntry, threshold: number): { nodes: Node<FlowNod
       style: { background: "var(--color-bg-elevated)", border: `2px dashed ${serviceColor(agg.service)}`, borderRadius: "8px", padding: "8px 16px", fontSize: "12px", color: "var(--color-fg-muted)", cursor: "default" },
     })
     edges.push({ id: `${rootId}→${agg.id}`, source: rootId, target: agg.id, label: `${agg.operation} ×${agg.count}`, style: { stroke: serviceColor(agg.service), strokeDasharray: "4 2" }, markerEnd: { type: MarkerType.ArrowClosed, color: serviceColor(agg.service) } })
-    y += 80
+    y += 100
   }
   return { nodes, edges }
 }
