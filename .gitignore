@@ -75,3 +75,4 @@ compat-comment.md
 flake-findings.json
 flake-run-*.json
 scripts/seed*.*
+.pnpm-store/

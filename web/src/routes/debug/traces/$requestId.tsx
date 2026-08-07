@@ -780,6 +780,7 @@ function EventsTab({ requestId }: { requestId: string }) {
     enabled: !!requestId,
     retry: false,
   })
+  const [expanded, setExpanded] = useState<number | null>(null)
 
   if (isLoading) return <Spinner />
   if (!events || events.length === 0) {
@@ -787,30 +788,38 @@ function EventsTab({ requestId }: { requestId: string }) {
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="overflow-auto rounded-lg border border-border bg-bg-elevated font-mono text-xs" style={{ maxHeight: "calc(100vh - 400px)" }}>
       {events.map((ev, i) => {
+        const isExpanded = expanded === i
         const label = eventTypeLabel(ev.type)
         const variant = eventBadgeVariant(ev.type)
         const srcColor = sourceColorClass(ev.source)
         return (
-          <EventRow key={i} ev={ev} label={label} variant={variant} srcColor={srcColor} />
+          <div
+            key={i}
+            className="group/row cursor-pointer border-b border-border-muted px-3 py-1.5 transition-colors hover:bg-accent-muted"
+            onClick={() => setExpanded(isExpanded ? null : i)}
+          >
+            <div className="flex min-w-0 items-baseline gap-2">
+              <span className="shrink-0 text-fg-subtle tabular-nums">
+                {formatEventTime(ev.time)}
+              </span>
+              <span className={cn("shrink-0 font-semibold", srcColor)}>
+                {ev.source}
+              </span>
+              <Badge variant={variant} className="shrink-0 text-xs">{label}</Badge>
+              {ev.resourceArn && (
+                <span className="min-w-0 truncate text-sm text-fg-muted">{ev.resourceArn}</span>
+              )}
+            </div>
+            {isExpanded && (
+              <div className="mt-1 rounded bg-bg-muted p-2 break-all whitespace-pre-wrap text-fg-muted">
+                <JsonTree value={ev.payload} path="$" />
+              </div>
+            )}
+          </div>
         )
       })}
-    </div>
-  )
-}
-
-function EventRow({ ev, label, variant, srcColor }: { ev: TraceEvent; label: string; variant: "default" | "success" | "danger" | "warning"; srcColor: string }) {
-  return (
-    <div className="border-b border-border px-3 py-2 leading-snug">
-      <div className="flex items-center gap-1.5">
-        <span className={cn("font-mono text-[11px] font-semibold", srcColor)}>{ev.source}</span>
-        <Badge variant={variant} className="py-px text-[10px] h-auto">{label}</Badge>
-        <span className="text-[11px] text-fg-muted ml-auto font-mono">{formatEventTime(ev.time)}</span>
-      </div>
-      <div className="pl-1">
-        <CompactJSON value={ev.payload} />
-      </div>
     </div>
   )
 }
@@ -826,51 +835,56 @@ function formatEventTime(iso: string): string {
   } catch { return iso }
 }
 
-const TOKENS = {
+const T = {
   string: "token string", property: "token property",
   number: "token number", boolean: "token boolean",
   null: "token null keyword", punctuation: "token punctuation",
+  operator: "token operator",
 }
 
-function CompactJSON({ value }: { value: unknown }) {
-  if (value === null || value === undefined) return <span className={cn("text-[11px] font-mono", TOKENS.null)}>null</span>
-  if (typeof value === "boolean") return <span className={cn("text-[11px] font-mono", TOKENS.boolean)}>{String(value)}</span>
-  if (typeof value === "number") return <span className={cn("text-[11px] font-mono", TOKENS.number)}>{value}</span>
-  if (typeof value === "string") return <span className={cn("text-[11px] font-mono", TOKENS.string)}>{JSON.stringify(value)}</span>
+function JsonTree({ value, path }: { value: unknown; path: string }) {
+  if (value === null || value === undefined) return <span className={T.null}>null</span>
+  if (typeof value === "boolean") return <span className={T.boolean}>{String(value)}</span>
+  if (typeof value === "number") return <span className={T.number}>{JSON.stringify(value)}</span>
+  if (typeof value === "string") {
+    const s = JSON.stringify(value)
+    if (value.startsWith("arn:")) return <span className={T.string}>"<span className="underline">{value}</span>"</span>
+    return <span className={T.string}>{s}</span>
+  }
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>[]</span>
+    if (value.length === 0) return <span className={T.punctuation}>[]</span>
     return (
-      <div className="pl-3">
-        <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>[</span>
+      <span>
+        <span className={T.punctuation}>[</span>
         {value.map((v, i) => (
-          <div key={i} className="flex items-start gap-1">
-            <CompactJSON value={v} />
-            {i < value.length - 1 && <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>,</span>}
-          </div>
+          <span key={i} className="block pl-4">
+            <JsonTree value={v} path={`${path}[${i}]`} />
+            {i < value.length - 1 && <span className={T.punctuation}>,</span>}
+          </span>
         ))}
-        <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>]</span>
-      </div>
+        <span className={cn("block", T.punctuation)}>]</span>
+      </span>
     )
   }
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
-    if (entries.length === 0) return <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>{'{}'}</span>
+    if (entries.length === 0) return <span className={T.punctuation}>{'{}'}</span>
     return (
-      <div className="pl-3">
-        <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>{'{'}</span>
+      <span>
+        <span className={T.punctuation}>{'{'}</span>
         {entries.map(([k, v], i) => (
-          <div key={k} className="flex items-start gap-1">
-            <span className={cn("text-[11px] font-mono", TOKENS.property)}>{JSON.stringify(k)}</span>
-            <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>:</span>
-            <CompactJSON value={v} />
-            {i < entries.length - 1 && <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>,</span>}
-          </div>
+          <span key={k} className="block pl-4">
+            <span className={T.property}>{JSON.stringify(k)}</span>
+            <span className={T.operator}>:</span>{" "}
+            <JsonTree value={v} path={`${path}.${k}`} />
+            {i < entries.length - 1 && <span className={T.punctuation}>,</span>}
+          </span>
         ))}
-        <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>{'}'}</span>
-      </div>
+        <span className={cn("block", T.punctuation)}>{'}'}</span>
+      </span>
     )
   }
-  return <span className="text-[11px] font-mono">{String(value)}</span>
+  return <span className="text-fg-muted">{JSON.stringify(String(value))}</span>
 }
 
 function eventTypeLabel(type: string): string {
