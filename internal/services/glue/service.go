@@ -168,17 +168,17 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, _ clock.Clock) 
 		cfg:   cfg,
 	}
 	s.ops = map[string]http.HandlerFunc{
-		"CreateDatabase":      s.createDatabase,
-		"GetDatabase":         s.getDatabase,
-		"GetDatabases":        s.getDatabases,
-		"DeleteDatabase":      s.deleteDatabase,
-		"CreateTable":         s.createTable,
-		"GetTable":            s.getTable,
-		"GetTables":           s.getTables,
-		"DeleteTable":         s.deleteTable,
-		"TagResource":         s.tagResource,
-		"UntagResource":       s.untagResource,
-		"GetTags": s.getTags,
+		"CreateDatabase": s.createDatabase,
+		"GetDatabase":    s.getDatabase,
+		"GetDatabases":   s.getDatabases,
+		"DeleteDatabase": s.deleteDatabase,
+		"CreateTable":    s.createTable,
+		"GetTable":       s.getTable,
+		"GetTables":      s.getTables,
+		"DeleteTable":    s.deleteTable,
+		"TagResource":    s.tagResource,
+		"UntagResource":  s.untagResource,
+		"GetTags":        s.getTags,
 	}
 	s.typedOp = s.typedOps()
 	return s

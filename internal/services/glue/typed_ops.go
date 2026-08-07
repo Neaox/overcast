@@ -7,17 +7,17 @@ import (
 
 func (s *Service) typedOps() map[string]op.Operation {
 	return map[string]op.Operation{
-		"CreateDatabase":      op.NewTyped[createDatabaseReq, struct{}]("CreateDatabase", s.createDatabaseTyped),
-		"GetDatabase":         op.NewTyped[getDatabaseReq, getDatabaseResp]("GetDatabase", s.getDatabaseTyped),
-		"GetDatabases":        op.NewTyped[struct{}, getDatabasesResp]("GetDatabases", s.getDatabasesTyped),
-		"DeleteDatabase":      op.NewTyped[deleteDatabaseReq, struct{}]("DeleteDatabase", s.deleteDatabaseTyped),
-		"CreateTable":         op.NewTyped[createTableReq, struct{}]("CreateTable", s.createTableTyped),
-		"GetTable":            op.NewTyped[getTableReq, getTableResp]("GetTable", s.getTableTyped),
-		"GetTables":           op.NewTyped[getTablesReq, getTablesResp]("GetTables", s.getTablesTyped),
-		"DeleteTable":         op.NewTyped[deleteTableReq, struct{}]("DeleteTable", s.deleteTableTyped),
-		"TagResource":         op.NewTyped[glueTagResourceReq, struct{}]("TagResource", s.tagResourceTyped),
-		"UntagResource":       op.NewTyped[glueUntagResourceReq, struct{}]("UntagResource", s.untagResourceTyped),
-		"ListTagsForResource": op.NewTyped[glueListTagsForResourceReq, glueListTagsForResourceResp]("ListTagsForResource", s.listTagsForResourceTyped),
+		"CreateDatabase": op.NewTyped[createDatabaseReq, struct{}]("CreateDatabase", s.createDatabaseTyped),
+		"GetDatabase":    op.NewTyped[getDatabaseReq, getDatabaseResp]("GetDatabase", s.getDatabaseTyped),
+		"GetDatabases":   op.NewTyped[struct{}, getDatabasesResp]("GetDatabases", s.getDatabasesTyped),
+		"DeleteDatabase": op.NewTyped[deleteDatabaseReq, struct{}]("DeleteDatabase", s.deleteDatabaseTyped),
+		"CreateTable":    op.NewTyped[createTableReq, struct{}]("CreateTable", s.createTableTyped),
+		"GetTable":       op.NewTyped[getTableReq, getTableResp]("GetTable", s.getTableTyped),
+		"GetTables":      op.NewTyped[getTablesReq, getTablesResp]("GetTables", s.getTablesTyped),
+		"DeleteTable":    op.NewTyped[deleteTableReq, struct{}]("DeleteTable", s.deleteTableTyped),
+		"TagResource":    op.NewTyped[glueTagResourceReq, struct{}]("TagResource", s.tagResourceTyped),
+		"UntagResource":  op.NewTyped[glueUntagResourceReq, struct{}]("UntagResource", s.untagResourceTyped),
+		"GetTags":        op.NewTyped[glueListTagsForResourceReq, glueListTagsForResourceResp]("GetTags", s.listTagsForResourceTyped),
 	}
 }
 
