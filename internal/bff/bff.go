@@ -35,6 +35,7 @@ import (
 const (
 	endpointHeader = "x-overcast-endpoint"
 	regionHeader   = "x-overcast-region"
+	defaultUIPort  = 4567
 )
 
 // defaultAPIURL is the fallback endpoint used when the browser does not send
@@ -42,12 +43,6 @@ const (
 // NewHandler so that the BFF proxies to the correct port even when the
 // emulator listens on a non-standard port.
 var defaultAPIURL = "http://localhost:4566"
-
-// publishedAPIPort is the host port the API is reachable on from outside the
-// container, when that differs from the port this process listens on. Zero
-// means they are the same and no endpoint rewriting is needed. Set from
-// UIConfig in NewHandler.
-var publishedAPIPort int
 
 var bffHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -89,6 +84,8 @@ type UIConfig struct {
 	// in auto mode, or the configured certificate chain in explicit mode.
 	// Without it the BFF could not verify the very server it fronts.
 	TLSTrustPEM []byte
+	// InDocker indicates the server process is running inside a Docker container.
+	InDocker bool
 }
 
 // browserPort returns the port the SPA should be told to use.
@@ -118,12 +115,6 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 		defaultAPIURL = fmt.Sprintf("%s://localhost:%d", scheme, cfg.APIPort)
 	}
 	configureAPITransports(cfg)
-	// Only meaningful when the two differ; equal ports need no rewriting.
-	if cfg.BrowserAPIPort > 0 && cfg.BrowserAPIPort != cfg.APIPort {
-		publishedAPIPort = cfg.BrowserAPIPort
-	} else {
-		publishedAPIPort = 0
-	}
 
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
@@ -266,17 +257,17 @@ func resolveEndpoint(r *http.Request) string {
 // console at a genuinely different emulator still works — that endpoint names
 // another host.
 func normalizeEndpoint(ep string) string {
-	if publishedAPIPort == 0 {
-		return ep
-	}
 	u, err := url.Parse(ep)
 	if err != nil || u.Host == "" {
 		return ep
 	}
-	if u.Port() != strconv.Itoa(publishedAPIPort) || !isLoopbackHost(u.Hostname()) {
-		return ep
+	// Any loopback endpoint must be rewritten to the internal API URL,
+	// because from inside the container the emulator is always on
+	// localhost:APIPort regardless of host port mappings.
+	if isLoopbackHost(u.Hostname()) {
+		return defaultAPIURL
 	}
-	return defaultAPIURL
+	return ep
 }
 
 // isLoopbackHost reports whether hostname refers to this machine.
@@ -547,59 +538,57 @@ func serveIndexHTML(w http.ResponseWriter, r *http.Request, staticFS fs.FS, cfg 
 }
 
 // buildBootstrapScript returns a <script> tag that sets window.__OVERCAST__
-// based on the incoming request's Host header. The derived apiBaseUrl is:
-//
-//   - Host "overcast-app.local"      → "http://overcast.local"   (bridge pairing)
-//   - Host "<host>:<uiPort>"         → "http://<host>:<APIPort>"
-//   - Host "<host>" (no port)        → "http://<host>"            (port 80 via bridge)
+// based on the incoming request's Host header. The scheme is http unless the
+// emulator is configured for TLS or the request itself arrived over TLS.
+// When the API port cannot be determined (Docker remap without socket),
+// apiBaseUrl is empty and endpointKnown is false — the SPA shows the
+// connection dialog instead of guessing.
 func buildBootstrapScript(r *http.Request, cfg UIConfig) string {
-	apiBaseURL := deriveAPIBaseURL(r, cfg)
+	apiBaseURL, endpointKnown := deriveAPIBaseURL(r, cfg)
 	region := cfg.Region
 	if region == "" {
 		region = "us-east-1"
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"apiBaseUrl": apiBaseURL,
-		"region":     region,
-		"debug":      cfg.Debug,
+		"apiBaseUrl":    apiBaseURL,
+		"region":        region,
+		"debug":         cfg.Debug,
+		"endpointKnown": endpointKnown,
+		"inDocker":      cfg.InDocker,
 	})
 	return `<script>window.__OVERCAST__=` + string(payload) + `;</script>`
 }
 
-func deriveAPIBaseURL(r *http.Request, cfg UIConfig) string {
+func deriveAPIBaseURL(r *http.Request, cfg UIConfig) (url string, endpointKnown bool) {
 	host := r.Host
 	if host == "" {
 		host = "localhost"
 	}
-	// The bridge serves the UI under overcast-app.local and the API under
-	// overcast.local on port 80. Pair them explicitly.
 	if strings.EqualFold(host, "overcast-app.local") {
-		return "http://overcast.local"
+		return "http://overcast.local", true
 	}
-	// Split host:port so we can swap the port for the API port.
 	hostname := host
 	hasPort := false
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		hostname = h
 		hasPort = true
 	}
-	// https when Overcast itself serves TLS (both listeners share one mode,
-	// so a TLS UI implies a TLS API) or when this request arrived over TLS
-	// (a terminating proxy in front of us); never a downgrade.
 	scheme := "http"
 	if cfg.TLS || r.TLS != nil {
 		scheme = "https"
 	}
 	if !hasPort {
-		// Access came through a port-80 proxy (bridge) on an arbitrary host;
-		// assume the paired API is also reachable on the same host at port 80.
-		return scheme + "://" + hostname
+		return scheme + "://" + hostname, true
 	}
-	apiPort := cfg.browserPort()
-	if apiPort == 0 {
-		apiPort = 4566
+	if apiPort := cfg.browserPort(); apiPort > 0 && apiPort != cfg.APIPort {
+		return scheme + "://" + hostname + ":" + strconv.Itoa(apiPort), true
 	}
-	return scheme + "://" + hostname + ":" + strconv.Itoa(apiPort)
+	if _, portStr, err := net.SplitHostPort(host); err == nil {
+		if p, _ := strconv.Atoi(portStr); p == defaultUIPort || p == cfg.APIPort+1 {
+			return scheme + "://" + hostname + ":" + strconv.Itoa(cfg.APIPort), true
+		}
+	}
+	return "", false
 }
 
 // ── Route handlers ─────────────────────────────────────────────────────────

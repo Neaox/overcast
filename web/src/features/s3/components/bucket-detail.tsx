@@ -38,6 +38,9 @@ import { Badge } from "@/components/ui/badge"
 import { TableCell, TableHead } from "@/components/ui/table"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import { useEndpoint } from "@/hooks/use-endpoint"
+import { CopyUrlButton } from "@/components/ui/copy-url-button"
+import { s3CopyFormats } from "@/types/s3"
 import { useToast } from "@/components/ui/toast"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
@@ -52,6 +55,7 @@ export function BucketDetail() {
   const { bucket } = Route.useParams()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const endpoint = useEndpoint()
   const { toast } = useToast()
 
   const [prefix, setPrefix] = useState("")
@@ -227,6 +231,11 @@ export function BucketDetail() {
         title={bucket}
         actions={
           <>
+            <CopyUrlButton
+              compact
+              formats={s3CopyFormats(endpoint.baseUrl, bucket)}
+              noun="bucket URL"
+            />
             <Button
               variant="ghost"
               size="icon"
@@ -339,6 +348,11 @@ export function BucketDetail() {
                           </TableCell>
                           <TableCell className="px-1">
                             <div className="flex items-center gap-0.5">
+                              <CopyUrlButton
+                                compact
+                                noun="URL"
+                                formats={s3CopyFormats(endpoint.baseUrl, bucket, item.prefix)}
+                              />
                               <Button
                                 variant="ghost"
                                 size="icon-sm"
@@ -387,6 +401,11 @@ export function BucketDetail() {
                           </TableCell>
                           <TableCell className="px-1">
                             <div className="flex items-center gap-0.5">
+                              <CopyUrlButton
+                                compact
+                                noun="URL"
+                                formats={s3CopyFormats(endpoint.baseUrl, bucket, item.key)}
+                              />
                               <Button
                                 variant="ghost"
                                 size="icon-sm"

@@ -10,17 +10,11 @@ import (
 	"time"
 )
 
-// TestHandleEvents_survivesLongerThanClientTimeout verifies the SSE proxy does
-// not inherit the short Timeout from bffHTTPClient. We shrink bffHTTPClient's
-// timeout to 200 ms and assert the stream stays open for a full second—proving
-// the events handler uses a separate streaming client.
 func TestHandleEvents_survivesLongerThanClientTimeout(t *testing.T) {
-	// Given: bffHTTPClient has a very short timeout.
 	origClient := bffHTTPClient
 	bffHTTPClient = &http.Client{Timeout: 200 * time.Millisecond}
 	defer func() { bffHTTPClient = origClient }()
 
-	// And: an upstream SSE endpoint that sends heartbeats every 50 ms.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -46,8 +40,11 @@ func TestHandleEvents_survivesLongerThanClientTimeout(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// When: we open the SSE proxy for 1 s (well beyond the 200 ms client timeout).
-	req := httptest.NewRequest(http.MethodGet, "/api/events?ep="+upstream.URL, nil)
+	prevAPIURL := defaultAPIURL
+	defaultAPIURL = upstream.URL
+	defer func() { defaultAPIURL = prevAPIURL }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
 	ctx, cancel := context.WithTimeout(req.Context(), 1*time.Second)
 	defer cancel()
 	req = req.WithContext(ctx)
@@ -55,7 +52,6 @@ func TestHandleEvents_survivesLongerThanClientTimeout(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleEvents(rec, req)
 
-	// Then: heartbeat frames should keep flowing for the full second.
 	body := rec.Body.String()
 	count := strings.Count(body, `data: {"type":"heartbeat"}`)
 	if count < 10 {
@@ -64,12 +60,6 @@ func TestHandleEvents_survivesLongerThanClientTimeout(t *testing.T) {
 	}
 }
 
-// TestHandleEvents_ForwardsResumePoint pins that a reconnecting browser's
-// resume point survives the proxy hop. The BFF builds a fresh upstream
-// request rather than forwarding the client's, so neither the Last-Event-ID
-// header nor the ?last_event_id fallback reaches /_events unless it is
-// copied across deliberately — and without it the emulator replays its whole
-// history buffer on every reconnect.
 func TestHandleEvents_ForwardsResumePoint(t *testing.T) {
 	type received struct {
 		header string
@@ -77,7 +67,7 @@ func TestHandleEvents_ForwardsResumePoint(t *testing.T) {
 	}
 	got := make(chan received, 1)
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, restore := stubEmulatorForProxyTests(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got <- received{
 			header: r.Header.Get("Last-Event-ID"),
 			query:  r.URL.Query().Get("last_event_id"),
@@ -85,10 +75,10 @@ func TestHandleEvents_ForwardsResumePoint(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
 	}))
-	defer upstream.Close()
+	defer restore()
 
 	t.Run("header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/events?ep="+upstream.URL, nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
 		req.Header.Set("Last-Event-ID", "run7-42")
 		handleEvents(httptest.NewRecorder(), req)
 
@@ -98,7 +88,7 @@ func TestHandleEvents_ForwardsResumePoint(t *testing.T) {
 	})
 
 	t.Run("query param", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/events?ep="+upstream.URL+"&last_event_id=run7-99", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/events?last_event_id=run7-99", nil)
 		handleEvents(httptest.NewRecorder(), req)
 
 		if r := <-got; r.query != "run7-99" {
@@ -107,7 +97,7 @@ func TestHandleEvents_ForwardsResumePoint(t *testing.T) {
 	})
 
 	t.Run("query param survives alongside source filters", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/events?ep="+upstream.URL+"&source=s3&last_event_id=run7-1", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/events?source=s3&last_event_id=run7-1", nil)
 		handleEvents(httptest.NewRecorder(), req)
 
 		if r := <-got; r.query != "run7-1" {

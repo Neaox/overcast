@@ -8,6 +8,7 @@ import (
 
 	overcast "github.com/Neaox/overcast"
 	"github.com/Neaox/overcast/internal/bff"
+	"github.com/Neaox/overcast/internal/containerendpoint"
 )
 
 func newUIHandler(apiPort, browserAPIPort int, region string, debug bool, tlsEnabled bool, tlsTrustPEM []byte) (http.Handler, error) {
@@ -26,5 +27,6 @@ func newUIHandler(apiPort, browserAPIPort int, region string, debug bool, tlsEna
 		Debug:          debug,
 		TLS:            tlsEnabled,
 		TLSTrustPEM:    tlsTrustPEM,
+		InDocker:       containerendpoint.RunningInContainer(),
 	}), nil
 }

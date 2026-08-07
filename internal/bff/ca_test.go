@@ -6,32 +6,21 @@ import (
 	"testing"
 )
 
-// TestCACert_proxiesPEMFromEmulator verifies /api/ca.pem passes the daemon's
-// CA certificate through verbatim, PEM content type included, so the UI
-// origin can also hand out the CA.
 func TestCACert_proxiesPEMFromEmulator(t *testing.T) {
-	// Given: a fake emulator serving its CA certificate
 	const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
 	var gotPath string
-	emulator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, restore := stubEmulatorForProxyTests(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.EscapedPath()
 		w.Header().Set("Content-Type", "application/x-pem-file")
-		w.Write([]byte(pem)) //nolint:errcheck
+		w.Write([]byte(pem))
 	}))
-	defer emulator.Close()
+	defer restore()
 
-	origClient := bffHTTPClient
-	bffHTTPClient = emulator.Client()
-	defer func() { bffHTTPClient = origClient }()
-
-	// When: the browser requests the CA through the BFF
 	handler := NewHandler(testStaticFS(), nil, UIConfig{})
 	req := httptest.NewRequest(http.MethodGet, "/api/ca.pem", nil)
-	req.Header.Set(endpointHeader, emulator.URL)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	// Then: the PEM comes back verbatim from /_overcast/ca.pem
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -46,19 +35,12 @@ func TestCACert_proxiesPEMFromEmulator(t *testing.T) {
 	}
 }
 
-// TestCACert_forwardsNotFound verifies a daemon without a CA (TLS off)
-// surfaces as 404 through the proxy rather than a masked error.
 func TestCACert_forwardsNotFound(t *testing.T) {
-	emulator := httptest.NewServer(http.NotFoundHandler())
-	defer emulator.Close()
-
-	origClient := bffHTTPClient
-	bffHTTPClient = emulator.Client()
-	defer func() { bffHTTPClient = origClient }()
+	_, restore := stubEmulatorForProxyTests(t, http.NotFoundHandler())
+	defer restore()
 
 	handler := NewHandler(testStaticFS(), nil, UIConfig{})
 	req := httptest.NewRequest(http.MethodGet, "/api/ca.pem", nil)
-	req.Header.Set(endpointHeader, emulator.URL)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 

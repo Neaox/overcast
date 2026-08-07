@@ -33,6 +33,9 @@ interface ComboboxBaseProps<T> {
   renderSeparator?: (item: T, prev: T | null) => React.ReactNode
   isItemDisabled?: (item: T) => string | undefined
   allowCustom?: boolean
+  /** When true, re-opening the dropdown seeds the query from the current value
+   *  instead of clearing it, so the user can edit after selecting a suggestion. */
+  allowFreeText?: boolean
   /** Shown when the filtered list is empty. Defaults to 'No results for "<query>"'. */
   emptyMessage?: string
   /** When true, renders a disabled input with a spinner instead of the full combobox. */
@@ -67,6 +70,7 @@ function useCombobox<T>(
   filterFn: (item: T, query: string) => boolean,
   getItemValue: (item: T) => string,
   allowCustom: boolean,
+  allowFreeText: boolean,
 ) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -87,7 +91,7 @@ function useCombobox<T>(
   }
 
   function handleOpen() {
-    setQuery("")
+    setQuery(allowFreeText ? _value : "")
     setActiveIdx(0)
     setOpen(true)
   }
@@ -128,6 +132,7 @@ function useCombobox<T>(
   // Close only when focus leaves the entire container (input + dropdown together).
   function handleContainerBlur(e: React.FocusEvent) {
     if (e.currentTarget.contains(e.relatedTarget)) return
+    if (allowFreeText && query && query !== _value) onChange(query)
     setOpen(false)
     setQuery("")
   }
@@ -259,6 +264,7 @@ function DropdownList<T>({
   select,
   items,
   popoverWidth,
+  allowFreeText,
 }: {
   filtered: T[]
   activeIdx: number
@@ -274,6 +280,7 @@ function DropdownList<T>({
   select: (v: string) => void
   items: T[]
   popoverWidth: string
+  allowFreeText: boolean
 }) {
   const showCustomFooter =
     !!renderCustomFooter && !!query && !items.find((item) => getItemValue(item) === query)
@@ -294,9 +301,11 @@ function DropdownList<T>({
       style={{ zIndex: 9999 }}
     >
       {filtered.length === 0 && !showCustomFooter ? (
-        <p className="px-3 py-6 text-center text-sm text-fg-muted">
-          {emptyMessage ?? `No results for "${query}"`}
-        </p>
+        allowFreeText ? null : (
+          <p className="px-3 py-6 text-center text-sm text-fg-muted">
+            {emptyMessage ?? `No results for "${query}"`}
+          </p>
+        )
       ) : (
         <ul ref={listRef} role="listbox" className="max-h-64 overflow-y-auto py-1">
           {filtered.map((item, i) => {
@@ -352,6 +361,7 @@ function SingleComboboxImpl<T>({
   renderSeparator,
   isItemDisabled,
   allowCustom = false,
+  allowFreeText = false,
   emptyMessage,
   isLoading = false,
   id,
@@ -372,7 +382,7 @@ function SingleComboboxImpl<T>({
     select,
     handleKeyDown,
     handleContainerBlur,
-  } = useCombobox(value, onChange, items, filterFn, getItemValue, allowCustom)
+  } = useCombobox(value, onChange, items, filterFn, getItemValue, allowCustom, allowFreeText)
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -408,7 +418,11 @@ function SingleComboboxImpl<T>({
             placeholder={open ? value : (placeholder ?? "")}
             spellCheck={false}
             onFocus={handleOpen}
-            onChange={(e) => setQuery(e.target.value)}
+            onClick={handleOpen}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              if (allowFreeText) onChange(e.target.value)
+            }}
             onKeyDown={handleKeyDown}
             className={cn(
               "flex h-8 w-full rounded-md border border-border bg-bg py-1 pr-8 pl-3",
@@ -438,6 +452,7 @@ function SingleComboboxImpl<T>({
             select={select}
             items={items}
             popoverWidth={popoverWidth}
+            allowFreeText={allowFreeText}
           />
         </PopoverPrimitive.Portal>
       )}
@@ -554,6 +569,7 @@ function MultiComboboxImpl<T>({
             select={toggle}
             items={items}
             popoverWidth={popoverWidth}
+            allowFreeText={false}
           />
         </PopoverPrimitive.Portal>
       )}
@@ -591,6 +607,7 @@ export function ComboboxCompact<T>({
   renderItem,
   renderCustomFooter,
   allowCustom = false,
+  allowFreeText = false,
   leadingIcon: LeadingIcon,
   inputClassName,
   popoverWidth = "w-64",
@@ -610,7 +627,7 @@ export function ComboboxCompact<T>({
     select,
     handleKeyDown,
     handleContainerBlur,
-  } = useCombobox(value, onChange, items, filterFn, getItemValue, allowCustom)
+  } = useCombobox(value, onChange, items, filterFn, getItemValue, allowCustom, allowFreeText)
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -645,7 +662,10 @@ export function ComboboxCompact<T>({
             spellCheck={false}
             onFocus={handleOpen}
             onClick={handleOpen}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              if (allowFreeText) onChange(e.target.value)
+            }}
             onKeyDown={handleKeyDown}
             className={cn(
               "min-w-0 flex-1 cursor-pointer bg-transparent px-2 font-mono text-xs",
@@ -676,6 +696,7 @@ export function ComboboxCompact<T>({
             select={select}
             items={items}
             popoverWidth={popoverWidth}
+            allowFreeText={allowFreeText}
           />
         </PopoverPrimitive.Portal>
       )}
