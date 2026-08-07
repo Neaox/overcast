@@ -26,6 +26,9 @@ func TestTrace_requestLifecycle(t *testing.T) {
 	// Then: the response carries a request ID
 	reqID := resp.Header.Get("x-amzn-requestid")
 	if reqID == "" {
+		reqID = resp.Header.Get("x-amz-request-id")
+	}
+	if reqID == "" {
 		t.Fatal("expected x-amzn-requestid header")
 	}
 
