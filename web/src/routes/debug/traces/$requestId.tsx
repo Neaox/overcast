@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
 import { useCopyToClipboard } from "@/hooks/use-clipboard"
+import { Link as RouterLink } from "@tanstack/react-router"
 import { nsToHuman, statusColor, statusMessage, formatTimestamp, traceToCurl } from "@/features/debug-traces/utils"
-import { formatBodyForDisplay, bodyHintFromHeaders } from "@/lib/format-body"
+import { formatBodyForDisplay, bodyHintFromHeaders, formatStackTrace } from "@/lib/format-body"
 import { Waterfall } from "@/features/debug-traces/components/waterfall"
 import { SequenceDiagram } from "@/features/debug-traces/components/sequence-diagram"
 import { FlowMap } from "@/features/debug-traces/components/flow-map"
@@ -20,7 +21,10 @@ export const Route = createFileRoute("/debug/traces/$requestId")({
   head: ({ params }) => ({
     meta: [{ title: `Trace ${params.requestId.slice(0, 12)}… — Overcast` }],
   }),
-  component: TraceDetailPage,
+  component: function TraceDetailRoute() {
+    const { requestId } = Route.useParams()
+    return <TraceDetailPage key={requestId} />
+  },
 })
 
 const tabs = ["Overview", "Hops", "Logs", "Errors"] as const
@@ -279,6 +283,12 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
           </div>
         </div>
       )}
+      {trace.stack && (
+        <details className="mt-2">
+          <summary className="text-sm font-medium text-fg-muted cursor-pointer hover:text-fg">Stack trace</summary>
+          <pre className="bg-bg rounded-lg border border-border p-4 text-xs font-mono overflow-x-auto max-h-64 mt-2 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: formatStackTrace(trace.stack) }} />
+        </details>
+      )}
       {selectedHopId && (
         <HopDetailPanel hopId={selectedHopId} hops={hops} onClose={() => setSelectedHopId(null)} />
       )}
@@ -383,7 +393,8 @@ function HeadersBodyView({
   streaming?: boolean
   hint: "json" | "xml" | "text"
 }) {
-  const formatted = body !== undefined ? formatBodyForDisplay(body, hint) : null
+  const ct = (headers["Content-Type"] ?? headers["content-type"] ?? [""])[0]
+  const formatted = body !== undefined ? formatBodyForDisplay(body, hint, ct) : null
   return (
     <div className="flex flex-col gap-3">
       {streaming && (
@@ -455,8 +466,9 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
             <th className="px-3 py-2 font-medium w-8">#</th>
             <th className="px-3 py-2 font-medium">Caller</th>
             <th className="px-3 py-2 font-medium">Service</th>
-            <th className="px-3 py-2 font-medium">Operation</th>
-            <th className="px-3 py-2 font-medium">Status</th>
+              <th className="px-3 py-2 font-medium">Operation</th>
+              <th className="px-3 py-2 font-medium">Request ID</th>
+              <th className="px-3 py-2 font-medium">Status</th>
             <th className="px-3 py-2 font-medium">Duration</th>
           </tr>
         </thead>
@@ -484,6 +496,15 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
                     <Badge variant="outline" className="text-xs">{hop.service}</Badge>
                   </td>
                   <td className="px-3 py-2 font-mono text-xs">{hop.operation}</td>
+                  <td className="px-3 py-2">
+                    {hop.requestId ? (
+                      <RouterLink to="/debug/traces/$requestId" params={{ requestId: hop.requestId }} className="font-mono text-xs text-accent hover:underline" onClick={(e) => e.stopPropagation()}>
+                        {hop.requestId.slice(0, 12)}…
+                      </RouterLink>
+                    ) : (
+                      <span className="text-fg-muted text-xs">—</span>
+                    )}
+                  </td>
                   <td className={cn("px-3 py-2 font-mono text-xs", statusColor(hop.responseStatus))}>
                     {hop.responseStatus}
                     {statusMessage(hop.responseStatus) && ` (${statusMessage(hop.responseStatus)})`}
@@ -494,8 +515,14 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
                 </tr>
                 {isExpanded && (
                   <tr key={`${hop.id}-detail`} className="bg-bg-elevated">
-                    <td colSpan={7} className="px-4 py-3">
+                    <td colSpan={8} className="px-4 py-3">
                       <div className="text-xs space-y-2">
+                        {hop.requestId && (
+                          <div>
+                            <span className="text-fg-muted">Request ID: </span>
+                            <RouterLink to="/debug/traces/$requestId" params={{ requestId: hop.requestId }} className="font-mono text-accent hover:underline">{hop.requestId}</RouterLink>
+                          </div>
+                        )}
                         {hop.targetUri && (
                           <div className="flex items-center gap-2">
                             <span className="text-fg-muted">Target: </span>
@@ -525,6 +552,12 @@ function HopsTab({ hops }: { hops: TraceHop[] }) {
                         )}
                         {hop.error && (
                           <div className="text-red-400 font-mono">{hop.error}</div>
+                        )}
+                        {hop.stack && (
+                          <details className="mt-2">
+                            <summary className="text-xs text-fg-muted cursor-pointer hover:text-fg">Stack trace</summary>
+                            <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48 mt-1 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: formatStackTrace(hop.stack) }} />
+                          </details>
                         )}
                       </div>
                     </td>

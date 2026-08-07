@@ -1,4 +1,5 @@
 import Prism from "@/lib/prism"
+import { highlightGoStack } from "@/lib/go-stack-prism"
 
 export type BodyLanguage = "json" | "xml" | "text"
 
@@ -7,7 +8,10 @@ export interface FormattedBody {
   html?: string
 }
 
-export function formatBodyForDisplay(raw: string, hint: BodyLanguage): FormattedBody {
+export function formatBodyForDisplay(raw: string, hint: BodyLanguage, contentType?: string): FormattedBody {
+  if (isFormEncoded(contentType)) {
+    return formatFormBody(raw)
+  }
   if (hint === "json" || (hint === "text" && looksLikeJSON(raw))) {
     try {
       const formatted = JSON.stringify(JSON.parse(raw), null, 2)
@@ -93,4 +97,53 @@ function formatXML(text: string): string {
   }
 
   return lines.join("\n")
+}
+
+function isFormEncoded(contentType?: string): boolean {
+  return !!contentType && /application\/x-www-form-urlencoded/i.test(contentType.split(";")[0])
+}
+
+function formatFormBody(raw: string): FormattedBody {
+  const params = new URLSearchParams(raw)
+  if (Array.from(params.entries()).length === 0) return { text: raw }
+  let html = '<table class="w-full text-sm">'
+  html += '<thead><tr class="border-b border-border text-fg-muted text-left"><th class="px-3 py-2 font-medium text-xs">Name</th><th class="px-3 py-2 font-medium text-xs">Value</th></tr></thead>'
+  html += '<tbody>'
+  for (const [k, v] of params.entries()) {
+    html += `<tr class="border-b border-border"><td class="px-3 py-2 font-mono text-xs text-accent whitespace-nowrap">${escapeHTML(k)}</td><td class="px-3 py-2 font-mono text-xs break-all">${escapeHTML(v)}</td></tr>`
+  }
+  html += '</tbody></table>'
+  return { text: raw, html }
+}
+
+function escapeHTML(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+/** Strip CaptureStack + caller frames, then apply Prism highlighting. */
+export function formatStackTrace(raw: string): string {
+  return highlightGoStack(stripTracingFrames(raw))
+}
+
+function stripTracingFrames(s: string): string {
+  const lines = s.split("\n")
+  const out = [lines[0]] // goroutine header
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].includes("internal/trace.CaptureStack") || lines[i].includes("internal/trace.(*Recorder).AddHop")) {
+      i += 1 // file:line
+      i += 1 // caller func
+      i += 1 // caller file:line
+      continue
+    }
+    // Strip function arguments and PC offsets — they're hex pointers, not useful for tracing.
+    let ln = lines[i]
+    if (!ln.startsWith("\t") && ln.includes("(") && ln.includes(")")) {
+      ln = ln.replace(/\(.*\)$/, "()")
+    }
+    if (ln.startsWith("\t")) {
+      ln = ln.replace(/ \+0x[0-9a-f]+$/, "")
+    }
+    out.push(ln)
+  }
+  return out.join("\n")
 }

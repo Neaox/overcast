@@ -30,6 +30,7 @@ export interface TraceEntry {
   remoteAddr?: string
   userAgent?: string
   referer?: string
+  stack?: string
 
   xrayTraceId?: string
   metadata?: Record<string, unknown>
@@ -38,6 +39,7 @@ export interface TraceEntry {
 export interface TraceHop {
   id: string
   parent?: string
+  requestId?: string
   order: number
   callerService: string
   callerOperation?: string
@@ -52,6 +54,7 @@ export interface TraceHop {
   error?: string
   timestamp: string
   noisy?: boolean
+  stack?: string
 }
 
 export interface TraceLogEntry {
@@ -72,6 +75,8 @@ export interface TraceSummary {
   statusCode: number
   duration: number
   internal?: boolean
+  hopCount?: number
+  logCount?: number
 }
 
 export interface TraceListResponse {
@@ -91,5 +96,6 @@ export interface TraceListParams {
   status?: string
   search?: string
   after?: string
+  before?: string
   limit?: number
 }

@@ -123,7 +123,8 @@ type ListFilter struct {
 	Path    string
 	Status  string
 	Search  string
-	After   string
+	After   string // cursor for older entries (next page)
+	Before  string // cursor for newer entries (polling for fresh data)
 	Limit   int
 }
 
@@ -155,6 +156,21 @@ func (b *Buffer) List(filter ListFilter) ([]*Entry, string) {
 	})
 
 	start := 0
+	if filter.Before != "" {
+		// Return entries newer than the cursor (poll for fresh data).
+		for i, e := range candidates {
+			if e.RequestID == filter.Before {
+				result := candidates[:i]
+				var cursor string
+				if len(result) > 0 {
+					cursor = result[0].RequestID
+				}
+				return result, cursor
+			}
+		}
+		// Cursor not found — return everything (all newer than "nothing").
+		return candidates, ""
+	}
 	if filter.After != "" {
 		found := false
 		for i, e := range candidates {

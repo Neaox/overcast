@@ -44,6 +44,9 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 			}
 
 			rec := trace.NewRecorder(reqID, start, r.Method, r.URL.Path, r.Host, r.URL.RawQuery, requestHeaders)
+			if pid := r.Header.Get("X-Overcast-Parent-Request-Id"); pid != "" {
+				rec.SetParentRequestID(pid)
+			}
 			rec.SetRequestBody(requestBody, maxTraceBody)
 			rec.SetMeta(r.RemoteAddr, r.UserAgent(), r.Header.Get("Referer"), "", "")
 			if r.Header.Get("X-Overcast-Client") == "webui" {
@@ -53,11 +56,9 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 			// when known, leave blank when the handler hasn't classified the
 			// request yet. The Logger middleware sets the final values after
 			// the handler runs.
-			svc := detectService(r)
-			if svc == "s3" && r.URL.Path == "/" && r.Method == http.MethodPost {
-				svc = "" // POST / with no distinguishing header — unclassified
-			}
-			rec.SetServiceInfo(svc, detectOperation(r), RegionFromContext(r.Context(), cfg.Region))
+			svc := detectService(r, requestBody)
+			op := detectOperation(r, requestBody)
+			rec.SetServiceInfo(svc, op, RegionFromContext(r.Context(), cfg.Region))
 
 			ctx := trace.ContextWithRecorder(r.Context(), rec)
 			r = r.WithContext(ctx)

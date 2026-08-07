@@ -6,10 +6,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/awsapi"
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -20,38 +22,13 @@ import (
 // the real AWS SDKs embed: X-Amz-Target prefix (JSON services), well-known URL
 // prefixes (Lambda REST API), the Authorization Credential scope (Query-protocol
 // services such as IAM, STS, SNS, EC2), and finally S3 as a fallback.
-func detectService(r *http.Request) string {
-	// 1. X-Amz-Target — covers all JSON-protocol services.
+// An optional body parameter enables Query-protocol Action-param detection.
+func detectService(r *http.Request, body ...[]byte) string {
+	// 1. X-Amz-Target — use the generated AWS operation registry for
+	// accurate service mapping across all JSON-protocol services.
 	if t := r.Header.Get("X-Amz-Target"); t != "" {
-		switch {
-		case strings.HasPrefix(t, "AmazonSQS."):
-			return "sqs"
-		case strings.HasPrefix(t, "DynamoDB_"):
-			return "dynamodb"
-		case strings.HasPrefix(t, "DynamoDBStreams_"):
-			return "dynamodbstreams"
-		case strings.HasPrefix(t, "AmazonSNS"):
-			return "sns"
-		case strings.HasPrefix(t, "Logs_"):
-			return "logs"
-		case strings.HasPrefix(t, "secretsmanager."):
-			return "secretsmanager"
-		case strings.HasPrefix(t, "AmazonSSM."):
-			return "ssm"
-		case strings.HasPrefix(t, "TrentService."):
-			return "kms"
-		case strings.HasPrefix(t, "AmazonStates."), strings.HasPrefix(t, "AWSStepFunctions."):
-			return "stepfunctions"
-		case strings.HasPrefix(t, "AWSShield_"):
-			return "shield"
-		case strings.HasPrefix(t, "AWSWAF_"):
-			return "waf"
-		case strings.HasPrefix(t, "AWSCognitoIdentityProviderService."):
-			return "cognito"
-		case strings.HasPrefix(t, "AmazonEC2ContainerServiceV"):
-			return "ecs"
-		case strings.HasPrefix(t, "AWSEvents."):
-			return "events"
+		if claim, ok := awsapi.NewRegistry().ClaimTarget(t); ok {
+			return claim.Service
 		}
 	}
 
@@ -127,6 +104,17 @@ func detectService(r *http.Request) string {
 		return svc
 	}
 
+	// 3b. Query-protocol Action parameter — use the generated AWS operation
+	// registry for accurate service/operation mapping.
+	if len(body) > 0 && len(body[0]) > 0 && bytes.Contains(body[0][:min(len(body[0]), 256)], []byte("Action=")) {
+		values, err := url.ParseQuery(string(body[0]))
+		if err == nil {
+			if claim, ok := awsapi.NewRegistry().ClaimQuery(values.Get("Version"), values.Get("Action")); ok {
+				return claim.Service
+			}
+		}
+	}
+
 	// 4. S3 is the final fallback: S3 uses plain HTTP verbs on path-style or
 	// virtual-hosted URLs with no distinguishing header, so there is no
 	// positive signal to match on.
@@ -175,18 +163,27 @@ func serviceFromAuthCredential(r *http.Request) string {
 //  1. X-Amz-Target suffix  ("AmazonSQS.CreateQueue" → "CreateQueue")
 //  2. x-id query param     ("?x-id=ListBuckets"    → "ListBuckets")
 //  3. Method + path shape  (PUT /{bucket}/{key}     → "PutObject")
-func detectOperation(r *http.Request) string {
-	// 1. Target-based (SQS / DynamoDB / SNS)
+func detectOperation(r *http.Request, body ...[]byte) string {
+	// 1. Target-based (all JSON-protocol services).
 	if t := r.Header.Get("X-Amz-Target"); t != "" {
-		if i := strings.LastIndex(t, "."); i >= 0 {
-			return t[i+1:]
+		if claim, ok := awsapi.NewRegistry().ClaimTarget(t); ok {
+			return claim.Operation
 		}
-		return t
 	}
 
 	// 2. x-id query param (S3 SDK sends this for several operations)
 	if xid := r.URL.Query().Get("x-id"); xid != "" {
 		return xid
+	}
+
+	// 2b. Query-protocol Action parameter.
+	if len(body) > 0 && len(body[0]) > 0 && bytes.Contains(body[0][:min(len(body[0]), 256)], []byte("Action=")) {
+		values, err := url.ParseQuery(string(body[0]))
+		if err == nil {
+			if claim, ok := awsapi.NewRegistry().ClaimQuery(values.Get("Version"), values.Get("Action")); ok {
+				return claim.Operation
+			}
+		}
 	}
 
 	if r.URL.Path == "/_events" {
@@ -302,10 +299,14 @@ type responseWriter struct {
 	awsErrorCode    string
 	awsErrorMessage string
 	awsErrorCause   error
+	req             *http.Request
 }
 
 func (rw *responseWriter) WriteHeader(status int) {
 	rw.status = status
+	if rec := trace.RecorderFromContext(rw.req.Context()); rec != nil {
+		rec.SetStack(trace.CaptureStack())
+	}
 	rw.ResponseWriter.WriteHeader(status)
 }
 
@@ -372,7 +373,7 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 				_ = r.Body.Close()
 				r.Body = io.NopCloser(bytes.NewReader(requestBody))
 			}
-			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK, req: r}
 
 			next.ServeHTTP(rw, r)
 

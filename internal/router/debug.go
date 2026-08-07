@@ -667,6 +667,7 @@ func debugTraceList(buf *trace.Buffer) http.HandlerFunc {
 			Status:  r.URL.Query().Get("status"),
 			Search:  r.URL.Query().Get("search"),
 			After:   r.URL.Query().Get("after"),
+			Before:  r.URL.Query().Get("before"),
 			Limit:   parseDebugStateLimit(r.URL.Query().Get("limit")),
 		}
 		entries, nextCursor := buf.ListSummaries(filter)

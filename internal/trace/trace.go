@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ type Entry struct {
 	Service   string        `json:"service"`
 	Operation string        `json:"operation,omitempty"`
 	Region    string        `json:"region"`
+	Stack     string        `json:"stack,omitempty"`
 
 	RequestHeaders       http.Header `json:"requestHeaders"`
 	RequestBody          []byte      `json:"requestBody,omitempty"`
@@ -47,9 +49,10 @@ type Entry struct {
 	AWSErrorCode    string `json:"awsErrorCode,omitempty"`
 	AWSErrorMessage string `json:"awsErrorMessage,omitempty"`
 
-	RemoteAddr string `json:"remoteAddr,omitempty"`
-	UserAgent  string `json:"userAgent,omitempty"`
-	Referer    string `json:"referer,omitempty"`
+	RemoteAddr      string `json:"remoteAddr,omitempty"`
+	UserAgent       string `json:"userAgent,omitempty"`
+	Referer         string `json:"referer,omitempty"`
+	ParentRequestID string `json:"parentRequestId,omitempty"`
 
 	XRayTraceID string         `json:"xrayTraceId,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
@@ -60,6 +63,7 @@ type Entry struct {
 type Hop struct {
 	ID              string        `json:"id"`
 	Parent          string        `json:"parent,omitempty"`
+	RequestID       string        `json:"requestId,omitempty"`
 	Order           int           `json:"order"`
 	CallerService   string        `json:"callerService"`
 	CallerOperation string        `json:"callerOperation,omitempty"`
@@ -74,6 +78,7 @@ type Hop struct {
 	Error           string        `json:"error,omitempty"`
 	Timestamp       time.Time     `json:"timestamp"`
 	Noisy           bool          `json:"noisy,omitempty"`
+	Stack           string        `json:"stack,omitempty"`
 }
 
 // LogEntry is one structured log line captured for this request.
@@ -109,6 +114,34 @@ func NewRecorder(requestID string, timestamp time.Time, method, path, host, quer
 			RequestHeaders: requestHeaders.Clone(),
 		},
 	}
+}
+
+var stackBufPool = sync.Pool{
+	New: func() any { return make([]byte, 4096) },
+}
+
+// CaptureStack returns the calling goroutine's stack trace as a string.
+// Uses a pooled 4 KiB buffer; falls back to a larger allocation if truncated.
+func CaptureStack() string {
+	buf := stackBufPool.Get().([]byte)
+	defer stackBufPool.Put(buf)
+	n := runtime.Stack(buf, false)
+	if n < len(buf) {
+		return string(buf[:n])
+	}
+	big := make([]byte, 16384)
+	n = runtime.Stack(big, false)
+	return string(big[:n])
+}
+
+// SetStack captures a goroutine stack trace for the entry.
+func (r *Recorder) SetStack(s string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entry.Stack = s
 }
 
 // SetRequestBody stores the request body, capping at maxBody.
@@ -203,6 +236,7 @@ func (r *Recorder) AddHop(h Hop) string {
 	if r == nil {
 		return ""
 	}
+	h.Stack = CaptureStack()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.hopOrder++
@@ -366,6 +400,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		Service               string         `json:"service"`
 		Operation             string         `json:"operation,omitempty"`
 		Region                string         `json:"region"`
+		Stack                 string         `json:"stack,omitempty"`
 		RequestHeaders        http.Header    `json:"requestHeaders"`
 		RequestBody           string         `json:"requestBody,omitempty"`
 		RequestBodyTruncated  bool           `json:"requestBodyTruncated,omitempty"`
@@ -382,6 +417,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		RemoteAddr            string         `json:"remoteAddr,omitempty"`
 		UserAgent             string         `json:"userAgent,omitempty"`
 		Referer               string         `json:"referer,omitempty"`
+		ParentRequestID       string         `json:"parentRequestId,omitempty"`
 		XRayTraceID           string         `json:"xrayTraceId,omitempty"`
 		Metadata              map[string]any `json:"metadata,omitempty"`
 	}
@@ -396,6 +432,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		Service:               e.Service,
 		Operation:             e.Operation,
 		Region:                e.Region,
+		Stack:                 e.Stack,
 		RequestHeaders:        e.RequestHeaders,
 		RequestBody:           string(e.RequestBody),
 		RequestBodyTruncated:  e.RequestBodyTruncated,
@@ -412,6 +449,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		RemoteAddr:            e.RemoteAddr,
 		UserAgent:             e.UserAgent,
 		Referer:               e.Referer,
+		ParentRequestID:       e.ParentRequestID,
 		XRayTraceID:           e.XRayTraceID,
 		Metadata:              e.Metadata,
 	})
@@ -423,6 +461,7 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 	type shadow struct {
 		ID              string        `json:"id"`
 		Parent          string        `json:"parent,omitempty"`
+		RequestID       string        `json:"requestId,omitempty"`
 		Order           int           `json:"order"`
 		CallerService   string        `json:"callerService"`
 		CallerOperation string        `json:"callerOperation,omitempty"`
@@ -437,10 +476,12 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 		Error           string        `json:"error,omitempty"`
 		Timestamp       time.Time     `json:"timestamp"`
 		Noisy           bool          `json:"noisy,omitempty"`
+		Stack           string        `json:"stack,omitempty"`
 	}
 	return json.Marshal(shadow{
 		ID:              h.ID,
 		Parent:          h.Parent,
+		RequestID:       h.RequestID,
 		Order:           h.Order,
 		CallerService:   h.CallerService,
 		CallerOperation: h.CallerOperation,
@@ -455,5 +496,6 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 		Error:           h.Error,
 		Timestamp:       h.Timestamp,
 		Noisy:           h.Noisy,
+		Stack:           h.Stack,
 	})
 }
