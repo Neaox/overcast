@@ -70,103 +70,35 @@ can be applied mechanically rather than reconstructed from memory.
 
 ### Added
 
-- [appconfig] TagResource, UntagResource, and ListTagsForResource for applications, environments, and configuration profiles
-
-- [athena] TagResource, UntagResource, and ListTagsForResource for workgroups
-
-- [bff] `normalizeEndpoint` now rewrites all loopback endpoints to internal API port, fixing BFF proxying in Docker with remapped ports and no socket
-
-- [bff] `deriveAPIBaseURL` returns endpoint known/unknown alongside URL; handles native custom API port via default-UI-port fallback
-
-- [cognito] TagResource, UntagResource, and ListTagsForResource for user pools
-
-- [combobox] add `allowFreeText` prop for editable-after-selection behaviour (seeds query from current value, commits on blur)
-
-- [dynamodb] TagResource, ListTagsOfResource, and UntagResource operations; CreateTable accepts Tags
-
-- [ecs] TagResource, UntagResource, and ListTagsForResource with tag validation
-
-- [eks] TagResource, UntagResource, and ListTagsForResource with tag validation
-
-- [elasticache] AddTagsToResource, ListTagsForResource, and RemoveTagsForResource with tag validation
-
-- [elbv2] AddTags, RemoveTags, and DescribeTags for load balancers and target groups
-
-- [eventbridge] TagResource, UntagResource, and ListTagsForResource for event buses
-
-- [firehose] TagDeliveryStream, UntagDeliveryStream, and ListTagsForDeliveryStream
-
-- [glue] TagResource, UntagResource, and ListTagsForResource for databases and tables
-
-- [iam] TagRole, UntagRole, ListRoleTags, TagUser, UntagUser, and ListUserTags use shared tag accessors
-
-- [kms] TagResource, UntagResource, and ListResourceTags use shared tag accessors
-
-- [lambda] TagResource, UntagResource, and ListTags operations CloudFormation tag updates now apply
-
-- [msk] TagResource, UntagResource, and ListTagsForResource
-
-- [pipes] TagResource, UntagResource, and ListTagsForResource
-
-- [rds] AddTagsToResource, ListTagsForResource, and RemoveTagsForResource
+- Resource tagging operations added across 25 services: AppConfig, Athena, Cognito, DynamoDB, ECS, EKS, ElastiCache, ELBv2, EventBridge, Firehose, Glue, IAM, KMS, Lambda, MSK, Pipes, RDS, Scheduler, Secrets Manager, Shield, SNS, SQS, SSM, Step Functions, and WAF. Includes shared `Taggable` interface, generic `ApplyTags`/`RemoveTags`/`ListTags` helpers in `serviceutil`, and `TagStore` + `NSStore` for separate-namespace tag storage. CloudFormation tag propagation is wired through for Lambda and Secrets Manager.
 
 - [router] new `/_debug/trace/*` endpoints for full request tracing — request/response bodies, per-handler structured log capture across 22 services, internal service-hop recording, and AWS errors. Active when `OVERCAST_DEBUG=true`; traces are looked up by the request ID already returned in every response (`x-amzn-requestid` / `x-amz-request-id`). Includes BFF proxy routes, web UI at `/debug/traces` with sequence diagram/waterfall/flow map views, live in-flight trace polling, infinite scroll list with auto-refresh, and `OVERCAST_DEBUG_TRACE_BUFFER` env var for ring-buffer sizing.
 
-- [router] GET /_health now includes a `docker` block with per-service Docker connection status Responses from Docker-backed describe endpoints carry `x-overcast-backing`, `x-overcast-backing-reason`, and `x-overcast-container-health` headers
+- [router] GET /_health now includes a `docker` block with per-service Docker connection status. Responses from Docker-backed describe endpoints carry `x-overcast-backing`, `x-overcast-backing-reason`, and `x-overcast-container-health` headers.
 
-- [scheduler] TagResource, UntagResource, and ListTagsForResource
+- Web UI: S3 copy-URL buttons (S3 URI and path-style formats, actions-menu UX), header endpoint indicator with copy button, overhauled connection dialog with debounced endpoint validation and combobox suggestions, auto-detect API port (Docker socket, native, or 1:1 mapping), connection settings always visible, Docker connectivity banners on resource pages, and Docker health metrics on `/metrics`.
 
-- [secretsmanager] TagResource uses shared tag accessors
+- [bff] `normalizeEndpoint` rewrites all loopback endpoints to internal API port, fixing BFF proxying in Docker with remapped ports and no socket. `deriveAPIBaseURL` returns endpoint known/unknown alongside URL; handles native custom API port via default-UI-port fallback.
 
-- [serviceutil] shared Taggable interface, generic ApplyTags/RemoveTags/ListTags helpers, and TagStore + NSStore for separate-namespace tag storage
-
-- [shield] TagResource, UntagResource, and ListTagsForResource for protections
-
-- [sns] TagResource, UntagResource, and ListTagsForResource operations
-
-- [sqs] TagQueue, UntagQueue, and ListQueueTags use shared tag accessors
-
-- [ssm] AddTagsToResource, RemoveTagsFromResource, and ListTagsForResource for parameters
-
-- [stepfunctions] TagResource, UntagResource, and ListTagsForResource for state machines
-
-- [ui] add copy URL buttons for S3 buckets, objects, and prefixes (S3 URI and path-style formats, actions-menu UX)
-
-- [ui] add copy endpoint button to header alongside connection status indicator
-
-- [ui] overhaul connection dialog with debounced endpoint validation (spinner/tick/cross + tooltip), combobox suggestions, and dynamic label placeholder
-
-- [ui] auto-detect API port when known (Docker socket, native, or 1:1 mapping); show connection dialog when unknown with Docker socket guidance
-
-- [ui] extract endpoint status indicator (dot + baseUrl + copy) into standalone `HeaderEndpoint` component
-
-- [ui] connection settings (Plug icon) always visible — opens modal when connected, resets dialog when unconfigured
-
-- [waf] TagResource, UntagResource, and ListTagsForResource for WebACLs
-
-### Changed
-
-- [web] Docker connectivity is now visible on the /metrics health page and via info banners on Docker-backed resource pages
+- [combobox] add `allowFreeText` prop for editable-after-selection behaviour (seeds query from current value, commits on blur)
 
 ### Fixed
 
-- [cloudformation/dynamodb] Local secondary indexes are applied on table creation, while unsupported LSI updates now fail without mutating the table
+- [cloudformation/dynamodb] Local secondary indexes are applied on table creation, while unsupported LSI updates now fail without mutating the table. DynamoDB table TTL configuration is validated, applied, and reconciled during stack create and update.
 
-- [cloudformation/dynamodb] DynamoDB table TTL configuration is validated, applied, and reconciled during stack create and update
+- [cloudformation/cloudwatch-logs] Log group retention, resource tags, and propagated stack tags are applied when a stack creates or updates the group.
 
-- [cloudformation/cloudwatch-logs] Log group retention, resource tags, and propagated stack tags are applied when a stack creates or updates the group
+- [ecs/rds/elasticache/msk] resources no longer report RUNNING/available/ACTIVE when Docker is unavailable.
 
-- [ecs/rds/elasticache/msk] resources no longer report RUNNING/available/ACTIVE when Docker is unavailable
-
-- **BREAKING** [kms/cloudformation] key-policy mutations apply AWS schema and caller lockout-safety validation
+- **BREAKING** [kms/cloudformation] key-policy mutations apply AWS schema and caller lockout-safety validation.
   migration: ensure custom policies retain `kms:PutKeyPolicy` for the caller, or explicitly set `BypassPolicyLockoutSafetyCheck`
 
 - [kms/cloudformation] KMS keys created by CloudFormation now honor `Enabled: false` on first deployment and restore the enabled default when the property is removed.
 
-- **BREAKING** [secretsmanager/cloudformation] generated-secret templates validate before mutation, while KMS key metadata and CloudFormation tags round-trip through the service APIs
+- **BREAKING** [secretsmanager/cloudformation] generated-secret templates validate before mutation, while KMS key metadata and CloudFormation tags round-trip through the service APIs.
   migration: use PasswordLength 1..4096 (or omit it for 32), and keep GenerateStringKey absent from the template object
 
-- [waf/stepfunctions/shield/glue] fix tag validation gaps: WAF no longer publishes spurious creation events on tag writes; Step Functions typed path validates tags; Shield and ELBv2 validate tag limits; Glue uses shared helpers; RDS fixes unbounded loop; removed dead TaggedResource and shieldTagsToList
+- [waf/stepfunctions/shield/glue/elbv2/rds] fix tag validation gaps: WAF no longer publishes spurious creation events on tag writes; Step Functions typed path validates tags; Shield and ELBv2 validate tag limits; Glue uses shared helpers; RDS fixes unbounded loop; removed dead TaggedResource and shieldTagsToList.
 
 ## [0.0.1-alpha.30] - 2026-08-04
 
