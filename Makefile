@@ -157,7 +157,7 @@ lint: lint-go lint-web lint-actions
 ## lint-go: run golangci-lint for Go/emulation code (pinned via go run — no install needed)
 lint-go:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
-	@scripts/go.sh run ./cmd/verify -record go
+	@bash scripts/verify-changed.sh --record go
 
 ## lint-web: run web UI linting
 lint-web:
@@ -185,7 +185,7 @@ check: fmt vet lint test
 
 ## verify: run the required-CI checks this branch touches (cached — a no-op if nothing changed)
 verify:
-	scripts/go.sh run ./cmd/verify $(ARGS)
+	bash scripts/verify-changed.sh $(ARGS)
 
 ## ci-local: run the whole CI pipeline locally (Go via Docker — no host Go needed)
 ci-local:
