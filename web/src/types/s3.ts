@@ -7,6 +7,8 @@ export function s3CopyFormats(baseUrl: string, bucket: string, key?: string): Co
     { label: "Path-style", value: `${baseUrl}/${path}`, description: "http" },
   ]
 }
+
+export interface S3Bucket {
   name: string
   creationDate: string
 }

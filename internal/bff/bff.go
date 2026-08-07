@@ -583,7 +583,7 @@ func deriveAPIBaseURL(r *http.Request, cfg UIConfig) (url string, endpointKnown 
 	if apiPort := cfg.browserPort(); apiPort > 0 && apiPort != cfg.APIPort {
 		return scheme + "://" + hostname + ":" + strconv.Itoa(apiPort), true
 	}
-	if _, portStr, _ := net.SplitHostPort(host); true {
+	if _, portStr, err := net.SplitHostPort(host); err == nil {
 		if p, _ := strconv.Atoi(portStr); p == defaultUIPort || p == cfg.APIPort+1 {
 			return scheme + "://" + hostname + ":" + strconv.Itoa(cfg.APIPort), true
 		}
