@@ -26,6 +26,11 @@ type keyIDRequest struct {
 	KeyId string `json:"KeyId" cbor:"KeyId"`
 }
 
+type updateKeyDescriptionRequest struct {
+	KeyId       string `json:"KeyId" cbor:"KeyId"`
+	Description string `json:"Description" cbor:"Description"`
+}
+
 type createKeyRequest struct {
 	Description                    string  `json:"Description" cbor:"Description"`
 	KeySpec                        string  `json:"KeySpec" cbor:"KeySpec"`
@@ -263,6 +268,18 @@ func (h *Handler) enableKeyTyped(ctx context.Context, req *keyIDRequest) (*struc
 		return nil, protocol.ErrInternalError
 	}
 	h.publishCtx(ctx, events.KMSKeyStateChanged, events.ResourcePayload{Name: k.KeyID})
+	return &struct{}{}, nil
+}
+
+func (h *Handler) updateKeyDescriptionTyped(ctx context.Context, req *updateKeyDescriptionRequest) (*struct{}, *protocol.AWSError) {
+	k, aerr := h.resolveKeyForTyped(ctx, req.KeyId)
+	if aerr != nil {
+		return nil, aerr
+	}
+	k.Description = req.Description
+	if err := h.store.PutKey(ctx, k); err != nil {
+		return nil, protocol.ErrInternalError
+	}
 	return &struct{}{}, nil
 }
 

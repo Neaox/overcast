@@ -2,7 +2,7 @@ service: dynamodb
 status: not_started
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-04
+last_updated: 2026-08-08
 protocols: [aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/dynamodb]
 integration_tests: [tests/integration/dynamodb]
@@ -52,6 +52,8 @@ findings:
   remaining_gaps:
     - Review expression edge cases, pagination semantics, and GSI/LSI behavior.
     - Review CBOR coverage against SDK expectations.
+    - AWS::DynamoDB::Table GlobalSecondaryIndexes changes are silently ignored on stack updates — the CloudFormation update handler forwards GSIs on create only and never emits GlobalSecondaryIndexUpdates (internal/services/cloudformation/provisioner.go dynamodbTableHandler.Update).
+    - AWS::DynamoDB::Table Tags are never forwarded to DynamoDB by CloudFormation, on create or update.
   intentionally_partial: []
 handoff:
   start_with: [Query, Scan, UpdateItem, transactions]

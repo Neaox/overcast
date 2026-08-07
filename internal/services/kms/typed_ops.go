@@ -22,6 +22,9 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"EnableKey": op.NewTyped[keyIDRequest, struct{}](
 			"EnableKey", h.enableKeyTyped,
 		),
+		"UpdateKeyDescription": op.NewTyped[updateKeyDescriptionRequest, struct{}](
+			"UpdateKeyDescription", h.updateKeyDescriptionTyped,
+		),
 		"ScheduleKeyDeletion": op.NewTyped[scheduleKeyDeletionRequest, scheduleKeyDeletionResponse](
 			"ScheduleKeyDeletion", h.scheduleKeyDeletionTyped,
 		),
