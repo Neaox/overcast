@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
@@ -13,8 +12,16 @@ import (
 func TestTrace_requestLifecycle(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	form := url.Values{"Action": {"CreateQueue"}, "Version": {"2012-11-05"}, "QueueName": {"test-trace-queue"}}
-	resp := doRequest(t, srv.URL, form)
+	body := bytes.NewBufferString(`{"FunctionName":"test-trace-func","Role":"arn:aws:iam::000000000000:role/test","Handler":"index.handler","Runtime":"nodejs22.x"}`)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -52,14 +59,14 @@ func TestTrace_requestLifecycle(t *testing.T) {
 	if trace.Method != "POST" {
 		t.Errorf("expected POST, got %s", trace.Method)
 	}
-	if trace.Path != "/" {
-		t.Errorf("expected /, got %s", trace.Path)
+	if trace.Path != "/2015-03-31/functions" {
+		t.Errorf("expected /2015-03-31/functions, got %s", trace.Path)
 	}
 	if trace.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", trace.StatusCode)
 	}
-	if trace.Service == "" {
-		t.Error("expected non-empty service")
+	if trace.Service != "lambda" {
+		t.Errorf("expected lambda, got %s", trace.Service)
 	}
 }
 
@@ -86,8 +93,10 @@ func TestTrace_notFound(t *testing.T) {
 func TestTrace_listReturnsEntries(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	form := url.Values{"Action": {"CreateQueue"}, "Version": {"2012-11-05"}, "QueueName": {"test-trace-list"}}
-	resp := doRequest(t, srv.URL, form)
+	body := bytes.NewBufferString(`{"FunctionName":"test-trace-list","Role":"arn:aws:iam::000000000000:role/test","Handler":"index.handler","Runtime":"nodejs22.x"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := http.DefaultClient.Do(req)
 	resp.Body.Close()
 
 	listResp, err := http.Get(srv.URL + "/_debug/traces")
@@ -112,8 +121,10 @@ func TestTrace_listReturnsEntries(t *testing.T) {
 func TestTrace_count(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	form := url.Values{"Action": {"CreateQueue"}, "Version": {"2012-11-05"}, "QueueName": {"test-trace-count"}}
-	resp := doRequest(t, srv.URL, form)
+	body := bytes.NewBufferString(`{"FunctionName":"test-trace-count","Role":"arn:aws:iam::000000000000:role/test","Handler":"index.handler","Runtime":"nodejs22.x"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := http.DefaultClient.Do(req)
 	resp.Body.Close()
 
 	countResp, err := http.Get(srv.URL + "/_debug/traces/count")
@@ -134,18 +145,4 @@ func TestTrace_count(t *testing.T) {
 	if count.Capacity != 1000 {
 		t.Errorf("expected capacity 1000, got %d", count.Capacity)
 	}
-}
-
-func doRequest(t *testing.T, baseURL string, form url.Values) *http.Response {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/", bytes.NewBufferString(form.Encode()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return resp
 }
