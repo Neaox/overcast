@@ -11,7 +11,7 @@ Prism.languages.gostacktrace = {
   },
   "stack-frame": {
     // github.com/Neaox/overcast/internal/services/sqs.CreateQueue(0x..., 0x...)
-    pattern: /^[^\t\n].+[^)]$/gm,
+    pattern: /^[^\t\n].+[^)]$/m,
     inside: {
       // Package path: github.com/Neaox/overcast/internal/services/
       namespace: {
@@ -34,7 +34,7 @@ Prism.languages.gostacktrace = {
     },
   },
   "file-frame": {
-    pattern: /^\t.+/gm,
+    pattern: /^\t.+/m,
     inside: {
       // /path/to/file.go
       "file-path": {
@@ -54,7 +54,7 @@ Prism.languages.gostacktrace = {
     },
   },
   "created-by": {
-    pattern: /^created by .+$/gm,
+    pattern: /^created by .+$/m,
     inside: {
       keyword: /^created by/,
     },

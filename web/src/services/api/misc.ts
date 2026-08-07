@@ -6,6 +6,7 @@ import type {
   CapturedMessage,
   DebugMetricsResponse,
   TraceEntry,
+  TraceEvent,
   TraceListResponse,
   TraceCountResponse,
   TraceListParams,
@@ -132,6 +133,9 @@ export const debugTrace = {
     const query = q.toString()
     return apiFetch<TraceListResponse>(`/debug/traces${query ? `?${query}` : ""}`)
   },
+
+  events: (requestId: string) =>
+    apiFetch<TraceEvent[]>(`/debug/trace/${encodeURIComponent(requestId)}/events`),
 
   count: () => apiFetch<TraceCountResponse>("/debug/traces/count"),
 }

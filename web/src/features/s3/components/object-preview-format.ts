@@ -54,18 +54,24 @@ function previewLanguage(contentType: string, key: string): PreviewLanguage | nu
   return languageFromContentType(normalizedContentType(contentType)) ?? languageFromKey(key)
 }
 
+/** HTML markup (as opposed to XML) gets void-tag-aware indentation. */
+function isHtmlMarkup(contentType: string, key: string): boolean {
+  return /^(text|application)\/html$/i.test(normalizedContentType(contentType)) || /\.html?$/i.test(key)
+}
+
 export function formatPreviewText(
   text: string,
   contentType: string,
   key: string,
 ): { text: string; html?: string } {
+  const htmlVoidTags = isHtmlMarkup(contentType, key)
   const sharedHint = contentTypeToHint(contentType)
   if (sharedHint === "json" || sharedHint === "xml") {
-    return formatBodyForDisplay(text, sharedHint)
+    return formatBodyForDisplay(text, sharedHint, contentType, { htmlVoidTags })
   }
   const language = previewLanguage(contentType, key)
   if (language === "json" || language === "markup") {
-    return formatBodyForDisplay(text, language === "json" ? "json" : "xml")
+    return formatBodyForDisplay(text, language === "json" ? "json" : "xml", contentType, { htmlVoidTags })
   }
   if (language === "css" || language === "javascript") {
     return { text, html: Prism.highlight(text, Prism.languages[language], language) }

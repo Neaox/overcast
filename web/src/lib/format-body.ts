@@ -8,7 +8,29 @@ export interface FormattedBody {
   html?: string
 }
 
-export function formatBodyForDisplay(raw: string, hint: BodyLanguage, contentType?: string): FormattedBody {
+export interface FormatBodyOptions {
+  /**
+   * Treat HTML void tags (`<br>`, `<img>`, `<meta>`, …) as self-closing when
+   * indenting markup. Defaults to sniffing `contentType` for HTML.
+   */
+  htmlVoidTags?: boolean
+}
+
+/**
+ * Bodies larger than this render as plain text — no pretty-printing or
+ * syntax highlighting. Parsing/highlighting a large (up to 1 MiB) body on
+ * every render is too expensive, especially on pages that re-render every
+ * second while a trace is in flight.
+ */
+export const MAX_FORMAT_BYTES = 256 * 1024
+
+export function formatBodyForDisplay(
+  raw: string,
+  hint: BodyLanguage,
+  contentType?: string,
+  opts?: FormatBodyOptions,
+): FormattedBody {
+  if (raw.length > MAX_FORMAT_BYTES) return { text: raw }
   if (isFormEncoded(contentType) || (hint === "text" && looksLikeFormEncoded(raw))) {
     return formatFormBody(raw)
   }
@@ -21,7 +43,7 @@ export function formatBodyForDisplay(raw: string, hint: BodyLanguage, contentTyp
     }
   }
   if (hint === "xml") {
-    const formatted = formatXML(raw)
+    const formatted = formatXML(raw, opts?.htmlVoidTags ?? isHtmlContentType(contentType))
     return { text: formatted, html: Prism.highlight(formatted, Prism.languages.markup, "markup") }
   }
   return { text: raw }
@@ -48,6 +70,27 @@ export function bodyHintFromHeaders(headers: Record<string, string[]>): BodyLang
   return contentTypeToHint(ct)
 }
 
+/** HTML tags that never take a closing tag — they must not increase indentation. */
+const HTML_VOID_TAGS = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input",
+  "link", "meta", "param", "source", "track", "wbr",
+])
+
+function isHtmlContentType(contentType?: string): boolean {
+  if (!contentType) return false
+  const mediaType = contentType.split(";", 1)[0].trim().toLowerCase()
+  return /^(text|application)\/html$/.test(mediaType)
+}
+
+function markupTagName(tag: string): string {
+  const match = /^<\/?\s*([A-Za-z][\w:.-]*)/.exec(tag)
+  return match?.[1]?.toLowerCase() ?? ""
+}
+
+function isSelfClosingMarkupTag(tag: string, useHtmlVoidTags: boolean): boolean {
+  return /\/\s*>$/.test(tag) || (useHtmlVoidTags && HTML_VOID_TAGS.has(markupTagName(tag)))
+}
+
 function findMarkupTagEnd(text: string, start: number): number {
   let quote: string | null = null
   for (let i = start + 1; i < text.length; i += 1) {
@@ -65,7 +108,7 @@ function findMarkupTagEnd(text: string, start: number): number {
   return -1
 }
 
-function formatXML(text: string): string {
+function formatXML(text: string, useHtmlVoidTags = false): string {
   const compact = text.trim()
   if (!compact) return text
   let depth = 0
@@ -96,7 +139,7 @@ function formatXML(text: string): string {
     const isOpening = /^<[^!?/]/.test(tag)
     if (isClosing) depth = Math.max(0, depth - 1)
     pushLine(tag)
-    if (isOpening && !/\/\s*>$/.test(tag)) depth += 1
+    if (isOpening && !isSelfClosingMarkupTag(tag, useHtmlVoidTags)) depth += 1
     i = tagEnd + 1
   }
 
