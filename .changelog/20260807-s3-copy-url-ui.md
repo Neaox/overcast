@@ -1,3 +1,9 @@
-+ [ui] add copy bucket/object URL buttons (S3 URI and path-style), copy endpoint button in header, and overhaul connection dialog with debounced endpoint validation (spinner/tick/cross with tooltip), combobox suggestions for endpoint URL, automatic connection when API port is known (Docker socket or native), or manual configuration dialog when unknown with Docker socket guidance. Endpoint status (connection dot + baseUrl) now shown independently of breadcrumbs. Connection settings always accessible via Plug icon, opening as a modal when already connected. Header search collapses to icon on narrow containers. S3 copy buttons use an actions-menu pattern (click to open dropdown, click item to copy) with stopPropagation to prevent row navigation. Combobox gains `allowFreeText` prop for editable-after-selection behaviour. BFF `normalizeEndpoint` now rewrites all loopback endpoints to the internal API port, fixing connection in Docker without socket. Back button on connecting screen allows returning to the connection dialog.
-
-(End of file - total 1 lines)
++ [ui] add copy URL buttons for S3 buckets, objects, and prefixes (S3 URI and path-style formats, actions-menu UX)
++ [ui] add copy endpoint button to header alongside connection status indicator
++ [ui] overhaul connection dialog with debounced endpoint validation (spinner/tick/cross + tooltip), combobox suggestions, and dynamic label placeholder
++ [ui] auto-detect API port when known (Docker socket, native, or 1:1 mapping); show connection dialog when unknown with Docker socket guidance
++ [ui] extract endpoint status indicator (dot + baseUrl + copy) into standalone `HeaderEndpoint` component
++ [ui] connection settings (Plug icon) always visible — opens modal when connected, resets dialog when unconfigured
++ [bff] `normalizeEndpoint` now rewrites all loopback endpoints to internal API port, fixing BFF proxying in Docker with remapped ports and no socket
++ [bff] `deriveAPIBaseURL` returns endpoint known/unknown alongside URL; handles native custom API port via default-UI-port fallback
++ [combobox] add `allowFreeText` prop for editable-after-selection behaviour (seeds query from current value, commits on blur)
