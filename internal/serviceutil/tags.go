@@ -79,10 +79,6 @@ type Taggable interface {
 	SetTags(map[string]string)
 }
 
-// TaggedResource is an alias for Taggable kept for backward compatibility.
-// Deprecated: use Taggable instead.
-type TaggedResource = Taggable
-
 // ApplyTags loads a resource via getter, merges incoming tag pairs, validates,
 // and saves back via putter.
 // T is the struct type (e.g. WebACL); *T must implement Taggable.
@@ -199,7 +195,7 @@ func ListStoreTags(ctx context.Context, s TagStore, key string) (map[string]stri
 // ---- Legacy inline helpers (used by existing refactored services) ----
 
 // ApplyInlineTags loads a resource, merges incoming tags, validates, and saves.
-func ApplyInlineTags[T TaggedResource](
+func ApplyInlineTags[T Taggable](
 	ctx context.Context,
 	key string,
 	incoming map[string]string,
@@ -226,7 +222,7 @@ func ApplyInlineTags[T TaggedResource](
 }
 
 // RemoveInlineTags removes keys from a resource's inline tags and saves.
-func RemoveInlineTags[T TaggedResource](
+func RemoveInlineTags[T Taggable](
 	ctx context.Context,
 	key string,
 	keys []string,
@@ -248,7 +244,7 @@ func RemoveInlineTags[T TaggedResource](
 }
 
 // ListInlineTags returns a resource's inline tags.
-func ListInlineTags[T TaggedResource](
+func ListInlineTags[T Taggable](
 	ctx context.Context,
 	key string,
 	load func(ctx context.Context, key string) (T, *protocol.AWSError),

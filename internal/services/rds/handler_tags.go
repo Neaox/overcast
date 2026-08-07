@@ -34,9 +34,7 @@ type rdsXMLAddTagsResponse struct {
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
-type rdsXMLAddTagsResult struct {
-	TagList rdsXMLTagList `xml:"TagList"`
-}
+type rdsXMLAddTagsResult struct{}
 
 type rdsXMLListTagsResponse struct {
 	XMLName          xml.Name                  `xml:"ListTagsForResourceResponse"`
@@ -66,28 +64,20 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
 	incoming := map[string]string{}
 	for i := 1; ; i++ {
-		key := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Key", i))
-		if key == "" {
+		key := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
+		val := r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
+		if key == "" && val == "" {
 			break
 		}
-		incoming[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
+		incoming[key] = val
 	}
 	if aerr := serviceutil.ApplyStoreTags(r.Context(), tagStore, arn, incoming, rdsTagCfg); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tags, aerr := tagStore.Load(r.Context(), arn)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-	items := make([]rdsXMLTag, 0, len(tags))
-	for k, v := range tags {
-		items = append(items, rdsXMLTag{Key: k, Value: v})
-	}
 	protocol.WriteQueryXML(w, r, http.StatusOK, &rdsXMLAddTagsResponse{
 		Xmlns:            rdsXMLNS,
-		Result:           rdsXMLAddTagsResult{TagList: rdsXMLTagList{Items: items}},
+		Result:           rdsXMLAddTagsResult{},
 		ResponseMetadata: protocol.QueryResponseMetadata(r),
 	})
 }

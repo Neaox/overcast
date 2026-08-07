@@ -842,6 +842,12 @@ func (h *Handler) DescribeTargetHealth(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
 }
 
+var elbv2TagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "TooManyTags",
+	InvalidCode:     "InvalidParameterException",
+	ExceededMessage: "Tag count exceeded the maximum of 50 tags per resource.",
+}
+
 func (h *Handler) AddTags(w http.ResponseWriter, r *http.Request) {
 	arns := collectMemberParams(r, "ResourceArns")
 	if len(arns) == 0 {
@@ -878,6 +884,10 @@ func (h *Handler) AddTags(w http.ResponseWriter, r *http.Request) {
 			for k, v := range tags {
 				lb.Tags[k] = v
 			}
+			if aerr := serviceutil.ValidateTags(elbv2TagCfg, lb.Tags); aerr != nil {
+				protocol.WriteQueryXMLError(w, r, aerr)
+				return
+			}
 			if err := h.putLB(ctx, region, lb); err != nil {
 				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 				return
@@ -893,6 +903,10 @@ func (h *Handler) AddTags(w http.ResponseWriter, r *http.Request) {
 			}
 			for k, v := range tags {
 				tg.Tags[k] = v
+			}
+			if aerr := serviceutil.ValidateTags(elbv2TagCfg, tg.Tags); aerr != nil {
+				protocol.WriteQueryXMLError(w, r, aerr)
+				return
 			}
 			if err := h.putTG(ctx, region, tg); err != nil {
 				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)

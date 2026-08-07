@@ -163,10 +163,16 @@ func (h *Handler) describeProtection(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var shieldTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidParameterException",
+	InvalidCode:     "InvalidParameterException",
+	ExceededMessage: "Too many tags. Maximum allowed: 50.",
+}
+
 func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ResourceARN string      `json:"ResourceARN"`
-		Tags        []shieldTag `json:"Tags"`
+		ResourceARN string                `json:"ResourceARN"`
+		Tags        []serviceutil.TagPair `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -198,6 +204,10 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range req.Tags {
 		tags[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(shieldTagCfg, tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
 	p.SetTags(tags)
 	if err := h.store.putProtection(ctx, p); err != nil {
@@ -278,13 +288,8 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	tagList := shieldTagsToList(p.GetTags())
+	tagList := serviceutil.TagsToList(p.GetTags())
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tagList})
-}
-
-type shieldTag struct {
-	Key   string `json:"Key"`
-	Value string `json:"Value"`
 }
 
 func protectionIDFromARN(arn string) (string, *protocol.AWSError) {
@@ -303,12 +308,4 @@ func protectionIDFromARN(arn string) (string, *protocol.AWSError) {
 		}
 	}
 	return strings.TrimPrefix(resource, "protection/"), nil
-}
-
-func shieldTagsToList(tags map[string]string) []shieldTag {
-	list := make([]shieldTag, 0, len(tags))
-	for k, v := range tags {
-		list = append(list, shieldTag{Key: k, Value: v})
-	}
-	return list
 }

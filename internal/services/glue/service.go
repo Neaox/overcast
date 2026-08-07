@@ -427,26 +427,22 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	}
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
-		t, found := s.store.getTable(r.Context(), dbName, tableName)
-		if !found {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{
-				Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName),
-				HTTPStatus: http.StatusNotFound,
-			})
-			return
-		}
-		if t.Tags == nil {
-			t.Tags = make(map[string]string)
-		}
-		for k, v := range req.TagsToAdd {
-			t.Tags[k] = v
-		}
-		if aerr := serviceutil.ValidateTags(glueTagCfg, t.Tags); aerr != nil {
+		if aerr := serviceutil.ApplyInlineTags(r.Context(), dbName+"/"+tableName, req.TagsToAdd, glueTagCfg,
+			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+				t, found := s.store.getTable(ctx, dbName, tableName)
+				if !found {
+					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
+				}
+				return t, nil
+			},
+			func(ctx context.Context, t *Table) *protocol.AWSError {
+				if err := s.store.putTable(ctx, t); err != nil {
+					return protocol.ErrInternalError
+				}
+				return nil
+			},
+		); aerr != nil {
 			protocol.WriteJSONError(w, r, aerr)
-			return
-		}
-		if err := s.store.putTable(r.Context(), t); err != nil {
-			protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 			return
 		}
 		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
@@ -459,26 +455,22 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	db, found := s.store.getDatabase(r.Context(), dbName)
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-	if db.Tags == nil {
-		db.Tags = make(map[string]string)
-	}
-	for k, v := range req.TagsToAdd {
-		db.Tags[k] = v
-	}
-	if aerr := serviceutil.ValidateTags(glueTagCfg, db.Tags); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), dbName, req.TagsToAdd, glueTagCfg,
+		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+			db, found := s.store.getDatabase(ctx, dbName)
+			if !found {
+				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
+			}
+			return db, nil
+		},
+		func(ctx context.Context, db *Database) *protocol.AWSError {
+			if err := s.store.putDatabase(ctx, db); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if err := s.store.putDatabase(r.Context(), db); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
@@ -494,19 +486,22 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 	}
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
-		t, found := s.store.getTable(r.Context(), dbName, tableName)
-		if !found {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{
-				Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName),
-				HTTPStatus: http.StatusNotFound,
-			})
-			return
-		}
-		for _, k := range req.TagsToRemove {
-			delete(t.Tags, k)
-		}
-		if err := s.store.putTable(r.Context(), t); err != nil {
-			protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		if aerr := serviceutil.RemoveInlineTags(r.Context(), dbName+"/"+tableName, req.TagsToRemove,
+			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+				t, found := s.store.getTable(ctx, dbName, tableName)
+				if !found {
+					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
+				}
+				return t, nil
+			},
+			func(ctx context.Context, t *Table) *protocol.AWSError {
+				if err := s.store.putTable(ctx, t); err != nil {
+					return protocol.ErrInternalError
+				}
+				return nil
+			},
+		); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
 			return
 		}
 		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
@@ -519,19 +514,22 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	db, found := s.store.getDatabase(r.Context(), dbName)
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-	for _, k := range req.TagsToRemove {
-		delete(db.Tags, k)
-	}
-	if err := s.store.putDatabase(r.Context(), db); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if aerr := serviceutil.RemoveInlineTags(r.Context(), dbName, req.TagsToRemove,
+		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+			db, found := s.store.getDatabase(ctx, dbName)
+			if !found {
+				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
+			}
+			return db, nil
+		},
+		func(ctx context.Context, db *Database) *protocol.AWSError {
+			if err := s.store.putDatabase(ctx, db); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
@@ -546,18 +544,20 @@ func (s *Service) getTags(w http.ResponseWriter, r *http.Request) {
 	}
 	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
 	if tableName != "" {
-		t, found := s.store.getTable(r.Context(), dbName, tableName)
-		if !found {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{
-				Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName),
-				HTTPStatus: http.StatusNotFound,
-			})
+		tags, aerr := serviceutil.ListInlineTags(r.Context(), dbName+"/"+tableName,
+			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+				t, found := s.store.getTable(ctx, dbName, tableName)
+				if !found {
+					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
+				}
+				return t, nil
+			},
+		)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
 			return
 		}
-		if t.Tags == nil {
-			t.Tags = make(map[string]string)
-		}
-		protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": t.Tags})
+		protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": tags})
 		return
 	}
 	if dbName == "" {
@@ -567,16 +567,18 @@ func (s *Service) getTags(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	db, found := s.store.getDatabase(r.Context(), dbName)
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName),
-			HTTPStatus: http.StatusNotFound,
-		})
+	tags, aerr := serviceutil.ListInlineTags(r.Context(), dbName,
+		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+			db, found := s.store.getDatabase(ctx, dbName)
+			if !found {
+				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
+			}
+			return db, nil
+		},
+	)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if db.Tags == nil {
-		db.Tags = make(map[string]string)
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": db.Tags})
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": tags})
 }
