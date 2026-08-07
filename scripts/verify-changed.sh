@@ -127,10 +127,13 @@ _fp_go() {
 # Vet rather than test: this stays a compile-and-vet gate, matching the
 # script's charter of not running the suite. Every set carries `slim`, so none
 # of them needs a built web/dist.
+# `go test -run='^$'` compiles test files (which `go vet` does not) while
+# running zero tests — catches undefined helpers and other compile-only errors
+# in test code.
 _ci_build_tags='slim slim,nosqlite slim,dev'
 
 _fp_tags() {
-  _fingerprint "go vet -tags [$_ci_build_tags] ./..." \
+  _fingerprint "go test -run _ -tags [$_ci_build_tags] ./..." \
     '*.go' go.mod go.sum ':(exclude)compat/suites/*'
 }
 
@@ -192,7 +195,7 @@ if [ -n "$go_changed" ]; then
   fi
 fi
 
-# ---- Go: vet under CI's build tags -----------------------------------------
+# ---- Go: vet + test-file compilation under CI's build tags -----------------
 if [ -n "$go_changed" ]; then
   fp=$(_fp_tags)
   if [ "$force" -eq 0 ] && [ -n "$fp" ] && [ "$(_cache_get vet-tags)" = "$fp" ]; then
@@ -201,11 +204,11 @@ if [ -n "$go_changed" ]; then
     tags_failed=""
     for tagset in $_ci_build_tags; do
       if command -v go >/dev/null 2>&1; then
-        go vet -tags "$tagset" ./... || tags_failed="$tags_failed vet(-tags $tagset)"
+        go test -run='^$' -count=1 -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
       elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
-        scripts/docker-go.sh vet -tags "$tagset" ./... || tags_failed="$tags_failed vet(-tags $tagset)"
+        scripts/docker-go.sh test -run='^$' -count=1 -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
       else
-        skipped="$skipped vet-tags(no go/docker)"
+        skipped="$skipped test-compile(no go/docker)"
         fp="" # never ran, so there is no pass to cache and none to invalidate
         break
       fi
