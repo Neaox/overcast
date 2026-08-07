@@ -28,7 +28,7 @@ func detectService(r *http.Request, body ...[]byte) string {
 	// accurate service mapping across all JSON-protocol services.
 	if t := r.Header.Get("X-Amz-Target"); t != "" {
 		if claim, ok := awsapi.NewRegistry().ClaimTarget(t); ok && claim.Service != "" {
-			return claim.Service
+			return middlewareServiceKey(claim.Service)
 		}
 	}
 
@@ -110,7 +110,7 @@ func detectService(r *http.Request, body ...[]byte) string {
 		values, err := url.ParseQuery(string(body[0]))
 		if err == nil {
 			if claim, ok := awsapi.NewRegistry().ClaimQuery(values.Get("Version"), values.Get("Action")); ok {
-				return claim.Service
+				return middlewareServiceKey(claim.Service)
 			}
 		}
 	}
@@ -119,6 +119,19 @@ func detectService(r *http.Request, body ...[]byte) string {
 	// virtual-hosted URLs with no distinguishing header, so there is no
 	// positive signal to match on.
 	return "s3"
+}
+
+// middlewareServiceKey translates the generated registry's service identity
+// to the key middleware has always used where the two differ. CloudWatch Logs
+// is modeled as "cloudwatch-logs" (its capability key), but its SigV4 signing
+// name and real IAM action prefix are "logs" (logs:PutLogEvents), and every
+// downstream switch — IAM enforcement, log labels, trace service badges —
+// keys on "logs".
+func middlewareServiceKey(s string) string {
+	if s == "cloudwatch-logs" {
+		return "logs"
+	}
+	return s
 }
 
 // internalService maps an emulator-internal /_-prefixed path to the service
