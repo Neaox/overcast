@@ -23,6 +23,8 @@ tmp/
 
 # persistent state (dev container data dir — survives rebuilds, not for VCS)
 .overcast/
+# git worktrees (must live outside the repo; ignore any stray ones inside)
+.worktrees/
 .devcontainer/.env
 .devcontainer/docker-compose.yaml
 

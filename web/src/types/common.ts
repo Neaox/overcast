@@ -71,6 +71,22 @@ export interface HealthResponse {
     serviceOverrides?: Record<string, string>
     persistent?: PersistentHealth
   }
+  docker?: DockerHealth
+}
+
+export interface DockerHealth {
+  available: boolean
+  services: DockerServiceHealth[]
+  lastEvent?: string
+  lastEventAt?: string
+}
+
+export interface DockerServiceHealth {
+  service: string
+  socket: string
+  connected: boolean
+  error?: string
+  lastSeen?: string
 }
 
 /** One attempted flush of buffered writes (internal/state.DebugFlushRecord). */

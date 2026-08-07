@@ -43,6 +43,7 @@ import { Badge } from "@/components/ui/badge"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
+import { DockerBanner } from "@/components/docker-banner"
 
 export function ClusterList() {
   const navigate = useNavigate()
@@ -94,6 +95,7 @@ export function ClusterList() {
         </>
       }
     >
+      <DockerBanner forService="ecs" />
       <ResourceListCard>
         {isLoading || clusters.length === 0 ? (
           <QueryListState

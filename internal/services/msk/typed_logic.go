@@ -72,18 +72,13 @@ func (s *Service) createClusterTyped(ctx context.Context, req *createClusterRequ
 		go func() {
 			defer s.handler.dockerWg.Done()
 			bgCtx := clusterRegionCtx(clusterARNCopy)
-			log := s.handler.log.WithRecorder(bgCtx)
 			if err := s.handler.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-				log.Warn("failed to start Docker container for MSK cluster — falling back to metadata-only",
+				s.handler.log.Warn("failed to start Docker container for MSK cluster — cluster stays in CREATING state",
 					zap.String("cluster", clusterARNCopy), zap.Error(err))
-				s.handler.clusterFallbackActive(clusterARNCopy)
 			}
 		}()
-	} else {
-		s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(bgCtx context.Context) {
-			s.handler.transitionCluster(bgCtx, clusterARNCopy, "ACTIVE", "CREATING")
-		})
 	}
+	// Docker is not available — leave the cluster in CREATING.
 
 	return &createClusterResponse{
 		ClusterArn: clusterARN, ClusterName: req.ClusterName, State: "CREATING",
@@ -167,9 +162,8 @@ func (s *Service) deleteClusterTyped(ctx context.Context, req *deleteClusterRequ
 	}
 
 	s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "delete", 50*time.Millisecond, func(bgCtx context.Context) {
-		log := s.handler.log.WithRecorder(bgCtx)
 		if aerr := s.handler.store.deleteCluster(bgCtx, clusterARNCopy); aerr != nil {
-			log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
+			s.handler.log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
 		}
 	})
 
@@ -496,18 +490,13 @@ func (s *Service) createClusterV2Typed(ctx context.Context, req *createClusterV2
 			go func() {
 				defer s.handler.dockerWg.Done()
 				bgCtx := clusterRegionCtx(clusterARNCopy)
-				log := s.handler.log.WithRecorder(bgCtx)
 				if err := s.handler.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-					log.Warn("failed to start Docker container for MSK V2 cluster — falling back to metadata-only",
+					s.handler.log.Warn("failed to start Docker container for MSK V2 cluster — cluster stays in CREATING state",
 						zap.String("cluster", clusterARNCopy), zap.Error(err))
-					s.handler.clusterFallbackActive(clusterARNCopy)
 				}
 			}()
-		} else {
-			s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(bgCtx context.Context) {
-				s.handler.transitionCluster(bgCtx, clusterARNCopy, "ACTIVE", "CREATING")
-			})
 		}
+		// Docker is not available — leave the cluster in CREATING.
 	}
 
 	return &createClusterV2Response{

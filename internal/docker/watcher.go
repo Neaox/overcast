@@ -25,6 +25,7 @@ type Watcher struct {
 	client    *Client
 	bus       *events.Bus
 	logger    *zap.Logger
+	tracker   *Tracker
 	attempted bool
 }
 
@@ -44,6 +45,12 @@ func NewWatcher(client *Client, bus *events.Bus, logger *zap.Logger) *Watcher {
 		bus:    bus,
 		logger: logger.Named("docker.watcher"),
 	}
+}
+
+func NewWatcherWithTracker(client *Client, bus *events.Bus, logger *zap.Logger, tracker *Tracker) *Watcher {
+	w := NewWatcher(client, bus, logger)
+	w.tracker = tracker
+	return w
 }
 
 // dockerEvent mirrors the subset of the Docker Engine /events JSON we care about.
@@ -148,6 +155,17 @@ func (w *Watcher) dispatch(ctx context.Context, de *dockerEvent) {
 	case "network":
 		w.dispatchNetwork(ctx, de)
 	}
+	w.recordTrackerEvent(de)
+}
+
+// recordTrackerEvent records the event type and time in the Docker status
+// tracker so the health endpoint can report the last observed Docker daemon
+// event — a useful signal that the daemon is alive and communicating.
+func (w *Watcher) recordTrackerEvent(de *dockerEvent) {
+	if w.tracker == nil {
+		return
+	}
+	w.tracker.RecordDockerEvent(de.Type+":"+de.Action, time.Unix(de.Time, 0))
 }
 
 // dispatchContainer handles container lifecycle events.

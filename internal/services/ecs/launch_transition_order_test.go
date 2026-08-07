@@ -32,6 +32,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -55,6 +56,7 @@ func (s *gatedTaskStore) Set(ctx context.Context, namespace, key, value string) 
 }
 
 func TestRunTask_runningTransitionScheduledAfterTheRecordLands(t *testing.T) {
+	docker.SkipWithoutDocker(t)
 	// Given: a handler whose first task write can be held open
 	gate := &gatedTaskStore{
 		Store:   state.NewMemoryStore(),

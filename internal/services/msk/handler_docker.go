@@ -31,14 +31,13 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	containerName := "overcast-msk-" + clusterUUID
 	containerPort := "9092/tcp"
 	network := h.cfg.MSKNetwork
-	log := h.log.WithRecorder(ctx)
 
 	// Check for existing container (post-restart reuse).
 	if existing, err := h.docker.GetContainerByName(ctx, containerName); err == nil && existing != nil {
 		if !existing.HasOvercastLabels(serviceName, clusterARN) {
 			return fmt.Errorf("container %q exists but is not an overcast-managed MSK container — refusing to reuse", containerName)
 		}
-		log.Info("MSK: reusing existing container",
+		h.log.Info("MSK: reusing existing container",
 			zap.String("cluster", clusterARN),
 			zap.String("container", existing.ID),
 			zap.String("state", existing.State.Status))
@@ -81,7 +80,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 
 	// Ensure Docker network exists.
 	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
-		log.Warn("MSK: failed to create network (may already exist)",
+		h.log.Warn("MSK: failed to create network (may already exist)",
 			zap.String("network", network), zap.Error(err))
 	}
 
@@ -116,7 +115,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	containerID, err := h.docker.CreateContainer(ctx, containerName, req)
 	if err != nil {
 		if docker.IsConflict(err) {
-			log.Warn("MSK: name conflict on create, retrying reuse",
+			h.log.Warn("MSK: name conflict on create, retrying reuse",
 				zap.String("cluster", clusterARN))
 			h.store.releasePort(ctx, hostPort) //nolint:errcheck
 			return h.startClusterContainer(ctx, clusterARN)
@@ -163,8 +162,7 @@ func (h *Handler) setClusterEndpoint(ctx context.Context, clusterARN, containerI
 // teardownOrphanedContainer removes a container whose cluster record was
 // deleted while the container was still starting, and releases its port.
 func (h *Handler) teardownOrphanedContainer(ctx context.Context, clusterARN, containerID string, hostPort int) {
-	log := h.log.WithRecorder(ctx)
-	log.Info("MSK: cluster deleted while its container was starting — removing container",
+	h.log.Info("MSK: cluster deleted while its container was starting — removing container",
 		zap.String("cluster", clusterARN), zap.String("container", containerID))
 	if containerID != "" {
 		if h.gc != nil {
@@ -213,15 +211,15 @@ func (h *Handler) cleanupClusterContainer(ctx context.Context, clusterARN string
 	}
 	if got.HostPort > 0 {
 		if aerr := h.store.releasePort(ctx, got.HostPort); aerr != nil {
-			log := h.log.WithRecorder(ctx)
-			log.Warn("MSK cleanup: release port",
+			h.log.Warn("MSK cleanup: release port",
 				zap.String("cluster", clusterARN), zap.Int("port", got.HostPort), zap.Error(aerr))
 		}
 	}
 }
 
 // scheduleHealthCheck polls TCP connectivity and transitions the cluster to
-// "ACTIVE" once Redpanda responds. Falls back to "ACTIVE" after maxRetries.
+// "ACTIVE" once Redpanda responds. After maxRetries the cluster stays in its
+// current state — it is never falsely marked ACTIVE when Kafka is not answering.
 func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 	const maxRetries = 60
 	region := serviceutil.ARNRegion(clusterARN)
@@ -238,9 +236,8 @@ func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 		if attempt < maxRetries {
 			h.scheduler.AfterScoped(region, clusterARN, "health", 2*time.Second, check)
 		} else {
-			log := h.log.WithRecorder(ctx)
-			log.Warn("MSK health check timed out", zap.String("cluster", clusterARN), zap.Int("attempts", attempt))
-			h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING", "STARTING")
+			h.log.Warn("MSK health check timed out — cluster stays in current state",
+				zap.String("cluster", clusterARN), zap.Int("attempts", attempt))
 		}
 	}
 	h.scheduler.AfterScoped(region, clusterARN, "health", 1*time.Second, check)
@@ -262,8 +259,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	switch cluster.State {
 	case "ACTIVE", "STARTING", "CREATING":
 		h.transitionCluster(ctx, p.ResourceID, "FAILED", cluster.State)
-		log := h.log.WithRecorder(ctx)
-		log.Info("MSK cluster container stopped",
+		h.log.Info("MSK cluster container stopped",
 			zap.String("cluster", p.ResourceID), zap.String("action", p.Action))
 	}
 }
@@ -300,8 +296,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 
 	regioned, err := serviceutil.ScanRegions[Cluster](ctx, h.store.store, nsClusters, h.store.defaultRegion)
 	if err != nil {
-		log := h.log.WithRecorder(ctx)
-		log.Warn("reconcile: failed to list MSK clusters", zap.Error(err))
+		h.log.Warn("reconcile: failed to list MSK clusters", zap.Error(err))
 		return
 	}
 	for _, rc := range regioned {
@@ -316,23 +311,20 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		case c == nil:
 			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" {
 				h.transitionCluster(rctx, cluster.ClusterArn, "FAILED", cluster.State)
-				log := h.log.WithRecorder(rctx)
-				log.Info("reconcile: MSK container missing — marked FAILED",
+				h.log.Info("reconcile: MSK container missing — marked FAILED",
 					zap.String("cluster", cluster.ClusterArn))
 			}
 		case c.State == "running":
 			addr, port := h.clusterEndpointAddr(rctx, cluster.DockerContainerID, cluster.HostPort, network)
 			if cluster.State == "CREATING" || cluster.State == "STARTING" || cluster.State == "FAILED" || cluster.State == "ACTIVE" {
 				h.scheduleHealthCheck(cluster.ClusterArn, addr, port)
-				log := h.log.WithRecorder(rctx)
-				log.Info("reconcile: MSK container running — scheduling health check",
+				h.log.Info("reconcile: MSK container running — scheduling health check",
 					zap.String("cluster", cluster.ClusterArn))
 			}
 		default:
 			if cluster.State == "ACTIVE" || cluster.State == "STARTING" {
 				h.transitionCluster(rctx, cluster.ClusterArn, "FAILED", cluster.State)
-				log := h.log.WithRecorder(rctx)
-				log.Info("reconcile: MSK container not running — marked FAILED",
+				h.log.Info("reconcile: MSK container not running — marked FAILED",
 					zap.String("cluster", cluster.ClusterArn),
 					zap.String("containerState", c.State))
 			}

@@ -83,7 +83,7 @@ func TestHealthHandler_reportsAutoStateProvenance(t *testing.T) {
 		StateConfigured: "auto",
 		StateSource:     config.StateSourceAuto,
 	}
-	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil)
+	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/_health", nil)
 	rec := httptest.NewRecorder()
 
@@ -117,7 +117,7 @@ func TestHealthHandler_omitsConfiguredWhenNotPopulated(t *testing.T) {
 		AccountID: "000000000000",
 		State:     config.StateBackendMemory,
 	}
-	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil)
+	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/_health", nil)
 	rec := httptest.NewRecorder()
 

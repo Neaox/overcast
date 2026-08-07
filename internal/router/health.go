@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -18,6 +19,7 @@ type healthResponse struct {
 	ServiceTiers     map[string]string `json:"serviceTiers"`
 	ServiceGoalTiers map[string]string `json:"serviceGoalTiers"`
 	Storage          healthStorage     `json:"storage"`
+	Docker           *docker.Status    `json:"docker,omitempty"`
 }
 
 // healthStorage describes the active storage configuration.
@@ -53,7 +55,8 @@ type persistentHealth struct {
 // enabledServices is the list of service names that are currently enabled.
 // enabledTiers maps each enabled service name to its emulation tier.
 // enabledGoalTiers maps each enabled service name to its goal emulation tier.
-func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []string, enabledTiers map[string]string, enabledGoalTiers map[string]string) http.HandlerFunc {
+// dockerStatus, when non-nil, supplies the per-service Docker connectivity snapshot.
+func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []string, enabledTiers map[string]string, enabledGoalTiers map[string]string, dockerStatus func() *docker.Status) http.HandlerFunc {
 	// Build the storage section once — it's static for the process lifetime.
 	storage := healthStorage{Default: string(cfg.State), Configured: cfg.StateConfigured}
 	if len(cfg.ServiceStates) > 0 {
@@ -78,6 +81,9 @@ func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []s
 			ServiceTiers:     enabledTiers,
 			ServiceGoalTiers: enabledGoalTiers,
 			Storage:          currentStorage,
+		}
+		if dockerStatus != nil {
+			resp.Docker = dockerStatus()
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

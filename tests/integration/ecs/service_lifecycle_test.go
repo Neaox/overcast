@@ -220,6 +220,7 @@ func pollService(t *testing.T, srv *helpers.TestServer, cluster, service string,
 }
 
 func TestCreateService_placesTasksAndReachesSteadyState(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: an awsvpc task definition in a cluster
 	srv := awsvpcTaskDefCluster(t, "rollout-cluster", "rollout-task")
 
@@ -269,6 +270,7 @@ func TestCreateService_placesTasksAndReachesSteadyState(t *testing.T) {
 }
 
 func TestCreateService_tasksCarryServiceNetworkingAndDeploymentID(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: an awsvpc task definition in a cluster
 	srv := awsvpcTaskDefCluster(t, "task-shape-cluster", "task-shape-task")
 
@@ -373,6 +375,7 @@ func TestCreateService_tasksCarryServiceNetworkingAndDeploymentID(t *testing.T) 
 }
 
 func TestUpdateService_scaleDownStopsTasksWithSchedulerStopCode(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a service running two tasks
 	srv := awsvpcTaskDefCluster(t, "scale-cluster", "scale-task")
 	resp := ecsCall(t, srv, "CreateService", map[string]any{
@@ -466,6 +469,7 @@ func TestRPCv2CBOR_CreateService_requiresNetworkConfigurationForAwsvpc(t *testin
 }
 
 func TestRPCv2CBOR_CreateService_placesTasks(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: an awsvpc task definition
 	srv := awsvpcTaskDefCluster(t, "cbor-run-cluster", "cbor-run-task")
 
@@ -507,6 +511,7 @@ func TestRPCv2CBOR_CreateService_placesTasks(t *testing.T) {
 }
 
 func TestStopTask_setsUserInitiatedStopCode(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a running task
 	srv := awsvpcTaskDefCluster(t, "stopcode-cluster", "stopcode-task")
 	runResp := ecsCall(t, srv, "RunTask", map[string]any{
@@ -574,6 +579,7 @@ func TestStopTask_setsUserInitiatedStopCode(t *testing.T) {
 }
 
 func TestStopTask_withoutReason(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a running standalone task.
 	srv := awsvpcTaskDefCluster(t, "default-reason-cluster", "default-reason-task")
 	run := ecsCall(t, srv, "RunTask", map[string]any{

@@ -48,6 +48,7 @@ import {
   RowActions,
 } from "@/components/ui/resource-list-page"
 import { Badge } from "@/components/ui/badge"
+import { DockerBanner } from "@/components/docker-banner"
 import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { sectionLabel } from "@/lib/typography"
@@ -118,6 +119,7 @@ export function InstanceList() {
         </>
       }
     >
+      <DockerBanner forService="rds" />
       <ResourceListCard>
         {isLoading || instances.length === 0 ? (
           <QueryListState

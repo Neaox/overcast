@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Radio, Trash2 } from "lucide-react"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
+import { DockerBanner } from "@/components/docker-banner"
 import {
   mskClustersQueryOptions,
   mskKeys,
@@ -94,6 +95,7 @@ export function ClusterList() {
         </>
       }
     >
+      <DockerBanner forService="msk" />
       <ResourceListCard>
         {isLoading || clusters.length === 0 ? (
           <QueryListState
