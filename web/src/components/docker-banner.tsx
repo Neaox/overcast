@@ -18,9 +18,8 @@ interface DockerBannerProps {
 }
 
 export function DockerBanner({ forService }: DockerBannerProps) {
-  if (!DOCKER_SERVICES.has(forService)) return null
-
   const { data: health } = useQuery({ ...healthQueryOptions, staleTime: 30000 })
+  if (!DOCKER_SERVICES.has(forService)) return null
   const docker = health?.docker
   if (!docker) return null
 
