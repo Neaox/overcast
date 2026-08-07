@@ -100,6 +100,12 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [waf/stepfunctions/shield/glue/elbv2/rds] fix tag validation gaps: WAF no longer publishes spurious creation events on tag writes; Step Functions typed path validates tags; Shield and ELBv2 validate tag limits; Glue uses shared helpers; RDS fixes unbounded loop; removed dead TaggedResource and shieldTagsToList.
 
+- [web] path-style S3 copy URLs percent-encode object keys, so keys with `#`, `?`, spaces, or unicode paste as working links
+
+- [web] bundled builds follow the server-injected API endpoint on boot instead of a stale stored one; only endpoints entered in the connection dialog persist as overrides
+
+- [web] reopening connection settings seeds the form from the active endpoint, so Connect keeps a custom endpoint instead of reverting it to the default
+
 ## [0.0.1-alpha.30] - 2026-08-04
 
 ### Added
