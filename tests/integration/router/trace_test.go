@@ -9,21 +9,19 @@ import (
 )
 
 func TestTrace_requestLifecycle(t *testing.T) {
-	// Given: a server with debug tracing enabled
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	// When: we send a request
-	resp, err := http.Get(srv.URL + "/_health")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := helpers.PostForm(t, srv.URL, map[string]string{
+		"Action":    "CreateQueue",
+		"Version":   "2012-11-05",
+		"QueueName": "test-trace-queue",
+	})
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
-	// Then: the response carries a request ID
 	reqID := resp.Header.Get("x-amzn-requestid")
 	if reqID == "" {
 		reqID = resp.Header.Get("x-amz-request-id")
@@ -32,7 +30,6 @@ func TestTrace_requestLifecycle(t *testing.T) {
 		t.Fatal("expected x-amzn-requestid header")
 	}
 
-	// When: we fetch the trace for that request
 	traceResp, err := http.Get(srv.URL + "/_debug/trace/" + reqID)
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +38,6 @@ func TestTrace_requestLifecycle(t *testing.T) {
 
 	helpers.AssertStatus(t, traceResp, http.StatusOK)
 
-	// Then: the trace contains expected request metadata
 	var trace struct {
 		RequestID  string `json:"requestId"`
 		Method     string `json:"method"`
@@ -54,32 +50,29 @@ func TestTrace_requestLifecycle(t *testing.T) {
 	if trace.RequestID != reqID {
 		t.Errorf("expected requestId %q, got %q", reqID, trace.RequestID)
 	}
-	if trace.Method != "GET" {
-		t.Errorf("expected GET, got %s", trace.Method)
+	if trace.Method != "POST" {
+		t.Errorf("expected POST, got %s", trace.Method)
 	}
-	if trace.Path != "/_health" {
-		t.Errorf("expected /_health, got %s", trace.Path)
+	if trace.Path != "/" {
+		t.Errorf("expected /, got %s", trace.Path)
 	}
 	if trace.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", trace.StatusCode)
 	}
-	if trace.Service == "" {
-		t.Error("expected non-empty service")
+	if trace.Service != "sqs" {
+		t.Errorf("expected sqs, got %s", trace.Service)
 	}
 }
 
 func TestTrace_notFound(t *testing.T) {
-	// Given: a server with debug tracing enabled
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	// When: we fetch a non-existent trace
 	resp, err := http.Get(srv.URL + "/_debug/trace/nonexistent")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 
-	// Then: we get a 404
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
 
 	var body map[string]any
@@ -92,17 +85,15 @@ func TestTrace_notFound(t *testing.T) {
 }
 
 func TestTrace_listReturnsEntries(t *testing.T) {
-	// Given: a server with debug tracing enabled
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	// When: we make a request (so there's a trace to list)
-	resp, err := http.Get(srv.URL + "/_health")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := helpers.PostForm(t, srv.URL, map[string]string{
+		"Action":    "CreateQueue",
+		"Version":   "2012-11-05",
+		"QueueName": "test-trace-list",
+	})
 	resp.Body.Close()
 
-	// When: we list traces
 	listResp, err := http.Get(srv.URL + "/_debug/traces")
 	if err != nil {
 		t.Fatal(err)
@@ -125,10 +116,11 @@ func TestTrace_listReturnsEntries(t *testing.T) {
 func TestTrace_count(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	resp, err := http.Get(srv.URL + "/_health")
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp := helpers.PostForm(t, srv.URL, map[string]string{
+		"Action":    "CreateQueue",
+		"Version":   "2012-11-05",
+		"QueueName": "test-trace-count",
+	})
 	resp.Body.Close()
 
 	countResp, err := http.Get(srv.URL + "/_debug/traces/count")

@@ -5,6 +5,7 @@
 
 # Shell scripts must always have LF endings so the shebang works on every OS.
 scripts/*.sh text eol=lf
+scripts/verify-changed.sh text eol=lf working-tree-encoding=UTF-8
 scripts/*.ps1 text eol=crlf
 
 # Committed generated files. linguist-generated collapses them by default in
