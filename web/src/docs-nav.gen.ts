@@ -3781,6 +3781,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Pipes",
         "id": "pipes"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },

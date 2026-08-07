@@ -61,10 +61,10 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 
 ### Tags
 
-| Operation             | Status       | Notes                                           | AWS Docs                                                                                 |
-| --------------------- | ------------ | ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `TagResource`         | ✅ Supported | Adds or overwrites tags on databases and tables | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-TagResource.html)         |
-| `UntagResource`       | ✅ Supported | Removes tags by key from databases and tables   | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-UntagResource.html)       |
-| `ListTagsForResource` | ✅ Supported | Returns tags for databases and tables           | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-ListTagsForResource.html) |
+| Operation       | Status       | Notes                                           | AWS Docs                                                                           |
+| --------------- | ------------ | ----------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `TagResource`   | ✅ Supported | Adds or overwrites tags on databases and tables | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-TagResource.html)   |
+| `UntagResource` | ✅ Supported | Removes tags by key from databases and tables   | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-UntagResource.html) |
+| `GetTags`       | ✅ Supported | Returns tags for databases and tables           | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-GetTags.html)       |
 
 <!-- END overcast:capabilities -->

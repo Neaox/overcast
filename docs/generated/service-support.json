@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1392,
+  "total_ops": 1398,
   "services": [
     {
       "service": "s3",
@@ -6894,8 +6894,8 @@
     {
       "service": "pipes",
       "display_name": "Pipes",
-      "total_ops": 5,
-      "implemented_ops": 5,
+      "total_ops": 8,
+      "implemented_ops": 8,
       "operations": [
         {
           "operation": "CreatePipe",
@@ -6926,14 +6926,32 @@
           "category": "Pipes",
           "status": "✅ Supported",
           "notes": "Lists all pipes as PipeSummary"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Adds/merges tags by pipe ARN"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Removes tags by key from a pipe ARN"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Returns tags for a pipe ARN"
         }
       ]
     },
     {
       "service": "waf",
       "display_name": "WAF v2",
-      "total_ops": 4,
-      "implemented_ops": 4,
+      "total_ops": 7,
+      "implemented_ops": 7,
       "operations": [
         {
           "operation": "CreateWebACL",
@@ -6956,6 +6974,24 @@
           "category": "Web ACLs",
           "status": "✅ Supported",
           "notes": "LockToken accepted but not checked"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Web ACLs",
+          "status": "✅ Supported",
+          "notes": "Adds/merges tags by WebACL ARN"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Web ACLs",
+          "status": "✅ Supported",
+          "notes": "Removes tags by key from a WebACL ARN"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Web ACLs",
+          "status": "✅ Supported",
+          "notes": "Returns tags for a WebACL ARN"
         }
       ]
     },
@@ -7428,7 +7464,7 @@
           "notes": "Removes tags by key from databases and tables"
         },
         {
-          "operation": "ListTagsForResource",
+          "operation": "GetTags",
           "category": "Tags",
           "status": "✅ Supported",
           "notes": "Returns tags for databases and tables"

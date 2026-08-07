@@ -53,8 +53,8 @@
 
 | Service        | Ops | Highlights                                                      |
 | -------------- | --- | --------------------------------------------------------------- |
-| Pipes          | 5   | CreatePipe, DescribePipe, DeletePipe, ListPipes; DDB→SQS only   |
-| WAF v2         | 4   | Metadata-only Web ACL CRUD; rules are stored but not evaluated or enforced |
+| Pipes          | 8   | CreatePipe, DescribePipe, DeletePipe, ListPipes; DDB→SQS only   |
+| WAF v2         | 7   | Metadata-only Web ACL CRUD; rules are stored but not evaluated or enforced |
 | Shield         | 8   | Minimal subscription and protection metadata for CDK/CF workflows |
 
 ### Op counts from capability registry
@@ -96,8 +96,8 @@
 | Route 53        | 25  |
 | Auto Scaling    | 25  |
 | Step Functions  | 14  |
-| Pipes           | 5   |
-| WAF v2          | 4   |
+| Pipes           | 8   |
+| WAF v2          | 7   |
 | Shield          | 8   |
 | ACM             | 7   |
 | Athena          | 11  |
