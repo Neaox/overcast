@@ -16,5 +16,13 @@ func init() {
 		capabilities.Capability{Service: "glue", Operation: "GetTable", Category: "Tables", Status: capabilities.StatusSupported, Notes: "Returns table details"},
 		capabilities.Capability{Service: "glue", Operation: "GetTables", Category: "Tables", Status: capabilities.StatusSupported, Notes: "Lists tables in a database"},
 		capabilities.Capability{Service: "glue", Operation: "DeleteTable", Category: "Tables", Status: capabilities.StatusSupported, Notes: "Deletes a table"},
+
+		// Tags
+		capabilities.Capability{Service: "glue", Operation: "TagResource", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Adds or overwrites tags on databases and tables"},
+		capabilities.Capability{Service: "glue", Operation: "UntagResource", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Removes tags by key from databases and tables"},
+		capabilities.Capability{Service: "glue", Operation: "GetTags", Category: "Tags",
+			Status: capabilities.StatusSupported, Notes: "Returns tags for databases and tables"},
 	)
 }

@@ -22,6 +22,7 @@ const (
 	nsSubnetGroups    = "rds:subnet-groups"
 	nsParameterGroups = "rds:parameter-groups"
 	nsEvents          = "rds:events"
+	nsTags            = "rds:tags"
 )
 
 // DBInstance represents a stored RDS DB instance.
@@ -548,6 +549,8 @@ func (s *rdsStore) deleteDBParameterGroup(ctx context.Context, name string) *pro
 	}
 	return nil
 }
+
+// ── Tags store ────────────────────────────────────────────────────────────────
 
 // ── Cluster store ─────────────────────────────────────────────────────────────
 

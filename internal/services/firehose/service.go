@@ -32,12 +32,16 @@ const serviceName = "firehose"
 
 // ─── Types ────────────────────────────────────────────────────
 
+func (ds *DeliveryStream) GetTags() map[string]string  { return ds.Tags }
+func (ds *DeliveryStream) SetTags(t map[string]string) { ds.Tags = t }
+
 // DeliveryStream represents a Firehose delivery stream.
 type DeliveryStream struct {
-	DeliveryStreamName   string `json:"DeliveryStreamName"`
-	DeliveryStreamARN    string `json:"DeliveryStreamARN"`
-	DeliveryStreamStatus string `json:"DeliveryStreamStatus"`
-	DeliveryStreamType   string `json:"DeliveryStreamType"`
+	DeliveryStreamName   string            `json:"DeliveryStreamName"`
+	DeliveryStreamARN    string            `json:"DeliveryStreamARN"`
+	DeliveryStreamStatus string            `json:"DeliveryStreamStatus"`
+	DeliveryStreamType   string            `json:"DeliveryStreamType"`
+	Tags                 map[string]string `json:"Tags,omitempty"`
 }
 
 // ─── Store ────────────────────────────────────────────────────
@@ -111,12 +115,15 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, _ clock.Clock) 
 		cfg:   cfg,
 	}
 	s.ops = map[string]http.HandlerFunc{
-		"CreateDeliveryStream":   s.createDeliveryStream,
-		"DescribeDeliveryStream": s.describeDeliveryStream,
-		"ListDeliveryStreams":    s.listDeliveryStreams,
-		"DeleteDeliveryStream":   s.deleteDeliveryStream,
-		"PutRecord":              s.putRecord,
-		"PutRecordBatch":         s.putRecordBatch,
+		"CreateDeliveryStream":      s.createDeliveryStream,
+		"DescribeDeliveryStream":    s.describeDeliveryStream,
+		"ListDeliveryStreams":       s.listDeliveryStreams,
+		"DeleteDeliveryStream":      s.deleteDeliveryStream,
+		"PutRecord":                 s.putRecord,
+		"PutRecordBatch":            s.putRecordBatch,
+		"TagDeliveryStream":         s.tagDeliveryStream,
+		"UntagDeliveryStream":       s.untagDeliveryStream,
+		"ListTagsForDeliveryStream": s.listTagsForDeliveryStream,
 	}
 	s.typedOp = s.typedOps()
 	return s
@@ -191,6 +198,7 @@ func (s *Service) createDeliveryStream(w http.ResponseWriter, r *http.Request) {
 		DeliveryStreamARN:    arn,
 		DeliveryStreamStatus: "ACTIVE",
 		DeliveryStreamType:   dsType,
+		Tags:                 make(map[string]string),
 	}
 	if err := s.store.putStream(r.Context(), ds); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
@@ -316,5 +324,116 @@ func (s *Service) putRecordBatch(w http.ResponseWriter, r *http.Request) {
 		"FailedPutCount":   0,
 		"Encrypted":        false,
 		"RequestResponses": results,
+	})
+}
+
+// ─── Tag handlers ───────────────────────────────────────────────
+
+var firehoseTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidArgumentException",
+	InvalidCode:     "InvalidArgumentException",
+	ExceededMessage: "Too many tags.",
+}
+
+func (s *Service) tagDeliveryStream(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeliveryStreamName string            `json:"DeliveryStreamName"`
+		Tags               map[string]string `json:"Tags"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), req.DeliveryStreamName, req.Tags, firehoseTagCfg,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+		func(ctx context.Context, ds *DeliveryStream) *protocol.AWSError {
+			if err := s.store.putStream(ctx, ds); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (s *Service) untagDeliveryStream(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeliveryStreamName string   `json:"DeliveryStreamName"`
+		TagKeys            []string `json:"TagKeys"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if aerr := serviceutil.RemoveInlineTags(r.Context(), req.DeliveryStreamName, req.TagKeys,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+		func(ctx context.Context, ds *DeliveryStream) *protocol.AWSError {
+			if err := s.store.putStream(ctx, ds); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (s *Service) listTagsForDeliveryStream(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeliveryStreamName string `json:"DeliveryStreamName"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	tags, aerr := serviceutil.ListInlineTags(r.Context(), req.DeliveryStreamName,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+	)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	var tagList []map[string]string
+	for k, v := range tags {
+		tagList = append(tagList, map[string]string{"Key": k, "Value": v})
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
+		"Tags":        tagList,
+		"HasMoreTags": false,
 	})
 }

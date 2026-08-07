@@ -27,7 +27,7 @@ func init() {
 		// Tags
 		capabilities.Capability{Service: "eventbridge", Operation: "TagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Tag buses and rules"},
 		capabilities.Capability{Service: "eventbridge", Operation: "ListTagsForResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "List tags for a resource"},
-		capabilities.Capability{Service: "eventbridge", Operation: "UntagResource", Category: "Tags", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},
+		capabilities.Capability{Service: "eventbridge", Operation: "UntagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Removes tags from a resource"},
 		// Archives
 		capabilities.Capability{Service: "eventbridge", Operation: "CreateArchive", Category: "Archives", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},
 		capabilities.Capability{Service: "eventbridge", Operation: "DescribeArchive", Category: "Archives", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},

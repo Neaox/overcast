@@ -33,6 +33,7 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 | ------------ | ------------ |
 | Subscription | 1            |
 | Protections  | 4            |
+| Tags         | 3            |
 
 ---
 
@@ -52,5 +53,13 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 | `DescribeProtection` | ✅ Supported | Lookup by ProtectionId or ResourceArn       | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_DescribeProtection.html) |
 | `ListProtections`    | ✅ Supported | Lists all protections                       | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_ListProtections.html)    |
 | `DeleteProtection`   | ✅ Supported | Deletes a protection by ID                  | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_DeleteProtection.html)   |
+
+### Tags
+
+| Operation             | Status       | Notes                              | AWS Docs                                                                                     |
+| --------------------- | ------------ | ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported | Adds/updates tags on a protection  | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | Removes tag keys from a protection | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | Lists tags on a protection         | [docs](https://docs.aws.amazon.com/waf/latest/DDOSAPIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

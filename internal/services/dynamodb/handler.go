@@ -2046,25 +2046,17 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	table, aerr := h.store.getTable(r.Context(), tableName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	if table.Tags == nil {
-		table.Tags = make(map[string]string)
-	}
+	incoming := make(map[string]string, len(req.Tags))
 	for _, t := range req.Tags {
-		table.Tags[t.Key] = t.Value
+		incoming[t.Key] = t.Value
 	}
 
-	if aerr := serviceutil.ValidateTags(dynamoTagCfg, table.Tags); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	if aerr := h.store.putTable(r.Context(), table); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), tableName, incoming, dynamoTagCfg,
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
+		func(ctx context.Context, t *Table) *protocol.AWSError { return h.store.putTable(ctx, t) },
+	); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -2087,24 +2079,28 @@ func (h *Handler) ListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	table, aerr := h.store.getTable(r.Context(), tableName)
+	tags, aerr := serviceutil.ListInlineTags(r.Context(), tableName,
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
+	)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
-	tags := make([]struct {
+	tagList := make([]struct {
 		Key   string `json:"Key"`
 		Value string `json:"Value"`
-	}, 0, len(table.Tags))
-	for k, v := range table.Tags {
-		tags = append(tags, struct {
+	}, 0, len(tags))
+	for k, v := range tags {
+		tagList = append(tagList, struct {
 			Key   string `json:"Key"`
 			Value string `json:"Value"`
 		}{Key: k, Value: v})
 	}
 
-	protocol.WriteJSON(w, r, http.StatusOK, &listTagsOfResourceResponse{Tags: tags})
+	protocol.WriteJSON(w, r, http.StatusOK, &listTagsOfResourceResponse{Tags: tagList})
 }
 
 func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
@@ -2122,17 +2118,12 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	table, aerr := h.store.getTable(r.Context(), tableName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	for _, k := range req.TagKeys {
-		delete(table.Tags, k)
-	}
-
-	if aerr := h.store.putTable(r.Context(), table); aerr != nil {
+	if aerr := serviceutil.RemoveInlineTags(r.Context(), tableName, req.TagKeys,
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
+		func(ctx context.Context, t *Table) *protocol.AWSError { return h.store.putTable(ctx, t) },
+	); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -2149,23 +2140,17 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 		}
 	}
 
-	table, aerr := h.store.getTable(ctx, tableName)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	if table.Tags == nil {
-		table.Tags = make(map[string]string)
-	}
+	incoming := make(map[string]string, len(req.Tags))
 	for _, t := range req.Tags {
-		table.Tags[t.Key] = t.Value
+		incoming[t.Key] = t.Value
 	}
 
-	if aerr := serviceutil.ValidateTags(dynamoTagCfg, table.Tags); aerr != nil {
-		return nil, aerr
-	}
-
-	if aerr := h.store.putTable(ctx, table); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(ctx, tableName, incoming, dynamoTagCfg,
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
+		func(ctx context.Context, t *Table) *protocol.AWSError { return h.store.putTable(ctx, t) },
+	); aerr != nil {
 		return nil, aerr
 	}
 
@@ -2181,23 +2166,27 @@ func (h *Handler) listTagsOfResourceTyped(ctx context.Context, req *listTagsOfRe
 		}
 	}
 
-	table, aerr := h.store.getTable(ctx, tableName)
+	tags, aerr := serviceutil.ListInlineTags(ctx, tableName,
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
+	)
 	if aerr != nil {
 		return nil, aerr
 	}
 
-	tags := make([]struct {
+	tagList := make([]struct {
 		Key   string `json:"Key"`
 		Value string `json:"Value"`
-	}, 0, len(table.Tags))
-	for k, v := range table.Tags {
-		tags = append(tags, struct {
+	}, 0, len(tags))
+	for k, v := range tags {
+		tagList = append(tagList, struct {
 			Key   string `json:"Key"`
 			Value string `json:"Value"`
 		}{Key: k, Value: v})
 	}
 
-	return &listTagsOfResourceResponse{Tags: tags}, nil
+	return &listTagsOfResourceResponse{Tags: tagList}, nil
 }
 
 func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
@@ -2209,16 +2198,12 @@ func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequ
 		}
 	}
 
-	table, aerr := h.store.getTable(ctx, tableName)
-	if aerr != nil {
-		return nil, aerr
-	}
-
-	for _, k := range req.TagKeys {
-		delete(table.Tags, k)
-	}
-
-	if aerr := h.store.putTable(ctx, table); aerr != nil {
+	if aerr := serviceutil.RemoveInlineTags(ctx, tableName, req.TagKeys,
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
+		func(ctx context.Context, t *Table) *protocol.AWSError { return h.store.putTable(ctx, t) },
+	); aerr != nil {
 		return nil, aerr
 	}
 

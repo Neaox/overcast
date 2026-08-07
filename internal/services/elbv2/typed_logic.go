@@ -3,6 +3,7 @@ package elbv2
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 
 	"github.com/google/uuid"
@@ -498,6 +499,202 @@ func (h *Handler) describeTargetHealthTyped(ctx context.Context, req *describeTa
 	return &xmlTypedDescribeTargetHealthResponse{
 		Xmlns:            elbv2XMLNS,
 		Result:           xmlTypedDescribeTargetHealthResult{TargetHealthDescriptions: xmlTypedTargetHealthDescriptions{Items: members}},
+		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
+	}, nil
+}
+
+// Tag operation request types.
+
+type elbv2Tag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+type addTagsReq struct {
+	ResourceArns []string   `json:"ResourceArns"`
+	Tags         []elbv2Tag `json:"Tags"`
+}
+
+type removeTagsReq struct {
+	ResourceArns []string `json:"ResourceArns"`
+	TagKeys      []string `json:"TagKeys"`
+}
+
+type describeTagsReq struct {
+	ResourceArns []string `json:"ResourceArns"`
+}
+
+type xmlTypedAddTagsResponse struct {
+	XMLName          struct{}                  `xml:"AddTagsResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"AddTagsResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlTypedRemoveTagsResponse struct {
+	XMLName          struct{}                  `xml:"RemoveTagsResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"RemoveTagsResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlTypedDescribeTagsResponse struct {
+	XMLName          struct{}                   `xml:"DescribeTagsResponse"`
+	Xmlns            string                     `xml:"xmlns,attr"`
+	Result           xmlTypedDescribeTagsResult `xml:"DescribeTagsResult"`
+	ResponseMetadata protocol.ResponseMetadata  `xml:"ResponseMetadata"`
+}
+
+type xmlTypedDescribeTagsResult struct {
+	TagDescriptions xmlTypedTagDescriptions `xml:"TagDescriptions"`
+}
+
+type xmlTypedTagDescriptions struct {
+	Items []xmlTagDescription `xml:"member"`
+}
+
+func (h *Handler) addTagsTyped(ctx context.Context, req *addTagsReq) (*xmlTypedAddTagsResponse, *protocol.AWSError) {
+	if len(req.ResourceArns) == 0 {
+		return nil, errMissingParam("ResourceArns")
+	}
+	region := h.region(ctx)
+
+	tagMap := map[string]string{}
+	for _, t := range req.Tags {
+		if _, exists := tagMap[t.Key]; exists {
+			return nil, &protocol.AWSError{
+				Code: "DuplicateTagKeys", Message: "Duplicate tag keys: " + t.Key,
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		tagMap[t.Key] = t.Value
+	}
+
+	for _, arn := range req.ResourceArns {
+		if lb, found, err := h.getLB(ctx, region, arn); err != nil {
+			return nil, protocol.ErrInternalError
+		} else if found {
+			if lb.Tags == nil {
+				lb.Tags = map[string]string{}
+			}
+			for k, v := range tagMap {
+				lb.Tags[k] = v
+			}
+			if err := h.putLB(ctx, region, lb); err != nil {
+				return nil, protocol.ErrInternalError
+			}
+			continue
+		}
+		if tg, found, err := h.getTG(ctx, region, arn); err != nil {
+			return nil, protocol.ErrInternalError
+		} else if found {
+			if tg.Tags == nil {
+				tg.Tags = map[string]string{}
+			}
+			for k, v := range tagMap {
+				tg.Tags[k] = v
+			}
+			if err := h.putTG(ctx, region, tg); err != nil {
+				return nil, protocol.ErrInternalError
+			}
+			continue
+		}
+		return nil, errNotFound("Resource", arn)
+	}
+
+	return &xmlTypedAddTagsResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
+	}, nil
+}
+
+func (h *Handler) removeTagsTyped(ctx context.Context, req *removeTagsReq) (*xmlTypedRemoveTagsResponse, *protocol.AWSError) {
+	if len(req.ResourceArns) == 0 {
+		return nil, errMissingParam("ResourceArns")
+	}
+	region := h.region(ctx)
+
+	for _, arn := range req.ResourceArns {
+		if lb, found, err := h.getLB(ctx, region, arn); err != nil {
+			return nil, protocol.ErrInternalError
+		} else if found {
+			if lb.Tags != nil {
+				for _, k := range req.TagKeys {
+					delete(lb.Tags, k)
+				}
+			}
+			if err := h.putLB(ctx, region, lb); err != nil {
+				return nil, protocol.ErrInternalError
+			}
+			continue
+		}
+		if tg, found, err := h.getTG(ctx, region, arn); err != nil {
+			return nil, protocol.ErrInternalError
+		} else if found {
+			if tg.Tags != nil {
+				for _, k := range req.TagKeys {
+					delete(tg.Tags, k)
+				}
+			}
+			if err := h.putTG(ctx, region, tg); err != nil {
+				return nil, protocol.ErrInternalError
+			}
+			continue
+		}
+		return nil, errNotFound("Resource", arn)
+	}
+
+	return &xmlTypedRemoveTagsResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
+	}, nil
+}
+
+func (h *Handler) describeTagsTyped(ctx context.Context, req *describeTagsReq) (*xmlTypedDescribeTagsResponse, *protocol.AWSError) {
+	region := h.region(ctx)
+
+	var descs []xmlTagDescription
+
+	if len(req.ResourceArns) == 0 {
+		lbs, err := h.listLBs(ctx, region)
+		if err != nil {
+			return nil, protocol.ErrInternalError
+		}
+		tgs, err := h.listTGs(ctx, region)
+		if err != nil {
+			return nil, protocol.ErrInternalError
+		}
+		for _, lb := range lbs {
+			descs = append(descs, tagDescXML(lb.LoadBalancerArn, lb.Tags))
+		}
+		for _, tg := range tgs {
+			descs = append(descs, tagDescXML(tg.TargetGroupArn, tg.Tags))
+		}
+	} else {
+		for _, arn := range req.ResourceArns {
+			if lb, found, err := h.getLB(ctx, region, arn); err != nil {
+				return nil, protocol.ErrInternalError
+			} else if found {
+				descs = append(descs, tagDescXML(lb.LoadBalancerArn, lb.Tags))
+				continue
+			}
+			if tg, found, err := h.getTG(ctx, region, arn); err != nil {
+				return nil, protocol.ErrInternalError
+			} else if found {
+				descs = append(descs, tagDescXML(tg.TargetGroupArn, tg.Tags))
+				continue
+			}
+			return nil, errNotFound("Resource", arn)
+		}
+	}
+
+	if descs == nil {
+		descs = []xmlTagDescription{}
+	}
+
+	return &xmlTypedDescribeTagsResponse{
+		Xmlns:            elbv2XMLNS,
+		Result:           xmlTypedDescribeTagsResult{TagDescriptions: xmlTypedTagDescriptions{Items: descs}},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
 }

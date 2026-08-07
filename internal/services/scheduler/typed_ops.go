@@ -2,10 +2,10 @@ package scheduler
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/protocol/op"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 func (s *Service) typedOps() map[string]op.Operation {
@@ -66,34 +66,30 @@ func (s *Service) saveTagsJSON(ctx context.Context, arn string, tags map[string]
 	if len(tags) == 0 {
 		return
 	}
-	raw, err := json.Marshal(tags)
-	if err != nil {
-		return
-	}
-	_ = s.store.Set(ctx, nsTags, arn, string(raw))
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
+	_ = tagStore.Save(ctx, arn, tags)
 }
 
 func (s *Service) mergeTags(ctx context.Context, arn string, tags map[string]string) {
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
 	existing := s.loadTags(ctx, arn)
 	for k, v := range tags {
 		existing[k] = v
 	}
-	s.saveTagsJSON(ctx, arn, existing)
+	_ = tagStore.Save(ctx, arn, existing)
 }
 
 func (s *Service) removeTags(ctx context.Context, arn string, keys []string) {
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
 	existing := s.loadTags(ctx, arn)
 	for _, k := range keys {
 		delete(existing, k)
 	}
-	s.saveTagsJSON(ctx, arn, existing)
+	_ = tagStore.Save(ctx, arn, existing)
 }
 
 func (s *Service) loadTags(ctx context.Context, arn string) map[string]string {
-	raw, found, _ := s.store.Get(ctx, nsTags, arn)
-	tags := map[string]string{}
-	if found {
-		_ = json.Unmarshal([]byte(raw), &tags)
-	}
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
+	tags, _ := tagStore.Load(ctx, arn)
 	return tags
 }

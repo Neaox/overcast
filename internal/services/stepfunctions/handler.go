@@ -63,6 +63,9 @@ func (h *Handler) initOps() {
 		"ListStateMachines":    h.ListStateMachines,
 		"StartExecution":       h.StartExecution,
 		"DeleteStateMachine":   h.DeleteStateMachine,
+		"TagResource":          h.TagResource,
+		"UntagResource":        h.UntagResource,
+		"ListTagsForResource":  h.ListTagsForResource,
 		// The execution plane has a single, typed implementation. These entries
 		// route the legacy X-Amz-Target path to it rather than duplicating the
 		// logic in a second handler that could drift.
@@ -326,4 +329,136 @@ func errSMNotFound(arn string) *protocol.AWSError {
 		Message:    fmt.Sprintf("State Machine Does Not Exist: '%s'", arn),
 		HTTPStatus: http.StatusBadRequest,
 	}
+}
+
+// ── Tags ──────────────────────────────────────────────────────────────────────
+
+var sfnTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "TooManyTags",
+	InvalidCode:     "InvalidParameter",
+	ExceededMessage: "Tag count exceeded the maximum of 50 tags per resource.",
+}
+
+type tagResourceRequest struct {
+	ResourceArn string `json:"resourceArn"`
+	Tags        []struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	} `json:"tags"`
+}
+
+type untagResourceRequest struct {
+	ResourceArn string   `json:"resourceArn"`
+	TagKeys     []string `json:"tagKeys"`
+}
+
+type listTagsForResourceRequest struct {
+	ResourceArn string `json:"resourceArn"`
+}
+
+func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
+	var req tagResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	name := extractSMName(req.ResourceArn)
+
+	incoming := make(map[string]string, len(req.Tags))
+	for _, t := range req.Tags {
+		incoming[t.Key] = t.Value
+	}
+
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), name, incoming, sfnTagCfg,
+		func(ctx context.Context, name string) (*StateMachine, *protocol.AWSError) {
+			sm, err := h.store.GetStateMachine(ctx, name)
+			if err != nil {
+				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			if sm == nil {
+				return nil, errSMNotFound(req.ResourceArn)
+			}
+			return sm, nil
+		},
+		func(ctx context.Context, sm *StateMachine) *protocol.AWSError {
+			if err := h.store.PutStateMachine(ctx, sm); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			return nil
+		},
+	); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
+	var req untagResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	name := extractSMName(req.ResourceArn)
+
+	if aerr := serviceutil.RemoveInlineTags(r.Context(), name, req.TagKeys,
+		func(ctx context.Context, name string) (*StateMachine, *protocol.AWSError) {
+			sm, err := h.store.GetStateMachine(ctx, name)
+			if err != nil {
+				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			if sm == nil {
+				return nil, errSMNotFound(req.ResourceArn)
+			}
+			return sm, nil
+		},
+		func(ctx context.Context, sm *StateMachine) *protocol.AWSError {
+			if err := h.store.PutStateMachine(ctx, sm); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			return nil
+		},
+	); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req listTagsForResourceRequest
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	name := extractSMName(req.ResourceArn)
+
+	tags, aerr := serviceutil.ListInlineTags(r.Context(), name,
+		func(ctx context.Context, name string) (*StateMachine, *protocol.AWSError) {
+			sm, err := h.store.GetStateMachine(ctx, name)
+			if err != nil {
+				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			if sm == nil {
+				return nil, errSMNotFound(req.ResourceArn)
+			}
+			return sm, nil
+		},
+	)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	tagList := make([]map[string]string, 0, len(tags))
+	for k, v := range tags {
+		tagList = append(tagList, map[string]string{"key": k, "value": v})
+	}
+	if tagList == nil {
+		tagList = []map[string]string{}
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"tags": tagList})
 }

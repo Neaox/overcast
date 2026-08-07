@@ -15,6 +15,9 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"GetWorkGroup":        op.NewTyped[workGroupNameReq, getWorkGroupResp]("GetWorkGroup", s.getWorkGroupTyped),
 		"ListWorkGroups":      op.NewTyped[struct{}, listWorkGroupsResp]("ListWorkGroups", s.listWorkGroupsTyped),
 		"DeleteWorkGroup":     op.NewTyped[workGroupNameReq, struct{}]("DeleteWorkGroup", s.deleteWorkGroupTyped),
+		"TagResource":         op.NewTyped[tagResourceReq, struct{}]("TagResource", s.tagResourceTyped),
+		"UntagResource":       op.NewTyped[untagResourceReq, struct{}]("UntagResource", s.untagResourceTyped),
+		"ListTagsForResource": op.NewTyped[listTagsForResourceReq, listTagsForResourceResp]("ListTagsForResource", s.listTagsForResourceTyped),
 	}
 }
 

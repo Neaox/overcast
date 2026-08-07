@@ -22,6 +22,9 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"ListTagsForResource": op.NewTyped[listTagsForResourceRequest, listTagsForResourceResponse](
 			"ListTagsForResource", s.listTagsForResourceTyped,
 		),
+		"UntagResource": op.NewTyped[untagResourceRequest, struct{}](
+			"UntagResource", s.untagResourceTyped,
+		),
 		"DeleteEventBus": op.NewTyped[deleteEventBusRequest, struct{}](
 			"DeleteEventBus", s.deleteEventBusTyped,
 		),

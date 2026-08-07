@@ -728,7 +728,6 @@ func TestUnsupportedOperations_notImplemented(t *testing.T) {
 	unsupported := []string{
 		"LabelParameterVersion",
 		"UnlabelParameterVersion",
-		"RemoveTagsFromResource",
 		"GetServiceSetting",
 		"CreateDocument",
 		"SendCommand",

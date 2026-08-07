@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createApplicationRequest struct {
@@ -428,4 +429,69 @@ func (s *Service) deleteHostedConfigurationVersionTyped(ctx context.Context, req
 	}
 	_ = s.store.deleteHCV(ctx, req.ApplicationId, req.ConfigurationProfileId, req.VersionNumber)
 	return nil, nil
+}
+
+// ─── Tag operations ─────────────────────────────────────────────
+
+type appConfigTagResourceRequest struct {
+	ResourceArn string            `json:"ResourceArn" cbor:"ResourceArn"`
+	Tags        map[string]string `json:"Tags" cbor:"Tags"`
+}
+
+type appConfigUntagResourceRequest struct {
+	ResourceArn string   `json:"ResourceArn" cbor:"ResourceArn"`
+	TagKeys     []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
+type appConfigListTagsForResourceRequest struct {
+	ResourceArn string `json:"ResourceArn" cbor:"ResourceArn"`
+}
+
+type appConfigListTagsForResourceResponse struct {
+	Tags map[string]string `json:"Tags" cbor:"Tags"`
+}
+
+func (s *Service) tagResourceTyped(ctx context.Context, req *appConfigTagResourceRequest) (any, *protocol.AWSError) {
+	p, existing, aerr := s.resolveTagTarget(ctx, req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if existing == nil {
+		existing = make(map[string]string)
+	}
+	for k, v := range req.Tags {
+		existing[k] = v
+	}
+	if aerr := serviceutil.ValidateTags(appConfigTagCfg, existing); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := s.persistTags(ctx, p, existing); aerr != nil {
+		return nil, aerr
+	}
+	return nil, nil
+}
+
+func (s *Service) untagResourceTyped(ctx context.Context, req *appConfigUntagResourceRequest) (any, *protocol.AWSError) {
+	p, existing, aerr := s.resolveTagTarget(ctx, req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	for _, k := range req.TagKeys {
+		delete(existing, k)
+	}
+	if aerr := s.persistTags(ctx, p, existing); aerr != nil {
+		return nil, aerr
+	}
+	return nil, nil
+}
+
+func (s *Service) listTagsForResourceTyped(ctx context.Context, req *appConfigListTagsForResourceRequest) (*appConfigListTagsForResourceResponse, *protocol.AWSError) {
+	_, existing, aerr := s.resolveTagTarget(ctx, req.ResourceArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if existing == nil {
+		existing = make(map[string]string)
+	}
+	return &appConfigListTagsForResourceResponse{Tags: existing}, nil
 }

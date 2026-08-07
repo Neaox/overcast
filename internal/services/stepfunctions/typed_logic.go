@@ -7,6 +7,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createStateMachineRequest struct {
@@ -170,4 +171,75 @@ func (h *Handler) publishCtx(ctx context.Context, t events.Type, payload any) {
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: t, Payload: payload})
 	}
+}
+
+type listTagsForResourceTypedResponse struct {
+	Tags []map[string]string `json:"tags"`
+}
+
+func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
+	name := extractSMName(req.ResourceArn)
+	sm, err := h.store.GetStateMachine(ctx, name)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if sm == nil {
+		return nil, errSMNotFound(req.ResourceArn)
+	}
+
+	if sm.Tags == nil {
+		sm.Tags = make(map[string]string)
+	}
+	for _, t := range req.Tags {
+		sm.Tags[t.Key] = t.Value
+	}
+
+	if aerr := serviceutil.ValidateTags(sfnTagCfg, sm.Tags); aerr != nil {
+		return nil, aerr
+	}
+
+	if err := h.store.PutStateMachine(ctx, sm); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return &struct{}{}, nil
+}
+
+func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	name := extractSMName(req.ResourceArn)
+	sm, err := h.store.GetStateMachine(ctx, name)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if sm == nil {
+		return nil, errSMNotFound(req.ResourceArn)
+	}
+
+	for _, k := range req.TagKeys {
+		delete(sm.Tags, k)
+	}
+
+	if err := h.store.PutStateMachine(ctx, sm); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return &struct{}{}, nil
+}
+
+func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceTypedResponse, *protocol.AWSError) {
+	name := extractSMName(req.ResourceArn)
+	sm, err := h.store.GetStateMachine(ctx, name)
+	if err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if sm == nil {
+		return nil, errSMNotFound(req.ResourceArn)
+	}
+
+	tags := make([]map[string]string, 0, len(sm.Tags))
+	for k, v := range sm.Tags {
+		tags = append(tags, map[string]string{"key": k, "value": v})
+	}
+	if tags == nil {
+		tags = []map[string]string{}
+	}
+	return &listTagsForResourceTypedResponse{Tags: tags}, nil
 }

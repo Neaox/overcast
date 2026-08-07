@@ -2,7 +2,6 @@ package eks
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,6 +11,12 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+var eksTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidParameterException",
+	InvalidCode:     "InvalidParameterException",
+	ExceededMessage: "Tag key list exceeds maximum tag limit",
+}
 
 func eksClusterFromResourceARN(arn string) (region, clusterName string, ok bool) {
 	parts := strings.SplitN(arn, ":", 6)
@@ -81,19 +86,13 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	raw, found, err := s.store.Get(ctx, nsTags, tagKey(arn))
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	tags, aerr := serviceutil.TagsFromStore(ctx, s.store, nsTags, tagKey(arn))
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if !found {
-		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"tags": map[string]string{}})
-		return
-	}
-	var tags map[string]string
-	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
+	if tags == nil {
+		tags = map[string]string{}
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"tags": tags})
 }
@@ -122,27 +121,12 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// Merge with existing tags.
-	existing := map[string]string{}
-	if raw, found, err := s.store.Get(ctx, nsTags, tagKey(arn)); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	} else if found {
-		if err := json.Unmarshal([]byte(raw), &existing); err != nil {
-			protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-			return
-		}
-	}
+	pairs := make([]serviceutil.TagPair, 0, len(req.Tags))
 	for k, v := range req.Tags {
-		existing[k] = v
+		pairs = append(pairs, serviceutil.TagPair{Key: k, Value: v})
 	}
-	merged, err := json.Marshal(existing)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if err := s.store.Set(ctx, nsTags, tagKey(arn), string(merged)); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if _, aerr := serviceutil.ApplyTagsToStore(ctx, eksTagCfg, nsTags, tagKey(arn), pairs, s.store); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
@@ -167,30 +151,8 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	raw, found, err := s.store.Get(ctx, nsTags, tagKey(arn))
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if !found {
-		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
-		return
-	}
-	var tags map[string]string
-	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	for _, k := range keys {
-		delete(tags, k)
-	}
-	updated, err := json.Marshal(tags)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if err := s.store.Set(ctx, nsTags, tagKey(arn), string(updated)); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if _, aerr := serviceutil.RemoveTagsFromStore(ctx, nsTags, tagKey(arn), keys, s.store); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
@@ -202,23 +164,18 @@ func (s *Service) putInlineTags(ctx context.Context, arn string, tags map[string
 	if len(tags) == 0 {
 		return nil
 	}
-	raw, err := json.Marshal(tags)
-	if err != nil {
-		return err
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
+	aerr := tagStore.Save(ctx, arn, tags)
+	if aerr != nil {
+		return aerr
 	}
-	return s.store.Set(ctx, nsTags, tagKey(arn), string(raw))
+	return nil
 }
 
 // readTagsForARN loads the tag map for an ARN from the tag store.
 // Returns an empty map when no tags are found.
 func (s *Service) readTagsForARN(ctx context.Context, arn string) map[string]string {
-	raw, found, err := s.store.Get(ctx, nsTags, tagKey(arn))
-	if err != nil || !found {
-		return nil
-	}
-	var tags map[string]string
-	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		return nil
-	}
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
+	tags, _ := tagStore.Load(ctx, arn)
 	return tags
 }

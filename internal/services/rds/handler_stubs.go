@@ -66,18 +66,3 @@ func (h *Handler) DescribeDBLogFiles(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DownloadDBLogFilePortion(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedQueryXML(w, r)
 }
-
-// AddTagsToResource adds metadata tags to an Amazon RDS resource.
-func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedQueryXML(w, r)
-}
-
-// RemoveTagsFromResource removes metadata tags from an Amazon RDS resource.
-func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedQueryXML(w, r)
-}
-
-// ListTagsForResource lists all tags on an Amazon RDS resource.
-func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
-	protocol.NotImplementedQueryXML(w, r)
-}

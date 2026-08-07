@@ -42,6 +42,9 @@ type WebACL struct {
 	CreatedAt        time.Time         `json:"CreatedAt"`
 }
 
+func (w *WebACL) GetTags() map[string]string     { return w.Tags }
+func (w *WebACL) SetTags(tags map[string]string) { w.Tags = tags }
+
 // Service implements router.Service and router.TargetDispatcher for WAF v2.
 type Service struct {
 	handler *Handler

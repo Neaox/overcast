@@ -28,6 +28,9 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"AddTagsToResource": op.NewTyped[addTagsToResourceRequest, struct{}](
 			"AddTagsToResource", h.addTagsToResourceTyped,
 		),
+		"RemoveTagsFromResource": op.NewTyped[removeTagsFromResourceRequest, struct{}](
+			"RemoveTagsFromResource", h.removeTagsFromResourceTyped,
+		),
 		"ListTagsForResource": op.NewTyped[resourceIDRequest, listTagsForResourceResponse](
 			"ListTagsForResource", h.listTagsForResourceTyped,
 		),

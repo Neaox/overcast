@@ -34,6 +34,7 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 | ---------------- | ------------ |
 | Delivery Streams | 4            |
 | Records          | 2            |
+| Tags             | 3            |
 
 ---
 
@@ -54,5 +55,13 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 | ---------------- | ------------ | ------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `PutRecord`      | ✅ Supported | Writes a single record to the stream  | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_PutRecord.html)      |
 | `PutRecordBatch` | ✅ Supported | Writes multiple records to the stream | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_PutRecordBatch.html) |
+
+### Tags
+
+| Operation                   | Status       | Notes                                        | AWS Docs                                                                                            |
+| --------------------------- | ------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `TagDeliveryStream`         | ✅ Supported | Adds or overwrites tags on a delivery stream | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_TagDeliveryStream.html)         |
+| `UntagDeliveryStream`       | ✅ Supported | Removes tags by key from a delivery stream   | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_UntagDeliveryStream.html)       |
+| `ListTagsForDeliveryStream` | ✅ Supported | Returns tags for a delivery stream           | [docs](https://docs.aws.amazon.com/firehose/latest/APIReference/API_ListTagsForDeliveryStream.html) |
 
 <!-- END overcast:capabilities -->

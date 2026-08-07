@@ -10,6 +10,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ---- Request types ----
@@ -1068,17 +1069,12 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 			Code: "InvalidParameterException", Message: "resourceArn must not be null", HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	existing, aerr := h.store.getTags(ctx, req.ResourceArn)
-	if aerr != nil {
-		return nil, aerr
+	region := h.store.region(ctx)
+	pairs := make([]serviceutil.TagPair, len(req.Tags))
+	for i, t := range req.Tags {
+		pairs[i] = serviceutil.TagPair{Key: t.Key, Value: t.Value}
 	}
-	if existing == nil {
-		existing = make(map[string]string)
-	}
-	for _, t := range req.Tags {
-		existing[t.Key] = t.Value
-	}
-	if aerr := h.store.putTags(ctx, req.ResourceArn, existing); aerr != nil {
+	if _, aerr := serviceutil.ApplyTagsToStore(ctx, ecsTagCfg, nsTags, serviceutil.RegionKey(region, req.ResourceArn), pairs, h.store.store); aerr != nil {
 		return nil, aerr
 	}
 	return &tagResourceResponse{}, nil
@@ -1090,17 +1086,9 @@ func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequ
 			Code: "InvalidParameterException", Message: "resourceArn must not be null", HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	existing, aerr := h.store.getTags(ctx, req.ResourceArn)
-	if aerr != nil {
+	region := h.store.region(ctx)
+	if _, aerr := serviceutil.RemoveTagsFromStore(ctx, nsTags, serviceutil.RegionKey(region, req.ResourceArn), req.TagKeys, h.store.store); aerr != nil {
 		return nil, aerr
-	}
-	if existing != nil {
-		for _, k := range req.TagKeys {
-			delete(existing, k)
-		}
-		if aerr := h.store.putTags(ctx, req.ResourceArn, existing); aerr != nil {
-			return nil, aerr
-		}
 	}
 	return &untagResourceResponse{}, nil
 }
@@ -1111,7 +1099,8 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 			Code: "InvalidParameterException", Message: "resourceArn must not be null", HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	existing, aerr := h.store.getTags(ctx, req.ResourceArn)
+	region := h.store.region(ctx)
+	existing, aerr := serviceutil.TagsFromStore(ctx, h.store.store, nsTags, serviceutil.RegionKey(region, req.ResourceArn))
 	if aerr != nil {
 		return nil, aerr
 	}

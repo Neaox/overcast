@@ -13,5 +13,9 @@ func init() {
 		capabilities.Capability{Service: "shield", Operation: "DescribeProtection", Category: "Protections", Status: capabilities.StatusSupported, Notes: "Lookup by ProtectionId or ResourceArn"},
 		capabilities.Capability{Service: "shield", Operation: "ListProtections", Category: "Protections", Status: capabilities.StatusSupported, Notes: "Lists all protections"},
 		capabilities.Capability{Service: "shield", Operation: "DeleteProtection", Category: "Protections", Status: capabilities.StatusSupported, Notes: "Deletes a protection by ID"},
+		// Tags
+		capabilities.Capability{Service: "shield", Operation: "TagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Adds/updates tags on a protection"},
+		capabilities.Capability{Service: "shield", Operation: "UntagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Removes tag keys from a protection"},
+		capabilities.Capability{Service: "shield", Operation: "ListTagsForResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Lists tags on a protection"},
 	)
 }

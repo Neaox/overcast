@@ -18,6 +18,9 @@ type UserAttribute struct {
 	Value string `json:"Value"`
 }
 
+func (p *UserPool) GetTags() map[string]string  { return p.Tags }
+func (p *UserPool) SetTags(t map[string]string) { p.Tags = t }
+
 // UserPool is the stored representation of a Cognito User Pool.
 type UserPool struct {
 	ID        string    `json:"Id"`
@@ -67,6 +70,9 @@ type UserPool struct {
 
 	// Policies holds pool-level policy settings, including PasswordPolicy.
 	Policies *UserPoolPolicies `json:"Policies,omitempty"`
+
+	// Tags are resource tags on the user pool.
+	Tags map[string]string `json:"Tags,omitempty"`
 }
 
 // UserPoolPolicies holds the password and other policy settings for a user pool.

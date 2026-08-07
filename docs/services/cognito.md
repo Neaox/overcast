@@ -236,6 +236,7 @@ Content-Type: `application/json`
 | Auth / Token operations     | 32           |
 | Group operations            | 9            |
 | User Pool Domain operations | 4            |
+| Tags                        | 3            |
 
 ---
 
@@ -337,5 +338,13 @@ Content-Type: `application/json`
 | `DescribeUserPoolDomain` | ✅ Supported | Returns domain details; empty DomainDescription when domain not found | [docs](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DescribeUserPoolDomain.html) |
 | `DeleteUserPoolDomain`   | ✅ Supported | Removes the domain association from the pool                          | [docs](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_DeleteUserPoolDomain.html)   |
 | `UpdateUserPoolDomain`   | ✅ Supported | Accepted; SSL certificate updates are inert in the emulator           | [docs](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UpdateUserPoolDomain.html)   |
+
+### Tags
+
+| Operation             | Status       | Notes | AWS Docs                                                                                                         |
+| --------------------- | ------------ | ----- | ---------------------------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported |       | [docs](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

@@ -97,20 +97,17 @@ type Secret struct {
 	ResourcePolicy      string           `json:"ResourcePolicy,omitempty"`
 }
 
-// GetTags returns the secret's tags as a map for handler convenience.
 func (s *Secret) GetTags() map[string]string {
-	tags := make(map[string]string, len(s.Tags))
+	out := make(map[string]string, len(s.Tags))
 	for _, t := range s.Tags {
-		tags[t.Key] = t.Value
+		out[t.Key] = t.Value
 	}
-	return tags
+	return out
 }
-
-// SetTags replaces the secret's tags from a map.
 func (s *Secret) SetTags(tags map[string]string) {
 	s.Tags = make([]Tag, 0, len(tags))
-	for key, value := range tags {
-		s.Tags = append(s.Tags, Tag{Key: key, Value: value})
+	for k, v := range tags {
+		s.Tags = append(s.Tags, Tag{Key: k, Value: v})
 	}
 }
 

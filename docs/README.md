@@ -103,7 +103,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | API Gateway      | [apigateway.md](./services/apigateway.md)           | 106 | Comprehensive / broad support |
 | AppSync          | [appsync.md](./services/appsync.md)                 | 82  | Comprehensive / broad support |
 | CloudFront       | [cloudfront.md](./services/cloudfront.md)           | 89  | Comprehensive / broad support |
-| Cognito          | [cognito.md](./services/cognito.md)                 | 67  | Comprehensive / broad support |
+| Cognito          | [cognito.md](./services/cognito.md)                 | 70  | Comprehensive / broad support |
 | EC2 / VPC        | [ec2.md](./services/ec2.md)                         | 72  | Comprehensive / broad support |
 | SNS              | [sns.md](./services/sns.md)                         | 29  | Comprehensive / broad support |
 | IAM              | [iam.md](./services/iam.md)                         | 62  | Core CRUD + common workflows  |
@@ -117,7 +117,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | RDS              | [rds.md](./services/rds.md)                         | 34  | Core CRUD + common workflows  |
 | ElastiCache      | [elasticache.md](./services/elasticache.md)         | 24  | Core CRUD + common workflows  |
 | EFS              | [efs.md](./services/efs.md)                         | 31  | Core CRUD + common workflows  |
-| AppConfig        | [appconfig.md](./services/appconfig.md)             | 16  | Core CRUD + common workflows  |
+| AppConfig        | [appconfig.md](./services/appconfig.md)             | 19  | Core CRUD + common workflows  |
 | AppConfigData    | [appconfigdata.md](./services/appconfigdata.md)     | 3   | Core CRUD + common workflows  |
 | Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 22  | Core CRUD + common workflows  |
 | SSM              | [ssm.md](./services/ssm.md)                         | 18  | Core CRUD + common workflows  |
@@ -126,23 +126,23 @@ For a shorter overview, start with the [service reference index](./services/READ
 | STS              | [sts.md](./services/sts.md)                         | 11  | Core CRUD + common workflows  |
 | Route 53         | [route53.md](./services/route53.md)                 | 25  | Core CRUD + common workflows  |
 | Auto Scaling     | [autoscaling.md](./services/autoscaling.md)         | 25  | Core CRUD + common workflows  |
-| Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 11  | Minimal / targeted support    |
-| Pipes            | [pipes.md](./services/pipes.md)                     | 5   | Minimal / targeted support    |
-| WAF v2           | [waf.md](./services/waf.md)                         | 4   | Minimal / targeted support    |
-| Shield           | [shield.md](./services/shield.md)                   | 5   | Minimal / targeted support    |
+| Step Functions   | [stepfunctions.md](./services/stepfunctions.md)     | 14  | Minimal / targeted support    |
+| Pipes            | [pipes.md](./services/pipes.md)                     | 8   | Minimal / targeted support    |
+| WAF v2           | [waf.md](./services/waf.md)                         | 7   | Minimal / targeted support    |
+| Shield           | [shield.md](./services/shield.md)                   | 8   | Minimal / targeted support    |
 | ACM              | [acm.md](./services/acm.md)                         | 7   | Minimal / targeted support    |
-| Athena           | [athena.md](./services/athena.md)                   | 8   | Minimal / targeted support    |
+| Athena           | [athena.md](./services/athena.md)                   | 11  | Minimal / targeted support    |
 | Bedrock          | [bedrock.md](./services/bedrock.md)                 | 2   | Minimal / targeted support    |
 | CloudWatch       | [cloudwatch.md](./services/cloudwatch.md)           | 17  | Minimal / targeted support    |
 | DynamoDB Streams | [dynamodbstreams.md](./services/dynamodbstreams.md) | 4   | Minimal / targeted support    |
-| Firehose         | [firehose.md](./services/firehose.md)               | 6   | Minimal / targeted support    |
-| Glue             | [glue.md](./services/glue.md)                       | 8   | Minimal / targeted support    |
+| Firehose         | [firehose.md](./services/firehose.md)               | 9   | Minimal / targeted support    |
+| Glue             | [glue.md](./services/glue.md)                       | 11  | Minimal / targeted support    |
 | OpenSearch       | [opensearch.md](./services/opensearch.md)           | 8   | Minimal / targeted support    |
 | AppRegistry      | [appregistry.md](./services/appregistry.md)         | 22  | IaC/discovery-oriented stub   |
 | Backup           | [backup.md](./services/backup.md)                   | 9   | IaC/discovery-oriented stub   |
 | CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 9   | IaC/discovery-oriented stub   |
 | EKS              | [eks.md](./services/eks.md)                         | 52  | IaC/discovery-oriented stub   |
-| ELBv2            | [elb.md](./services/elb.md)                         | 15  | IaC/discovery-oriented stub   |
+| ELBv2            | [elb.md](./services/elb.md)                         | 18  | IaC/discovery-oriented stub   |
 | MSK              | [msk.md](./services/msk.md)                         | 29  | IaC/discovery-oriented stub   |
 | Organizations    | [organizations.md](./services/organizations.md)     | 1   | IaC/discovery-oriented stub   |
 | Transfer Family  | [transfer.md](./services/transfer.md)               | 10  | IaC/discovery-oriented stub   |

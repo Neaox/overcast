@@ -27,6 +27,12 @@ import (
 
 const cacheXMLNS = "http://elasticache.amazonaws.com/doc/2015-02-02/"
 
+var cacheTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidParameterValue",
+	InvalidCode:     "InvalidParameterValue",
+	ExceededMessage: "Tag list exceeds maximum number of tags allowed.",
+}
+
 // Handler handles ElastiCache Query-protocol requests.
 type Handler struct {
 	cfg         *config.Config
@@ -472,20 +478,16 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
-	tags, aerr := h.store.getTags(r.Context(), arn)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-	// Tags arrive as Tags.Tag.N.Key / Tags.Tag.N.Value
+	var pairs []serviceutil.TagPair
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Key", i))
 		if key == "" {
 			break
 		}
-		tags[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
+		pairs = append(pairs, serviceutil.TagPair{Key: key, Value: r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))})
 	}
-	if aerr := h.store.setTags(r.Context(), arn, tags); aerr != nil {
+	tags, aerr := serviceutil.ApplyTagsToStore(r.Context(), cacheTagCfg, nsTags, arn, pairs, h.store.store)
+	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -506,10 +508,13 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
-	tags, aerr := h.store.getTags(r.Context(), arn)
+	tags, aerr := serviceutil.TagsFromStore(r.Context(), h.store.store, nsTags, arn)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
+	}
+	if tags == nil {
+		tags = map[string]string{}
 	}
 	items := make([]xmlTag, 0, len(tags))
 	for k, v := range tags {
@@ -528,19 +533,15 @@ func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request)
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
-	tags, aerr := h.store.getTags(r.Context(), arn)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
+	var keys []string
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
 		if key == "" {
 			break
 		}
-		delete(tags, key)
+		keys = append(keys, key)
 	}
-	if aerr := h.store.setTags(r.Context(), arn, tags); aerr != nil {
+	if _, aerr := serviceutil.RemoveTagsFromStore(r.Context(), nsTags, arn, keys, h.store.store); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}

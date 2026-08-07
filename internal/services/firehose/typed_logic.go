@@ -10,6 +10,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createDeliveryStreamReq struct {
@@ -89,6 +90,7 @@ func (s *Service) createDeliveryStreamTyped(ctx context.Context, req *createDeli
 		DeliveryStreamARN:    arn,
 		DeliveryStreamStatus: "ACTIVE",
 		DeliveryStreamType:   dsType,
+		Tags:                 make(map[string]string),
 	}
 	if err := s.store.putStream(ctx, ds); err != nil {
 		return nil, protocol.ErrInternalError
@@ -176,4 +178,101 @@ func (s *Service) putRecordBatchTyped(ctx context.Context, req *putRecordBatchRe
 		Encrypted:        false,
 		RequestResponses: results,
 	}, nil
+}
+
+// ─── Tag operations ──────────────────────────────────────────────────────────
+
+type tagDeliveryStreamReq struct {
+	DeliveryStreamName string            `json:"DeliveryStreamName" cbor:"DeliveryStreamName"`
+	Tags               map[string]string `json:"Tags" cbor:"Tags"`
+}
+
+type untagDeliveryStreamReq struct {
+	DeliveryStreamName string   `json:"DeliveryStreamName" cbor:"DeliveryStreamName"`
+	TagKeys            []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
+type listTagsForDeliveryStreamReq struct {
+	DeliveryStreamName string `json:"DeliveryStreamName" cbor:"DeliveryStreamName"`
+}
+
+type listTagsForDeliveryStreamResp struct {
+	Tags        []firehoseTag `json:"Tags" cbor:"Tags"`
+	HasMoreTags bool          `json:"HasMoreTags" cbor:"HasMoreTags"`
+}
+
+type firehoseTag struct {
+	Key   string `json:"Key" cbor:"Key"`
+	Value string `json:"Value" cbor:"Value"`
+}
+
+func (s *Service) tagDeliveryStreamTyped(ctx context.Context, req *tagDeliveryStreamReq) (*struct{}, *protocol.AWSError) {
+	if aerr := serviceutil.ApplyInlineTags(ctx, req.DeliveryStreamName, req.Tags, firehoseTagCfg,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+		func(ctx context.Context, ds *DeliveryStream) *protocol.AWSError {
+			if err := s.store.putStream(ctx, ds); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) untagDeliveryStreamTyped(ctx context.Context, req *untagDeliveryStreamReq) (*struct{}, *protocol.AWSError) {
+	if aerr := serviceutil.RemoveInlineTags(ctx, req.DeliveryStreamName, req.TagKeys,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+		func(ctx context.Context, ds *DeliveryStream) *protocol.AWSError {
+			if err := s.store.putStream(ctx, ds); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) listTagsForDeliveryStreamTyped(ctx context.Context, req *listTagsForDeliveryStreamReq) (*listTagsForDeliveryStreamResp, *protocol.AWSError) {
+	tags, aerr := serviceutil.ListInlineTags(ctx, req.DeliveryStreamName,
+		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
+			ds, found := s.store.getStream(ctx, name)
+			if !found {
+				return nil, &protocol.AWSError{
+					Code: "ResourceNotFoundException", Message: fmt.Sprintf("Delivery stream %s not found", name),
+					HTTPStatus: http.StatusNotFound,
+				}
+			}
+			return ds, nil
+		},
+	)
+	if aerr != nil {
+		return nil, aerr
+	}
+	tagList := make([]firehoseTag, 0, len(tags))
+	for k, v := range tags {
+		tagList = append(tagList, firehoseTag{Key: k, Value: v})
+	}
+	return &listTagsForDeliveryStreamResp{Tags: tagList, HasMoreTags: false}, nil
 }
