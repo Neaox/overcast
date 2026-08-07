@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
-	"github.com/Neaox/overcast/internal/docker"
 )
 
 // crashLoopFixture is a service whose single task is placed, reaches RUNNING

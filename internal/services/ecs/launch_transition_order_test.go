@@ -32,8 +32,8 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/state"
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // gatedTaskStore blocks the first write of a task record until it is released,

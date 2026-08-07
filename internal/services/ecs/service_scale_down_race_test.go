@@ -37,8 +37,8 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/state"
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/state"
 )
 
 // One service is enough to lose the update, but only on the interleaving where
