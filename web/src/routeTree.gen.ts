@@ -84,6 +84,7 @@ import { Route as SqsQueueIndexRouteImport } from './routes/sqs/$queue/index'
 import { Route as S3BucketIndexRouteImport } from './routes/s3/$bucket/index'
 import { Route as LambdaLayersIndexRouteImport } from './routes/lambda/layers/index'
 import { Route as EcsClusterIndexRouteImport } from './routes/ecs/$cluster.index'
+import { Route as DebugTracesIndexRouteImport } from './routes/debug/traces/index'
 import { Route as CloudwatchLogsIndexRouteImport } from './routes/cloudwatch/logs/index'
 import { Route as CloudfrontDistributionIdIndexRouteImport } from './routes/cloudfront/$distributionId/index'
 import { Route as AppsyncApiIdIndexRouteImport } from './routes/appsync/$apiId/index'
@@ -483,6 +484,11 @@ const EcsClusterIndexRoute = EcsClusterIndexRouteImport.update({
   path: '/',
   getParentRoute: () => EcsClusterRoute,
 } as any)
+const DebugTracesIndexRoute = DebugTracesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DebugTracesRoute,
+} as any)
 const CloudwatchLogsIndexRoute = CloudwatchLogsIndexRouteImport.update({
   id: '/cloudwatch/logs/',
   path: '/cloudwatch/logs/',
@@ -663,6 +669,7 @@ export interface FileRoutesByFullPath {
   '/appsync/$apiId/': typeof AppsyncApiIdIndexRoute
   '/cloudfront/$distributionId/': typeof CloudfrontDistributionIdIndexRoute
   '/cloudwatch/logs/': typeof CloudwatchLogsIndexRoute
+  '/debug/traces/': typeof DebugTracesIndexRoute
   '/ecs/$cluster/': typeof EcsClusterIndexRoute
   '/lambda/layers/': typeof LambdaLayersIndexRoute
   '/s3/$bucket/': typeof S3BucketIndexRoute
@@ -694,7 +701,6 @@ export interface FileRoutesByTo {
   '/cloudfront/key-groups': typeof CloudfrontKeyGroupsRoute
   '/cloudfront/realtime-log-configs': typeof CloudfrontRealtimeLogConfigsRoute
   '/cognito/$poolId': typeof CognitoPoolIdRoute
-  '/debug/traces': typeof DebugTracesRouteWithChildren
   '/dynamodb/$tableName': typeof DynamodbTableNameRoute
   '/ec2/$instanceId': typeof Ec2InstanceIdRoute
   '/ecr/$repositoryName': typeof EcrRepositoryNameRoute
@@ -752,6 +758,7 @@ export interface FileRoutesByTo {
   '/appsync/$apiId': typeof AppsyncApiIdIndexRoute
   '/cloudfront/$distributionId': typeof CloudfrontDistributionIdIndexRoute
   '/cloudwatch/logs': typeof CloudwatchLogsIndexRoute
+  '/debug/traces': typeof DebugTracesIndexRoute
   '/ecs/$cluster': typeof EcsClusterIndexRoute
   '/lambda/layers': typeof LambdaLayersIndexRoute
   '/s3/$bucket': typeof S3BucketIndexRoute
@@ -848,6 +855,7 @@ export interface FileRoutesById {
   '/appsync/$apiId/': typeof AppsyncApiIdIndexRoute
   '/cloudfront/$distributionId/': typeof CloudfrontDistributionIdIndexRoute
   '/cloudwatch/logs/': typeof CloudwatchLogsIndexRoute
+  '/debug/traces/': typeof DebugTracesIndexRoute
   '/ecs/$cluster/': typeof EcsClusterIndexRoute
   '/lambda/layers/': typeof LambdaLayersIndexRoute
   '/s3/$bucket/': typeof S3BucketIndexRoute
@@ -945,6 +953,7 @@ export interface FileRouteTypes {
     | '/appsync/$apiId/'
     | '/cloudfront/$distributionId/'
     | '/cloudwatch/logs/'
+    | '/debug/traces/'
     | '/ecs/$cluster/'
     | '/lambda/layers/'
     | '/s3/$bucket/'
@@ -976,7 +985,6 @@ export interface FileRouteTypes {
     | '/cloudfront/key-groups'
     | '/cloudfront/realtime-log-configs'
     | '/cognito/$poolId'
-    | '/debug/traces'
     | '/dynamodb/$tableName'
     | '/ec2/$instanceId'
     | '/ecr/$repositoryName'
@@ -1034,6 +1042,7 @@ export interface FileRouteTypes {
     | '/appsync/$apiId'
     | '/cloudfront/$distributionId'
     | '/cloudwatch/logs'
+    | '/debug/traces'
     | '/ecs/$cluster'
     | '/lambda/layers'
     | '/s3/$bucket'
@@ -1129,6 +1138,7 @@ export interface FileRouteTypes {
     | '/appsync/$apiId/'
     | '/cloudfront/$distributionId/'
     | '/cloudwatch/logs/'
+    | '/debug/traces/'
     | '/ecs/$cluster/'
     | '/lambda/layers/'
     | '/s3/$bucket/'
@@ -1752,6 +1762,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EcsClusterIndexRouteImport
       parentRoute: typeof EcsClusterRoute
     }
+    '/debug/traces/': {
+      id: '/debug/traces/'
+      path: '/'
+      fullPath: '/debug/traces/'
+      preLoaderRoute: typeof DebugTracesIndexRouteImport
+      parentRoute: typeof DebugTracesRoute
+    }
     '/cloudwatch/logs/': {
       id: '/cloudwatch/logs/'
       path: '/cloudwatch/logs'
@@ -1883,10 +1900,12 @@ declare module '@tanstack/react-router' {
 
 interface DebugTracesRouteChildren {
   DebugTracesRequestIdRoute: typeof DebugTracesRequestIdRoute
+  DebugTracesIndexRoute: typeof DebugTracesIndexRoute
 }
 
 const DebugTracesRouteChildren: DebugTracesRouteChildren = {
   DebugTracesRequestIdRoute: DebugTracesRequestIdRoute,
+  DebugTracesIndexRoute: DebugTracesIndexRoute,
 }
 
 const DebugTracesRouteWithChildren = DebugTracesRoute._addFileChildren(

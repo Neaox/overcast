@@ -29,6 +29,7 @@ export interface TraceEntry {
 
   remoteAddr?: string
   userAgent?: string
+  referer?: string
 
   xrayTraceId?: string
   metadata?: Record<string, unknown>
@@ -70,6 +71,7 @@ export interface TraceSummary {
   operation?: string
   statusCode: number
   duration: number
+  internal?: boolean
 }
 
 export interface TraceListResponse {

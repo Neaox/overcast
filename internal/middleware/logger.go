@@ -429,7 +429,7 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 					Fields:    trace.ZapFieldsToMap(fields),
 				})
 				if rw.awsErrorCode != "" {
-					rec.SetMeta(r.RemoteAddr, r.UserAgent(), rw.awsErrorCode, rw.awsErrorMessage)
+					rec.SetMeta(r.RemoteAddr, r.UserAgent(), r.Header.Get("Referer"), rw.awsErrorCode, rw.awsErrorMessage)
 				}
 			}
 

@@ -292,7 +292,7 @@ func TestRecorderStreamingResponse(t *testing.T) {
 
 func TestRecorderSetMeta(t *testing.T) {
 	rec := NewRecorder("req-1", time.Now(), "GET", "/", "host", "", http.Header{})
-	rec.SetMeta("1.2.3.4", "test-agent", "AccessDenied", "User is not authorized")
+	rec.SetMeta("1.2.3.4", "test-agent", "", "AccessDenied", "User is not authorized")
 
 	e := rec.Entry()
 	if e.RemoteAddr != "1.2.3.4" {

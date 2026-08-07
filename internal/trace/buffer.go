@@ -32,7 +32,9 @@ func NewBuffer(capacity int) *Buffer {
 
 // Store inserts or updates an entry. If the entry already exists (same
 // RequestID), the slot is updated in-place. Otherwise the entry is written to
-// the next ring slot, evicting the oldest entry when full.
+// the next ring slot, evicting the oldest entry when full. When full and a
+// non-internal entry is being stored, the oldest *internal* entry is evicted
+// preferentially, so polling traces never crowd out user requests.
 func (b *Buffer) Store(e *Entry) {
 	if e == nil || e.RequestID == "" {
 		return
@@ -41,6 +43,28 @@ func (b *Buffer) Store(e *Entry) {
 	defer b.mu.Unlock()
 	if idx, ok := b.index[e.RequestID]; ok {
 		b.entries[idx] = e
+		return
+	}
+	if len(b.index) >= b.capacity {
+		// When a non-internal entry arrives, try replacing an internal one.
+		if !isInternalPath(e.Path) {
+			for i := 0; i < b.capacity; i++ {
+				idx := (b.head + i) % b.capacity
+				if candidate := b.entries[idx]; candidate != nil && isInternalPath(candidate.Path) {
+					delete(b.index, candidate.RequestID)
+					b.entries[idx] = e
+					b.index[e.RequestID] = idx
+					return
+				}
+			}
+		}
+		// Replace the oldest (at head) and advance.
+		if old := b.entries[b.head]; old != nil {
+			delete(b.index, old.RequestID)
+		}
+		b.entries[b.head] = e
+		b.index[e.RequestID] = b.head
+		b.head = (b.head + 1) % b.capacity
 		return
 	}
 	old := b.entries[b.head]

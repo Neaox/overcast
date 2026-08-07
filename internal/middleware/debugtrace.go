@@ -45,13 +45,16 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 
 			rec := trace.NewRecorder(reqID, start, r.Method, r.URL.Path, r.Host, r.URL.RawQuery, requestHeaders)
 			rec.SetRequestBody(requestBody, maxTraceBody)
-			rec.SetMeta(r.RemoteAddr, r.UserAgent(), "", "")
+			rec.SetMeta(r.RemoteAddr, r.UserAgent(), r.Header.Get("Referer"), "", "")
+			if r.Header.Get("X-Overcast-Client") == "webui" {
+				rec.AddMeta("source", "webui")
+			}
 			// Best-effort detection for the early push: set service/operation
 			// when known, leave blank when the handler hasn't classified the
 			// request yet. The Logger middleware sets the final values after
 			// the handler runs.
 			svc := detectService(r)
-			if svc == "s3" && r.URL.Path == "/" {
+			if svc == "s3" && r.URL.Path == "/" && r.Method == http.MethodPost {
 				svc = "" // POST / with no distinguishing header — unclassified
 			}
 			rec.SetServiceInfo(svc, detectOperation(r), RegionFromContext(r.Context(), cfg.Region))

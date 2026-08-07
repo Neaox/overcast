@@ -49,6 +49,7 @@ type Entry struct {
 
 	RemoteAddr string `json:"remoteAddr,omitempty"`
 	UserAgent  string `json:"userAgent,omitempty"`
+	Referer    string `json:"referer,omitempty"`
 
 	XRayTraceID string         `json:"xrayTraceId,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
@@ -172,8 +173,8 @@ func (r *Recorder) SetServiceInfo(service, operation, region string) {
 	r.entry.Region = region
 }
 
-// SetMeta records request-level metadata (remote addr, user agent, AWS error).
-func (r *Recorder) SetMeta(remoteAddr, userAgent, awsErrorCode, awsErrorMessage string) {
+// SetMeta records request-level metadata (remote addr, user agent, referer, AWS error).
+func (r *Recorder) SetMeta(remoteAddr, userAgent, referer, awsErrorCode, awsErrorMessage string) {
 	if r == nil {
 		return
 	}
@@ -181,6 +182,7 @@ func (r *Recorder) SetMeta(remoteAddr, userAgent, awsErrorCode, awsErrorMessage 
 	defer r.mu.Unlock()
 	r.entry.RemoteAddr = remoteAddr
 	r.entry.UserAgent = userAgent
+	r.entry.Referer = referer
 	r.entry.AWSErrorCode = awsErrorCode
 	r.entry.AWSErrorMessage = awsErrorMessage
 }
@@ -303,6 +305,7 @@ type Summary struct {
 	Region     string        `json:"region,omitempty"`
 	HopCount   int           `json:"hopCount,omitempty"`
 	LogCount   int           `json:"logCount,omitempty"`
+	Internal   bool          `json:"internal,omitempty"`
 }
 
 // ToSummary returns a lightweight summary of this entry.
@@ -319,7 +322,34 @@ func (e Entry) ToSummary() Summary {
 		Region:     e.Region,
 		HopCount:   len(e.Hops),
 		LogCount:   len(e.LogEntries),
+		Internal:   isInternalPath(e.Path),
 	}
+}
+
+var internalPaths = map[string]bool{
+	"/_health":             true,
+	"/_events":             true,
+	"/_overcast/inbox":     true,
+	"/_overcast/inbox/":    true,
+	"/_/info":              true,
+	"/_debug/traces":       true,
+	"/_debug/traces/":      true,
+	"/_debug/trace":        true,
+	"/_debug/trace/":       true,
+	"/_debug/traces/count": true,
+}
+
+func isInternalPath(p string) bool {
+	if internalPaths[p] {
+		return true
+	}
+	// Match prefix paths like /_debug/traces/<id> or /_overcast/inbox/messages
+	for prefix := range internalPaths {
+		if len(prefix) > 1 && prefix[len(prefix)-1] == '/' && len(p) > len(prefix) && p[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
 }
 
 // MarshalJSON overrides the default []byte → base64 encoding so that body
@@ -351,6 +381,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		AWSErrorMessage       string         `json:"awsErrorMessage,omitempty"`
 		RemoteAddr            string         `json:"remoteAddr,omitempty"`
 		UserAgent             string         `json:"userAgent,omitempty"`
+		Referer               string         `json:"referer,omitempty"`
 		XRayTraceID           string         `json:"xrayTraceId,omitempty"`
 		Metadata              map[string]any `json:"metadata,omitempty"`
 	}
@@ -380,6 +411,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		AWSErrorMessage:       e.AWSErrorMessage,
 		RemoteAddr:            e.RemoteAddr,
 		UserAgent:             e.UserAgent,
+		Referer:               e.Referer,
 		XRayTraceID:           e.XRayTraceID,
 		Metadata:              e.Metadata,
 	})
