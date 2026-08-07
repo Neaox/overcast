@@ -110,9 +110,39 @@ fi
 
 pr="${1:-}"
 
-# Resolve gh — native bash, WSL Windows binary, or bust.
-if ! command -v gh >/dev/null 2>&1; then
+# Resolve gh — native, Git Bash, WSL2, or bust.
+#
+# Every codepath runs a liveness probe after finding a binary: in WSL2 a
+# Windows PE binary on /mnt/c/… may be found on PATH ("gh.exe" directly, or
+# "gh" when interop is enabled) but still fail to execute — exit 126 — if the
+# binfmt_misc WSLInterop handler is disabled (interop is off in .wslconfig).
+# Without the probe the script catches the failure only later, inside a
+# command substitution whose stderr is redirected to /dev/null, and reports
+# the misleading "no pull request found for <n>" instead of naming the real
+# problem.
+#
+# The probe uses || → $? rather than a bare capture because "set -e" would
+# exit the script on the first failure before the capture line ever runs.
+#
+# Branch A — native gh (Linux, macOS, Git Bash where MSYS2 resolves gh → gh.exe).
+if command -v gh >/dev/null 2>&1; then
+  gh version >/dev/null 2>&1 || _gh_probe=$?
+  if [ "${_gh_probe:-0}" -eq 126 ]; then
+    echo "pr-wait: found 'gh' at '$(command -v gh)' but cannot execute it." >&2
+    echo "pr-wait: in WSL2, install the Linux-native gh (https://cli.github.com)" >&2
+    echo "pr-wait: or enable Windows interop in .wslconfig, or use scripts\\pr-wait.ps1 from PowerShell." >&2
+    exit 2
+  fi
+else
+  # Branch B — fall back to gh.exe (WSL2 with the Windows binary on PATH).
   if gh_exe="$(command -v gh.exe 2>/dev/null)"; then
+    "$gh_exe" version >/dev/null 2>&1 || _gh_probe=$?
+    if [ "${_gh_probe:-0}" -eq 126 ]; then
+      echo "pr-wait: found gh.exe at '$gh_exe' but cannot execute it." >&2
+      echo "pr-wait: in WSL2, install the Linux-native gh (https://cli.github.com)" >&2
+      echo "pr-wait: or enable Windows interop in .wslconfig, or use scripts\\pr-wait.ps1 from PowerShell." >&2
+      exit 2
+    fi
     gh() { "$gh_exe" "$@"; }
   else
     echo "pr-wait: gh not found. Install it: https://cli.github.com" >&2
