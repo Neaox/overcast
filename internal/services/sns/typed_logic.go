@@ -255,16 +255,25 @@ type publishBatchResult struct {
 }
 
 // Tag responses
+//
+// TagResource and UntagResource have an (empty) output shape in the SNS
+// model, so botocore requires the empty <TagResourceResult/> /
+// <UntagResourceResult/> element before ResponseMetadata — without it the
+// AWS CLI fails client-side even though the operation succeeded. Operations
+// with no output shape at all (e.g. SetTopicAttributes) correctly omit the
+// element.
 
 type tagResourceResp struct {
 	XMLName struct{}    `xml:"TagResourceResponse"`
 	Xmlns   string      `xml:"xmlns,attr"`
+	Result  struct{}    `xml:"TagResourceResult"`
 	Meta    snsRespMeta `xml:"ResponseMetadata"`
 }
 
 type untagResourceResp struct {
 	XMLName struct{}    `xml:"UntagResourceResponse"`
 	Xmlns   string      `xml:"xmlns,attr"`
+	Result  struct{}    `xml:"UntagResourceResult"`
 	Meta    snsRespMeta `xml:"ResponseMetadata"`
 }
 
