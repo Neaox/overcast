@@ -15,7 +15,6 @@ import { Link as RouterLink } from "@tanstack/react-router"
 import type { useNavigate } from "@tanstack/react-router"
 import { nsToHuman, statusColor, statusMessage, formatTimestamp, traceToCurl } from "@/features/debug-traces/utils"
 import { formatBodyForDisplay, bodyHintFromHeaders, formatStackTrace } from "@/lib/format-body"
-import Prism from "@/lib/prism"
 import { Waterfall } from "@/features/debug-traces/components/waterfall"
 import { SequenceDiagram } from "@/features/debug-traces/components/sequence-diagram"
 import { FlowMap } from "@/features/debug-traces/components/flow-map"
@@ -788,36 +787,99 @@ function EventsTab({ requestId }: { requestId: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col">
       {events.map((ev, i) => {
-        const readable = eventLabel(ev.type)
-        const color = eventColorBadge(ev.type)
-        const sourceColorClass = SOURCE_COLOR_MAP[ev.source] ?? "text-fg-muted"
+        const label = eventTypeLabel(ev.type)
+        const variant = eventBadgeVariant(ev.type)
+        const srcColor = sourceColorClass(ev.source)
         return (
-          <div key={i} className="rounded-lg border border-border bg-bg-elevated">
-            <div className="flex items-center gap-2 px-3 py-2">
-              <span className={cn("font-mono text-xs font-medium", sourceColorClass)}>{ev.source}</span>
-              <Badge variant={color} className="text-xs">{readable}</Badge>
-              <span className="text-xs text-fg-muted ml-auto">{formatTimestamp(ev.time)}</span>
-            </div>
-            <details className="group">
-              <summary className="px-3 pb-2 text-xs text-fg-muted cursor-pointer hover:text-fg select-none">Payload</summary>
-              <pre className="bg-bg px-3 pb-3 text-xs font-mono overflow-x-auto max-h-48 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: Prism.highlight(JSON.stringify(ev.payload, null, 2), Prism.languages.json, "json") }} />
-            </details>
-          </div>
+          <EventRow key={i} ev={ev} label={label} variant={variant} srcColor={srcColor} />
         )
       })}
     </div>
   )
 }
 
-function eventLabel(type: string): string {
+function EventRow({ ev, label, variant, srcColor }: { ev: TraceEvent; label: string; variant: "default" | "success" | "danger" | "warning"; srcColor: string }) {
+  return (
+    <div className="border-b border-border px-3 py-2 leading-snug">
+      <div className="flex items-center gap-1.5">
+        <span className={cn("font-mono text-[11px] font-semibold", srcColor)}>{ev.source}</span>
+        <Badge variant={variant} className="py-px text-[10px] h-auto">{label}</Badge>
+        <span className="text-[11px] text-fg-muted ml-auto font-mono">{formatEventTime(ev.time)}</span>
+      </div>
+      <div className="pl-1">
+        <CompactJSON value={ev.payload} />
+      </div>
+    </div>
+  )
+}
+
+function formatEventTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const hh = String(d.getUTCHours()).padStart(2, "0")
+    const mm = String(d.getUTCMinutes()).padStart(2, "0")
+    const ss = String(d.getUTCSeconds()).padStart(2, "0")
+    const ms = String(d.getUTCMilliseconds()).padStart(3, "0")
+    return `${hh}:${mm}:${ss}.${ms}`
+  } catch { return iso }
+}
+
+const TOKENS = {
+  string: "token string", property: "token property",
+  number: "token number", boolean: "token boolean",
+  null: "token null keyword", punctuation: "token punctuation",
+}
+
+function CompactJSON({ value }: { value: unknown }) {
+  if (value === null || value === undefined) return <span className={cn("text-[11px] font-mono", TOKENS.null)}>null</span>
+  if (typeof value === "boolean") return <span className={cn("text-[11px] font-mono", TOKENS.boolean)}>{String(value)}</span>
+  if (typeof value === "number") return <span className={cn("text-[11px] font-mono", TOKENS.number)}>{value}</span>
+  if (typeof value === "string") return <span className={cn("text-[11px] font-mono", TOKENS.string)}>{JSON.stringify(value)}</span>
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>[]</span>
+    return (
+      <div className="pl-3">
+        <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>[</span>
+        {value.map((v, i) => (
+          <div key={i} className="flex items-start gap-1">
+            <CompactJSON value={v} />
+            {i < value.length - 1 && <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>,</span>}
+          </div>
+        ))}
+        <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>]</span>
+      </div>
+    )
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length === 0) return <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>{'{}'}</span>
+    return (
+      <div className="pl-3">
+        <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>{'{'}</span>
+        {entries.map(([k, v], i) => (
+          <div key={k} className="flex items-start gap-1">
+            <span className={cn("text-[11px] font-mono", TOKENS.property)}>{JSON.stringify(k)}</span>
+            <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>:</span>
+            <CompactJSON value={v} />
+            {i < entries.length - 1 && <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>,</span>}
+          </div>
+        ))}
+        <span className={cn("text-[11px] font-mono", TOKENS.punctuation)}>{'}'}</span>
+      </div>
+    )
+  }
+  return <span className="text-[11px] font-mono">{String(value)}</span>
+}
+
+function eventTypeLabel(type: string): string {
   const parts = type.split(":")
   if (parts.length >= 2) return parts.slice(1).join(":").replace(":*", "")
   return type
 }
 
-function eventColorBadge(type: string): "default" | "success" | "danger" | "warning" {
+function eventBadgeVariant(type: string): "default" | "success" | "danger" | "warning" {
   if (type === "request:Received") return "default"
   if (type === "service:Error") return "danger"
   if (type.includes("Created") || type.includes("Insert") || type.includes("Started") || type.includes("Launched") || type.includes("Registered")) return "success"
@@ -826,20 +888,20 @@ function eventColorBadge(type: string): "default" | "success" | "danger" | "warn
   return "default"
 }
 
-const SOURCE_COLOR_MAP: Record<string, string> = {
-  secretsmanager: "text-cat-1", ecr: "text-cat-1",
-  s3: "text-cat-2", ssm: "text-cat-2", ses: "text-cat-2",
-  sqs: "text-cat-3", kms: "text-cat-3", iam: "text-cat-3",
-  ecs: "text-cat-4", apigateway: "text-cat-4", elasticache: "text-cat-4",
-  logs: "text-cat-5", stepfunctions: "text-cat-5",
-  request: "text-cat-6", pipes: "text-cat-6", kinesis: "text-cat-6", cloudformation: "text-cat-6",
-  dynamodb: "text-cat-7", ec2: "text-cat-7", docker: "text-cat-7", msk: "text-cat-7",
-  lambda: "text-cat-8", rds: "text-cat-8",
-  events: "text-cat-9", eventbridge: "text-cat-9", appsync: "text-cat-9", shield: "text-cat-9",
-  sns: "text-cat-10", cognito: "text-cat-10", waf: "text-cat-10", cloudfront: "text-cat-10",
-  autoscaling: "text-cat-2", route53: "text-cat-5", acm: "text-cat-1", sts: "text-cat-10",
-  transfer: "text-cat-9", backup: "text-cat-5", firehose: "text-cat-6", athena: "text-cat-7",
-  glue: "text-cat-5", eks: "text-cat-8", efs: "text-cat-4", opensearch: "text-cat-8",
-  appconfig: "text-cat-2", bedrock: "text-cat-10", scheduler: "text-cat-9",
-  cloudtrail: "text-cat-6", organizations: "text-cat-10", elbv2: "text-cat-4",
+function sourceColorClass(source: string): string {
+  const map: Record<string, string> = {
+    secretsmanager: "text-cat-1", ecr: "text-cat-1",
+    s3: "text-cat-2", ssm: "text-cat-2", ses: "text-cat-2",
+    sqs: "text-cat-3", kms: "text-cat-3", iam: "text-cat-3",
+    ecs: "text-cat-4", apigateway: "text-cat-4", elasticache: "text-cat-4",
+    logs: "text-cat-5", stepfunctions: "text-cat-5",
+    request: "text-cat-6", pipes: "text-cat-6", kinesis: "text-cat-6", cloudformation: "text-cat-6",
+    dynamodb: "text-cat-7", ec2: "text-cat-7", docker: "text-cat-7", msk: "text-cat-7",
+    lambda: "text-cat-8", rds: "text-cat-8",
+    events: "text-cat-9", eventbridge: "text-cat-9", appsync: "text-cat-9", shield: "text-cat-9",
+    sns: "text-cat-10", cognito: "text-cat-10", waf: "text-cat-10", cloudfront: "text-cat-10",
+    autoscaling: "text-cat-2", route53: "text-cat-5", acm: "text-cat-1", sts: "text-fg-subtle",
+    inbox: "text-fg-muted",
+  }
+  return map[source.toLowerCase()] ?? "text-fg-muted"
 }
