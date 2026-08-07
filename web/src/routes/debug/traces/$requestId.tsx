@@ -15,6 +15,7 @@ import { Link as RouterLink } from "@tanstack/react-router"
 import type { useNavigate } from "@tanstack/react-router"
 import { nsToHuman, statusColor, statusMessage, formatTimestamp, traceToCurl } from "@/features/debug-traces/utils"
 import { formatBodyForDisplay, bodyHintFromHeaders, formatStackTrace } from "@/lib/format-body"
+import Prism from "@/lib/prism"
 import { Waterfall } from "@/features/debug-traces/components/waterfall"
 import { SequenceDiagram } from "@/features/debug-traces/components/sequence-diagram"
 import { FlowMap } from "@/features/debug-traces/components/flow-map"
@@ -774,7 +775,7 @@ interface TraceEvent {
 }
 
 function EventsTab({ requestId }: { requestId: string }) {
-  const { data: events, isLoading, error } = useQuery({
+  const { data: events, isLoading } = useQuery({
     queryKey: [...debugTraceKeys.detail(requestId), "events"],
     queryFn: () => apiFetch<TraceEvent[]>(`/debug/trace/${requestId}/events`),
     enabled: !!requestId,
@@ -782,40 +783,63 @@ function EventsTab({ requestId }: { requestId: string }) {
   })
 
   if (isLoading) return <Spinner />
-  if (error || !events) {
-    return <div className="text-center text-fg-muted py-8">No events captured for this request.</div>
-  }
-  if (events.length === 0) {
+  if (!events || events.length === 0) {
     return <div className="text-center text-fg-muted py-8">No events captured for this request.</div>
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-fg-muted text-left">
-            <th className="px-3 py-2 font-medium w-44">Time</th>
-            <th className="px-3 py-2 font-medium w-24">Source</th>
-            <th className="px-3 py-2 font-medium">Type</th>
-            <th className="px-3 py-2 font-medium">Payload</th>
-          </tr>
-        </thead>
-        <tbody>
-          {events.map((ev, i) => (
-            <tr key={i} className="border-b border-border">
-              <td className="px-3 py-2 font-mono text-xs text-fg-muted whitespace-nowrap">{formatTimestamp(ev.time)}</td>
-              <td className="px-3 py-2"><Badge variant="outline" className="text-xs">{ev.source}</Badge></td>
-              <td className="px-3 py-2 font-mono text-xs">{ev.type}</td>
-              <td className="px-3 py-2">
-                <details>
-                  <summary className="text-xs text-fg-muted cursor-pointer hover:text-fg">Show payload</summary>
-                  <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48 mt-1">{JSON.stringify(ev.payload, null, 2)}</pre>
-                </details>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="flex flex-col gap-2">
+      {events.map((ev, i) => {
+        const readable = eventLabel(ev.type)
+        const color = eventColorBadge(ev.type)
+        const sourceColorClass = SOURCE_COLOR_MAP[ev.source] ?? "text-fg-muted"
+        return (
+          <div key={i} className="rounded-lg border border-border bg-bg-elevated">
+            <div className="flex items-center gap-2 px-3 py-2">
+              <span className={cn("font-mono text-xs font-medium", sourceColorClass)}>{ev.source}</span>
+              <Badge variant={color} className="text-xs">{readable}</Badge>
+              <span className="text-xs text-fg-muted ml-auto">{formatTimestamp(ev.time)}</span>
+            </div>
+            <details className="group">
+              <summary className="px-3 pb-2 text-xs text-fg-muted cursor-pointer hover:text-fg select-none">Payload</summary>
+              <pre className="bg-bg px-3 pb-3 text-xs font-mono overflow-x-auto max-h-48 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: Prism.highlight(JSON.stringify(ev.payload, null, 2), Prism.languages.json, "json") }} />
+            </details>
+          </div>
+        )
+      })}
     </div>
   )
+}
+
+function eventLabel(type: string): string {
+  const parts = type.split(":")
+  if (parts.length >= 2) return parts.slice(1).join(":").replace(":*", "")
+  return type
+}
+
+function eventColorBadge(type: string): "default" | "success" | "danger" | "warning" {
+  if (type === "request:Received") return "default"
+  if (type === "service:Error") return "danger"
+  if (type.includes("Created") || type.includes("Insert") || type.includes("Started") || type.includes("Launched") || type.includes("Registered")) return "success"
+  if (type.includes("Removed") || type.includes("Delete") || type.includes("Remove") || type.includes("Died") || type.includes("OOM") || type.includes("Failed")) return "danger"
+  if (type.includes("Modified") || type.includes("Modify") || type.includes("Updated") || type.includes("Stopped")) return "warning"
+  return "default"
+}
+
+const SOURCE_COLOR_MAP: Record<string, string> = {
+  secretsmanager: "text-cat-1", ecr: "text-cat-1",
+  s3: "text-cat-2", ssm: "text-cat-2", ses: "text-cat-2",
+  sqs: "text-cat-3", kms: "text-cat-3", iam: "text-cat-3",
+  ecs: "text-cat-4", apigateway: "text-cat-4", elasticache: "text-cat-4",
+  logs: "text-cat-5", stepfunctions: "text-cat-5",
+  request: "text-cat-6", pipes: "text-cat-6", kinesis: "text-cat-6", cloudformation: "text-cat-6",
+  dynamodb: "text-cat-7", ec2: "text-cat-7", docker: "text-cat-7", msk: "text-cat-7",
+  lambda: "text-cat-8", rds: "text-cat-8",
+  events: "text-cat-9", eventbridge: "text-cat-9", appsync: "text-cat-9", shield: "text-cat-9",
+  sns: "text-cat-10", cognito: "text-cat-10", waf: "text-cat-10", cloudfront: "text-cat-10",
+  autoscaling: "text-cat-2", route53: "text-cat-5", acm: "text-cat-1", sts: "text-cat-10",
+  transfer: "text-cat-9", backup: "text-cat-5", firehose: "text-cat-6", athena: "text-cat-7",
+  glue: "text-cat-5", eks: "text-cat-8", efs: "text-cat-4", opensearch: "text-cat-8",
+  appconfig: "text-cat-2", bedrock: "text-cat-10", scheduler: "text-cat-9",
+  cloudtrail: "text-cat-6", organizations: "text-cat-10", elbv2: "text-cat-4",
 }

@@ -374,6 +374,8 @@ func (e Entry) ToSummary() Summary {
 var internalPaths = map[string]bool{
 	"/_health":             true,
 	"/_events":             true,
+	"/_events/request":     true,
+	"/_events/request/":    true,
 	"/_overcast/inbox":     true,
 	"/_overcast/inbox/":    true,
 	"/_/info":              true,

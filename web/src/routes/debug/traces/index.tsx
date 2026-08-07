@@ -5,6 +5,7 @@ import { useInfiniteQuery, useQuery, infiniteQueryOptions, skipToken } from "@ta
 import { traceCountQueryOptions, debugTraceKeys } from "@/features/debug-traces/data"
 import { debugTrace } from "@/services/api/misc"
 import { nsToHuman, statusColor, statusMessage, formatTimestamp } from "@/features/debug-traces/utils"
+import { serviceColor } from "@/features/debug-traces/service-color"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -215,7 +216,7 @@ function TracesPage() {
                       <td className="px-3 py-2 truncate font-mono text-xs">{t.path}</td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
-                          <Badge variant="outline" className="text-xs">{t.service || "—"}</Badge>
+                          <Badge variant="outline" className="text-xs" style={{ borderColor: serviceColor(t.service || "") }}>{t.service || "—"}</Badge>
                           {t.hopCount ? <span className="inline-flex items-center gap-0.5 text-[10px] text-fg-muted" title={`${t.hopCount} hop${t.hopCount !== 1 ? "s" : ""}`}><GitFork className="h-3 w-3" />{t.hopCount}</span> : null}
                         </div>
                       </td>
