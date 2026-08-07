@@ -8,6 +8,16 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 )
 
+// SkipWithoutDocker calls t.Skip if Docker is not reachable. Use at the top of
+// tests that need a running daemon (ECS, Lambda, RDS, ElastiCache, MSK, EFS).
+func SkipWithoutDocker(t *testing.T) {
+	t.Helper()
+	dc := docker.NewClient("", nil)
+	if err := dc.Ping(t.Context()); err != nil {
+		t.Skipf("skipping: Docker is not available (%v)", err)
+	}
+}
+
 // Docker-dependent tests that need an image from a public registry have two
 // distinct ways to go wrong, and they deserve opposite verdicts.
 //

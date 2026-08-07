@@ -32,7 +32,7 @@ export function FlowMap({ trace, aggregateThreshold = 5, onSelectHop, selectedHo
 
     // Collect matching IDs from active filters
     const noisyIds = new Set(
-      hops.filter((h) => h.noisy).map((h) => h.id),
+      h.filter((hop) => hop.noisy).map((hop) => hop.id),
     )
     result.nodes.forEach((n) => {
       if (n.data.aggregateCount > 0) noisyIds.add(n.id)

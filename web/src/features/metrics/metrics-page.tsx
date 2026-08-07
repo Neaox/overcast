@@ -31,6 +31,7 @@ import { StatPill } from "./stat-pill"
 import { HealthStrip } from "./health-strip"
 import { AdvisoriesList } from "./advisories"
 import { StorageActivity } from "./storage-activity"
+import { DockerHealthPanel } from "./docker-health"
 import { debugMetricsQueryOptions } from "./data"
 
 // ─── Formatters ────────────────────────────────────────────────────────────
@@ -136,6 +137,9 @@ export function MetricsPage() {
 
       {/* ── Health strip ──────────────────────────────────────────────── */}
       <HealthStrip uptime={latest?.uptime} />
+
+      {/* ── Docker connectivity ────────────────────────────────────────── */}
+      <DockerHealthPanel />
 
       {/* ── Advisories ────────────────────────────────────────────────── */}
       <AdvisoriesList

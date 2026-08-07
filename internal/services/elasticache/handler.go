@@ -296,10 +296,8 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := h.startCacheContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for ElastiCache cluster — falling back to metadata-only",
+				h.log.Warn("failed to start Docker container for ElastiCache cluster — cluster stays in creating state",
 					zap.String("cluster", clusterID), zap.Error(err))
-				// Container failed: fall back so the cluster isn't stuck in "creating".
-				h.clusterFallbackAvailable(region, clusterID)
 				return
 			}
 			// The start took real time; the cluster may have been deleted
@@ -326,13 +324,9 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 			}
 			h.scheduleHealthCheck(region, clusterID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
 		}()
-	} else {
-		// No Docker — use the metadata-only transition so the cluster becomes
-		// "available" immediately (0 delay runs synchronously on a real clock).
-		h.scheduler.AfterScoped(h.store.region(r.Context()), clusterID, "available", 0, func(ctx context.Context) {
-			h.transitionCacheCluster(ctx, clusterID, "available", "creating")
-		})
 	}
+	// Docker is not available — leave the cluster in "creating".
+	// The /_health endpoint and web UI banner tell the user why.
 
 	h.publish(r, events.ElastiCacheClusterCreated, events.ResourcePayload{Name: id, ARN: arn})
 
@@ -354,6 +348,7 @@ func (h *Handler) DescribeCacheClusters(w http.ResponseWriter, r *http.Request) 
 			protocol.WriteQueryXMLError(w, r, aerr)
 			return
 		}
+		docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 		protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeCacheClustersResponse{
 			Xmlns: cacheXMLNS,
 			Result: xmlDescribeCacheClustersResult{
@@ -373,6 +368,7 @@ func (h *Handler) DescribeCacheClusters(w http.ResponseWriter, r *http.Request) 
 	for _, c := range all {
 		items = append(items, toXMLCacheCluster(c))
 	}
+	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeCacheClustersResponse{
 		Xmlns:            cacheXMLNS,
 		Result:           xmlDescribeCacheClustersResult{CacheClusters: xmlCacheClusters{Items: items}},
@@ -723,7 +719,10 @@ func (h *Handler) cleanupCacheContainer(ctx context.Context, clusterID, containe
 }
 
 // scheduleHealthCheck polls TCP connectivity and transitions the cluster to
-// "available" once Redis responds. Falls back to "available" after maxRetries.
+// "available" once Redis responds. After maxRetries the cluster stays in its
+// current state — it is never falsely marked "available" when the engine is
+// not answering. A Docker container-died event arriving after exhaustion will
+// still transition to "stopped".
 // region is the region the cluster is stored under — the callbacks run outside
 // any request context.
 func (h *Handler) scheduleHealthCheck(region, clusterID, host string, port int) {
@@ -741,15 +740,13 @@ func (h *Handler) scheduleHealthCheck(region, clusterID, host string, port int) 
 		if attempt < maxRetries {
 			h.scheduler.AfterScoped(region, clusterID, "health", 2*time.Second, check)
 		} else {
-			h.log.Warn("ElastiCache health check timed out", zap.String("cluster", clusterID), zap.Int("attempts", attempt))
-			h.transitionCacheCluster(ctx, clusterID, "available", "creating", "starting")
+			h.log.Warn("ElastiCache health check timed out — cluster stays in current state",
+				zap.String("cluster", clusterID), zap.Int("attempts", attempt))
 		}
 	}
 	h.scheduler.AfterScoped(region, clusterID, "health", 1*time.Second, check)
 }
 
-// clusterFallbackAvailable sets a cluster to "available" if it is still in
-// "creating" or "starting". Used when Docker start fails.
 // teardownOrphanedContainer removes a container whose resource record was
 // deleted while the container was still starting. The delete path could not
 // stop it — the container ID had not been persisted yet — so the start
@@ -771,18 +768,6 @@ func (h *Handler) teardownOrphanedContainer(ctx context.Context, kind, id, conta
 	if hostPort > 0 {
 		_ = h.store.releasePort(ctx, hostPort) //nolint:errcheck
 	}
-}
-
-func (h *Handler) clusterFallbackAvailable(region, clusterID string) {
-	ctx := middleware.ContextWithRegion(context.Background(), region)
-	h.transitionCacheCluster(ctx, clusterID, "available", "creating", "starting")
-}
-
-// rgFallbackAvailable sets a replication group to "available" if it is still
-// in "creating" or "starting". Used when Docker start fails.
-func (h *Handler) rgFallbackAvailable(region, rgID string) {
-	ctx := middleware.ContextWithRegion(context.Background(), region)
-	h.transitionReplicationGroup(ctx, rgID, "available", "creating", "starting")
 }
 
 // startReplicationGroupContainer creates (or reuses) and starts a single Docker

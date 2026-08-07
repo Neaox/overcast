@@ -12,6 +12,7 @@ import {
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import { DockerBanner } from "@/components/docker-banner"
 import { Badge } from "@/components/ui/badge"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
@@ -124,6 +125,8 @@ export function InstanceDetail({ instanceId }: { instanceId: string }) {
       />
 
       <ApplicationOwnershipBanner candidates={[db.DBInstanceArn, db.DBInstanceIdentifier]} />
+
+      <DockerBanner forService="rds" />
 
       <Tabs selectedKey={activeTab} onSelectionChange={setActiveTab}>
         <TabList>

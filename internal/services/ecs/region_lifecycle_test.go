@@ -20,6 +20,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
@@ -52,6 +53,7 @@ func postJSON(t *testing.T, ctx context.Context, fn http.HandlerFunc, body any) 
 }
 
 func TestTaskTransition_nonDefaultRegion(t *testing.T) {
+	docker.SkipWithoutDocker(t)
 	h, clk := newECSRegionTestHandler(t)
 	ctx := middleware.ContextWithRegion(context.Background(), "eu-west-1")
 

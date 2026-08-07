@@ -50,14 +50,12 @@ type taskLaunchSpec struct {
 }
 
 // launchTask builds one task from a task definition and places it, starting
-// real containers whenever Docker is wired. The task is persisted either way,
-// and is returned even when the launch failed so the caller can report it.
+// real containers whenever Docker is wired. The task is persisted and then
+// transitions to RUNNING only when Docker is available; without Docker the
+// task stays at PROVISIONING — it is never misrepresented as RUNNING.
 //
 // A task whose containers cannot be started is persisted STOPPED with stopCode
 // TaskFailedToStart, which is what AWS does — it is never reported RUNNING.
-// The metadata-only path, where a task goes RUNNING with nothing behind it, is
-// reserved for Overcast running without a container runtime at all: that is a
-// deployment mode, not a task that failed.
 func (h *Handler) launchTask(ctx context.Context, spec taskLaunchSpec) (*Task, *protocol.AWSError, error) {
 	taskID := uuid.New().String()
 	td := spec.td
@@ -121,7 +119,12 @@ func (h *Handler) launchTask(ctx context.Context, spec taskLaunchSpec) (*Task, *
 	// this write, it can fire against a task that does not exist yet, be spent,
 	// and leave the record that lands a moment later stuck at PROVISIONING for
 	// good. Both placement paths converge here so neither can get that wrong.
-	h.scheduleRunningTransition(h.store.region(ctx), spec.clusterName, taskID)
+	//
+	// When Docker is unavailable the task is not transitioned to RUNNING: no
+	// container is running and it is dishonest to report otherwise.
+	if h.dockerReady.Load() {
+		h.scheduleRunningTransition(h.store.region(ctx), spec.clusterName, taskID)
+	}
 	return task, nil, nil
 }
 

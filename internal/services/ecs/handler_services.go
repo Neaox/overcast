@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
 )
@@ -448,6 +449,8 @@ func (h *Handler) DescribeServices(w http.ResponseWriter, r *http.Request) {
 		"services": found,
 		"failures": failures,
 	}, "application/x-amz-json-1.1")
+
+	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 }
 
 // ListServices handles AmazonEC2ContainerServiceV20141113.ListServices.

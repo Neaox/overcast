@@ -405,6 +405,7 @@ func (h *Handler) DescribeDBInstances(w http.ResponseWriter, r *http.Request) {
 			protocol.WriteQueryXMLError(w, r, aerr)
 			return
 		}
+		docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 		protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDBInstancesResponse{
 			Xmlns: rdsXMLNS,
 			Result: xmlDescribeDBInstancesResult{
@@ -426,6 +427,7 @@ func (h *Handler) DescribeDBInstances(w http.ResponseWriter, r *http.Request) {
 		items = append(items, h.toXMLDBInstance(r.Context(), inst))
 	}
 
+	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlDescribeDBInstancesResponse{
 		Xmlns: rdsXMLNS,
 		Result: xmlDescribeDBInstancesResult{

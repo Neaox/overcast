@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/dialog"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import { DockerBanner } from "@/components/docker-banner"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabList, Tab, TabPanel } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -101,6 +102,8 @@ export function ClusterDetail({
       />
 
       <ApplicationOwnershipBanner candidates={[cluster.clusterArn, cluster.clusterName]} />
+
+      <DockerBanner forService="ecs" />
 
       <Tabs
         selectedKey={activeTab}

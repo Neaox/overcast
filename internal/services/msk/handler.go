@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -98,18 +99,13 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer h.dockerWg.Done()
 			bgCtx := clusterRegionCtx(clusterARNCopy)
-			log := h.log.WithRecorder(bgCtx)
 			if err := h.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-				log.Warn("failed to start Docker container for MSK cluster — falling back to metadata-only",
+				h.log.Warn("failed to start Docker container for MSK cluster — cluster stays in CREATING state",
 					zap.String("cluster", clusterARNCopy), zap.Error(err))
-				h.clusterFallbackActive(clusterARNCopy)
 			}
 		}()
-	} else {
-		h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(ctx context.Context) {
-			h.transitionCluster(ctx, clusterARNCopy, "ACTIVE", "CREATING")
-		})
 	}
+	// Docker is not available — leave the cluster in CREATING.
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"clusterArn":  clusterARN,
@@ -196,9 +192,8 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterArn), clusterArn, "delete", 50*time.Millisecond, func(ctx context.Context) {
-		log := h.log.WithRecorder(ctx)
 		if aerr := h.store.deleteCluster(ctx, clusterARNCopy); aerr != nil {
-			log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
+			h.log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
 		}
 	})
 
@@ -529,18 +524,13 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 			go func() {
 				defer h.dockerWg.Done()
 				bgCtx := clusterRegionCtx(clusterARNCopy)
-				log := h.log.WithRecorder(bgCtx)
 				if err := h.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-					log.Warn("failed to start Docker container for MSK V2 cluster — falling back to metadata-only",
+					h.log.Warn("failed to start Docker container for MSK V2 cluster — cluster stays in CREATING state",
 						zap.String("cluster", clusterARNCopy), zap.Error(err))
-					h.clusterFallbackActive(clusterARNCopy)
 				}
 			}()
-		} else {
-			h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "active", 0, func(ctx context.Context) {
-				h.transitionCluster(ctx, clusterARNCopy, "ACTIVE", "CREATING")
-			})
 		}
+		// Docker is not available — leave the cluster in CREATING.
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
@@ -596,6 +586,7 @@ func (h *Handler) describeClusterV2(w http.ResponseWriter, r *http.Request) {
 		info["serverless"] = map[string]any{}
 	}
 
+	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"clusterInfo": info,
 	})
@@ -677,8 +668,6 @@ func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// ── clusterFallbackActive ─────────────────────────────────────────────────────
-
 // clusterRegionCtx returns a background context carrying the region embedded
 // in the cluster ARN — the same region the store keys the cluster under. MSK
 // background callbacks (container starts, health checks, Docker events) run
@@ -686,10 +675,4 @@ func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Requ
 // resolve to the default region and miss clusters created elsewhere.
 func clusterRegionCtx(clusterARN string) context.Context {
 	return middleware.ContextWithRegion(context.Background(), serviceutil.ARNRegion(clusterARN))
-}
-
-// clusterFallbackActive sets a cluster to "ACTIVE" if it is still in "CREATING".
-func (h *Handler) clusterFallbackActive(clusterARN string) {
-	ctx := clusterRegionCtx(clusterARN)
-	h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING", "STARTING")
 }

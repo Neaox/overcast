@@ -30,6 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
+import { DockerBanner } from "@/components/docker-banner"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
@@ -76,6 +77,8 @@ export function EksPage() {
           </div>
         }
       />
+
+      <DockerBanner forService="eks" />
 
       {isLoading ? (
         <div className="flex justify-center py-16">

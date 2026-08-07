@@ -778,6 +778,8 @@ func (h *Handler) DescribeTasks(w http.ResponseWriter, r *http.Request) {
 		"tasks":    found,
 		"failures": failures,
 	}, "application/x-amz-json-1.1")
+
+	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 }
 
 // ListTasks handles AmazonEC2ContainerServiceV20141113.ListTasks.
