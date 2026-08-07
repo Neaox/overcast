@@ -21,6 +21,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/tests/helpers"
 )
 
 // crashLoopFixture is a service whose single task is placed, reaches RUNNING
@@ -243,6 +244,7 @@ func allEvents(svc *ecsService) string {
 // rolloutState COMPLETED, failedTasks 0, and a fresh "has reached a steady
 // state" event on every replacement.
 func TestCrashLoopingService_countsFailuresAndStopsClaimingSteadyState(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a one-task service that has placed its first task
 	f := newCrashLoopService(t, "crash-cluster", "crash-svc", nil)
 
@@ -275,6 +277,7 @@ func TestCrashLoopingService_countsFailuresAndStopsClaimingSteadyState(t *testin
 
 // TestCrashLoopingService_reportsUnableToConsistentlyStartTasks covers defect 1.
 func TestCrashLoopingService_reportsUnableToConsistentlyStartTasks(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a one-task service that has placed its first task
 	f := newCrashLoopService(t, "inconsistent-cluster", "inconsistent-svc", nil)
 
@@ -298,6 +301,7 @@ func TestCrashLoopingService_reportsUnableToConsistentlyStartTasks(t *testing.T)
 
 // TestCrashLoopingService_circuitBreakerTrips covers defect 2.
 func TestCrashLoopingService_circuitBreakerTrips(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a one-task service that asked for a deployment circuit breaker
 	f := newCrashLoopService(t, "breaker-cluster", "breaker-svc", map[string]any{
 		"deploymentCircuitBreaker": map[string]any{"enable": true, "rollback": false},
@@ -334,6 +338,7 @@ func TestCrashLoopingService_circuitBreakerTrips(t *testing.T) {
 // TestCrashLoopingService_withoutCircuitBreakerStaysInProgress — with the
 // breaker off AWS keeps retrying and reports the failure through events alone.
 func TestCrashLoopingService_withoutCircuitBreakerStaysInProgress(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a one-task service with no circuit breaker
 	f := newCrashLoopService(t, "nobreaker-cluster", "nobreaker-svc", nil)
 
@@ -360,6 +365,7 @@ func TestCrashLoopingService_withoutCircuitBreakerStaysInProgress(t *testing.T) 
 // stopped on purpose is not a failed task, and the container's die event must
 // not rewrite the stop code the scheduler already recorded.
 func TestServiceScaleDown_doesNotCountAsDeploymentFailure(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a service running one task
 	f := newCrashLoopService(t, "scaledown-cluster", "scaledown-svc", nil)
 	taskID := f.runningTaskID(t)
@@ -407,6 +413,7 @@ func TestServiceScaleDown_doesNotCountAsDeploymentFailure(t *testing.T) {
 // service's task by hand does not reduce its desired count, so ECS replaces it;
 // and a task the caller stopped is not a task that failed.
 func TestStopTask_onAServiceTask_replacesItWithoutCountingAFailure(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a service running one task
 	f := newCrashLoopService(t, "stoptask-cluster", "stoptask-svc", nil)
 	taskID := f.runningTaskID(t)
@@ -445,6 +452,7 @@ func TestStopTask_onAServiceTask_replacesItWithoutCountingAFailure(t *testing.T)
 // count is not a one-way door: a replacement that actually stays running
 // settles the service again and clears it, as AWS does at steady state.
 func TestCrashLoopingService_recoversWhenATaskStaysUp(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a service that has already failed twice
 	f := newCrashLoopService(t, "recover-cluster", "recover-svc", nil)
 	f.crashOnce(t)

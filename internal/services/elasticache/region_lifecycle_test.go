@@ -21,9 +21,11 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/state"
+	"github.com/Neaox/overcast/tests/helpers"
 )
 
 func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	clk := clock.NewMock()
 	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, state.NewMemoryStore(), zap.NewNop(), clk)
 	h := svc.handler

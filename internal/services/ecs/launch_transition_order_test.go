@@ -33,6 +33,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/state"
+	"github.com/Neaox/overcast/tests/helpers"
 )
 
 // gatedTaskStore blocks the first write of a task record until it is released,
@@ -55,6 +56,7 @@ func (s *gatedTaskStore) Set(ctx context.Context, namespace, key, value string) 
 }
 
 func TestRunTask_runningTransitionScheduledAfterTheRecordLands(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a handler whose first task write can be held open
 	gate := &gatedTaskStore{
 		Store:   state.NewMemoryStore(),

@@ -23,6 +23,7 @@ import (
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
+	"github.com/Neaox/overcast/tests/helpers"
 )
 
 func newECSRegionTestHandler(t *testing.T) (*Handler, *clock.Mock) {
@@ -52,6 +53,7 @@ func postJSON(t *testing.T, ctx context.Context, fn http.HandlerFunc, body any) 
 }
 
 func TestTaskTransition_nonDefaultRegion(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	h, clk := newECSRegionTestHandler(t)
 	ctx := middleware.ContextWithRegion(context.Background(), "eu-west-1")
 
