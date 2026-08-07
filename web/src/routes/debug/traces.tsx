@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { useMemo, useState } from "react"
 import { Search, RefreshCw } from "lucide-react"
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery, infiniteQueryOptions } from "@tanstack/react-query"
 import { traceCountQueryOptions, debugTraceKeys } from "@/features/debug-traces/data"
 import { debugTrace } from "@/services/api/misc"
 import { nsToHuman, statusColor } from "@/features/debug-traces/utils"
@@ -54,7 +54,7 @@ function TracesPage() {
     return p
   }, [serviceFilter, methodFilter, statusFilter, searchInput])
 
-  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+  const infiniteOpts = infiniteQueryOptions({
     queryKey: [...debugTraceKeys.list(params), debugEnabled],
     queryFn: ({ pageParam }) => debugTrace.list({ ...params, after: pageParam }),
     getNextPageParam: (lastPage: TraceListResponse) => lastPage.nextCursor ?? undefined,
@@ -62,6 +62,8 @@ function TracesPage() {
     refetchInterval: autoRefresh ? 3000 : false,
     enabled: debugEnabled,
   })
+
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery(infiniteOpts)
 
   const { data: countData } = useQuery({
     ...traceCountQueryOptions(),
