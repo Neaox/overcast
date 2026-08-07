@@ -94,9 +94,15 @@ func TestTrace_listReturnsEntries(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
 	body := bytes.NewBufferString(`{"FunctionName":"test-trace-list","Role":"arn:aws:iam::000000000000:role/test","Handler":"index.handler","Runtime":"nodejs22.x"}`)
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 
 	listResp, err := http.Get(srv.URL + "/_debug/traces")
@@ -122,9 +128,15 @@ func TestTrace_count(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
 	body := bytes.NewBufferString(`{"FunctionName":"test-trace-count","Role":"arn:aws:iam::000000000000:role/test","Handler":"index.handler","Runtime":"nodejs22.x"}`)
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 
 	countResp, err := http.Get(srv.URL + "/_debug/traces/count")

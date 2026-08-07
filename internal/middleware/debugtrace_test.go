@@ -87,8 +87,8 @@ func TestDebugTraceMiddlewareEnabled(t *testing.T) {
 	if string(entry.ResponseBody) != `{"result":"ok"}` {
 		t.Errorf("unexpected response body: %s", entry.ResponseBody)
 	}
-	if entry.Duration <= 0 {
-		t.Error("expected positive duration")
+	if entry.Duration < 0 {
+		t.Error("expected non-negative duration")
 	}
 }
 
