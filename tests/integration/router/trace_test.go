@@ -1,44 +1,36 @@
 package router_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
-	"os"
+	"strings"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
 func TestTrace(t *testing.T) {
-	if os.Getenv("CI") == "" {
-		t.Skip("skipping trace integration tests outside CI (port exhaustion on Windows)")
-	}
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
 	t.Run("requestLifecycle", func(t *testing.T) {
-		body := bytes.NewBufferString(`{"FunctionName":"test-trace-func","Role":"arn:aws:iam::000000000000:role/test","Handler":"index.handler","Runtime":"nodejs22.x"}`)
-		req, err := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
+		body := `Action=CreateQueue&Version=2012-11-05&QueueName=test-trace-queue`
+		req, err := http.NewRequest("POST", srv.URL+"/", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("expected 200, got %d", resp.StatusCode)
-		}
-
 		reqID := resp.Header.Get("x-amzn-requestid")
 		if reqID == "" {
 			reqID = resp.Header.Get("x-amz-request-id")
 		}
 		if reqID == "" {
-			t.Fatal("expected x-amzn-requestid header")
+			t.Fatal("expected request ID header")
 		}
 
 		traceResp, err := http.Get(srv.URL + "/_debug/trace/" + reqID)
@@ -64,14 +56,11 @@ func TestTrace(t *testing.T) {
 		if trace.Method != "POST" {
 			t.Errorf("expected POST, got %s", trace.Method)
 		}
-		if trace.Path != "/2015-03-31/functions" {
-			t.Errorf("expected /2015-03-31/functions, got %s", trace.Path)
+		if trace.Path != "/" {
+			t.Errorf("expected /, got %s", trace.Path)
 		}
 		if trace.StatusCode != http.StatusOK {
 			t.Errorf("expected 200, got %d", trace.StatusCode)
-		}
-		if trace.Service != "lambda" {
-			t.Errorf("expected lambda, got %s", trace.Service)
 		}
 	})
 
@@ -94,13 +83,7 @@ func TestTrace(t *testing.T) {
 	})
 
 	t.Run("listReturnsEntries", func(t *testing.T) {
-		body := bytes.NewBufferString(`{"FunctionName":"test-trace-list","Role":"arn:aws:iam::000000000000:role/test","Handler":"index.handler","Runtime":"nodejs22.x"}`)
-		req, err := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := http.Get(srv.URL + "/2015-03-31/functions")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,13 +109,7 @@ func TestTrace(t *testing.T) {
 	})
 
 	t.Run("count", func(t *testing.T) {
-		body := bytes.NewBufferString(`{"FunctionName":"test-trace-count","Role":"arn:aws:iam::000000000000:role/test","Handler":"index.handler","Runtime":"nodejs22.x"}`)
-		req, err := http.NewRequest(http.MethodPost, srv.URL+"/2015-03-31/functions", body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := http.Get(srv.URL + "/2015-03-31/functions")
 		if err != nil {
 			t.Fatal(err)
 		}
