@@ -1315,6 +1315,53 @@ func TestTagResource_success(t *testing.T) {
 	}
 }
 
+// The SNS model gives TagResource and UntagResource an (empty) output shape,
+// so botocore requires the <TagResourceResult/> / <UntagResourceResult/>
+// element inside the response envelope. Without it the AWS CLI fails
+// client-side ("aws: [ERROR]: 'TagResourceResult'") even though the tag was
+// stored. Operations with no output shape (e.g. SetTopicAttributes) correctly
+// omit the element.
+func TestTagResource_responseIncludesEmptyResultElement(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := createTopic(t, srv, "tag-result-element-topic")
+
+	resp := snsCall(t, srv, "TagResource", url.Values{
+		"ResourceArn":      {arn},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var out struct {
+		Result *struct{} `xml:"TagResourceResult"`
+	}
+	decodeXML(t, resp, &out)
+	if out.Result == nil {
+		t.Error("TagResourceResponse is missing the empty <TagResourceResult/> element botocore requires")
+	}
+}
+
+func TestUntagResource_responseIncludesEmptyResultElement(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	arn := createTopic(t, srv, "untag-result-element-topic")
+
+	resp := snsCall(t, srv, "UntagResource", url.Values{
+		"ResourceArn":      {arn},
+		"TagKeys.member.1": {"env"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var out struct {
+		Result *struct{} `xml:"UntagResourceResult"`
+	}
+	decodeXML(t, resp, &out)
+	if out.Result == nil {
+		t.Error("UntagResourceResponse is missing the empty <UntagResourceResult/> element botocore requires")
+	}
+}
+
 func TestTagResource_notFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	resp := snsCall(t, srv, "TagResource", url.Values{

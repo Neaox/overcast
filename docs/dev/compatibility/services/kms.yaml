@@ -2,12 +2,12 @@ service: kms
 status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-06
+last_updated: 2026-08-08
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/kms]
 integration_tests: [tests/integration/kms, tests/integration/cloudformation]
 capability_docs: docs/services/kms.md
-operation_count_estimate: 32 tracked, 32 supported
+operation_count_estimate: 33 tracked, 33 supported
 current_support_level: Broad local-dev KMS coverage for keys, aliases, tags, policies, grants, and crypto.
 operations: {}
 findings:
@@ -30,9 +30,18 @@ findings:
       evidence:
         aws_docs: https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-key.html
         tests: [tests/integration/cloudformation/kms_policy_test.go, internal/services/cloudformation/provisioner_resources_test.go]
+    - operation: AWS::KMS::Key
+      scenario: Updates dispatch PutKeyPolicy only when KeyPolicy changed (real CFN behavior), accept a KeyPolicy given as a JSON string without double-encoding it, and apply Description changes through UpdateKeyDescription instead of silently ignoring them.
+      evidence:
+        aws_docs:
+          - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-kms-key.html
+          - https://docs.aws.amazon.com/kms/latest/APIReference/API_UpdateKeyDescription.html
+        tests: [tests/integration/cloudformation/kms_policy_test.go, internal/services/cloudformation/provisioner_resources_test.go, tests/integration/kms/update_key_description_test.go]
   remaining_gaps:
     - Align docs note for JSON 1.0 if intentional.
     - Principal existence is not checked against remote AWS accounts; syntactically valid cross-account principals are accepted.
+    - AWS::KMS::Key Tags are not applied by CloudFormation (create or update); KMS TagResource exists but the provisioner never dispatches it.
+    - AWS::KMS::Key EnableKeyRotation is not applied by CloudFormation; KMS has no rotation-state operations yet.
   intentionally_partial: []
 handoff:
   start_with: [Encrypt, Decrypt, CreateGrant, key policies]

@@ -53,13 +53,14 @@ func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger
 func (h *Handler) initOps() {
 	h.ops = map[string]http.HandlerFunc{
 		// Key lifecycle
-		"CreateKey":           h.CreateKey,
-		"DescribeKey":         h.DescribeKey,
-		"ListKeys":            h.ListKeys,
-		"DisableKey":          h.DisableKey,
-		"EnableKey":           h.EnableKey,
-		"ScheduleKeyDeletion": h.ScheduleKeyDeletion,
-		"CancelKeyDeletion":   h.CancelKeyDeletion,
+		"CreateKey":            h.CreateKey,
+		"DescribeKey":          h.DescribeKey,
+		"ListKeys":             h.ListKeys,
+		"DisableKey":           h.DisableKey,
+		"EnableKey":            h.EnableKey,
+		"UpdateKeyDescription": h.UpdateKeyDescription,
+		"ScheduleKeyDeletion":  h.ScheduleKeyDeletion,
+		"CancelKeyDeletion":    h.CancelKeyDeletion,
 		// Aliases
 		"CreateAlias": h.CreateAlias,
 		"DeleteAlias": h.DeleteAlias,
@@ -299,6 +300,34 @@ func (h *Handler) EnableKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.publish(r, events.KMSKeyStateChanged, events.ResourcePayload{Name: k.KeyID})
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
+}
+
+// UpdateKeyDescription updates a key's description.
+// AWS docs: https://docs.aws.amazon.com/kms/latest/APIReference/API_UpdateKeyDescription.html
+func (h *Handler) UpdateKeyDescription(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId       string `json:"KeyId"`
+		Description string `json:"Description"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	ctx := r.Context()
+	k, err := h.resolveKey(ctx, req.KeyId)
+	if err != nil || k == nil {
+		if k == nil {
+			protocol.WriteJSONError(w, r, errNotFound(req.KeyId))
+			return
+		}
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	k.Description = req.Description
+	if err := h.store.PutKey(ctx, k); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{}, "application/x-amz-json-1.1")
 }
 

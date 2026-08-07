@@ -109,7 +109,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | IAM              | [iam.md](./services/iam.md)                         | 62  | Core CRUD + common workflows  |
 | ECS              | [ecs.md](./services/ecs.md)                         | 48  | Core CRUD + common workflows  |
 | ECR              | [ecr.md](./services/ecr.md)                         | 20  | Core CRUD + common workflows  |
-| KMS              | [kms.md](./services/kms.md)                         | 32  | Core CRUD + common workflows  |
+| KMS              | [kms.md](./services/kms.md)                         | 33  | Core CRUD + common workflows  |
 | Kinesis          | [kinesis.md](./services/kinesis.md)                 | 17  | Core CRUD + common workflows  |
 | EventBridge      | [eventbridge.md](./services/eventbridge.md)         | 28  | Core CRUD + common workflows  |
 | Scheduler        | [scheduler.md](./services/scheduler.md)             | 12  | Core CRUD + common workflows  |

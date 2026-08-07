@@ -714,6 +714,22 @@ func (h *eventsRuleHandler) Update(ctx context.Context, router http.Handler, _ *
 
 type kmsKeyHandler struct{}
 
+// kmsKeyPolicyString serializes a CloudFormation KeyPolicy property for the
+// KMS Policy parameter. The property is Type: Json, which accepts both an
+// object and a JSON string; a string must pass through verbatim because
+// marshalling it again would double-encode it into a quoted string that KMS
+// policy validation rejects.
+func kmsKeyPolicyString(keyPolicy any) (string, error) {
+	if s, ok := keyPolicy.(string); ok {
+		return s, nil
+	}
+	policy, err := json.Marshal(keyPolicy)
+	if err != nil {
+		return "", err
+	}
+	return string(policy), nil
+}
+
 func (h *kmsKeyHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	body := map[string]any{}
 	if v, _ := props["Description"].(string); v != "" {
@@ -726,11 +742,11 @@ func (h *kmsKeyHandler) Create(ctx context.Context, router http.Handler, cfg *co
 		body["KeyUsage"] = v
 	}
 	if keyPolicy, ok := props["KeyPolicy"]; ok {
-		policy, err := json.Marshal(keyPolicy)
+		policy, err := kmsKeyPolicyString(keyPolicy)
 		if err != nil {
 			return "", nil, fmt.Errorf("CreateKey: serialize KeyPolicy: %w", err)
 		}
-		body["Policy"] = string(policy)
+		body["Policy"] = policy
 	}
 	if bypass, ok := props["BypassPolicyLockoutSafetyCheck"]; ok {
 		body["BypassPolicyLockoutSafetyCheck"] = asBool(bypass)
@@ -796,10 +812,17 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 		}
 	}
 
+	policyChanged, err := cfnPropertyChanged(props, oldProps, "KeyPolicy")
+	if err != nil {
+		return physicalID, nil, failUpdate(err)
+	}
 	var previousPolicy string
 	policyApplied := false
-	if keyPolicy, ok := props["KeyPolicy"]; ok {
-		policy, err := json.Marshal(keyPolicy)
+	if keyPolicy, ok := props["KeyPolicy"]; ok && policyChanged {
+		// Real CloudFormation calls PutKeyPolicy only on a policy diff.
+		// Re-putting an unchanged caller-locking policy would re-run lockout
+		// validation without the bypass that originally created it.
+		policy, err := kmsKeyPolicyString(keyPolicy)
 		if err != nil {
 			return physicalID, nil, failUpdate(fmt.Errorf("PutKeyPolicy: serialize KeyPolicy: %w", err))
 		}
@@ -819,7 +842,7 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 		body := map[string]any{
 			"KeyId":      physicalID,
 			"PolicyName": "default",
-			"Policy":     string(policy),
+			"Policy":     policy,
 		}
 		if bypass, ok := props["BypassPolicyLockoutSafetyCheck"]; ok {
 			body["BypassPolicyLockoutSafetyCheck"] = asBool(bypass)
@@ -828,6 +851,37 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 			return physicalID, nil, failUpdate(fmt.Errorf("PutKeyPolicy: %w", err))
 		}
 		policyApplied = true
+	}
+
+	// restorePolicy compensates an applied policy change when a later
+	// sub-operation fails; bypass is forced because the previous policy may
+	// exclude the local caller.
+	restorePolicy := func(opErr error) (string, map[string]string, error) {
+		if policyApplied {
+			_, restoreErr := internalJSON(ctx, router, rCtx.Region, "TrentService.PutKeyPolicy", map[string]any{
+				"KeyId": physicalID, "PolicyName": "default", "Policy": previousPolicy,
+				"BypassPolicyLockoutSafetyCheck": true,
+			})
+			if restoreErr != nil {
+				return physicalID, nil, failDirtyUpdate(errors.Join(opErr,
+					fmt.Errorf("restore KMS key policy: %w", restoreErr)))
+			}
+		}
+		return physicalID, nil, failUpdate(opErr)
+	}
+
+	descriptionChanged, err := cfnPropertyChanged(props, oldProps, "Description")
+	if err != nil {
+		return physicalID, nil, failUpdate(err)
+	}
+	if descriptionChanged {
+		// A removed Description restores the documented default (empty).
+		description, _ := props["Description"].(string)
+		if _, err := internalJSON(ctx, router, rCtx.Region, "TrentService.UpdateKeyDescription", map[string]any{
+			"KeyId": physicalID, "Description": description,
+		}); err != nil {
+			return restorePolicy(fmt.Errorf("UpdateKeyDescription: %w", err))
+		}
 	}
 
 	newEnabledBool := true
@@ -851,17 +905,7 @@ func (h *kmsKeyHandler) Update(ctx context.Context, router http.Handler, _ *conf
 			}
 		}
 		if transitionErr != nil {
-			if policyApplied {
-				_, restoreErr := internalJSON(ctx, router, rCtx.Region, "TrentService.PutKeyPolicy", map[string]any{
-					"KeyId": physicalID, "PolicyName": "default", "Policy": previousPolicy,
-					"BypassPolicyLockoutSafetyCheck": true,
-				})
-				if restoreErr != nil {
-					return physicalID, nil, failDirtyUpdate(errors.Join(transitionErr,
-						fmt.Errorf("restore KMS key policy: %w", restoreErr)))
-				}
-			}
-			return physicalID, nil, failUpdate(transitionErr)
+			return restorePolicy(transitionErr)
 		}
 	}
 

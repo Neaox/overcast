@@ -243,15 +243,20 @@ type xmlTagMember struct {
 	Value string `xml:"Value"`
 }
 
+// The empty result elements are required by botocore — see the comment on
+// tagResourceResp in typed_logic.go, which serves the same envelope on the
+// typed dispatch path.
 type xmlTagResourceResponse struct {
 	XMLName          xml.Name                  `xml:"TagResourceResponse"`
 	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"TagResourceResult"`
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 type xmlUntagResourceResponse struct {
 	XMLName          xml.Name                  `xml:"UntagResourceResponse"`
 	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"UntagResourceResult"`
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
