@@ -1097,6 +1097,9 @@ var AllCapabilities = []Capability{
 	{Service: "pipes", Operation: "DeletePipe", Category: "Pipes", Status: StatusSupported, Notes: "Async deletion (DELETING→removed)", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "pipes", Operation: "DescribePipe", Category: "Pipes", Status: StatusSupported, Notes: "Returns the full pipe configuration and current state", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "pipes", Operation: "ListPipes", Category: "Pipes", Status: StatusSupported, Notes: "Lists all pipes as PipeSummary", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "pipes", Operation: "ListTagsForResource", Category: "Tags", Status: StatusSupported, Notes: "Returns tags for a pipe ARN", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "pipes", Operation: "TagResource", Category: "Tags", Status: StatusSupported, Notes: "Adds/merges tags by pipe ARN", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "pipes", Operation: "UntagResource", Category: "Tags", Status: StatusSupported, Notes: "Removes tags by key from a pipe ARN", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "pipes", Operation: "UpdatePipe", Category: "Pipes", Status: StatusSupported, Notes: "Updates DesiredState, description, role and parameter blocks (UPDATING→previous state)", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "rds", Operation: "AddTagsToResource", Category: "General", Status: StatusSupported, Notes: "Tags stored per-ARN in `rds:tags` namespace; shared tag validation", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "rds", Operation: "CreateDBCluster", Category: "Aurora clusters", Status: StatusSupported, Notes: "aurora-mysql and aurora-postgresql only; logical cluster, Docker started on first instance", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
@@ -1400,5 +1403,8 @@ var AllCapabilities = []Capability{
 	{Service: "waf", Operation: "CreateWebACL", Category: "Web ACLs", Status: StatusSupported, Notes: "Returns Summary with Id/LockToken", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "waf", Operation: "DeleteWebACL", Category: "Web ACLs", Status: StatusSupported, Notes: "LockToken accepted but not checked", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "waf", Operation: "GetWebACL", Category: "Web ACLs", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "waf", Operation: "ListTagsForResource", Category: "Web ACLs", Status: StatusSupported, Notes: "Returns tags for a WebACL ARN", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "waf", Operation: "ListWebACLs", Category: "Web ACLs", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "waf", Operation: "TagResource", Category: "Web ACLs", Status: StatusSupported, Notes: "Adds/merges tags by WebACL ARN", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "waf", Operation: "UntagResource", Category: "Web ACLs", Status: StatusSupported, Notes: "Removes tags by key from a WebACL ARN", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 }
