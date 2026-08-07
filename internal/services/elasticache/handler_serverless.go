@@ -214,10 +214,9 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 			}
 			h.scheduleServerlessHealthCheck(region, cacheName, got.Endpoint.Address, got.Endpoint.Port)
 		}(name)
-	} else {
-		// Docker is not available — leave the cache in "creating".
-		// The /_health endpoint and web UI banner tell the user why.
 	}
+	// Docker is not available — leave the cache in "creating".
+	// The /_health endpoint and web UI banner tell the user why.
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateServerlessCacheResponse{
 		Xmlns:            cacheXMLNS,

@@ -104,9 +104,8 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 					zap.String("cluster", clusterARNCopy), zap.Error(err))
 			}
 		}()
-	} else {
-		// Docker is not available — leave the cluster in CREATING.
 	}
+	// Docker is not available — leave the cluster in CREATING.
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"clusterArn":  clusterARN,
@@ -530,9 +529,8 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 						zap.String("cluster", clusterARNCopy), zap.Error(err))
 				}
 			}()
-		} else {
-			// Docker is not available — leave the cluster in CREATING.
 		}
+		// Docker is not available — leave the cluster in CREATING.
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{

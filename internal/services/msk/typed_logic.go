@@ -77,9 +77,8 @@ func (s *Service) createClusterTyped(ctx context.Context, req *createClusterRequ
 					zap.String("cluster", clusterARNCopy), zap.Error(err))
 			}
 		}()
-	} else {
-		// Docker is not available — leave the cluster in CREATING.
 	}
+	// Docker is not available — leave the cluster in CREATING.
 
 	return &createClusterResponse{
 		ClusterArn: clusterARN, ClusterName: req.ClusterName, State: "CREATING",
@@ -496,9 +495,8 @@ func (s *Service) createClusterV2Typed(ctx context.Context, req *createClusterV2
 						zap.String("cluster", clusterARNCopy), zap.Error(err))
 				}
 			}()
-		} else {
-			// Docker is not available — leave the cluster in CREATING.
 		}
+		// Docker is not available — leave the cluster in CREATING.
 	}
 
 	return &createClusterV2Response{

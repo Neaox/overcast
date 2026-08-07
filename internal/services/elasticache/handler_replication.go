@@ -204,10 +204,9 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 			}
 			h.scheduleReplicationGroupHealthCheck(region, rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
 		}()
-	} else {
-		// Docker is not available — leave the group in "creating".
-		// The /_health endpoint and web UI banner tell the user why.
 	}
+	// Docker is not available — leave the group in "creating".
+	// The /_health endpoint and web UI banner tell the user why.
 
 	h.publish(r, events.ElastiCacheReplicationGroupCreated, events.ResourcePayload{Name: id, ARN: arn})
 
