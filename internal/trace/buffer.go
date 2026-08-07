@@ -8,13 +8,15 @@ import (
 )
 
 // Buffer is a fixed-size, concurrency-safe ring buffer of trace entries keyed
-// by request ID for O(1) lookup. When full, the oldest entry is evicted (FIFO).
+// by request ID for O(1) lookup. Internal traces are capped at capacity/5 so
+// they can never crowd out user-facing requests.
 type Buffer struct {
-	mu       sync.RWMutex
-	entries  []*Entry
-	index    map[string]int
-	head     int
-	capacity int
+	mu            sync.RWMutex
+	entries       []*Entry
+	index         map[string]int
+	head          int
+	capacity      int
+	internalCount int
 }
 
 // NewBuffer creates a ring buffer with the given capacity.
@@ -30,11 +32,9 @@ func NewBuffer(capacity int) *Buffer {
 	}
 }
 
-// Store inserts or updates an entry. If the entry already exists (same
-// RequestID), the slot is updated in-place. Otherwise the entry is written to
-// the next ring slot, evicting the oldest entry when full. When full and a
-// non-internal entry is being stored, the oldest *internal* entry is evicted
-// preferentially, so polling traces never crowd out user requests.
+// Store inserts or updates an entry. Internal traces (health, inbox, SSE,
+// debug polling) are silently dropped when they exceed capacity/5 so they
+// can never crowd out user-facing requests.
 func (b *Buffer) Store(e *Entry) {
 	if e == nil || e.RequestID == "" {
 		return
@@ -45,35 +45,55 @@ func (b *Buffer) Store(e *Entry) {
 		b.entries[idx] = e
 		return
 	}
+
+	internal := isInternalPath(e.Path)
+	maxInternal := max(b.capacity/5, 1)
+
+	// Internal cap: silently drop when quota is full.
+	if internal && b.internalCount >= maxInternal {
+		return
+	}
+
 	if len(b.index) >= b.capacity {
-		// When a non-internal entry arrives, try replacing an internal one.
-		if !isInternalPath(e.Path) {
+		// When a non-internal entry arrives, try evicting an internal one.
+		if !internal {
 			for i := 0; i < b.capacity; i++ {
 				idx := (b.head + i) % b.capacity
 				if candidate := b.entries[idx]; candidate != nil && isInternalPath(candidate.Path) {
 					delete(b.index, candidate.RequestID)
+					b.internalCount--
 					b.entries[idx] = e
 					b.index[e.RequestID] = idx
 					return
 				}
 			}
 		}
-		// Replace the oldest (at head) and advance.
+		// Evict oldest (at head).
 		if old := b.entries[b.head]; old != nil {
 			delete(b.index, old.RequestID)
+			if isInternalPath(old.Path) {
+				b.internalCount--
+			}
 		}
 		b.entries[b.head] = e
 		b.index[e.RequestID] = b.head
 		b.head = (b.head + 1) % b.capacity
 		return
 	}
+
 	old := b.entries[b.head]
 	if old != nil {
 		delete(b.index, old.RequestID)
+		if isInternalPath(old.Path) {
+			b.internalCount--
+		}
 	}
 	b.entries[b.head] = e
 	b.index[e.RequestID] = b.head
 	b.head = (b.head + 1) % b.capacity
+	if internal {
+		b.internalCount++
+	}
 }
 
 // Get retrieves an entry by request ID. Returns nil, false if not found.

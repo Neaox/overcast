@@ -86,7 +86,7 @@ function TracesPage() {
     queryFn: autoRefresh && newestId
       ? () => debugTrace.list({ before: newestId })
       : skipToken,
-    refetchInterval: autoRefresh ? 5000 : false,
+    refetchInterval: autoRefresh ? 1000 : false,
   })
 
   const allTraces = useMemo(() => {

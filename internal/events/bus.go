@@ -250,3 +250,9 @@ func (b *Bus) Publish(ctx context.Context, e Event) {
 		b.workCh <- workItem{ctx: ctx, e: e, h: h}
 	}
 }
+
+// FindEventsByRequestID returns all buffered events whose
+// RequestReceived payload matches the given request ID.
+func (b *Bus) FindEventsByRequestID(requestID string) []Event {
+	return b.history.FindByRequestID(requestID)
+}

@@ -4,6 +4,7 @@ import { useState, Fragment, useMemo } from "react"
 import { ArrowLeft, Clock, Server, AlertCircle, Loader2, ChevronDown, ChevronRight, Terminal, Check } from "lucide-react"
 import { traceDetailQueryOptions, debugTraceKeys } from "@/features/debug-traces/data"
 import { debugTrace } from "@/services/api/misc"
+import { apiFetch } from "@/services/api/base"
 import { Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -29,7 +30,7 @@ export const Route = createFileRoute("/debug/traces/$requestId")({
   },
 })
 
-const tabs = ["Overview", "Hops", "Logs", "Errors"] as const
+const tabs = ["Overview", "Hops", "Logs", "Errors", "Events"] as const
 type Tab = (typeof tabs)[number]
 type HopView = "sequence" | "waterfall" | "flow"
 
@@ -133,6 +134,7 @@ function TraceDetailPage() {
         {tab === "Hops" && <HopsTab hops={trace.hops ?? []} requestId={requestId} navigate={navigate} />}
         {tab === "Logs" && <LogsTab entries={trace.logEntries ?? []} hops={trace.hops ?? []} />}
         {tab === "Errors" && <ErrorsTab trace={trace} />}
+        {tab === "Events" && <EventsTab requestId={requestId} />}
       </div>
     </div>
   )
@@ -761,4 +763,59 @@ function HopBody({ raw, headers }: { raw: string; headers?: Record<string, strin
     if (formatted.html && formatted.html !== formatted.text) return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48" dangerouslySetInnerHTML={{ __html: formatted.html }} />
   }
   return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48">{raw}</pre>
+}
+
+interface TraceEvent {
+  type: string
+  time: string
+  source: string
+  resourceArn?: string
+  payload: unknown
+}
+
+function EventsTab({ requestId }: { requestId: string }) {
+  const { data: events, isLoading, error } = useQuery({
+    queryKey: [...debugTraceKeys.detail(requestId), "events"],
+    queryFn: () => apiFetch<TraceEvent[]>(`/debug/trace/${requestId}/events`),
+    enabled: !!requestId,
+    retry: false,
+  })
+
+  if (isLoading) return <Spinner />
+  if (error || !events) {
+    return <div className="text-center text-fg-muted py-8">No events captured for this request.</div>
+  }
+  if (events.length === 0) {
+    return <div className="text-center text-fg-muted py-8">No events captured for this request.</div>
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-fg-muted text-left">
+            <th className="px-3 py-2 font-medium w-44">Time</th>
+            <th className="px-3 py-2 font-medium w-24">Source</th>
+            <th className="px-3 py-2 font-medium">Type</th>
+            <th className="px-3 py-2 font-medium">Payload</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((ev, i) => (
+            <tr key={i} className="border-b border-border">
+              <td className="px-3 py-2 font-mono text-xs text-fg-muted whitespace-nowrap">{formatTimestamp(ev.time)}</td>
+              <td className="px-3 py-2"><Badge variant="outline" className="text-xs">{ev.source}</Badge></td>
+              <td className="px-3 py-2 font-mono text-xs">{ev.type}</td>
+              <td className="px-3 py-2">
+                <details>
+                  <summary className="text-xs text-fg-muted cursor-pointer hover:text-fg">Show payload</summary>
+                  <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48 mt-1">{JSON.stringify(ev.payload, null, 2)}</pre>
+                </details>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
