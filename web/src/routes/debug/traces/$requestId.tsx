@@ -215,6 +215,13 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
         {trace.streaming && <Field label="Streaming" value="Yes" />}
       </div>
 
+      {trace.parentRequestId && (
+        <div className="text-sm flex items-center gap-1">
+          <span className="text-fg-muted">Called by</span>
+          <RouterLink to="/debug/traces/$requestId" params={{ requestId: trace.parentRequestId }} className="font-mono text-accent hover:underline text-xs">{trace.parentRequestId}</RouterLink>
+        </div>
+      )}
+
       {/* Side-by-side Request / Response */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>

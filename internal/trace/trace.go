@@ -220,6 +220,17 @@ func (r *Recorder) SetMeta(remoteAddr, userAgent, referer, awsErrorCode, awsErro
 	r.entry.AWSErrorMessage = awsErrorMessage
 }
 
+// SetParentRequestID records the request ID of the parent trace that
+// triggered this one (for internal service-to-service calls).
+func (r *Recorder) SetParentRequestID(parentID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entry.ParentRequestID = parentID
+}
+
 // SetDuration records the total request duration.
 func (r *Recorder) SetDuration(d time.Duration) {
 	if r == nil {

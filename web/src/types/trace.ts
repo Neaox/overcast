@@ -31,6 +31,7 @@ export interface TraceEntry {
   userAgent?: string
   referer?: string
   stack?: string
+  parentRequestId?: string
 
   xrayTraceId?: string
   metadata?: Record<string, unknown>
