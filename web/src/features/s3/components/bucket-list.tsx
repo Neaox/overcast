@@ -46,7 +46,7 @@ import { formatDate } from "@/lib/format"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { CopyUrlButton } from "@/components/ui/copy-url-button"
-import { s3CopyFormats } from "@/types/s3"
+import { s3CopyFormats } from "@/features/s3/copy-formats"
 
 export function BucketList() {
   const endpoint = useEndpoint()

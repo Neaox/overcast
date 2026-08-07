@@ -1,13 +1,3 @@
-import type { CopyUrlFormat } from "@/components/ui/copy-url-button"
-
-export function s3CopyFormats(baseUrl: string, bucket: string, key?: string): CopyUrlFormat[] {
-  const path = key ? `${bucket}/${key}` : bucket
-  return [
-    { label: "S3 URI", value: `s3://${path}`, description: "aws cli" },
-    { label: "Path-style", value: `${baseUrl}/${path}`, description: "http" },
-  ]
-}
-
 export interface S3Bucket {
   name: string
   creationDate: string
