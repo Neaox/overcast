@@ -38,6 +38,8 @@ import { Badge } from "@/components/ui/badge"
 import { TableCell, TableHead } from "@/components/ui/table"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
+import { useEndpoint } from "@/hooks/use-endpoint"
+import { CopyUrlButton } from "@/components/ui/copy-url-button"
 import { useToast } from "@/components/ui/toast"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
@@ -52,6 +54,7 @@ export function BucketDetail() {
   const { bucket } = Route.useParams()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const endpoint = useEndpoint()
   const { toast } = useToast()
 
   const [prefix, setPrefix] = useState("")
@@ -339,6 +342,14 @@ export function BucketDetail() {
                           </TableCell>
                           <TableCell className="px-1">
                             <div className="flex items-center gap-0.5">
+                              <CopyUrlButton
+                                compact
+                                noun="URL"
+                                formats={[
+                                  { label: "S3 URI", value: `s3://${bucket}/${item.prefix}`, description: "aws cli" },
+                                  { label: "Path-style", value: `${endpoint.baseUrl}/${bucket}/${item.prefix}`, description: "http" },
+                                ]}
+                              />
                               <Button
                                 variant="ghost"
                                 size="icon-sm"
@@ -387,6 +398,14 @@ export function BucketDetail() {
                           </TableCell>
                           <TableCell className="px-1">
                             <div className="flex items-center gap-0.5">
+                              <CopyUrlButton
+                                compact
+                                noun="URL"
+                                formats={[
+                                  { label: "S3 URI", value: `s3://${bucket}/${item.key}`, description: "aws cli" },
+                                  { label: "Path-style", value: `${endpoint.baseUrl}/${bucket}/${item.key}`, description: "http" },
+                                ]}
+                              />
                               <Button
                                 variant="ghost"
                                 size="icon-sm"

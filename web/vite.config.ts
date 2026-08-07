@@ -62,6 +62,9 @@ export default defineConfig(async () => {
   )
   return {
     plugins,
+    build: {
+      sourcemap: true,
+    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

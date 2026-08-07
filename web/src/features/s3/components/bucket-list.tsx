@@ -45,6 +45,7 @@ import {
 import { formatDate } from "@/lib/format"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
+import { CopyUrlButton } from "@/components/ui/copy-url-button"
 
 export function BucketList() {
   const endpoint = useEndpoint()
@@ -118,13 +119,14 @@ export function BucketList() {
           />
         ) : (
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-20 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>URL</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="w-20 text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
             <TableBody>
               {buckets.map((b) => (
                 <TableRow
@@ -133,6 +135,15 @@ export function BucketList() {
                 >
                   <TableCell>
                     <ResourceName icon={HardDrive} name={b.name} />
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <CopyUrlButton
+                      formats={[
+                        { label: "S3 URI", value: `s3://${b.name}`, description: "aws cli" },
+                        { label: "Path-style", value: `${endpoint.baseUrl}/${b.name}`, description: "http" },
+                      ]}
+                      noun="bucket URL"
+                    />
                   </TableCell>
                   <TableCell className="text-fg-muted">{formatDate(b.creationDate)}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>

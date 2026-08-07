@@ -19,7 +19,10 @@ func TestDeriveAPIBaseURL_usesBrowserPortWhenRemapped(t *testing.T) {
 	r.Host = "localhost:4581" // the remapped UI port
 
 	// When the SPA bootstrap URL is derived
-	got := deriveAPIBaseURL(r, cfg)
+	got, known := deriveAPIBaseURL(r, cfg)
+	if !known {
+		t.Error("expected known endpoint for localhost:4581 with browser port 4580")
+	}
 
 	// Then the browser is pointed at the published port, not the listen port
 	if want := "http://localhost:4580"; got != want {
@@ -33,7 +36,10 @@ func TestDeriveAPIBaseURL_nativeBinaryUnchanged(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Host = "localhost:4567"
 
-	got := deriveAPIBaseURL(r, cfg)
+	got, known := deriveAPIBaseURL(r, cfg)
+	if !known {
+		t.Error("expected known endpoint for localhost:4567 with default port")
+	}
 
 	// Then behaviour is exactly as before
 	if want := "http://localhost:4566"; got != want {
@@ -45,10 +51,30 @@ func TestDeriveAPIBaseURL_customListenPortNativeBinary(t *testing.T) {
 	// Given a native binary on a non-default API port
 	cfg := UIConfig{APIPort: 5000}
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.Host = "localhost:4567"
+	r.Host = "localhost:5001"
 
-	if got, want := deriveAPIBaseURL(r, cfg), "http://localhost:5000"; got != want {
+	got, known := deriveAPIBaseURL(r, cfg)
+	if !known {
+		t.Error("expected known endpoint for localhost:5001 with APIPort 5000")
+	}
+	if want := "http://localhost:5000"; got != want {
 		t.Errorf("deriveAPIBaseURL = %q, want %q", got, want)
+	}
+}
+
+func TestDeriveAPIBaseURL_unknownWhenPortMismatch(t *testing.T) {
+	// Given APIPort 4566, a request to port 4571 is not 4566+1, so it must
+	// be treated as unknown rather than silently deriving the wrong port.
+	cfg := UIConfig{APIPort: 4566}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Host = "localhost:4571"
+
+	got, known := deriveAPIBaseURL(r, cfg)
+	if known {
+		t.Error("expected unknown endpoint for port 4571 with APIPort 4566")
+	}
+	if got != "" {
+		t.Errorf("deriveAPIBaseURL = %q, want empty string", got)
 	}
 }
 
@@ -63,14 +89,12 @@ func TestNormalizeEndpoint_rewritesPublishedPortToListenPort(t *testing.T) {
 		in   string
 		want string
 	}{
-		// The SPA echoes back the origin it was given; from inside the
-		// container that port does not exist.
+		// Loopback endpoints are always rewritten to the internal port.
 		{"localhost on the published port", "http://localhost:4580", "http://localhost:4566"},
 		{"127.0.0.1 on the published port", "http://127.0.0.1:4580", "http://localhost:4566"},
-		// A different emulator must still be reachable — the console's endpoint
-		// switcher depends on it.
+		{"loopback on an unrelated port", "http://localhost:9999", "http://localhost:4566"},
+		// Non-loopback endpoints are left alone — the endpoint switcher needs them.
 		{"another host on the same port", "http://example.test:4580", "http://example.test:4580"},
-		{"loopback on an unrelated port", "http://localhost:9999", "http://localhost:9999"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

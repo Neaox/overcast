@@ -19,7 +19,10 @@ func TestDeriveAPIBaseURL_httpsWhenTLSConfigured(t *testing.T) {
 	r.Host = "localhost.overcast.sh:4567"
 
 	// When: the SPA bootstrap URL is derived
-	got := deriveAPIBaseURL(r, cfg)
+	got, known := deriveAPIBaseURL(r, cfg)
+	if !known {
+		t.Error("expected known endpoint for localhost.overcast.sh:4567 with TLS")
+	}
 
 	// Then: the browser is pointed at the https API origin
 	if want := "https://localhost.overcast.sh:4566"; got != want {
@@ -35,7 +38,11 @@ func TestDeriveAPIBaseURL_httpsWhenRequestArrivedOverTLS(t *testing.T) {
 	r.Host = "localhost:4567"
 	r.TLS = &tls.ConnectionState{}
 
-	if got, want := deriveAPIBaseURL(r, cfg), "https://localhost:4566"; got != want {
+	got, known := deriveAPIBaseURL(r, cfg)
+	if !known {
+		t.Error("expected known endpoint for localhost:4567 with TLS connection state")
+	}
+	if want := "https://localhost:4566"; got != want {
 		t.Errorf("deriveAPIBaseURL = %q, want %q", got, want)
 	}
 }
@@ -46,7 +53,11 @@ func TestDeriveAPIBaseURL_plainHTTPUnchanged(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Host = "localhost:4567"
 
-	if got, want := deriveAPIBaseURL(r, cfg), "http://localhost:4566"; got != want {
+	got, known := deriveAPIBaseURL(r, cfg)
+	if !known {
+		t.Error("expected known endpoint for localhost:4567")
+	}
+	if want := "http://localhost:4566"; got != want {
 		t.Errorf("deriveAPIBaseURL = %q, want %q", got, want)
 	}
 }

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react"
-import { Clock } from "lucide-react"
+import { ArrowLeft, Clock } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { OvercastMark } from "@/components/brand/overcast-mark"
 import { OvercastWordmark } from "@/components/brand/overcast-wordmark"
 import { OvercastLoader } from "@/components/brand/overcast-loader"
+import { endpointStore } from "@/services/endpoint-store"
 
 /** How long the attempt runs before the retry affordance offers a way out. */
 export const RETRY_AFTER_MS = 5000
@@ -80,20 +81,36 @@ export function ConnectingScreen({
 
         <div className={cn("flex items-center", CHIP_HEIGHT)}>
           {showRetry && (
-            <button
-              type="button"
-              onClick={handleRetry}
-              aria-label="Retry connecting"
-              className={cn(
-                "flex items-center gap-2 rounded-control border border-border bg-bg-elevated px-3 py-[7px]",
-                "font-mono text-[11px] text-fg-subtle transition-colors",
-                "hover:border-accent hover:text-accent",
-                "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
-              )}
-            >
-              <Clock className="h-[13px] w-[13px] shrink-0" strokeWidth={1.75} />
-              still working after {Math.round(retryAfterMs / 1000)}s · retry
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => endpointStore.reset()}
+                aria-label="Change endpoint"
+                className={cn(
+                  "flex items-center gap-2 rounded-control border border-border bg-bg-elevated px-3 py-[7px]",
+                  "font-mono text-[11px] text-fg-subtle transition-colors",
+                  "hover:border-accent hover:text-accent",
+                  "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+                )}
+              >
+                <ArrowLeft className="h-[13px] w-[13px] shrink-0" strokeWidth={1.75} />
+                change endpoint
+              </button>
+              <button
+                type="button"
+                onClick={handleRetry}
+                aria-label="Retry connecting"
+                className={cn(
+                  "flex items-center gap-2 rounded-control border border-border bg-bg-elevated px-3 py-[7px]",
+                  "font-mono text-[11px] text-fg-subtle transition-colors",
+                  "hover:border-accent hover:text-accent",
+                  "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+                )}
+              >
+                <Clock className="h-[13px] w-[13px] shrink-0" strokeWidth={1.75} />
+                still working after {Math.round(retryAfterMs / 1000)}s · retry
+              </button>
+            </>
           )}
         </div>
       </div>

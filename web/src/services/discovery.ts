@@ -27,7 +27,13 @@ export interface EmulatorEndpoint {
 // API — no client-side guessing, no connection dialog.
 declare global {
   interface Window {
-    __OVERCAST__?: { apiBaseUrl?: string; region?: string; debug?: boolean }
+    __OVERCAST__?: {
+      apiBaseUrl?: string
+      region?: string
+      debug?: boolean
+      endpointKnown?: boolean
+      inDocker?: boolean
+    }
   }
 }
 
@@ -49,18 +55,33 @@ function isBundled(): boolean {
   return import.meta.env.VITE_BUNDLED === "true"
 }
 
+function endpointIsUnknown(): boolean {
+  if (!isBundled()) return false
+  try {
+    return window.__OVERCAST__?.endpointKnown === false
+  } catch {
+    return false
+  }
+}
+
 function resolveBundledDefault(): EmulatorEndpoint {
-  if (typeof window !== "undefined" && window.__OVERCAST__?.apiBaseUrl) {
-    const { apiBaseUrl, region } = window.__OVERCAST__
-    try {
-      const baseUrl = apiBaseUrl.replace(/\/$/, "")
-      return {
-        baseUrl,
-        region: region ?? "us-east-1",
-        label: new URL(baseUrl).host,
+  if (typeof window !== "undefined" && window.__OVERCAST__) {
+    const overcast = window.__OVERCAST__
+    if (overcast.endpointKnown === false) {
+      return { baseUrl: "", region: overcast.region ?? "us-east-1" }
+    }
+    if (overcast.apiBaseUrl) {
+      const { apiBaseUrl, region } = overcast
+      try {
+        const baseUrl = apiBaseUrl.replace(/\/$/, "")
+        return {
+          baseUrl,
+          region: region ?? "us-east-1",
+          label: new URL(baseUrl).host,
+        }
+      } catch {
+        // Malformed URL injected by the server — fall through to fallback.
       }
-    } catch {
-      // Malformed URL injected by the server — fall through to fallback.
     }
   }
   return { baseUrl: "http://localhost:4566", region: "us-east-1", label: "Local (4566)" }
@@ -85,10 +106,7 @@ interface Resolver {
 class LocalStorageResolver implements Resolver {
   get(): EmulatorEndpoint {
     try {
-      // Bundled mode: the baseUrl is always derived from window.location so the
-      // UI works out of the box wherever overcast is reached from. Stored
-      // baseUrls from a prior dev session would be wrong here.
-      const raw = isBundled() ? null : localStorage.getItem(STORAGE_KEY)
+      const raw = localStorage.getItem(STORAGE_KEY)
       const stored = raw ? (JSON.parse(raw) as EmulatorEndpoint) : DEFAULT_ENDPOINT
       // Priority: per-tab session → last known (localStorage) → static default.
       // Server default (tier 3) is seeded into localStorage at startup in main.tsx
@@ -163,14 +181,20 @@ export async function fetchServerInfo(baseUrl: string): Promise<ServerInfo | nul
  *
  * Bundled builds derive the baseUrl from `window.location`, so there is nothing
  * to configure and no way to unconfigure: `isConfigured()` is unconditionally
- * true and clearing storage changes nothing. Controls that exist to reopen the
- * connection dialog must be hidden rather than left as no-ops.
+ * true and clearing storage changes nothing. The one exception is when
+ * endpointKnown is explicitly false — the bundled binary cannot determine
+ * its own endpoint (e.g. Docker without host networking) and the user must
+ * provide one.
  */
 export function isEndpointConfigurable(): boolean {
-  return !isBundled()
+  if (isBundled()) return endpointIsUnknown()
+  return true
 }
 
 export function isConfigured(): boolean {
-  if (isBundled()) return true
+  if (isBundled()) {
+    if (endpointIsUnknown()) return localStorage.getItem(STORAGE_KEY) !== null
+    return true
+  }
   return localStorage.getItem(STORAGE_KEY) !== null
 }

@@ -615,20 +615,36 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
 
 export function GlobalSearchTrigger({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex h-8 w-full max-w-[360px] min-w-0 items-center gap-2 rounded-md border border-border bg-bg px-2.5 font-mono text-xs text-fg-subtle",
-        "md:max-w-[480px] xl:max-w-[640px]",
-        "transition-colors hover:border-accent hover:text-fg",
-        "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
-      )}
-    >
-      <Search className="h-3.5 w-3.5 shrink-0" />
-      <span className="min-w-0 flex-1 truncate text-left">Search resources, ARNs, keys…</span>
-      <kbd className="shrink-0 rounded border border-border bg-bg-subtle px-1.5 py-0.5 font-mono text-[10px]">
-        ⌘K
-      </kbd>
-    </button>
+    <>
+      {/* Full search bar — visible at @md and wider */}
+      <button
+        onClick={onClick}
+        className={cn(
+          "hidden @md:flex h-8 w-full max-w-[360px] min-w-0 items-center gap-2 rounded-md border border-border bg-bg px-2.5 font-mono text-xs text-fg-subtle",
+          "md:max-w-[480px] xl:max-w-[640px]",
+          "transition-colors hover:border-accent hover:text-fg",
+          "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+        )}
+      >
+        <Search className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-left">Search resources, ARNs, keys…</span>
+        <kbd className="shrink-0 rounded border border-border bg-bg-subtle px-1.5 py-0.5 font-mono text-[10px]">
+          ⌘K
+        </kbd>
+      </button>
+
+      {/* Icon-only trigger — visible below @md */}
+      <button
+        onClick={onClick}
+        className={cn(
+          "@md:hidden flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-bg",
+          "transition-colors hover:border-accent hover:text-fg",
+          "focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none",
+        )}
+        aria-label="Search"
+      >
+        <Search className="h-3.5 w-3.5" />
+      </button>
+    </>
   )
 }

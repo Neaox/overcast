@@ -7,33 +7,29 @@ import { HeaderActions } from "./header-actions"
  * identical on every page, with settings last whenever it is shown.
  * Page-specific or build-specific controls sit to the left of the region
  * select so they never shift the tail.
- *
- * Settings is the one tail member that can disappear: a bundled build derives
- * the endpoint from `window.location`, so the control has nothing to reopen.
- * It drops off the end rather than moving, which leaves the order intact.
  */
 describe("HeaderActions > action cluster order", () => {
-  const gear = () => screen.getByRole("button", { name: "Change connection" })
+  const settings = () => screen.getByRole("button", { name: "Connection settings" })
   const themeToggle = () => screen.getByRole("button", { name: /^Switch to .+ mode$/ })
   const regionSelect = () => screen.getByRole("combobox")
 
   describe("when the endpoint is user-configurable", () => {
-    it("renders the settings control", () => {
+    it("renders the connection settings button", () => {
       render(<HeaderActions />)
 
-      expect(gear()).toBeInTheDocument()
+      expect(settings()).toBeInTheDocument()
     })
 
-    it("places the settings control last in the cluster", () => {
+    it("places the connection settings button last in the cluster", () => {
       render(<HeaderActions />)
 
-      expect(gear().parentElement?.lastElementChild).toBe(gear())
+      expect(settings().parentElement?.lastElementChild).toBe(settings())
     })
 
-    it("places the theme toggle immediately before the settings control", () => {
+    it("places the theme toggle immediately before the connection settings button", () => {
       render(<HeaderActions />)
 
-      expect(gear().previousElementSibling).toBe(themeToggle())
+      expect(settings().previousElementSibling).toBe(themeToggle())
     })
 
     it("places the region select immediately before the theme toggle", () => {
@@ -50,7 +46,7 @@ describe("HeaderActions > action cluster order", () => {
     })
   })
 
-  describe("when the endpoint is not user-configurable", () => {
+  describe("when the endpoint is not user-configurable (bundled)", () => {
     beforeEach(() => {
       vi.stubEnv("VITE_BUNDLED", "true")
     })
@@ -59,16 +55,16 @@ describe("HeaderActions > action cluster order", () => {
       vi.unstubAllEnvs()
     })
 
-    it("omits the settings control rather than offering a no-op", () => {
+    it("still renders the connection settings button", () => {
       render(<HeaderActions />)
 
-      expect(screen.queryByRole("button", { name: "Change connection" })).not.toBeInTheDocument()
+      expect(settings()).toBeInTheDocument()
     })
 
-    it("leaves the theme toggle last in the cluster", () => {
+    it("places the connection settings button last in the cluster", () => {
       render(<HeaderActions />)
 
-      expect(themeToggle().parentElement?.lastElementChild).toBe(themeToggle())
+      expect(settings().parentElement?.lastElementChild).toBe(settings())
     })
 
     it("still places the region select immediately before the theme toggle", () => {

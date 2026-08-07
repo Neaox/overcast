@@ -1,8 +1,5 @@
 import { Fragment } from "react"
 import { Link, useRouterState } from "@tanstack/react-router"
-import { cn } from "@/lib/utils"
-import { useEndpoint } from "@/hooks/use-endpoint"
-import { useConnectionStatus } from "@/hooks/use-connection-status"
 import { ALL_SERVICES, findServiceKeyForPathname } from "@/lib/nav-services"
 
 interface Ancestor {
@@ -25,37 +22,17 @@ function ancestorsOf(pathname: string): Ancestor[] {
 
 export function HeaderBreadcrumbs() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const endpoint = useEndpoint()
-  const { isOnline } = useConnectionStatus()
-
-  if (pathname === "/") return null
-
+  const crumbs = ancestorsOf(pathname)
+  if (crumbs.length === 0) return null
   return (
-    <nav
-      aria-label="Breadcrumb"
-      className="hidden min-w-0 items-center gap-2 font-mono text-xs sm:flex"
-    >
-      <span
-        className={cn(
-          "h-[7px] w-[7px] shrink-0 rounded-full",
-          // Amber for a drop, matching the connection toast that explains it;
-          // grey only while the first answer is still outstanding.
-          isOnline === true ? "bg-success" : isOnline === false ? "bg-warning" : "bg-fg-subtle",
-        )}
-        title={
-          isOnline === true ? "Connected" : isOnline === false ? "Disconnected" : "Connecting…"
-        }
-      />
-      <span className="shrink-0 text-fg-subtle">{endpoint.label ?? endpoint.baseUrl}</span>
-      {ancestorsOf(pathname).map((ancestor) => (
+    <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-2 font-mono text-xs sm:flex">
+      <span className="shrink-0 text-border">/</span>
+      {crumbs.map((ancestor) => (
         <Fragment key={ancestor.to}>
-          <span className="shrink-0 text-border">/</span>
-          <Link
-            to={ancestor.to}
-            className="min-w-0 truncate text-fg-muted transition-colors hover:text-fg"
-          >
+          <Link to={ancestor.to} className="min-w-0 truncate text-fg-muted transition-colors hover:text-fg">
             {ancestor.label}
           </Link>
+          <span className="shrink-0 text-border">/</span>
         </Fragment>
       ))}
     </nav>
