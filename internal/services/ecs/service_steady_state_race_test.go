@@ -39,7 +39,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/state"
-	"github.com/Neaox/overcast/tests/helpers"
+	"github.com/Neaox/overcast/internal/docker"
 )
 
 // The test starts steadyStateServices services of steadyStateTasks tasks each,
@@ -54,7 +54,7 @@ const (
 )
 
 func TestServiceSteadyState_concurrentTaskTransitions(t *testing.T) {
-	helpers.SkipWithoutDocker(t)
+	docker.SkipWithoutDocker(t)
 	// Given: several services, each wanting several tasks
 	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	h := svc.handler
