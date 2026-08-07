@@ -84,6 +84,7 @@ func describeClusterTasks(t *testing.T, srv *helpers.TestServer, cluster string)
 }
 
 func TestUpdateService_newTaskDefinitionReplacesRunningTasks(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a service running one task of revision 1
 	srv := awsvpcTaskDefCluster(t, "rollout-upd-cluster", "rollout-upd-task")
 	create := ecsCall(t, srv, "CreateService", map[string]any{
@@ -153,6 +154,7 @@ func TestUpdateService_newTaskDefinitionReplacesRunningTasks(t *testing.T) {
 }
 
 func TestUpdateService_newDeploymentDoesNotCountTheOldDeploymentsTasks(t *testing.T) {
+	helpers.SkipWithoutDocker(t)
 	// Given: a service at steady state on revision 1
 	srv := awsvpcTaskDefCluster(t, "count-upd-cluster", "count-upd-task")
 	create := ecsCall(t, srv, "CreateService", map[string]any{
