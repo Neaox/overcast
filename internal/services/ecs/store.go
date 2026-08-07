@@ -770,6 +770,7 @@ func (s *ecsStore) getTags(ctx context.Context, arn string) (map[string]string, 
 	}
 	return tags, nil
 }
+
 // ---- Task definition family listing -------------------------------------------
 
 // listTaskDefinitionFamilies returns the distinct family names that have registered task definitions.
