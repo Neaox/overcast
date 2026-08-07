@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { CheckboxFilterDropdown, type CheckboxFilterItem } from "@/components/ui/checkbox-filter-dropdown"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
+import { useCopyToClipboard } from "@/hooks/use-clipboard"
 import { cn } from "@/lib/utils"
 import { useDebugEnabled } from "@/hooks/use-server-info"
 import type { TraceListParams, TraceListResponse, TraceSummary } from "@/types"
@@ -51,6 +52,7 @@ function TracesPage() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [hideInternal, setHideInternal] = useState(true)
   const [hiddenServices, setHiddenServices] = useState<Set<string>>(new Set())
+  const { copy } = useCopyToClipboard()
 
   const params: TraceListParams = useMemo(() => {
     const p: TraceListParams = { limit: 50 }
@@ -83,7 +85,7 @@ function TracesPage() {
   const pages = (data as unknown as { pages: TraceListResponse[] } | undefined)?.pages
   const newestId = pages?.[0]?.traces?.[0]?.requestId
   const { data: pollData } = useQuery({
-    queryKey: [...debugTraceKeys.list(params), "poll", debugEnabled],
+    queryKey: [...debugTraceKeys.list(params), "poll", debugEnabled, newestId],
     queryFn: autoRefresh && newestId
       ? () => debugTrace.list({ before: newestId })
       : skipToken,
@@ -227,7 +229,7 @@ function TracesPage() {
                         <Link to="/debug/traces/$requestId" params={{ requestId: t.requestId }} className="font-mono text-xs text-accent hover:underline" onClick={(e) => e.stopPropagation()}>{t.requestId}</Link>
                       </td>
                       <td className="px-3 py-2">
-                        <button className="inline-flex items-center justify-center h-7 w-7 rounded hover:bg-fg/5 text-fg-muted hover:text-fg shrink-0" title="Copy as curl" aria-label="Copy as curl" onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(curlCmd(t)) }}>
+                        <button className="inline-flex items-center justify-center h-7 w-7 rounded hover:bg-fg/5 text-fg-muted hover:text-fg shrink-0" title="Copy as curl" aria-label="Copy as curl" onClick={(e) => { e.stopPropagation(); copy(curlCmd(t), { noun: "curl command", id: t.requestId }) }}>
                           <Terminal className="h-3.5 w-3.5" />
                         </button>
                       </td>

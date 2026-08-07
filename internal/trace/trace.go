@@ -117,14 +117,15 @@ func NewRecorder(requestID string, timestamp time.Time, method, path, host, quer
 }
 
 var stackBufPool = sync.Pool{
-	New: func() any { return make([]byte, 4096) },
+	New: func() any { b := make([]byte, 4096); return &b },
 }
 
 // CaptureStack returns the calling goroutine's stack trace as a string.
 // Uses a pooled 4 KiB buffer; falls back to a larger allocation if truncated.
 func CaptureStack() string {
-	buf := stackBufPool.Get().([]byte)
-	defer stackBufPool.Put(buf)
+	bufp := stackBufPool.Get().(*[]byte)
+	buf := *bufp
+	defer stackBufPool.Put(bufp)
 	n := runtime.Stack(buf, false)
 	if n < len(buf) {
 		return string(buf[:n])

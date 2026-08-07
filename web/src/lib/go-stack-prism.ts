@@ -6,7 +6,7 @@ Prism.languages.gostacktrace = {
     inside: {
       keyword: /^goroutine/,
       number: /\b\d+\b/,
-      punctuation: /[\[\]]/,
+      punctuation: /[[\]]/,
     },
   },
   "stack-frame": {
