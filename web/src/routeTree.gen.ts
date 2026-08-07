@@ -66,6 +66,7 @@ import { Route as EcsClusterRouteImport } from './routes/ecs/$cluster'
 import { Route as EcrRepositoryNameRouteImport } from './routes/ecr/$repositoryName'
 import { Route as Ec2InstanceIdRouteImport } from './routes/ec2/$instanceId'
 import { Route as DynamodbTableNameRouteImport } from './routes/dynamodb/$tableName'
+import { Route as DebugTracesRouteImport } from './routes/debug/traces'
 import { Route as CognitoPoolIdRouteImport } from './routes/cognito/$poolId'
 import { Route as CloudfrontRealtimeLogConfigsRouteImport } from './routes/cloudfront/realtime-log-configs'
 import { Route as CloudfrontKeyGroupsRouteImport } from './routes/cloudfront/key-groups'
@@ -89,6 +90,7 @@ import { Route as S3BucketUploadRouteImport } from './routes/s3/$bucket/upload'
 import { Route as S3BucketConfigRouteImport } from './routes/s3/$bucket/config'
 import { Route as LambdaLayersLayerNameRouteImport } from './routes/lambda/layers/$layerName'
 import { Route as Ec2VpcVpcIdRouteImport } from './routes/ec2/vpc.$vpcId'
+import { Route as DebugTracesRequestIdRouteImport } from './routes/debug/traces/$requestId'
 import { Route as CloudwatchLogsStreamRouteImport } from './routes/cloudwatch/logs/stream'
 import { Route as CloudwatchLogsGroupRouteImport } from './routes/cloudwatch/logs/group'
 import { Route as CloudwatchLogsEventsRouteImport } from './routes/cloudwatch/logs/events'
@@ -386,6 +388,11 @@ const DynamodbTableNameRoute = DynamodbTableNameRouteImport.update({
   path: '/dynamodb/$tableName',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DebugTracesRoute = DebugTracesRouteImport.update({
+  id: '/traces',
+  path: '/traces',
+  getParentRoute: () => DebugRoute,
+} as any)
 const CognitoPoolIdRoute = CognitoPoolIdRouteImport.update({
   id: '/cognito/$poolId',
   path: '/cognito/$poolId',
@@ -506,6 +513,11 @@ const Ec2VpcVpcIdRoute = Ec2VpcVpcIdRouteImport.update({
   path: '/ec2/vpc/$vpcId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DebugTracesRequestIdRoute = DebugTracesRequestIdRouteImport.update({
+  id: '/$requestId',
+  path: '/$requestId',
+  getParentRoute: () => DebugTracesRoute,
+} as any)
 const CloudwatchLogsStreamRoute = CloudwatchLogsStreamRouteImport.update({
   id: '/cloudwatch/logs/stream',
   path: '/cloudwatch/logs/stream',
@@ -563,7 +575,7 @@ const CloudwatchLogsGroupNameStreamNameRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
@@ -584,6 +596,7 @@ export interface FileRoutesByFullPath {
   '/cloudfront/key-groups': typeof CloudfrontKeyGroupsRoute
   '/cloudfront/realtime-log-configs': typeof CloudfrontRealtimeLogConfigsRoute
   '/cognito/$poolId': typeof CognitoPoolIdRoute
+  '/debug/traces': typeof DebugTracesRouteWithChildren
   '/dynamodb/$tableName': typeof DynamodbTableNameRoute
   '/ec2/$instanceId': typeof Ec2InstanceIdRoute
   '/ecr/$repositoryName': typeof EcrRepositoryNameRoute
@@ -635,6 +648,7 @@ export interface FileRoutesByFullPath {
   '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
   '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
   '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
+  '/debug/traces/$requestId': typeof DebugTracesRequestIdRoute
   '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
   '/lambda/layers/$layerName': typeof LambdaLayersLayerNameRoute
   '/s3/$bucket/config': typeof S3BucketConfigRoute
@@ -655,7 +669,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
@@ -674,6 +688,7 @@ export interface FileRoutesByTo {
   '/cloudfront/key-groups': typeof CloudfrontKeyGroupsRoute
   '/cloudfront/realtime-log-configs': typeof CloudfrontRealtimeLogConfigsRoute
   '/cognito/$poolId': typeof CognitoPoolIdRoute
+  '/debug/traces': typeof DebugTracesRouteWithChildren
   '/dynamodb/$tableName': typeof DynamodbTableNameRoute
   '/ec2/$instanceId': typeof Ec2InstanceIdRoute
   '/ecr/$repositoryName': typeof EcrRepositoryNameRoute
@@ -722,6 +737,7 @@ export interface FileRoutesByTo {
   '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
   '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
   '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
+  '/debug/traces/$requestId': typeof DebugTracesRequestIdRoute
   '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
   '/lambda/layers/$layerName': typeof LambdaLayersLayerNameRoute
   '/s3/$bucket/config': typeof S3BucketConfigRoute
@@ -743,7 +759,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
-  '/debug': typeof DebugRoute
+  '/debug': typeof DebugRouteWithChildren
   '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
@@ -764,6 +780,7 @@ export interface FileRoutesById {
   '/cloudfront/key-groups': typeof CloudfrontKeyGroupsRoute
   '/cloudfront/realtime-log-configs': typeof CloudfrontRealtimeLogConfigsRoute
   '/cognito/$poolId': typeof CognitoPoolIdRoute
+  '/debug/traces': typeof DebugTracesRouteWithChildren
   '/dynamodb/$tableName': typeof DynamodbTableNameRoute
   '/ec2/$instanceId': typeof Ec2InstanceIdRoute
   '/ecr/$repositoryName': typeof EcrRepositoryNameRoute
@@ -815,6 +832,7 @@ export interface FileRoutesById {
   '/cloudwatch/logs/events': typeof CloudwatchLogsEventsRoute
   '/cloudwatch/logs/group': typeof CloudwatchLogsGroupRoute
   '/cloudwatch/logs/stream': typeof CloudwatchLogsStreamRoute
+  '/debug/traces/$requestId': typeof DebugTracesRequestIdRoute
   '/ec2/vpc/$vpcId': typeof Ec2VpcVpcIdRoute
   '/lambda/layers/$layerName': typeof LambdaLayersLayerNameRoute
   '/s3/$bucket/config': typeof S3BucketConfigRoute
@@ -858,6 +876,7 @@ export interface FileRouteTypes {
     | '/cloudfront/key-groups'
     | '/cloudfront/realtime-log-configs'
     | '/cognito/$poolId'
+    | '/debug/traces'
     | '/dynamodb/$tableName'
     | '/ec2/$instanceId'
     | '/ecr/$repositoryName'
@@ -909,6 +928,7 @@ export interface FileRouteTypes {
     | '/cloudwatch/logs/events'
     | '/cloudwatch/logs/group'
     | '/cloudwatch/logs/stream'
+    | '/debug/traces/$requestId'
     | '/ec2/vpc/$vpcId'
     | '/lambda/layers/$layerName'
     | '/s3/$bucket/config'
@@ -948,6 +968,7 @@ export interface FileRouteTypes {
     | '/cloudfront/key-groups'
     | '/cloudfront/realtime-log-configs'
     | '/cognito/$poolId'
+    | '/debug/traces'
     | '/dynamodb/$tableName'
     | '/ec2/$instanceId'
     | '/ecr/$repositoryName'
@@ -996,6 +1017,7 @@ export interface FileRouteTypes {
     | '/cloudwatch/logs/events'
     | '/cloudwatch/logs/group'
     | '/cloudwatch/logs/stream'
+    | '/debug/traces/$requestId'
     | '/ec2/vpc/$vpcId'
     | '/lambda/layers/$layerName'
     | '/s3/$bucket/config'
@@ -1037,6 +1059,7 @@ export interface FileRouteTypes {
     | '/cloudfront/key-groups'
     | '/cloudfront/realtime-log-configs'
     | '/cognito/$poolId'
+    | '/debug/traces'
     | '/dynamodb/$tableName'
     | '/ec2/$instanceId'
     | '/ecr/$repositoryName'
@@ -1088,6 +1111,7 @@ export interface FileRouteTypes {
     | '/cloudwatch/logs/events'
     | '/cloudwatch/logs/group'
     | '/cloudwatch/logs/stream'
+    | '/debug/traces/$requestId'
     | '/ec2/vpc/$vpcId'
     | '/lambda/layers/$layerName'
     | '/s3/$bucket/config'
@@ -1109,7 +1133,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ServiceRoute: typeof ServiceRoute
-  DebugRoute: typeof DebugRoute
+  DebugRoute: typeof DebugRouteWithChildren
   DocsRoute: typeof DocsRoute
   EventsRoute: typeof EventsRoute
   IamRoute: typeof IamRoute
@@ -1592,6 +1616,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DynamodbTableNameRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/debug/traces': {
+      id: '/debug/traces'
+      path: '/traces'
+      fullPath: '/debug/traces'
+      preLoaderRoute: typeof DebugTracesRouteImport
+      parentRoute: typeof DebugRoute
+    }
     '/cognito/$poolId': {
       id: '/cognito/$poolId'
       path: '/cognito/$poolId'
@@ -1753,6 +1784,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof Ec2VpcVpcIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/debug/traces/$requestId': {
+      id: '/debug/traces/$requestId'
+      path: '/$requestId'
+      fullPath: '/debug/traces/$requestId'
+      preLoaderRoute: typeof DebugTracesRequestIdRouteImport
+      parentRoute: typeof DebugTracesRoute
+    }
     '/cloudwatch/logs/stream': {
       id: '/cloudwatch/logs/stream'
       path: '/cloudwatch/logs/stream'
@@ -1826,6 +1864,28 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface DebugTracesRouteChildren {
+  DebugTracesRequestIdRoute: typeof DebugTracesRequestIdRoute
+}
+
+const DebugTracesRouteChildren: DebugTracesRouteChildren = {
+  DebugTracesRequestIdRoute: DebugTracesRequestIdRoute,
+}
+
+const DebugTracesRouteWithChildren = DebugTracesRoute._addFileChildren(
+  DebugTracesRouteChildren,
+)
+
+interface DebugRouteChildren {
+  DebugTracesRoute: typeof DebugTracesRouteWithChildren
+}
+
+const DebugRouteChildren: DebugRouteChildren = {
+  DebugTracesRoute: DebugTracesRouteWithChildren,
+}
+
+const DebugRouteWithChildren = DebugRoute._addFileChildren(DebugRouteChildren)
+
 interface AppsyncApiIdRouteChildren {
   AppsyncApiIdIndexRoute: typeof AppsyncApiIdIndexRoute
 }
@@ -1897,7 +1957,7 @@ const SqsQueueRouteWithChildren = SqsQueueRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ServiceRoute: ServiceRoute,
-  DebugRoute: DebugRoute,
+  DebugRoute: DebugRouteWithChildren,
   DocsRoute: DocsRoute,
   EventsRoute: EventsRoute,
   IamRoute: IamRoute,

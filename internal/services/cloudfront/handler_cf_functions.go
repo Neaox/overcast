@@ -35,6 +35,7 @@ func (h *Handler) runViewerRequest(
 	reqPath string,
 	fas *FunctionAssociations,
 ) (*cfFunctionResult, error) {
+	log := h.log.WithRecorder(r.Context())
 	if fas == nil || len(fas.Items) == 0 {
 		return nil, nil
 	}
@@ -45,14 +46,14 @@ func (h *Handler) runViewerRequest(
 		}
 		fn, ferr := h.store.GetFunctionByARN(r.Context(), fa.FunctionARN)
 		if ferr != nil || fn == nil {
-			h.log.Warn("viewer-request function not found",
+			log.Warn("viewer-request function not found",
 				zap.String("arn", fa.FunctionARN))
 			continue
 		}
 		event := buildViewerRequestEvent(r, distID, domainName, reqPath)
 		res, execErr := execCFFunction(fn.FunctionCode, event)
 		if execErr != nil {
-			h.log.Warn("viewer-request function error",
+			log.Warn("viewer-request function error",
 				zap.String("arn", fa.FunctionARN),
 				zap.Error(execErr))
 			continue
@@ -81,6 +82,7 @@ func (h *Handler) runViewerResponse(
 	statusCode int,
 	headers map[string][]string,
 ) {
+	log := h.log.WithRecorder(r.Context())
 	if fas == nil || len(fas.Items) == 0 {
 		return
 	}
@@ -90,14 +92,14 @@ func (h *Handler) runViewerResponse(
 		}
 		fn, ferr := h.store.GetFunctionByARN(r.Context(), fa.FunctionARN)
 		if ferr != nil || fn == nil {
-			h.log.Warn("viewer-response function not found",
+			log.Warn("viewer-response function not found",
 				zap.String("arn", fa.FunctionARN))
 			continue
 		}
 		event := buildViewerResponseEvent(r, distID, domainName, reqPath, statusCode, headers)
 		res, execErr := execCFFunction(fn.FunctionCode, event)
 		if execErr != nil {
-			h.log.Warn("viewer-response function error",
+			log.Warn("viewer-response function error",
 				zap.String("arn", fa.FunctionARN),
 				zap.Error(execErr))
 			continue

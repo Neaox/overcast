@@ -52,6 +52,7 @@ func autoSetUsernameAttribute(usernameAttrs []string, attrs *[]UserAttribute, us
 // Creates a user with FORCE_CHANGE_PASSWORD status and optionally sends a
 // temp-password email if the user has an email attribute and MessageAction != "SUPPRESS".
 func (s *Service) adminCreateUser(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID         string          `json:"UserPoolId"`
 		Username           string          `json:"Username"`
@@ -159,7 +160,7 @@ func (s *Service) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.log.Info("admin created user",
+	log.Info("admin created user",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoUserCreated, events.ResourcePayload{Name: req.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"User": toUserWire(u)})
@@ -167,6 +168,7 @@ func (s *Service) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 
 // adminDeleteUser — AdminDeleteUser.
 func (s *Service) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID string `json:"UserPoolId"`
 		Username   string `json:"Username"`
@@ -191,7 +193,7 @@ func (s *Service) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("admin deleted user",
+	log.Info("admin deleted user",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoUserDeleted, events.ResourcePayload{Name: req.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})
@@ -232,6 +234,7 @@ func (s *Service) adminGetUser(w http.ResponseWriter, r *http.Request) {
 
 // adminSetUserPassword — AdminSetUserPassword.
 func (s *Service) adminSetUserPassword(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID string `json:"UserPoolId"`
 		Username   string `json:"Username"`
@@ -273,7 +276,7 @@ func (s *Service) adminSetUserPassword(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("admin set user password",
+	log.Info("admin set user password",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username),
 		zap.Bool("permanent", req.Permanent))
 	s.publish(r, events.CognitoUserUpdated, events.ResourcePayload{Name: req.Username})
@@ -282,6 +285,7 @@ func (s *Service) adminSetUserPassword(w http.ResponseWriter, r *http.Request) {
 
 // adminConfirmSignUp — AdminConfirmSignUp.
 func (s *Service) adminConfirmSignUp(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID string `json:"UserPoolId"`
 		Username   string `json:"Username"`
@@ -311,7 +315,7 @@ func (s *Service) adminConfirmSignUp(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("admin confirmed user signup",
+	log.Info("admin confirmed user signup",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username))
 	s.publish(r, events.CognitoUserConfirmed, events.ResourcePayload{Name: req.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})

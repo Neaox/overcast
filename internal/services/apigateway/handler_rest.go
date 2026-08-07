@@ -36,6 +36,7 @@ type createRestAPIRequest struct {
 }
 
 func (h *Handler) CreateRestApi(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	var req createRestAPIRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -85,7 +86,7 @@ func (h *Handler) CreateRestApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("REST API created",
+	log.Info("REST API created",
 		zap.String("api_id", apiID),
 		zap.String("name", req.Name),
 	)
@@ -144,6 +145,7 @@ func (h *Handler) GetRestApis(w http.ResponseWriter, r *http.Request) {
 // ---- DeleteRestApi --------------------------------------------------------
 
 func (h *Handler) DeleteRestApi(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	apiID := chi.URLParam(r, "restApiId")
 
 	api, aerr := h.store.getRestAPI(r.Context(), apiID)
@@ -162,7 +164,7 @@ func (h *Handler) DeleteRestApi(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("REST API deleted",
+	log.Info("REST API deleted",
 		zap.String("api_id", apiID),
 		zap.String("name", api.Name),
 	)

@@ -309,6 +309,7 @@ func (h *Handler) UpdateFunctionUrlConfig(w http.ResponseWriter, r *http.Request
 
 // DeleteFunctionUrlConfig handles DELETE /2021-10-31/functions/{name}/url.
 func (h *Handler) DeleteFunctionUrlConfig(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	qualifier := r.URL.Query().Get("Qualifier")
 	ctx := r.Context()
@@ -341,7 +342,7 @@ func (h *Handler) DeleteFunctionUrlConfig(w http.ResponseWriter, r *http.Request
 		})
 	}
 
-	h.log.Debug("delete function url config", zap.String("function", name), zap.String("qualifier", qualifier))
+	log.Debug("delete function url config", zap.String("function", name), zap.String("qualifier", qualifier))
 	w.WriteHeader(http.StatusNoContent)
 }
 

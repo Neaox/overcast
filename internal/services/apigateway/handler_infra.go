@@ -40,6 +40,7 @@ type createDomainNameRequest struct {
 
 // CreateDomainName handles POST /domainnames.
 func (h *Handler) CreateDomainName(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	h.ensureRegistryHydrated()
 	var req createDomainNameRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
@@ -67,7 +68,7 @@ func (h *Handler) CreateDomainName(w http.ResponseWriter, r *http.Request) {
 		h.domainRegistry.Put(domainregistry.Record{Name: dn.DomainName, Source: "apigateway.v1"})
 	}
 
-	h.log.Info("domain name created", zap.String("domainName", dn.DomainName))
+	log.Info("domain name created", zap.String("domainName", dn.DomainName))
 	protocol.WriteJSON(w, r, http.StatusCreated, dn)
 }
 
@@ -87,6 +88,7 @@ func (h *Handler) GetDomainNames(w http.ResponseWriter, r *http.Request) {
 
 // DeleteDomainName handles DELETE /domainnames/{domainName}.
 func (h *Handler) DeleteDomainName(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	h.ensureRegistryHydrated()
 	domainName := chi.URLParam(r, "domainName")
 
@@ -104,7 +106,7 @@ func (h *Handler) DeleteDomainName(w http.ResponseWriter, r *http.Request) {
 		h.domainRegistry.Delete(domainName)
 	}
 
-	h.log.Info("domain name deleted", zap.String("domainName", domainName))
+	log.Info("domain name deleted", zap.String("domainName", domainName))
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -174,6 +176,7 @@ type createVpcLinkRequest struct {
 
 // CreateVpcLink handles POST /vpclinks.
 func (h *Handler) CreateVpcLink(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	var req createVpcLinkRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -196,7 +199,7 @@ func (h *Handler) CreateVpcLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("VPC link created", zap.String("id", vl.ID), zap.String("name", vl.Name))
+	log.Info("VPC link created", zap.String("id", vl.ID), zap.String("name", vl.Name))
 	protocol.WriteJSON(w, r, http.StatusCreated, vl)
 }
 
@@ -215,6 +218,7 @@ func (h *Handler) GetVpcLinks(w http.ResponseWriter, r *http.Request) {
 
 // DeleteVpcLink handles DELETE /vpclinks/{vpcLinkId}.
 func (h *Handler) DeleteVpcLink(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	id := chi.URLParam(r, "vpcLinkId")
 
 	if _, aerr := h.store.getVpcLink(r.Context(), id); aerr != nil {
@@ -227,7 +231,7 @@ func (h *Handler) DeleteVpcLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("VPC link deleted", zap.String("id", id))
+	log.Info("VPC link deleted", zap.String("id", id))
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -323,6 +327,7 @@ type createV2DomainNameRequest struct {
 
 // CreateV2DomainName handles POST /v2/domainnames.
 func (h *Handler) CreateV2DomainName(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	h.ensureRegistryHydrated()
 	var req createV2DomainNameRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
@@ -348,7 +353,7 @@ func (h *Handler) CreateV2DomainName(w http.ResponseWriter, r *http.Request) {
 		h.domainRegistry.Put(domainregistry.Record{Name: dn.DomainName, Source: "apigateway.v2"})
 	}
 
-	h.log.Info("v2 domain name created", zap.String("domainName", dn.DomainName))
+	log.Info("v2 domain name created", zap.String("domainName", dn.DomainName))
 	protocol.WriteJSON(w, r, http.StatusCreated, dn)
 }
 
@@ -368,6 +373,7 @@ func (h *Handler) GetV2DomainNames(w http.ResponseWriter, r *http.Request) {
 
 // DeleteV2DomainName handles DELETE /v2/domainnames/{domainName}.
 func (h *Handler) DeleteV2DomainName(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	h.ensureRegistryHydrated()
 	domainName := chi.URLParam(r, "domainName")
 
@@ -385,7 +391,7 @@ func (h *Handler) DeleteV2DomainName(w http.ResponseWriter, r *http.Request) {
 		h.domainRegistry.Delete(domainName)
 	}
 
-	h.log.Info("v2 domain name deleted", zap.String("domainName", domainName))
+	log.Info("v2 domain name deleted", zap.String("domainName", domainName))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -400,6 +406,7 @@ type createV2VpcLinkRequest struct {
 
 // CreateV2VpcLink handles POST /v2/vpclinks.
 func (h *Handler) CreateV2VpcLink(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	var req createV2VpcLinkRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -423,7 +430,7 @@ func (h *Handler) CreateV2VpcLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("v2 VPC link created", zap.String("id", vl.VpcLinkID), zap.String("name", vl.Name))
+	log.Info("v2 VPC link created", zap.String("id", vl.VpcLinkID), zap.String("name", vl.Name))
 	protocol.WriteJSON(w, r, http.StatusCreated, vl)
 }
 
@@ -442,6 +449,7 @@ func (h *Handler) GetV2VpcLinks(w http.ResponseWriter, r *http.Request) {
 
 // DeleteV2VpcLink handles DELETE /v2/vpclinks/{vpcLinkId}.
 func (h *Handler) DeleteV2VpcLink(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	id := chi.URLParam(r, "vpcLinkId")
 
 	if _, aerr := h.store.getV2VpcLink(r.Context(), id); aerr != nil {
@@ -454,7 +462,7 @@ func (h *Handler) DeleteV2VpcLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("v2 VPC link deleted", zap.String("id", id))
+	log.Info("v2 VPC link deleted", zap.String("id", id))
 	w.WriteHeader(http.StatusNoContent)
 }
 

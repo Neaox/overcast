@@ -913,6 +913,7 @@ func (s *Service) HandleSignUpPage(w http.ResponseWriter, r *http.Request) {
 
 // HandleSignUpSubmit processes the sign-up form POST.
 func (s *Service) HandleSignUpSubmit(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	poolID := chi.URLParam(r, "poolId")
 	ctx := r.Context()
 
@@ -984,7 +985,7 @@ func (s *Service) HandleSignUpSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.log.Info("user signed up via managed login", zap.String("pool", pool.ID), zap.String("user", username))
+	log.Info("user signed up via managed login", zap.String("pool", pool.ID), zap.String("user", username))
 	s.publish(r, events.CognitoUserCreated, events.ResourcePayload{Name: username})
 
 	// Redirect to confirm page.
@@ -1049,6 +1050,7 @@ func (s *Service) HandleConfirmPage(w http.ResponseWriter, r *http.Request) {
 
 // HandleConfirmSubmit processes the confirmation code POST.
 func (s *Service) HandleConfirmSubmit(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	poolID := chi.URLParam(r, "poolId")
 	ctx := r.Context()
 
@@ -1089,7 +1091,7 @@ func (s *Service) HandleConfirmSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.log.Info("user confirmed via managed login", zap.String("pool", pool.ID), zap.String("user", username))
+	log.Info("user confirmed via managed login", zap.String("pool", pool.ID), zap.String("user", username))
 	s.publish(r, events.CognitoUserConfirmed, events.ResourcePayload{Name: username})
 
 	// Redirect to login page.
@@ -1552,6 +1554,7 @@ func (s *Service) HandleForgotPasswordPage(w http.ResponseWriter, r *http.Reques
 
 // HandleForgotPasswordSubmit processes the forgot-password form POST.
 func (s *Service) HandleForgotPasswordSubmit(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	poolID := chi.URLParam(r, "poolId")
 	ctx := r.Context()
 
@@ -1618,7 +1621,7 @@ func (s *Service) HandleForgotPasswordSubmit(w http.ResponseWriter, r *http.Requ
 		s.sendPasswordResetSMS(pool, phone, user.Username, code)
 	}
 
-	s.log.Info("password reset code issued via managed login",
+	log.Info("password reset code issued via managed login",
 		zap.String("pool", pool.ID), zap.String("user", username))
 
 	q := params.query() + "&username=" + url.QueryEscape(username)
@@ -1659,6 +1662,7 @@ func (s *Service) HandleResetPasswordPage(w http.ResponseWriter, r *http.Request
 
 // HandleResetPasswordSubmit processes the reset-password form POST.
 func (s *Service) HandleResetPasswordSubmit(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	poolID := chi.URLParam(r, "poolId")
 	ctx := r.Context()
 
@@ -1738,7 +1742,7 @@ func (s *Service) HandleResetPasswordSubmit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.log.Info("password reset via managed login",
+	log.Info("password reset via managed login",
 		zap.String("pool", pool.ID), zap.String("user", username))
 	s.publish(r, events.CognitoPasswordChanged, events.ResourcePayload{Name: username})
 

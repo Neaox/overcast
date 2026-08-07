@@ -40,6 +40,8 @@ const maxDeliveryAttempts = 6
 // matched rule, so a batch of N entries against a bus with R rules costs one
 // scan rather than N.
 func (s *Service) deliverEntries(ctx context.Context, eventIDs []string, entries []map[string]any) {
+	log := s.log.WithRecorder(ctx)
+
 	if len(entries) == 0 {
 		return
 	}
@@ -56,7 +58,7 @@ func (s *Service) deliverEntries(ctx context.Context, eventIDs []string, entries
 			var err error
 			rules, err = s.loadRules(ctx, busName)
 			if err != nil {
-				s.log.Error("eventbridge: deliver: scan rules", zap.String("bus", busName), zap.Error(err))
+				log.Error("eventbridge: deliver: scan rules", zap.String("bus", busName), zap.Error(err))
 				rules = nil
 			}
 			rulesByBus[busName] = rules
@@ -79,7 +81,7 @@ func (s *Service) deliverEntries(ctx context.Context, eventIDs []string, entries
 				var err error
 				targets, err = s.loadTargets(ctx, busName, rule.Name)
 				if err != nil {
-					s.log.Error("eventbridge: deliver: get targets", zap.String("rule", rule.Name), zap.Error(err))
+					log.Error("eventbridge: deliver: get targets", zap.String("rule", rule.Name), zap.Error(err))
 					targets = nil
 				}
 				targetsByRule[cacheKey] = targets
@@ -115,9 +117,11 @@ func (s *Service) putEventsEnvelope(ctx context.Context, eventID string, entry m
 // schedule engine uses it directly; PutEvents goes through deliverEntries,
 // which reuses the loaded target list across a batch.
 func (s *Service) deliverTargets(ctx context.Context, rule ebRule, event map[string]any) {
+	log := s.log.WithRecorder(ctx)
+
 	targets, err := s.loadTargets(ctx, rule.EventBusName, rule.Name)
 	if err != nil {
-		s.log.Error("eventbridge: deliver: get targets", zap.String("rule", rule.Name), zap.Error(err))
+		log.Error("eventbridge: deliver: get targets", zap.String("rule", rule.Name), zap.Error(err))
 		return
 	}
 	s.deliverToTargets(ctx, rule, targets, event)
@@ -132,6 +136,8 @@ func (s *Service) deliverToTargets(ctx context.Context, rule ebRule, targets []e
 // deliverTarget renders the target's payload, attempts delivery (retrying as
 // the target's RetryPolicy allows), and records the outcome.
 func (s *Service) deliverTarget(ctx context.Context, rule ebRule, target ebTarget, event map[string]any) {
+	log := s.log.WithRecorder(ctx)
+
 	rec := deliveryRecord{
 		Region:     s.region(ctx),
 		Bus:        rule.EventBusName,
@@ -146,7 +152,7 @@ func (s *Service) deliverTarget(ctx context.Context, rule ebRule, target ebTarge
 	if err != nil {
 		rec.Outcome = outcomeDropped
 		rec.Error = err.Error()
-		s.log.Warn("eventbridge: target input transformation failed",
+		log.Warn("eventbridge: target input transformation failed",
 			zap.String("rule", rule.Name), zap.String("target", target.ID), zap.Error(err))
 		s.recordDelivery(rec)
 		return
@@ -181,12 +187,12 @@ func (s *Service) deliverTarget(ctx context.Context, rule ebRule, target ebTarge
 		if dlqErr := s.deadLetter(ctx, dlq, payload); dlqErr != nil {
 			rec.Outcome = outcomeDropped
 			rec.Error = fmt.Sprintf("%v; dead-letter delivery also failed: %v", lastErr, dlqErr)
-			s.log.Warn("eventbridge: dead-letter delivery failed",
+			log.Warn("eventbridge: dead-letter delivery failed",
 				zap.String("rule", rule.Name), zap.String("target", target.ID),
 				zap.String("dlq", dlq), zap.Error(dlqErr))
 		} else {
 			rec.Outcome = outcomeDLQ
-			s.log.Warn("eventbridge: target delivery dead-lettered",
+			log.Warn("eventbridge: target delivery dead-lettered",
 				zap.String("rule", rule.Name), zap.String("target", target.ID),
 				zap.String("arn", target.ARN), zap.Int("attempts", rec.Attempts), zap.Error(lastErr))
 		}
@@ -195,7 +201,7 @@ func (s *Service) deliverTarget(ctx context.Context, rule ebRule, target ebTarge
 	}
 
 	rec.Outcome = outcomeDropped
-	s.log.Warn("eventbridge: target delivery failed",
+	log.Warn("eventbridge: target delivery failed",
 		zap.String("rule", rule.Name), zap.String("target", target.ID),
 		zap.String("arn", target.ARN), zap.Int("attempts", rec.Attempts), zap.Error(lastErr))
 	s.recordDelivery(rec)

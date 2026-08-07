@@ -145,9 +145,10 @@ func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 }
 
 func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	identifier := chi.URLParam(r, "name")
 	name, qualifier := policyFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
-	h.log.Debug("add permission", zap.String("function", name), zap.String("qualifier", qualifier))
+	log.Debug("add permission", zap.String("function", name), zap.String("qualifier", qualifier))
 	var req addPermissionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))

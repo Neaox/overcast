@@ -15,6 +15,7 @@ import (
 // (pending verification via VerifySoftwareToken). Supports AccessToken only;
 // session-based association (mid-flow MFA setup) is not yet implemented.
 func (s *Service) associateSoftwareToken(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		AccessToken string `json:"AccessToken"`
 	}
@@ -41,7 +42,7 @@ func (s *Service) associateSoftwareToken(w http.ResponseWriter, r *http.Request)
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("TOTP secret generated",
+	log.Info("TOTP secret generated",
 		zap.String("poolId", t.UserPoolID), zap.String("username", t.Username))
 	s.publish(r, events.CognitoUserUpdated, events.ResourcePayload{Name: t.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{
@@ -53,6 +54,7 @@ func (s *Service) associateSoftwareToken(w http.ResponseWriter, r *http.Request)
 // Verifies that the user can produce a valid TOTP code for their stored secret.
 // On success, marks TOTPVerified = true so MFA can be enabled.
 func (s *Service) verifySoftwareToken(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		AccessToken  string `json:"AccessToken"`
 		UserCode     string `json:"UserCode"`
@@ -97,7 +99,7 @@ func (s *Service) verifySoftwareToken(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("TOTP verified",
+	log.Info("TOTP verified",
 		zap.String("poolId", t.UserPoolID), zap.String("username", t.Username))
 	s.publish(r, events.CognitoUserUpdated, events.ResourcePayload{Name: t.Username})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{

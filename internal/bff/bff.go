@@ -139,6 +139,9 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/debug/state", handleDebugState)
 	r.Get("/api/debug/state/*", handleDebugNamespace)
 	r.Get("/api/debug/metrics", handleDebugMetrics)
+	r.Get("/api/debug/trace/{requestId}", handleDebugTrace)
+	r.Get("/api/debug/traces", handleDebugTraces)
+	r.Get("/api/debug/traces/count", handleDebugTraceCount)
 	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_lambda/runtimes"))
 	r.Get("/api/lambda/instances", handleLambdaInstances)
 	r.Get("/api/lambda/functions/{name}/source", handleLambdaSourceGet)
@@ -396,6 +399,37 @@ func handleDebugNamespace(w http.ResponseWriter, r *http.Request) {
 // bare "HTTP 404".
 func handleDebugMetrics(w http.ResponseWriter, r *http.Request) {
 	proxyDebugState(w, r, "/_debug/metrics")
+}
+
+func handleDebugTrace(w http.ResponseWriter, r *http.Request) {
+	requestID := chi.URLParam(r, "requestId")
+	proxyDebugJSON(w, r, "/_debug/trace/"+url.PathEscape(requestID))
+}
+
+func handleDebugTraces(w http.ResponseWriter, r *http.Request) {
+	proxyDebugJSON(w, r, "/_debug/traces")
+}
+
+func handleDebugTraceCount(w http.ResponseWriter, r *http.Request) {
+	proxyDebugJSON(w, r, "/_debug/traces/count")
+}
+
+// proxyDebugJSON proxies a debug endpoint, forwarding query params and
+// passing through the response status and body without translating 404s
+// (unlike proxyDebugState which maps 404 to "DebugDisabled").
+func proxyDebugJSON(w http.ResponseWriter, r *http.Request, path string) {
+	ep := resolveEndpoint(r)
+	url := ep + path
+	if r.URL.RawQuery != "" {
+		url += "?" + r.URL.RawQuery
+	}
+	resp, err := doGet(r.Context(), url)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	copyDebugResponse(w, resp)
 }
 
 func proxyDebugState(w http.ResponseWriter, r *http.Request, path string) {

@@ -97,6 +97,23 @@ type Secret struct {
 	ResourcePolicy      string           `json:"ResourcePolicy,omitempty"`
 }
 
+// GetTags returns the secret's tags as a map for handler convenience.
+func (s *Secret) GetTags() map[string]string {
+	tags := make(map[string]string, len(s.Tags))
+	for _, t := range s.Tags {
+		tags[t.Key] = t.Value
+	}
+	return tags
+}
+
+// SetTags replaces the secret's tags from a map.
+func (s *Secret) SetTags(tags map[string]string) {
+	s.Tags = make([]Tag, 0, len(tags))
+	for key, value := range tags {
+		s.Tags = append(s.Tags, Tag{Key: key, Value: value})
+	}
+}
+
 // currentVersion returns the version carrying AWSCURRENT, or nil.
 func (s *Secret) currentVersion() *SecretVersion { return s.versionByStage(stageAWSCurrent) }
 

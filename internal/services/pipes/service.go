@@ -34,6 +34,7 @@ package pipes
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -88,9 +89,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Post("/{name}", s.handler.CreatePipe)
 		r.Get("/{name}", s.handler.DescribePipe)
 		r.Delete("/{name}", s.handler.DeletePipe)
-		// AWS routes UpdatePipe on PUT, which is what every SDK and the CLI
-		// send — a PATCH route answered them 405. The compat suites caught it.
 		r.Put("/{name}", s.handler.UpdatePipe)
+	})
+	r.Route("/tags", func(r chi.Router) {
+		r.Post("/*", s.handler.TagResource)
+		r.Delete("/*", s.handler.UntagResource)
+		r.Get("/*", s.handler.ListTagsForResource)
 	})
 	s.handler.registerAdminRoutes(r)
 }
@@ -267,7 +271,8 @@ func (h *Handler) CreatePipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("pipe created",
+	log := h.log.WithRecorder(r.Context())
+	log.Info("pipe created",
 		zap.String("pipe", name),
 		zap.String("source", req.Source),
 		zap.String("enrichment", req.Enrichment),
@@ -310,7 +315,8 @@ func (h *Handler) DeletePipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("pipe deleting", zap.String("pipe", name))
+	log := h.log.WithRecorder(r.Context())
+	log.Info("pipe deleting", zap.String("pipe", name))
 
 	// Remove from store asynchronously after the transition delay.
 	h.scheduleDeletion(h.store.region(ctx), name)
@@ -429,7 +435,8 @@ func (h *Handler) UpdatePipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("pipe updated", zap.String("pipe", name),
+	log := h.log.WithRecorder(r.Context())
+	log.Info("pipe updated", zap.String("pipe", name),
 		zap.String("desiredState", string(p.DesiredState)))
 
 	if p.CurrentState == PipeStateStarting || p.CurrentState == PipeStateStopping || p.CurrentState == PipeStateUpdating {
@@ -451,6 +458,180 @@ func (h *Handler) ListPipes(w http.ResponseWriter, r *http.Request) {
 		summaries = append(summaries, p.summary())
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Pipes": summaries})
+}
+
+// ---- State machine ----------------------------------------------------------
+
+// ---- Tag handlers -----------------------------------------------------------
+
+const (
+	errTagExceededCode    = "ValidationException"
+	errTagInvalidCode     = "ValidationException"
+	errTagExceededMessage = "Exceeded maximum number of tags allowed."
+)
+
+var pipesTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    errTagExceededCode,
+	InvalidCode:     errTagInvalidCode,
+	ExceededMessage: errTagExceededMessage,
+}
+
+func (h *Handler) pipeNameFromARN(arn string) (string, *protocol.AWSError) {
+	prefix := "arn:aws:pipes:"
+	idx := strings.LastIndex(arn, "pipe/")
+	if idx < 0 || !strings.HasPrefix(arn, prefix) {
+		return "", &protocol.AWSError{
+			Code: "ValidationException", Message: "Invalid ARN", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	name := arn[idx+5:]
+	if name == "" {
+		return "", &protocol.AWSError{
+			Code: "ValidationException", Message: "Invalid ARN", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return name, nil
+}
+
+func (h *Handler) tagResourceARNFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	arn := strings.TrimPrefix(r.URL.Path, "/tags/")
+	arn = strings.TrimPrefix(arn, "/")
+	arn, _, _ = strings.Cut(arn, "?")
+	if arn == "" {
+		writeError(w, r, &protocol.AWSError{
+			Code: "ValidationException", Message: "Resource ARN is required", HTTPStatus: http.StatusBadRequest,
+		})
+		return "", false
+	}
+	return arn, true
+}
+
+// TagResource handles POST /tags/{ResourceArn}.
+func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
+	arn, ok := h.tagResourceARNFromPath(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Tags map[string]string `json:"Tags"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	name, aerr := h.pipeNameFromARN(arn)
+	if aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	if aerr := serviceutil.ValidateTags(pipesTagCfg, req.Tags); aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	ctx := r.Context()
+	p, aerr := h.store.getPipe(ctx, name)
+	if aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	existing := p.Tags
+	if existing == nil {
+		existing = make(map[string]string)
+	}
+	for k, v := range req.Tags {
+		existing[k] = v
+	}
+	p.Tags = existing
+
+	if aerr := serviceutil.ValidateTags(pipesTagCfg, p.Tags); aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	if aerr := h.store.putPipe(ctx, p); aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+// UntagResource handles DELETE /tags/{ResourceArn}.
+func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
+	arn, ok := h.tagResourceARNFromPath(w, r)
+	if !ok {
+		return
+	}
+
+	type untagBody struct {
+		TagKeys []string `json:"TagKeys"`
+	}
+	var req untagBody
+	tagKeys := r.URL.Query()["tagKeys"]
+	if len(tagKeys) == 0 {
+		if !serviceutil.DecodeJSON(w, r, &req) {
+			return
+		}
+		tagKeys = req.TagKeys
+	}
+
+	name, aerr := h.pipeNameFromARN(arn)
+	if aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	ctx := r.Context()
+	p, aerr := h.store.getPipe(ctx, name)
+	if aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	if p.Tags != nil {
+		for _, k := range tagKeys {
+			delete(p.Tags, k)
+		}
+	}
+
+	if aerr := h.store.putPipe(ctx, p); aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+// ListTagsForResource handles GET /tags/{ResourceArn}.
+func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	arn, ok := h.tagResourceARNFromPath(w, r)
+	if !ok {
+		return
+	}
+
+	name, aerr := h.pipeNameFromARN(arn)
+	if aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	ctx := r.Context()
+	p, aerr := h.store.getPipe(ctx, name)
+	if aerr != nil {
+		writeError(w, r, aerr)
+		return
+	}
+
+	tags := p.Tags
+	if tags == nil {
+		tags = make(map[string]string)
+	}
+
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tags})
 }
 
 // ---- State machine ----------------------------------------------------------
@@ -480,7 +661,8 @@ func (h *Handler) scheduleTransition(region, name string, nextState, from PipeSt
 		p.CurrentState = nextState
 		p.LastModifiedTime = float64(h.clk.Now().Unix())
 		if aerr := h.store.putPipe(ctx, p); aerr != nil {
-			h.log.Error("pipe state transition failed",
+			log := h.log.WithRecorder(ctx)
+			log.Error("pipe state transition failed",
 				zap.String("pipe", name), zap.String("state", string(nextState)))
 			return
 		}
@@ -500,7 +682,8 @@ func (h *Handler) scheduleDeletion(region, name string) {
 		}
 		ctx := regionContext(context.Background(), region)
 		if aerr := h.store.deletePipe(ctx, name); aerr != nil {
-			h.log.Error("pipe deletion failed", zap.String("pipe", name))
+			log := h.log.WithRecorder(ctx)
+			log.Error("pipe deletion failed", zap.String("pipe", name))
 			return
 		}
 		h.publishStateChange(ctx, name, string(PipeStateDeleting), "DELETED")
@@ -548,7 +731,8 @@ func (h *Handler) deliverStreamEvent(ctx context.Context, evt events.Event) {
 
 	pipes, aerr := h.store.listAllPipes(ctx)
 	if aerr != nil {
-		h.log.Error("pipes: delivery: list pipes failed", zap.String("error", aerr.Message))
+		log := h.log.WithRecorder(ctx)
+		log.Error("pipes: delivery: list pipes failed", zap.String("error", aerr.Message))
 		return
 	}
 

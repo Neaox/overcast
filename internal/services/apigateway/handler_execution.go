@@ -163,6 +163,7 @@ func (h *Handler) executeRestLambdaProxy(
 	api *RestAPI, resource *Resource, _ *Method,
 	integration *Integration, stageVars map[string]string, requestPath string,
 ) {
+	log := h.log.WithRecorder(r.Context())
 	if h.invoker == nil {
 		writeGatewayError(w, http.StatusServiceUnavailable, "Lambda service not available")
 		return
@@ -245,7 +246,7 @@ func (h *Handler) executeRestLambdaProxy(
 
 	outcome, err := h.invoker.Invoke(r.Context(), functionName, payload)
 	if err != nil {
-		h.log.Error("lambda invocation failed",
+		log.Error("lambda invocation failed",
 			zap.String("function", functionName),
 			zap.Error(err),
 		)
@@ -253,7 +254,7 @@ func (h *Handler) executeRestLambdaProxy(
 		return
 	}
 	if outcome == nil {
-		h.log.Warn("lambda function not available",
+		log.Warn("lambda function not available",
 			zap.String("function", functionName),
 		)
 		writeGatewayError(w, http.StatusServiceUnavailable, "Service Unavailable")
@@ -261,7 +262,7 @@ func (h *Handler) executeRestLambdaProxy(
 	}
 
 	if outcome.FunctionError != "" {
-		h.log.Warn("lambda function error",
+		log.Warn("lambda function error",
 			zap.String("function", functionName),
 			zap.String("error", outcome.FunctionError),
 		)
@@ -395,6 +396,7 @@ func (h *Handler) executeV2LambdaProxy(
 	api *APIV2, route *RouteV2, integ *IntegrationV2,
 	stageVars map[string]string, requestPath string,
 ) {
+	log := h.log.WithRecorder(r.Context())
 	if h.invoker == nil {
 		writeGatewayError(w, http.StatusServiceUnavailable, "Lambda service not available")
 		return
@@ -525,7 +527,7 @@ func (h *Handler) executeV2LambdaProxy(
 
 	outcome, invokeErr := h.invoker.Invoke(r.Context(), functionName, payload)
 	if invokeErr != nil {
-		h.log.Error("lambda invocation failed",
+		log.Error("lambda invocation failed",
 			zap.String("function", functionName),
 			zap.Error(invokeErr),
 		)
@@ -533,7 +535,7 @@ func (h *Handler) executeV2LambdaProxy(
 		return
 	}
 	if outcome == nil {
-		h.log.Warn("lambda function not available",
+		log.Warn("lambda function not available",
 			zap.String("function", functionName),
 		)
 		writeGatewayError(w, http.StatusServiceUnavailable, "Service Unavailable")
@@ -541,7 +543,7 @@ func (h *Handler) executeV2LambdaProxy(
 	}
 
 	if outcome.FunctionError != "" {
-		h.log.Warn("lambda function error",
+		log.Warn("lambda function error",
 			zap.String("function", functionName),
 			zap.String("error", outcome.FunctionError),
 		)
@@ -971,6 +973,7 @@ func substituteStageVars(uri string, vars map[string]string) string {
 
 // executeHTTPProxy makes an outbound HTTP request (REST v1 HTTP_PROXY or HTTP integration).
 func (h *Handler) executeHTTPProxy(w http.ResponseWriter, r *http.Request, integration *Integration) {
+	log := h.log.WithRecorder(r.Context())
 	if integration.URI == "" {
 		writeGatewayError(w, http.StatusInternalServerError, "Integration URI not configured")
 		return
@@ -1002,7 +1005,7 @@ func (h *Handler) executeHTTPProxy(w http.ResponseWriter, r *http.Request, integ
 
 	resp, err := proxyHTTPClient.Do(outReq)
 	if err != nil {
-		h.log.Error("HTTP_PROXY integration request failed",
+		log.Error("HTTP_PROXY integration request failed",
 			zap.String("uri", integration.URI),
 			zap.Error(err),
 		)
@@ -1023,6 +1026,7 @@ func (h *Handler) executeHTTPProxy(w http.ResponseWriter, r *http.Request, integ
 
 // executeV2HTTPProxy makes an outbound HTTP request (HTTP API v2 HTTP_PROXY integration).
 func (h *Handler) executeV2HTTPProxy(w http.ResponseWriter, r *http.Request, integ *IntegrationV2) {
+	log := h.log.WithRecorder(r.Context())
 	if integ.IntegrationURI == "" {
 		writeGatewayError(w, http.StatusInternalServerError, "Integration URI not configured")
 		return
@@ -1054,7 +1058,7 @@ func (h *Handler) executeV2HTTPProxy(w http.ResponseWriter, r *http.Request, int
 
 	resp, err := proxyHTTPClient.Do(outReq)
 	if err != nil {
-		h.log.Error("HTTP_PROXY v2 integration request failed",
+		log.Error("HTTP_PROXY v2 integration request failed",
 			zap.String("uri", integ.IntegrationURI),
 			zap.Error(err),
 		)
@@ -1080,6 +1084,7 @@ func (h *Handler) executeRestLambdaNonProxy(
 	w http.ResponseWriter, r *http.Request,
 	_ *RestAPI, integration *Integration, _ string,
 ) {
+	log := h.log.WithRecorder(r.Context())
 	if h.invoker == nil {
 		writeGatewayError(w, http.StatusServiceUnavailable, "Lambda service not available")
 		return
@@ -1110,7 +1115,7 @@ func (h *Handler) executeRestLambdaNonProxy(
 
 	outcome, invokeErr := h.invoker.Invoke(r.Context(), functionName, payload)
 	if invokeErr != nil {
-		h.log.Error("lambda invocation failed (AWS integration)",
+		log.Error("lambda invocation failed (AWS integration)",
 			zap.String("function", functionName),
 			zap.Error(invokeErr),
 		)
@@ -1118,7 +1123,7 @@ func (h *Handler) executeRestLambdaNonProxy(
 		return
 	}
 	if outcome == nil {
-		h.log.Warn("lambda function not available (AWS integration)",
+		log.Warn("lambda function not available (AWS integration)",
 			zap.String("function", functionName),
 		)
 		writeGatewayError(w, http.StatusServiceUnavailable, "Service Unavailable")
@@ -1126,7 +1131,7 @@ func (h *Handler) executeRestLambdaNonProxy(
 	}
 
 	if outcome.FunctionError != "" {
-		h.log.Warn("lambda function error (AWS integration)",
+		log.Warn("lambda function error (AWS integration)",
 			zap.String("function", functionName),
 			zap.String("error", outcome.FunctionError),
 		)

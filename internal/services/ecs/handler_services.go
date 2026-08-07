@@ -749,6 +749,7 @@ func circuitBreakerThreshold(desired int) int {
 // does: a service event, the primary deployment's consecutive failure count,
 // and — only when the service asked for a circuit breaker — a FAILED rollout.
 func (h *Handler) scaleUp(ctx context.Context, clusterName string, svc *ecsService, n int) {
+	log := h.log.WithRecorder(ctx)
 	family, revision, hasRevision := parseTaskDefRef(svc.TaskDefinition)
 	var td *TaskDefinition
 	var aerr *protocol.AWSError
@@ -793,7 +794,7 @@ func (h *Handler) scaleUp(ctx context.Context, clusterName string, svc *ecsServi
 		})
 		switch {
 		case aerr != nil:
-			h.log.Warn("ecs: reconcile: failed to persist new task",
+			log.Warn("ecs: reconcile: failed to persist new task",
 				zap.String("cluster", clusterName),
 				zap.String("service", svc.ServiceName),
 				zap.String("error", aerr.Message))
@@ -848,6 +849,7 @@ func taskTargetAddress(task *Task) string {
 // service's loadBalancers entry, as on ECS, falling back to the container's
 // first port mapping when the entry omits it.
 func (h *Handler) registerTaskTargets(ctx context.Context, svc *ecsService, td *TaskDefinition, task *Task) {
+	log := h.log.WithRecorder(ctx)
 	if h.targets == nil || len(svc.LoadBalancers) == 0 {
 		return
 	}
@@ -867,7 +869,7 @@ func (h *Handler) registerTaskTargets(ctx context.Context, svc *ecsService, td *
 			continue
 		}
 		if err := h.targets.RegisterTarget(ctx, lb.TargetGroupArn, address, port); err != nil {
-			h.log.Warn("ecs: could not register task with target group",
+			log.Warn("ecs: could not register task with target group",
 				zap.String("service", svc.ServiceName),
 				zap.String("target_group", lb.TargetGroupArn),
 				zap.String("address", address), zap.Error(err))
@@ -878,6 +880,7 @@ func (h *Handler) registerTaskTargets(ctx context.Context, svc *ecsService, td *
 // deregisterTaskTargets removes a stopped task from its service's target
 // groups, so the load balancer stops forwarding to an address that is gone.
 func (h *Handler) deregisterTaskTargets(ctx context.Context, svc *ecsService, task *Task) {
+	log := h.log.WithRecorder(ctx)
 	if h.targets == nil || len(svc.LoadBalancers) == 0 {
 		return
 	}
@@ -890,7 +893,7 @@ func (h *Handler) deregisterTaskTargets(ctx context.Context, svc *ecsService, ta
 			continue
 		}
 		if err := h.targets.DeregisterTarget(ctx, lb.TargetGroupArn, address); err != nil {
-			h.log.Warn("ecs: could not deregister task from target group",
+			log.Warn("ecs: could not deregister task from target group",
 				zap.String("service", svc.ServiceName),
 				zap.String("target_group", lb.TargetGroupArn),
 				zap.String("address", address), zap.Error(err))
@@ -1056,6 +1059,7 @@ const (
 // tearing their containers down.
 func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc *ecsService, tasks []Task, reason string) {
 	stoppedCount := 0
+	log := h.log.WithRecorder(ctx)
 	for i := range tasks {
 		t := tasks[i]
 		taskID := extractTaskID(t.TaskArn)
@@ -1081,7 +1085,7 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 			reason: reason, code: stopCodeServiceScheduler,
 		})
 		if aerr != nil {
-			h.log.Warn("ecs: reconcile: failed to persist stopped task",
+			log.Warn("ecs: reconcile: failed to persist stopped task",
 				zap.String("cluster", clusterName),
 				zap.String("service", svc.ServiceName),
 				zap.String("task", taskID),
@@ -1099,12 +1103,12 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 					continue
 				}
 				if err := h.docker.StopContainer(ctx, c.DockerID, 5); err != nil {
-					h.log.Warn("ecs: reconcile: failed to stop container",
+					log.Warn("ecs: reconcile: failed to stop container",
 						zap.String("container", c.DockerID), zap.Error(err))
 				}
 				if !h.cfg.ECSKeepContainers {
 					if err := h.docker.RemoveContainerForce(c.DockerID); err != nil {
-						h.log.Warn("ecs: reconcile: failed to remove container",
+						log.Warn("ecs: reconcile: failed to remove container",
 							zap.String("container", c.DockerID), zap.Error(err))
 					}
 				}
@@ -1132,6 +1136,7 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 // keep serving, and the service reports steady state on a deployment that never
 // happened.
 func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string) {
+	log := h.log.WithRecorder(ctx)
 	defer h.lockService(ctx, clusterName, serviceName)()
 
 	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
@@ -1197,7 +1202,7 @@ func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string
 	}
 	h.scheduleRecoveryCheck(ctx, clusterName, svc)
 	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
-		h.log.Warn("ecs: reconcile: failed to persist service counts",
+		log.Warn("ecs: reconcile: failed to persist service counts",
 			zap.String("cluster", clusterName),
 			zap.String("service", serviceName),
 			zap.String("error", aerr.Message))

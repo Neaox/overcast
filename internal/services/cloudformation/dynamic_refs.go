@@ -267,12 +267,13 @@ func resolveSecretsManagerRef(ctx context.Context, router http.Handler, region s
 // it would break templates that pin a version they are already on, which is the
 // overwhelmingly common case.
 func (p *provisioner) resolveSSMRef(ctx context.Context, router http.Handler, region string, ref dynamicRef) (string, error) {
+	log := p.log.WithRecorder(ctx)
 	name := ref.field(0)
 	if name == "" {
 		return "", fmt.Errorf("no parameter name")
 	}
 	if version := ref.field(1); version != "" {
-		p.log.Warn("cfn: dynamic reference pins an SSM parameter version — resolving the current value instead",
+		log.Warn("cfn: dynamic reference pins an SSM parameter version — resolving the current value instead",
 			zap.String("parameter", name),
 			zap.String("version", version))
 	}

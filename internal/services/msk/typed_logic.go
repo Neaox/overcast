@@ -72,8 +72,9 @@ func (s *Service) createClusterTyped(ctx context.Context, req *createClusterRequ
 		go func() {
 			defer s.handler.dockerWg.Done()
 			bgCtx := clusterRegionCtx(clusterARNCopy)
+			log := s.handler.log.WithRecorder(bgCtx)
 			if err := s.handler.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-				s.handler.log.Warn("failed to start Docker container for MSK cluster — falling back to metadata-only",
+				log.Warn("failed to start Docker container for MSK cluster — falling back to metadata-only",
 					zap.String("cluster", clusterARNCopy), zap.Error(err))
 				s.handler.clusterFallbackActive(clusterARNCopy)
 			}
@@ -166,8 +167,9 @@ func (s *Service) deleteClusterTyped(ctx context.Context, req *deleteClusterRequ
 	}
 
 	s.handler.scheduler.AfterScoped(serviceutil.ARNRegion(clusterARNCopy), clusterARNCopy, "delete", 50*time.Millisecond, func(bgCtx context.Context) {
+		log := s.handler.log.WithRecorder(bgCtx)
 		if aerr := s.handler.store.deleteCluster(bgCtx, clusterARNCopy); aerr != nil {
-			s.handler.log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
+			log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
 		}
 	})
 
@@ -494,8 +496,9 @@ func (s *Service) createClusterV2Typed(ctx context.Context, req *createClusterV2
 			go func() {
 				defer s.handler.dockerWg.Done()
 				bgCtx := clusterRegionCtx(clusterARNCopy)
+				log := s.handler.log.WithRecorder(bgCtx)
 				if err := s.handler.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-					s.handler.log.Warn("failed to start Docker container for MSK V2 cluster — falling back to metadata-only",
+					log.Warn("failed to start Docker container for MSK V2 cluster — falling back to metadata-only",
 						zap.String("cluster", clusterARNCopy), zap.Error(err))
 					s.handler.clusterFallbackActive(clusterARNCopy)
 				}

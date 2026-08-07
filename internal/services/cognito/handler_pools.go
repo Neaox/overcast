@@ -13,6 +13,7 @@ import (
 
 // createUserPool — CreateUserPool.
 func (s *Service) createUserPool(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		PoolName                    string                           `json:"PoolName"`
 		UserPoolTier                string                           `json:"UserPoolTier"`
@@ -104,7 +105,7 @@ func (s *Service) createUserPool(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user pool created", zap.String("poolId", poolID), zap.String("name", req.PoolName))
+	log.Info("user pool created", zap.String("poolId", poolID), zap.String("name", req.PoolName))
 	s.publish(r, events.CognitoUserPoolCreated, events.ResourcePayload{Name: req.PoolName, ARN: arn})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"UserPool": toUserPoolWire(pool)})
 }
@@ -140,6 +141,7 @@ func (s *Service) describeUserPool(w http.ResponseWriter, r *http.Request) {
 
 // deleteUserPool — DeleteUserPool.
 func (s *Service) deleteUserPool(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID string `json:"UserPoolId"`
 	}
@@ -158,7 +160,7 @@ func (s *Service) deleteUserPool(w http.ResponseWriter, r *http.Request) {
 	}
 	// Best-effort cleanup of the RSA signing key for this pool.
 	_ = s.removeSigningKey(r.Context(), req.UserPoolID)
-	s.log.Info("user pool deleted", zap.String("poolId", req.UserPoolID))
+	log.Info("user pool deleted", zap.String("poolId", req.UserPoolID))
 	s.publish(r, events.CognitoUserPoolDeleted, events.ResourcePayload{Name: req.UserPoolID})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})
 }
@@ -296,6 +298,7 @@ func (s *Service) updateUserPool(w http.ResponseWriter, r *http.Request) {
 
 // createUserPoolDomain — CreateUserPoolDomain.
 func (s *Service) createUserPoolDomain(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		Domain     string `json:"Domain"`
 		UserPoolID string `json:"UserPoolId"`
@@ -342,7 +345,7 @@ func (s *Service) createUserPoolDomain(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user pool domain created",
+	log.Info("user pool domain created",
 		zap.String("poolId", req.UserPoolID), zap.String("domain", req.Domain))
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})
 }
@@ -379,6 +382,7 @@ func (s *Service) describeUserPoolDomain(w http.ResponseWriter, r *http.Request)
 
 // deleteUserPoolDomain — DeleteUserPoolDomain.
 func (s *Service) deleteUserPoolDomain(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		Domain     string `json:"Domain"`
 		UserPoolID string `json:"UserPoolId"`
@@ -404,7 +408,7 @@ func (s *Service) deleteUserPoolDomain(w http.ResponseWriter, r *http.Request) {
 		pool.Domain = ""
 		_ = s.savePool(r.Context(), pool)
 	}
-	s.log.Info("user pool domain deleted",
+	log.Info("user pool domain deleted",
 		zap.String("poolId", req.UserPoolID), zap.String("domain", req.Domain))
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})
 }

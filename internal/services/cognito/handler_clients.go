@@ -14,6 +14,7 @@ import (
 
 // createUserPoolClient — CreateUserPoolClient.
 func (s *Service) createUserPoolClient(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID                      string                  `json:"UserPoolId"`
 		ClientName                      string                  `json:"ClientName"`
@@ -79,7 +80,7 @@ func (s *Service) createUserPoolClient(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user pool client created",
+	log.Info("user pool client created",
 		zap.String("poolId", req.UserPoolID), zap.String("clientId", c.ClientID))
 	s.publish(r, events.CognitoClientCreated, events.ResourcePayload{Name: c.ClientName})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"UserPoolClient": toClientWire(c)})
@@ -129,6 +130,7 @@ func (s *Service) describeUserPoolClient(w http.ResponseWriter, r *http.Request)
 
 // deleteUserPoolClient — DeleteUserPoolClient.
 func (s *Service) deleteUserPoolClient(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID string `json:"UserPoolId"`
 		ClientID   string `json:"ClientId"`
@@ -149,7 +151,7 @@ func (s *Service) deleteUserPoolClient(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user pool client deleted",
+	log.Info("user pool client deleted",
 		zap.String("poolId", req.UserPoolID), zap.String("clientId", req.ClientID))
 	s.publish(r, events.CognitoClientDeleted, events.ResourcePayload{Name: req.ClientID})
 	s.writeJSON(w, r, http.StatusOK, map[string]any{})
@@ -188,6 +190,7 @@ func (s *Service) listUserPoolClients(w http.ResponseWriter, r *http.Request) {
 
 // updateUserPoolClient — UpdateUserPoolClient.
 func (s *Service) updateUserPoolClient(w http.ResponseWriter, r *http.Request) {
+	log := s.log.WithRecorder(r.Context())
 	var req struct {
 		UserPoolID                      string                  `json:"UserPoolId"`
 		ClientID                        string                  `json:"ClientId"`
@@ -290,7 +293,7 @@ func (s *Service) updateUserPoolClient(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	s.log.Info("user pool client updated",
+	log.Info("user pool client updated",
 		zap.String("poolId", req.UserPoolID), zap.String("clientId", req.ClientID))
 	s.writeJSON(w, r, http.StatusOK, map[string]any{"UserPoolClient": toClientWire(c)})
 }

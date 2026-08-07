@@ -329,6 +329,7 @@ func (h *Handler) unsubscribeURL(subARN string) string {
 // protocols and respects FilterPolicy. A protocol with no delivery
 // implementation is reported through failDelivery rather than dropped.
 func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMessage string, env snsNotificationEnvelope, subs []*Subscription, msgAttrs map[string]messageAttribute) {
+	log := h.log.WithRecorder(ctx)
 	// Filter-policy matching works on plain string values. Derive them at most
 	// once per publish rather than once per subscription, and only when some
 	// subscription actually carries a policy.
@@ -356,7 +357,7 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 		subEnv.UnsubscribeURL = h.unsubscribeURL(sub.SubscriptionARN)
 		jsonBytes, err := json.Marshal(subEnv)
 		if err != nil {
-			h.log.Error("SNS fan-out: failed to marshal envelope",
+			log.Error("SNS fan-out: failed to marshal envelope",
 				zap.String("subscription", sub.SubscriptionARN), zap.Error(err))
 			continue
 		}
@@ -581,10 +582,11 @@ func (h *Handler) deliverToLambda(ctx context.Context, d delivery, msgAttrs map[
 // Without a RedrivePolicy the message is genuinely lost — that is AWS's
 // behaviour too — but it is lost loudly.
 func (h *Handler) failDelivery(ctx context.Context, d delivery, reason string) {
+	log := h.log.WithRecorder(ctx)
 	dlq := deadLetterQueueName(d.sub.Attributes)
 	if dlq != "" && h.enqueuer != nil {
 		if err := h.enqueuer.EnqueueRaw(ctx, dlq, d.jsonBody); err != nil {
-			h.log.Error("SNS fan-out: failed to dead-letter an undelivered notification",
+			log.Error("SNS fan-out: failed to dead-letter an undelivered notification",
 				zap.String("subscription", d.sub.SubscriptionARN),
 				zap.String("dead_letter_queue", dlq),
 				zap.Error(err))
@@ -594,7 +596,7 @@ func (h *Handler) failDelivery(ctx context.Context, d delivery, reason string) {
 		dlq = ""
 	}
 
-	h.log.Error("SNS fan-out: delivery failed",
+	log.Error("SNS fan-out: delivery failed",
 		zap.String("subscription", d.sub.SubscriptionARN),
 		zap.String("protocol", d.sub.Protocol),
 		zap.String("endpoint", d.sub.Endpoint),

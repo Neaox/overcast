@@ -19,12 +19,14 @@ import (
 // via Service.ReconcileNetworks. It delegates to the active strategy and must
 // tolerate every error path without aborting overcastd startup.
 func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.NetworkSummary) {
+	log := h.log.WithRecorder(ctx)
+
 	if !h.dockerReady.Load() {
 		return
 	}
 	vpcs, aerr := h.store.listVPCs(ctx)
 	if aerr != nil {
-		h.log.Error("reconcile networks: list VPCs", zap.String("error", aerr.Message))
+		log.Error("reconcile networks: list VPCs", zap.String("error", aerr.Message))
 		return
 	}
 	h.vpcStrategy.Reconcile(ctx, vpcs, networks)
@@ -48,23 +50,27 @@ func (h *Handler) reconcileNetworks(ctx context.Context, networks []docker.Netwo
 // no container to attach, and reaching a bridge subnet is the host's routing
 // question rather than ours.
 func (h *Handler) joinVPCNetwork(ctx context.Context, netID string) {
+	log := h.log.WithRecorder(ctx)
+
 	self, ok := h.selfContainer()
 	if !ok || netID == "" {
 		return
 	}
 	if err := h.docker.ConnectNetwork(ctx, netID, self); err != nil {
-		h.log.Warn("vpc network: could not attach Overcast to the VPC network — "+
+		log.Warn("vpc network: could not attach Overcast to the VPC network — "+
 			"the load balancer data plane cannot reach tasks in this VPC",
 			zap.String("network", netID), zap.Error(err))
 		return
 	}
-	h.log.Debug("vpc network: Overcast attached", zap.String("network", netID))
+	log.Debug("vpc network: Overcast attached", zap.String("network", netID))
 }
 
 // leaveVPCNetwork detaches Overcast from a VPC network. Docker refuses to
 // remove a network that still has endpoints, so the join above would otherwise
 // make every VPC network undeletable.
 func (h *Handler) leaveVPCNetwork(ctx context.Context, netID string) {
+	log := h.log.WithRecorder(ctx)
+
 	self, ok := h.selfContainer()
 	if !ok || netID == "" {
 		return
@@ -72,7 +78,7 @@ func (h *Handler) leaveVPCNetwork(ctx context.Context, netID string) {
 	if err := h.docker.DisconnectNetwork(ctx, netID, self); err != nil {
 		// Not being attached is the common case here (host mode, a network
 		// created before this ran), and Docker reports it as an error.
-		h.log.Debug("vpc network: detach Overcast",
+		log.Debug("vpc network: detach Overcast",
 			zap.String("network", netID), zap.Error(err))
 	}
 }

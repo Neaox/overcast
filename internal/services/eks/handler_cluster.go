@@ -402,7 +402,8 @@ func (s *Service) deleteCluster(w http.ResponseWriter, r *http.Request) {
 		if !runtimeFound || strings.TrimSpace(runtime.containerID) == "" {
 			runtime, runtimeFound, err = s.reconcileLiveClusterRuntime(ctx, region, name)
 			if err != nil {
-				s.log.Warn("failed to reconcile live cluster runtime during delete; skipping container cleanup",
+				log := s.log.WithRecorder(ctx)
+				log.Warn("failed to reconcile live cluster runtime during delete; skipping container cleanup",
 					zap.String("cluster", name), zap.Error(err))
 				runtimeFound = false
 			}
@@ -414,7 +415,8 @@ func (s *Service) deleteCluster(w http.ResponseWriter, r *http.Request) {
 			// block cleanup when the underlying container was recreated.
 			reconciled, reconciledFound, reconcileErr := s.reconcileLiveClusterRuntime(ctx, region, name)
 			if reconcileErr != nil {
-				s.log.Warn("failed to reconcile stale live cluster runtime during delete; using cached runtime",
+				log := s.log.WithRecorder(ctx)
+				log.Warn("failed to reconcile stale live cluster runtime during delete; using cached runtime",
 					zap.String("cluster", name), zap.Error(reconcileErr))
 			} else {
 				if reconciledFound {

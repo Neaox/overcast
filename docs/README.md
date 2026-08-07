@@ -460,7 +460,9 @@ services:
 
 ## Debug endpoints
 
-Set `OVERCAST_DEBUG=true` to enable the `/_debug` namespace:
+Set `OVERCAST_DEBUG=true` to enable the `/_debug` namespace and request tracing.
+Every response carries a request ID (`x-amzn-requestid` for most services,
+`x-amz-request-id` for S3) which can be used to look up the full trace:
 
 | Endpoint                    | Method | Description                                           |
 | --------------------------- | ------ | ----------------------------------------------------- |
@@ -476,6 +478,9 @@ Set `OVERCAST_DEBUG=true` to enable the `/_debug` namespace:
 | `/_debug/reset/{service}`   | POST   | Wipe state for one service                            |
 | `/_debug/metrics`           | GET    | Storage diagnostics: flush history, seed duration, pending-log size; `?includeRowCounts=true` adds per-namespace row counts |
 | `/_debug/pprof/`            | GET    | Go pprof index (goroutine, heap, CPU profiles, etc.)  |
+| `/_debug/trace/{requestId}` | GET    | Full trace for one request: bodies, headers, log entries, AWS errors |
+| `/_debug/traces`            | GET    | Paginated list of recent traces; filterable by `?service=`, `?method=`, `?path=`, `?status=`, `?search=` |
+| `/_debug/traces/count`      | GET    | Current trace buffer count and capacity               |
 
 ---
 

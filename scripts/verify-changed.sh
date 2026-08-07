@@ -127,10 +127,13 @@ _fp_go() {
 # Vet rather than test: this stays a compile-and-vet gate, matching the
 # script's charter of not running the suite. Every set carries `slim`, so none
 # of them needs a built web/dist.
+# `go test -run='^$'` compiles test files (which `go vet` does not) while
+# running zero tests — catches undefined helpers and other compile-only errors
+# in test code.
 _ci_build_tags='slim slim,nosqlite slim,dev'
 
 _fp_tags() {
-  _fingerprint "go vet -tags [$_ci_build_tags] ./..." \
+  _fingerprint "go test -run _ -tags [$_ci_build_tags] ./..." \
     '*.go' go.mod go.sum ':(exclude)compat/suites/*'
 }
 
@@ -192,7 +195,7 @@ if [ -n "$go_changed" ]; then
   fi
 fi
 
-# ---- Go: vet under CI's build tags -----------------------------------------
+# ---- Go: vet + test-file compilation under CI's build tags -----------------
 if [ -n "$go_changed" ]; then
   fp=$(_fp_tags)
   if [ "$force" -eq 0 ] && [ -n "$fp" ] && [ "$(_cache_get vet-tags)" = "$fp" ]; then
@@ -201,11 +204,11 @@ if [ -n "$go_changed" ]; then
     tags_failed=""
     for tagset in $_ci_build_tags; do
       if command -v go >/dev/null 2>&1; then
-        go vet -tags "$tagset" ./... || tags_failed="$tags_failed vet(-tags $tagset)"
+        go test -run='^$' -count=1 -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
       elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
-        scripts/docker-go.sh vet -tags "$tagset" ./... || tags_failed="$tags_failed vet(-tags $tagset)"
+        scripts/docker-go.sh test -run='^$' -count=1 -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
       else
-        skipped="$skipped vet-tags(no go/docker)"
+        skipped="$skipped test-compile(no go/docker)"
         fp="" # never ran, so there is no pass to cache and none to invalidate
         break
       fi
@@ -213,6 +216,28 @@ if [ -n "$go_changed" ]; then
     failed="$failed$tags_failed"
     if [ -n "$fp" ]; then
       if [ -z "$tags_failed" ]; then _cache_put vet-tags "$fp"; else _cache_put vet-tags ""; fi
+    fi
+  fi
+fi
+
+# ---- Go: run tests in packages touched by this branch ----------------------
+if [ -n "$go_changed" ]; then
+  test_pkgs=$(for f in $(printf '%s\n' "$changed" | grep '\.go$'); do
+    d=$(dirname "$f")
+    if [ -f "$d" ]; then d="."; fi
+    while [ ! -f "$d/go.mod" ] && [ "$d" != "." ]; do d=$(dirname "$d"); done
+    [ -f "$d/go.mod" ] && printf '%s/...\n' "$d"
+  done | sort -u | tr '\n' ' ')
+  # Extract unique package paths from changed files
+  if [ -n "$test_pkgs" ]; then
+    # Only run under the default tag set (it's the most common path).
+    # The tag-aware vet pass above already caught compile errors for all sets.
+    if command -v go >/dev/null 2>&1; then
+      go test -count=1 -tags slim $test_pkgs || failed="$failed test-run"
+    elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
+      scripts/docker-go.sh test -count=1 -tags slim $test_pkgs || failed="$failed test-run"
+    else
+      skipped="$skipped test-run(no go/docker)"
     fi
   fi
 fi

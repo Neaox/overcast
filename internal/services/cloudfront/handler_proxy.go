@@ -32,6 +32,7 @@ var proxyClient = &http.Client{
 func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 	distID := chi.URLParam(r, "distId")
 	ctx := r.Context()
+	log := h.log.WithRecorder(ctx)
 
 	// Wrap the response writer to capture status+bytes for access logging.
 	rec := newResponseRecorder(w)
@@ -136,7 +137,7 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "https://"+serviceutil.FoldHostname(r.Host)+r.RequestURI, http.StatusMovedPermanently)
 			return
 		}
-		h.warnViewerPolicyNotEnforceable(distID, viewerProtoPolicy)
+		h.warnViewerPolicyNotEnforceable(ctx, distID, viewerProtoPolicy)
 	}
 
 	// Geo-restriction enforcement.
@@ -214,7 +215,7 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 	// an origin GROUP; a group resolves to its members in failover order.
 	candidates, failoverCodes := resolveOriginTargets(cfg, targetOriginID)
 	if len(candidates) == 0 {
-		h.log.Error("origin not found in distribution config",
+		log.Error("origin not found in distribution config",
 			zap.String("distId", distID),
 			zap.String("targetOriginId", targetOriginID),
 		)
@@ -224,7 +225,7 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	resp, originURL, err := h.dispatchToOrigins(ctx, r, reqPath, candidates, failoverCodes)
 	if err != nil {
-		h.log.Error("origin request failed",
+		log.Error("origin request failed",
 			zap.String("originURL", originURL),
 			zap.Error(err),
 		)
@@ -289,7 +290,7 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, maxProxyResponseBytes))
 		if readErr != nil {
-			h.log.Error("failed to read origin response body", zap.Error(readErr))
+			log.Error("failed to read origin response body", zap.Error(readErr))
 			http.Error(w, "Failed to read origin response", http.StatusBadGateway)
 			return
 		}
@@ -642,9 +643,10 @@ func (h *Handler) requestIsHTTPS(r *http.Request) bool {
 // distribution's HTTPS viewer policy is being served as allow-all. Silence here
 // would be its own trap: the policy is in the distribution config the user
 // wrote, so its absence needs a reason they can find.
-func (h *Handler) warnViewerPolicyNotEnforceable(distID, policy string) {
+func (h *Handler) warnViewerPolicyNotEnforceable(ctx context.Context, distID, policy string) {
 	h.tlsPolicyWarnOnce.Do(func() {
-		h.log.Warn("serving an HTTPS-only viewer protocol policy over plain HTTP",
+		log := h.log.WithRecorder(ctx)
+		log.Warn("serving an HTTPS-only viewer protocol policy over plain HTTP",
 			zap.String("distributionId", distID),
 			zap.String("viewerProtocolPolicy", policy),
 			zap.String("reason", "this server is not serving TLS, so the policy cannot be satisfied by any client"),
@@ -724,6 +726,7 @@ func (h *Handler) dispatchToOrigins(
 	ctx context.Context, r *http.Request, reqPath string,
 	candidates []*Origin, failoverCodes map[int]bool,
 ) (*http.Response, string, error) {
+	log := h.log.WithRecorder(ctx)
 	canFailOver := len(candidates) > 1 && requestCanFailOver(r)
 
 	var lastErr error
@@ -761,7 +764,7 @@ func (h *Handler) dispatchToOrigins(
 			if isLast || !canFailOver {
 				return nil, originURL, lastErr
 			}
-			h.log.Warn("origin unreachable, failing over to the next group member",
+			log.Warn("origin unreachable, failing over to the next group member",
 				zap.String("originId", origin.ID),
 				zap.String("originURL", originURL),
 				zap.Error(err),
@@ -771,7 +774,7 @@ func (h *Handler) dispatchToOrigins(
 
 		if !isLast && canFailOver && failoverCodes[resp.StatusCode] {
 			resp.Body.Close()
-			h.log.Warn("origin returned a failover status, trying the next group member",
+			log.Warn("origin returned a failover status, trying the next group member",
 				zap.String("originId", origin.ID),
 				zap.Int("status", resp.StatusCode),
 			)

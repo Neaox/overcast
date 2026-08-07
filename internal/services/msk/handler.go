@@ -98,8 +98,9 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer h.dockerWg.Done()
 			bgCtx := clusterRegionCtx(clusterARNCopy)
+			log := h.log.WithRecorder(bgCtx)
 			if err := h.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-				h.log.Warn("failed to start Docker container for MSK cluster — falling back to metadata-only",
+				log.Warn("failed to start Docker container for MSK cluster — falling back to metadata-only",
 					zap.String("cluster", clusterARNCopy), zap.Error(err))
 				h.clusterFallbackActive(clusterARNCopy)
 			}
@@ -195,8 +196,9 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.scheduler.AfterScoped(serviceutil.ARNRegion(clusterArn), clusterArn, "delete", 50*time.Millisecond, func(ctx context.Context) {
+		log := h.log.WithRecorder(ctx)
 		if aerr := h.store.deleteCluster(ctx, clusterARNCopy); aerr != nil {
-			h.log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
+			log.Warn("failed to delete MSK cluster record", zap.String("cluster", clusterARNCopy), zap.Error(aerr))
 		}
 	})
 
@@ -527,8 +529,9 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 			go func() {
 				defer h.dockerWg.Done()
 				bgCtx := clusterRegionCtx(clusterARNCopy)
+				log := h.log.WithRecorder(bgCtx)
 				if err := h.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-					h.log.Warn("failed to start Docker container for MSK V2 cluster — falling back to metadata-only",
+					log.Warn("failed to start Docker container for MSK V2 cluster — falling back to metadata-only",
 						zap.String("cluster", clusterARNCopy), zap.Error(err))
 					h.clusterFallbackActive(clusterARNCopy)
 				}

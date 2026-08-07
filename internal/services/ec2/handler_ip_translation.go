@@ -10,6 +10,8 @@ import (
 )
 
 func (h *Handler) allocatePrivateIPForSubnet(ctx context.Context, subnetID string) (apiIP, realIP, vpcID string) {
+	log := h.log.WithRecorder(ctx)
+
 	if subnetID == "" {
 		legacy := fmt.Sprintf("10.0.0.%d", syntheticIPCounter.Add(1)%254+1)
 		return legacy, legacy, ""
@@ -22,7 +24,7 @@ func (h *Handler) allocatePrivateIPForSubnet(ctx context.Context, subnetID strin
 	vpc, aerr := h.store.getVPC(ctx, sub.VpcID)
 	if aerr != nil {
 		legacy := fmt.Sprintf("10.0.0.%d", syntheticIPCounter.Add(1)%254+1)
-		h.log.Warn("allocatePrivateIPForSubnet: failed to load VPC, using synthetic IP",
+		log.Warn("allocatePrivateIPForSubnet: failed to load VPC, using synthetic IP",
 			zap.String("subnet", subnetID),
 			zap.Error(aerr))
 		return legacy, legacy, sub.VpcID
@@ -30,7 +32,7 @@ func (h *Handler) allocatePrivateIPForSubnet(ctx context.Context, subnetID strin
 	api, err := h.vpcStrategy.AllocatePrivateIP(ctx, vpc)
 	if err != nil || api == "" {
 		legacy := fmt.Sprintf("10.0.0.%d", syntheticIPCounter.Add(1)%254+1)
-		h.log.Warn("allocatePrivateIPForSubnet: strategy allocation failed, using synthetic IP",
+		log.Warn("allocatePrivateIPForSubnet: strategy allocation failed, using synthetic IP",
 			zap.String("vpc", vpc.VpcID),
 			zap.Error(err))
 		return legacy, legacy, vpc.VpcID

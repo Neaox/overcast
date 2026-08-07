@@ -113,8 +113,9 @@ func layerToWireResponse(lv *LayerVersion) layerVersionWireResponse {
 // PublishLayerVersion handles POST /2015-03-31/layers/{layerName}/versions.
 // https://docs.aws.amazon.com/lambda/latest/api/API_PublishLayerVersion.html
 func (h *Handler) PublishLayerVersion(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	layerName := chi.URLParam(r, "layerName")
-	h.log.Debug("publish layer version", zap.String("layer", layerName))
+	log.Debug("publish layer version", zap.String("layer", layerName))
 	ctx := r.Context()
 
 	var req publishLayerVersionRequest
@@ -125,7 +126,7 @@ func (h *Handler) PublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 
 	version, err := h.ls.nextLayerVersion(ctx, layerName)
 	if err != nil {
-		h.log.Error("publish layer version: counter", zap.String("layer", layerName), zap.Error(err))
+		log.Error("publish layer version: counter", zap.String("layer", layerName), zap.Error(err))
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
@@ -142,7 +143,7 @@ func (h *Handler) PublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 		if zip, err := h.s3Fetch(ctx, req.Content.S3Bucket, req.Content.S3Key); err == nil {
 			content = zip
 		} else {
-			h.log.Warn("lambda: publish layer version: s3 fetch failed",
+			log.Warn("lambda: publish layer version: s3 fetch failed",
 				zap.String("layer", layerName),
 				zap.String("bucket", req.Content.S3Bucket),
 				zap.String("key", req.Content.S3Key),
@@ -168,7 +169,7 @@ func (h *Handler) PublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Debug("layer version published", zap.String("layer", layerName), zap.Int64("version", version))
+	log.Debug("layer version published", zap.String("layer", layerName), zap.Int64("version", version))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -178,9 +179,10 @@ func (h *Handler) PublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 // GetLayerVersion handles GET /2015-03-31/layers/{layerName}/versions/{versionNumber}.
 // https://docs.aws.amazon.com/lambda/latest/api/API_GetLayerVersion.html
 func (h *Handler) GetLayerVersion(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	layerName := chi.URLParam(r, "layerName")
 	versionStr := chi.URLParam(r, "versionNumber")
-	h.log.Debug("get layer version", zap.String("layer", layerName), zap.String("version", versionStr))
+	log.Debug("get layer version", zap.String("layer", layerName), zap.String("version", versionStr))
 
 	version, err := strconv.ParseInt(versionStr, 10, 64)
 	if err != nil {
@@ -249,8 +251,9 @@ func (h *Handler) GetLayerVersionMetadata(w http.ResponseWriter, r *http.Request
 // https://docs.aws.amazon.com/lambda/latest/api/API_ListLayerVersions.html
 // AWS returns versions in descending order (newest first).
 func (h *Handler) ListLayerVersions(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	layerName := chi.URLParam(r, "layerName")
-	h.log.Debug("list layer versions", zap.String("layer", layerName))
+	log.Debug("list layer versions", zap.String("layer", layerName))
 
 	versions, aerr := h.ls.listLayerVersions(r.Context(), layerName)
 	if aerr != nil {
@@ -277,7 +280,8 @@ func (h *Handler) ListLayerVersions(w http.ResponseWriter, r *http.Request) {
 // https://docs.aws.amazon.com/lambda/latest/api/API_ListLayers.html
 // Returns one entry per distinct layer name, with its latest version.
 func (h *Handler) ListLayers(w http.ResponseWriter, r *http.Request) {
-	h.log.Debug("list layers")
+	log := h.log.WithRecorder(r.Context())
+	log.Debug("list layers")
 	ctx := r.Context()
 
 	names, aerr := h.ls.listAllLayerNames(ctx)
@@ -314,9 +318,10 @@ func (h *Handler) ListLayers(w http.ResponseWriter, r *http.Request) {
 // DeleteLayerVersion handles DELETE /2015-03-31/layers/{layerName}/versions/{versionNumber}.
 // https://docs.aws.amazon.com/lambda/latest/api/API_DeleteLayerVersion.html
 func (h *Handler) DeleteLayerVersion(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	layerName := chi.URLParam(r, "layerName")
 	versionStr := chi.URLParam(r, "versionNumber")
-	h.log.Debug("delete layer version", zap.String("layer", layerName), zap.String("version", versionStr))
+	log.Debug("delete layer version", zap.String("layer", layerName), zap.String("version", versionStr))
 	ctx := r.Context()
 
 	version, err := strconv.ParseInt(versionStr, 10, 64)

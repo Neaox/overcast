@@ -165,7 +165,8 @@ func (s *Service) getZone(ctx context.Context, id string) (*HostedZone, bool, er
 	}
 	var z HostedZone
 	if err := json.Unmarshal([]byte(raw), &z); err != nil {
-		s.log.Warn("skipping malformed hosted zone record", zap.String("zoneId", id), zap.Error(err))
+		log := s.log.WithRecorder(ctx)
+		log.Warn("skipping malformed hosted zone record", zap.String("zoneId", id), zap.Error(err))
 		return nil, false, nil
 	}
 	return &z, true, nil
@@ -181,7 +182,8 @@ func (s *Service) listAllZones(ctx context.Context) ([]*HostedZone, error) {
 	for _, kv := range pairs {
 		var z HostedZone
 		if err := json.Unmarshal([]byte(kv.Value), &z); err != nil {
-			s.log.Warn("skipping malformed hosted zone record", zap.String("key", kv.Key), zap.Error(err))
+			log := s.log.WithRecorder(ctx)
+			log.Warn("skipping malformed hosted zone record", zap.String("key", kv.Key), zap.Error(err))
 			continue
 		}
 		out = append(out, &z)
@@ -218,7 +220,8 @@ func (s *Service) listRRSets(ctx context.Context, zoneID string) ([]*ResourceRec
 	for _, kv := range pairs {
 		var rr ResourceRecordSet
 		if err := json.Unmarshal([]byte(kv.Value), &rr); err != nil {
-			s.log.Warn("skipping malformed record set", zap.String("key", kv.Key), zap.Error(err))
+			log := s.log.WithRecorder(ctx)
+			log.Warn("skipping malformed record set", zap.String("key", kv.Key), zap.Error(err))
 			continue
 		}
 		out = append(out, &rr)
@@ -293,7 +296,8 @@ func (s *Service) getTags(ctx context.Context, resourceType, bareID string) (map
 	}
 	var tags map[string]string
 	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		s.log.Warn("skipping malformed tag record", zap.String("resource", tagKey(resourceType, bareID)), zap.Error(err))
+		log := s.log.WithRecorder(ctx)
+		log.Warn("skipping malformed tag record", zap.String("resource", tagKey(resourceType, bareID)), zap.Error(err))
 		return map[string]string{}, nil
 	}
 	return tags, nil
@@ -331,7 +335,8 @@ func (s *Service) getHealthCheck(ctx context.Context, id string) (*HealthCheck, 
 	}
 	var hc HealthCheck
 	if err := json.Unmarshal([]byte(raw), &hc); err != nil {
-		s.log.Warn("skipping malformed health check record", zap.String("id", id), zap.Error(err))
+		log := s.log.WithRecorder(ctx)
+		log.Warn("skipping malformed health check record", zap.String("id", id), zap.Error(err))
 		return nil, false, nil
 	}
 	return &hc, true, nil
@@ -348,7 +353,8 @@ func (s *Service) listAllHealthChecks(ctx context.Context) ([]*HealthCheck, erro
 	for _, kv := range pairs {
 		var hc HealthCheck
 		if err := json.Unmarshal([]byte(kv.Value), &hc); err != nil {
-			s.log.Warn("skipping malformed health check record", zap.String("key", kv.Key), zap.Error(err))
+			log := s.log.WithRecorder(ctx)
+			log.Warn("skipping malformed health check record", zap.String("key", kv.Key), zap.Error(err))
 			continue
 		}
 		out = append(out, &hc)

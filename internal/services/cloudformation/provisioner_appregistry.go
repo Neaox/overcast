@@ -56,6 +56,7 @@ func extractAwsApplicationTag(props map[string]any) string {
 // which lets the frontend's reverse-map hit regardless of whether a detail
 // page knows the ARN or the bare name.
 func (p *provisioner) autoAssociateResource(ctx context.Context, rCtx *resolveContext, appRef, physID string) {
+	log := p.log.WithRecorder(ctx)
 	// The tag value may be an application ID, name, or ARN. Chi's URL-param
 	// matcher captures a single path segment, so ARNs (which contain `/` in
 	// the `/applications/<id>` tail) can't be passed through directly — take
@@ -70,7 +71,7 @@ func (p *provisioner) autoAssociateResource(ctx context.Context, rCtx *resolveCo
 	// associations from the `awsApplication` tag.
 	path := fmt.Sprintf("/applications/%s/resources/RESOURCE_TAG_VALUE/%s", appKey, physID)
 	if _, err := internalRequest(ctx, p.router, rCtx.Region, http.MethodPut, path, "application/json", []byte(`{}`)); err != nil {
-		p.log.Warn("appregistry auto-association failed",
+		log.Warn("appregistry auto-association failed",
 			zap.String("application", appRef),
 			zap.String("resource", physID),
 			zap.Error(err))

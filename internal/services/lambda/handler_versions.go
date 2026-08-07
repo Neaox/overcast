@@ -175,8 +175,9 @@ func (h *Handler) latestVersionResponse(fn *Function) versionConfigurationRespon
 // PublishVersion handles POST /2015-03-31/functions/{name}/versions.
 // https://docs.aws.amazon.com/lambda/latest/api/API_PublishVersion.html
 func (h *Handler) PublishVersion(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("publish version", zap.String("function", name))
+	log.Debug("publish version", zap.String("function", name))
 	ctx := r.Context()
 
 	var req publishVersionRequest
@@ -207,7 +208,7 @@ func (h *Handler) PublishVersion(w http.ResponseWriter, r *http.Request) {
 
 	versionNum, err := h.ls.nextVersion(ctx, name)
 	if err != nil {
-		h.log.Error("publish version: next version", zap.String("function", name), zap.Error(err))
+		log.Error("publish version: next version", zap.String("function", name), zap.Error(err))
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
@@ -237,8 +238,9 @@ func (h *Handler) PublishVersion(w http.ResponseWriter, r *http.Request) {
 // ListVersionsByFunction handles GET /2015-03-31/functions/{name}/versions.
 // https://docs.aws.amazon.com/lambda/latest/api/API_ListVersionsByFunction.html
 func (h *Handler) ListVersionsByFunction(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("list versions", zap.String("function", name))
+	log.Debug("list versions", zap.String("function", name))
 	ctx := r.Context()
 
 	fn, aerr := h.ls.getFunction(ctx, name)
@@ -278,8 +280,9 @@ func (h *Handler) ListVersionsByFunction(w http.ResponseWriter, r *http.Request)
 // CreateAlias handles POST /2015-03-31/functions/{name}/aliases.
 // https://docs.aws.amazon.com/lambda/latest/api/API_CreateAlias.html
 func (h *Handler) CreateAlias(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("create alias", zap.String("function", name))
+	log.Debug("create alias", zap.String("function", name))
 	ctx := r.Context()
 
 	var req createAliasRequest
@@ -350,9 +353,10 @@ func (h *Handler) CreateAlias(w http.ResponseWriter, r *http.Request) {
 // GetAlias handles GET /2015-03-31/functions/{name}/aliases/{aliasName}.
 // https://docs.aws.amazon.com/lambda/latest/api/API_GetAlias.html
 func (h *Handler) GetAlias(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	aliasName := chi.URLParam(r, "aliasName")
-	h.log.Debug("get alias", zap.String("function", name), zap.String("alias", aliasName))
+	log.Debug("get alias", zap.String("function", name), zap.String("alias", aliasName))
 	ctx := r.Context()
 
 	a, aerr := h.ls.getAlias(ctx, name, aliasName)
@@ -377,9 +381,10 @@ func (h *Handler) GetAlias(w http.ResponseWriter, r *http.Request) {
 // UpdateAlias handles PUT /2015-03-31/functions/{name}/aliases/{aliasName}.
 // https://docs.aws.amazon.com/lambda/latest/api/API_UpdateAlias.html
 func (h *Handler) UpdateAlias(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	aliasName := chi.URLParam(r, "aliasName")
-	h.log.Debug("update alias", zap.String("function", name), zap.String("alias", aliasName))
+	log.Debug("update alias", zap.String("function", name), zap.String("alias", aliasName))
 	ctx := r.Context()
 
 	var req updateAliasRequest
@@ -427,8 +432,9 @@ func (h *Handler) UpdateAlias(w http.ResponseWriter, r *http.Request) {
 // ListAliases handles GET /2015-03-31/functions/{name}/aliases.
 // https://docs.aws.amazon.com/lambda/latest/api/API_ListAliases.html
 func (h *Handler) ListAliases(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
-	h.log.Debug("list aliases", zap.String("function", name))
+	log.Debug("list aliases", zap.String("function", name))
 	ctx := r.Context()
 
 	fn, aerr := h.ls.getFunction(ctx, name)
@@ -464,9 +470,10 @@ func (h *Handler) ListAliases(w http.ResponseWriter, r *http.Request) {
 // DeleteAlias handles DELETE /2015-03-31/functions/{name}/aliases/{aliasName}.
 // https://docs.aws.amazon.com/lambda/latest/api/API_DeleteAlias.html
 func (h *Handler) DeleteAlias(w http.ResponseWriter, r *http.Request) {
+	log := h.log.WithRecorder(r.Context())
 	name := chi.URLParam(r, "name")
 	aliasName := chi.URLParam(r, "aliasName")
-	h.log.Debug("delete alias", zap.String("function", name), zap.String("alias", aliasName))
+	log.Debug("delete alias", zap.String("function", name), zap.String("alias", aliasName))
 	ctx := r.Context()
 
 	a, aerr := h.ls.getAlias(ctx, name, aliasName)

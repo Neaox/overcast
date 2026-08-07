@@ -1,6 +1,7 @@
 package serviceutil
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,8 +12,10 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/logging"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 // ── Trace level ──────────────────────────────────────────────────────────────
@@ -170,6 +173,15 @@ func wrapTag(l *zap.Logger, tag string) *zap.Logger {
 //	        ...
 //	    }
 //	}
+//
+// ServiceLogger wraps a *zap.Logger with a "service" field and console-mode
+// tag. Every service creates one at construction time and stores it on its
+// Handler. Handlers that perform structured logging must opt into per-request
+// trace capture at the top of each handler function:
+//
+//	log := h.log.WithRecorder(r.Context())  // or s.log.WithRecorder(ctx)
+//
+// See WithRecorder and CONTRIBUTING.md § How to add a service, step 2.
 type ServiceLogger struct {
 	log     *zap.Logger
 	service string
@@ -283,4 +295,31 @@ func (l *ServiceLogger) WithOperation(op string) *ServiceLogger {
 // Logger returns the underlying zap.Logger for cases where raw zap is needed.
 func (l *ServiceLogger) Logger() *zap.Logger {
 	return l.log
+}
+
+// WithRecorder returns a ServiceLogger whose log calls are captured into the
+// per-request trace Recorder (when OVERCAST_DEBUG is on and the DebugTrace
+// middleware has injected one into the request context). When the Recorder
+// is absent (debug off, or a non-request goroutine) the original logger is
+// returned unchanged — zero cost.
+//
+// This is the canonical pattern for opting a handler into per-request log
+// capture. Add it once at the top of every handler function that uses the
+// service logger:
+//
+//	log := h.log.WithRecorder(r.Context())   // HTTP handlers
+//	log := s.log.WithRecorder(ctx)           // typed handlers with context.Context
+//
+// Then replace h.log.X / s.log.X with log.X in the handler body. All 21
+// services follow this convention; CONTRIBUTING.md § How to add a service
+// step 2 requires it for new services.
+func (l *ServiceLogger) WithRecorder(ctx context.Context) *ServiceLogger {
+	rec := trace.RecorderFromContext(ctx)
+	if rec == nil {
+		return l
+	}
+	return &ServiceLogger{
+		log:     trace.WithRecorder(l.log, rec, clock.New()),
+		service: l.service,
+	}
 }

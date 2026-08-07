@@ -13,6 +13,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/trace"
 )
 
 // detectService infers the AWS service from a request using the same signals
@@ -420,6 +421,18 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 				}
 			}
 
+			if rec := trace.RecorderFromContext(r.Context()); rec != nil {
+				rec.AddLog(trace.LogEntry{
+					Level:     logLevel(rw.status),
+					Message:   "request",
+					Timestamp: start,
+					Fields:    trace.ZapFieldsToMap(fields),
+				})
+				if rw.awsErrorCode != "" {
+					rec.SetMeta(r.RemoteAddr, r.UserAgent(), rw.awsErrorCode, rw.awsErrorMessage)
+				}
+			}
+
 			switch {
 			case rw.status >= 500:
 				log.Error("request failed", fields...)
@@ -430,4 +443,11 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 			}
 		})
 	}
+}
+
+func logLevel(status int) string {
+	if status >= 500 {
+		return "ERROR"
+	}
+	return "INFO"
 }

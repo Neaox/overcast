@@ -742,6 +742,7 @@ func (s *Service) issuerBase(ctx context.Context) string {
 // ─── typed auth challenge handlers ────────────────────────────────────────────
 
 func (s *Service) handlePasswordAuthTyped(ctx context.Context, client *UserPoolClient, params map[string]string) (*InitiateAuthResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	poolID := client.UserPoolID
 	username := params["USERNAME"]
 	password := params["PASSWORD"]
@@ -812,7 +813,7 @@ func (s *Service) handlePasswordAuthTyped(ctx context.Context, client *UserPoolC
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	s.attachNewDeviceMetadata(ctx, pool, result, params)
-	s.log.Info("user authenticated",
+	log.Info("user authenticated",
 		zap.String("poolId", poolID), zap.String("username", username))
 	s.publishTyped(ctx, events.CognitoSignIn, events.ResourcePayload{Name: username})
 	return &InitiateAuthResp{AuthenticationResult: result}, nil
@@ -861,6 +862,7 @@ func (s *Service) handleRefreshTokenAuthTyped(ctx context.Context, c *UserPoolCl
 }
 
 func (s *Service) handleUserAuthWithConfirmSessionTyped(ctx context.Context, client *UserPoolClient, params map[string]string, session string) (*InitiateAuthResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	username := params["USERNAME"]
 	if username == "" {
 		return nil, &protocol.AWSError{
@@ -955,7 +957,7 @@ func (s *Service) handleUserAuthWithConfirmSessionTyped(ctx context.Context, cli
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	_ = s.removeToken(ctx, session)
-	s.log.Info("user authenticated from confirm signup session",
+	log.Info("user authenticated from confirm signup session",
 		zap.String("poolId", client.UserPoolID), zap.String("username", username))
 	s.publishTyped(ctx, events.CognitoSignIn, events.ResourcePayload{Name: username})
 	return &InitiateAuthResp{AuthenticationResult: result}, nil
@@ -1345,6 +1347,7 @@ func (s *Service) startWebAuthnChallengeParameters(pool *UserPool, u *User) (map
 }
 
 func (s *Service) handleNewPasswordChallengeTyped(ctx context.Context, client *UserPoolClient, session string, responses map[string]string) (*RespondToAuthChallengeResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	poolID := client.UserPoolID
 	if session == "" {
 		return nil, &protocol.AWSError{
@@ -1399,7 +1402,7 @@ func (s *Service) handleNewPasswordChallengeTyped(ctx context.Context, client *U
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user completed new-password challenge",
+	log.Info("user completed new-password challenge",
 		zap.String("poolId", poolID), zap.String("username", u.Username))
 	s.publishTyped(ctx, events.CognitoUserConfirmed, events.ResourcePayload{Name: u.Username})
 	s.publishTyped(ctx, events.CognitoPasswordChanged, events.ResourcePayload{Name: u.Username})
@@ -1407,6 +1410,7 @@ func (s *Service) handleNewPasswordChallengeTyped(ctx context.Context, client *U
 }
 
 func (s *Service) handleMFAChallengeTyped(ctx context.Context, client *UserPoolClient, session string, responses map[string]string) (*RespondToAuthChallengeResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	poolID := client.UserPoolID
 	if session == "" {
 		return nil, &protocol.AWSError{
@@ -1446,7 +1450,7 @@ func (s *Service) handleMFAChallengeTyped(ctx context.Context, client *UserPoolC
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user completed MFA challenge",
+	log.Info("user completed MFA challenge",
 		zap.String("poolId", poolID), zap.String("username", u.Username))
 	s.publishTyped(ctx, events.CognitoSignIn, events.ResourcePayload{Name: u.Username})
 	return &RespondToAuthChallengeResp{AuthenticationResult: result}, nil
@@ -1455,6 +1459,7 @@ func (s *Service) handleMFAChallengeTyped(ctx context.Context, client *UserPoolC
 // ─── pool handlers ────────────────────────────────────────────────────────────
 
 func (s *Service) CreateUserPoolTyped(ctx context.Context, req *CreateUserPoolReq) (*CreateUserPoolResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	if aerr := validateUserPoolPolicies(req.Policies); aerr != nil {
 		return nil, aerr
 	}
@@ -1520,7 +1525,7 @@ func (s *Service) CreateUserPoolTyped(ctx context.Context, req *CreateUserPoolRe
 	if err := s.savePool(ctx, pool); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user pool created", zap.String("poolId", poolID), zap.String("name", req.PoolName))
+	log.Info("user pool created", zap.String("poolId", poolID), zap.String("name", req.PoolName))
 	s.publishTyped(ctx, events.CognitoUserPoolCreated, events.ResourcePayload{Name: req.PoolName, ARN: arn})
 	return &CreateUserPoolResp{UserPool: toUserPoolWire(pool)}, nil
 }
@@ -1543,6 +1548,7 @@ func (s *Service) DescribeUserPoolTyped(ctx context.Context, req *UserPoolIDReq)
 }
 
 func (s *Service) DeleteUserPoolTyped(ctx context.Context, req *UserPoolIDReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	if _, aerr := s.requirePoolTyped(ctx, req.UserPoolID); aerr != nil {
 		return nil, aerr
 	}
@@ -1550,7 +1556,7 @@ func (s *Service) DeleteUserPoolTyped(ctx context.Context, req *UserPoolIDReq) (
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	_ = s.removeSigningKey(ctx, req.UserPoolID)
-	s.log.Info("user pool deleted", zap.String("poolId", req.UserPoolID))
+	log.Info("user pool deleted", zap.String("poolId", req.UserPoolID))
 	s.publishTyped(ctx, events.CognitoUserPoolDeleted, events.ResourcePayload{Name: req.UserPoolID})
 	return &struct{}{}, nil
 }
@@ -1688,6 +1694,7 @@ func (s *Service) UpdateUserPoolTyped(ctx context.Context, req *UpdateUserPoolRe
 // ─── domain handlers ──────────────────────────────────────────────────────────
 
 func (s *Service) CreateUserPoolDomainTyped(ctx context.Context, req *DomainAndPoolReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	pool, aerr := s.requirePoolTyped(ctx, req.UserPoolID)
 	if aerr != nil {
 		return nil, aerr
@@ -1715,7 +1722,7 @@ func (s *Service) CreateUserPoolDomainTyped(ctx context.Context, req *DomainAndP
 	if err := s.savePool(ctx, pool); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user pool domain created",
+	log.Info("user pool domain created",
 		zap.String("poolId", req.UserPoolID), zap.String("domain", req.Domain))
 	return &struct{}{}, nil
 }
@@ -1738,6 +1745,7 @@ func (s *Service) DescribeUserPoolDomainTyped(ctx context.Context, req *Describe
 }
 
 func (s *Service) DeleteUserPoolDomainTyped(ctx context.Context, req *DomainAndPoolReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	pool, aerr := s.requirePoolTyped(ctx, req.UserPoolID)
 	if aerr != nil {
 		return nil, aerr
@@ -1749,7 +1757,7 @@ func (s *Service) DeleteUserPoolDomainTyped(ctx context.Context, req *DomainAndP
 		pool.Domain = ""
 		_ = s.savePool(ctx, pool)
 	}
-	s.log.Info("user pool domain deleted",
+	log.Info("user pool domain deleted",
 		zap.String("poolId", req.UserPoolID), zap.String("domain", req.Domain))
 	return &struct{}{}, nil
 }
@@ -1764,6 +1772,7 @@ func (s *Service) UpdateUserPoolDomainTyped(ctx context.Context, req *DomainAndP
 // ─── pool client handlers ─────────────────────────────────────────────────────
 
 func (s *Service) CreateUserPoolClientTyped(ctx context.Context, req *CreateUserPoolClientReq) (*CreateUserPoolClientResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	pool, aerr := s.requirePoolTyped(ctx, req.UserPoolID)
 	if aerr != nil {
 		return nil, aerr
@@ -1800,7 +1809,7 @@ func (s *Service) CreateUserPoolClientTyped(ctx context.Context, req *CreateUser
 	if err := s.saveClient(ctx, c); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user pool client created",
+	log.Info("user pool client created",
 		zap.String("poolId", req.UserPoolID), zap.String("clientId", c.ClientID))
 	s.publishTyped(ctx, events.CognitoClientCreated, events.ResourcePayload{Name: c.ClientName})
 	return &CreateUserPoolClientResp{UserPoolClient: toClientWire(c)}, nil
@@ -1818,13 +1827,14 @@ func (s *Service) DescribeUserPoolClientTyped(ctx context.Context, req *PoolAndC
 }
 
 func (s *Service) DeleteUserPoolClientTyped(ctx context.Context, req *PoolAndClientReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	if _, aerr := s.requirePoolTyped(ctx, req.UserPoolID); aerr != nil {
 		return nil, aerr
 	}
 	if err := s.removeClient(ctx, req.UserPoolID, req.ClientID); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user pool client deleted",
+	log.Info("user pool client deleted",
 		zap.String("poolId", req.UserPoolID), zap.String("clientId", req.ClientID))
 	s.publishTyped(ctx, events.CognitoClientDeleted, events.ResourcePayload{Name: req.ClientID})
 	return &struct{}{}, nil
@@ -1846,6 +1856,7 @@ func (s *Service) ListUserPoolClientsTyped(ctx context.Context, req *UserPoolIDR
 }
 
 func (s *Service) UpdateUserPoolClientTyped(ctx context.Context, req *UpdateUserPoolClientReq) (*UpdateUserPoolClientResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	pool, aerr := s.requirePoolTyped(ctx, req.UserPoolID)
 	if aerr != nil {
 		return nil, aerr
@@ -1914,7 +1925,7 @@ func (s *Service) UpdateUserPoolClientTyped(ctx context.Context, req *UpdateUser
 	if err := s.saveClient(ctx, c); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user pool client updated",
+	log.Info("user pool client updated",
 		zap.String("poolId", req.UserPoolID), zap.String("clientId", req.ClientID))
 	return &UpdateUserPoolClientResp{UserPoolClient: toClientWire(c)}, nil
 }
@@ -1922,6 +1933,7 @@ func (s *Service) UpdateUserPoolClientTyped(ctx context.Context, req *UpdateUser
 // ─── admin user handlers ──────────────────────────────────────────────────────
 
 func (s *Service) AdminCreateUserTyped(ctx context.Context, req *AdminCreateUserReq) (*AdminCreateUserResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	pool, aerr := s.requirePoolTyped(ctx, req.UserPoolID)
 	if aerr != nil {
 		return nil, aerr
@@ -1991,13 +2003,14 @@ func (s *Service) AdminCreateUserTyped(ctx context.Context, req *AdminCreateUser
 			s.sendTempPasswordSMS(pool, phone, u.Username, tempPw)
 		}
 	}
-	s.log.Info("admin created user",
+	log.Info("admin created user",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username))
 	s.publishTyped(ctx, events.CognitoUserCreated, events.ResourcePayload{Name: req.Username})
 	return &AdminCreateUserResp{User: toUserWire(u)}, nil
 }
 
 func (s *Service) AdminDeleteUserTyped(ctx context.Context, req *PoolAndUserReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	if _, aerr := s.requirePoolTyped(ctx, req.UserPoolID); aerr != nil {
 		return nil, aerr
 	}
@@ -2008,7 +2021,7 @@ func (s *Service) AdminDeleteUserTyped(ctx context.Context, req *PoolAndUserReq)
 	if err := s.removeUser(ctx, req.UserPoolID, u.Username); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("admin deleted user",
+	log.Info("admin deleted user",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username))
 	s.publishTyped(ctx, events.CognitoUserDeleted, events.ResourcePayload{Name: req.Username})
 	return &struct{}{}, nil
@@ -2034,6 +2047,7 @@ func (s *Service) AdminGetUserTyped(ctx context.Context, req *PoolAndUserReq) (*
 }
 
 func (s *Service) AdminSetUserPasswordTyped(ctx context.Context, req *AdminSetUserPasswordReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	if _, aerr := s.requirePoolTyped(ctx, req.UserPoolID); aerr != nil {
 		return nil, aerr
 	}
@@ -2054,7 +2068,7 @@ func (s *Service) AdminSetUserPasswordTyped(ctx context.Context, req *AdminSetUs
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("admin set user password",
+	log.Info("admin set user password",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username),
 		zap.Bool("permanent", req.Permanent))
 	s.publishTyped(ctx, events.CognitoUserUpdated, events.ResourcePayload{Name: req.Username})
@@ -2062,6 +2076,7 @@ func (s *Service) AdminSetUserPasswordTyped(ctx context.Context, req *AdminSetUs
 }
 
 func (s *Service) AdminConfirmSignUpTyped(ctx context.Context, req *PoolAndUserReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	if _, aerr := s.requirePoolTyped(ctx, req.UserPoolID); aerr != nil {
 		return nil, aerr
 	}
@@ -2080,7 +2095,7 @@ func (s *Service) AdminConfirmSignUpTyped(ctx context.Context, req *PoolAndUserR
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("admin confirmed user signup",
+	log.Info("admin confirmed user signup",
 		zap.String("poolId", req.UserPoolID), zap.String("username", req.Username))
 	s.publishTyped(ctx, events.CognitoUserConfirmed, events.ResourcePayload{Name: req.Username})
 	return &struct{}{}, nil
@@ -2285,6 +2300,7 @@ func (s *Service) AdminRespondToAuthChallengeTyped(ctx context.Context, req *Adm
 // ─── self-service sign-up handlers ────────────────────────────────────────────
 
 func (s *Service) SignUpTyped(ctx context.Context, req *SignUpReq) (*SignUpResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	c, aerr := s.requireClientByIDTyped(ctx, req.ClientID)
 	if aerr != nil {
 		return nil, aerr
@@ -2350,13 +2366,14 @@ func (s *Service) SignUpTyped(ctx context.Context, req *SignUpReq) (*SignUpResp,
 	if phone := u.phoneNumber(); phone != "" {
 		s.sendVerificationSMS(pool, phone, u.Username, code)
 	}
-	s.log.Info("user signed up",
+	log.Info("user signed up",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
 	s.publishTyped(ctx, events.CognitoUserCreated, events.ResourcePayload{Name: req.Username})
 	return &SignUpResp{UserConfirmed: false, UserSub: u.Sub}, nil
 }
 
 func (s *Service) ConfirmSignUpTyped(ctx context.Context, req *ConfirmSignUpReq) (*ConfirmSignUpResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	c, aerr := s.requireClientByIDTyped(ctx, req.ClientID)
 	if aerr != nil {
 		return nil, aerr
@@ -2402,7 +2419,7 @@ func (s *Service) ConfirmSignUpTyped(ctx context.Context, req *ConfirmSignUpReq)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user confirmed signup",
+	log.Info("user confirmed signup",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
 	s.publishTyped(ctx, events.CognitoUserConfirmed, events.ResourcePayload{Name: req.Username})
 	return &ConfirmSignUpResp{Session: session}, nil
@@ -2766,6 +2783,7 @@ func (s *Service) ForgotPasswordTyped(ctx context.Context, req *ClientUserSecret
 }
 
 func (s *Service) ConfirmForgotPasswordTyped(ctx context.Context, req *ConfirmForgotPasswordReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	c, aerr := s.requireClientByIDTyped(ctx, req.ClientID)
 	if aerr != nil {
 		return nil, aerr
@@ -2804,7 +2822,7 @@ func (s *Service) ConfirmForgotPasswordTyped(ctx context.Context, req *ConfirmFo
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("user confirmed password reset",
+	log.Info("user confirmed password reset",
 		zap.String("poolId", c.UserPoolID), zap.String("username", req.Username))
 	s.publishTyped(ctx, events.CognitoPasswordChanged, events.ResourcePayload{Name: req.Username})
 	return &struct{}{}, nil
@@ -2846,6 +2864,7 @@ func (s *Service) ChangePasswordTyped(ctx context.Context, req *ChangePasswordRe
 // ─── MFA handlers ─────────────────────────────────────────────────────────────
 
 func (s *Service) AssociateSoftwareTokenTyped(ctx context.Context, req *AccessTokenReq) (*AssociateSoftwareTokenResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	t, aerr := s.validateAccessTokenTyped(ctx, req.AccessToken)
 	if aerr != nil {
 		return nil, aerr
@@ -2860,13 +2879,14 @@ func (s *Service) AssociateSoftwareTokenTyped(ctx context.Context, req *AccessTo
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("TOTP secret generated",
+	log.Info("TOTP secret generated",
 		zap.String("poolId", t.UserPoolID), zap.String("username", t.Username))
 	s.publishTyped(ctx, events.CognitoUserUpdated, events.ResourcePayload{Name: t.Username})
 	return &AssociateSoftwareTokenResp{SecretCode: secret}, nil
 }
 
 func (s *Service) VerifySoftwareTokenTyped(ctx context.Context, req *VerifySoftwareTokenReq) (*VerifySoftwareTokenResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	t, aerr := s.validateAccessTokenTyped(ctx, req.AccessToken)
 	if aerr != nil {
 		return nil, aerr
@@ -2893,7 +2913,7 @@ func (s *Service) VerifySoftwareTokenTyped(ctx context.Context, req *VerifySoftw
 	if err := s.saveUser(ctx, u); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("TOTP verified",
+	log.Info("TOTP verified",
 		zap.String("poolId", t.UserPoolID), zap.String("username", t.Username))
 	s.publishTyped(ctx, events.CognitoUserUpdated, events.ResourcePayload{Name: t.Username})
 	return &VerifySoftwareTokenResp{Status: "SUCCESS"}, nil
@@ -3018,6 +3038,7 @@ func (s *Service) AdminSetUserMFAPreferenceTyped(ctx context.Context, req *Admin
 // ─── group handlers ───────────────────────────────────────────────────────────
 
 func (s *Service) CreateGroupTyped(ctx context.Context, req *CreateGroupReq) (*CreateGroupResp, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	if _, aerr := s.requirePoolTyped(ctx, req.UserPoolID); aerr != nil {
 		return nil, aerr
 	}
@@ -3043,7 +3064,7 @@ func (s *Service) CreateGroupTyped(ctx context.Context, req *CreateGroupReq) (*C
 	if err := s.saveGroup(ctx, g); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("group created",
+	log.Info("group created",
 		zap.String("poolId", req.UserPoolID), zap.String("group", req.GroupName))
 	s.publishTyped(ctx, events.CognitoGroupCreated, events.ResourcePayload{Name: req.GroupName})
 	return &CreateGroupResp{Group: toGroupWire(g)}, nil
@@ -3058,13 +3079,14 @@ func (s *Service) GetGroupTyped(ctx context.Context, req *PoolAndGroupReq) (*Get
 }
 
 func (s *Service) DeleteGroupTyped(ctx context.Context, req *PoolAndGroupReq) (*struct{}, *protocol.AWSError) {
+	log := s.log.WithRecorder(ctx)
 	if _, aerr := s.requireGroupTyped(ctx, req.UserPoolID, req.GroupName); aerr != nil {
 		return nil, aerr
 	}
 	if err := s.removeGroup(ctx, req.UserPoolID, req.GroupName); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	s.log.Info("group deleted",
+	log.Info("group deleted",
 		zap.String("poolId", req.UserPoolID), zap.String("group", req.GroupName))
 	s.publishTyped(ctx, events.CognitoGroupDeleted, events.ResourcePayload{Name: req.GroupName})
 	return &struct{}{}, nil

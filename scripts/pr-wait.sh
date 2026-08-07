@@ -110,6 +110,16 @@ fi
 
 pr="${1:-}"
 
+# Resolve gh — native bash, WSL Windows binary, or bust.
+if ! command -v gh >/dev/null 2>&1; then
+  if gh_exe="$(command -v gh.exe 2>/dev/null)"; then
+    gh() { "$gh_exe" "$@"; }
+  else
+    echo "pr-wait: gh not found. Install it: https://cli.github.com" >&2
+    exit 2
+  fi
+fi
+
 # shellcheck disable=SC2086 # $pr is deliberately unquoted: empty = current branch
 state_json=$(gh pr view $pr --json number,state,mergeable,mergeStateStatus,headRefOid 2>/dev/null) || {
     echo "pr-wait: no pull request found${pr:+ for $pr}" >&2

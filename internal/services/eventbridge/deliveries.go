@@ -189,6 +189,8 @@ func (s *Service) registerAdminRoutes(r chi.Router) {
 // loadTargets reads a rule's stored targets. A malformed record yields no
 // targets rather than an error: one bad payload must not break the rule list.
 func (s *Service) loadTargets(ctx context.Context, bus, rule string) ([]ebTarget, error) {
+	log := s.log.WithRecorder(ctx)
+
 	key := serviceutil.RegionKey(s.region(ctx), bus+"/"+rule)
 	raw, found, err := s.store.Get(ctx, nsTargets, key)
 	if err != nil {
@@ -199,7 +201,7 @@ func (s *Service) loadTargets(ctx context.Context, bus, rule string) ([]ebTarget
 	}
 	var targets []ebTarget
 	if err := json.Unmarshal([]byte(raw), &targets); err != nil {
-		s.log.Warn("eventbridge: malformed targets record", zap.String("rule", rule), zap.Error(err))
+		log.Warn("eventbridge: malformed targets record", zap.String("rule", rule), zap.Error(err))
 		return nil, nil
 	}
 	return targets, nil

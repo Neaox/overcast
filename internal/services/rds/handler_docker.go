@@ -62,6 +62,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		return
 	}
 	ctx := middleware.ContextWithRegion(context.Background(), region)
+	log := h.log.WithRecorder(ctx)
 
 	// The status is re-read under the record's lock rather than written back
 	// from the scan above: the event stream is a writer like any other, and the
@@ -76,7 +77,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		if !h.recoverExpectedContainer(ctx, p.ResourceID, inst) {
 			return
 		}
-		h.log.Info("instance container exited — recovering",
+		log.Info("instance container exited — recovering",
 			zap.String("instance", p.ResourceID),
 			zap.String("action", p.Action))
 	}
@@ -98,11 +99,12 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 	}
 
 	ctx := middleware.ContextWithRegion(context.Background(), region)
+	log := h.log.WithRecorder(ctx)
 	switch inst.DBInstanceStatus {
 	case "stopped":
 		if inst.StoppedByUser {
 			if err := h.docker.StopContainer(ctx, p.ContainerID, 10); err != nil {
-				h.log.Warn("RDS: stop Docker-started container for explicitly stopped instance",
+				log.Warn("RDS: stop Docker-started container for explicitly stopped instance",
 					zap.String("instance", p.ResourceID), zap.Error(err))
 			}
 			return
@@ -119,13 +121,14 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 // initial connection and every reconnection; the pointer check prevents an RDS
 // service wired to one daemon from reacting to another configured socket.
 func (h *Handler) handleDockerDaemonConnected(ctx context.Context, e events.Event) {
+	log := h.log.WithRecorder(ctx)
 	p, ok := e.Payload.(docker.DaemonConnectedPayload)
 	if !ok || !p.Reconnected || p.Client == nil || p.Client != h.docker || h.shuttingDown.Load() {
 		return
 	}
 	containers, err := h.docker.ListContainers(ctx, serviceName)
 	if err != nil {
-		h.log.Warn("RDS: reconcile after Docker reconnect", zap.Error(err))
+		log.Warn("RDS: reconcile after Docker reconnect", zap.Error(err))
 		return
 	}
 	h.reconcileContainers(ctx, containers)
@@ -139,13 +142,14 @@ func (h *Handler) instanceOwnsContainer(resourceID string) bool {
 	if resourceID == "" {
 		return false
 	}
+	log := h.log.WithRecorder(context.Background())
 	_, _, found, err := serviceutil.FindRegioned[DBInstance](
 		context.Background(), h.store.store, nsDBInstances, resourceID, h.store.defaultRegion)
 	if err != nil {
 		// Unknown ownership: keep the container. Removing one that is still
 		// owned strands an instance; keeping an orphan costs disk until the
 		// next sweep.
-		h.log.Warn("RDS: could not determine container ownership for the startup sweep — keeping it",
+		log.Warn("RDS: could not determine container ownership for the startup sweep — keeping it",
 			zap.String("resource", resourceID), zap.Error(err))
 		return true
 	}
@@ -159,6 +163,7 @@ func (h *Handler) instanceOwnsContainer(resourceID string) bool {
 // startup recovery start its container behind its back.
 func (h *Handler) recoverExpectedContainer(ctx context.Context, instanceID string, captured *DBInstance) bool {
 	region := h.store.region(ctx)
+	log := h.log.WithRecorder(ctx)
 	// A new exit before this timer fires proves the previous recovery was not
 	// stable. Preserve its attempt count and replace the timer only after the
 	// next successful health check.
@@ -217,14 +222,14 @@ func (h *Handler) recoverExpectedContainer(ctx context.Context, instanceID strin
 		return nil
 	}); aerr != nil {
 		if aerr != errInstanceMovedOn {
-			h.log.Warn("reconcile: prepare instance recovery",
+			log.Warn("reconcile: prepare instance recovery",
 				zap.String("instance", instanceID), zap.String("error", aerr.Message))
 		}
 		return false
 	}
 	if exhausted {
 		h.recordInstanceFailureEvent(ctx, instanceID, priorStatus, reason)
-		h.log.Warn("RDS: automatic container recovery exhausted",
+		log.Warn("RDS: automatic container recovery exhausted",
 			zap.String("instance", instanceID), zap.String("reason", reason))
 		return false
 	}
@@ -239,6 +244,7 @@ func (h *Handler) recoverExpectedContainer(ctx context.Context, instanceID strin
 // It compares the live container state against stored RDS instances and corrects
 // any status drift (e.g. containers that exited while Overcast was not running).
 func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
+	log := h.log.WithRecorder(ctx)
 	// Index containers by resource ID for fast lookup.
 	byResource := make(map[string]*docker.ContainerSummary, len(containers))
 	for i := range containers {
@@ -250,7 +256,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 
 	regioned, err := serviceutil.ScanRegions[DBInstance](ctx, h.store.store, nsDBInstances, h.store.defaultRegion)
 	if err != nil {
-		h.log.Warn("reconcile: failed to list instances", zap.Error(err))
+		log.Warn("reconcile: failed to list instances", zap.Error(err))
 		return
 	}
 
@@ -269,7 +275,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			// stopped instance stays stopped.
 			if expectsDockerRecovery(inst) {
 				if h.recoverExpectedContainer(rctx, inst.DBInstanceIdentifier, nil) {
-					h.log.Info("reconcile: container missing — rebuilding",
+					log.Info("reconcile: container missing — rebuilding",
 						zap.String("instance", inst.DBInstanceIdentifier))
 				}
 			}
@@ -280,10 +286,10 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 				// starts that engine directly through Docker, restore the
 				// control-plane state instead of adopting the runtime state.
 				if err := h.docker.StopContainer(rctx, c.ID, 10); err != nil {
-					h.log.Warn("reconcile: stop container for explicitly stopped instance",
+					log.Warn("reconcile: stop container for explicitly stopped instance",
 						zap.String("instance", inst.DBInstanceIdentifier), zap.Error(err))
 				} else {
-					h.log.Info("reconcile: Docker-started container stopped to preserve StopDBInstance",
+					log.Info("reconcile: Docker-started container stopped to preserve StopDBInstance",
 						zap.String("instance", inst.DBInstanceIdentifier))
 				}
 				continue
@@ -302,19 +308,19 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 				stored.DialPort = inst.DialPort
 				return nil
 			}); aerr != nil {
-				h.log.Warn("reconcile: persist dial target",
+				log.Warn("reconcile: persist dial target",
 					zap.String("instance", inst.DBInstanceIdentifier), zap.String("error", aerr.Message))
 			}
 
 			if inst.DBInstanceStatus == "stopped" || (inst.DBInstanceStatus == "failed" && inst.DockerRecoveryPending) {
 				if h.recoverExpectedContainer(rctx, inst.DBInstanceIdentifier, nil) {
-					h.log.Info("reconcile: running container recovering from external stop",
+					log.Info("reconcile: running container recovering from external stop",
 						zap.String("instance", inst.DBInstanceIdentifier))
 				}
 			} else if inst.DBInstanceStatus == "creating" || inst.DBInstanceStatus == "starting" || inst.DBInstanceStatus == "available" {
 				healthHost, healthPort := dialTarget(inst)
 				h.scheduleHealthCheck(ri.Region, inst.DBInstanceIdentifier, healthHost, healthPort)
-				h.log.Info("reconcile: container running — scheduling health check",
+				log.Info("reconcile: container running — scheduling health check",
 					zap.String("instance", inst.DBInstanceIdentifier),
 					zap.String("endpoint", inst.Endpoint.Address),
 					zap.Int("port", inst.Endpoint.Port))
@@ -326,7 +332,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 				// instance status is the desired state, so restart its engine and
 				// health-check it instead of treating drift as a user stop.
 				if h.recoverExpectedContainer(rctx, inst.DBInstanceIdentifier, nil) {
-					h.log.Info("reconcile: container not running — restarting",
+					log.Info("reconcile: container not running — restarting",
 						zap.String("instance", inst.DBInstanceIdentifier),
 						zap.String("containerState", c.State))
 				}

@@ -59,7 +59,8 @@ func (h *Handler) transitionCluster(ctx context.Context, clusterARN, to string, 
 		c.State = to
 		return nil
 	}); aerr != nil && aerr != errClusterMovedOn {
-		h.log.Warn("MSK: persist cluster transition",
+		log := h.log.WithRecorder(ctx)
+		log.Warn("MSK: persist cluster transition",
 			zap.String("cluster", clusterARN), zap.String("state", to),
 			zap.String("error", aerr.Message))
 	}

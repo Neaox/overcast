@@ -109,6 +109,8 @@ type sharedVPCStrategy struct {
 func (s *sharedVPCStrategy) Name() string { return "shared" }
 
 func (s *sharedVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protocol.AWSError {
+	log := s.h.log.WithRecorder(ctx)
+
 	if !s.h.dockerReady.Load() {
 		vpc.DockerNetworkID = ""
 		vpc.NetworkStatus = vpcNetworkStatusUnbacked
@@ -120,7 +122,7 @@ func (s *sharedVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protoc
 	if existing, ok := s.findSharerForCIDR(ctx, vpc.CidrBlock, vpc.VpcID); ok {
 		vpc.DockerNetworkID = existing.DockerNetworkID
 		vpc.NetworkStatus = vpcNetworkStatusShared
-		s.h.log.Info("vpc network: sharing existing Docker network",
+		log.Info("vpc network: sharing existing Docker network",
 			zap.String("vpc", vpc.VpcID),
 			zap.String("cidr", vpc.CidrBlock),
 			zap.String("owner", existing.VpcID),
@@ -132,7 +134,7 @@ func (s *sharedVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protoc
 	if err != nil {
 		vpc.DockerNetworkID = ""
 		vpc.NetworkStatus = vpcNetworkStatusUnbacked
-		s.h.log.Warn("vpc network: create failed",
+		log.Warn("vpc network: create failed",
 			zap.String("vpc", vpc.VpcID),
 			zap.String("cidr", vpc.CidrBlock),
 			zap.Error(err))
@@ -143,12 +145,14 @@ func (s *sharedVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protoc
 	return nil
 }
 
-func (s *sharedVPCStrategy) AllocatePrivateIP(_ context.Context, vpc *VPC) (string, error) {
+func (s *sharedVPCStrategy) AllocatePrivateIP(ctx context.Context, vpc *VPC) (string, error) {
+	log := s.h.log.WithRecorder(ctx)
+
 	seq := syntheticIPCounter.Add(1)
 	ip, ok := ipForCIDRSequence(vpc.CidrBlock, seq)
 	if !ok {
 		// Fallback to synthetic 10.0.0.x IP if CIDR parse failed.
-		s.h.log.Debug("AllocatePrivateIP: CIDR parse failed, using synthetic IP",
+		log.Debug("AllocatePrivateIP: CIDR parse failed, using synthetic IP",
 			zap.String("vpc", vpc.VpcID),
 			zap.String("cidr", vpc.CidrBlock),
 			zap.Uint64("seq", uint64(seq)))
@@ -170,6 +174,8 @@ type strictVPCStrategy struct {
 func (s *strictVPCStrategy) Name() string { return "strict" }
 
 func (s *strictVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protocol.AWSError {
+	log := s.h.log.WithRecorder(ctx)
+
 	// Reject before persisting if the CIDR overlaps an existing VPC.
 	vpcs, aerr := s.h.store.listVPCs(ctx)
 	if aerr != nil {
@@ -198,7 +204,7 @@ func (s *strictVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protoc
 	if err != nil {
 		vpc.DockerNetworkID = ""
 		vpc.NetworkStatus = vpcNetworkStatusUnbacked
-		s.h.log.Warn("vpc network: strict: create failed",
+		log.Warn("vpc network: strict: create failed",
 			zap.String("vpc", vpc.VpcID),
 			zap.String("cidr", vpc.CidrBlock),
 			zap.Error(err))
@@ -209,12 +215,14 @@ func (s *strictVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protoc
 	return nil
 }
 
-func (s *strictVPCStrategy) AllocatePrivateIP(_ context.Context, vpc *VPC) (string, error) {
+func (s *strictVPCStrategy) AllocatePrivateIP(ctx context.Context, vpc *VPC) (string, error) {
+	log := s.h.log.WithRecorder(ctx)
+
 	seq := syntheticIPCounter.Add(1)
 	ip, ok := ipForCIDRSequence(vpc.CidrBlock, seq)
 	if !ok {
 		// Fallback to synthetic 10.0.0.x IP if CIDR parse failed.
-		s.h.log.Debug("AllocatePrivateIP: CIDR parse failed, using synthetic IP",
+		log.Debug("AllocatePrivateIP: CIDR parse failed, using synthetic IP",
 			zap.String("vpc", vpc.VpcID),
 			zap.String("cidr", vpc.CidrBlock),
 			zap.Uint64("seq", uint64(seq)))
@@ -224,6 +232,8 @@ func (s *strictVPCStrategy) AllocatePrivateIP(_ context.Context, vpc *VPC) (stri
 }
 
 func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing []docker.NetworkSummary) {
+	log := s.h.log.WithRecorder(ctx)
+
 	// Sort deterministically: earliest creation wins, VpcID as tiebreaker.
 	// First VPC per CIDR group wins the Docker network; later ones are
 	// marked conflict.
@@ -267,7 +277,7 @@ func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 				vpc.NetworkStatus = vpcNetworkStatusConflict
 				_ = s.h.store.putVPC(ctx, vpc)
 			}
-			s.h.log.Warn("reconcile networks: CIDR conflict — VPC has no Docker network",
+			log.Warn("reconcile networks: CIDR conflict — VPC has no Docker network",
 				zap.String("vpc", vpc.VpcID),
 				zap.String("cidr", vpc.CidrBlock),
 				zap.String("conflicts_with", conflictOwner))
@@ -288,7 +298,7 @@ func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 
 		netID, err := s.h.createDockerVPCNetwork(ctx, vpc)
 		if err != nil {
-			s.h.log.Warn("reconcile networks: strict: create failed",
+			log.Warn("reconcile networks: strict: create failed",
 				zap.String("vpc", vpc.VpcID),
 				zap.String("cidr", vpc.CidrBlock),
 				zap.Error(err))
@@ -303,18 +313,18 @@ func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 		vpc.NetworkStatus = vpcNetworkStatusOK
 		_ = s.h.store.putVPC(ctx, vpc)
 		cidrOwner[vpc.CidrBlock] = vpc.VpcID
-		s.h.log.Info("reconcile networks: strict: recreated VPC network",
+		log.Info("reconcile networks: strict: recreated VPC network",
 			zap.String("vpc", vpc.VpcID),
 			zap.String("network", netID))
 	}
 
 	// Remove any Docker network not claimed by any VPC.
 	for id, n := range byID {
-		s.h.log.Info("reconcile networks: strict: removing orphaned network",
+		log.Info("reconcile networks: strict: removing orphaned network",
 			zap.String("vpc", n.ResourceID()),
 			zap.String("network", id))
 		if err := s.h.removeDockerVPCNetwork(ctx, id); err != nil {
-			s.h.log.Warn("reconcile networks: strict: remove orphaned network",
+			log.Warn("reconcile networks: strict: remove orphaned network",
 				zap.String("network", id),
 				zap.Error(err))
 		}
@@ -322,17 +332,21 @@ func (s *strictVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 }
 
 func (s *strictVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
+	log := s.h.log.WithRecorder(ctx)
+
 	if !s.h.dockerReady.Load() || vpc.DockerNetworkID == "" {
 		return
 	}
 	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		s.h.log.Warn("vpc network: strict: remove on delete",
+		log.Warn("vpc network: strict: remove on delete",
 			zap.String("vpc", vpc.VpcID),
 			zap.Error(err))
 	}
 }
 
 func (s *strictVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) {
+	log := s.h.log.WithRecorder(ctx)
+
 	if !s.h.dockerReady.Load() {
 		return
 	}
@@ -341,13 +355,13 @@ func (s *strictVPCStrategy) SetInternal(ctx context.Context, vpcID string, inter
 		return
 	}
 	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		s.h.log.Warn("vpc network: strict: toggle internal — remove old",
+		log.Warn("vpc network: strict: toggle internal — remove old",
 			zap.String("vpc", vpcID), zap.Error(err))
 		return
 	}
 	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
 	if err != nil {
-		s.h.log.Warn("vpc network: strict: toggle internal — recreate",
+		log.Warn("vpc network: strict: toggle internal — recreate",
 			zap.String("vpc", vpcID), zap.Error(err))
 		vpc.DockerNetworkID = ""
 		vpc.NetworkStatus = vpcNetworkStatusUnbacked
@@ -372,6 +386,8 @@ type remappedVPCStrategy struct {
 func (s *remappedVPCStrategy) Name() string { return "remapped" }
 
 func (s *remappedVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *protocol.AWSError {
+	log := s.h.log.WithRecorder(ctx)
+
 	vpcs, aerr := s.h.store.listVPCs(ctx)
 	if aerr != nil {
 		return aerr
@@ -401,7 +417,7 @@ func (s *remappedVPCStrategy) EnsureNetwork(ctx context.Context, vpc *VPC) *prot
 	if err != nil {
 		vpc.DockerNetworkID = ""
 		vpc.NetworkStatus = vpcNetworkStatusUnbacked
-		s.h.log.Warn("vpc network: remapped: create failed",
+		log.Warn("vpc network: remapped: create failed",
 			zap.String("vpc", vpc.VpcID),
 			zap.String("cidr", vpc.CidrBlock),
 			zap.String("docker_cidr", vpc.DockerCidrBlock),
@@ -450,6 +466,8 @@ func (s *remappedVPCStrategy) AllocatePrivateIP(ctx context.Context, vpc *VPC) (
 }
 
 func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing []docker.NetworkSummary) {
+	log := s.h.log.WithRecorder(ctx)
+
 	// Sort deterministically: earliest creation wins, VpcID as tiebreaker.
 	sort.Slice(vpcs, func(i, j int) bool {
 		if vpcs[i].CreateTime != vpcs[j].CreateTime {
@@ -478,7 +496,7 @@ func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existi
 			if vpc.DockerCidrBlock == "" {
 				shadow, ok := s.allocateShadowCIDR(vpcs)
 				if !ok {
-					s.h.log.Warn("reconcile networks: remapped: no shadow CIDR available",
+					log.Warn("reconcile networks: remapped: no shadow CIDR available",
 						zap.String("vpc", vpc.VpcID),
 						zap.String("cidr", vpc.CidrBlock))
 					vpc.DockerNetworkID = ""
@@ -506,7 +524,7 @@ func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existi
 
 		netID, err := s.h.createDockerVPCNetwork(ctx, vpc)
 		if err != nil {
-			s.h.log.Warn("reconcile networks: remapped: create failed",
+			log.Warn("reconcile networks: remapped: create failed",
 				zap.String("vpc", vpc.VpcID),
 				zap.String("cidr", vpc.CidrBlock),
 				zap.String("docker_cidr", vpc.DockerCidrBlock),
@@ -524,11 +542,11 @@ func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existi
 	}
 
 	for id, n := range byID {
-		s.h.log.Info("reconcile networks: remapped: removing orphaned network",
+		log.Info("reconcile networks: remapped: removing orphaned network",
 			zap.String("vpc", n.ResourceID()),
 			zap.String("network", id))
 		if err := s.h.removeDockerVPCNetwork(ctx, id); err != nil {
-			s.h.log.Warn("reconcile networks: remapped: remove orphaned network",
+			log.Warn("reconcile networks: remapped: remove orphaned network",
 				zap.String("network", id),
 				zap.Error(err))
 		}
@@ -536,18 +554,22 @@ func (s *remappedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existi
 }
 
 func (s *remappedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
+	log := s.h.log.WithRecorder(ctx)
+
 	s.releaseShadowCIDR(vpc.DockerCidrBlock)
 	if !s.h.dockerReady.Load() || vpc.DockerNetworkID == "" {
 		return
 	}
 	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		s.h.log.Warn("vpc network: remapped: remove on delete",
+		log.Warn("vpc network: remapped: remove on delete",
 			zap.String("vpc", vpc.VpcID),
 			zap.Error(err))
 	}
 }
 
 func (s *remappedVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) {
+	log := s.h.log.WithRecorder(ctx)
+
 	if !s.h.dockerReady.Load() {
 		return
 	}
@@ -556,13 +578,13 @@ func (s *remappedVPCStrategy) SetInternal(ctx context.Context, vpcID string, int
 		return
 	}
 	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		s.h.log.Warn("vpc network: remapped: toggle internal — remove old",
+		log.Warn("vpc network: remapped: toggle internal — remove old",
 			zap.String("vpc", vpcID), zap.Error(err))
 		return
 	}
 	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
 	if err != nil {
-		s.h.log.Warn("vpc network: remapped: toggle internal — recreate",
+		log.Warn("vpc network: remapped: toggle internal — recreate",
 			zap.String("vpc", vpcID), zap.Error(err))
 		vpc.DockerNetworkID = ""
 		vpc.NetworkStatus = vpcNetworkStatusUnbacked
@@ -728,6 +750,8 @@ func (s *remappedVPCStrategy) releaseShadowCIDR(cidr string) {
 }
 
 func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing []docker.NetworkSummary) {
+	log := s.h.log.WithRecorder(ctx)
+
 	// Sort for deterministic owner selection: earliest creation wins,
 	// VpcID as tiebreaker.
 	sort.Slice(vpcs, func(i, j int) bool {
@@ -781,7 +805,7 @@ func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 
 		netID, err := s.h.createDockerVPCNetwork(ctx, vpc)
 		if err != nil {
-			s.h.log.Warn("reconcile networks: create failed",
+			log.Warn("reconcile networks: create failed",
 				zap.String("vpc", vpc.VpcID),
 				zap.String("cidr", vpc.CidrBlock),
 				zap.Error(err))
@@ -796,18 +820,18 @@ func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 		vpc.NetworkStatus = vpcNetworkStatusOK
 		_ = s.h.store.putVPC(ctx, vpc)
 		cidrOwner[vpc.CidrBlock] = vpc
-		s.h.log.Info("reconcile networks: recreated VPC network",
+		log.Info("reconcile networks: recreated VPC network",
 			zap.String("vpc", vpc.VpcID),
 			zap.String("network", netID))
 	}
 
 	// Whatever is left in byID was not adopted by any VPC — remove it.
 	for id, n := range byID {
-		s.h.log.Info("reconcile networks: removing orphaned network",
+		log.Info("reconcile networks: removing orphaned network",
 			zap.String("vpc", n.ResourceID()),
 			zap.String("network", id))
 		if err := s.h.removeDockerVPCNetwork(ctx, id); err != nil {
-			s.h.log.Warn("reconcile networks: remove orphaned network",
+			log.Warn("reconcile networks: remove orphaned network",
 				zap.String("network", id),
 				zap.Error(err))
 		}
@@ -815,6 +839,8 @@ func (s *sharedVPCStrategy) Reconcile(ctx context.Context, vpcs []*VPC, existing
 }
 
 func (s *sharedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
+	log := s.h.log.WithRecorder(ctx)
+
 	if !s.h.dockerReady.Load() || vpc.DockerNetworkID == "" {
 		return
 	}
@@ -823,7 +849,7 @@ func (s *sharedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 	if aerr == nil {
 		for _, other := range remaining {
 			if other.DockerNetworkID == vpc.DockerNetworkID {
-				s.h.log.Info("vpc network: retaining shared network after delete",
+				log.Info("vpc network: retaining shared network after delete",
 					zap.String("vpc", vpc.VpcID),
 					zap.String("network", vpc.DockerNetworkID),
 					zap.String("still_used_by", other.VpcID))
@@ -832,13 +858,15 @@ func (s *sharedVPCStrategy) OnDelete(ctx context.Context, vpc *VPC) {
 		}
 	}
 	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		s.h.log.Warn("vpc network: remove on delete",
+		log.Warn("vpc network: remove on delete",
 			zap.String("vpc", vpc.VpcID),
 			zap.Error(err))
 	}
 }
 
 func (s *sharedVPCStrategy) SetInternal(ctx context.Context, vpcID string, internal bool) {
+	log := s.h.log.WithRecorder(ctx)
+
 	if !s.h.dockerReady.Load() {
 		return
 	}
@@ -850,7 +878,7 @@ func (s *sharedVPCStrategy) SetInternal(ctx context.Context, vpcID string, inter
 	// If the network is shared, recreating it would affect every sharer —
 	// skip the toggle and record the limitation.
 	if s.networkIsShared(ctx, vpc) {
-		s.h.log.Warn("vpc network: skipping internal toggle on shared network",
+		log.Warn("vpc network: skipping internal toggle on shared network",
 			zap.String("vpc", vpcID),
 			zap.String("network", vpc.DockerNetworkID),
 			zap.Bool("internal", internal))
@@ -858,13 +886,13 @@ func (s *sharedVPCStrategy) SetInternal(ctx context.Context, vpcID string, inter
 	}
 
 	if err := s.h.removeDockerVPCNetwork(ctx, vpc.DockerNetworkID); err != nil {
-		s.h.log.Warn("vpc network: toggle internal — remove old",
+		log.Warn("vpc network: toggle internal — remove old",
 			zap.String("vpc", vpcID), zap.Error(err))
 		return
 	}
 	netID, err := s.h.createDockerVPCNetworkInternal(ctx, vpc, internal)
 	if err != nil {
-		s.h.log.Warn("vpc network: toggle internal — recreate",
+		log.Warn("vpc network: toggle internal — recreate",
 			zap.String("vpc", vpcID), zap.Error(err))
 		vpc.DockerNetworkID = ""
 		vpc.NetworkStatus = vpcNetworkStatusUnbacked

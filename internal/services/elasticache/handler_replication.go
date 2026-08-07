@@ -172,12 +172,13 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 		go func() {
 			defer h.dockerWg.Done()
 			bgCtx := middleware.ContextWithRegion(context.Background(), region)
+			log := h.log.WithRecorder(bgCtx)
 			got, aerr := h.store.getReplicationGroup(bgCtx, rgID)
 			if aerr != nil || got == nil {
 				return
 			}
 			if err := h.startReplicationGroupContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for replication group — falling back to metadata-only",
+				log.Warn("failed to start Docker container for replication group — falling back to metadata-only",
 					zap.String("rg", rgID), zap.Error(err))
 				h.rgFallbackAvailable(region, rgID)
 				return
@@ -197,7 +198,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 				return nil
 			}); aerr != nil {
 				if aerr != errRecordMovedOn {
-					h.log.Warn("ElastiCache: persist post-start replication group",
+					log.Warn("ElastiCache: persist post-start replication group",
 						zap.String("rg", rgID), zap.String("error", aerr.Message))
 				}
 				h.teardownOrphanedContainer(bgCtx, "replication group", rgID, got.DockerContainerID, got.HostPort)
@@ -299,8 +300,9 @@ func (h *Handler) DeleteReplicationGroup(w http.ResponseWriter, r *http.Request)
 	}
 
 	h.scheduler.AfterScoped(h.store.region(r.Context()), id, "rg-delete", 50*time.Millisecond, func(ctx context.Context) {
+		log := h.log.WithRecorder(ctx)
 		if aerr := h.store.deleteReplicationGroup(ctx, id); aerr != nil {
-			h.log.Warn("failed to delete replication group record", zap.String("rg", id), zap.Error(aerr))
+			log.Warn("failed to delete replication group record", zap.String("rg", id), zap.Error(aerr))
 		}
 	})
 }

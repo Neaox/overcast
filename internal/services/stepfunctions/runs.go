@@ -94,6 +94,7 @@ func (h *Handler) releaseRun(execARN string) {
 //
 // Satisfies router.Stopper.
 func (h *Handler) Stop(ctx context.Context) {
+	log := h.log.WithRecorder(ctx)
 	if h.shutdownCancel != nil {
 		h.shutdownCancel()
 	}
@@ -106,7 +107,7 @@ func (h *Handler) Stop(ctx context.Context) {
 	case <-done:
 	case <-ctx.Done():
 		if h.log != nil {
-			h.log.Logger().Warn("stepfunctions: timed out waiting for in-flight executions to finish")
+			log.Logger().Warn("stepfunctions: timed out waiting for in-flight executions to finish")
 		}
 	}
 }

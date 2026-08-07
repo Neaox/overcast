@@ -19,6 +19,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // taskLockStripes is how many mutexes lockTask spreads task records over.
@@ -139,10 +140,11 @@ func (h *Handler) stopTaskRecord(ctx context.Context, clusterName, taskID string
 }
 
 func (h *Handler) deleteStoppedTaskTags(ctx context.Context, task *Task) {
-	if aerr := h.store.deleteTags(ctx, task.TaskArn); aerr != nil && h.log != nil {
-		h.log.Warn("ecs: failed to delete stopped task tags",
+	log := h.log.WithRecorder(ctx)
+	if err := h.store.store.Delete(ctx, nsTags, serviceutil.RegionKey(h.region(ctx), task.TaskArn)); err != nil && h.log != nil {
+		log.Warn("ecs: failed to delete stopped task tags",
 			zap.String("task", task.TaskArn),
-			zap.String("error", aerr.Message))
+			zap.String("error", err.Error()))
 	}
 }
 
@@ -160,8 +162,8 @@ func (h *Handler) getVisibleTask(ctx context.Context, clusterName, taskID string
 	if aerr != nil || !h.stoppedTaskExpired(task) {
 		return task, aerr
 	}
-	if aerr := h.store.deleteTags(ctx, task.TaskArn); aerr != nil {
-		return nil, aerr
+	if aerr := h.store.store.Delete(ctx, nsTags, serviceutil.RegionKey(h.region(ctx), task.TaskArn)); aerr != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, aerr)
 	}
 	if aerr := h.store.deleteTask(ctx, clusterName, taskID); aerr != nil {
 		return nil, aerr
@@ -180,8 +182,8 @@ func (h *Handler) listVisibleTasks(ctx context.Context, clusterName string) ([]T
 			visible = append(visible, tasks[i])
 			continue
 		}
-		if aerr := h.store.deleteTags(ctx, tasks[i].TaskArn); aerr != nil {
-			return nil, aerr
+		if aerr := h.store.store.Delete(ctx, nsTags, serviceutil.RegionKey(h.region(ctx), tasks[i].TaskArn)); aerr != nil {
+			return nil, protocol.Wrap(protocol.ErrInternalError, aerr)
 		}
 		if aerr := h.store.deleteTask(ctx, clusterName, extractTaskID(tasks[i].TaskArn)); aerr != nil {
 			return nil, aerr
@@ -291,6 +293,7 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 // DockerIDs. The RUNNING transition is queued by launchTask once the task
 // record has been persisted, not here — see the comment there.
 func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement) error {
+	log := h.log.WithRecorder(ctx)
 	// Ensure the ECS network exists.
 	if _, err := h.docker.CreateNetwork(ctx, h.cfg.ECSNetwork); err != nil {
 		return fmt.Errorf("ecs: create network %s: %w", h.cfg.ECSNetwork, err)
@@ -403,7 +406,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		// code: CopyToContainer, because a dockerized Overcast has no host
 		// path to bind-mount from.
 		if caTar, caErr := endpoint.CABundleTar(); caErr != nil {
-			h.log.ZapLogger().Warn("ecs: CA bundle unavailable; task TLS calls to Overcast will fail verification", zap.Error(caErr))
+			log.ZapLogger().Warn("ecs: CA bundle unavailable; task TLS calls to Overcast will fail verification", zap.Error(caErr))
 		} else if caTar != nil {
 			if err := h.docker.CopyToContainer(ctx, dockerID, "/", bytes.NewReader(caTar)); err != nil {
 				_ = h.docker.RemoveContainerForce(dockerID)
@@ -487,6 +490,7 @@ func (h *Handler) efsMountSkipReason() (msg, hint string) {
 }
 
 func (h *Handler) efsMountsForContainer(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition) []docker.Mount {
+	log := h.log.WithRecorder(ctx)
 	if len(cd.MountPoints) == 0 || h.efsResolver == nil {
 		return nil
 	}
@@ -498,7 +502,7 @@ func (h *Handler) efsMountsForContainer(ctx context.Context, td *TaskDefinition,
 	for _, mp := range cd.MountPoints {
 		v := volumesByName[mp.SourceVolume]
 		if v == nil || v.EFSVolumeConfiguration == nil {
-			h.log.Warn("ecs: mount point skipped — source volume is not EFS-backed",
+			log.Warn("ecs: mount point skipped — source volume is not EFS-backed",
 				zap.String("container", cd.Name), zap.String("volume", mp.SourceVolume))
 			continue
 		}
@@ -513,7 +517,7 @@ func (h *Handler) efsMountsForContainer(ctx context.Context, td *TaskDefinition,
 		}
 		if !ok {
 			msg, hint := h.efsMountSkipReason()
-			h.log.Warn(msg,
+			log.Warn(msg,
 				zap.String("container", cd.Name),
 				zap.String("file_system", cfg.FileSystemId),
 				zap.String("container_path", mp.ContainerPath),
