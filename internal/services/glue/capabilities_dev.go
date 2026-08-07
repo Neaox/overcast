@@ -23,6 +23,6 @@ func init() {
 		capabilities.Capability{Service: "glue", Operation: "UntagResource", Category: "Tags",
 			Status: capabilities.StatusSupported, Notes: "Removes tags by key from databases and tables"},
 		capabilities.Capability{Service: "glue", Operation: "ListTagsForResource", Category: "Tags",
-			Status: capabilities.StatusSupported, Notes: "Returns tags for databases and tables"},
+			Status: capabilities.StatusSupported, Notes: "Returns tags for databases and tables", DocOnly: true},
 	)
 }
