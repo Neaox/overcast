@@ -32,7 +32,7 @@
 | IAM             | 62  | Users, roles, groups, policies, instance profiles; real policy simulation, **opt-in** request-time enforcement (`OVERCAST_ENFORCE_IAM`, default off)                                                                                                                                    |
 | ECS             | 48  | Clusters, task definitions, tasks (Docker), services with reconciler                                                                                                                                       |
 | ECR             | 20  | Repository CRUD + registry metadata (DescribeRegistry), image metadata (PutImage/DescribeImages/BatchGetImage/BatchDeleteImage/DescribeImageScanFindings), auth token, repository+lifecycle policies, tags |
-| KMS             | 32  | Keys, aliases, symmetric AES-256-GCM + RSA-2048 signing                                                                                                                                                    |
+| KMS             | 33  | Keys, aliases, symmetric AES-256-GCM + RSA-2048 signing                                                                                                                                                    |
 | Kinesis         | 17  | Streams, records, shards, tags, retention                                                                                                                                                                  |
 | EventBridge     | 28  | Event buses, rules, targets, PutEvents, tags                                                                                                                                                               |
 | Scheduler       | 12  | Schedule groups, schedules, tags, clock-driven Lambda/SQS target firing                                                                                                                                    |
@@ -78,7 +78,7 @@
 | IAM             | 62  |
 | ECS             | 48  |
 | ECR             | 20  |
-| KMS             | 32  |
+| KMS             | 33  |
 | Kinesis         | 17  |
 | EventBridge     | 28  |
 | Scheduler       | 12  |

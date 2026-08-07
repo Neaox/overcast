@@ -999,6 +999,7 @@ var AllCapabilities = []Capability{
 	{Service: "kms", Operation: "TagResource", Category: "Tags", Status: StatusSupported, Notes: "Add tags to a KMS key", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "kms", Operation: "UntagResource", Category: "Tags", Status: StatusSupported, Notes: "Remove tags from a KMS key", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "kms", Operation: "UpdateAlias", Category: "Aliases", Status: StatusSupported, Notes: "Updates target key for an existing alias", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "kms", Operation: "UpdateKeyDescription", Category: "Key lifecycle", Status: StatusSupported, Notes: "Also dispatched by CloudFormation when AWS::KMS::Key Description changes", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "kms", Operation: "Verify", Category: "Asymmetric crypto", Status: StatusSupported, Notes: "Returns `SignatureValid: true/false`", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "kms", Operation: "VerifyMac", Category: "Asymmetric crypto", Status: StatusSupported, Notes: "HMAC_SHA_256, HMAC_SHA_384, HMAC_SHA_512", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "lambda", Operation: "AddPermission", Category: "Resource-based policies", Status: StatusUnsupported, Notes: "Policy lifecycle and validation are implemented, but statements are not yet enforced during invocation (#629)", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

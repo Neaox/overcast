@@ -11,6 +11,7 @@ func init() {
 		capabilities.Capability{Service: "kms", Operation: "ListKeys", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Excludes `PendingDeletion` keys; no pagination (Truncated=false)"},
 		capabilities.Capability{Service: "kms", Operation: "EnableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "kms", Operation: "DisableKey", Category: "Key lifecycle", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "kms", Operation: "UpdateKeyDescription", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Also dispatched by CloudFormation when AWS::KMS::Key Description changes"},
 		capabilities.Capability{Service: "kms", Operation: "ScheduleKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "`PendingWindowInDays` honoured; defaults to 30 days"},
 		capabilities.Capability{Service: "kms", Operation: "CancelKeyDeletion", Category: "Key lifecycle", Status: capabilities.StatusSupported, Notes: "Restores key to `Disabled` state"},
 
