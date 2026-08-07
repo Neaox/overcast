@@ -26,6 +26,13 @@ sentence.
 | `changelog-missing-release-branch.md` | the same, on a PR that is *itself* setting `VERSION` to the untagged version and carries something beyond the release edit — the one PR whose answer is to write the note into its own `## [x.y.z]` section | `changelog-required.yml` |
 | `changelog-waived.md` | `/no-changelog <reason>` recorded that a PR needs no fragment | `changelog-required.yml` |
 | `changelog-waiver-refused.md` | `/no-changelog` was asked for but not carried out | `changelog-waiver.yml` |
+| `pr-into-release-branch.md` | a PR is based on a `release/**` branch, which only the bot writes to — **job summary, not a comment** | `release-branch-base.yml` |
+
+`pr-into-release-branch.md` is the one message that is never posted. Retargeting
+the PR is the fix it asks for, and a base change away from `release/**` does not
+re-trigger a workflow that filtered on it — so there would be no later run to
+come back and delete the comment, and the bot would be left arguing with a PR
+that had already done what it said.
 
 `retarget-refused.md`'s `$REASON` and `changelog-waiver-refused.md`'s `$PROBLEM`
 are the exception to prose living here: they are one short sentence per failure,
