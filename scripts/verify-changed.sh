@@ -220,6 +220,28 @@ if [ -n "$go_changed" ]; then
   fi
 fi
 
+# ---- Go: run tests in packages touched by this branch ----------------------
+if [ -n "$go_changed" ]; then
+  test_pkgs=$(for f in $(printf '%s\n' "$changed" | grep '\.go$'); do
+    d=$(dirname "$f")
+    if [ -f "$d" ]; then d="."; fi
+    while [ ! -f "$d/go.mod" ] && [ "$d" != "." ]; do d=$(dirname "$d"); done
+    [ -f "$d/go.mod" ] && printf '%s/...\n' "$d"
+  done | sort -u | tr '\n' ' ')
+  # Extract unique package paths from changed files
+  if [ -n "$test_pkgs" ]; then
+    # Only run under the default tag set (it's the most common path).
+    # The tag-aware vet pass above already caught compile errors for all sets.
+    if command -v go >/dev/null 2>&1; then
+      go test -count=1 -tags slim $test_pkgs || failed="$failed test-run"
+    elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
+      scripts/docker-go.sh test -count=1 -tags slim $test_pkgs || failed="$failed test-run"
+    else
+      skipped="$skipped test-run(no go/docker)"
+    fi
+  fi
+fi
+
 # ---- Web: typecheck + lint -------------------------------------------------
 if [ -n "$web_changed" ]; then
   fp=$(_fp_web)
