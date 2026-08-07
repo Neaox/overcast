@@ -6,7 +6,7 @@ import { s3 } from "@/services/api"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import { Button } from "@/components/ui/button"
 import { CopyUrlButton } from "@/components/ui/copy-url-button"
-import { s3CopyFormats } from "@/types/s3"
+import { s3CopyFormats } from "@/features/s3/copy-formats"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import {
   Dialog,

@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query"
 import { z } from "zod"
 import { AlertTriangle, Check, CircleX, Loader2, Server } from "lucide-react"
 import { endpointStore } from "@/services/endpoint-store"
-import { DEFAULT_ENDPOINT } from "@/services/discovery"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Combobox } from "@/components/ui/combobox"
@@ -90,15 +89,22 @@ function useEndpointValidation(baseUrl: string): ValidationState {
 export function ConnectionDialogContent() {
   const inDocker = typeof window !== "undefined" && window.__OVERCAST__?.inDocker === true
   const endpointUnknown = typeof window !== "undefined" && window.__OVERCAST__?.endpointKnown === false
-  const [baseUrlDraft, setBaseUrlDraft] = useState(DEFAULT_ENDPOINT.baseUrl)
+  // Seed from the active endpoint, not DEFAULT_ENDPOINT: a user reopening the
+  // dialog must see their configured endpoint, or clicking Connect would
+  // silently revert it to the default.
+  const [initial] = useState(() => endpointStore.get())
+  const [baseUrlDraft, setBaseUrlDraft] = useState(initial.baseUrl)
   const validation = useEndpointValidation(baseUrlDraft)
   const labelPlaceholder = (() => { try { return new URL(baseUrlDraft).host } catch { return "Local (4566)" } })()
   const form = useForm({
     validators: { onChange: connectionSchema },
-    defaultValues: { baseUrl: DEFAULT_ENDPOINT.baseUrl, region: DEFAULT_ENDPOINT.region, label: DEFAULT_ENDPOINT.label ?? "" },
+    defaultValues: { baseUrl: initial.baseUrl, region: initial.region, label: initial.label ?? "" },
     onSubmit: ({ value }) => {
       const url = new URL(value.baseUrl)
-      endpointStore.set({ baseUrl: url.origin, region: value.region.trim() || "us-east-1", label: value.label.trim() || undefined })
+      endpointStore.set(
+        { baseUrl: url.origin, region: value.region.trim() || "us-east-1", label: value.label.trim() || undefined },
+        { explicit: true },
+      )
     },
   })
   return (
@@ -139,7 +145,7 @@ export function ConnectionDialogContent() {
         <form.Field name="label">{(field) => (<FormField label="Label (optional)" htmlFor="label" hint="A friendly name shown in the header."><Input id="label" value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} onBlur={field.handleBlur} placeholder={labelPlaceholder} /></FormField>)}</form.Field>
         <div className="mt-2 flex flex-col gap-2">
           <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting]}>{([canSubmit, isSubmitting]) => (<Button type="submit" className="w-full" disabled={!canSubmit}>{isSubmitting ? "Connecting…" : "Connect"}</Button>)}</form.Subscribe>
-          <p className="text-center text-xs text-fg-subtle">Settings are stored in session storage only.</p>
+          <p className="text-center text-xs text-fg-subtle">Settings are stored locally in this browser.</p>
         </div>
       </form>
     </div>

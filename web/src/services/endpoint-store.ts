@@ -10,7 +10,7 @@
  */
 
 import { DEFAULT_ENDPOINT, endpointResolver } from "./discovery"
-import type { EmulatorEndpoint } from "./discovery"
+import type { EmulatorEndpoint, SetEndpointOptions } from "./discovery"
 
 type Listener = (prev: EmulatorEndpoint, next: EmulatorEndpoint) => void
 
@@ -20,10 +20,12 @@ const listeners = new Set<Listener>()
 export const endpointStore = {
   get: (): EmulatorEndpoint => current,
 
-  set(next: EmulatorEndpoint): void {
-    // Always persist — even if the values match the in-memory default — so
-    // that isConfigured() returns true on the next page load.
-    endpointResolver.set(next)
+  set(next: EmulatorEndpoint, opts?: SetEndpointOptions): void {
+    // Persist even if the values match the in-memory default — an explicit
+    // set must make isConfigured() return true on the next page load. Only
+    // explicit (user-entered) sets persist baseUrl/label; implicit ones
+    // (region seeding, region switches) persist the region alone.
+    endpointResolver.set(next, opts)
     if (
       current.baseUrl === next.baseUrl &&
       current.region === next.region &&
