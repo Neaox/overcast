@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query"
 import { Download } from "lucide-react"
 import { s3ObjectPreviewQueryOptions } from "@/features/s3/data"
 import { s3 } from "@/services/api"
+import { useEndpoint } from "@/hooks/use-endpoint"
 import { Button } from "@/components/ui/button"
+import { CopyUrlButton } from "@/components/ui/copy-url-button"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import {
   Dialog,
@@ -44,6 +46,7 @@ export function ObjectPreviewDialog({
   loading,
   onClose,
 }: ObjectPreviewDialogProps) {
+  const endpoint = useEndpoint()
   const previewUrl = objectKey ? s3.getObjectDownloadUrl(bucket, objectKey) : undefined
   const canPreviewImage = !!metadata && isImagePreviewable(metadata.contentType)
   const canPreviewText =
@@ -67,8 +70,18 @@ export function ObjectPreviewDialog({
     <Dialog open={!!objectKey} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle className="truncate font-mono text-sm" title={objectKey}>
-            {objectKey}
+          <DialogTitle className="flex items-center gap-2 truncate font-mono text-sm" title={objectKey}>
+            <span className="truncate">{objectKey}</span>
+            {objectKey && (
+              <CopyUrlButton
+                compact
+                formats={[
+                  { label: "S3 URI", value: `s3://${bucket}/${objectKey}`, description: "aws cli" },
+                  { label: "Path-style", value: `${endpoint.baseUrl}/${bucket}/${objectKey}`, description: "http" },
+                ]}
+                noun="URL"
+              />
+            )}
           </DialogTitle>
         </DialogHeader>
         {loading ? (

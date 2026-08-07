@@ -230,6 +230,14 @@ export function BucketDetail() {
         title={bucket}
         actions={
           <>
+            <CopyUrlButton
+              compact
+              formats={[
+                { label: "S3 URI", value: `s3://${bucket}`, description: "aws cli" },
+                { label: "Path-style", value: `${endpoint.baseUrl}/${bucket}`, description: "http" },
+              ]}
+              noun="bucket URL"
+            />
             <Button
               variant="ghost"
               size="icon"
