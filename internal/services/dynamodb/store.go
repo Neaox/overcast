@@ -44,8 +44,8 @@ type ProvisionedThroughput struct {
 	WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
 }
 
-func (t *Table) GetTags() map[string]string { return t.Tags }
-func (t *Table) SetTags(tags map[string]string)  { t.Tags = tags }
+func (t *Table) GetTags() map[string]string     { return t.Tags }
+func (t *Table) SetTags(tags map[string]string) { t.Tags = tags }
 
 // Table represents a DynamoDB table definition.
 type Table struct {

@@ -3362,7 +3362,9 @@ func (s *Service) TagResourceTyped(ctx context.Context, req *TagResourceReq) (*s
 	poolID := extractPoolIDFromARN(req.ResourceArn)
 
 	if aerr := serviceutil.ApplyInlineTags(ctx, poolID, req.Tags, cognitoTagCfg,
-		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) { return s.requirePoolTyped(ctx, id) },
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) {
+			return s.requirePoolTyped(ctx, id)
+		},
 		func(ctx context.Context, pool *UserPool) *protocol.AWSError {
 			if err := s.savePool(ctx, pool); err != nil {
 				return protocol.Wrap(protocol.ErrInternalError, err)
@@ -3379,7 +3381,9 @@ func (s *Service) UntagResourceTyped(ctx context.Context, req *UntagResourceReq)
 	poolID := extractPoolIDFromARN(req.ResourceArn)
 
 	if aerr := serviceutil.RemoveInlineTags(ctx, poolID, req.TagKeys,
-		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) { return s.requirePoolTyped(ctx, id) },
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) {
+			return s.requirePoolTyped(ctx, id)
+		},
 		func(ctx context.Context, pool *UserPool) *protocol.AWSError {
 			if err := s.savePool(ctx, pool); err != nil {
 				return protocol.Wrap(protocol.ErrInternalError, err)
@@ -3396,7 +3400,9 @@ func (s *Service) ListTagsForResourceTyped(ctx context.Context, req *ListTagsFor
 	poolID := extractPoolIDFromARN(req.ResourceArn)
 
 	tags, aerr := serviceutil.ListInlineTags(ctx, poolID,
-		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) { return s.requirePoolTyped(ctx, id) },
+		func(ctx context.Context, id string) (*UserPool, *protocol.AWSError) {
+			return s.requirePoolTyped(ctx, id)
+		},
 	)
 	if aerr != nil {
 		return nil, aerr

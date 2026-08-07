@@ -32,8 +32,8 @@ const serviceName = "firehose"
 
 // ─── Types ────────────────────────────────────────────────────
 
-func (ds *DeliveryStream) GetTags() map[string]string { return ds.Tags }
-func (ds *DeliveryStream) SetTags(t map[string]string)  { ds.Tags = t }
+func (ds *DeliveryStream) GetTags() map[string]string  { return ds.Tags }
+func (ds *DeliveryStream) SetTags(t map[string]string) { ds.Tags = t }
 
 // DeliveryStream represents a Firehose delivery stream.
 type DeliveryStream struct {

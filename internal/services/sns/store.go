@@ -19,8 +19,8 @@ const (
 	nsSubscriptions = "sns:subscriptions"
 )
 
-func (t *Topic) GetTags() map[string]string { return t.Tags }
-func (t *Topic) SetTags(tags map[string]string)   { t.Tags = tags }
+func (t *Topic) GetTags() map[string]string     { return t.Tags }
+func (t *Topic) SetTags(tags map[string]string) { t.Tags = tags }
 
 // Topic represents a stored SNS topic.
 type Topic struct {

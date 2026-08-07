@@ -33,7 +33,7 @@ type User struct {
 	Tags             map[string]string `json:"Tags,omitempty"`
 }
 
-func (u *User) GetTags() map[string]string { return u.Tags }
+func (u *User) GetTags() map[string]string     { return u.Tags }
 func (u *User) SetTags(tags map[string]string) { u.Tags = tags }
 
 // AccessKey represents an IAM access key.
@@ -112,7 +112,7 @@ func (s *iamStore) arnForUser(path, name string) string {
 	return fmt.Sprintf("arn:aws:iam::%s:user%s%s", s.cfg.AccountID, path, name)
 }
 
-func (r *Role) GetTags() map[string]string { return r.Tags }
+func (r *Role) GetTags() map[string]string     { return r.Tags }
 func (r *Role) SetTags(tags map[string]string) { r.Tags = tags }
 
 func (s *iamStore) arnForRole(path, name string) string {

@@ -158,8 +158,8 @@ type LayerVersionLink struct {
 	SigningJobARN            string `json:"SigningJobArn,omitempty"`
 }
 
-func (f *Function) GetTags() map[string]string { return f.Tags }
-func (f *Function) SetTags(t map[string]string)        { f.Tags = t }
+func (f *Function) GetTags() map[string]string  { return f.Tags }
+func (f *Function) SetTags(t map[string]string) { f.Tags = t }
 
 // Function is the domain model for a stored Lambda function definition.
 type Function struct {

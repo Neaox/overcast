@@ -2052,7 +2052,9 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := serviceutil.ApplyInlineTags(r.Context(), tableName, incoming, dynamoTagCfg,
-		func(ctx context.Context, name string) (*Table, *protocol.AWSError) { return h.store.getTable(ctx, name) },
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
 		func(ctx context.Context, t *Table) *protocol.AWSError { return h.store.putTable(ctx, t) },
 	); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -2078,7 +2080,9 @@ func (h *Handler) ListTagsOfResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tags, aerr := serviceutil.ListInlineTags(r.Context(), tableName,
-		func(ctx context.Context, name string) (*Table, *protocol.AWSError) { return h.store.getTable(ctx, name) },
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
 	)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -2115,7 +2119,9 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aerr := serviceutil.RemoveInlineTags(r.Context(), tableName, req.TagKeys,
-		func(ctx context.Context, name string) (*Table, *protocol.AWSError) { return h.store.getTable(ctx, name) },
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
 		func(ctx context.Context, t *Table) *protocol.AWSError { return h.store.putTable(ctx, t) },
 	); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -2140,7 +2146,9 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	}
 
 	if aerr := serviceutil.ApplyInlineTags(ctx, tableName, incoming, dynamoTagCfg,
-		func(ctx context.Context, name string) (*Table, *protocol.AWSError) { return h.store.getTable(ctx, name) },
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
 		func(ctx context.Context, t *Table) *protocol.AWSError { return h.store.putTable(ctx, t) },
 	); aerr != nil {
 		return nil, aerr
@@ -2159,7 +2167,9 @@ func (h *Handler) listTagsOfResourceTyped(ctx context.Context, req *listTagsOfRe
 	}
 
 	tags, aerr := serviceutil.ListInlineTags(ctx, tableName,
-		func(ctx context.Context, name string) (*Table, *protocol.AWSError) { return h.store.getTable(ctx, name) },
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
 	)
 	if aerr != nil {
 		return nil, aerr
@@ -2189,7 +2199,9 @@ func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequ
 	}
 
 	if aerr := serviceutil.RemoveInlineTags(ctx, tableName, req.TagKeys,
-		func(ctx context.Context, name string) (*Table, *protocol.AWSError) { return h.store.getTable(ctx, name) },
+		func(ctx context.Context, name string) (*Table, *protocol.AWSError) {
+			return h.store.getTable(ctx, name)
+		},
 		func(ctx context.Context, t *Table) *protocol.AWSError { return h.store.putTable(ctx, t) },
 	); aerr != nil {
 		return nil, aerr

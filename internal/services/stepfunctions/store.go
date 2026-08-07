@@ -21,8 +21,8 @@ const (
 )
 
 // StateMachine represents a Step Functions state machine.
-func (sm *StateMachine) GetTags() map[string]string { return sm.Tags }
-func (sm *StateMachine) SetTags(t map[string]string)  { sm.Tags = t }
+func (sm *StateMachine) GetTags() map[string]string  { return sm.Tags }
+func (sm *StateMachine) SetTags(t map[string]string) { sm.Tags = t }
 
 type StateMachine struct {
 	Name       string            `json:"Name"`
