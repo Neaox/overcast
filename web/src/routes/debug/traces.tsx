@@ -56,7 +56,7 @@ function TracesPage() {
   const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     ...traceListQueryOptions(params, debugEnabled),
     getNextPageParam: (lastPage: TraceListResponse) => lastPage.nextCursor ?? undefined,
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: undefined,
     refetchInterval: autoRefresh ? 3000 : false,
   })
 
@@ -65,7 +65,7 @@ function TracesPage() {
     refetchInterval: autoRefresh ? 3000 : false,
   })
 
-  const pages = (data as { pages: TraceListResponse[] } | undefined)?.pages
+  const pages = (data as unknown as { pages: TraceListResponse[] } | undefined)?.pages
   const allTraces = useMemo(() => (pages ?? []).flatMap((p) => p.traces), [pages])
 
   const applyFilters = () => {
