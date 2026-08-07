@@ -8,7 +8,7 @@ const TWO_ITEMS = [
   { value: "http://localhost.overcast.sh:" },
 ]
 
-function TestCombobox({ value, onChange }: { value: string; onChange?: (v: string) => void }) {
+function TestCombobox({ value, onChange, allowFreeText, allowCustom }: { value: string; onChange?: (v: string) => void; allowFreeText?: boolean; allowCustom?: boolean }) {
   return (
     <Combobox<{ value: string }>
       value={value}
@@ -18,6 +18,8 @@ function TestCombobox({ value, onChange }: { value: string; onChange?: (v: strin
       getItemValue={(item) => item.value}
       renderItem={(item) => <span>{item.value}</span>}
       placeholder="..."
+      allowFreeText={allowFreeText}
+      allowCustom={allowCustom}
     />
   )
 }
@@ -47,13 +49,13 @@ describe("Combobox", () => {
 
   describe("allowFreeText", () => {
     it("seeds query from current value on re-open", async () => {
-      const { user } = render(<TestCombobox value="http://localhost:" />)
+      const { user } = render(<TestCombobox value="http://localhost:" allowFreeText />)
       await user.click(screen.getByRole("combobox"))
       expect(screen.getByRole("combobox")).toHaveValue("http://localhost:")
     })
 
     it("selects second item with allowFreeText without crashing", async () => {
-      const { user } = render(<TestCombobox value="" />)
+      const { user } = render(<TestCombobox value="" allowFreeText allowCustom />)
       await user.click(screen.getByRole("combobox"))
       const items = screen.getAllByRole("option")
       await user.click(items[1])
@@ -65,12 +67,14 @@ describe("Combobox", () => {
         <TestCombobox
           value={value}
           onChange={(v) => { value = v }}
+          allowFreeText
+          allowCustom
         />,
       )
       await user.click(screen.getByRole("combobox"))
       await user.click(screen.getAllByRole("option")[1])
 
-      rerender(<TestCombobox value={value} onChange={(v) => { value = v }} />)
+      rerender(<TestCombobox value={value} onChange={(v) => { value = v }} allowFreeText allowCustom />)
 
       await user.click(screen.getByRole("combobox"))
       expect(screen.getByRole("combobox")).toHaveValue(value)
