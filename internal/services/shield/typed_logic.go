@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createProtectionRequest struct {
@@ -139,8 +140,8 @@ func (h *Handler) describeProtectionTyped(ctx context.Context, req *describeProt
 }
 
 type tagResourceRequest struct {
-	ResourceARN string      `json:"ResourceARN" cbor:"ResourceARN"`
-	Tags        []shieldTag `json:"Tags" cbor:"Tags"`
+	ResourceARN string                `json:"ResourceARN" cbor:"ResourceARN"`
+	Tags        []serviceutil.TagPair `json:"Tags" cbor:"Tags"`
 }
 
 type untagResourceRequest struct {
@@ -153,7 +154,7 @@ type listTagsForResourceRequest struct {
 }
 
 type listTagsForResourceResponse struct {
-	Tags []shieldTag `json:"Tags" cbor:"Tags"`
+	Tags []serviceutil.TagPair `json:"Tags" cbor:"Tags"`
 }
 
 func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
@@ -178,6 +179,9 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	}
 	for _, t := range req.Tags {
 		tags[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(shieldTagCfg, tags); aerr != nil {
+		return nil, aerr
 	}
 	p.SetTags(tags)
 	if err := h.store.putProtection(ctx, p); err != nil {
@@ -231,5 +235,5 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Protection %s not found", pid), HTTPStatus: http.StatusNotFound,
 		}
 	}
-	return &listTagsForResourceResponse{Tags: shieldTagsToList(p.GetTags())}, nil
+	return &listTagsForResourceResponse{Tags: serviceutil.TagsToList(p.GetTags())}, nil
 }

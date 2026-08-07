@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createLoadBalancerReq struct {
@@ -580,6 +581,9 @@ func (h *Handler) addTagsTyped(ctx context.Context, req *addTagsReq) (*xmlTypedA
 			for k, v := range tagMap {
 				lb.Tags[k] = v
 			}
+			if aerr := serviceutil.ValidateTags(elbv2TagCfg, lb.Tags); aerr != nil {
+				return nil, aerr
+			}
 			if err := h.putLB(ctx, region, lb); err != nil {
 				return nil, protocol.ErrInternalError
 			}
@@ -593,6 +597,9 @@ func (h *Handler) addTagsTyped(ctx context.Context, req *addTagsReq) (*xmlTypedA
 			}
 			for k, v := range tagMap {
 				tg.Tags[k] = v
+			}
+			if aerr := serviceutil.ValidateTags(elbv2TagCfg, tg.Tags); aerr != nil {
+				return nil, aerr
 			}
 			if err := h.putTG(ctx, region, tg); err != nil {
 				return nil, protocol.ErrInternalError

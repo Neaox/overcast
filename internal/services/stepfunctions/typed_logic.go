@@ -179,27 +179,31 @@ type listTagsForResourceTypedResponse struct {
 
 func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
 	name := extractSMName(req.ResourceArn)
-	sm, err := h.store.GetStateMachine(ctx, name)
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	if sm == nil {
-		return nil, errSMNotFound(req.ResourceArn)
-	}
 
-	if sm.Tags == nil {
-		sm.Tags = make(map[string]string)
-	}
+	incoming := make(map[string]string, len(req.Tags))
 	for _, t := range req.Tags {
-		sm.Tags[t.Key] = t.Value
+		incoming[t.Key] = t.Value
 	}
 
-	if aerr := serviceutil.ValidateTags(sfnTagCfg, sm.Tags); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(ctx, name, incoming, sfnTagCfg,
+		func(ctx context.Context, key string) (*StateMachine, *protocol.AWSError) {
+			sm, err := h.store.GetStateMachine(ctx, key)
+			if err != nil {
+				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			if sm == nil {
+				return nil, errSMNotFound(req.ResourceArn)
+			}
+			return sm, nil
+		},
+		func(ctx context.Context, sm *StateMachine) *protocol.AWSError {
+			if err := h.store.PutStateMachine(ctx, sm); err != nil {
+				return protocol.Wrap(protocol.ErrInternalError, err)
+			}
+			return nil
+		},
+	); aerr != nil {
 		return nil, aerr
-	}
-
-	if err := h.store.PutStateMachine(ctx, sm); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return &struct{}{}, nil
 }
@@ -237,9 +241,6 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 	tags := make([]map[string]string, 0, len(sm.Tags))
 	for k, v := range sm.Tags {
 		tags = append(tags, map[string]string{"key": k, "value": v})
-	}
-	if tags == nil {
-		tags = []map[string]string{}
 	}
 	return &listTagsForResourceTypedResponse{Tags: tags}, nil
 }

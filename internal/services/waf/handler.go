@@ -293,7 +293,6 @@ func (h *Handler) putACL(ctx context.Context, acl *WebACL) *protocol.AWSError {
 	if err := h.store.Set(ctx, nsWebACLs, h.storeKey(acl.Scope, acl.ID), string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	h.publish(ctx, events.WAFWebACLCreated, acl)
 	return nil
 }
 
