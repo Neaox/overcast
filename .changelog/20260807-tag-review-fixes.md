@@ -1,1 +1,0 @@
-* [waf/stepfunctions/shield/glue] fix tag validation gaps: WAF no longer publishes spurious creation events on tag writes; Step Functions typed path validates tags; Shield and ELBv2 validate tag limits; Glue uses shared helpers; RDS fixes unbounded loop; removed dead TaggedResource and shieldTagsToList
