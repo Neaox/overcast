@@ -42,6 +42,7 @@ import { Route as EcsIndexRouteImport } from './routes/ecs/index'
 import { Route as EcrIndexRouteImport } from './routes/ecr/index'
 import { Route as Ec2IndexRouteImport } from './routes/ec2/index'
 import { Route as DynamodbIndexRouteImport } from './routes/dynamodb/index'
+import { Route as DebugIndexRouteImport } from './routes/debug/index'
 import { Route as CognitoIndexRouteImport } from './routes/cognito/index'
 import { Route as CloudwatchIndexRouteImport } from './routes/cloudwatch/index'
 import { Route as CloudfrontIndexRouteImport } from './routes/cloudfront/index'
@@ -266,6 +267,11 @@ const DynamodbIndexRoute = DynamodbIndexRouteImport.update({
   id: '/dynamodb/',
   path: '/dynamodb/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const DebugIndexRoute = DebugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DebugRoute,
 } as any)
 const CognitoIndexRoute = CognitoIndexRouteImport.update({
   id: '/cognito/',
@@ -621,6 +627,7 @@ export interface FileRoutesByFullPath {
   '/cloudfront/': typeof CloudfrontIndexRoute
   '/cloudwatch/': typeof CloudwatchIndexRoute
   '/cognito/': typeof CognitoIndexRoute
+  '/debug/': typeof DebugIndexRoute
   '/dynamodb/': typeof DynamodbIndexRoute
   '/ec2/': typeof Ec2IndexRoute
   '/ecr/': typeof EcrIndexRoute
@@ -669,7 +676,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$service': typeof ServiceRoute
-  '/debug': typeof DebugRouteWithChildren
   '/docs': typeof DocsRoute
   '/events': typeof EventsRoute
   '/iam': typeof IamRoute
@@ -710,6 +716,7 @@ export interface FileRoutesByTo {
   '/cloudfront': typeof CloudfrontIndexRoute
   '/cloudwatch': typeof CloudwatchIndexRoute
   '/cognito': typeof CognitoIndexRoute
+  '/debug': typeof DebugIndexRoute
   '/dynamodb': typeof DynamodbIndexRoute
   '/ec2': typeof Ec2IndexRoute
   '/ecr': typeof EcrIndexRoute
@@ -805,6 +812,7 @@ export interface FileRoutesById {
   '/cloudfront/': typeof CloudfrontIndexRoute
   '/cloudwatch/': typeof CloudwatchIndexRoute
   '/cognito/': typeof CognitoIndexRoute
+  '/debug/': typeof DebugIndexRoute
   '/dynamodb/': typeof DynamodbIndexRoute
   '/ec2/': typeof Ec2IndexRoute
   '/ecr/': typeof EcrIndexRoute
@@ -901,6 +909,7 @@ export interface FileRouteTypes {
     | '/cloudfront/'
     | '/cloudwatch/'
     | '/cognito/'
+    | '/debug/'
     | '/dynamodb/'
     | '/ec2/'
     | '/ecr/'
@@ -949,7 +958,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/$service'
-    | '/debug'
     | '/docs'
     | '/events'
     | '/iam'
@@ -990,6 +998,7 @@ export interface FileRouteTypes {
     | '/cloudfront'
     | '/cloudwatch'
     | '/cognito'
+    | '/debug'
     | '/dynamodb'
     | '/ec2'
     | '/ecr'
@@ -1084,6 +1093,7 @@ export interface FileRouteTypes {
     | '/cloudfront/'
     | '/cloudwatch/'
     | '/cognito/'
+    | '/debug/'
     | '/dynamodb/'
     | '/ec2/'
     | '/ecr/'
@@ -1447,6 +1457,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/dynamodb/'
       preLoaderRoute: typeof DynamodbIndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/debug/': {
+      id: '/debug/'
+      path: '/'
+      fullPath: '/debug/'
+      preLoaderRoute: typeof DebugIndexRouteImport
+      parentRoute: typeof DebugRoute
     }
     '/cognito/': {
       id: '/cognito/'
@@ -1878,10 +1895,12 @@ const DebugTracesRouteWithChildren = DebugTracesRoute._addFileChildren(
 
 interface DebugRouteChildren {
   DebugTracesRoute: typeof DebugTracesRouteWithChildren
+  DebugIndexRoute: typeof DebugIndexRoute
 }
 
 const DebugRouteChildren: DebugRouteChildren = {
   DebugTracesRoute: DebugTracesRouteWithChildren,
+  DebugIndexRoute: DebugIndexRoute,
 }
 
 const DebugRouteWithChildren = DebugRoute._addFileChildren(DebugRouteChildren)
