@@ -40,6 +40,7 @@ import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import { CopyUrlButton } from "@/components/ui/copy-url-button"
+import { s3CopyFormats } from "@/types/s3"
 import { useToast } from "@/components/ui/toast"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
@@ -232,10 +233,7 @@ export function BucketDetail() {
           <>
             <CopyUrlButton
               compact
-              formats={[
-                { label: "S3 URI", value: `s3://${bucket}`, description: "aws cli" },
-                { label: "Path-style", value: `${endpoint.baseUrl}/${bucket}`, description: "http" },
-              ]}
+              formats={s3CopyFormats(endpoint.baseUrl, bucket)}
               noun="bucket URL"
             />
             <Button
@@ -353,10 +351,8 @@ export function BucketDetail() {
                               <CopyUrlButton
                                 compact
                                 noun="URL"
-                                formats={[
-                                  { label: "S3 URI", value: `s3://${bucket}/${item.prefix}`, description: "aws cli" },
-                                  { label: "Path-style", value: `${endpoint.baseUrl}/${bucket}/${item.prefix}`, description: "http" },
-                                ]}
+                                formats={s3CopyFormats(endpoint.baseUrl, bucket, item.prefix)}
+                              />
                               />
                               <Button
                                 variant="ghost"
@@ -409,10 +405,7 @@ export function BucketDetail() {
                               <CopyUrlButton
                                 compact
                                 noun="URL"
-                                formats={[
-                                  { label: "S3 URI", value: `s3://${bucket}/${item.key}`, description: "aws cli" },
-                                  { label: "Path-style", value: `${endpoint.baseUrl}/${bucket}/${item.key}`, description: "http" },
-                                ]}
+                                formats={s3CopyFormats(endpoint.baseUrl, bucket, item.key)}
                               />
                               <Button
                                 variant="ghost"

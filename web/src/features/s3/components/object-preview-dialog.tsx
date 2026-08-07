@@ -6,6 +6,7 @@ import { s3 } from "@/services/api"
 import { useEndpoint } from "@/hooks/use-endpoint"
 import { Button } from "@/components/ui/button"
 import { CopyUrlButton } from "@/components/ui/copy-url-button"
+import { s3CopyFormats } from "@/types/s3"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import {
   Dialog,
@@ -75,10 +76,7 @@ export function ObjectPreviewDialog({
             {objectKey && (
               <CopyUrlButton
                 compact
-                formats={[
-                  { label: "S3 URI", value: `s3://${bucket}/${objectKey}`, description: "aws cli" },
-                  { label: "Path-style", value: `${endpoint.baseUrl}/${bucket}/${objectKey}`, description: "http" },
-                ]}
+                formats={s3CopyFormats(endpoint.baseUrl, bucket, objectKey)}
                 noun="URL"
               />
             )}

@@ -46,6 +46,7 @@ import { formatDate } from "@/lib/format"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { CopyUrlButton } from "@/components/ui/copy-url-button"
+import { s3CopyFormats } from "@/types/s3"
 
 export function BucketList() {
   const endpoint = useEndpoint()
@@ -138,10 +139,7 @@ export function BucketList() {
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <CopyUrlButton
-                      formats={[
-                        { label: "S3 URI", value: `s3://${b.name}`, description: "aws cli" },
-                        { label: "Path-style", value: `${endpoint.baseUrl}/${b.name}`, description: "http" },
-                      ]}
+                      formats={s3CopyFormats(endpoint.baseUrl, b.name)}
                       noun="bucket URL"
                     />
                   </TableCell>
