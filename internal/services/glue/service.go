@@ -178,7 +178,7 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, _ clock.Clock) 
 		"DeleteTable":         s.deleteTable,
 		"TagResource":         s.tagResource,
 		"UntagResource":       s.untagResource,
-		"ListTagsForResource": s.listTagsForResource,
+		"GetTags": s.getTags,
 	}
 	s.typedOp = s.typedOps()
 	return s
@@ -537,7 +537,7 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 
-func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+func (s *Service) getTags(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceArn string `json:"ResourceArn"`
 	}

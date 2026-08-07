@@ -887,7 +887,7 @@ var AllCapabilities = []Capability{
 	{Service: "glue", Operation: "GetDatabases", Category: "Databases", Status: StatusSupported, Notes: "Lists all databases", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "glue", Operation: "GetTable", Category: "Tables", Status: StatusSupported, Notes: "Returns table details", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "glue", Operation: "GetTables", Category: "Tables", Status: StatusSupported, Notes: "Lists tables in a database", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "glue", Operation: "ListTagsForResource", Category: "Tags", Status: StatusSupported, Notes: "Returns tags for databases and tables", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
+	{Service: "glue", Operation: "GetTags", Category: "Tags", Status: StatusSupported, Notes: "Returns tags for databases and tables", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "glue", Operation: "TagResource", Category: "Tags", Status: StatusSupported, Notes: "Adds or overwrites tags on databases and tables", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "glue", Operation: "UntagResource", Category: "Tags", Status: StatusSupported, Notes: "Removes tags by key from databases and tables", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "iam", Operation: "AddRoleToInstanceProfile", Category: "Instance profiles", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
