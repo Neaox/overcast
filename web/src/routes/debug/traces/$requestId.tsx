@@ -131,7 +131,7 @@ function TraceDetailPage() {
       <div className="min-h-0">
         {tab === "Overview" && <OverviewTab trace={trace} />}
         {tab === "Hops" && <HopsTab hops={trace.hops ?? []} requestId={requestId} navigate={navigate} />}
-        {tab === "Logs" && <LogsTab entries={trace.logEntries ?? []} />}
+        {tab === "Logs" && <LogsTab entries={trace.logEntries ?? []} hops={trace.hops ?? []} />}
         {tab === "Errors" && <ErrorsTab trace={trace} />}
       </div>
     </div>
@@ -626,10 +626,23 @@ function HopsTab({ hops, requestId, navigate }: { hops: TraceHop[]; requestId: s
   )
 }
 
-function LogsTab({ entries }: { entries: TraceLogEntry[] }) {
+function LogsTab({ entries, hops }: { entries: TraceLogEntry[]; hops: TraceHop[] }) {
   const [expanded, setExpanded] = useState<number | null>(null)
+  const [showHopLogs, setShowHopLogs] = useState(false)
 
-  if (entries.length === 0) {
+  // Merge main logs + hop logs (when toggle on), sorted by timestamp.
+  const allLogs = useMemo(() => {
+    const base: (TraceLogEntry & { source?: string })[] = entries.map((e) => ({ ...e }))
+    if (!showHopLogs || hops.length === 0) return base
+    const merged = [...base]
+    // Logs within hops don't exist in the current data model. Since we
+    // capture request-level logs and hop-level logs separately, hop logs
+    // come from the hop's own trace (which we'd need to fetch). For now,
+    // this toggle is ready for when hop log entries are captured.
+    return merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+  }, [entries, hops, showHopLogs])
+
+  if (allLogs.length === 0) {
     return (
       <div className="text-center text-fg-muted py-8">
         No log entries captured for this request.
@@ -638,64 +651,53 @@ function LogsTab({ entries }: { entries: TraceLogEntry[] }) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-fg-muted text-left">
-            <th className="px-3 py-2 font-medium w-6" />
-            <th className="px-3 py-2 font-medium w-24">Level</th>
-            <th className="px-3 py-2 font-medium w-44">Timestamp</th>
-            <th className="px-3 py-2 font-medium">Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry, i) => {
-            const isExpanded = expanded === i
-            return (
-              <Fragment key={`${entry.timestamp}-${entry.level}-${i}`}>
-                <tr
-                  className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors"
-                  onClick={() => setExpanded(isExpanded ? null : i)}
-                >
-                  <td className="px-3 py-2 text-fg-muted">
-                    {isExpanded ? (
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "text-xs",
-                        entry.level === "ERROR"
-                          ? "border-red-400/50 text-red-400"
-                          : entry.level === "WARN"
-                            ? "border-amber-400/50 text-amber-400"
-                            : "border-emerald-400/50 text-emerald-400",
-                      )}
-                    >
-                      {entry.level}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs text-fg-muted whitespace-nowrap">
-                    {formatTimestamp(entry.timestamp)}
-                  </td>
-                  <td className="px-3 py-2 text-xs">{entry.message}</td>
-                </tr>
-                {isExpanded && entry.fields && Object.keys(entry.fields).length > 0 && (
-                  <tr key={`${i}-detail`} className="bg-bg-elevated">
-                    <td colSpan={4} className="px-4 py-3">
-                      <HopBody raw={JSON.stringify(entry.fields)} />
+    <div className="flex flex-col gap-2">
+      {hops.length > 0 && (
+        <div className="flex items-center gap-2">
+          <Button variant={showHopLogs ? "default" : "ghost"} size="sm" onClick={() => setShowHopLogs((v) => !v)} className="gap-1 text-xs h-7">
+            {showHopLogs ? "Hide hop logs" : "Show hop logs"}
+          </Button>
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-fg-muted text-left">
+              <th className="px-3 py-2 font-medium w-6" />
+              <th className="px-3 py-2 font-medium w-24">Level</th>
+              <th className="px-3 py-2 font-medium w-44">Timestamp</th>
+              {showHopLogs && <th className="px-3 py-2 font-medium w-24">Source</th>}
+              <th className="px-3 py-2 font-medium">Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allLogs.map((entry, i) => {
+              const isExpanded = expanded === i
+              const k = `${entry.timestamp}-${entry.level}-${i}`
+              return (
+                <Fragment key={k}>
+                  <tr className="border-b border-border hover:bg-bg-elevated cursor-pointer" onClick={() => setExpanded(isExpanded ? null : i)}>
+                    <td className="px-3 py-2 text-fg-muted">{isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline" className={cn("text-xs", entry.level === "ERROR" ? "border-red-400/50 text-red-400" : entry.level === "WARN" ? "border-amber-400/50 text-amber-400" : "border-emerald-400/50 text-emerald-400")}>{entry.level}</Badge>
                     </td>
+                    <td className="px-3 py-2 font-mono text-xs text-fg-muted whitespace-nowrap">{formatTimestamp(entry.timestamp)}</td>
+                    {showHopLogs && <td className="px-3 py-2 text-xs text-fg-muted">{entry.source ?? "request"}</td>}
+                    <td className="px-3 py-2 text-xs">{entry.message}</td>
                   </tr>
-                )}
-              </Fragment>
-            )
-          })}
-        </tbody>
-      </table>
+                  {isExpanded && entry.fields && Object.keys(entry.fields).length > 0 && (
+                    <tr key={`${i}-detail`} className="bg-bg-elevated">
+                      <td colSpan={showHopLogs ? 5 : 4} className="px-4 py-3">
+                        <HopBody raw={JSON.stringify(entry.fields)} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
