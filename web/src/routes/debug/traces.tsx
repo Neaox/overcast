@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/ui/copy-button"
 import { cn } from "@/lib/utils"
 import { useDebugEnabled } from "@/hooks/use-server-info"
-import type { TraceListParams, TraceSummary } from "@/types"
+import type { TraceListParams, TraceListResponse, TraceSummary } from "@/types"
 
 type TracesSearch = {
   service?: string
@@ -55,8 +55,8 @@ function TracesPage() {
 
   const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     ...traceListQueryOptions(params, debugEnabled),
-    getNextPageParam: (lastPage: { nextCursor?: string }) => lastPage.nextCursor ?? (null as string | null),
-    initialPageParam: "" as string,
+    getNextPageParam: (lastPage: TraceListResponse) => lastPage.nextCursor ?? undefined,
+    initialPageParam: undefined as string | undefined,
     refetchInterval: autoRefresh ? 3000 : false,
   })
 
@@ -65,10 +65,8 @@ function TracesPage() {
     refetchInterval: autoRefresh ? 3000 : false,
   })
 
-  const allTraces = useMemo(() => {
-    if (!data?.pages) return []
-    return data.pages.flatMap((p) => p.traces ?? [])
-  }, [data])
+  const pages = (data as { pages: TraceListResponse[] } | undefined)?.pages
+  const allTraces = useMemo(() => (pages ?? []).flatMap((p) => p.traces), [pages])
 
   const applyFilters = () => {
     void navigate({
