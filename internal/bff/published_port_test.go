@@ -79,10 +79,7 @@ func TestDeriveAPIBaseURL_unknownWhenPortMismatch(t *testing.T) {
 }
 
 func TestNormalizeEndpoint_rewritesPublishedPortToListenPort(t *testing.T) {
-	// Given the BFF knows it is published on 4580 while listening on 4566
 	defaultAPIURL = "http://localhost:4566"
-	publishedAPIPort = 4580
-	t.Cleanup(func() { publishedAPIPort = 0 })
 
 	cases := []struct {
 		name string
@@ -106,9 +103,7 @@ func TestNormalizeEndpoint_rewritesPublishedPortToListenPort(t *testing.T) {
 }
 
 func TestNormalizeEndpoint_noRewriteWhenPortsMatch(t *testing.T) {
-	// Given a native binary or a 1:1 port mapping, nothing is rewritten
 	defaultAPIURL = "http://localhost:4566"
-	publishedAPIPort = 0
 
 	if got, want := normalizeEndpoint("http://localhost:4566"), "http://localhost:4566"; got != want {
 		t.Errorf("normalizeEndpoint = %q, want %q", got, want)
@@ -116,10 +111,7 @@ func TestNormalizeEndpoint_noRewriteWhenPortsMatch(t *testing.T) {
 }
 
 func TestResolveEndpoint_normalizesHeader(t *testing.T) {
-	// Given the SPA sends the endpoint it was bootstrapped with
 	defaultAPIURL = "http://localhost:4566"
-	publishedAPIPort = 4580
-	t.Cleanup(func() { publishedAPIPort = 0 })
 
 	r := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	r.Header.Set(endpointHeader, "http://localhost:4580")

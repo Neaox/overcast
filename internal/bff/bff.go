@@ -44,12 +44,6 @@ const (
 // emulator listens on a non-standard port.
 var defaultAPIURL = "http://localhost:4566"
 
-// publishedAPIPort is the host port the API is reachable on from outside the
-// container, when that differs from the port this process listens on. Zero
-// means they are the same and no endpoint rewriting is needed. Set from
-// UIConfig in NewHandler.
-var publishedAPIPort int
-
 var bffHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // bffStreamingClient is used for long-lived streaming requests (SSE) where a
@@ -121,12 +115,6 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 		defaultAPIURL = fmt.Sprintf("%s://localhost:%d", scheme, cfg.APIPort)
 	}
 	configureAPITransports(cfg)
-	// Only meaningful when the two differ; equal ports need no rewriting.
-	if cfg.BrowserAPIPort > 0 && cfg.BrowserAPIPort != cfg.APIPort {
-		publishedAPIPort = cfg.BrowserAPIPort
-	} else {
-		publishedAPIPort = 0
-	}
 
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
