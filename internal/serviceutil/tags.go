@@ -60,7 +60,16 @@ func tagsFromStore(ctx context.Context, store state.Store, ns, key string) (map[
 	}
 	var tags map[string]string
 	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+		// Malformed persisted state is isolated, not escalated: one corrupt
+		// tag blob must not turn every tag operation on this resource into a
+		// 500 (AGENTS.md § Malformed persisted state must be isolated). The
+		// record reads as empty; the next tag write replaces it wholesale.
+		return map[string]string{}, nil
+	}
+	if tags == nil {
+		// A persisted JSON "null" decodes to a nil map; callers index into
+		// the result, so never hand one back.
+		return map[string]string{}, nil
 	}
 	return tags, nil
 }
