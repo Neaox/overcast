@@ -19,8 +19,11 @@ export interface CopyUrlButtonProps {
 
 export function CopyUrlButton({ formats, noun, defaultIndex = 0, compact }: CopyUrlButtonProps) {
   const { copy, copied } = useCopyToClipboard()
+  const [activeIdx, setActiveIdx] = useState(defaultIndex)
 
   if (formats.length === 0) return null
+
+  const active = formats[Math.min(activeIdx, formats.length - 1)]
 
   if (compact) {
     return (
@@ -50,7 +53,6 @@ export function CopyUrlButton({ formats, noun, defaultIndex = 0, compact }: Copy
             {formats.map((f) => (
               <DropdownMenu.Item
                 key={f.label}
-                onClick={(e) => e.stopPropagation()}
                 onSelect={() => copy(f.value, { noun: noun ?? f.label })}
                 className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-fg outline-none hover:bg-accent hover:text-white focus:bg-accent focus:text-white"
               >
@@ -65,9 +67,6 @@ export function CopyUrlButton({ formats, noun, defaultIndex = 0, compact }: Copy
       </DropdownMenu.Root>
     )
   }
-
-  const [activeIdx, setActiveIdx] = useState(defaultIndex)
-  const active = formats[Math.min(activeIdx, formats.length - 1)]
 
   return (
     <DropdownMenu.Root>
@@ -94,7 +93,6 @@ export function CopyUrlButton({ formats, noun, defaultIndex = 0, compact }: Copy
           {formats.map((f, i) => (
             <DropdownMenu.Item
               key={f.label}
-              onClick={(e) => e.stopPropagation()}
               onSelect={() => {
                 setActiveIdx(i)
                 copy(f.value, { noun: noun ?? f.label })
