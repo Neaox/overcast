@@ -17,8 +17,10 @@ interface CheckboxFilterDropdownProps {
   /** IDs whose semantics depend on `model`: hide-model = currently hidden; show-model = currently selected. */
   selected: Set<string>
   onToggle: (id: string) => void
-  onSelectAll: () => void
-  onDeselectAll: () => void
+  /** Make every item visible (hide-model: clear the hidden set; show-model: select all). */
+  onShowAll: () => void
+  /** Make every item hidden (hide-model: hide all; show-model: deselect all). */
+  onHideAll: () => void
   triggerLabel: string
 }
 
@@ -27,8 +29,8 @@ export function CheckboxFilterDropdown({
   model,
   selected,
   onToggle,
-  onSelectAll,
-  onDeselectAll,
+  onShowAll,
+  onHideAll,
   triggerLabel,
 }: CheckboxFilterDropdownProps) {
   const [open, setOpen] = useState(false)
@@ -69,11 +71,11 @@ export function CheckboxFilterDropdown({
       {open && (
         <div className="absolute top-full left-0 z-50 mt-1 w-52 rounded-lg border border-border bg-bg-elevated shadow-lg">
           {visibleCount > 0 ? (
-            <button className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5" onClick={onDeselectAll}>
+            <button className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5" onClick={onHideAll}>
               {model === "hide" ? "Hide all" : "Deselect all"}
             </button>
           ) : (
-            <button className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5" onClick={onSelectAll}>
+            <button className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5" onClick={onShowAll}>
               {model === "hide" ? "Show all" : "Select all"}
             </button>
           )}

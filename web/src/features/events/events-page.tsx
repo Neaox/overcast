@@ -224,8 +224,8 @@ export function EventsPage() {
     })
   }, [])
 
-  const selectAllSources = useCallback(() => setHiddenSources(new Set(allSources.map((s) => s.id))), [allSources])
-  const deselectAllSources = useCallback(() => setHiddenSources(new Set()), [])
+  const showAllSources = useCallback(() => setHiddenSources(new Set()), [])
+  const hideAllSources = useCallback(() => setHiddenSources(new Set(allSources.map((s) => s.id))), [allSources])
 
   const clearFilters = useCallback(() => {
     setHiddenSources(new Set(DEFAULT_HIDDEN_SOURCES))
@@ -292,8 +292,8 @@ export function EventsPage() {
           model="hide"
           selected={hiddenSources}
           onToggle={toggleSource}
-          onSelectAll={selectAllSources}
-          onDeselectAll={deselectAllSources}
+          onShowAll={showAllSources}
+          onHideAll={hideAllSources}
           triggerLabel={(() => {
             const vc = allSources.length - hiddenSources.size
             if (vc <= 0) return "No sources"
