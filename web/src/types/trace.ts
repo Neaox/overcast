@@ -90,6 +90,15 @@ export interface TraceCountResponse {
   capacity: number
 }
 
+/** Event-bus event captured while a traced request was in flight. */
+export interface TraceEvent {
+  type: string
+  time: string
+  source: string
+  resourceArn?: string
+  payload: unknown
+}
+
 export interface TraceListParams {
   service?: string
   method?: string

@@ -1,10 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { useMemo, useState, useCallback } from "react"
 import { Search, RefreshCw, EyeOff, Terminal, GitFork } from "lucide-react"
-import { useInfiniteQuery, useQuery, infiniteQueryOptions, skipToken } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery, useQueryClient, infiniteQueryOptions } from "@tanstack/react-query"
+import type { InfiniteData } from "@tanstack/react-query"
 import { traceCountQueryOptions, debugTraceKeys } from "@/features/debug-traces/data"
 import { debugTrace } from "@/services/api/misc"
-import { nsToHuman, statusColor, statusMessage, formatTimestamp } from "@/features/debug-traces/utils"
+import { endpointResolver } from "@/services/api/base"
+import { nsToHuman, statusColor, statusMessage, formatTimestamp, shellQuote, traceRequestUrl, mergePolledTraces } from "@/features/debug-traces/utils"
 import { serviceColor } from "@/features/debug-traces/service-color"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { Input } from "@/components/ui/input"
@@ -13,6 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { CheckboxFilterDropdown, type CheckboxFilterItem } from "@/components/ui/checkbox-filter-dropdown"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { useCopyToClipboard } from "@/hooks/use-clipboard"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { cn } from "@/lib/utils"
 import { useDebugEnabled } from "@/hooks/use-server-info"
 import type { TraceListParams, TraceListResponse, TraceSummary } from "@/types"
@@ -37,34 +40,45 @@ export const Route = createFileRoute("/debug/traces/")({
 
 const COL_COUNT = 9
 
+/** Coalesce an empty service name the same way everywhere (options, filter). */
+function serviceKey(service: string): string {
+  return service || "(unknown)"
+}
+
 function curlCmd(t: TraceSummary): string {
-  return `curl -X ${t.method} 'http://${window.location.hostname}${t.path}'`
+  const { baseUrl } = endpointResolver.get()
+  return `curl -X ${t.method} ${shellQuote(traceRequestUrl(baseUrl, t.path))}`
 }
 
 function TracesPage() {
   const { method, status, search } = Route.useSearch()
   const navigate = Route.useNavigate()
   const debugEnabled = useDebugEnabled()
+  const queryClient = useQueryClient()
 
   const [searchInput, setSearchInput] = useState(search ?? "")
   const [statusFilter, setStatusFilter] = useState(status ?? "")
   const [methodFilter, setMethodFilter] = useState(method ?? "")
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [hideInternal, setHideInternal] = useState(true)
+  // Deny-list of service keys: a service in the set is hidden from the table.
   const [hiddenServices, setHiddenServices] = useState<Set<string>>(new Set())
   const { copy } = useCopyToClipboard()
+
+  // Debounce so the infinite query does not refire on every keystroke.
+  const debouncedSearch = useDebouncedValue(searchInput, 300)
 
   const params: TraceListParams = useMemo(() => {
     const p: TraceListParams = { limit: 50 }
     if (methodFilter) p.method = methodFilter
     if (statusFilter) p.status = statusFilter
-    if (searchInput) p.search = searchInput
+    if (debouncedSearch) p.search = debouncedSearch
     return p
-  }, [methodFilter, statusFilter, searchInput])
+  }, [methodFilter, statusFilter, debouncedSearch])
 
   // Infinite-query: page 1 = newest, scroll down loads older via after-cursor.
   const infiniteOpts = infiniteQueryOptions({
-    queryKey: [...debugTraceKeys.list(params), debugEnabled],
+    queryKey: [...debugTraceKeys.list(params), debugEnabled] as const,
     queryFn: ({ pageParam }) => debugTrace.list({ ...params, after: pageParam }),
     getNextPageParam: (lastPage: TraceListResponse) => lastPage.nextCursor || undefined,
     initialPageParam: undefined as string | undefined,
@@ -81,31 +95,38 @@ function TracesPage() {
     ...traceCountQueryOptions(),
   })
 
-  // Poll for newer records using before-cursor.
-  const pages = (data as unknown as { pages: TraceListResponse[] } | undefined)?.pages
-  const newestId = pages?.[0]?.traces?.[0]?.requestId
-  const { data: pollData } = useQuery({
-    queryKey: [...debugTraceKeys.list(params), "poll", debugEnabled, newestId],
-    queryFn: autoRefresh && newestId
-      ? () => debugTrace.list({ before: newestId })
-      : skipToken,
-    refetchInterval: autoRefresh ? 1000 : false,
+  // Live poll: fetch traces newer than the newest one in the cache (same
+  // filters as the list) and fold them into the infinite query's first page.
+  // Prepending advances `newestId` naturally, so each poll only fetches the
+  // delta since the previous one, and an initially empty list still goes
+  // live once traces start arriving.
+  const newestId = data?.pages[0]?.traces[0]?.requestId
+  // eslint-disable-next-line @tanstack/query/exhaustive-deps -- newestId is deliberately NOT in the key: the poll's identity must stay stable while setQueryData advances the cursor (a keyed poll would reset every second); queryClient and infiniteOpts.queryKey are stable derivations of what is already in the key.
+  useQuery({
+    queryKey: [...infiniteOpts.queryKey, "poll"],
+    queryFn: async () => {
+      const fresh = await debugTrace.list(
+        newestId ? { ...params, before: newestId } : { ...params },
+      )
+      if (fresh.traces.length > 0) {
+        queryClient.setQueryData<InfiniteData<TraceListResponse, string | undefined>>(
+          infiniteOpts.queryKey,
+          (old) => (old ? mergePolledTraces(old, fresh.traces) : old),
+        )
+      }
+      return fresh
+    },
+    enabled: debugEnabled && autoRefresh && data !== undefined,
+    refetchInterval: 1000,
   })
 
-  const allTraces = useMemo(() => {
-    const base = (pages ?? []).flatMap((p) => p.traces)
-    const fresh = pollData?.traces ?? []
-    if (base.length === 0 && fresh.length === 0) return []
-    if (fresh.length === 0) return base
-    const seen = new Set(fresh.map((t) => t.requestId))
-    return [...fresh, ...base.filter((t) => !seen.has(t.requestId))]
-  }, [pages, pollData])
+  const allTraces = useMemo(() => (data?.pages ?? []).flatMap((p) => p.traces), [data])
 
   const serviceOptions: CheckboxFilterItem[] = useMemo(() => {
     const counts = new Map<string, number>()
     for (const t of allTraces) {
       if (t.internal) continue
-      const svc = t.service || "(unknown)"
+      const svc = serviceKey(t.service)
       counts.set(svc, (counts.get(svc) ?? 0) + 1)
     }
     return Array.from(counts.entries())
@@ -116,20 +137,24 @@ function TracesPage() {
   const displayTraces = useMemo(() => {
     let filtered = allTraces
     if (hideInternal) filtered = filtered.filter((t) => !t.internal)
-    if (hiddenServices.size > 0) filtered = filtered.filter((t) => hiddenServices.has(t.service))
+    if (hiddenServices.size > 0) filtered = filtered.filter((t) => !hiddenServices.has(serviceKey(t.service)))
     return filtered
   }, [allTraces, hideInternal, hiddenServices])
 
   const toggleService = useCallback((id: string) => {
     setHiddenServices((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }, [])
-  const selectAllServices = useCallback(() => setHiddenServices(new Set()), [])
-  const deselectAllServices = useCallback(() => setHiddenServices(new Set(serviceOptions.map((s) => s.id))), [serviceOptions])
+  const showAllServices = useCallback(() => setHiddenServices(new Set()), [])
+  const hideAllServices = useCallback(() => setHiddenServices(new Set(serviceOptions.map((s) => s.id))), [serviceOptions])
+  const visibleServiceCount = useMemo(
+    () => serviceOptions.filter((s) => !hiddenServices.has(s.id)).length,
+    [serviceOptions, hiddenServices],
+  )
   const serviceTriggerLabel = useMemo(() => {
     if (hiddenServices.size === 0) return "all services"
-    if (hiddenServices.size >= serviceOptions.length) return "no services"
-    return `${hiddenServices.size} selected`
-  }, [hiddenServices, serviceOptions])
+    if (serviceOptions.length > 0 && visibleServiceCount === 0) return "no services"
+    return `${visibleServiceCount} selected`
+  }, [hiddenServices, serviceOptions, visibleServiceCount])
 
   if (!debugEnabled) {
     return (
@@ -163,7 +188,7 @@ function TracesPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-fg-muted" />
           <Input className="pl-8" placeholder="Search by request ID, path, or service…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
-        <CheckboxFilterDropdown items={serviceOptions} model="show" selected={hiddenServices} onToggle={toggleService} onSelectAll={selectAllServices} onDeselectAll={deselectAllServices} triggerLabel={serviceTriggerLabel} />
+        <CheckboxFilterDropdown items={serviceOptions} model="hide" selected={hiddenServices} onToggle={toggleService} onShowAll={showAllServices} onHideAll={hideAllServices} triggerLabel={serviceTriggerLabel} />
         <select className="h-9 rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-fg" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">all status</option>
           <option value="2xx">2xx</option>

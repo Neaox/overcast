@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { useState, Fragment, useMemo } from "react"
 import { ArrowLeft, Clock, Server, AlertCircle, Loader2, ChevronDown, ChevronRight, Terminal, Check } from "lucide-react"
-import { traceDetailQueryOptions, debugTraceKeys } from "@/features/debug-traces/data"
+import { traceDetailQueryOptions, traceEventsQueryOptions, debugTraceKeys } from "@/features/debug-traces/data"
 import { debugTrace } from "@/services/api/misc"
-import { apiFetch } from "@/services/api/base"
+import { endpointResolver } from "@/services/api/base"
 import { Spinner } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -13,12 +13,12 @@ import { cn } from "@/lib/utils"
 import { useCopyToClipboard } from "@/hooks/use-clipboard"
 import { Link as RouterLink } from "@tanstack/react-router"
 import type { useNavigate } from "@tanstack/react-router"
-import { nsToHuman, statusColor, statusMessage, formatTimestamp, traceToCurl } from "@/features/debug-traces/utils"
+import { nsToHuman, statusColor, statusMessage, formatTimestamp, traceToCurl, shellQuote } from "@/features/debug-traces/utils"
 import { formatBodyForDisplay, bodyHintFromHeaders, formatStackTrace } from "@/lib/format-body"
 import { Waterfall } from "@/features/debug-traces/components/waterfall"
 import { SequenceDiagram } from "@/features/debug-traces/components/sequence-diagram"
 import { FlowMap } from "@/features/debug-traces/components/flow-map"
-import type { TraceEntry, TraceHop, TraceLogEntry, TraceSummary } from "@/types"
+import type { TraceEntry, TraceHop, TraceLogEntry } from "@/types"
 
 export const Route = createFileRoute("/debug/traces/$requestId")({
   head: ({ params }) => ({
@@ -149,6 +149,10 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
   const inFlight = trace.statusCode === 0 || trace.duration === 0
   const reqHint = bodyHintFromHeaders(trace.requestHeaders)
   const resHint = bodyHintFromHeaders(trace.responseHeaders)
+  // Memoize: this page re-renders every second while a trace is in flight,
+  // and the curl command / stack highlight can involve large payloads.
+  const curl = useMemo(() => traceToCurl(trace, endpointResolver.get().baseUrl), [trace])
+  const stackHtml = useMemo(() => (trace.stack ? formatStackTrace(trace.stack) : null), [trace.stack])
 
   return (
     <div className="flex flex-col gap-6">
@@ -184,7 +188,7 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
           </span>
         </div>
         <div className="ml-auto">
-          <CopyButton value={traceToCurl(trace)} noun="curl command" />
+          <CopyButton value={curl} noun="curl command" />
         </div>
       </div>
 
@@ -294,10 +298,10 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
           </div>
         </div>
       )}
-      {trace.stack && (
+      {stackHtml && (
         <details className="mt-2">
           <summary className="text-sm font-medium text-fg-muted cursor-pointer hover:text-fg">Stack trace</summary>
-          <pre className="bg-bg rounded-lg border border-border p-4 text-xs font-mono overflow-x-auto max-h-64 mt-2 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: formatStackTrace(trace.stack) }} />
+          <pre className="bg-bg rounded-lg border border-border p-4 text-xs font-mono overflow-x-auto max-h-64 mt-2 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: stackHtml }} />
         </details>
       )}
       {selectedHopId && (
@@ -368,11 +372,11 @@ function hopCurl(hop: TraceHop): string {
       for (const [k, vs] of Object.entries(hop.requestHeaders)) {
         const lk = k.toLowerCase()
         if (lk === "host" || lk === "content-length" || lk === "connection") continue
-        for (const v of vs) lines.push(`  -H '${k}: ${v}'`)
+        for (const v of vs) lines.push(`  -H ${shellQuote(`${k}: ${v}`)}`)
       }
     }
-    if (hop.requestBody) lines.push(`  -d '${hop.requestBody.replace(/'/g, "\\'")}'`)
-    lines.push(`  '${url}'`)
+    if (hop.requestBody) lines.push(`  -d ${shellQuote(hop.requestBody)}`)
+    lines.push(`  ${shellQuote(String(url))}`)
     return lines.join(" \\\n")
   } catch {
     return ""
@@ -405,7 +409,12 @@ function HeadersBodyView({
   hint: "json" | "xml" | "text"
 }) {
   const ct = (headers["Content-Type"] ?? headers["content-type"] ?? [""])[0]
-  const formatted = body !== undefined ? formatBodyForDisplay(body, hint, ct) : null
+  // Memoized: bodies can be large and this component re-renders every second
+  // while the trace is in flight.
+  const formatted = useMemo(
+    () => (body !== undefined ? formatBodyForDisplay(body, hint, ct) : null),
+    [body, hint, ct],
+  )
   return (
     <div className="flex flex-col gap-3">
       {streaming && (
@@ -464,7 +473,7 @@ function HopsTab({ hops, requestId, navigate }: { hops: TraceHop[]; requestId: s
     queryKey: [...debugTraceKeys.list(), "hopsFor", requestId],
     queryFn: () => debugTrace.list({ hopsFor: requestId, limit: 50 }),
   })
-  const upstreamTraces = useMemo(() => (upstream as unknown as { traces?: TraceSummary[] })?.traces ?? [], [upstream])
+  const upstreamTraces = upstream?.traces ?? []
 
   if (hops.length === 0 && upstreamTraces.length === 0) {
     return (
@@ -753,37 +762,39 @@ function ErrorsTab({ trace }: { trace: TraceEntry }) {
 
 function HopBody({ raw, headers }: { raw: string; headers?: Record<string, string[]> }) {
   const ct = (headers?.["Content-Type"] ?? headers?.["content-type"] ?? [""])[0]
-  if (ct) {
-    const formatted = formatBodyForDisplay(raw, "text", ct)
-    if (formatted.html && formatted.html !== formatted.text) return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48" dangerouslySetInnerHTML={{ __html: formatted.html }} />
-  }
-  // Fallback: try to detect format from content.
-  for (const hint of ["text", "json", "xml"] as const) {
-    const formatted = formatBodyForDisplay(raw, hint)
-    if (formatted.html && formatted.html !== formatted.text) return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48" dangerouslySetInnerHTML={{ __html: formatted.html }} />
-  }
+  // Memoized: formatting tries several parsers over a potentially large body.
+  const html = useMemo(() => {
+    if (ct) {
+      const formatted = formatBodyForDisplay(raw, "text", ct)
+      if (formatted.html && formatted.html !== formatted.text) return formatted.html
+    }
+    // Fallback: try to detect format from content.
+    for (const hint of ["text", "json", "xml"] as const) {
+      const formatted = formatBodyForDisplay(raw, hint)
+      if (formatted.html && formatted.html !== formatted.text) return formatted.html
+    }
+    return null
+  }, [raw, ct])
+  if (html) return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48" dangerouslySetInnerHTML={{ __html: html }} />
   return <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48">{raw}</pre>
 }
 
-interface TraceEvent {
-  type: string
-  time: string
-  source: string
-  resourceArn?: string
-  payload: unknown
-}
-
 function EventsTab({ requestId }: { requestId: string }) {
-  const { data: events, isLoading } = useQuery({
-    queryKey: [...debugTraceKeys.detail(requestId), "events"],
-    queryFn: () => apiFetch<TraceEvent[]>(`/debug/trace/${requestId}/events`),
-    enabled: !!requestId,
-    retry: false,
-  })
+  const { data, isLoading, isError } = useQuery(traceEventsQueryOptions(requestId))
   const [expanded, setExpanded] = useState<number | null>(null)
 
   if (isLoading) return <Spinner />
-  if (!events || events.length === 0) {
+  if (isError) {
+    return (
+      <div className="flex items-center justify-center gap-2 text-red-400 py-8 text-sm">
+        <AlertCircle className="h-4 w-4" />
+        Failed to load events for this request.
+      </div>
+    )
+  }
+  // apiFetch resolves an empty body to {}, so guard the shape before mapping.
+  const events = Array.isArray(data) ? data : []
+  if (events.length === 0) {
     return <div className="text-center text-fg-muted py-8">No events captured for this request.</div>
   }
 
@@ -802,7 +813,7 @@ function EventsTab({ requestId }: { requestId: string }) {
           >
             <div className="flex min-w-0 items-baseline gap-2">
               <span className="shrink-0 text-fg-subtle tabular-nums">
-                {formatEventTime(ev.time)}
+                {formatTimestamp(ev.time)}
               </span>
               <span className={cn("shrink-0 font-semibold", srcColor)}>
                 {ev.source}
@@ -822,17 +833,6 @@ function EventsTab({ requestId }: { requestId: string }) {
       })}
     </div>
   )
-}
-
-function formatEventTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    const hh = String(d.getUTCHours()).padStart(2, "0")
-    const mm = String(d.getUTCMinutes()).padStart(2, "0")
-    const ss = String(d.getUTCSeconds()).padStart(2, "0")
-    const ms = String(d.getUTCMilliseconds()).padStart(3, "0")
-    return `${hh}:${mm}:${ss}.${ms}`
-  } catch { return iso }
 }
 
 const T = {
