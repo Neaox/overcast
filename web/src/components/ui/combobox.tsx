@@ -472,7 +472,6 @@ function MultiComboboxImpl<T>({
   renderCustomFooter,
   isItemDisabled,
   allowCustom = false,
-  allowFreeText = false,
   emptyMessage,
   isLoading = false,
   placeholder,
