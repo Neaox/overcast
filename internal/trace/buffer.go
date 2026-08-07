@@ -33,8 +33,9 @@ func NewBuffer(capacity int) *Buffer {
 }
 
 // Store inserts or updates an entry. Internal traces (health, inbox, SSE,
-// debug polling) are silently dropped when they exceed capacity/5 so they
-// can never crowd out user-facing requests.
+// debug polling) are capped at capacity/5 so they can never crowd out
+// user-facing requests; once that quota is full, a new internal trace
+// recycles the oldest internal entry instead of consuming user budget.
 func (b *Buffer) Store(e *Entry) {
 	if e == nil || e.RequestID == "" {
 		return
@@ -49,38 +50,32 @@ func (b *Buffer) Store(e *Entry) {
 	internal := isInternalPath(e.Path)
 	maxInternal := max(b.capacity/5, 1)
 
-	// Internal cap: silently drop when quota is full.
+	// Internal cap: when the quota is full, recycle the oldest internal
+	// entry (ring semantics within the quota) so the freshest polls stay
+	// visible without evicting user entries.
 	if internal && b.internalCount >= maxInternal {
+		if idx, ok := b.oldestInternalLocked(); ok {
+			b.replaceLocked(idx, e)
+		}
+		// No internal entry found despite a full quota can only mean the
+		// accounting drifted; drop rather than evict a user entry.
 		return
 	}
 
 	if len(b.index) >= b.capacity {
-		// When a non-internal entry arrives, try evicting an internal one.
+		// When a non-internal entry arrives, try reclaiming an internal slot.
 		if !internal {
-			for i := 0; i < b.capacity; i++ {
-				idx := (b.head + i) % b.capacity
-				if candidate := b.entries[idx]; candidate != nil && isInternalPath(candidate.Path) {
-					delete(b.index, candidate.RequestID)
-					b.internalCount--
-					b.entries[idx] = e
-					b.index[e.RequestID] = idx
-					return
-				}
+			if idx, ok := b.oldestInternalLocked(); ok {
+				b.replaceLocked(idx, e)
+				return
 			}
 		}
 		// Evict oldest (at head).
-		if old := b.entries[b.head]; old != nil {
-			delete(b.index, old.RequestID)
-			if isInternalPath(old.Path) {
-				b.internalCount--
-			}
-		}
-		b.entries[b.head] = e
-		b.index[e.RequestID] = b.head
-		b.head = (b.head + 1) % b.capacity
+		b.replaceLocked(b.head, e)
 		return
 	}
 
+	// Not full: take the slot at head.
 	old := b.entries[b.head]
 	if old != nil {
 		delete(b.index, old.RequestID)
@@ -92,6 +87,46 @@ func (b *Buffer) Store(e *Entry) {
 	b.index[e.RequestID] = b.head
 	b.head = (b.head + 1) % b.capacity
 	if internal {
+		b.internalCount++
+	}
+}
+
+// oldestInternalLocked returns the slot of the oldest internal entry, scanning
+// from head (oldest) forward. Callers must hold b.mu.
+func (b *Buffer) oldestInternalLocked() (int, bool) {
+	for i := 0; i < b.capacity; i++ {
+		idx := (b.head + i) % b.capacity
+		if c := b.entries[idx]; c != nil && isInternalPath(c.Path) {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+// replaceLocked evicts the entry at idx and inserts e as the newest entry,
+// keeping internalCount in sync. To preserve FIFO fairness, e never inherits
+// the victim's slot position: the current head occupant (the oldest entry, if
+// any) moves into the victim's slot, e takes the head slot, and head advances
+// — so the new entry gets a full lifetime instead of the victim's remaining
+// one. Callers must hold b.mu.
+func (b *Buffer) replaceLocked(idx int, e *Entry) {
+	if victim := b.entries[idx]; victim != nil {
+		delete(b.index, victim.RequestID)
+		if isInternalPath(victim.Path) {
+			b.internalCount--
+		}
+	}
+	if idx != b.head {
+		moved := b.entries[b.head]
+		b.entries[idx] = moved
+		if moved != nil {
+			b.index[moved.RequestID] = idx
+		}
+	}
+	b.entries[b.head] = e
+	b.index[e.RequestID] = b.head
+	b.head = (b.head + 1) % b.capacity
+	if isInternalPath(e.Path) {
 		b.internalCount++
 	}
 }
@@ -178,10 +213,14 @@ func (b *Buffer) List(filter ListFilter) ([]*Entry, string) {
 
 	start := 0
 	if filter.Before != "" {
-		// Return entries newer than the cursor (poll for fresh data).
+		// Return entries newer than the cursor (poll for fresh data),
+		// newest first, capped at limit.
 		for i, e := range candidates {
 			if e.RequestID == filter.Before {
 				result := candidates[:i]
+				if len(result) > limit {
+					result = result[:limit]
+				}
 				var cursor string
 				if len(result) > 0 {
 					cursor = result[0].RequestID
@@ -189,7 +228,11 @@ func (b *Buffer) List(filter ListFilter) ([]*Entry, string) {
 				return result, cursor
 			}
 		}
-		// Cursor not found — return everything (all newer than "nothing").
+		// Cursor not found (evicted) — return the newest entries, still
+		// honouring the limit.
+		if len(candidates) > limit {
+			candidates = candidates[:limit]
+		}
 		return candidates, ""
 	}
 	if filter.After != "" {

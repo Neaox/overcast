@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -291,6 +292,17 @@ func (r *Recorder) AddMeta(key string, value any) {
 	r.entry.Metadata[key] = value
 }
 
+// RequestID returns the entry's request ID without deep-copying the whole
+// trace (unlike Entry, which copies every hop body and log line).
+func (r *Recorder) RequestID() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.entry.RequestID
+}
+
 // Entry returns a copy of the captured trace data.
 func (r *Recorder) Entry() Entry {
 	if r == nil {
@@ -373,25 +385,29 @@ func (e Entry) ToSummary() Summary {
 }
 
 var internalPaths = map[string]bool{
-	"/_health":             true,
-	"/_events":             true,
-	"/_events/request":     true,
-	"/_events/request/":    true,
-	"/_overcast/inbox":     true,
-	"/_overcast/inbox/":    true,
-	"/_/info":              true,
-	"/_debug/traces":       true,
-	"/_debug/traces/":      true,
-	"/_debug/trace":        true,
-	"/_debug/trace/":       true,
-	"/_debug/traces/count": true,
+	"/_health":          true,
+	"/_metrics":         true,
+	"/_events":          true,
+	"/_events/request":  true,
+	"/_events/request/": true,
+	"/_overcast/inbox":  true,
+	"/_overcast/inbox/": true,
+	"/_/info":           true,
 }
 
+// isInternalPath reports whether p is polled by infrastructure or the web UI
+// rather than driven by a real AWS client. It must stay aligned with
+// middleware's isOperationalPollPath: the entire /_debug/* namespace counts
+// as internal so UI polling (traces, state, metrics) never consumes the
+// user-trace budget in the ring buffer.
 func isInternalPath(p string) bool {
+	if p == "/_debug" || strings.HasPrefix(p, "/_debug/") {
+		return true
+	}
 	if internalPaths[p] {
 		return true
 	}
-	// Match prefix paths like /_debug/traces/<id> or /_overcast/inbox/messages
+	// Match prefix paths like /_overcast/inbox/messages or /_events/request/<id>
 	for prefix := range internalPaths {
 		if len(prefix) > 1 && prefix[len(prefix)-1] == '/' && len(p) > len(prefix) && p[:len(prefix)] == prefix {
 			return true
