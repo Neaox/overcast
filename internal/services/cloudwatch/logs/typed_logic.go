@@ -653,6 +653,10 @@ scanLoop:
 }
 
 func (h *Handler) putRetentionPolicyTyped(ctx context.Context, req *putRetentionPolicyRequest) (*struct{}, *protocol.AWSError) {
+	if !validRetentionDays[req.RetentionInDays] {
+		return nil, errInvalidParameter(
+			"Invalid retention value. Valid values are: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653]")
+	}
 	g, aerr := h.store.getLogGroup(ctx, req.LogGroupName)
 	if aerr != nil {
 		return nil, aerr
