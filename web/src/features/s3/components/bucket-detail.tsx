@@ -353,7 +353,6 @@ export function BucketDetail() {
                                 noun="URL"
                                 formats={s3CopyFormats(endpoint.baseUrl, bucket, item.prefix)}
                               />
-                              />
                               <Button
                                 variant="ghost"
                                 size="icon-sm"
