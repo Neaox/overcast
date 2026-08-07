@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createDatabaseReq struct {
@@ -157,4 +158,158 @@ func (s *Service) deleteTableTyped(ctx context.Context, req *deleteTableReq) (*s
 		return nil, protocol.ErrInternalError
 	}
 	return &struct{}{}, nil
+}
+
+// ─── Tag operations ─────────────────────────────────────────────
+
+type glueTagResourceReq struct {
+	ResourceArn string            `json:"ResourceArn" cbor:"ResourceArn"`
+	TagsToAdd   map[string]string `json:"TagsToAdd" cbor:"TagsToAdd"`
+}
+
+type glueUntagResourceReq struct {
+	ResourceArn  string   `json:"ResourceArn" cbor:"ResourceArn"`
+	TagsToRemove []string `json:"TagsToRemove" cbor:"TagsToRemove"`
+}
+
+type glueListTagsForResourceReq struct {
+	ResourceArn string `json:"ResourceArn" cbor:"ResourceArn"`
+}
+
+type glueListTagsForResourceResp struct {
+	Tags map[string]string `json:"Tags" cbor:"Tags"`
+}
+
+func (s *Service) tagResourceTyped(ctx context.Context, req *glueTagResourceReq) (*struct{}, *protocol.AWSError) {
+	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
+	if tableName != "" {
+		if aerr := serviceutil.ApplyInlineTags(ctx, dbName+"/"+tableName, req.TagsToAdd, glueTagCfg,
+			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+				t, found := s.store.getTable(ctx, dbName, tableName)
+				if !found {
+					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
+				}
+				return t, nil
+			},
+			func(ctx context.Context, t *Table) *protocol.AWSError {
+				if err := s.store.putTable(ctx, t); err != nil {
+					return protocol.ErrInternalError
+				}
+				return nil
+			},
+		); aerr != nil {
+			return nil, aerr
+		}
+		return &struct{}{}, nil
+	}
+	if dbName == "" {
+		return nil, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: "Resource not found",
+			HTTPStatus: http.StatusNotFound,
+		}
+	}
+	if aerr := serviceutil.ApplyInlineTags(ctx, dbName, req.TagsToAdd, glueTagCfg,
+		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+			db, found := s.store.getDatabase(ctx, dbName)
+			if !found {
+				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
+			}
+			return db, nil
+		},
+		func(ctx context.Context, db *Database) *protocol.AWSError {
+			if err := s.store.putDatabase(ctx, db); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) untagResourceTyped(ctx context.Context, req *glueUntagResourceReq) (*struct{}, *protocol.AWSError) {
+	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
+	if tableName != "" {
+		if aerr := serviceutil.RemoveInlineTags(ctx, dbName+"/"+tableName, req.TagsToRemove,
+			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+				t, found := s.store.getTable(ctx, dbName, tableName)
+				if !found {
+					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
+				}
+				return t, nil
+			},
+			func(ctx context.Context, t *Table) *protocol.AWSError {
+				if err := s.store.putTable(ctx, t); err != nil {
+					return protocol.ErrInternalError
+				}
+				return nil
+			},
+		); aerr != nil {
+			return nil, aerr
+		}
+		return &struct{}{}, nil
+	}
+	if dbName == "" {
+		return nil, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: "Resource not found",
+			HTTPStatus: http.StatusNotFound,
+		}
+	}
+	if aerr := serviceutil.RemoveInlineTags(ctx, dbName, req.TagsToRemove,
+		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+			db, found := s.store.getDatabase(ctx, dbName)
+			if !found {
+				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
+			}
+			return db, nil
+		},
+		func(ctx context.Context, db *Database) *protocol.AWSError {
+			if err := s.store.putDatabase(ctx, db); err != nil {
+				return protocol.ErrInternalError
+			}
+			return nil
+		},
+	); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) listTagsForResourceTyped(ctx context.Context, req *glueListTagsForResourceReq) (*glueListTagsForResourceResp, *protocol.AWSError) {
+	dbName, tableName := glueARNToDBAndTable(req.ResourceArn)
+	if tableName != "" {
+		tags, aerr := serviceutil.ListInlineTags(ctx, dbName+"/"+tableName,
+			func(ctx context.Context, key string) (*Table, *protocol.AWSError) {
+				t, found := s.store.getTable(ctx, dbName, tableName)
+				if !found {
+					return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Table %s not found in database %s", tableName, dbName), HTTPStatus: http.StatusNotFound}
+				}
+				return t, nil
+			},
+		)
+		if aerr != nil {
+			return nil, aerr
+		}
+		return &glueListTagsForResourceResp{Tags: tags}, nil
+	}
+	if dbName == "" {
+		return nil, &protocol.AWSError{
+			Code: "EntityNotFoundException", Message: "Resource not found",
+			HTTPStatus: http.StatusNotFound,
+		}
+	}
+	tags, aerr := serviceutil.ListInlineTags(ctx, dbName,
+		func(ctx context.Context, key string) (*Database, *protocol.AWSError) {
+			db, found := s.store.getDatabase(ctx, dbName)
+			if !found {
+				return nil, &protocol.AWSError{Code: "EntityNotFoundException", Message: fmt.Sprintf("Database %s not found", dbName), HTTPStatus: http.StatusNotFound}
+			}
+			return db, nil
+		},
+	)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &glueListTagsForResourceResp{Tags: tags}, nil
 }

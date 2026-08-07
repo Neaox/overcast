@@ -1,6 +1,7 @@
 package lambda
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 
@@ -36,19 +37,6 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fn, aerr := h.ls.getFunction(r.Context(), fnName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if fn == nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Function not found: " + arn,
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
 	var req struct {
 		Tags map[string]string `json:"Tags"`
 	}
@@ -56,19 +44,19 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if fn.Tags == nil {
-		fn.Tags = make(map[string]string)
-	}
-	for k, v := range req.Tags {
-		fn.Tags[k] = v
-	}
-
-	if aerr := serviceutil.ValidateTags(lambdaTagCfg, fn.Tags); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	if aerr := h.ls.putFunction(r.Context(), fn); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), fnName, req.Tags, lambdaTagCfg,
+		func(ctx context.Context, name string) (*Function, *protocol.AWSError) {
+			fn, aerr := h.ls.getFunction(ctx, name)
+			if aerr != nil {
+				return nil, aerr
+			}
+			if fn == nil {
+				return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Function not found: " + arn, HTTPStatus: http.StatusNotFound}
+			}
+			return fn, nil
+		},
+		func(ctx context.Context, fn *Function) *protocol.AWSError { return h.ls.putFunction(ctx, fn) },
+	); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -96,25 +84,21 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fn, aerr := h.ls.getFunction(r.Context(), fnName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if fn == nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Function not found: " + arn,
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
 	tagKeys := r.URL.Query()["tagKeys"]
-	for _, k := range tagKeys {
-		delete(fn.Tags, k)
-	}
 
-	if aerr := h.ls.putFunction(r.Context(), fn); aerr != nil {
+	if aerr := serviceutil.RemoveInlineTags(r.Context(), fnName, tagKeys,
+		func(ctx context.Context, name string) (*Function, *protocol.AWSError) {
+			fn, aerr := h.ls.getFunction(ctx, name)
+			if aerr != nil {
+				return nil, aerr
+			}
+			if fn == nil {
+				return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Function not found: " + arn, HTTPStatus: http.StatusNotFound}
+			}
+			return fn, nil
+		},
+		func(ctx context.Context, fn *Function) *protocol.AWSError { return h.ls.putFunction(ctx, fn) },
+	); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -142,22 +126,21 @@ func (h *Handler) listTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fn, aerr := h.ls.getFunction(r.Context(), fnName)
+	tags, aerr := serviceutil.ListInlineTags(r.Context(), fnName,
+		func(ctx context.Context, name string) (*Function, *protocol.AWSError) {
+			fn, aerr := h.ls.getFunction(ctx, name)
+			if aerr != nil {
+				return nil, aerr
+			}
+			if fn == nil {
+				return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Function not found: " + arn, HTTPStatus: http.StatusNotFound}
+			}
+			return fn, nil
+		},
+	)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
-	}
-	if fn == nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Function not found: " + arn,
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	tags := fn.Tags
-	if tags == nil {
-		tags = map[string]string{}
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, struct {

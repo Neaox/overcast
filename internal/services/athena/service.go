@@ -46,11 +46,15 @@ type QueryExecution struct {
 	} `json:"ResultConfiguration,omitempty"`
 }
 
+func (wg *WorkGroup) GetTags() map[string]string  { return wg.Tags }
+func (wg *WorkGroup) SetTags(t map[string]string) { wg.Tags = t }
+
 // WorkGroup represents an Athena workgroup.
 type WorkGroup struct {
-	Name        string `json:"Name"`
-	State       string `json:"State"`
-	Description string `json:"Description,omitempty"`
+	Name        string            `json:"Name"`
+	State       string            `json:"State"`
+	Description string            `json:"Description,omitempty"`
+	Tags        map[string]string `json:"Tags,omitempty"`
 }
 
 // ─── Store ────────────────────────────────────────────────────
@@ -173,6 +177,9 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		"GetWorkGroup":        s.getWorkGroup,
 		"ListWorkGroups":      s.listWorkGroups,
 		"DeleteWorkGroup":     s.deleteWorkGroup,
+		"TagResource":         s.tagResource,
+		"UntagResource":       s.untagResource,
+		"ListTagsForResource": s.listTagsForResource,
 	}
 	s.typedOp = s.typedOps()
 	return s
@@ -386,4 +393,147 @@ func (s *Service) deleteWorkGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string      `json:"ResourceARN"`
+		Tags        []athenaTag `json:"Tags"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ResourceARN == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: "ResourceARN is required",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	wgName, aerr := workGroupNameFromARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	wg, found := s.store.getWorkGroup(r.Context(), wgName)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	if wg.Tags == nil {
+		wg.Tags = map[string]string{}
+	}
+	for _, t := range req.Tags {
+		wg.Tags[t.Key] = t.Value
+	}
+	if err := s.store.putWorkGroup(r.Context(), wg); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string   `json:"ResourceARN"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ResourceARN == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: "ResourceARN is required",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	wgName, aerr := workGroupNameFromARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	wg, found := s.store.getWorkGroup(r.Context(), wgName)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	if wg.Tags != nil {
+		for _, k := range req.TagKeys {
+			delete(wg.Tags, k)
+		}
+	}
+	if err := s.store.putWorkGroup(r.Context(), wg); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+}
+
+func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ResourceARN == "" {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: "ResourceARN is required",
+			HTTPStatus: http.StatusBadRequest,
+		})
+		return
+	}
+	wgName, aerr := workGroupNameFromARN(req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	wg, found := s.store.getWorkGroup(r.Context(), wgName)
+	if !found {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{
+			Code: "InvalidRequestException", Message: fmt.Sprintf("WorkGroup %s not found", wgName),
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	tagList := tagsToList(wg.Tags)
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tagList})
+}
+
+type athenaTag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+func workGroupNameFromARN(arn string) (string, *protocol.AWSError) {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return "", &protocol.AWSError{
+			Code: "InvalidRequestException", Message: "Invalid ResourceARN format",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	resource := parts[5]
+	if !strings.HasPrefix(resource, "workgroup/") {
+		return "", &protocol.AWSError{
+			Code: "InvalidRequestException", Message: "ResourceARN must be a workgroup ARN",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return strings.TrimPrefix(resource, "workgroup/"), nil
+}
+
+func tagsToList(tags map[string]string) []athenaTag {
+	list := make([]athenaTag, 0, len(tags))
+	for k, v := range tags {
+		list = append(list, athenaTag{Key: k, Value: v})
+	}
+	return list
 }

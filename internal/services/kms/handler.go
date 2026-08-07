@@ -1301,9 +1301,10 @@ func (h *Handler) ListResourceTags(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errNotFound(req.KeyId))
 		return
 	}
-	tags := k.Tags
-	if tags == nil {
-		tags = []Tag{}
+	tagMap := k.GetTags()
+	tags := make([]Tag, 0, len(tagMap))
+	for kk, v := range tagMap {
+		tags = append(tags, Tag{TagKey: kk, TagValue: v})
 	}
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"Tags":      tags,

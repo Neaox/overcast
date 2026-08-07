@@ -14,5 +14,8 @@ func init() {
 		capabilities.Capability{Service: "athena", Operation: "GetWorkGroup", Category: "WorkGroups", Status: capabilities.StatusSupported, Notes: "Returns workgroup details"},
 		capabilities.Capability{Service: "athena", Operation: "ListWorkGroups", Category: "WorkGroups", Status: capabilities.StatusSupported, Notes: "Lists all workgroups"},
 		capabilities.Capability{Service: "athena", Operation: "DeleteWorkGroup", Category: "WorkGroups", Status: capabilities.StatusSupported, Notes: "Deletes a workgroup"},
+		capabilities.Capability{Service: "athena", Operation: "TagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Adds/updates tags on a workgroup"},
+		capabilities.Capability{Service: "athena", Operation: "UntagResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Removes tag keys from a workgroup"},
+		capabilities.Capability{Service: "athena", Operation: "ListTagsForResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Lists tags on a workgroup"},
 	)
 }

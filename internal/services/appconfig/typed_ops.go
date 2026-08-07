@@ -55,6 +55,15 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"DeleteHostedConfigurationVersion": op.NewTypedAny[deleteHostedConfigurationVersionRequest](
 			"DeleteHostedConfigurationVersion", s.deleteHostedConfigurationVersionTyped,
 		),
+		"TagResource": op.NewTypedAny[appConfigTagResourceRequest](
+			"TagResource", s.tagResourceTyped,
+		),
+		"UntagResource": op.NewTypedAny[appConfigUntagResourceRequest](
+			"UntagResource", s.untagResourceTyped,
+		),
+		"ListTagsForResource": op.NewTyped[appConfigListTagsForResourceRequest, appConfigListTagsForResourceResponse](
+			"ListTagsForResource", s.listTagsForResourceTyped,
+		),
 	}
 }
 

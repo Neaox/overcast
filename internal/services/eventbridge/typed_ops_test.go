@@ -23,6 +23,7 @@ func TestTypedOps_matchDispatchSurface(t *testing.T) {
 		"ListEventBuses",
 		"TagResource",
 		"ListTagsForResource",
+		"UntagResource",
 		"DeleteEventBus",
 		"PutRule",
 		"DescribeRule",

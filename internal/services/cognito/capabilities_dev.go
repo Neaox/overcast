@@ -79,5 +79,9 @@ func init() {
 		capabilities.Capability{Service: "cognito", Operation: "DescribeUserPoolDomain", Category: "User Pool Domain operations", Status: capabilities.StatusSupported, Notes: "Returns domain details; empty DomainDescription when domain not found"},
 		capabilities.Capability{Service: "cognito", Operation: "DeleteUserPoolDomain", Category: "User Pool Domain operations", Status: capabilities.StatusSupported, Notes: "Removes the domain association from the pool"},
 		capabilities.Capability{Service: "cognito", Operation: "UpdateUserPoolDomain", Category: "User Pool Domain operations", Status: capabilities.StatusSupported, Notes: "Accepted; SSL certificate updates are inert in the emulator"},
+		// Tags
+		capabilities.Capability{Service: "cognito", Operation: "TagResource", Category: "Tags", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "cognito", Operation: "UntagResource", Category: "Tags", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "cognito", Operation: "ListTagsForResource", Category: "Tags", Status: capabilities.StatusSupported},
 	)
 }

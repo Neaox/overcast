@@ -81,7 +81,7 @@ same-process target delivery.
 | Rules       | 6            |                |
 | Targets     | 3            |                |
 | Events      | 1            |                |
-| Tags        | 2            | 1              |
+| Tags        | 3            |                |
 | Archives    |              | 4              |
 | Replays     |              | 3              |
 | Connections |              | 4              |
@@ -126,11 +126,11 @@ same-process target delivery.
 
 ### Tags
 
-| Operation             | Status         | Notes                    | AWS Docs                                                                                         |
-| --------------------- | -------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
-| `TagResource`         | ✅ Supported   | Tag buses and rules      | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_TagResource.html)         |
-| `ListTagsForResource` | ✅ Supported   | List tags for a resource | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTagsForResource.html) |
-| `UntagResource`       | ❌ Unsupported | Returns 501              | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_UntagResource.html)       |
+| Operation             | Status       | Notes                        | AWS Docs                                                                                         |
+| --------------------- | ------------ | ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `TagResource`         | ✅ Supported | Tag buses and rules          | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_TagResource.html)         |
+| `ListTagsForResource` | ✅ Supported | List tags for a resource     | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_ListTagsForResource.html) |
+| `UntagResource`       | ✅ Supported | Removes tags from a resource | [docs](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_UntagResource.html)       |
 
 ### Archives
 

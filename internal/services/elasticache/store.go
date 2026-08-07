@@ -378,34 +378,6 @@ func (s *cacheStore) listCacheParameterGroups(ctx context.Context) ([]*CachePara
 	return groups, nil
 }
 
-// ── Tags store ────────────────────────────────────────────────────────────────
-
-func (s *cacheStore) getTags(ctx context.Context, arn string) (map[string]string, *protocol.AWSError) {
-	raw, ok, err := s.store.Get(ctx, nsTags, arn)
-	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	if !ok {
-		return map[string]string{}, nil
-	}
-	var tags map[string]string
-	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	return tags, nil
-}
-
-func (s *cacheStore) setTags(ctx context.Context, arn string, tags map[string]string) *protocol.AWSError {
-	raw, err := json.Marshal(tags)
-	if err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	if err := s.store.Set(ctx, nsTags, arn, string(raw)); err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
-	}
-	return nil
-}
-
 // ── Port allocation ───────────────────────────────────────────────────────────
 
 // allocatePort finds and reserves the first free port in [portBase, portBase+1000).

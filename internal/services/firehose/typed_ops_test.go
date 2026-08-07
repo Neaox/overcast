@@ -13,6 +13,7 @@ import (
 var allFirehoseOps = []string{
 	"CreateDeliveryStream", "DescribeDeliveryStream", "ListDeliveryStreams",
 	"DeleteDeliveryStream", "PutRecord", "PutRecordBatch",
+	"TagDeliveryStream", "UntagDeliveryStream", "ListTagsForDeliveryStream",
 }
 
 func TestTypedOps_matchAllOperations(t *testing.T) {

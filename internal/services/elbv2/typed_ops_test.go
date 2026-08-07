@@ -15,6 +15,7 @@ var elbv2Ops = []string{
 	"CreateTargetGroup", "DescribeTargetGroups", "DeleteTargetGroup",
 	"CreateListener", "DescribeListeners", "DeleteListener",
 	"RegisterTargets", "DeregisterTargets", "DescribeTargetHealth",
+	"AddTags", "RemoveTags", "DescribeTags",
 }
 
 func TestTypedOps_matchLegacyRegistry(t *testing.T) {

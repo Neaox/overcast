@@ -30,26 +30,28 @@ const (
 )
 
 type LoadBalancer struct {
-	LoadBalancerArn  string    `json:"LoadBalancerArn"`
-	LoadBalancerName string    `json:"LoadBalancerName"`
-	DNSName          string    `json:"DNSName"`
-	Type             string    `json:"Type"`
-	Scheme           string    `json:"Scheme"`
-	State            string    `json:"State"`
-	VpcId            string    `json:"VpcId,omitempty"`
-	CreatedTime      time.Time `json:"CreatedTime"`
-	Region           string    `json:"Region"`
+	LoadBalancerArn  string            `json:"LoadBalancerArn"`
+	LoadBalancerName string            `json:"LoadBalancerName"`
+	DNSName          string            `json:"DNSName"`
+	Type             string            `json:"Type"`
+	Scheme           string            `json:"Scheme"`
+	State            string            `json:"State"`
+	VpcId            string            `json:"VpcId,omitempty"`
+	CreatedTime      time.Time         `json:"CreatedTime"`
+	Region           string            `json:"Region"`
+	Tags             map[string]string `json:"Tags,omitempty"`
 }
 
 type TargetGroup struct {
-	TargetGroupArn  string `json:"TargetGroupArn"`
-	TargetGroupName string `json:"TargetGroupName"`
-	Protocol        string `json:"Protocol"`
-	Port            int    `json:"Port"`
-	VpcId           string `json:"VpcId,omitempty"`
-	TargetType      string `json:"TargetType"`
-	HealthCheckPath string `json:"HealthCheckPath,omitempty"`
-	Region          string `json:"Region"`
+	TargetGroupArn  string            `json:"TargetGroupArn"`
+	TargetGroupName string            `json:"TargetGroupName"`
+	Protocol        string            `json:"Protocol"`
+	Port            int               `json:"Port"`
+	VpcId           string            `json:"VpcId,omitempty"`
+	TargetType      string            `json:"TargetType"`
+	HealthCheckPath string            `json:"HealthCheckPath,omitempty"`
+	Region          string            `json:"Region"`
+	Tags            map[string]string `json:"Tags,omitempty"`
 }
 
 type Listener struct {
@@ -298,5 +300,46 @@ type xmlDescribeTargetHealthResponse struct {
 			Member []xmlTargetHealthDescription `xml:"member"`
 		} `xml:"TargetHealthDescriptions"`
 	} `xml:"DescribeTargetHealthResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+// Tag XML wire types.
+
+type xmlTag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value,omitempty"`
+}
+
+type xmlTagDescription struct {
+	ResourceArn string  `xml:"ResourceArn"`
+	Tags        xmlTags `xml:"Tags"`
+}
+
+type xmlTags struct {
+	Member []xmlTag `xml:"member"`
+}
+
+type xmlAddTagsResponse struct {
+	XMLName          xml.Name                  `xml:"AddTagsResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"AddTagsResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlRemoveTagsResponse struct {
+	XMLName          xml.Name                  `xml:"RemoveTagsResponse"`
+	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"RemoveTagsResult"`
+	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
+}
+
+type xmlDescribeTagsResponse struct {
+	XMLName xml.Name `xml:"DescribeTagsResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		TagDescriptions struct {
+			Member []xmlTagDescription `xml:"member"`
+		} `xml:"TagDescriptions"`
+	} `xml:"DescribeTagsResult"`
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }

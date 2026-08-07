@@ -80,6 +80,7 @@ field, so a pipe is never stored in a state where it would silently do nothing.
 | Category | ✅ Supported |
 | -------- | ------------ |
 | Pipes    | 5            |
+| Tags     | 3            |
 
 ---
 
@@ -94,5 +95,13 @@ field, so a pipe is never stored in a state where it would silently do nothing.
 | `UpdatePipe`   | ✅ Supported | Updates DesiredState, description, role and parameter blocks (UPDATING→previous state)     | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_UpdatePipe.html)   |
 | `DeletePipe`   | ✅ Supported | Async deletion (DELETING→removed)                                                          | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_DeletePipe.html)   |
 | `ListPipes`    | ✅ Supported | Lists all pipes as PipeSummary                                                             | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_ListPipes.html)    |
+
+### Tags
+
+| Operation             | Status       | Notes                               | AWS Docs                                                                                            |
+| --------------------- | ------------ | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported | Adds/merges tags by pipe ARN        | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | Removes tags by key from a pipe ARN | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | Returns tags for a pipe ARN         | [docs](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

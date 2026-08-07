@@ -58,6 +58,9 @@ func (h *Handler) initOps() {
 		"RegisterTargets":       h.RegisterTargets,
 		"DeregisterTargets":     h.DeregisterTargets,
 		"DescribeTargetHealth":  h.DescribeTargetHealth,
+		"AddTags":               h.AddTags,
+		"RemoveTags":            h.RemoveTags,
+		"DescribeTags":          h.DescribeTags,
 	}
 	h.typedOp = h.typedOps()
 }
@@ -837,4 +840,195 @@ func (h *Handler) DescribeTargetHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Result.TargetHealthDescriptions.Member = members
 	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+}
+
+func (h *Handler) AddTags(w http.ResponseWriter, r *http.Request) {
+	arns := collectMemberParams(r, "ResourceArns")
+	if len(arns) == 0 {
+		protocol.WriteQueryXMLError(w, r, errMissingParam("ResourceArns"))
+		return
+	}
+	region := h.region(r.Context())
+
+	tags := map[string]string{}
+	for i := 1; ; i++ {
+		k := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
+		if k == "" {
+			break
+		}
+		if _, exists := tags[k]; exists {
+			protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
+				Code: "DuplicateTagKeys", Message: "Duplicate tag keys: " + k,
+				HTTPStatus: http.StatusBadRequest,
+			})
+			return
+		}
+		tags[k] = r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
+	}
+
+	ctx := r.Context()
+	for _, arn := range arns {
+		if lb, found, err := h.getLB(ctx, region, arn); err != nil {
+			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+			return
+		} else if found {
+			if lb.Tags == nil {
+				lb.Tags = map[string]string{}
+			}
+			for k, v := range tags {
+				lb.Tags[k] = v
+			}
+			if err := h.putLB(ctx, region, lb); err != nil {
+				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+				return
+			}
+			continue
+		}
+		if tg, found, err := h.getTG(ctx, region, arn); err != nil {
+			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+			return
+		} else if found {
+			if tg.Tags == nil {
+				tg.Tags = map[string]string{}
+			}
+			for k, v := range tags {
+				tg.Tags[k] = v
+			}
+			if err := h.putTG(ctx, region, tg); err != nil {
+				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+				return
+			}
+			continue
+		}
+		protocol.WriteQueryXMLError(w, r, errNotFound("Resource", arn))
+		return
+	}
+
+	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlAddTagsResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.QueryResponseMetadata(r),
+	})
+}
+
+func (h *Handler) RemoveTags(w http.ResponseWriter, r *http.Request) {
+	arns := collectMemberParams(r, "ResourceArns")
+	if len(arns) == 0 {
+		protocol.WriteQueryXMLError(w, r, errMissingParam("ResourceArns"))
+		return
+	}
+	tagKeys := collectMemberParams(r, "TagKeys")
+
+	ctx := r.Context()
+	region := h.region(ctx)
+	for _, arn := range arns {
+		if lb, found, err := h.getLB(ctx, region, arn); err != nil {
+			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+			return
+		} else if found {
+			if lb.Tags != nil {
+				for _, k := range tagKeys {
+					delete(lb.Tags, k)
+				}
+			}
+			if err := h.putLB(ctx, region, lb); err != nil {
+				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+				return
+			}
+			continue
+		}
+		if tg, found, err := h.getTG(ctx, region, arn); err != nil {
+			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+			return
+		} else if found {
+			if tg.Tags != nil {
+				for _, k := range tagKeys {
+					delete(tg.Tags, k)
+				}
+			}
+			if err := h.putTG(ctx, region, tg); err != nil {
+				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+				return
+			}
+			continue
+		}
+		protocol.WriteQueryXMLError(w, r, errNotFound("Resource", arn))
+		return
+	}
+
+	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlRemoveTagsResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.QueryResponseMetadata(r),
+	})
+}
+
+func (h *Handler) DescribeTags(w http.ResponseWriter, r *http.Request) {
+	arns := collectMemberParams(r, "ResourceArns")
+
+	ctx := r.Context()
+	region := h.region(ctx)
+
+	var descs []xmlTagDescription
+
+	if len(arns) == 0 {
+		lbs, err := h.listLBs(ctx, region)
+		if err != nil {
+			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+			return
+		}
+		tgs, err := h.listTGs(ctx, region)
+		if err != nil {
+			protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+			return
+		}
+		for _, lb := range lbs {
+			descs = append(descs, tagDescXML(lb.LoadBalancerArn, lb.Tags))
+		}
+		for _, tg := range tgs {
+			descs = append(descs, tagDescXML(tg.TargetGroupArn, tg.Tags))
+		}
+	} else {
+		for _, arn := range arns {
+			if lb, found, err := h.getLB(ctx, region, arn); err != nil {
+				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+				return
+			} else if found {
+				descs = append(descs, tagDescXML(lb.LoadBalancerArn, lb.Tags))
+				continue
+			}
+			if tg, found, err := h.getTG(ctx, region, arn); err != nil {
+				protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+				return
+			} else if found {
+				descs = append(descs, tagDescXML(tg.TargetGroupArn, tg.Tags))
+				continue
+			}
+			protocol.WriteQueryXMLError(w, r, errNotFound("Resource", arn))
+			return
+		}
+	}
+
+	if descs == nil {
+		descs = []xmlTagDescription{}
+	}
+
+	resp := &xmlDescribeTagsResponse{
+		Xmlns:            elbv2XMLNS,
+		ResponseMetadata: protocol.QueryResponseMetadata(r),
+	}
+	resp.Result.TagDescriptions.Member = descs
+	protocol.WriteQueryXML(w, r, http.StatusOK, resp)
+}
+
+func tagDescXML(arn string, tags map[string]string) xmlTagDescription {
+	desc := xmlTagDescription{ResourceArn: arn}
+	if len(tags) > 0 {
+		members := make([]xmlTag, 0, len(tags))
+		for k, v := range tags {
+			members = append(members, xmlTag{Key: k, Value: v})
+		}
+		desc.Tags.Member = members
+	} else {
+		desc.Tags.Member = []xmlTag{}
+	}
+	return desc
 }

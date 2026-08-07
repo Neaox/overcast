@@ -23,7 +23,7 @@ func init() {
 		// listed here.
 		capabilities.Capability{Service: "ssm", Operation: "LabelParameterVersion", Category: "Parameters", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},
 		capabilities.Capability{Service: "ssm", Operation: "UnlabelParameterVersion", Category: "Parameters", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},
-		capabilities.Capability{Service: "ssm", Operation: "RemoveTagsFromResource", Category: "Tags", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},
+		capabilities.Capability{Service: "ssm", Operation: "RemoveTagsFromResource", Category: "Tags", Status: capabilities.StatusSupported, Notes: "Removes tags from a parameter"},
 		capabilities.Capability{Service: "ssm", Operation: "GetServiceSetting", Category: "Advanced/misc", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},
 		capabilities.Capability{Service: "ssm", Operation: "CreateDocument", Category: "Advanced/misc", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},
 		capabilities.Capability{Service: "ssm", Operation: "SendCommand", Category: "Advanced/misc", Status: capabilities.StatusUnsupported, Notes: "Returns 501", DocOnly: true},

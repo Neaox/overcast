@@ -33,6 +33,9 @@ type Queue struct {
 	Tags             map[string]string `json:"tags,omitempty"`
 }
 
+func (q *Queue) GetTags() map[string]string     { return q.Tags }
+func (q *Queue) SetTags(tags map[string]string) { q.Tags = tags }
+
 // Message represents a stored SQS message.
 type Message struct {
 	MessageID               string                      `json:"message_id"`

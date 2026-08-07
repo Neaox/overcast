@@ -81,7 +81,7 @@ SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
 | ------------- | ------------ | -------------- |
 | General       | 10           |                |
 | Parameters    |              | 2              |
-| Tags          |              | 1              |
+| Tags          | 1            |                |
 | Advanced/misc |              | 5              |
 
 ---
@@ -112,9 +112,9 @@ SSM Parameter Store accepts AWS JSON 1.1 requests at `POST /` with
 
 ### Tags
 
-| Operation                | Status         | Notes       | AWS Docs                                                                                                |
-| ------------------------ | -------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
-| `RemoveTagsFromResource` | ❌ Unsupported | Returns 501 | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RemoveTagsFromResource.html) |
+| Operation                | Status       | Notes                         | AWS Docs                                                                                                |
+| ------------------------ | ------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `RemoveTagsFromResource` | ✅ Supported | Removes tags from a parameter | [docs](https://docs.aws.amazon.com/systems-manager/latest/APIReference/API_RemoveTagsFromResource.html) |
 
 ### Advanced/misc
 

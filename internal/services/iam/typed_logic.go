@@ -1627,12 +1627,14 @@ func (h *Handler) tagRoleTyped(ctx context.Context, req *tagRoleReq) (*tagRoleRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	if role.Tags == nil {
-		role.Tags = make(map[string]string)
+	tags := role.GetTags()
+	if tags == nil {
+		tags = make(map[string]string)
 	}
 	for _, t := range req.Tags {
-		role.Tags[t.Key] = t.Value
+		tags[t.Key] = t.Value
 	}
+	role.SetTags(tags)
 	if aerr := h.store.putRole(ctx, role); aerr != nil {
 		return nil, aerr
 	}
@@ -1644,9 +1646,11 @@ func (h *Handler) untagRoleTyped(ctx context.Context, req *untagRoleReq) (*untag
 	if aerr != nil {
 		return nil, aerr
 	}
+	tags := role.GetTags()
 	for _, k := range req.TagKeys {
-		delete(role.Tags, k)
+		delete(tags, k)
 	}
+	role.SetTags(tags)
 	if aerr := h.store.putRole(ctx, role); aerr != nil {
 		return nil, aerr
 	}
@@ -1658,8 +1662,9 @@ func (h *Handler) listRoleTagsTyped(ctx context.Context, req *listRoleTagsReq) (
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := make([]tagXML, 0, len(role.Tags))
-	for k, v := range role.Tags {
+	tagMap := role.GetTags()
+	tags := make([]tagXML, 0, len(tagMap))
+	for k, v := range tagMap {
 		tags = append(tags, tagXML{Key: k, Value: v})
 	}
 	return &listRoleTagsResp{Xmlns: iamXMLNS, Result: listRoleTagsResult{
@@ -1674,12 +1679,14 @@ func (h *Handler) tagUserTyped(ctx context.Context, req *tagUserReq) (*tagUserRe
 	if aerr != nil {
 		return nil, aerr
 	}
-	if u.Tags == nil {
-		u.Tags = make(map[string]string)
+	tags := u.GetTags()
+	if tags == nil {
+		tags = make(map[string]string)
 	}
 	for _, t := range req.Tags {
-		u.Tags[t.Key] = t.Value
+		tags[t.Key] = t.Value
 	}
+	u.SetTags(tags)
 	if aerr := h.store.putUser(ctx, u); aerr != nil {
 		return nil, aerr
 	}
@@ -1691,9 +1698,11 @@ func (h *Handler) untagUserTyped(ctx context.Context, req *untagUserReq) (*untag
 	if aerr != nil {
 		return nil, aerr
 	}
+	tags := u.GetTags()
 	for _, k := range req.TagKeys {
-		delete(u.Tags, k)
+		delete(tags, k)
 	}
+	u.SetTags(tags)
 	if aerr := h.store.putUser(ctx, u); aerr != nil {
 		return nil, aerr
 	}
@@ -1705,8 +1714,9 @@ func (h *Handler) listUserTagsTyped(ctx context.Context, req *listUserTagsReq) (
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := make([]tagXML, 0, len(u.Tags))
-	for k, v := range u.Tags {
+	tagMap := u.GetTags()
+	tags := make([]tagXML, 0, len(tagMap))
+	for k, v := range tagMap {
 		tags = append(tags, tagXML{Key: k, Value: v})
 	}
 	return &listUserTagsResp{Xmlns: iamXMLNS, Result: listUserTagsResult{

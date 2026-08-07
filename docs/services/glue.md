@@ -35,6 +35,7 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 | --------- | ------------ |
 | Databases | 4            |
 | Tables    | 4            |
+| Tags      | 3            |
 
 ---
 
@@ -57,5 +58,13 @@ Operations are identified by the `X-Amz-Target` header with the prefix
 | `GetTable`    | ✅ Supported | Returns table details         | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-GetTable.html)    |
 | `GetTables`   | ✅ Supported | Lists tables in a database    | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-GetTables.html)   |
 | `DeleteTable` | ✅ Supported | Deletes a table               | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-DeleteTable.html) |
+
+### Tags
+
+| Operation       | Status       | Notes                                           | AWS Docs                                                                           |
+| --------------- | ------------ | ----------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `TagResource`   | ✅ Supported | Adds or overwrites tags on databases and tables | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-TagResource.html)   |
+| `UntagResource` | ✅ Supported | Removes tags by key from databases and tables   | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-UntagResource.html) |
+| `GetTags`       | ✅ Supported | Returns tags for databases and tables           | [docs](https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-GetTags.html)       |
 
 <!-- END overcast:capabilities -->

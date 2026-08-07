@@ -131,6 +131,11 @@ type putEventsRequest struct {
 	Entries []map[string]any `json:"Entries" cbor:"Entries"`
 }
 
+type untagResourceRequest struct {
+	ResourceARN string   `json:"ResourceARN" cbor:"ResourceARN"`
+	TagKeys     []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
 type putEventsEntryResponse struct {
 	EventId string `json:"EventId" cbor:"EventId"`
 }
@@ -184,23 +189,28 @@ func (s *Service) listEventBusesTyped(ctx context.Context, _ *listEventBusesRequ
 }
 
 func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
-	existing := map[string]string{}
-	if raw, found, _ := s.store.Get(ctx, nsTags, req.ResourceARN); found {
-		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
-	}
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
+	existing, _ := tagStore.Load(ctx, req.ResourceARN)
 	for _, t := range req.Tags {
 		existing[t.Key] = t.Value
 	}
-	b, _ := json.Marshal(existing)
-	s.store.Set(ctx, nsTags, req.ResourceARN, string(b)) //nolint:errcheck
+	tagStore.Save(ctx, req.ResourceARN, existing) //nolint:errcheck
+	return &struct{}{}, nil
+}
+
+func (s *Service) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
+	existing, _ := tagStore.Load(ctx, req.ResourceARN)
+	for _, k := range req.TagKeys {
+		delete(existing, k)
+	}
+	tagStore.Save(ctx, req.ResourceARN, existing) //nolint:errcheck
 	return &struct{}{}, nil
 }
 
 func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
-	stored := map[string]string{}
-	if raw, found, _ := s.store.Get(ctx, nsTags, req.ResourceARN); found {
-		json.Unmarshal([]byte(raw), &stored) //nolint:errcheck
-	}
+	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
+	stored, _ := tagStore.Load(ctx, req.ResourceARN)
 	tags := make([]tagEntry, 0, len(stored))
 	for k, v := range stored {
 		tags = append(tags, tagEntry{Key: k, Value: v})

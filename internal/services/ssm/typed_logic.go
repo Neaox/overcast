@@ -100,6 +100,12 @@ type resourceIDRequest struct {
 	ResourceId   string `json:"ResourceId" cbor:"ResourceId"`
 }
 
+type removeTagsFromResourceRequest struct {
+	ResourceType string   `json:"ResourceType" cbor:"ResourceType"`
+	ResourceId   string   `json:"ResourceId" cbor:"ResourceId"`
+	TagKeys      []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
 type listTagsForResourceResponse struct {
 	TagList []resourceTag `json:"TagList" cbor:"TagList"`
 }
@@ -319,12 +325,33 @@ func (h *Handler) addTagsToResourceTyped(ctx context.Context, req *addTagsToReso
 	if aerr != nil {
 		return nil, aerr
 	}
-	if rec.Tags == nil {
-		rec.Tags = map[string]string{}
+	tags := rec.GetTags()
+	if tags == nil {
+		tags = map[string]string{}
 	}
 	for _, t := range req.Tags {
-		rec.Tags[t.Key] = t.Value
+		tags[t.Key] = t.Value
 	}
+	rec.SetTags(tags)
+	if err := h.store.Put(ctx, rec); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &struct{}{}, nil
+}
+
+func (h *Handler) removeTagsFromResourceTyped(ctx context.Context, req *removeTagsFromResourceRequest) (*struct{}, *protocol.AWSError) {
+	if req.ResourceId == "" {
+		return nil, protocol.ErrMissingParameter("ResourceId")
+	}
+	rec, aerr := h.requireParameter(ctx, req.ResourceId)
+	if aerr != nil {
+		return nil, aerr
+	}
+	tags := rec.GetTags()
+	for _, k := range req.TagKeys {
+		delete(tags, k)
+	}
+	rec.SetTags(tags)
 	if err := h.store.Put(ctx, rec); err != nil {
 		return nil, protocol.ErrInternalError
 	}
@@ -339,8 +366,8 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *resourceIDR
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := make([]resourceTag, 0, len(rec.Tags))
-	for k, v := range rec.Tags {
+	tags := make([]resourceTag, 0, len(rec.GetTags()))
+	for k, v := range rec.GetTags() {
 		tags = append(tags, resourceTag{Key: k, Value: v})
 	}
 	return &listTagsForResourceResponse{TagList: tags}, nil

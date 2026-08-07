@@ -1316,6 +1316,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Hosted Configuration Versions",
         "id": "hosted-configuration-versions"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },
@@ -1611,6 +1616,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "WorkGroups",
         "id": "workgroups"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },
@@ -2332,6 +2342,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "User Pool Domain operations",
         "id": "user-pool-domain-operations-2"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },
@@ -3084,6 +3099,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Records",
         "id": "records"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },
@@ -3131,6 +3151,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Tables",
         "id": "tables"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },
@@ -3756,6 +3781,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Pipes",
         "id": "pipes"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },
@@ -4322,6 +4352,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Protections",
         "id": "protections"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },
@@ -4577,6 +4612,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Executions",
         "id": "executions"
+      },
+      {
+        "depth": 3,
+        "text": "Tags",
+        "id": "tags"
       }
     ]
   },

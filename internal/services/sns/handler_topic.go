@@ -7,6 +7,7 @@ package sns
 // Wire protocol: AWS Query (form-encoded POST body, XML responses).
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -276,30 +277,21 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	topic, aerr := h.snsStore.getTopicByARN(r.Context(), resourceArn)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	if topic.Tags == nil {
-		topic.Tags = make(map[string]string)
-	}
-
+	incoming := make(map[string]string)
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Key", i))
 		if key == "" {
 			break
 		}
-		topic.Tags[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
+		incoming[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
 	}
 
-	if aerr := serviceutil.ValidateTags(snsTagCfg, topic.Tags); aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
-	if aerr := h.snsStore.putTopic(r.Context(), topic); aerr != nil {
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), resourceArn, incoming, snsTagCfg,
+		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
+			return h.snsStore.getTopicByARN(ctx, arn)
+		},
+		func(ctx context.Context, t *Topic) *protocol.AWSError { return h.snsStore.putTopic(ctx, t) },
+	); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -318,21 +310,21 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	topic, aerr := h.snsStore.getTopicByARN(r.Context(), resourceArn)
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
-		return
-	}
-
+	var tagKeys []string
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
 		if key == "" {
 			break
 		}
-		delete(topic.Tags, key)
+		tagKeys = append(tagKeys, key)
 	}
 
-	if aerr := h.snsStore.putTopic(r.Context(), topic); aerr != nil {
+	if aerr := serviceutil.RemoveInlineTags(r.Context(), resourceArn, tagKeys,
+		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
+			return h.snsStore.getTopicByARN(ctx, arn)
+		},
+		func(ctx context.Context, t *Topic) *protocol.AWSError { return h.snsStore.putTopic(ctx, t) },
+	); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -350,14 +342,18 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	topic, aerr := h.snsStore.getTopicByARN(r.Context(), resourceArn)
+	tags, aerr := serviceutil.ListInlineTags(r.Context(), resourceArn,
+		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
+			return h.snsStore.getTopicByARN(ctx, arn)
+		},
+	)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 
-	members := make([]xmlTagMember, 0, len(topic.Tags))
-	for k, v := range topic.Tags {
+	members := make([]xmlTagMember, 0, len(tags))
+	for k, v := range tags {
 		members = append(members, xmlTagMember{Key: k, Value: v})
 	}
 

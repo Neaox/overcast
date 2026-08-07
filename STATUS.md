@@ -21,7 +21,7 @@
 | API Gateway | 106 | REST v1 + HTTP v2: full CRUD, stages, deployments, Lambda/MOCK/HTTP proxy execution, authorizers, API keys       |
 | AppSync     | 82  | Full CRUD, GraphQL execution (NONE/HTTP/Lambda/DynamoDB), CloudFormation/CDK provisioning, merged APIs, Events API, channel namespaces |
 | CloudFront  | 89  | Distribution CRUD, invalidations, OAC/OAI, cache policies, CloudFront Functions, key groups, field-level encrypt |
-| Cognito     | 67  | User Pools + Clients, Users, Auth flows, TOTP MFA, Groups, RS256 JWT + JWKS endpoint                             |
+| Cognito     | 70  | User Pools + Clients, Users, Auth flows, TOTP MFA, Groups, RS256 JWT + JWKS endpoint                             |
 | EC2 / VPC   | 72  | Instances, VPCs, subnets, security groups, key pairs, route tables, IGWs, VPC peering                            |
 | SNS         | 29  | Topics, subscriptions (SQS/email), Publish/PublishBatch, FilterPolicy message filtering                          |
 
@@ -39,7 +39,7 @@
 | CloudFormation  | 52  | Stacks, change sets, async provisioner (~55 resource types including AppSync), intrinsic functions, GetAtt                                                                                                  |
 | RDS             | 34  | DB instances (Docker), start/stop, modify, subnet/parameter groups                                                                                                                                         |
 | ElastiCache     | 24  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
-| AppConfig       | 16  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
+| AppConfig       | 19  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
 | AppConfigData   | 3   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
 | Secrets Manager | 22  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
 | SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
@@ -47,15 +47,15 @@
 | SES             | 42  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
 | STS             | 11  | GetCallerIdentity, AssumeRole, GetSessionToken, temp credentials                                                                                                                                           |
 | Route 53        | 25  | Hosted zones (default NS/SOA, delegation sets), validated change batches, DNS-order pagination, tags, health checks — inert (no DNS served)                                                                |
-| Step Functions  | 11  | State machine CRUD plus a real ASL interpreter: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real GetExecutionHistory. Executions run synchronously; unsupported ASL fails loudly |
+| Step Functions  | 14  | State machine CRUD plus a real ASL interpreter: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real GetExecutionHistory. Executions run synchronously; unsupported ASL fails loudly |
 
 ### Minimal / Stub
 
 | Service        | Ops | Highlights                                                      |
 | -------------- | --- | --------------------------------------------------------------- |
-| Pipes          | 5   | CreatePipe, DescribePipe, DeletePipe, ListPipes; DDB→SQS only   |
-| WAF v2         | 4   | Metadata-only Web ACL CRUD; rules are stored but not evaluated or enforced |
-| Shield         | 5   | Minimal subscription and protection metadata for CDK/CF workflows |
+| Pipes          | 8   | CreatePipe, DescribePipe, DeletePipe, ListPipes; DDB→SQS only   |
+| WAF v2         | 7   | Metadata-only Web ACL CRUD; rules are stored but not evaluated or enforced |
+| Shield         | 8   | Minimal subscription and protection metadata for CDK/CF workflows |
 
 ### Op counts from capability registry
 
@@ -72,7 +72,7 @@
 | API Gateway     | 106 |
 | AppSync         | 82  |
 | CloudFront      | 89  |
-| Cognito         | 67  |
+| Cognito         | 70  |
 | EC2 / VPC       | 72  |
 | SNS             | 29  |
 | IAM             | 62  |
@@ -86,7 +86,7 @@
 | RDS             | 34  |
 | ElastiCache     | 24  |
 | EFS             | 31  |
-| AppConfig       | 16  |
+| AppConfig       | 19  |
 | AppConfigData   | 3   |
 | Secrets Manager | 22  |
 | SSM             | 18  |
@@ -95,23 +95,23 @@
 | STS             | 11  |
 | Route 53        | 25  |
 | Auto Scaling    | 25  |
-| Step Functions  | 11  |
-| Pipes           | 5   |
-| WAF v2          | 4   |
-| Shield          | 5   |
+| Step Functions  | 14  |
+| Pipes           | 8   |
+| WAF v2          | 7   |
+| Shield          | 8   |
 | ACM             | 7   |
-| Athena          | 8   |
+| Athena          | 11  |
 | Bedrock         | 2   |
 | CloudWatch      | 17  |
 | DynamoDB Streams | 4   |
-| Firehose        | 6   |
-| Glue            | 8   |
+| Firehose        | 9   |
+| Glue            | 11  |
 | OpenSearch      | 8   |
 | AppRegistry     | 22  |
 | Backup          | 9   |
 | CloudTrail      | 9   |
 | EKS             | 52  |
-| ELBv2           | 15  |
+| ELBv2           | 18  |
 | MSK             | 29  |
 | Organizations   | 1   |
 | Transfer Family | 10  |

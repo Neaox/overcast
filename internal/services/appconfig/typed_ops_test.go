@@ -26,6 +26,9 @@ func TestTypedOps_matchDispatchSurface(t *testing.T) {
 		"GetHostedConfigurationVersion",
 		"ListHostedConfigurationVersions",
 		"DeleteHostedConfigurationVersion",
+		"TagResource",
+		"UntagResource",
+		"ListTagsForResource",
 	}
 
 	if len(ops) != len(expected) {

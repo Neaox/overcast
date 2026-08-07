@@ -21,14 +21,18 @@ const (
 )
 
 // StateMachine represents a Step Functions state machine.
+func (sm *StateMachine) GetTags() map[string]string  { return sm.Tags }
+func (sm *StateMachine) SetTags(t map[string]string) { sm.Tags = t }
+
 type StateMachine struct {
-	Name       string    `json:"Name"`
-	ARN        string    `json:"ARN"`
-	Definition string    `json:"Definition"`
-	RoleArn    string    `json:"RoleArn"`
-	Type       string    `json:"Type"` // "STANDARD" or "EXPRESS"
-	Status     string    `json:"Status"`
-	CreatedAt  time.Time `json:"CreatedAt"`
+	Name       string            `json:"Name"`
+	ARN        string            `json:"ARN"`
+	Definition string            `json:"Definition"`
+	RoleArn    string            `json:"RoleArn"`
+	Type       string            `json:"Type"` // "STANDARD" or "EXPRESS"
+	Status     string            `json:"Status"`
+	CreatedAt  time.Time         `json:"CreatedAt"`
+	Tags       map[string]string `json:"Tags,omitempty"`
 }
 
 // Execution represents a Step Functions execution.

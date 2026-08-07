@@ -1546,21 +1546,12 @@ type eksTagResourceRequest struct {
 
 func (s *Service) eksTagResourceTyped(ctx context.Context, req *eksTagResourceRequest) (any, *protocol.AWSError) {
 	arn := s.tryDecodeARN(req.ResourceArn)
-	existing := map[string]string{}
-	if raw, found, err := s.store.Get(ctx, nsTags, tagKey(arn)); err != nil {
-		return nil, protocol.ErrInternalError
-	} else if found {
-		_ = json.Unmarshal([]byte(raw), &existing)
-	}
+	pairs := make([]serviceutil.TagPair, 0, len(req.Tags))
 	for k, v := range req.Tags {
-		existing[k] = v
+		pairs = append(pairs, serviceutil.TagPair{Key: k, Value: v})
 	}
-	raw, err := json.Marshal(existing)
-	if err != nil {
-		return nil, protocol.ErrInternalError
-	}
-	if err := s.store.Set(ctx, nsTags, tagKey(arn), string(raw)); err != nil {
-		return nil, protocol.ErrInternalError
+	if _, aerr := serviceutil.ApplyTagsToStore(ctx, eksTagCfg, nsTags, tagKey(arn), pairs, s.store); aerr != nil {
+		return nil, aerr
 	}
 	return struct{}{}, nil
 }
@@ -1575,23 +1566,9 @@ func (s *Service) eksUntagResourceTyped(ctx context.Context, req *eksUntagResour
 	if len(req.TagKeys) == 0 {
 		return nil, &protocol.AWSError{Code: "InvalidParameterException", Message: "at least one tagKeys query parameter is required", HTTPStatus: 400}
 	}
-	raw, found, err := s.store.Get(ctx, nsTags, tagKey(arn))
-	if err != nil {
-		return nil, protocol.ErrInternalError
+	if _, aerr := serviceutil.RemoveTagsFromStore(ctx, nsTags, tagKey(arn), req.TagKeys, s.store); aerr != nil {
+		return nil, aerr
 	}
-	if !found {
-		return struct{}{}, nil
-	}
-	var tags map[string]string
-	_ = json.Unmarshal([]byte(raw), &tags)
-	for _, k := range req.TagKeys {
-		delete(tags, k)
-	}
-	updated, err := json.Marshal(tags)
-	if err != nil {
-		return nil, protocol.ErrInternalError
-	}
-	_ = s.store.Set(ctx, nsTags, tagKey(arn), string(updated))
 	return struct{}{}, nil
 }
 
@@ -1605,15 +1582,13 @@ type eksListTagsForResourceResponse struct {
 
 func (s *Service) eksListTagsForResourceTyped(ctx context.Context, req *eksListTagsForResourceRequest) (*eksListTagsForResourceResponse, *protocol.AWSError) {
 	arn := s.tryDecodeARN(req.ResourceArn)
-	raw, found, err := s.store.Get(ctx, nsTags, tagKey(arn))
-	if err != nil {
-		return nil, protocol.ErrInternalError
+	tags, aerr := serviceutil.TagsFromStore(ctx, s.store, nsTags, tagKey(arn))
+	if aerr != nil {
+		return nil, aerr
 	}
-	if !found {
-		return &eksListTagsForResourceResponse{Tags: map[string]string{}}, nil
+	if tags == nil {
+		tags = map[string]string{}
 	}
-	var tags map[string]string
-	_ = json.Unmarshal([]byte(raw), &tags)
 	return &eksListTagsForResourceResponse{Tags: tags}, nil
 }
 

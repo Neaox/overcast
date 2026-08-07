@@ -84,6 +84,10 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"DeleteUserAttributes":             op.NewTyped[DeleteUserAttributesReq, struct{}]("DeleteUserAttributes", s.DeleteUserAttributesTyped),
 		"GlobalSignOut":                    op.NewTyped[AccessTokenReq, struct{}]("GlobalSignOut", s.GlobalSignOutTyped),
 		"RevokeToken":                      op.NewTyped[RevokeTokenReq, struct{}]("RevokeToken", s.RevokeTokenTyped),
+		// Tags
+		"TagResource":         op.NewTyped[TagResourceReq, struct{}]("TagResource", s.TagResourceTyped),
+		"UntagResource":       op.NewTyped[UntagResourceReq, struct{}]("UntagResource", s.UntagResourceTyped),
+		"ListTagsForResource": op.NewTyped[ListTagsForResourceReq, ListTagsForResourceResp]("ListTagsForResource", s.ListTagsForResourceTyped),
 	}
 }
 

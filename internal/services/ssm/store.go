@@ -22,6 +22,9 @@ type ParameterVersion struct {
 	CreatedAt time.Time
 }
 
+func (p *ParameterRecord) GetTags() map[string]string  { return p.Tags }
+func (p *ParameterRecord) SetTags(t map[string]string) { p.Tags = t }
+
 // ParameterRecord holds the full parameter history and associated metadata.
 type ParameterRecord struct {
 	Name        string

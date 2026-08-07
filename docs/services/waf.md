@@ -52,7 +52,7 @@ traffic.
 
 | Category | ✅ Supported |
 | -------- | ------------ |
-| Web ACLs | 4            |
+| Web ACLs | 7            |
 
 ---
 
@@ -60,11 +60,14 @@ traffic.
 
 ### Web ACLs
 
-| Operation      | Status       | Notes                              | AWS Docs                                                                          |
-| -------------- | ------------ | ---------------------------------- | --------------------------------------------------------------------------------- |
-| `CreateWebACL` | ✅ Supported | Returns Summary with Id/LockToken  | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_CreateWebACL.html) |
-| `GetWebACL`    | ✅ Supported |                                    | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_GetWebACL.html)    |
-| `ListWebACLs`  | ✅ Supported |                                    | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_ListWebACLs.html)  |
-| `DeleteWebACL` | ✅ Supported | LockToken accepted but not checked | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_DeleteWebACL.html) |
+| Operation             | Status       | Notes                                 | AWS Docs                                                                                 |
+| --------------------- | ------------ | ------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `CreateWebACL`        | ✅ Supported | Returns Summary with Id/LockToken     | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_CreateWebACL.html)        |
+| `GetWebACL`           | ✅ Supported |                                       | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_GetWebACL.html)           |
+| `ListWebACLs`         | ✅ Supported |                                       | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_ListWebACLs.html)         |
+| `DeleteWebACL`        | ✅ Supported | LockToken accepted but not checked    | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_DeleteWebACL.html)        |
+| `TagResource`         | ✅ Supported | Adds/merges tags by WebACL ARN        | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | Removes tags by key from a WebACL ARN | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | Returns tags for a WebACL ARN         | [docs](https://docs.aws.amazon.com/waf/latest/APIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

@@ -15,6 +15,9 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"GetTable":       op.NewTyped[getTableReq, getTableResp]("GetTable", s.getTableTyped),
 		"GetTables":      op.NewTyped[getTablesReq, getTablesResp]("GetTables", s.getTablesTyped),
 		"DeleteTable":    op.NewTyped[deleteTableReq, struct{}]("DeleteTable", s.deleteTableTyped),
+		"TagResource":    op.NewTyped[glueTagResourceReq, struct{}]("TagResource", s.tagResourceTyped),
+		"UntagResource":  op.NewTyped[glueUntagResourceReq, struct{}]("UntagResource", s.untagResourceTyped),
+		"GetTags":        op.NewTyped[glueListTagsForResourceReq, glueListTagsForResourceResp]("GetTags", s.listTagsForResourceTyped),
 	}
 }
 

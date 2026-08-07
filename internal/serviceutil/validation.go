@@ -312,3 +312,30 @@ func ValidateTags(cfg TagValidationConfig, tags map[string]string) *protocol.AWS
 	}
 	return nil
 }
+
+// TagPair is the common Key-Value tag element used across AWS tag response
+// shapes. Services that store tags as map[string]string internally can use
+// TagsToList to produce the wire format without a bespoke loop.
+type TagPair struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+// TagsToList converts an internal tag map to the common tag-array response
+// shape.
+func TagsToList(tags map[string]string) []TagPair {
+	out := make([]TagPair, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, TagPair{Key: k, Value: v})
+	}
+	return out
+}
+
+// TagsFromList converts a tag-array request shape to an internal tag map.
+func TagsFromList(pairs []TagPair) map[string]string {
+	out := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		out[p.Key] = p.Value
+	}
+	return out
+}
