@@ -82,11 +82,15 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [combobox] add `allowFreeText` prop for editable-after-selection behaviour (seeds query from current value, commits on blur)
 
+- [kms] `UpdateKeyDescription`
+
 ### Fixed
 
 - [cloudformation/dynamodb] Local secondary indexes are applied on table creation, while unsupported LSI updates now fail without mutating the table. DynamoDB table TTL configuration is validated, applied, and reconciled during stack create and update.
 
 - [cloudformation/cloudwatch-logs] Log group retention, resource tags, and propagated stack tags are applied when a stack creates or updates the group.
+
+- [cloudformation/kms] `AWS::KMS::Key` updates dispatch `PutKeyPolicy` only when `KeyPolicy` actually changed, so an unchanged caller-locking policy created with `BypassPolicyLockoutSafetyCheck` survives unrelated stack updates; a `KeyPolicy` given as a JSON string is forwarded verbatim instead of double-encoded; `Description` changes are applied through `UpdateKeyDescription` instead of being ignored
 
 - [ecs/rds/elasticache/msk] resources no longer report RUNNING/available/ACTIVE when Docker is unavailable.
 
@@ -105,6 +109,15 @@ can be applied mechanically rather than reconstructed from memory.
 - [web] bundled builds follow the server-injected API endpoint on boot instead of a stale stored one; only endpoints entered in the connection dialog persist as overrides
 
 - [web] reopening connection settings seeds the form from the active endpoint, so Connect keeps a custom endpoint instead of reverting it to the default
+
+- **BREAKING** [logs] `PutRetentionPolicy` validates `retentionInDays` against AWS's fixed value set and returns `InvalidParameterException` otherwise, matching real CloudWatch Logs
+  migration: use one of the AWS-documented retention values (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 or 3653 days)
+
+- [router] debug tracing no longer pins an oversized request body's full backing array in memory when truncating it into the trace ring buffer, and internal CloudFormation dispatch hop bodies are capped at 1 MiB and flagged truncated
+
+- [router] traces of responses written without an explicit status code record 200 instead of appearing in-flight forever in the debug UI
+
+- [sns] `TagResource` and `UntagResource` responses include the empty result element botocore requires, so the AWS CLI no longer fails client-side after a successful tagging call
 
 ## [0.0.1-alpha.30] - 2026-08-04
 
