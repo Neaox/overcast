@@ -662,62 +662,67 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
               </form.Field>
 
               {/* Log format — JSON is what makes the two levels settable, and
-                  Lambda rejects either of them alongside Text. */}
-              <FormRow>
-                <FormField
-                  label="Log format"
-                  hint={
-                    logFormat === "JSON"
-                      ? "Platform records are emitted as JSON events and both streams are filtered at the selected level."
-                      : "Plain text START / END / REPORT lines, unfiltered."
-                  }
-                >
-                  <Select
-                    value={logFormat}
-                    onChange={(e) => setLogFormat(e.target.value as LoggingConfigForm["logFormat"])}
-                  >
-                    {LOG_FORMATS.map((format) => (
-                      <option key={format} value={format}>
-                        {format}
-                      </option>
-                    ))}
-                  </Select>
-                </FormField>
-                {logFormat === "JSON" && (
-                  <>
-                    <FormField label="Application log level">
-                      <Select
-                        value={applicationLogLevel}
-                        onChange={(e) =>
-                          setApplicationLogLevel(
-                            e.target.value as LoggingConfigForm["applicationLogLevel"],
-                          )
-                        }
-                      >
-                        {APPLICATION_LOG_LEVELS.map((level) => (
-                          <option key={level} value={level}>
-                            {level}
-                          </option>
-                        ))}
-                      </Select>
-                    </FormField>
-                    <FormField label="System log level">
-                      <Select
-                        value={systemLogLevel}
-                        onChange={(e) =>
-                          setSystemLogLevel(e.target.value as LoggingConfigForm["systemLogLevel"])
-                        }
-                      >
-                        {SYSTEM_LOG_LEVELS.map((level) => (
-                          <option key={level} value={level}>
-                            {level}
-                          </option>
-                        ))}
-                      </Select>
-                    </FormField>
-                  </>
-                )}
-              </FormRow>
+                  Lambda rejects either of them alongside Text. The hint sits
+                  under the whole row rather than in the format field's own
+                  column: it describes all three, and a 200px column wraps it
+                  to three cramped lines. */}
+              <div className="flex flex-col gap-1.5">
+                <FormRow>
+                  <FormField label="Log format">
+                    <Select
+                      value={logFormat}
+                      onChange={(e) =>
+                        setLogFormat(e.target.value as LoggingConfigForm["logFormat"])
+                      }
+                    >
+                      {LOG_FORMATS.map((format) => (
+                        <option key={format} value={format}>
+                          {format}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormField>
+                  {logFormat === "JSON" && (
+                    <>
+                      <FormField label="Application log level">
+                        <Select
+                          value={applicationLogLevel}
+                          onChange={(e) =>
+                            setApplicationLogLevel(
+                              e.target.value as LoggingConfigForm["applicationLogLevel"],
+                            )
+                          }
+                        >
+                          {APPLICATION_LOG_LEVELS.map((level) => (
+                            <option key={level} value={level}>
+                              {level}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormField>
+                      <FormField label="System log level">
+                        <Select
+                          value={systemLogLevel}
+                          onChange={(e) =>
+                            setSystemLogLevel(e.target.value as LoggingConfigForm["systemLogLevel"])
+                          }
+                        >
+                          {SYSTEM_LOG_LEVELS.map((level) => (
+                            <option key={level} value={level}>
+                              {level}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormField>
+                    </>
+                  )}
+                </FormRow>
+                <p className="text-[11px] text-fg-subtle">
+                  {logFormat === "JSON"
+                    ? "Platform records are emitted as JSON events and both streams are filtered at the selected level."
+                    : "Plain text START / END / REPORT lines, unfiltered."}
+                </p>
+              </div>
 
               {/* ── General configuration (collapsible) ─────────────────────── */}
               <CollapsibleSection
