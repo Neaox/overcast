@@ -449,7 +449,7 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec == nil {
-		protocol.WriteJSONError(w, r, errParameterNotFound(req.ResourceId))
+		protocol.WriteJSONError(w, r, errInvalidResourceId(req.ResourceId))
 		return
 	}
 	tags := rec.GetTags()
@@ -458,6 +458,10 @@ func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range req.Tags {
 		tags[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(ssmTagCfg, tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
 	rec.SetTags(tags)
 	if err := h.store.Put(ctx, rec); err != nil {
@@ -488,7 +492,7 @@ func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if rec == nil {
-		protocol.WriteJSONError(w, r, errParameterNotFound(req.ResourceId))
+		protocol.WriteJSONError(w, r, errInvalidResourceId(req.ResourceId))
 		return
 	}
 	tags := rec.GetTags()
@@ -523,7 +527,7 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec == nil {
-		protocol.WriteJSONError(w, r, errParameterNotFound(req.ResourceId))
+		protocol.WriteJSONError(w, r, errInvalidResourceId(req.ResourceId))
 		return
 	}
 	tags := make([]map[string]string, 0, len(rec.GetTags()))
@@ -633,6 +637,23 @@ func errParameterNotFound(name string) *protocol.AWSError {
 		Message:    fmt.Sprintf("Parameter %s not found.", name),
 		HTTPStatus: http.StatusBadRequest,
 	}
+}
+
+// errInvalidResourceId is the error the tag operations answer for a missing
+// resource — real SSM uses InvalidResourceId there, not ParameterNotFound.
+func errInvalidResourceId(id string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidResourceId",
+		Message:    fmt.Sprintf("Invalid resource ID: %s", id),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// ssmTagCfg tunes shared tag validation to SSM's error shape.
+var ssmTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "TooManyTagsError",
+	InvalidCode:     "ValidationException",
+	ExceededMessage: "The request exceeds the maximum number of tags allowed for the resource.",
 }
 
 // errInvalidNextToken maps a garbled/out-of-range pagination NextToken to

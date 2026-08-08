@@ -336,15 +336,16 @@ var firehoseTagCfg = serviceutil.TagValidationConfig{
 }
 
 func (s *Service) tagDeliveryStream(w http.ResponseWriter, r *http.Request) {
+	// Real Firehose sends Tags as a LIST of {Key,Value} structs, never a map.
 	var req struct {
-		DeliveryStreamName string            `json:"DeliveryStreamName"`
-		Tags               map[string]string `json:"Tags"`
+		DeliveryStreamName string                `json:"DeliveryStreamName"`
+		Tags               []serviceutil.TagPair `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	if aerr := serviceutil.ApplyInlineTags(r.Context(), req.DeliveryStreamName, req.Tags, firehoseTagCfg,
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), req.DeliveryStreamName, serviceutil.TagsFromList(req.Tags), firehoseTagCfg,
 		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
 			ds, found := s.store.getStream(ctx, name)
 			if !found {
@@ -428,12 +429,10 @@ func (s *Service) listTagsForDeliveryStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var tagList []map[string]string
-	for k, v := range tags {
-		tagList = append(tagList, map[string]string{"Key": k, "Value": v})
-	}
+	// serviceutil.TagsToList never returns nil, so an untagged stream
+	// serializes as "Tags":[] rather than null.
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"Tags":        tagList,
+		"Tags":        serviceutil.TagsToList(tags),
 		"HasMoreTags": false,
 	})
 }

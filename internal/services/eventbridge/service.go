@@ -334,16 +334,14 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	// Merge with existing tags
-	existing := map[string]string{}
-	if raw, found, _ := s.store.Get(r.Context(), nsTags, req.ResourceARN); found {
-		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
-	}
+	incoming := make(map[string]string, len(req.Tags))
 	for _, t := range req.Tags {
-		existing[t.Key] = t.Value
+		incoming[t.Key] = t.Value
 	}
-	b, _ := json.Marshal(existing)
-	s.store.Set(r.Context(), nsTags, req.ResourceARN, string(b)) //nolint:errcheck
+	if aerr := s.applyResourceTags(r.Context(), req.ResourceARN, incoming); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 
@@ -354,9 +352,10 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	stored := map[string]string{}
-	if raw, found, _ := s.store.Get(r.Context(), nsTags, req.ResourceARN); found {
-		json.Unmarshal([]byte(raw), &stored) //nolint:errcheck
+	stored, aerr := s.listResourceTags(r.Context(), req.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
 	// Return Tags as array of {Key, Value} objects (AWS SDK wire format).
 	tags := make([]map[string]string, 0, len(stored))
@@ -374,15 +373,10 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	existing := map[string]string{}
-	if raw, found, _ := s.store.Get(r.Context(), nsTags, req.ResourceARN); found {
-		json.Unmarshal([]byte(raw), &existing) //nolint:errcheck
+	if aerr := s.removeResourceTags(r.Context(), req.ResourceARN, req.TagKeys); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	for _, k := range req.TagKeys {
-		delete(existing, k)
-	}
-	b, _ := json.Marshal(existing)
-	s.store.Set(r.Context(), nsTags, req.ResourceARN, string(b)) //nolint:errcheck
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 

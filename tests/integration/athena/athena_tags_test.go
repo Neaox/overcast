@@ -1,0 +1,87 @@
+package athena_test
+
+import (
+	"net/http"
+	"testing"
+
+	"github.com/Neaox/overcast/tests/helpers"
+)
+
+const athenaTagWGARN = "arn:aws:athena:us-east-1:000000000000:workgroup/tagged-wg"
+
+func createTagTestWorkGroup(t *testing.T, srv *helpers.TestServer) {
+	t.Helper()
+	resp := athenaCall(t, srv, "CreateWorkGroup", map[string]any{"Name": "tagged-wg"})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+// TestAthenaTagResource_invalidTagRejected: reserved aws: tag keys must be
+// rejected with Athena's InvalidRequestException, not silently stored.
+func TestAthenaTagResource_invalidTagRejected(t *testing.T) {
+	// Given: a workgroup
+	srv := helpers.NewTestServer(t)
+	createTagTestWorkGroup(t, srv)
+
+	// When: TagResource is called with a reserved key
+	resp := athenaCall(t, srv, "TagResource", map[string]any{
+		"ResourceARN": athenaTagWGARN,
+		"Tags":        []map[string]string{{"Key": "aws:reserved", "Value": "x"}},
+	})
+	defer resp.Body.Close()
+
+	// Then: the tag is rejected
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidRequestException")
+}
+
+// TestAthenaTagResource_tooManyTagsRejected: exceeding the 50-tag limit is
+// rejected with InvalidRequestException.
+func TestAthenaTagResource_tooManyTagsRejected(t *testing.T) {
+	// Given: a workgroup
+	srv := helpers.NewTestServer(t)
+	createTagTestWorkGroup(t, srv)
+
+	tags := make([]map[string]string, 0, 51)
+	for i := 0; i < 51; i++ {
+		tags = append(tags, map[string]string{"Key": string(rune('a'+i%26)) + string(rune('a'+i/26)), "Value": "v"})
+	}
+
+	// When: TagResource is called with 51 tags
+	resp := athenaCall(t, srv, "TagResource", map[string]any{
+		"ResourceARN": athenaTagWGARN,
+		"Tags":        tags,
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidRequestException")
+}
+
+// TestAthenaTagResource_validRoundTrip: valid tags still round trip.
+func TestAthenaTagResource_validRoundTrip(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createTagTestWorkGroup(t, srv)
+
+	resp := athenaCall(t, srv, "TagResource", map[string]any{
+		"ResourceARN": athenaTagWGARN,
+		"Tags":        []map[string]string{{"Key": "env", "Value": "prod"}},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	list := athenaCall(t, srv, "ListTagsForResource", map[string]any{"ResourceARN": athenaTagWGARN})
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	helpers.DecodeJSON(t, list, &out)
+	if len(out.Tags) != 1 || out.Tags[0].Key != "env" || out.Tags[0].Value != "prod" {
+		t.Errorf("Tags: got %v, want env=prod", out.Tags)
+	}
+}

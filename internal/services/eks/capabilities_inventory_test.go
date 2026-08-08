@@ -30,6 +30,11 @@ func TestCapabilities_MatchRouteInventory(t *testing.T) {
 	)
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	// The /tags routes are not registered by RegisterRoutes: the main router
+	// owns the shared /tags path space and mounts TagsRouter behind an
+	// ARN-prefix dispatch (see internal/router/router.go). Mount it here the
+	// way production does so the inventory covers the whole EKS surface.
+	r.Mount("/tags", svc.TagsRouter())
 
 	routeSet := make(map[string]struct{})
 	err := chi.Walk(r, func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
