@@ -1156,9 +1156,12 @@ type stackSummaryXML struct {
 	ParentID    string `xml:"ParentId,omitempty"`
 	RootID      string `xml:"RootId,omitempty"`
 	StackStatus string `xml:"StackStatus"`
-	CreatedAt   string `xml:"CreationTime"`
-	UpdatedAt   string `xml:"LastUpdatedTime,omitempty"`
-	DeletedAt   string `xml:"DeletionTime,omitempty"`
+	// StackSummary carries the reason as well as the status, which is what
+	// lets a list view say why a stack failed without a second call.
+	StatusReason string `xml:"StackStatusReason,omitempty"`
+	CreatedAt    string `xml:"CreationTime"`
+	UpdatedAt    string `xml:"LastUpdatedTime,omitempty"`
+	DeletedAt    string `xml:"DeletionTime,omitempty"`
 }
 
 // toStackSummaryXML builds the ListStacks view of a stack. ListStacks has two
@@ -1166,12 +1169,13 @@ type stackSummaryXML struct {
 // from this one place so a field cannot reach callers on only one of them.
 func toStackSummaryXML(s *Stack) stackSummaryXML {
 	summary := stackSummaryXML{
-		StackName:   s.StackName,
-		StackID:     s.StackID,
-		ParentID:    s.ParentStackID,
-		RootID:      s.RootID,
-		StackStatus: s.Status,
-		CreatedAt:   s.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		StackName:    s.StackName,
+		StackID:      s.StackID,
+		ParentID:     s.ParentStackID,
+		RootID:       s.RootID,
+		StackStatus:  s.Status,
+		StatusReason: s.StatusReason,
+		CreatedAt:    s.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 	}
 	// Both are absent until the stack has actually been updated or deleted: an
 	// empty element would deserialise to a zero timestamp rather than to nothing.

@@ -11,7 +11,10 @@ import {
   stackStatusVariant,
   canDeleteStack,
   formatStatus,
+  isStackFailed,
   isStackInProgress,
+  isStackRollingBack,
+  stackStatusExplanation,
 } from "@/features/cloudformation/utils"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Badge } from "@/components/ui/badge"
@@ -117,6 +120,16 @@ export function StackList() {
             <TableBody>
               {visibleStacks.map((stack) => {
                 const stackName = stack.StackName ?? ""
+                const stackStatus = stack.StackStatus ?? ""
+                // A red badge says a deploy failed; this says why, so the list
+                // answers the question without a click. The reason comes from
+                // the StackStatusReason on the ListStacks summary, falling
+                // back to the standing meaning of the status for the terminal
+                // rollback states, which clear it.
+                const failureNote =
+                  isStackFailed(stackStatus) || isStackRollingBack(stackStatus)
+                    ? (stack.StackStatusReason ?? stackStatusExplanation(stackStatus))
+                    : undefined
                 return (
                   <TableRow
                     key={stackName}
@@ -138,13 +151,18 @@ export function StackList() {
                     </TableCell>
                     <TableCell>
                       <span className="flex items-center gap-1.5">
-                        {isStackInProgress(stack.StackStatus ?? "") && (
+                        {isStackInProgress(stackStatus) && (
                           <Loader2 className="h-3 w-3 animate-spin text-fg-muted" />
                         )}
-                        <Badge variant={stackStatusVariant(stack.StackStatus ?? "")}>
-                          {formatStatus(stack.StackStatus ?? "")}
+                        <Badge variant={stackStatusVariant(stackStatus)}>
+                          {formatStatus(stackStatus)}
                         </Badge>
                       </span>
+                      {failureNote && (
+                        <p className="mt-0.5 max-w-md font-sans text-[13px] text-danger">
+                          {failureNote}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell className="text-fg-muted">
                       {stack.CreationTime ? stack.CreationTime.toLocaleString() : "—"}
@@ -162,7 +180,7 @@ export function StackList() {
                         >
                           <Eye className="h-3.5 w-3.5" />
                         </RowAction>
-                        {canDeleteStack(stack.StackStatus ?? "") && (
+                        {canDeleteStack(stackStatus) && (
                           <RowAction
                             label={`Delete ${stackName}`}
                             tone="danger"

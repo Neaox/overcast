@@ -4912,7 +4912,7 @@
           "operation": "ListStacks",
           "category": "Stacks",
           "status": "✅ Supported",
-          "notes": "Filter by status"
+          "notes": "Filter by status; summaries carry StackStatusReason"
         },
         {
           "operation": "ContinueUpdateRollback",
