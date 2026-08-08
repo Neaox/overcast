@@ -230,6 +230,22 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 		return nil, aerr
 	}
 
+	// Billing mode and throughput are validated before anything is written:
+	// AWS rejects an invalid parameter combination without creating a table,
+	// and parameter validation precedes the existence check.
+	billingMode, aerr := resolveBillingMode(req.BillingMode)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if aerr := validateTableThroughput(billingMode, req.ProvisionedThroughput); aerr != nil {
+		return nil, aerr
+	}
+	for i := range req.GlobalSecondaryIndexes {
+		if aerr := validateIndexThroughput(billingMode, &req.GlobalSecondaryIndexes[i]); aerr != nil {
+			return nil, aerr
+		}
+	}
+
 	exists, aerr := h.store.tableExists(ctx, req.TableName)
 	if aerr != nil {
 		return nil, aerr
@@ -249,6 +265,8 @@ func (h *Handler) createTableTyped(ctx context.Context, req *createTableRequest)
 		CreationDateTime:     float64(h.clk.Now().UnixMilli()) / 1000.0,
 		ItemCount:            0,
 	}
+	// Only an explicitly requested billing mode is echoed back: AWS reports no
+	// BillingModeSummary for a table left on the default PROVISIONED mode.
 	if req.BillingMode != "" {
 		table.BillingModeSummary = &BillingModeSummary{BillingMode: req.BillingMode}
 	}
@@ -1265,7 +1283,7 @@ func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest)
 	if req.BillingMode != "" {
 		table.BillingMode = req.BillingMode
 		summary := &BillingModeSummary{BillingMode: req.BillingMode}
-		if req.BillingMode == "PAY_PER_REQUEST" {
+		if req.BillingMode == billingModePayPerRequest {
 			summary.LastUpdateToPayPerRequest = float64(h.clk.Now().UnixMilli()) / 1000.0
 		}
 		table.BillingModeSummary = summary

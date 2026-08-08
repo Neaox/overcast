@@ -3227,13 +3227,16 @@ func (h *dynamodbTableHandler) Create(ctx context.Context, router http.Handler, 
 	if ad, ok := props["AttributeDefinitions"]; ok {
 		reqBody["AttributeDefinitions"] = ad
 	}
+	// BillingMode and ProvisionedThroughput are forwarded exactly as declared.
+	// DynamoDB owns the defaulting (an omitted BillingMode is PROVISIONED) and
+	// the required/forbidden throughput combinations, so an invalid template
+	// surfaces DynamoDB's own modeled ValidationException through stack
+	// failure rather than being silently rewritten to on-demand billing here.
 	if bt, ok := props["BillingMode"]; ok {
 		reqBody["BillingMode"] = bt
 	}
 	if pt, ok := props["ProvisionedThroughput"]; ok {
 		reqBody["ProvisionedThroughput"] = pt
-	} else {
-		reqBody["BillingMode"] = "PAY_PER_REQUEST"
 	}
 	if gsi, ok := props["GlobalSecondaryIndexes"]; ok {
 		reqBody["GlobalSecondaryIndexes"] = gsi

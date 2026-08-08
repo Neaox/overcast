@@ -438,7 +438,7 @@
           "operation": "CreateTable",
           "category": "Table management",
           "status": "✅ Supported",
-          "notes": "Includes GSI/LSI definitions"
+          "notes": "Includes GSI/LSI definitions; an omitted `BillingMode` defaults to `PROVISIONED`, which requires `ProvisionedThroughput` on the table and on every GSI, while `PAY_PER_REQUEST` rejects it"
         },
         {
           "operation": "DeleteTable",

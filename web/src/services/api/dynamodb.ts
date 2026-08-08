@@ -49,6 +49,7 @@ function describeTableToUI(
     KeySchema?: { AttributeName?: string; KeyType?: string }[]
     AttributeDefinitions?: { AttributeName?: string; AttributeType?: string }[]
     BillingModeSummary?: { BillingMode?: string }
+    ProvisionedThroughput?: { ReadCapacityUnits?: number; WriteCapacityUnits?: number }
     CreationDateTime?: Date
     GlobalSecondaryIndexes?: {
       IndexName?: string
@@ -79,7 +80,15 @@ function describeTableToUI(
       attributeName: a.AttributeName,
       attributeType: a.AttributeType,
     })),
+    // AWS omits BillingModeSummary for a table left on the default mode.
     billingMode: t.BillingModeSummary?.BillingMode ?? "PROVISIONED",
+    provisionedThroughput:
+      t.ProvisionedThroughput?.ReadCapacityUnits || t.ProvisionedThroughput?.WriteCapacityUnits
+        ? {
+            readCapacityUnits: t.ProvisionedThroughput.ReadCapacityUnits ?? 0,
+            writeCapacityUnits: t.ProvisionedThroughput.WriteCapacityUnits ?? 0,
+          }
+        : undefined,
     creationDateTime: t.CreationDateTime?.toISOString() ?? "",
     globalSecondaryIndexes: (t.GlobalSecondaryIndexes ?? []).map((g) => ({
       indexName: g.IndexName,
@@ -150,6 +159,9 @@ export const dynamodb = {
     sortKeyName?: string
     sortKeyType?: "S" | "N" | "B"
     billingMode?: "PAY_PER_REQUEST" | "PROVISIONED"
+    /** Required by DynamoDB when billingMode is PROVISIONED, rejected otherwise. */
+    readCapacityUnits?: number
+    writeCapacityUnits?: number
   }): Promise<DynamoTable> => {
     const keySchema: { AttributeName: string; KeyType: "HASH" | "RANGE" }[] = [
       { AttributeName: opts.hashKeyName, KeyType: "HASH" },
@@ -162,12 +174,22 @@ export const dynamodb = {
         AttributeType: opts.sortKeyType ?? "S",
       })
     }
+    const billingMode = opts.billingMode ?? "PAY_PER_REQUEST"
     const res = await awsClients.dynamodb().send(
       new CreateTableCommand({
         TableName: opts.tableName,
         KeySchema: keySchema,
         AttributeDefinitions: attrDefs,
-        BillingMode: opts.billingMode ?? "PAY_PER_REQUEST",
+        BillingMode: billingMode,
+        // DynamoDB requires capacity under PROVISIONED and rejects it under
+        // PAY_PER_REQUEST, so it is sent for exactly one of the two modes.
+        ProvisionedThroughput:
+          billingMode === "PROVISIONED"
+            ? {
+                ReadCapacityUnits: opts.readCapacityUnits ?? 5,
+                WriteCapacityUnits: opts.writeCapacityUnits ?? 5,
+              }
+            : undefined,
       }),
     )
     return describeTableToUI(res.TableDescription!)
