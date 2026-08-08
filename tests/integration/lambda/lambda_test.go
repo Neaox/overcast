@@ -480,17 +480,65 @@ func TestCreateFunction_duplicate(t *testing.T) {
 }
 
 func TestCreateFunction_deprecatedRuntime(t *testing.T) {
-	// nodejs18.x is deprecated (EOL 2025-04-30) — AWS rejects it on CreateFunction
+	// AWS blocks CreateFunction only once a runtime passes its "block function
+	// create" date, which comes after the deprecation date. nodejs14.x passed
+	// it on 2024-01-09 and is refused with AWS's message; nodejs18.x is
+	// deprecated but not blocked until 2027-02-01, so AWS — and therefore
+	// Overcast — still accepts it.
 	srv := helpers.NewTestServer(t)
+
 	resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), createFunctionReq{
-		FunctionName: "deprecated-fn",
-		Runtime:      "nodejs18.x",
+		FunctionName: "create-blocked-fn",
+		Runtime:      "nodejs14.x",
 		Handler:      "index.handler",
 		Role:         "arn:aws:iam::000000000000:role/r",
 		Code:         &lambdaCode{},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	var errBody map[string]string
+	decodeJSON(t, resp, &errBody)
+	want := "The runtime parameter of nodejs14.x is no longer supported for creating or updating AWS Lambda functions. " +
+		"We recommend you use the new runtime (nodejs24.x) while creating or updating functions."
+	if errBody["__type"] != "InvalidParameterValueException" || errBody["message"] != want {
+		t.Errorf("got %v, want InvalidParameterValueException with message %q", errBody, want)
+	}
+
+	stillCreatable := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), createFunctionReq{
+		FunctionName: "deprecated-but-creatable-fn",
+		Runtime:      "nodejs18.x",
+		Handler:      "index.handler",
+		Role:         "arn:aws:iam::000000000000:role/r",
+		Code:         &lambdaCode{},
+	})
+	defer stillCreatable.Body.Close()
+	helpers.AssertStatus(t, stillCreatable, http.StatusCreated)
+}
+
+func TestCreateFunction_newlySupportedRuntimes(t *testing.T) {
+	// One newly mapped runtime per family, over the wire. Each must create;
+	// none may answer 501.
+	srv := helpers.NewTestServer(t)
+	for _, tc := range []struct{ runtime, handler string }{
+		{"python3.14", "lambda_function.handler"},
+		{"java25", "example.Handler::handleRequest"},
+		{"java17.al2023", "example.Handler::handleRequest"},
+		{"dotnet10", "Function::FunctionHandler"},
+		{"ruby3.4", "lambda_function.lambda_handler"},
+		{"ruby4.0", "lambda_function.lambda_handler"},
+	} {
+		t.Run(tc.runtime, func(t *testing.T) {
+			resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), createFunctionReq{
+				FunctionName: "new-runtime-" + tc.runtime,
+				Runtime:      tc.runtime,
+				Handler:      tc.handler,
+				Role:         "arn:aws:iam::000000000000:role/r",
+				Code:         &lambdaCode{},
+			})
+			defer resp.Body.Close()
+			helpers.AssertStatus(t, resp, http.StatusCreated)
+		})
+	}
 }
 
 // ─── GetFunction ─────────────────────────────────────────────────────────────

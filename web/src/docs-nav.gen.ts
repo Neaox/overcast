@@ -3434,6 +3434,26 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Runtimes",
+        "id": "runtimes"
+      },
+      {
+        "depth": 3,
+        "text": "The three answers a runtime can get",
+        "id": "the-three-answers-a-runtime-can-get"
+      },
+      {
+        "depth": 3,
+        "text": "Deprecation follows AWS's phases, not a single flag",
+        "id": "deprecation-follows-aws-s-phases-not-a-single-flag"
+      },
+      {
+        "depth": 3,
+        "text": "Execution coverage",
+        "id": "execution-coverage"
+      },
+      {
+        "depth": 2,
         "text": "Concurrency and execution environments",
         "id": "concurrency-and-execution-environments"
       },

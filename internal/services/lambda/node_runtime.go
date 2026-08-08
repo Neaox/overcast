@@ -40,10 +40,11 @@ func (rt *NodeRuntime) lambdaLogStreamName() string {
 	return date + "/[$LATEST]" + hex.EncodeToString(b[:])
 }
 
-// CanHandle returns true for all currently supported Node.js runtime identifiers.
-// nodejs18.x is excluded — it reached end-of-life on 2025-04-30 and is no
-// longer supported by AWS Lambda. Attempting to create a function with nodejs18.x
-// will return an InvalidParameterValueException, matching AWS behaviour.
+// CanHandle returns true for the Node.js runtimes this stub answers for. It is
+// deliberately narrower than the real runtime catalog (runtime_catalog.go):
+// the stub exists only to keep the service usable while Docker is unavailable,
+// so it mocks the current Node.js runtimes and nothing else. Which runtimes
+// CreateFunction accepts is decided by the catalog, not here.
 func (rt *NodeRuntime) CanHandle(runtimeID string) bool {
 	switch runtimeID {
 	case "nodejs20.x", "nodejs22.x", "nodejs24.x":

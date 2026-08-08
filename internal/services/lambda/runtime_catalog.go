@@ -1,320 +1,310 @@
 package lambda
 
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
+// runtime_catalog.go — the single source of truth for Lambda runtimes.
+//
+// Four views of "which runtimes exist" used to be maintained separately: the
+// modeled enum used for request validation, the runtime→image map used to
+// execute functions, the deprecation set used to reject creates, and the list
+// the web UI renders. They drifted. Everything below is derived from one table
+// so they cannot drift again; runtime_catalog_test.go fails if any derived view
+// stops agreeing with it.
+//
+// Two upstream sources feed the table, and neither is guessed:
+//
+//   - Runtime identifiers and their order come from com.amazonaws.lambda#Runtime
+//     in the pinned AWS Smithy model (models/aws/VERSION, revision 66e973ca,
+//     model date 2026-07-27). Order matters: it is reproduced verbatim in the
+//     enum-validation error message AWS returns for an unmodeled value.
+//   - Deprecation, block-create and block-update dates and the recommended
+//     successor come from AWS's own published Lambda runtime lifecycle table, as
+//     mirrored machine-readably in aws-cloudformation/cfn-lint
+//     (src/cfnlint/data/AdditionalSpecs/LmbdRuntimeLifecycle.json). Runtimes the
+//     model declares but that table does not yet cover carry no dates and are
+//     never blocked.
+//
+// Image mappings are official AWS Lambda base images on public.ecr.aws/lambda.
+// A runtime carries an image only when Overcast can actually execute it; a
+// modeled runtime with no image is an honest emulator gap and answers 501,
+// never an invented 400. Runtimes AWS has already blocked from CreateFunction
+// carry no image because Overcast will never create one: the 400 comes first.
 
-	"go.uber.org/zap"
+import (
+	"time"
 )
 
-// runtimeFamily defines a Lambda runtime image family on public ECR
-// and the rules for converting image tags into runtime IDs.
-type runtimeFamily struct {
-	// Image is the ECR Public repository path (e.g. "lambda/nodejs").
-	Image string
-	// Family is the human-readable family name (e.g. "Node.js").
+// runtimeSpec is one row of the Lambda runtime catalog.
+type runtimeSpec struct {
+	// ID is the modeled runtime identifier (com.amazonaws.lambda#Runtime).
+	ID string
+	// Name is the human-readable name shown in the web UI.
+	Name string
+	// Family groups runtimes in the UI and picks the base-image repository.
 	Family string
-	// VersionRegex extracts the version number from an image tag.
-	// Must have one capture group returning the version string.
-	VersionRegex *regexp.Regexp
-	// RuntimeID converts a version string (from VersionRegex) into a Lambda
-	// runtime ID (e.g. "20" -> "nodejs20.x").
-	RuntimeID func(version string) string
-	// DisplayName builds the human-readable name (e.g. "20" -> "Node.js 20").
-	DisplayName func(version string) string
-	// DefaultHandler is the handler string for new functions of this family.
+	// DefaultHandler seeds the handler field for new functions.
 	DefaultHandler string
-	// VersionSort returns a sort key — higher is newer.
-	VersionSort func(version string) int
+	// Image is the official Lambda base image backing this runtime, or "" when
+	// Overcast cannot execute it.
+	Image string
+	// Deprecated, BlockCreate and BlockUpdate are AWS's published lifecycle
+	// dates (YYYY-MM-DD, UTC), empty when AWS has not published one.
+	Deprecated  string
+	BlockCreate string
+	BlockUpdate string
+	// Successor is the runtime AWS recommends in its deprecation error, empty
+	// for the newest runtime of a family.
+	Successor string
 }
 
-var runtimeFamilies = []runtimeFamily{
-	{
-		Image:          "lambda/nodejs",
-		Family:         "Node.js",
-		VersionRegex:   regexp.MustCompile(`^(\d+)[\.\-]`),
-		RuntimeID:      func(v string) string { return "nodejs" + v + ".x" },
-		DisplayName:    func(v string) string { return "Node.js " + v },
-		DefaultHandler: "index.handler",
-		VersionSort:    atoi,
-	},
-	{
-		Image:          "lambda/python",
-		Family:         "Python",
-		VersionRegex:   regexp.MustCompile(`^(\d+\.\d+)[\.\-]`),
-		RuntimeID:      func(v string) string { return "python" + v },
-		DisplayName:    func(v string) string { return "Python " + v },
-		DefaultHandler: "lambda_function.handler",
-		VersionSort: func(v string) int {
-			parts := strings.SplitN(v, ".", 2)
-			major := atoiOr(parts[0], 0)
-			minor := 0
-			if len(parts) > 1 {
-				minor = atoiOr(parts[1], 0)
-			}
-			return major*1000 + minor
-		},
-	},
-	{
-		Image:          "lambda/java",
-		Family:         "Java",
-		VersionRegex:   regexp.MustCompile(`^(\d+)[\.\-]`),
-		RuntimeID:      func(v string) string { return "java" + v },
-		DisplayName:    func(v string) string { return "Java " + v },
-		DefaultHandler: "example.Handler::handleRequest",
-		VersionSort:    atoi,
-	},
-	{
-		Image:          "lambda/dotnet",
-		Family:         ".NET",
-		VersionRegex:   regexp.MustCompile(`^(\d+)[\.\-]`),
-		RuntimeID:      func(v string) string { return "dotnet" + v },
-		DisplayName:    func(v string) string { return ".NET " + v },
-		DefaultHandler: "Function::FunctionHandler",
-		VersionSort:    atoi,
-	},
+const (
+	familyNodeJS = "Node.js"
+	familyPython = "Python"
+	familyJava   = "Java"
+	familyDotnet = ".NET"
+	familyRuby   = "Ruby"
+	familyGo     = "Go"
+	familyCustom = "Custom runtime"
+)
+
+const (
+	handlerNodeJS = "index.handler"
+	handlerPython = "lambda_function.handler"
+	handlerJava   = "example.Handler::handleRequest"
+	handlerDotnet = "Function::FunctionHandler"
+	handlerRuby   = "lambda_function.lambda_handler"
+	handlerBinary = "bootstrap"
+)
+
+// lambdaRuntimeCatalog is the table. Order is the pinned model's enum order.
+var lambdaRuntimeCatalog = []runtimeSpec{
+	{ID: "nodejs", Name: "Node.js 0.10", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Deprecated: "2016-08-30", BlockCreate: "2016-09-30", BlockUpdate: "2016-10-31", Successor: "nodejs24.x"},
+	{ID: "nodejs4.3", Name: "Node.js 4.3", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Deprecated: "2020-03-05", BlockCreate: "2020-02-03", BlockUpdate: "2020-03-05", Successor: "nodejs24.x"},
+	{ID: "nodejs6.10", Name: "Node.js 6.10", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Deprecated: "2019-08-12", BlockCreate: "2019-07-12", BlockUpdate: "2019-08-12", Successor: "nodejs24.x"},
+	{ID: "nodejs8.10", Name: "Node.js 8.10", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Deprecated: "2020-03-06", BlockCreate: "2020-02-04", BlockUpdate: "2020-03-06", Successor: "nodejs24.x"},
+	{ID: "nodejs10.x", Name: "Node.js 10", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Deprecated: "2021-07-30", BlockCreate: "2021-07-30", BlockUpdate: "2022-02-14", Successor: "nodejs24.x"},
+	{ID: "nodejs12.x", Name: "Node.js 12", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Deprecated: "2023-03-31", BlockCreate: "2023-03-31", BlockUpdate: "2023-04-30", Successor: "nodejs24.x"},
+	{ID: "nodejs14.x", Name: "Node.js 14", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Deprecated: "2023-12-04", BlockCreate: "2024-01-09", BlockUpdate: "2027-03-03", Successor: "nodejs24.x"},
+	{ID: "nodejs16.x", Name: "Node.js 16", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Image:      "public.ecr.aws/lambda/nodejs:16",
+		Deprecated: "2024-06-12", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "nodejs24.x"},
+	{ID: "nodejs18.x", Name: "Node.js 18", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Image:      "public.ecr.aws/lambda/nodejs:18",
+		Deprecated: "2025-09-01", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "nodejs24.x"},
+	{ID: "nodejs20.x", Name: "Node.js 20", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Image:      "public.ecr.aws/lambda/nodejs:20",
+		Deprecated: "2026-04-30", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "nodejs24.x"},
+	{ID: "nodejs22.x", Name: "Node.js 22", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Image:      "public.ecr.aws/lambda/nodejs:22",
+		Deprecated: "2027-04-30", BlockCreate: "2027-06-01", BlockUpdate: "2027-07-01", Successor: "nodejs24.x"},
+	{ID: "nodejs24.x", Name: "Node.js 24", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Image:      "public.ecr.aws/lambda/nodejs:24",
+		Deprecated: "2028-04-30", BlockCreate: "2028-06-01", BlockUpdate: "2028-07-01"},
+
+	{ID: "java8", Name: "Java 8", Family: familyJava, DefaultHandler: handlerJava,
+		Deprecated: "2024-01-08", BlockCreate: "2024-02-08", BlockUpdate: "2027-03-03", Successor: "java25"},
+	{ID: "java8.al2", Name: "Java 8 (AL2)", Family: familyJava, DefaultHandler: handlerJava,
+		Image:      "public.ecr.aws/lambda/java:8.al2",
+		Deprecated: "2027-06-30", BlockCreate: "2027-07-31", BlockUpdate: "2027-08-31", Successor: "java25"},
+	{ID: "java11", Name: "Java 11", Family: familyJava, DefaultHandler: handlerJava,
+		Image:      "public.ecr.aws/lambda/java:11",
+		Deprecated: "2027-06-30", BlockCreate: "2027-07-31", BlockUpdate: "2027-08-31", Successor: "java25"},
+	{ID: "java17", Name: "Java 17", Family: familyJava, DefaultHandler: handlerJava,
+		Image:      "public.ecr.aws/lambda/java:17",
+		Deprecated: "2027-06-30", BlockCreate: "2027-07-31", BlockUpdate: "2027-08-31", Successor: "java25"},
+	{ID: "java21", Name: "Java 21", Family: familyJava, DefaultHandler: handlerJava,
+		Image:      "public.ecr.aws/lambda/java:21",
+		Deprecated: "2029-06-30", BlockCreate: "2029-07-31", BlockUpdate: "2029-08-31", Successor: "java25"},
+	{ID: "java25", Name: "Java 25", Family: familyJava, DefaultHandler: handlerJava,
+		Image:      "public.ecr.aws/lambda/java:25",
+		Deprecated: "2029-06-30", BlockCreate: "2029-07-31", BlockUpdate: "2029-08-31"},
+
+	{ID: "python2.7", Name: "Python 2.7", Family: familyPython, DefaultHandler: handlerPython,
+		Deprecated: "2021-07-15", BlockCreate: "2021-07-15", BlockUpdate: "2022-05-30", Successor: "python3.14"},
+	{ID: "python3.6", Name: "Python 3.6", Family: familyPython, DefaultHandler: handlerPython,
+		Deprecated: "2022-07-18", BlockCreate: "2022-07-18", BlockUpdate: "2022-08-29", Successor: "python3.14"},
+	{ID: "python3.7", Name: "Python 3.7", Family: familyPython, DefaultHandler: handlerPython,
+		Deprecated: "2023-12-04", BlockCreate: "2024-01-09", BlockUpdate: "2027-03-03", Successor: "python3.14"},
+	{ID: "python3.8", Name: "Python 3.8", Family: familyPython, DefaultHandler: handlerPython,
+		Image:      "public.ecr.aws/lambda/python:3.8",
+		Deprecated: "2024-10-14", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "python3.14"},
+	{ID: "python3.9", Name: "Python 3.9", Family: familyPython, DefaultHandler: handlerPython,
+		Image:      "public.ecr.aws/lambda/python:3.9",
+		Deprecated: "2025-12-15", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "python3.14"},
+	{ID: "python3.10", Name: "Python 3.10", Family: familyPython, DefaultHandler: handlerPython,
+		Image:      "public.ecr.aws/lambda/python:3.10",
+		Deprecated: "2026-10-31", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "python3.14"},
+	{ID: "python3.11", Name: "Python 3.11", Family: familyPython, DefaultHandler: handlerPython,
+		Image:      "public.ecr.aws/lambda/python:3.11",
+		Deprecated: "2027-06-30", BlockCreate: "2027-07-31", BlockUpdate: "2027-08-31", Successor: "python3.14"},
+	{ID: "python3.12", Name: "Python 3.12", Family: familyPython, DefaultHandler: handlerPython,
+		Image:      "public.ecr.aws/lambda/python:3.12",
+		Deprecated: "2028-10-31", BlockCreate: "2028-11-30", BlockUpdate: "2029-01-10", Successor: "python3.14"},
+	{ID: "python3.13", Name: "Python 3.13", Family: familyPython, DefaultHandler: handlerPython,
+		Image:      "public.ecr.aws/lambda/python:3.13",
+		Deprecated: "2029-06-30", BlockCreate: "2029-07-31", BlockUpdate: "2029-08-31", Successor: "python3.14"},
+	{ID: "python3.14", Name: "Python 3.14", Family: familyPython, DefaultHandler: handlerPython,
+		Image:      "public.ecr.aws/lambda/python:3.14",
+		Deprecated: "2029-06-30", BlockCreate: "2029-07-31", BlockUpdate: "2029-08-31"},
+
+	{ID: "dotnetcore1.0", Name: ".NET Core 1.0", Family: familyDotnet, DefaultHandler: handlerDotnet,
+		Deprecated: "2019-06-27", BlockCreate: "2019-06-30", BlockUpdate: "2019-07-30", Successor: "dotnet10"},
+	{ID: "dotnetcore2.0", Name: ".NET Core 2.0", Family: familyDotnet, DefaultHandler: handlerDotnet,
+		Deprecated: "2019-05-30", BlockCreate: "2019-04-30", BlockUpdate: "2019-05-30", Successor: "dotnet10"},
+	{ID: "dotnetcore2.1", Name: ".NET Core 2.1", Family: familyDotnet, DefaultHandler: handlerDotnet,
+		Deprecated: "2022-01-05", BlockCreate: "2022-01-05", BlockUpdate: "2022-04-13", Successor: "dotnet10"},
+	{ID: "dotnetcore3.1", Name: ".NET Core 3.1", Family: familyDotnet, DefaultHandler: handlerDotnet,
+		Deprecated: "2023-04-03", BlockCreate: "2023-04-03", BlockUpdate: "2023-05-03", Successor: "dotnet10"},
+	{ID: "dotnet6", Name: ".NET 6", Family: familyDotnet, DefaultHandler: handlerDotnet,
+		Image:      "public.ecr.aws/lambda/dotnet:6",
+		Deprecated: "2024-12-20", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "dotnet10"},
+	{ID: "dotnet8", Name: ".NET 8", Family: familyDotnet, DefaultHandler: handlerDotnet,
+		Image:      "public.ecr.aws/lambda/dotnet:8",
+		Deprecated: "2026-11-10", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "dotnet10"},
+	{ID: "dotnet10", Name: ".NET 10", Family: familyDotnet, DefaultHandler: handlerDotnet,
+		Image:      "public.ecr.aws/lambda/dotnet:10",
+		Deprecated: "2028-11-14", BlockCreate: "2028-12-14", BlockUpdate: "2029-01-15"},
+
+	{ID: "nodejs4.3-edge", Name: "Node.js 4.3 (edge)", Family: familyNodeJS, DefaultHandler: handlerNodeJS,
+		Deprecated: "2020-03-05", BlockCreate: "2019-03-31", BlockUpdate: "2019-04-30", Successor: "nodejs24.x"},
+	{ID: "go1.x", Name: "Go 1.x", Family: familyGo, DefaultHandler: handlerBinary,
+		Deprecated: "2024-01-08", BlockCreate: "2024-02-08", BlockUpdate: "2027-03-03", Successor: "provided.al2023"},
+
+	{ID: "ruby2.5", Name: "Ruby 2.5", Family: familyRuby, DefaultHandler: handlerRuby,
+		Deprecated: "2021-07-30", BlockCreate: "2021-07-30", BlockUpdate: "2022-03-31", Successor: "ruby4.0"},
+	{ID: "ruby2.7", Name: "Ruby 2.7", Family: familyRuby, DefaultHandler: handlerRuby,
+		Deprecated: "2023-12-07", BlockCreate: "2024-01-09", BlockUpdate: "2027-03-03", Successor: "ruby4.0"},
+	{ID: "ruby3.2", Name: "Ruby 3.2", Family: familyRuby, DefaultHandler: handlerRuby,
+		Image:      "public.ecr.aws/lambda/ruby:3.2",
+		Deprecated: "2026-03-31", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "ruby4.0"},
+	{ID: "ruby3.3", Name: "Ruby 3.3", Family: familyRuby, DefaultHandler: handlerRuby,
+		Image:      "public.ecr.aws/lambda/ruby:3.3",
+		Deprecated: "2027-03-31", BlockCreate: "2027-04-30", BlockUpdate: "2027-05-31", Successor: "ruby4.0"},
+	{ID: "ruby3.4", Name: "Ruby 3.4", Family: familyRuby, DefaultHandler: handlerRuby,
+		Image:      "public.ecr.aws/lambda/ruby:3.4",
+		Deprecated: "2028-03-31", BlockCreate: "2028-04-30", BlockUpdate: "2028-05-31", Successor: "ruby4.0"},
+	{ID: "ruby4.0", Name: "Ruby 4.0", Family: familyRuby, DefaultHandler: handlerRuby,
+		Image:      "public.ecr.aws/lambda/ruby:4.0",
+		Deprecated: "2029-03-31", BlockCreate: "2029-04-30", BlockUpdate: "2029-05-31"},
+
+	{ID: "provided", Name: "Custom (Amazon Linux 1)", Family: familyCustom, DefaultHandler: handlerBinary,
+		Deprecated: "2024-01-08", BlockCreate: "2024-02-08", BlockUpdate: "2027-03-03", Successor: "provided.al2023"},
+	{ID: "provided.al2", Name: "Custom (AL2)", Family: familyCustom, DefaultHandler: handlerBinary,
+		Image:      "public.ecr.aws/lambda/provided:al2",
+		Deprecated: "2026-07-31", BlockCreate: "2027-02-01", BlockUpdate: "2027-03-03", Successor: "provided.al2023"},
+	{ID: "provided.al2023", Name: "Custom (AL2023)", Family: familyCustom, DefaultHandler: handlerBinary,
+		Image:      "public.ecr.aws/lambda/provided:al2023",
+		Deprecated: "2029-06-30", BlockCreate: "2029-07-31", BlockUpdate: "2029-08-31"},
+
+	// AWS models the Amazon Linux 2023 Java runtimes and publishes their base
+	// images, but has not published lifecycle dates for them at the pinned
+	// model date. No dates means no blocking — inventing one is not an option.
+	{ID: "java8.al2023", Name: "Java 8 (AL2023)", Family: familyJava, DefaultHandler: handlerJava,
+		Image: "public.ecr.aws/lambda/java:8.al2023"},
+	{ID: "java11.al2023", Name: "Java 11 (AL2023)", Family: familyJava, DefaultHandler: handlerJava,
+		Image: "public.ecr.aws/lambda/java:11.al2023"},
+	{ID: "java17.al2023", Name: "Java 17 (AL2023)", Family: familyJava, DefaultHandler: handlerJava,
+		Image: "public.ecr.aws/lambda/java:17.al2023"},
 }
 
-// staticCustomRuntimes are not on ECR — always included.
-var staticCustomRuntimes = []RuntimeInfo{
-	{ID: "provided.al2023", Name: "Custom (AL2023)", Family: "Custom runtime", DefaultHandler: "bootstrap"},
-	{ID: "provided.al2", Name: "Custom (AL2)", Family: "Custom runtime", DefaultHandler: "bootstrap"},
+// runtimeLifecycle holds one runtime's parsed AWS lifecycle dates.
+type runtimeLifecycle struct {
+	deprecated  time.Time
+	blockCreate time.Time
+	blockUpdate time.Time
+	successor   string
 }
 
-// knownDeprecated lists runtime IDs that should be marked deprecated.
-// Runtimes end-of-life'd by AWS but whose tags may still appear on ECR.
-var knownDeprecated = map[string]bool{
-	"nodejs18.x": true, "nodejs16.x": true, "nodejs14.x": true,
-	"nodejs12.x": true, "nodejs10.x": true, "nodejs8.10": true,
-	"nodejs6.10": true, "nodejs4.3": true,
-	"python3.8": true, "python3.7": true, "python3.6": true, "python2.7": true,
-	"java8": true, "java8.al2": true,
-	"dotnet5": true, "dotnet5.0": true,
-	"ruby2.5": true, "ruby2.7": true,
-	"go1.x":        true,
-	"provided.al1": true,
-}
+var (
+	// runtimeSpecByID indexes the catalog by runtime identifier.
+	runtimeSpecByID map[string]runtimeSpec
+	// runtimeLifecycles holds the parsed lifecycle dates, one entry per
+	// runtime AWS has published dates for.
+	runtimeLifecycles map[string]runtimeLifecycle
+	// activeRuntimes maps every runtime Overcast can execute to its official
+	// Lambda base image. ContainerRuntime dispatches on it.
+	activeRuntimes map[string]string
+)
 
-// runtimeCache holds the lazily-fetched runtime catalog.
-type runtimeCache struct {
-	mu       sync.RWMutex
-	runtimes []RuntimeInfo
-	fetched  bool
-	log      *zap.Logger
-}
-
-func newRuntimeCache(log *zap.Logger) *runtimeCache {
-	return &runtimeCache{log: log}
-}
-
-// get returns the cached runtime list, fetching from ECR Public on first call.
-// If the ECR fetch fails, falls back to the static catalog.
-func (rc *runtimeCache) get(runtimes []Runtime) []RuntimeInfo {
-	rc.mu.RLock()
-	if rc.fetched {
-		result := rc.runtimes
-		rc.mu.RUnlock()
-		return result
-	}
-	rc.mu.RUnlock()
-
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-
-	// Double-check after acquiring write lock.
-	if rc.fetched {
-		return rc.runtimes
-	}
-
-	catalog := rc.fetchFromECR()
-	if len(catalog) == 0 {
-		rc.log.Warn("ECR runtime discovery returned no results, using static fallback")
-		catalog = staticFallbackCatalog()
-	}
-
-	// Set the Supported flag based on registered Runtime strategies.
-	for i := range catalog {
-		for _, rt := range runtimes {
-			if rt.CanHandle(catalog[i].ID) {
-				catalog[i].Supported = true
-				break
-			}
+func init() {
+	runtimeSpecByID = make(map[string]runtimeSpec, len(lambdaRuntimeCatalog))
+	runtimeLifecycles = make(map[string]runtimeLifecycle, len(lambdaRuntimeCatalog))
+	activeRuntimes = make(map[string]string, len(lambdaRuntimeCatalog))
+	for _, spec := range lambdaRuntimeCatalog {
+		runtimeSpecByID[spec.ID] = spec
+		if spec.Image != "" {
+			activeRuntimes[spec.ID] = spec.Image
 		}
-	}
-
-	rc.runtimes = catalog
-	rc.fetched = true
-	return rc.runtimes
-}
-
-// fetchFromECR queries ECR Public for each runtime family's image tags and
-// extracts available runtime versions.
-func (rc *runtimeCache) fetchFromECR() []RuntimeInfo {
-	var all []RuntimeInfo
-
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	for _, fam := range runtimeFamilies {
-		tags, err := fetchECRTags(client, fam.Image)
-		if err != nil {
-			rc.log.Warn("failed to fetch ECR tags",
-				zap.String("image", fam.Image),
-				zap.Error(err))
+		if spec.Deprecated == "" && spec.BlockCreate == "" && spec.BlockUpdate == "" {
 			continue
 		}
+		runtimeLifecycles[spec.ID] = runtimeLifecycle{
+			deprecated:  mustParseRuntimeDate(spec.ID, spec.Deprecated),
+			blockCreate: mustParseRuntimeDate(spec.ID, spec.BlockCreate),
+			blockUpdate: mustParseRuntimeDate(spec.ID, spec.BlockUpdate),
+			successor:   spec.Successor,
+		}
+	}
+}
 
-		versions := extractVersions(tags, fam.VersionRegex)
-		sort.Slice(versions, func(i, j int) bool {
-			return fam.VersionSort(versions[i]) > fam.VersionSort(versions[j])
+// mustParseRuntimeDate parses a catalog lifecycle date. Its only inputs are the
+// literals in this file, so a failure is a typo in the table and must not be
+// allowed to reach a running emulator as a silently-ignored date.
+func mustParseRuntimeDate(runtimeID, date string) time.Time {
+	if date == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.DateOnly, date)
+	if err != nil {
+		panic("lambda: runtime " + runtimeID + " has malformed lifecycle date " + date)
+	}
+	return parsed.UTC()
+}
+
+// runtimeDeprecated reports whether AWS has ended support for the runtime as of
+// now. Deprecation alone does not stop CreateFunction — see runtimeCreateBlocked.
+func runtimeDeprecated(runtimeID string, now time.Time) bool {
+	return reachedRuntimePhase(runtimeLifecycles[runtimeID].deprecated, now)
+}
+
+// runtimeCreateBlocked reports whether AWS refuses to create new functions with
+// the runtime as of now (AWS's "block function create" phase).
+func runtimeCreateBlocked(runtimeID string, now time.Time) bool {
+	return reachedRuntimePhase(runtimeLifecycles[runtimeID].blockCreate, now)
+}
+
+// runtimeUpdateBlocked reports whether AWS refuses to update functions using
+// the runtime as of now (AWS's "block function update" phase).
+func runtimeUpdateBlocked(runtimeID string, now time.Time) bool {
+	return reachedRuntimePhase(runtimeLifecycles[runtimeID].blockUpdate, now)
+}
+
+func reachedRuntimePhase(phase, now time.Time) bool {
+	return !phase.IsZero() && !now.UTC().Before(phase)
+}
+
+// runtimeCatalog renders the catalog for the emulator-only runtime listing the
+// web UI reads. Supported mirrors exactly what CreateFunction will accept for
+// execution, so the UI cannot offer a runtime the API answers 501 for.
+func runtimeCatalog(now time.Time) []RuntimeInfo {
+	out := make([]RuntimeInfo, 0, len(lambdaRuntimeCatalog))
+	for _, spec := range lambdaRuntimeCatalog {
+		out = append(out, RuntimeInfo{
+			ID:             spec.ID,
+			Name:           spec.Name,
+			Family:         spec.Family,
+			DefaultHandler: spec.DefaultHandler,
+			ImageURI:       spec.Image,
+			Deprecated:     runtimeDeprecated(spec.ID, now),
+			CreateBlocked:  runtimeCreateBlocked(spec.ID, now),
+			UpdateBlocked:  runtimeUpdateBlocked(spec.ID, now),
+			Supported:      spec.Image != "",
 		})
-
-		for _, v := range versions {
-			id := fam.RuntimeID(v)
-			all = append(all, RuntimeInfo{
-				ID:             id,
-				Name:           fam.DisplayName(v),
-				Family:         fam.Family,
-				DefaultHandler: fam.DefaultHandler,
-				ImageURI:       "public.ecr.aws/" + fam.Image + ":" + v,
-				Deprecated:     knownDeprecated[id],
-			})
-		}
-	}
-
-	// Append custom runtimes (not from ECR).
-	all = append(all, staticCustomRuntimes...)
-
-	return all
-}
-
-// ecrTokenResponse is the JSON shape returned by the ECR Public auth endpoint.
-type ecrTokenResponse struct {
-	Token string `json:"token"`
-}
-
-// ecrTagsResponse is the OCI distribution tag list.
-type ecrTagsResponse struct {
-	Tags []string `json:"tags"`
-}
-
-// fetchECRTags gets an anonymous token and lists image tags for a public
-// ECR repository. The token endpoint requires a trailing slash.
-func fetchECRTags(client *http.Client, repo string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Step 1: get anonymous auth token.
-	tokenURL := fmt.Sprintf(
-		"https://public.ecr.aws/token/?service=public.ecr.aws&scope=repository:%s:pull",
-		repo,
-	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build token request: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch token: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint returned %d", resp.StatusCode)
-	}
-	var tok ecrTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
-		return nil, fmt.Errorf("decode token: %w", err)
-	}
-
-	// Step 2: list tags using the OCI distribution API.
-	tagsURL := fmt.Sprintf("https://public.ecr.aws/v2/%s/tags/list", repo)
-	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, tagsURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build tags request: %w", err)
-	}
-	req2.Header.Set("Authorization", "Bearer "+tok.Token)
-
-	resp2, err := client.Do(req2)
-	if err != nil {
-		return nil, fmt.Errorf("fetch tags: %w", err)
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tags endpoint returned %d", resp2.StatusCode)
-	}
-	var tags ecrTagsResponse
-	if err := json.NewDecoder(resp2.Body).Decode(&tags); err != nil {
-		return nil, fmt.Errorf("decode tags: %w", err)
-	}
-
-	return tags.Tags, nil
-}
-
-// extractVersions de-duplicates version strings from image tag names.
-func extractVersions(tags []string, re *regexp.Regexp) []string {
-	seen := make(map[string]bool)
-	var out []string
-	for _, tag := range tags {
-		m := re.FindStringSubmatch(tag)
-		if m == nil {
-			continue
-		}
-		v := m[1]
-		if !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
 	}
 	return out
-}
-
-func atoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
-func atoiOr(s string, fallback int) int {
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return fallback
-	}
-	return n
-}
-
-// staticFallbackCatalog returns the hardcoded catalog used when ECR is unreachable.
-func staticFallbackCatalog() []RuntimeInfo {
-	return []RuntimeInfo{
-		// Node.js
-		{ID: "nodejs24.x", Name: "Node.js 24", Family: "Node.js", DefaultHandler: "index.handler", ImageURI: "public.ecr.aws/lambda/nodejs:24"},
-		{ID: "nodejs22.x", Name: "Node.js 22", Family: "Node.js", DefaultHandler: "index.handler", ImageURI: "public.ecr.aws/lambda/nodejs:22"},
-		{ID: "nodejs20.x", Name: "Node.js 20", Family: "Node.js", DefaultHandler: "index.handler", ImageURI: "public.ecr.aws/lambda/nodejs:20"},
-		{ID: "nodejs18.x", Name: "Node.js 18", Family: "Node.js", DefaultHandler: "index.handler", ImageURI: "public.ecr.aws/lambda/nodejs:18", Deprecated: true},
-		{ID: "nodejs16.x", Name: "Node.js 16", Family: "Node.js", DefaultHandler: "index.handler", ImageURI: "public.ecr.aws/lambda/nodejs:16", Deprecated: true},
-		{ID: "nodejs14.x", Name: "Node.js 14", Family: "Node.js", DefaultHandler: "index.handler", ImageURI: "public.ecr.aws/lambda/nodejs:14", Deprecated: true},
-		// Python
-		{ID: "python3.13", Name: "Python 3.13", Family: "Python", DefaultHandler: "lambda_function.handler", ImageURI: "public.ecr.aws/lambda/python:3.13"},
-		{ID: "python3.12", Name: "Python 3.12", Family: "Python", DefaultHandler: "lambda_function.handler", ImageURI: "public.ecr.aws/lambda/python:3.12"},
-		{ID: "python3.11", Name: "Python 3.11", Family: "Python", DefaultHandler: "lambda_function.handler", ImageURI: "public.ecr.aws/lambda/python:3.11"},
-		{ID: "python3.10", Name: "Python 3.10", Family: "Python", DefaultHandler: "lambda_function.handler", ImageURI: "public.ecr.aws/lambda/python:3.10"},
-		{ID: "python3.9", Name: "Python 3.9", Family: "Python", DefaultHandler: "lambda_function.handler", ImageURI: "public.ecr.aws/lambda/python:3.9"},
-		{ID: "python3.8", Name: "Python 3.8", Family: "Python", DefaultHandler: "lambda_function.handler", ImageURI: "public.ecr.aws/lambda/python:3.8", Deprecated: true},
-		// Java
-		{ID: "java21", Name: "Java 21", Family: "Java", DefaultHandler: "example.Handler::handleRequest", ImageURI: "public.ecr.aws/lambda/java:21"},
-		{ID: "java17", Name: "Java 17", Family: "Java", DefaultHandler: "example.Handler::handleRequest", ImageURI: "public.ecr.aws/lambda/java:17"},
-		{ID: "java11", Name: "Java 11", Family: "Java", DefaultHandler: "example.Handler::handleRequest", ImageURI: "public.ecr.aws/lambda/java:11"},
-		{ID: "java8", Name: "Java 8", Family: "Java", DefaultHandler: "example.Handler::handleRequest", ImageURI: "public.ecr.aws/lambda/java:8", Deprecated: true},
-		// .NET
-		{ID: "dotnet8", Name: ".NET 8", Family: ".NET", DefaultHandler: "Function::FunctionHandler", ImageURI: "public.ecr.aws/lambda/dotnet:8"},
-		{ID: "dotnet6", Name: ".NET 6", Family: ".NET", DefaultHandler: "Function::FunctionHandler", ImageURI: "public.ecr.aws/lambda/dotnet:6"},
-		// Custom
-		{ID: "provided.al2023", Name: "Custom (AL2023)", Family: "Custom runtime", DefaultHandler: "bootstrap"},
-		{ID: "provided.al2", Name: "Custom (AL2)", Family: "Custom runtime", DefaultHandler: "bootstrap"},
-	}
 }
