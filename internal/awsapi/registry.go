@@ -100,9 +100,7 @@ func (r *Registry) ClaimRPC(protocol Protocol, serviceShape, operation string) (
 	if (protocol != ProtocolRPCV2CBOR && protocol != ProtocolRPCV2JSON) || serviceShape == "" || operation == "" {
 		return Claim{}, false
 	}
-	if separator := strings.LastIndexAny(serviceShape, ".#"); separator >= 0 {
-		serviceShape = serviceShape[separator+1:]
-	}
+	serviceShape = ServiceShapeName(serviceShape)
 	i := sort.Search(len(rpcOperations), func(i int) bool {
 		return compareRPCKey(rpcOperations[i], protocol, serviceShape, operation) >= 0
 	})
@@ -122,6 +120,21 @@ func (r *Registry) ClaimRPC(protocol Protocol, serviceShape, operation string) (
 		ErrorProfile: profile,
 		Ambiguous:    op.Ambiguous,
 	}, true
+}
+
+// ServiceShapeName reduces a Smithy service identifier to the bare shape name
+// the generated indexes are keyed by. The Smithy RPC v2 protocol specifies the
+// `{service}` URI label as the service's shape name, but the absolute shape ID
+// ("com.amazonaws.example#Example_20200101") and the namespace-qualified form
+// are both spellings a caller can reasonably produce, and both name the same
+// service. Exported because the router has to normalise the same label the same
+// way when it resolves the shape to an implementation — two normalisations that
+// could drift apart is how a request gets a claim but no dispatcher.
+func ServiceShapeName(serviceShape string) string {
+	if separator := strings.LastIndexAny(serviceShape, ".#"); separator >= 0 {
+		return serviceShape[separator+1:]
+	}
+	return serviceShape
 }
 
 func compareRPCKey(op rpcOperation, protocol Protocol, serviceShape, operation string) int {
