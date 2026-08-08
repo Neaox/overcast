@@ -285,9 +285,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/clusters/{name}/fargate-profiles/{fargateProfileName}", s.describeFargateProfile)
 	r.Post("/clusters/{name}/fargate-profiles", s.createFargateProfile)
 	r.Delete("/clusters/{name}/fargate-profiles/{fargateProfileName}", s.deleteFargateProfile)
-	r.Get("/tags/{resourceArn}", s.listTagsForResource)
-	r.Post("/tags/{resourceArn}", s.tagResource)
-	r.Delete("/tags/{resourceArn}", s.untagResource)
+	// NOTE: /tags routes are NOT registered here — see TagsRouter. The /tags
+	// path space is shared with Pipes and API Gateway, so the main router
+	// owns it and dispatches by the resource ARN's service prefix.
 	r.Post("/clusters/{name}/addons", s.createAddon)
 	r.Get("/clusters/{name}/addons", s.listAddons)
 	r.Get("/clusters/{name}/addons/{addonName}", s.describeAddon)
@@ -295,6 +295,19 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Delete("/clusters/{name}/addons/{addonName}", s.deleteAddon)
 	r.Get("/addons/{addonName}/versions", s.describeAddonVersions)
 	r.Get("/addons/{addonName}/configuration", s.describeAddonConfiguration)
+}
+
+// TagsRouter returns a chi.Router for the EKS tagging routes that live under
+// the shared /tags/{resourceArn} path space. The main router mounts it
+// behind an ARN-dispatching owner shared with Pipes and API Gateway. EKS
+// clients always URL-escape the ARN into a single path segment, which is
+// what the {resourceArn} pattern matches.
+func (s *Service) TagsRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/{resourceArn}", s.listTagsForResource)
+	r.Post("/{resourceArn}", s.tagResource)
+	r.Delete("/{resourceArn}", s.untagResource)
+	return r
 }
 
 func (s *Service) region(r *http.Request) string {

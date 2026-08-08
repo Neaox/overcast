@@ -1731,6 +1731,13 @@ func TestEKSLiveModeUntagLegacyMockAccessEntryArnMissingTagKeysStillReturnsNotIm
 	expectStatus(t, resp, http.StatusNotImplemented)
 }
 
+// The /tags path space is owned by the main router, which dispatches on the
+// ARN's service prefix (pipes → Pipes, eks → EKS, everything else → API
+// Gateway's ARN-keyed fallback store). The tests below pin that a non-EKS
+// ARN never reaches the EKS handlers — EKS live-mode gating must not swallow
+// foreign-ARN tag traffic, which keeps flowing to the fallback owner with
+// API Gateway's semantics (PUT/POST/DELETE answer 204, GET answers 200).
+
 func TestEKSLiveModeListTagsForNonEKSArnStillAllowed(t *testing.T) {
 	store := state.NewMemoryStore()
 	liveSrv := helpers.NewTestServer(t,
@@ -1739,10 +1746,13 @@ func TestEKSLiveModeListTagsForNonEKSArnStillAllowed(t *testing.T) {
 	)
 
 	arn := "arn:aws:s3:::example-bucket"
-	mustTagResource(t, liveSrv.URL, arn, map[string]string{"env": "live"})
+	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/tags/"+url.PathEscape(arn), map[string]any{
+		"tags": map[string]string{"env": "live"},
+	})
+	expectStatus(t, resp, http.StatusNoContent)
 
-	resp := eksCall(t, http.MethodGet, liveSrv.URL+"/tags/"+url.PathEscape(arn), nil)
-	body := expectJSONStatus(t, resp, http.StatusOK)
+	getResp := eksCall(t, http.MethodGet, liveSrv.URL+"/tags/"+url.PathEscape(arn), nil)
+	body := expectJSONStatus(t, getResp, http.StatusOK)
 	tags, _ := body["tags"].(map[string]any)
 	if tags["env"] != "live" {
 		t.Fatalf("expected non-EKS ARN tag reads to remain functional in live mode, got %#v", body)
@@ -1756,33 +1766,23 @@ func TestEKSLiveModeTagNonEKSArnStillAllowed(t *testing.T) {
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
+	// An empty tags map would trip EKS's InvalidParameterException; the
+	// fallback owner accepts it as a 204 no-op — proof the request is
+	// answered outside EKS regardless of its live-mode gating.
 	arn := "arn:aws:s3:::example-bucket"
 	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/tags/"+url.PathEscape(arn), map[string]any{
 		"tags": map[string]string{"env": "live"},
 	})
-	expectStatus(t, resp, http.StatusOK)
+	expectStatus(t, resp, http.StatusNoContent)
 
-	tags := listResourceTags(t, liveSrv.URL, arn)
+	emptyResp := eksCall(t, http.MethodPost, liveSrv.URL+"/tags/"+url.PathEscape(arn), map[string]any{})
+	expectStatus(t, emptyResp, http.StatusNoContent)
+
+	getResp := eksCall(t, http.MethodGet, liveSrv.URL+"/tags/"+url.PathEscape(arn), nil)
+	body := expectJSONStatus(t, getResp, http.StatusOK)
+	tags, _ := body["tags"].(map[string]any)
 	if tags["env"] != "live" {
 		t.Fatalf("expected non-EKS ARN tags to remain functional in live mode, got %#v", tags)
-	}
-}
-
-func TestEKSLiveModeTagNonEKSArnRejectsEmptyTagsMap(t *testing.T) {
-	store := state.NewMemoryStore()
-	liveSrv := helpers.NewTestServer(t,
-		helpers.WithStore(store),
-		helpers.WithEKSMode(config.EKSModeLive),
-	)
-
-	arn := "arn:aws:s3:::example-bucket"
-	body := expectJSONStatus(t, eksCall(t, http.MethodPost, liveSrv.URL+"/tags/"+url.PathEscape(arn), map[string]any{}), http.StatusBadRequest)
-	if body["__type"] != "InvalidParameterException" {
-		t.Fatalf("expected InvalidParameterException for empty non-EKS tag map in live mode, got %#v", body)
-	}
-	msg, _ := body["message"].(string)
-	if !strings.Contains(msg, "tags map") {
-		t.Fatalf("expected empty non-EKS tag map message in live mode, got %#v", body)
 	}
 }
 
@@ -1794,35 +1794,22 @@ func TestEKSLiveModeUntagNonEKSArnStillAllowed(t *testing.T) {
 	)
 
 	arn := "arn:aws:s3:::example-bucket"
-	mustTagResource(t, liveSrv.URL, arn, map[string]string{"env": "live", "owner": "ci"})
+	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/tags/"+url.PathEscape(arn), map[string]any{
+		"tags": map[string]string{"env": "live", "owner": "ci"},
+	})
+	expectStatus(t, resp, http.StatusNoContent)
 
-	resp := eksCall(t, http.MethodDelete, liveSrv.URL+"/tags/"+url.PathEscape(arn)+"?tagKeys=owner", nil)
-	expectStatus(t, resp, http.StatusOK)
+	delResp := eksCall(t, http.MethodDelete, liveSrv.URL+"/tags/"+url.PathEscape(arn)+"?tagKeys=owner", nil)
+	expectStatus(t, delResp, http.StatusNoContent)
 
-	tags := listResourceTags(t, liveSrv.URL, arn)
+	getResp := eksCall(t, http.MethodGet, liveSrv.URL+"/tags/"+url.PathEscape(arn), nil)
+	body := expectJSONStatus(t, getResp, http.StatusOK)
+	tags, _ := body["tags"].(map[string]any)
 	if tags["env"] != "live" {
 		t.Fatalf("expected env tag to remain after untag on non-EKS ARN, got %#v", tags)
 	}
 	if _, exists := tags["owner"]; exists {
 		t.Fatalf("expected owner tag removed after untag on non-EKS ARN, got %#v", tags)
-	}
-}
-
-func TestEKSLiveModeUntagNonEKSArnRejectsMissingTagKeys(t *testing.T) {
-	store := state.NewMemoryStore()
-	liveSrv := helpers.NewTestServer(t,
-		helpers.WithStore(store),
-		helpers.WithEKSMode(config.EKSModeLive),
-	)
-
-	arn := "arn:aws:s3:::example-bucket"
-	body := expectJSONStatus(t, eksCall(t, http.MethodDelete, liveSrv.URL+"/tags/"+url.PathEscape(arn), nil), http.StatusBadRequest)
-	if body["__type"] != "InvalidParameterException" {
-		t.Fatalf("expected InvalidParameterException for missing non-EKS tagKeys in live mode, got %#v", body)
-	}
-	msg, _ := body["message"].(string)
-	if !strings.Contains(msg, "tagKeys") {
-		t.Fatalf("expected missing non-EKS tagKeys message in live mode, got %#v", body)
 	}
 }
 
