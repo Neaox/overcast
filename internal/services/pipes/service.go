@@ -753,6 +753,15 @@ func (h *Handler) deliverStreamEvent(ctx context.Context, evt events.Event) {
 		if tableNameFromStreamARN(p.SourceArn) != payload.Table {
 			continue
 		}
+		// A DynamoDB table is regional, so the same table name in two regions
+		// has two independent streams (issue #673). Without this a pipe
+		// sourced from one region's stream also ran for the other region's
+		// writes. A payload with no region predates the field — fall back to
+		// name-only matching rather than dropping its records.
+		if sourceRegion := serviceutil.ARNRegion(p.SourceArn); payload.Region != "" &&
+			sourceRegion != "" && !strings.EqualFold(sourceRegion, payload.Region) {
+			continue
+		}
 		record := dynamoDBStreamRecord(p.SourceArn, payload)
 		// A stream record has nowhere to be redelivered from, so a failed
 		// delivery is retried in place and dead-lettered rather than dropped.

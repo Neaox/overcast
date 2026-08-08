@@ -236,7 +236,10 @@ func TestMigration_ReencodeNumericKeys_reencodesExistingRows(t *testing.T) {
 	// Then: a plain ORDER BY sort_key (exactly what scanAll/scanPage issue)
 	// now returns the scores in NUMERIC order (5, 10, 50), not the
 	// lexicographic order the raw text would have given ("10", "5", "50").
-	rows, err := db.Query(`SELECT item_json FROM dynamodb_items WHERE table_name = 'scores' ORDER BY hash_key, sort_key`)
+	// The full chain also runs the region-qualification migration (24), so
+	// post-chain rows are addressed by "<region>/<name>" — the key
+	// dynamoStore.tableKey mints — not by the bare name they were seeded under.
+	rows, err := db.Query(`SELECT item_json FROM dynamodb_items WHERE table_name = 'us-east-1/scores' ORDER BY hash_key, sort_key`)
 	if err != nil {
 		t.Fatalf("query re-encoded rows: %v", err)
 	}
@@ -273,7 +276,7 @@ func TestMigration_ReencodeNumericKeys_reencodesExistingRows(t *testing.T) {
 	// And: the stored sort_key values are no longer the raw "5"/"10"/"50" —
 	// confirms this test actually exercised the re-encoding, not a no-op.
 	var rawSortKey string
-	if err := db.QueryRow(`SELECT sort_key FROM dynamodb_items WHERE table_name = 'scores' AND hash_key = 'g1' AND json_extract(item_json, '$.score.N') = '5'`).Scan(&rawSortKey); err != nil {
+	if err := db.QueryRow(`SELECT sort_key FROM dynamodb_items WHERE table_name = 'us-east-1/scores' AND hash_key = 'g1' AND json_extract(item_json, '$.score.N') = '5'`).Scan(&rawSortKey); err != nil {
 		t.Fatalf("read re-encoded sort_key for score=5: %v", err)
 	}
 	if rawSortKey == "5" {
@@ -282,7 +285,7 @@ func TestMigration_ReencodeNumericKeys_reencodesExistingRows(t *testing.T) {
 
 	// Then: the pure-String-keyed table's row is untouched (no-op).
 	var usersHashKey string
-	if err := db.QueryRow(`SELECT hash_key FROM dynamodb_items WHERE table_name = 'users'`).Scan(&usersHashKey); err != nil {
+	if err := db.QueryRow(`SELECT hash_key FROM dynamodb_items WHERE table_name = 'us-east-1/users'`).Scan(&usersHashKey); err != nil {
 		t.Fatalf("read users row: %v", err)
 	}
 	if usersHashKey != "alice" {
@@ -372,7 +375,8 @@ func TestMigration_CreateIndexEntriesTable_BackfillsExistingGSIs(t *testing.T) {
 	// silently become a row), not 0 (the migration didn't just skip
 	// everything on the first error it hit).
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM dynamodb_index_entries WHERE table_name = 'Orders' AND index_name = 'gsi-customer'`).Scan(&n); err != nil {
+	// Region-qualified by migration 24, which runs after this backfill.
+	if err := db.QueryRow(`SELECT COUNT(*) FROM dynamodb_index_entries WHERE table_name = 'us-east-1/Orders' AND index_name = 'gsi-customer'`).Scan(&n); err != nil {
 		t.Fatalf("count dynamodb_index_entries rows: %v", err)
 	}
 	if n != 2 {
@@ -380,7 +384,7 @@ func TestMigration_CreateIndexEntriesTable_BackfillsExistingGSIs(t *testing.T) {
 	}
 
 	var indexHashes []string
-	rows, err := db.Query(`SELECT index_hash FROM dynamodb_index_entries WHERE table_name = 'Orders' AND index_name = 'gsi-customer' ORDER BY index_hash`)
+	rows, err := db.Query(`SELECT index_hash FROM dynamodb_index_entries WHERE table_name = 'us-east-1/Orders' AND index_name = 'gsi-customer' ORDER BY index_hash`)
 	if err != nil {
 		t.Fatalf("query index_hash values: %v", err)
 	}
@@ -557,5 +561,152 @@ func TestNewItemBackendFor_TableAlreadyExists_ViaHybridStore(t *testing.T) {
 	}
 	if !found || got["pk"]["S"] != "artist-1" {
 		t.Fatalf("unexpected get result: found=%v item=%#v", found, got)
+	}
+}
+
+// TestMigration_RegionQualifyTableKeys_rewritesPreExistingRows is issue #673's
+// storage-compatibility test: a database written before item/index/stream
+// storage was region-scoped must come out the other side with its data still
+// reachable — under the region its table was actually created in.
+func TestMigration_RegionQualifyTableKeys_rewritesPreExistingRows(t *testing.T) {
+	db, dbPath := openRawMigrationTestDB(t)
+
+	// Given: a pre-#673 database — table descriptors already carry a region
+	// prefix, but the three dedicated tables key on the bare table name.
+	seedPreRegionSchema(t, db)
+
+	if _, err := db.Exec(`INSERT INTO kv (namespace, key, value) VALUES (?, ?, ?)`,
+		"dynamodb:tables", "eu-west-1/orders",
+		`{"TableName":"orders","KeySchema":[{"AttributeName":"id","KeyType":"HASH"}],`+
+			`"AttributeDefinitions":[{"AttributeName":"id","AttributeType":"S"}],"TableStatus":"ACTIVE"}`,
+	); err != nil {
+		t.Fatalf("insert orders schema: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO dynamodb_items (table_name, hash_key, sort_key, item_json) VALUES (?, ?, ?, ?)`,
+		"orders", "o1", "", `{"id":{"S":"o1"}}`); err != nil {
+		t.Fatalf("insert orders item: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO dynamodb_index_entries
+		(table_name, index_name, index_hash, index_sort, base_hash, base_sort, item_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"orders", "by-status", "OPEN", "", "o1", "", `{"id":{"S":"o1"},"status":{"S":"OPEN"}}`); err != nil {
+		t.Fatalf("insert orders index entry: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO dynamodb_stream_records
+		(table_name, event_name, keys_json, new_image_json, old_image_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		"orders", "INSERT", `{"id":{"S":"o1"}}`, `null`, `null`, 1); err != nil {
+		t.Fatalf("insert orders stream record: %v", err)
+	}
+
+	// And: an orphan row whose table name no descriptor declares.
+	if _, err := db.Exec(`INSERT INTO dynamodb_items (table_name, hash_key, sort_key, item_json) VALUES (?, ?, ?, ?)`,
+		"ghost", "g1", "", `{"id":{"S":"g1"}}`); err != nil {
+		t.Fatalf("insert orphan item: %v", err)
+	}
+
+	// When: the migration chain runs
+	if err := state.RunMigrations(context.Background(), db, dbPath, nil); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if version < migrationDynamoDBRegionQualifyKeysVersion {
+		t.Fatalf("user_version = %d, want >= %d", version, migrationDynamoDBRegionQualifyKeysVersion)
+	}
+
+	// Then: every keyspace is addressed by the region-qualified key the
+	// running code now mints, so the data is still reachable from eu-west-1.
+	for _, tc := range []struct{ table, where string }{
+		{"dynamodb_items", `table_name = 'eu-west-1/orders'`},
+		{"dynamodb_index_entries", `table_name = 'eu-west-1/orders'`},
+		{"dynamodb_stream_records", `table_name = 'eu-west-1/orders'`},
+	} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + tc.table + ` WHERE ` + tc.where).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", tc.table, err)
+		}
+		if n != 1 {
+			t.Errorf("%s WHERE %s: got %d rows, want 1", tc.table, tc.where, n)
+		}
+	}
+
+	// And: nothing is left under the bare name.
+	var stale int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM dynamodb_items WHERE table_name = 'orders'`).Scan(&stale); err != nil {
+		t.Fatalf("count stale rows: %v", err)
+	}
+	if stale != 0 {
+		t.Errorf("dynamodb_items still has %d rows under the bare name 'orders'", stale)
+	}
+
+	// And: the orphan is preserved verbatim rather than dropped or guessed at
+	// — unreachable, but not lost (AGENTS.md's malformed-persisted-state rule).
+	var orphan int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM dynamodb_items WHERE table_name = 'ghost'`).Scan(&orphan); err != nil {
+		t.Fatalf("count orphan rows: %v", err)
+	}
+	if orphan != 1 {
+		t.Errorf("orphan row count = %d, want 1 (left untouched)", orphan)
+	}
+}
+
+// TestMigration_RegionQualifyTableKeys_sameNameInTwoRegions pins the one case
+// the pre-#673 layout makes unrecoverable: two regions declared the same table
+// name and therefore shared one set of rows. Nothing on disk says which write
+// came from where, so the rows go to the lexicographically first region,
+// deterministically, and the other region starts empty.
+func TestMigration_RegionQualifyTableKeys_sameNameInTwoRegions(t *testing.T) {
+	db, dbPath := openRawMigrationTestDB(t)
+	seedPreRegionSchema(t, db)
+
+	schema := `{"TableName":"shared","KeySchema":[{"AttributeName":"id","KeyType":"HASH"}],` +
+		`"AttributeDefinitions":[{"AttributeName":"id","AttributeType":"S"}],"TableStatus":"ACTIVE"}`
+	for _, key := range []string{"us-west-2/shared", "eu-west-1/shared"} {
+		if _, err := db.Exec(`INSERT INTO kv (namespace, key, value) VALUES (?, ?, ?)`,
+			"dynamodb:tables", key, schema); err != nil {
+			t.Fatalf("insert %s schema: %v", key, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO dynamodb_items (table_name, hash_key, sort_key, item_json) VALUES (?, ?, ?, ?)`,
+		"shared", "s1", "", `{"id":{"S":"s1"}}`); err != nil {
+		t.Fatalf("insert shared item: %v", err)
+	}
+
+	if err := state.RunMigrations(context.Background(), db, dbPath, nil); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	var gotKey string
+	if err := db.QueryRow(`SELECT table_name FROM dynamodb_items`).Scan(&gotKey); err != nil {
+		t.Fatalf("read migrated key: %v", err)
+	}
+	if gotKey != "eu-west-1/shared" {
+		t.Errorf("table_name = %q, want %q (lexicographically first declaring region)", gotKey, "eu-west-1/shared")
+	}
+}
+
+// seedPreRegionSchema creates the three dedicated tables with the schema a
+// pre-#673 database would already have, so a migration test can insert rows
+// under bare table names before the chain runs.
+func seedPreRegionSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, ddl := range []string{
+		`CREATE TABLE IF NOT EXISTS dynamodb_items (
+			table_name TEXT NOT NULL, hash_key TEXT NOT NULL, sort_key TEXT NOT NULL DEFAULT '',
+			item_json TEXT NOT NULL, PRIMARY KEY (table_name, hash_key, sort_key))`,
+		`CREATE TABLE IF NOT EXISTS dynamodb_index_entries (
+			table_name TEXT NOT NULL, index_name TEXT NOT NULL, index_hash TEXT NOT NULL,
+			index_sort TEXT NOT NULL DEFAULT '', base_hash TEXT NOT NULL, base_sort TEXT NOT NULL DEFAULT '',
+			item_json TEXT NOT NULL,
+			PRIMARY KEY (table_name, index_name, index_hash, index_sort, base_hash, base_sort))`,
+		createStreamRecordsTable,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("seed pre-region schema: %v", err)
+		}
 	}
 }

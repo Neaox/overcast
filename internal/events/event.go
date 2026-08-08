@@ -554,8 +554,15 @@ type S3ObjectPayload struct {
 
 // DynamoDBStreamPayload carries the full details of a DynamoDB Streams change record.
 // It is sufficient for delivery to SQS without an additional GetRecords call.
+//
+// Region names the region the table lives in. Table alone does not identify a
+// stream: DynamoDB tables are regional and the same name can exist in several
+// regions with independent streams (issue #673), so a subscriber matching an
+// event-source ARN against this payload must compare both fields — see
+// lambda's makeStreamHandler and pipes' deliverStreamEvent.
 type DynamoDBStreamPayload struct {
 	Table          string `json:"table"`
+	Region         string `json:"region,omitempty"`
 	EventName      string `json:"eventName"` // INSERT, MODIFY, REMOVE
 	SequenceNumber int64  `json:"sequenceNumber"`
 	Keys           any    `json:"keys"`
@@ -570,6 +577,7 @@ type DynamoDBStreamPayload struct {
 // patterns are evaluated against.
 type DynamoDBStreamRecordPayload struct {
 	Table     string         `json:"table"`
+	Region    string         `json:"region,omitempty"`
 	EventName string         `json:"eventName"` // INSERT | MODIFY | REMOVE
 	Dynamodb  map[string]any `json:"dynamodb"`  // uppercase keys matching AWS StreamRecord
 }

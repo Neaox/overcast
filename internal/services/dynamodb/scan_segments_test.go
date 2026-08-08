@@ -219,7 +219,7 @@ func TestScanSegmentPage_TerminatesOnItemsWithoutResolvableKeys(t *testing.T) {
 			// no cursor at all — the shape that spins.
 			for i := 0; i < 150; i++ {
 				keyless := Item{"payload": attrValue{"S": fmt.Sprintf("v%03d", i)}}
-				if err := store.items.put(ctx, table.TableName, fmt.Sprintf("k%03d", i), "", keyless); err != nil {
+				if err := store.items.put(ctx, store.tableKey(ctx, table.TableName), fmt.Sprintf("k%03d", i), "", keyless); err != nil {
 					t.Fatalf("put: %v", err)
 				}
 			}

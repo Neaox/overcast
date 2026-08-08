@@ -4,7 +4,12 @@ import { createSearchContributor } from "./create-contributor"
 
 createSearchContributor<DynamoTable>({
   id: "dynamodb",
-  cacheKey: (ep) => ["dynamodb", "tables", ep.baseUrl],
+  // Must match dynamoKeys.tables() exactly — [baseUrl, region, "dynamodb",
+  // "tables"] — or getQueryData never hits and every search refetches. The
+  // region segment is load-bearing now that DynamoDB tables are region-scoped:
+  // without it a cached list from one region could answer search while the
+  // endpoint points at another.
+  cacheKey: (ep) => [ep.baseUrl, ep.region, "dynamodb", "tables"] as const,
   fetchAll: () => dynamodb.listTables(),
   matchFields: (t) => [t.tableName, t.tableArn],
   toResult: (t) => ({

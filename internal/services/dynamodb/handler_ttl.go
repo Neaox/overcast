@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
@@ -47,19 +48,25 @@ func (h *Handler) sweepExpiredItems(ctx context.Context) {
 	now := h.clk.Now().Unix()
 
 	for _, kv := range pairs {
+		region, name := serviceutil.SplitRegionKey(kv.Key)
 		var table Table
 		if err := json.Unmarshal([]byte(kv.Value), &table); err != nil {
 			// A single malformed persisted table record — skipped, not a
 			// sweep-wide failure, so this is WARN per the malformed-persisted-
 			// state policy (CONTRIBUTING.md / AGENTS.md), not ERROR.
-			_, name := serviceutil.SplitRegionKey(kv.Key)
 			h.log.Warn("ttl: unmarshal table; skipping", zap.String("key", name), zap.Error(err))
 			continue
 		}
 		if !table.ttlEnabled() {
 			continue
 		}
-		h.sweepTable(ctx, &table, now)
+		// Item storage is region-qualified (dynamoStore.tableKey), and this
+		// sweep runs on a background context that carries no region. Pin each
+		// table's own region — read back from the key it was stored under —
+		// or every table's sweep would resolve against the default region's
+		// partition and silently delete nothing (or, for a same-named table
+		// there, the wrong region's items).
+		h.sweepTable(middleware.ContextWithRegion(ctx, region), &table, now)
 	}
 }
 

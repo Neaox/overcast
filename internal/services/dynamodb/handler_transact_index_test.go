@@ -114,7 +114,7 @@ func TestTransactWriteItems_Put_MaintainsGSIIndex(t *testing.T) {
 				t.Fatalf("transactWriteItemsTyped: %v", aerr)
 			}
 
-			n, err := store.items.countIndexEntries(ctx, table.TableName, "gsi-status")
+			n, err := store.items.countIndexEntries(ctx, store.tableKey(ctx, table.TableName), "gsi-status")
 			if err != nil {
 				t.Fatalf("countIndexEntries: %v", err)
 			}
@@ -122,7 +122,7 @@ func TestTransactWriteItems_Put_MaintainsGSIIndex(t *testing.T) {
 				t.Fatalf("countIndexEntries(gsi-status) = %d, want 1 — TransactWriteItems Put did not maintain the GSI index", n)
 			}
 
-			got, err := store.items.queryIndexByHash(ctx, table.TableName, "gsi-status", "shipped")
+			got, err := store.items.queryIndexByHash(ctx, store.tableKey(ctx, table.TableName), "gsi-status", "shipped")
 			if err != nil {
 				t.Fatalf("queryIndexByHash: %v", err)
 			}
@@ -155,7 +155,7 @@ func TestTransactWriteItems_Delete_RemovesGSIIndexRow(t *testing.T) {
 			if aerr := store.putItemWithIndexMaintenance(ctx, table, item, nil); aerr != nil {
 				t.Fatalf("seed putItemWithIndexMaintenance: %v", aerr)
 			}
-			if n, err := store.items.countIndexEntries(ctx, table.TableName, "gsi-status"); err != nil || n != 1 {
+			if n, err := store.items.countIndexEntries(ctx, store.tableKey(ctx, table.TableName), "gsi-status"); err != nil || n != 1 {
 				t.Fatalf("seed: countIndexEntries = %d, err %v, want 1 (test setup invalid)", n, err)
 			}
 
@@ -172,7 +172,7 @@ func TestTransactWriteItems_Delete_RemovesGSIIndexRow(t *testing.T) {
 				t.Fatalf("transactWriteItemsTyped: %v", aerr)
 			}
 
-			n, err := store.items.countIndexEntries(ctx, table.TableName, "gsi-status")
+			n, err := store.items.countIndexEntries(ctx, store.tableKey(ctx, table.TableName), "gsi-status")
 			if err != nil {
 				t.Fatalf("countIndexEntries: %v", err)
 			}
@@ -222,7 +222,7 @@ func TestTransactWriteItems_Update_MovesIndexKey(t *testing.T) {
 				t.Fatalf("transactWriteItemsTyped: %v", aerr)
 			}
 
-			oldRows, err := store.items.queryIndexByHash(ctx, table.TableName, "gsi-status", "pending")
+			oldRows, err := store.items.queryIndexByHash(ctx, store.tableKey(ctx, table.TableName), "gsi-status", "pending")
 			if err != nil {
 				t.Fatalf("queryIndexByHash(pending): %v", err)
 			}
@@ -230,7 +230,7 @@ func TestTransactWriteItems_Update_MovesIndexKey(t *testing.T) {
 				t.Fatalf("queryIndexByHash(gsi-status, pending) = %d rows, want 0 — stale old-key row left behind", len(oldRows))
 			}
 
-			newRows, err := store.items.queryIndexByHash(ctx, table.TableName, "gsi-status", "shipped")
+			newRows, err := store.items.queryIndexByHash(ctx, store.tableKey(ctx, table.TableName), "gsi-status", "shipped")
 			if err != nil {
 				t.Fatalf("queryIndexByHash(shipped): %v", err)
 			}
@@ -238,7 +238,7 @@ func TestTransactWriteItems_Update_MovesIndexKey(t *testing.T) {
 				t.Fatalf("queryIndexByHash(gsi-status, shipped) = %d rows, want 1", len(newRows))
 			}
 
-			n, err := store.items.countIndexEntries(ctx, table.TableName, "gsi-status")
+			n, err := store.items.countIndexEntries(ctx, store.tableKey(ctx, table.TableName), "gsi-status")
 			if err != nil {
 				t.Fatalf("countIndexEntries: %v", err)
 			}

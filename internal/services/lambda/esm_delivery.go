@@ -517,16 +517,26 @@ func (m *esmDeliveryManager) buildSQSEvent(esm *EventSourceMapping, msgs []event
 // are not tied to Lambda execution and stream bursts do not create a cold-start
 // storm for one function.
 func (m *esmDeliveryManager) makeStreamHandler(ctx context.Context, esm *EventSourceMapping, streamCh chan<- streamDeliveryEvent) events.HandlerFunc {
-	// Pre-compute region context once (immutable per ESM).
+	// Pre-compute the source stream's identity once (immutable per ESM).
 	tableName := tableNameFromStreamARN(esm.EventSourceArn)
+	sourceRegion := serviceutil.ARNRegion(esm.EventSourceArn)
 
 	return func(_ context.Context, evt events.Event) {
 		payload, ok := evt.Payload.(events.DynamoDBStreamPayload)
 		if !ok {
 			return
 		}
-		// Match by table name: the ESM EventSourceArn ends with /table/NAME/stream/...
+		// Match by table name AND region: the ESM EventSourceArn is
+		// arn:aws:dynamodb:REGION:ACCT:table/NAME/stream/LABEL, and a DynamoDB
+		// table is regional — the same name can exist in several regions with
+		// independent streams (issue #673). Matching on the name alone made an
+		// ESM bound to one region's stream fire on the other region's writes.
+		// A payload with no region is from a producer that predates the field;
+		// fall back to name-only matching rather than dropping its records.
 		if !strings.EqualFold(tableName, payload.Table) {
+			return
+		}
+		if payload.Region != "" && sourceRegion != "" && !strings.EqualFold(sourceRegion, payload.Region) {
 			return
 		}
 

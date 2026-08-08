@@ -223,10 +223,34 @@ func (s *dynamoStore) region(ctx context.Context) string {
 	return middleware.RegionFromContext(ctx, s.defaultRegion)
 }
 
+// tableKey is the single place a DynamoDB table name becomes a storage key.
+//
+// A DynamoDB table is a regional resource, so every keyspace that hangs off a
+// table — the table descriptor in nsTables, item rows, GSI index entries and
+// stream records — is keyed by "<region>/<tableName>" rather than by the bare
+// name. Two same-named tables in different regions therefore never share a
+// key, which is what makes their items, index entries and streams independent
+// (issue #673).
+//
+// This mirrors Kinesis, whose record keys are "<region>/<streamName>/..."
+// (internal/services/kinesis/store.go's nsRecords) — the region is folded into
+// the composite key at the one place that key is built, rather than threaded
+// through every backend method as a separate parameter. That matters here
+// because itemBackend has ~20 methods across two implementations: keeping the
+// qualification in dynamoStore means the backends stay unaware of regions and
+// no call site can forget one.
+//
+// The separator is "/" for the same reason serviceutil.RegionKey uses it: an
+// AWS region never contains one, and neither does a DynamoDB table name
+// (AWS restricts them to [a-zA-Z0-9_.-]), so the split is unambiguous.
+func (s *dynamoStore) tableKey(ctx context.Context, tableName string) string {
+	return serviceutil.RegionKey(s.region(ctx), tableName)
+}
+
 // ---- Table helpers ---------------------------------------------------------
 
 func (s *dynamoStore) getTable(ctx context.Context, name string) (*Table, *protocol.AWSError) {
-	key := serviceutil.RegionKey(s.region(ctx), name)
+	key := s.tableKey(ctx, name)
 	raw, found, err := s.tables.Get(ctx, nsTables, key)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
@@ -246,7 +270,7 @@ func (s *dynamoStore) putTable(ctx context.Context, t *Table) *protocol.AWSError
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	key := serviceutil.RegionKey(s.region(ctx), t.TableName)
+	key := s.tableKey(ctx, t.TableName)
 	if err := s.tables.Set(ctx, nsTables, key, string(raw)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -254,7 +278,7 @@ func (s *dynamoStore) putTable(ctx context.Context, t *Table) *protocol.AWSError
 }
 
 func (s *dynamoStore) tableExists(ctx context.Context, name string) (bool, *protocol.AWSError) {
-	key := serviceutil.RegionKey(s.region(ctx), name)
+	key := s.tableKey(ctx, name)
 	_, found, err := s.tables.Get(ctx, nsTables, key)
 	if err != nil {
 		return false, protocol.Wrap(protocol.ErrInternalError, err)
@@ -262,24 +286,28 @@ func (s *dynamoStore) tableExists(ctx context.Context, name string) (bool, *prot
 	return found, nil
 }
 
+// listTables returns the tables in ctx's region whose names start with prefix,
+// in key order (which, the region prefix being constant, is table-name order —
+// what ListTables' pagination cursor relies on).
+//
+// One Scan rather than List-then-Get-per-key: state.Store.Scan is documented as
+// the read to prefer when both keys and values are wanted, it holds the store
+// lock once, and it removes the TOCTOU window the old List+Get pair had to
+// special-case. A record whose JSON will not decode is skipped rather than
+// failing the whole listing, per AGENTS.md § "Malformed persisted state must be
+// isolated".
 func (s *dynamoStore) listTables(ctx context.Context, prefix string) ([]*Table, *protocol.AWSError) {
-	keys, err := s.tables.List(ctx, nsTables, serviceutil.RegionKey(s.region(ctx), prefix))
+	pairs, err := s.tables.Scan(ctx, nsTables, s.tableKey(ctx, prefix))
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	tables := make([]*Table, 0, len(keys))
-	for _, k := range keys {
-		// keys are region-prefixed; strip the prefix for getTable
-		_, tableName := serviceutil.SplitRegionKey(k)
-		t, aerr := s.getTable(ctx, tableName)
-		if aerr != nil {
-			// Table was deleted between List and getTable (TOCTOU race).
-			if aerr.HTTPStatus == http.StatusBadRequest {
-				continue
-			}
-			return nil, aerr
+	tables := make([]*Table, 0, len(pairs))
+	for _, kv := range pairs {
+		var t Table
+		if err := json.Unmarshal([]byte(kv.Value), &t); err != nil {
+			continue // malformed table record — isolate, skip
 		}
-		tables = append(tables, t)
+		tables = append(tables, &t)
 	}
 	return tables, nil
 }
@@ -359,7 +387,7 @@ func (s *dynamoStore) putItem(ctx context.Context, table *Table, item Item) *pro
 	if aerr != nil {
 		return aerr
 	}
-	if err := s.items.put(ctx, table.TableName, hashKey, sortKey, item); err != nil {
+	if err := s.items.put(ctx, s.tableKey(ctx, table.TableName), hashKey, sortKey, item); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -384,7 +412,7 @@ func (s *dynamoStore) putItemWithIndexMaintenance(ctx context.Context, table *Ta
 		return aerr
 	}
 	mutations := diffIndexMutations(table, oldItem, item)
-	if err := s.items.putWithIndexMutations(ctx, table.TableName, hashKey, sortKey, item, mutations); err != nil {
+	if err := s.items.putWithIndexMutations(ctx, s.tableKey(ctx, table.TableName), hashKey, sortKey, item, mutations); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -395,7 +423,7 @@ func (s *dynamoStore) getItem(ctx context.Context, table *Table, key Item) (Item
 	if aerr != nil {
 		return nil, aerr
 	}
-	item, _, err := s.items.get(ctx, table.TableName, hashKey, sortKey)
+	item, _, err := s.items.get(ctx, s.tableKey(ctx, table.TableName), hashKey, sortKey)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -407,7 +435,7 @@ func (s *dynamoStore) deleteItem(ctx context.Context, table *Table, key Item) *p
 	if aerr != nil {
 		return aerr
 	}
-	if err := s.items.remove(ctx, table.TableName, hashKey, sortKey); err != nil {
+	if err := s.items.remove(ctx, s.tableKey(ctx, table.TableName), hashKey, sortKey); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -425,7 +453,7 @@ func (s *dynamoStore) deleteItemWithIndexMaintenance(ctx context.Context, table 
 		return aerr
 	}
 	mutations := diffIndexMutations(table, oldItem, nil)
-	if err := s.items.removeWithIndexMutations(ctx, table.TableName, hashKey, sortKey, mutations); err != nil {
+	if err := s.items.removeWithIndexMutations(ctx, s.tableKey(ctx, table.TableName), hashKey, sortKey, mutations); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -433,7 +461,7 @@ func (s *dynamoStore) deleteItemWithIndexMaintenance(ctx context.Context, table 
 
 // scanItems returns all items in the table via a single backend call.
 func (s *dynamoStore) scanItems(ctx context.Context, tableName string) ([]Item, *protocol.AWSError) {
-	items, err := s.items.scanAll(ctx, tableName)
+	items, err := s.items.scanAll(ctx, s.tableKey(ctx, tableName))
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -465,7 +493,7 @@ func (s *dynamoStore) scanItemsPage(ctx context.Context, table *Table, exclusive
 		hasAfter, afterHash, afterSort = true, h, sk
 	}
 
-	fetched, err := s.items.scanPage(ctx, table.TableName, hasAfter, afterHash, afterSort, limit+1)
+	fetched, err := s.items.scanPage(ctx, s.tableKey(ctx, table.TableName), hasAfter, afterHash, afterSort, limit+1)
 	if err != nil {
 		return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -512,7 +540,7 @@ func (s *dynamoStore) scanIndexPage(ctx context.Context, table *Table, idx *Seco
 		hasAfter, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort = true, ih, is, bh, bs
 	}
 
-	fetched, err := s.items.scanIndexPage(ctx, table.TableName, idx.IndexName, hasAfter, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort, limit+1)
+	fetched, err := s.items.scanIndexPage(ctx, s.tableKey(ctx, table.TableName), idx.IndexName, hasAfter, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort, limit+1)
 	if err != nil {
 		return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -531,16 +559,40 @@ func (s *dynamoStore) scanIndexPage(ctx context.Context, table *Table, idx *Seco
 // table's hash key.
 func (s *dynamoStore) scanIndexByHash(ctx context.Context, table *Table, idx *SecondaryIndex, hashVal string) ([]Item, *protocol.AWSError) {
 	storageHashVal := encodeStorageKeyComponent(keyAttrType(table, indexHashKeyName(idx)), hashVal)
-	items, err := s.items.queryIndexByHash(ctx, table.TableName, idx.IndexName, storageHashVal)
+	items, err := s.items.queryIndexByHash(ctx, s.tableKey(ctx, table.TableName), idx.IndexName, storageHashVal)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return items, nil
 }
 
+// applyIndexMutations applies GSI index-row mutations with no accompanying
+// base-item write — the backfill path (UpdateTable adding a GSI to a table
+// that already has items). Routed through dynamoStore rather than called on
+// s.items directly so that the region-qualified storage key is minted in
+// exactly one place (tableKey) and a backfill can never land its rows in a
+// different region's partition from the writes that follow it.
+func (s *dynamoStore) applyIndexMutations(ctx context.Context, tableName string, mutations []indexMutation) *protocol.AWSError {
+	if err := s.items.applyIndexMutations(ctx, s.tableKey(ctx, tableName), mutations); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
+// deleteIndexEntriesForIndex removes every index row for one (table, index) —
+// called when UpdateTable drops a GSI, so a GSI later recreated under the same
+// name does not inherit stale rows. Region-qualified for the same reason as
+// applyIndexMutations.
+func (s *dynamoStore) deleteIndexEntriesForIndex(ctx context.Context, tableName, indexName string) *protocol.AWSError {
+	if err := s.items.deleteAllIndexEntriesForIndex(ctx, s.tableKey(ctx, tableName), indexName); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
 // scanExpiredTTL returns only items whose TTL attribute is expired (> 0 and <= cutoffUnix).
 func (s *dynamoStore) scanExpiredTTL(ctx context.Context, tableName, ttlAttr string, cutoffUnix int64) ([]Item, *protocol.AWSError) {
-	items, err := s.items.scanExpiredTTL(ctx, tableName, ttlAttr, cutoffUnix)
+	items, err := s.items.scanExpiredTTL(ctx, s.tableKey(ctx, tableName), ttlAttr, cutoffUnix)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -549,7 +601,7 @@ func (s *dynamoStore) scanExpiredTTL(ctx context.Context, tableName, ttlAttr str
 
 // countItems returns the live item count for a table without loading item values.
 func (s *dynamoStore) countItems(ctx context.Context, tableName string) (int64, *protocol.AWSError) {
-	n, err := s.items.count(ctx, tableName)
+	n, err := s.items.count(ctx, s.tableKey(ctx, tableName))
 	if err != nil {
 		return 0, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -564,7 +616,7 @@ func (s *dynamoStore) countItems(ctx context.Context, tableName string) (int64, 
 // rows putItem wrote (docs/plans/dynamodb-gsi-design.md §2).
 func (s *dynamoStore) scanItemsByHashKey(ctx context.Context, table *Table, hashVal string) ([]Item, *protocol.AWSError) {
 	storageHashVal := encodeStorageKeyComponent(keyAttrType(table, table.hashKeyName()), hashVal)
-	items, err := s.items.queryByHash(ctx, table.TableName, storageHashVal)
+	items, err := s.items.queryByHash(ctx, s.tableKey(ctx, table.TableName), storageHashVal)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -575,7 +627,7 @@ func (s *dynamoStore) scanItemsByHashKey(ctx context.Context, table *Table, hash
 
 // appendStreamRecord adds a stream change record for a table.
 func (s *dynamoStore) appendStreamRecord(ctx context.Context, tableName string, r *StreamRecord) *protocol.AWSError {
-	if err := s.streams.append(ctx, tableName, r); err != nil {
+	if err := s.streams.append(ctx, s.tableKey(ctx, tableName), r); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return nil
@@ -583,7 +635,7 @@ func (s *dynamoStore) appendStreamRecord(ctx context.Context, tableName string, 
 
 // getStreamRecordsSince returns stream records with SequenceNumber > afterSeq.
 func (s *dynamoStore) getStreamRecordsSince(ctx context.Context, tableName string, afterSeq int64, limit int) ([]*StreamRecord, *protocol.AWSError) {
-	recs, err := s.streams.since(ctx, tableName, afterSeq, limit)
+	recs, err := s.streams.since(ctx, s.tableKey(ctx, tableName), afterSeq, limit)
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -592,28 +644,32 @@ func (s *dynamoStore) getStreamRecordsSince(ctx context.Context, tableName strin
 
 // latestStreamSeq returns the highest sequence number stored for the table.
 func (s *dynamoStore) latestStreamSeq(ctx context.Context, tableName string) (int64, *protocol.AWSError) {
-	seq, err := s.streams.latest(ctx, tableName)
+	seq, err := s.streams.latest(ctx, s.tableKey(ctx, tableName))
 	if err != nil {
 		return 0, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	return seq, nil
 }
 
-// deleteTable removes a table descriptor, all its items, and its stream
-// records — AWS deletes a table's stream along with the table, and a table
-// recreated under the same name gets a new, empty stream rather than the
-// deleted one's history.
+// deleteTable removes a table descriptor, all its items, its GSI index
+// entries, and its stream records — AWS deletes a table's stream along with
+// the table, and a table recreated under the same name gets a new, empty
+// stream rather than the deleted one's history.
+//
+// All four keyspaces are addressed by the same region-qualified key, so
+// deleting a table in one region leaves a same-named table in another region
+// entirely untouched.
 func (s *dynamoStore) deleteTable(ctx context.Context, name string) *protocol.AWSError {
-	if err := s.items.deleteAll(ctx, name); err != nil {
+	key := s.tableKey(ctx, name)
+	if err := s.items.deleteAll(ctx, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	if err := s.items.deleteAllIndexEntriesForTable(ctx, name); err != nil {
+	if err := s.items.deleteAllIndexEntriesForTable(ctx, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	if err := s.streams.deleteAll(ctx, name); err != nil {
+	if err := s.streams.deleteAll(ctx, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	key := serviceutil.RegionKey(s.region(ctx), name)
 	if err := s.tables.Delete(ctx, nsTables, key); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}

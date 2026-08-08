@@ -24,6 +24,11 @@ type StreamRecord struct {
 
 // streamBackend is the narrow interface for stream record storage.
 // Implementations: memStreamBackend (tests / default), sqlStreamBackend (SQLite).
+//
+// As with itemBackend, tableName is a region-qualified table key
+// ("<region>/<name>") minted by dynamoStore.tableKey — a table's stream is
+// regional, so same-named tables in two regions have wholly separate record
+// sets and separate TRIM_HORIZON/LATEST positions (issue #673).
 type streamBackend interface {
 	// append stores a new stream record for the given table.
 	// The backend assigns a unique monotonically-increasing SequenceNumber.
