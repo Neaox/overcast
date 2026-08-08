@@ -414,6 +414,36 @@ before the next starts. `internal/services/ecs/service_steady_state_race_test.go
 is the worked example of the exception: it runs on a real clock, and says why at
 the top of the file.
 
+### Wind the clock before the tickers exist
+
+That millisecond is also why **how far you move a mock clock matters as much as
+when**. `Set`/`Add` replays every interval it passes over — each due timer *and
+every ticker tick* between the old time and the new one, a millisecond apiece.
+Against a subject that has already started a ticker-driven loop, a long jump is
+effectively unbounded: winding a fresh `clock.NewMock()` from its 1970 epoch to
+a date in 2027 with a 30-second sweep ticker registered is tens of millions of
+ticks, and the package times out rather than failing.
+
+```go
+h, _ := lifecycleTestHandler(t)          // starts the InstancePool and instanceTracker sweep loops
+h.clk.(*clock.Mock).Set(someFutureDate)  // never returns
+```
+
+Build the clock, wind it, *then* construct the subject —
+`lifecycleTestHandlerAt` in `internal/services/lambda/instance_lifecycle_test.go`
+is the worked example, and a helper that takes the time is the right shape when
+several tests need different dates. Do **not** reach for a cut-down subject with
+no tickers instead: the pool and tracker are usually on the path under test, so
+that trades a hang for lost coverage.
+
+Recognising it matters, because it presents as anything but its cause: a package
+timeout rather than a test failure, a goroutine dump full of idle `select`s, and
+local runs that pass because they happen never to reach the test. **If a package
+times out with a goroutine parked in `clock.(*Mock).Set` → `runNextTimer` →
+`Tick` → `gosched`, this is it** — not the load on the machine. A failure that
+passes on re-run has not been shown to be a flake; it has only been shown not to
+be deterministic *in the runs you did*.
+
 ---
 
 ## Test for error responses specifically
