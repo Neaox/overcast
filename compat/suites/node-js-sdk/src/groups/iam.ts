@@ -467,6 +467,24 @@ export function makeIAMGroups(suite: string): TestGroup[] {
           name: "DeleteRole",
           fn: async (ctx) => {
             const { iam } = makeClients(ctx);
+            // AWS refuses DeleteRole with DeleteConflict while the role is
+            // still in an instance profile, so clear that first — this group
+            // put it there in AddRoleToInstanceProfile.
+            try {
+              await iam.send(
+                new RemoveRoleFromInstanceProfileCommand({
+                  InstanceProfileName: `${ctx.runId}-profile`,
+                  RoleName: `${ctx.runId}-role`,
+                }),
+              );
+            } catch {}
+            try {
+              await iam.send(
+                new DeleteInstanceProfileCommand({
+                  InstanceProfileName: `${ctx.runId}-profile`,
+                }),
+              );
+            } catch {}
             await iam.send(
               new DeleteRoleCommand({ RoleName: `${ctx.runId}-role` }),
             );

@@ -96,6 +96,10 @@ function UsersTab() {
     options: deleteUserMutationOptions(),
     invalidateKeys: [iamKeys.users()],
     successTitle: "User deleted",
+    // IAM answers DeleteConflict (409) while access keys, policies or group
+    // memberships remain. The AWS message names what to clear, so it is worth
+    // showing verbatim rather than behind a generic "Operation failed".
+    errorTitle: "Could not delete user",
     onSuccess: () => setDeleteTarget(undefined),
   })
 
@@ -218,6 +222,7 @@ function RolesTab() {
     options: deleteRoleMutationOptions(),
     invalidateKeys: [iamKeys.roles()],
     successTitle: "Role deleted",
+    errorTitle: "Could not delete role",
     onSuccess: () => setDeleteTarget(undefined),
   })
 
@@ -344,6 +349,7 @@ function PoliciesTab() {
     options: deletePolicyMutationOptions(),
     invalidateKeys: [iamKeys.policies()],
     successTitle: "Policy deleted",
+    errorTitle: "Could not delete policy",
     onSuccess: () => setDeleteTarget(undefined),
   })
 
@@ -503,6 +509,7 @@ function GroupsTab() {
     options: deleteGroupMutationOptions(),
     invalidateKeys: [iamKeys.groups()],
     successTitle: "Group deleted",
+    errorTitle: "Could not delete group",
     onSuccess: () => setDeleteTarget(undefined),
   })
 

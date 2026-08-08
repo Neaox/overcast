@@ -41,6 +41,43 @@ validated**.
 - **Event bus integration.** User, role, policy and group lifecycle events are published to the
   internal event bus for topology/UI updates.
 
+## Deletes enforce dependencies
+
+`DeleteUser`, `DeleteRole`, `DeleteGroup` and `DeletePolicy` refuse with AWS's `DeleteConflict`
+(HTTP 409) while the entity still has dependencies, and the message names what to clear — the
+same behaviour Terraform, CDK, `aws-nuke` and eksctl already expect from real IAM.
+
+| Delete         | Refused while                     | Message                                                            |
+| -------------- | --------------------------------- | ------------------------------------------------------------------ |
+| `DeleteUser`   | access keys exist                 | `Cannot delete entity, must delete access keys first.`             |
+|                | inline policies exist             | `Cannot delete entity, must delete policies first.`                |
+|                | managed policies are attached     | `Cannot delete entity, must detach all policies first.`            |
+|                | the user is in a group            | `Cannot delete entity, must remove users from group first.`        |
+| `DeleteRole`   | the role is in an instance profile | `Cannot delete entity, must remove roles from instance profile first.` |
+|                | inline policies exist             | `Cannot delete entity, must delete policies first.`                |
+|                | managed policies are attached     | `Cannot delete entity, must detach all policies first.`            |
+| `DeleteGroup`  | the group has members             | `Cannot delete entity, must remove users from group first.`        |
+|                | inline policies exist             | `Cannot delete entity, must delete policies first.`                |
+|                | managed policies are attached     | `Cannot delete entity, must detach all policies first.`            |
+| `DeletePolicy` | attached to any user, role or group | `Cannot delete a policy attached to entities.`                   |
+
+A non-existent entity is still `NoSuchEntity` (404): existence is checked before dependencies.
+When several dependencies block at once the checks run in the order listed above, which is the
+order AWS's own API Reference lists the prerequisites in; AWS does not document which one wins,
+so clearing them top to bottom is what a caller should expect.
+
+Overcast does not model login profiles, signing certificates, SSH keys, Git credentials or MFA
+devices, so the AWS conflicts for those cannot arise here.
+
+> [!NOTE]
+> Local teardown scripts that used to delete an IAM entity without unwinding it first will now
+> get a 409. Remove the dependency through the modeled API — `DeleteAccessKey`,
+> `DeleteUserPolicy`, `DetachUserPolicy`, `RemoveUserFromGroup`,
+> `RemoveRoleFromInstanceProfile`, `DeleteRolePolicy`, `DetachRolePolicy`,
+> `DeleteGroupPolicy`, `DetachGroupPolicy` — exactly as you would against AWS. CloudFormation
+> stack teardown handles this itself: `AWS::IAM::Policy` removes its inline document from the
+> entities it named, and reverse dependency order puts instance profiles before their roles.
+
 ## Policy simulation
 
 `SimulateCustomPolicy` and `SimulatePrincipalPolicy` run a real evaluation of the IAM policy
@@ -130,13 +167,13 @@ for catching missing permissions early, not a security control.
 
 ### Users
 
-| Operation    | Status       | Notes | AWS Docs                                                                        |
-| ------------ | ------------ | ----- | ------------------------------------------------------------------------------- |
-| `CreateUser` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateUser.html) |
-| `GetUser`    | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetUser.html)    |
-| `ListUsers`  | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListUsers.html)  |
-| `UpdateUser` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UpdateUser.html) |
-| `DeleteUser` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteUser.html) |
+| Operation    | Status       | Notes                                                                                            | AWS Docs                                                                        |
+| ------------ | ------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `CreateUser` | ✅ Supported |                                                                                                  | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateUser.html) |
+| `GetUser`    | ✅ Supported |                                                                                                  | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetUser.html)    |
+| `ListUsers`  | ✅ Supported |                                                                                                  | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListUsers.html)  |
+| `UpdateUser` | ✅ Supported |                                                                                                  | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UpdateUser.html) |
+| `DeleteUser` | ✅ Supported | DeleteConflict (409) while access keys, inline or attached policies, or group memberships remain | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteUser.html) |
 
 ### Access keys
 
@@ -173,14 +210,14 @@ for catching missing permissions early, not a security control.
 
 ### Roles
 
-| Operation                 | Status       | Notes | AWS Docs                                                                                     |
-| ------------------------- | ------------ | ----- | -------------------------------------------------------------------------------------------- |
-| `CreateRole`              | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateRole.html)              |
-| `GetRole`                 | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetRole.html)                 |
-| `ListRoles`               | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListRoles.html)               |
-| `DeleteRole`              | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteRole.html)              |
-| `UpdateAssumeRolePolicy`  | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UpdateAssumeRolePolicy.html)  |
-| `CreateServiceLinkedRole` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateServiceLinkedRole.html) |
+| Operation                 | Status       | Notes                                                                                         | AWS Docs                                                                                     |
+| ------------------------- | ------------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `CreateRole`              | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateRole.html)              |
+| `GetRole`                 | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetRole.html)                 |
+| `ListRoles`               | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListRoles.html)               |
+| `DeleteRole`              | ✅ Supported | DeleteConflict (409) while an instance profile association or inline/attached policies remain | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteRole.html)              |
+| `UpdateAssumeRolePolicy`  | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UpdateAssumeRolePolicy.html)  |
+| `CreateServiceLinkedRole` | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateServiceLinkedRole.html) |
 
 ### Role inline policies
 
@@ -221,12 +258,12 @@ for catching missing permissions early, not a security control.
 
 ### Managed policies
 
-| Operation      | Status       | Notes | AWS Docs                                                                          |
-| -------------- | ------------ | ----- | --------------------------------------------------------------------------------- |
-| `CreatePolicy` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicy.html) |
-| `GetPolicy`    | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicy.html)    |
-| `ListPolicies` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicies.html) |
-| `DeletePolicy` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicy.html) |
+| Operation      | Status       | Notes                                                                        | AWS Docs                                                                          |
+| -------------- | ------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `CreatePolicy` | ✅ Supported |                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicy.html) |
+| `GetPolicy`    | ✅ Supported |                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicy.html)    |
+| `ListPolicies` | ✅ Supported |                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicies.html) |
+| `DeletePolicy` | ✅ Supported | DeleteConflict (409) while the policy is attached to any user, role or group | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicy.html) |
 
 ### Groups
 
@@ -234,7 +271,7 @@ for catching missing permissions early, not a security control.
 | --------------------- | ------------ | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `CreateGroup`         | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateGroup.html)         |
 | `GetGroup`            | ✅ Supported | Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000) | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetGroup.html)            |
-| `DeleteGroup`         | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteGroup.html)         |
+| `DeleteGroup`         | ✅ Supported | DeleteConflict (409) while members or inline/attached policies remain               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteGroup.html)         |
 | `ListGroups`          | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListGroups.html)          |
 | `AddUserToGroup`      | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_AddUserToGroup.html)      |
 | `RemoveUserFromGroup` | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_RemoveUserFromGroup.html) |

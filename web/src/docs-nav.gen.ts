@@ -3186,6 +3186,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Deletes enforce dependencies",
+        "id": "deletes-enforce-dependencies"
+      },
+      {
+        "depth": 2,
         "text": "Policy simulation",
         "id": "policy-simulation"
       },

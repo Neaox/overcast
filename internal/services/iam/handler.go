@@ -285,7 +285,12 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("UserName"))
 		return
 	}
-	if _, aerr := h.store.getUser(r.Context(), name); aerr != nil {
+	u, aerr := h.store.getUser(r.Context(), name)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.checkUserDeletable(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -548,7 +553,12 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("RoleName"))
 		return
 	}
-	if _, aerr := h.store.getRole(r.Context(), name); aerr != nil {
+	role, aerr := h.store.getRole(r.Context(), name)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.checkRoleDeletable(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -849,7 +859,12 @@ func (h *Handler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("PolicyArn"))
 		return
 	}
-	if _, aerr := h.store.getPolicy(r.Context(), arn); aerr != nil {
+	p, aerr := h.store.getPolicy(r.Context(), arn)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.checkPolicyDeletable(r.Context(), p); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -898,7 +913,12 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("GroupName"))
 		return
 	}
-	if _, aerr := h.store.getGroup(r.Context(), name); aerr != nil {
+	g, aerr := h.store.getGroup(r.Context(), name)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.checkGroupDeletable(r.Context(), g); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}

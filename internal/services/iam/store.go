@@ -295,6 +295,54 @@ func (s *iamStore) listPolicies(ctx context.Context) ([]Policy, *protocol.AWSErr
 	return policies, nil
 }
 
+// policyIsAttached reports whether a managed policy ARN is attached to any
+// user, role or group. AWS's DeletePolicy refuses while any attachment
+// remains, so this is what stands in for ListEntitiesForPolicy's count.
+//
+// Records that cannot be decoded are skipped by the list helpers rather than
+// failing the scan; a policy whose only attachment is recorded in a corrupt
+// record therefore reads as unattached, which lets the delete through instead
+// of wedging it. See AGENTS.md § "Malformed persisted state must be isolated".
+func (s *iamStore) policyIsAttached(ctx context.Context, arn string) (bool, *protocol.AWSError) {
+	hasArn := func(attached []AttachedPolicy) bool {
+		for _, ap := range attached {
+			if ap.PolicyArn == arn {
+				return true
+			}
+		}
+		return false
+	}
+
+	users, aerr := s.listUsers(ctx)
+	if aerr != nil {
+		return false, aerr
+	}
+	for i := range users {
+		if hasArn(users[i].AttachedPolicies) {
+			return true, nil
+		}
+	}
+	roles, aerr := s.listRoles(ctx)
+	if aerr != nil {
+		return false, aerr
+	}
+	for i := range roles {
+		if hasArn(roles[i].AttachedPolicies) {
+			return true, nil
+		}
+	}
+	groups, aerr := s.listGroups(ctx)
+	if aerr != nil {
+		return false, aerr
+	}
+	for i := range groups {
+		if hasArn(groups[i].AttachedPolicies) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ─── Group operations ─────────────────────────────────────────────────────────
 
 func (s *iamStore) getGroup(ctx context.Context, name string) (*Group, *protocol.AWSError) {
