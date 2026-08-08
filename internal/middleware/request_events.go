@@ -28,7 +28,7 @@ func RequestEvents(busPtr **events.Bus, clk clock.Clock) func(http.Handler) http
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := clk.Now()
-			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK, req: r}
 
 			next.ServeHTTP(rw, r)
 

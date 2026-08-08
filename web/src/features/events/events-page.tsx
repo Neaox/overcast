@@ -17,13 +17,14 @@
  * the server's history buffer uses to decide what to evict first.
  */
 import { useState, useCallback, useMemo, useRef, useEffect } from "react"
-import { Activity, Check, ChevronDown, Heart, Pause, Play, Search, X } from "lucide-react"
+import { Activity, Heart, Pause, Play, Search, X } from "lucide-react"
 import { useEventStream, type StreamEvent } from "@/hooks/use-event-stream"
 import { EventConsole } from "@/components/ui/event-console"
 import { PageHeader } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
 import { Tooltip } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
+import { CheckboxFilterDropdown } from "@/components/ui/checkbox-filter-dropdown"
 import { cn } from "@/lib/utils"
 import { toTitleCase } from "@/lib/format"
 import { EventType, isNoiseEventType } from "@/services/event-types"
@@ -150,10 +151,7 @@ export function EventsPage() {
   const [textFilter, setTextFilter] = useState("")
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
-  const [sourceMenuOpen, setSourceMenuOpen] = useState(false)
-  const [sourceSearch, setSourceSearch] = useState("")
   const searchRef = useRef<HTMLInputElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
 
   const {
     events: rawEvents,
@@ -217,18 +215,6 @@ export function EventsPage() {
     return () => document.removeEventListener("keydown", onKey)
   }, [])
 
-  // Close source menu on outside click.
-  useEffect(() => {
-    if (!sourceMenuOpen) return
-    function onClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setSourceMenuOpen(false)
-      }
-    }
-    document.addEventListener("mousedown", onClick)
-    return () => document.removeEventListener("mousedown", onClick)
-  }, [sourceMenuOpen])
-
   const toggleSource = useCallback((id: string) => {
     setHiddenSources((prev) => {
       const next = new Set(prev)
@@ -238,6 +224,9 @@ export function EventsPage() {
     })
   }, [])
 
+  const showAllSources = useCallback(() => setHiddenSources(new Set()), [])
+  const hideAllSources = useCallback(() => setHiddenSources(new Set(allSources.map((s) => s.id))), [allSources])
+
   const clearFilters = useCallback(() => {
     setHiddenSources(new Set(DEFAULT_HIDDEN_SOURCES))
     setTextFilter("")
@@ -245,20 +234,8 @@ export function EventsPage() {
     setDateTo("")
   }, [])
 
-  const hasSourceFilter = !setsEqual(hiddenSources, DEFAULT_HIDDEN_SOURCES)
-  const hasFilter = hasSourceFilter || textFilter !== "" || dateFrom !== "" || dateTo !== ""
+  const hasFilter = !setsEqual(hiddenSources, DEFAULT_HIDDEN_SOURCES) || textFilter !== "" || dateFrom !== "" || dateTo !== ""
   const top5 = useMemo(() => topSources(rawEvents, 5), [rawEvents])
-  const visibleSourceCount = allSources.length - hiddenSources.size
-
-  // Filter sources in the dropdown by search text.
-  const filteredSources = useMemo(() => {
-    const q = sourceSearch.toLowerCase()
-    return q
-      ? allSources.filter(
-          (s) => s.id.toLowerCase().includes(q) || s.label.toLowerCase().includes(q),
-        )
-      : allSources
-  }, [sourceSearch, allSources])
 
   return (
     <div className="flex w-full flex-col gap-3">
@@ -310,86 +287,20 @@ export function EventsPage() {
         </div>
 
         {/* Source multi-select dropdown */}
-        <div className="relative" ref={menuRef}>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn("h-8 gap-1 text-xs", hasSourceFilter && "bg-fg/5 font-medium")}
-            onClick={() => setSourceMenuOpen((o) => !o)}
-          >
-            {(() => {
-              if (visibleSourceCount <= 0) return "No sources"
-              if (visibleSourceCount === allSources.length) return "All sources"
-              return `${visibleSourceCount} source${visibleSourceCount !== 1 ? "s" : ""}`
-            })()}
-            <ChevronDown className="h-3 w-3" />
-          </Button>
-
-          {sourceMenuOpen && (
-            <div className="absolute top-full left-0 z-50 mt-1 w-56 rounded-lg border border-border bg-bg-elevated shadow-lg">
-              {visibleSourceCount > 0 ? (
-                <button
-                  className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5"
-                  onClick={() => setHiddenSources(new Set(allSources.map((s) => s.id)))}
-                >
-                  Hide all
-                </button>
-              ) : (
-                <button
-                  className="flex w-full items-center gap-2 rounded-t-lg px-3 py-1.5 text-xs text-fg-muted hover:bg-fg/5"
-                  onClick={() => setHiddenSources(new Set())}
-                >
-                  Show all
-                </button>
-              )}
-
-              <div className="mx-2 h-px bg-border" />
-
-              {/* Search within sources */}
-              <div className="px-2 py-1">
-                <Input
-                  placeholder="Search sources…"
-                  value={sourceSearch}
-                  onChange={(e) => setSourceSearch(e.target.value)}
-                  className="h-7 text-xs"
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </div>
-
-              {/* Source list */}
-              <div className="max-h-64 overflow-y-auto">
-                {filteredSources.length === 0 ? (
-                  <div className="px-3 py-4 text-center text-xs text-fg-subtle">
-                    No sources match
-                  </div>
-                ) : (
-                  filteredSources.map((s) => {
-                    const checked = !hiddenSources.has(s.id)
-                    return (
-                      <button
-                        key={s.id}
-                        role="checkbox"
-                        aria-checked={checked}
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-fg/5"
-                        onClick={() => toggleSource(s.id)}
-                      >
-                        <span
-                          className={cn(
-                            "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
-                            checked ? "border-accent bg-accent text-bg" : "border-border",
-                          )}
-                        >
-                          {checked && <Check className="h-3 w-3" />}
-                        </span>
-                        <span className="flex-1 text-left">{s.label}</span>
-                      </button>
-                    )
-                  })
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        <CheckboxFilterDropdown
+          items={allSources}
+          model="hide"
+          selected={hiddenSources}
+          onToggle={toggleSource}
+          onShowAll={showAllSources}
+          onHideAll={hideAllSources}
+          triggerLabel={(() => {
+            const vc = allSources.length - hiddenSources.size
+            if (vc <= 0) return "No sources"
+            if (vc === allSources.length) return "All sources"
+            return `${vc} source${vc !== 1 ? "s" : ""}`
+          })()}
+        />
 
         {/* Date filters */}
         <Input

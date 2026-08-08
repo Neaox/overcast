@@ -68,6 +68,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/go-chi/chi/v5"
 )
 
 // sseEnvelope is the JSON shape streamed to each SSE client.
@@ -343,4 +344,32 @@ func highestKey(m map[uint64]struct{}) uint64 {
 		}
 	}
 	return high
+}
+
+// eventsByRequestHandler returns all buffered events matching a request ID.
+func eventsByRequestHandler(bus *events.Bus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		requestID := chi.URLParam(r, "requestId")
+		if requestID == "" {
+			http.Error(w, "missing requestId", http.StatusBadRequest)
+			return
+		}
+		evs := bus.FindEventsByRequestID(requestID)
+		if evs == nil {
+			evs = []events.Event{}
+		}
+		sseEvents := make([]sseEnvelope, len(evs))
+		for i, e := range evs {
+			payload, _ := json.Marshal(e.Payload)
+			sseEvents[i] = sseEnvelope{
+				Type:        string(e.Type),
+				Time:        e.Time.Format(time.RFC3339Nano),
+				Source:      e.Source,
+				ResourceARN: e.ResourceARN,
+				Payload:     payload,
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sseEvents)
+	}
 }

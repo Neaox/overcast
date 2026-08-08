@@ -12,7 +12,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,6 +31,7 @@ type Entry struct {
 	Service   string        `json:"service"`
 	Operation string        `json:"operation,omitempty"`
 	Region    string        `json:"region"`
+	Stack     string        `json:"stack,omitempty"`
 
 	RequestHeaders       http.Header `json:"requestHeaders"`
 	RequestBody          []byte      `json:"requestBody,omitempty"`
@@ -47,8 +50,10 @@ type Entry struct {
 	AWSErrorCode    string `json:"awsErrorCode,omitempty"`
 	AWSErrorMessage string `json:"awsErrorMessage,omitempty"`
 
-	RemoteAddr string `json:"remoteAddr,omitempty"`
-	UserAgent  string `json:"userAgent,omitempty"`
+	RemoteAddr      string `json:"remoteAddr,omitempty"`
+	UserAgent       string `json:"userAgent,omitempty"`
+	Referer         string `json:"referer,omitempty"`
+	ParentRequestID string `json:"parentRequestId,omitempty"`
 
 	XRayTraceID string         `json:"xrayTraceId,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
@@ -64,6 +69,7 @@ const MaxHopBody = 1 << 20 // 1 MiB
 type Hop struct {
 	ID                    string        `json:"id"`
 	Parent                string        `json:"parent,omitempty"`
+	RequestID             string        `json:"requestId,omitempty"`
 	Order                 int           `json:"order"`
 	CallerService         string        `json:"callerService"`
 	CallerOperation       string        `json:"callerOperation,omitempty"`
@@ -80,6 +86,7 @@ type Hop struct {
 	Error                 string        `json:"error,omitempty"`
 	Timestamp             time.Time     `json:"timestamp"`
 	Noisy                 bool          `json:"noisy,omitempty"`
+	Stack                 string        `json:"stack,omitempty"`
 }
 
 // LogEntry is one structured log line captured for this request.
@@ -115,6 +122,35 @@ func NewRecorder(requestID string, timestamp time.Time, method, path, host, quer
 			RequestHeaders: requestHeaders.Clone(),
 		},
 	}
+}
+
+var stackBufPool = sync.Pool{
+	New: func() any { b := make([]byte, 4096); return &b },
+}
+
+// CaptureStack returns the calling goroutine's stack trace as a string.
+// Uses a pooled 4 KiB buffer; falls back to a larger allocation if truncated.
+func CaptureStack() string {
+	bufp := stackBufPool.Get().(*[]byte)
+	buf := *bufp
+	defer stackBufPool.Put(bufp)
+	n := runtime.Stack(buf, false)
+	if n < len(buf) {
+		return string(buf[:n])
+	}
+	big := make([]byte, 16384)
+	n = runtime.Stack(big, false)
+	return string(big[:n])
+}
+
+// SetStack captures a goroutine stack trace for the entry.
+func (r *Recorder) SetStack(s string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entry.Stack = s
 }
 
 // SetRequestBody stores the request body, capping at maxBody.
@@ -183,8 +219,8 @@ func (r *Recorder) SetServiceInfo(service, operation, region string) {
 	r.entry.Region = region
 }
 
-// SetMeta records request-level metadata (remote addr, user agent, AWS error).
-func (r *Recorder) SetMeta(remoteAddr, userAgent, awsErrorCode, awsErrorMessage string) {
+// SetMeta records request-level metadata (remote addr, user agent, referer, AWS error).
+func (r *Recorder) SetMeta(remoteAddr, userAgent, referer, awsErrorCode, awsErrorMessage string) {
 	if r == nil {
 		return
 	}
@@ -192,8 +228,20 @@ func (r *Recorder) SetMeta(remoteAddr, userAgent, awsErrorCode, awsErrorMessage 
 	defer r.mu.Unlock()
 	r.entry.RemoteAddr = remoteAddr
 	r.entry.UserAgent = userAgent
+	r.entry.Referer = referer
 	r.entry.AWSErrorCode = awsErrorCode
 	r.entry.AWSErrorMessage = awsErrorMessage
+}
+
+// SetParentRequestID records the request ID of the parent trace that
+// triggered this one (for internal service-to-service calls).
+func (r *Recorder) SetParentRequestID(parentID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entry.ParentRequestID = parentID
 }
 
 // SetDuration records the total request duration.
@@ -212,6 +260,7 @@ func (r *Recorder) AddHop(h Hop) string {
 	if r == nil {
 		return ""
 	}
+	h.Stack = CaptureStack()
 	if len(h.RequestBody) > MaxHopBody {
 		h.RequestBody = append([]byte(nil), h.RequestBody[:MaxHopBody]...)
 		h.RequestBodyTruncated = true
@@ -260,6 +309,17 @@ func (r *Recorder) AddMeta(key string, value any) {
 		r.entry.Metadata = make(map[string]any)
 	}
 	r.entry.Metadata[key] = value
+}
+
+// RequestID returns the entry's request ID without deep-copying the whole
+// trace (unlike Entry, which copies every hop body and log line).
+func (r *Recorder) RequestID() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.entry.RequestID
 }
 
 // Entry returns a copy of the captured trace data.
@@ -322,6 +382,7 @@ type Summary struct {
 	Region     string        `json:"region,omitempty"`
 	HopCount   int           `json:"hopCount,omitempty"`
 	LogCount   int           `json:"logCount,omitempty"`
+	Internal   bool          `json:"internal,omitempty"`
 }
 
 // ToSummary returns a lightweight summary of this entry.
@@ -338,7 +399,40 @@ func (e Entry) ToSummary() Summary {
 		Region:     e.Region,
 		HopCount:   len(e.Hops),
 		LogCount:   len(e.LogEntries),
+		Internal:   isInternalPath(e.Path),
 	}
+}
+
+var internalPaths = map[string]bool{
+	"/_health":          true,
+	"/_metrics":         true,
+	"/_events":          true,
+	"/_events/request":  true,
+	"/_events/request/": true,
+	"/_overcast/inbox":  true,
+	"/_overcast/inbox/": true,
+	"/_/info":           true,
+}
+
+// isInternalPath reports whether p is polled by infrastructure or the web UI
+// rather than driven by a real AWS client. It must stay aligned with
+// middleware's isOperationalPollPath: the entire /_debug/* namespace counts
+// as internal so UI polling (traces, state, metrics) never consumes the
+// user-trace budget in the ring buffer.
+func isInternalPath(p string) bool {
+	if p == "/_debug" || strings.HasPrefix(p, "/_debug/") {
+		return true
+	}
+	if internalPaths[p] {
+		return true
+	}
+	// Match prefix paths like /_overcast/inbox/messages or /_events/request/<id>
+	for prefix := range internalPaths {
+		if len(prefix) > 1 && prefix[len(prefix)-1] == '/' && len(p) > len(prefix) && p[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
 }
 
 // MarshalJSON overrides the default []byte → base64 encoding so that body
@@ -355,6 +449,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		Service               string         `json:"service"`
 		Operation             string         `json:"operation,omitempty"`
 		Region                string         `json:"region"`
+		Stack                 string         `json:"stack,omitempty"`
 		RequestHeaders        http.Header    `json:"requestHeaders"`
 		RequestBody           string         `json:"requestBody,omitempty"`
 		RequestBodyTruncated  bool           `json:"requestBodyTruncated,omitempty"`
@@ -370,6 +465,8 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		AWSErrorMessage       string         `json:"awsErrorMessage,omitempty"`
 		RemoteAddr            string         `json:"remoteAddr,omitempty"`
 		UserAgent             string         `json:"userAgent,omitempty"`
+		Referer               string         `json:"referer,omitempty"`
+		ParentRequestID       string         `json:"parentRequestId,omitempty"`
 		XRayTraceID           string         `json:"xrayTraceId,omitempty"`
 		Metadata              map[string]any `json:"metadata,omitempty"`
 	}
@@ -384,6 +481,7 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		Service:               e.Service,
 		Operation:             e.Operation,
 		Region:                e.Region,
+		Stack:                 e.Stack,
 		RequestHeaders:        e.RequestHeaders,
 		RequestBody:           string(e.RequestBody),
 		RequestBodyTruncated:  e.RequestBodyTruncated,
@@ -399,6 +497,8 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		AWSErrorMessage:       e.AWSErrorMessage,
 		RemoteAddr:            e.RemoteAddr,
 		UserAgent:             e.UserAgent,
+		Referer:               e.Referer,
+		ParentRequestID:       e.ParentRequestID,
 		XRayTraceID:           e.XRayTraceID,
 		Metadata:              e.Metadata,
 	})
@@ -410,6 +510,7 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 	type shadow struct {
 		ID                    string        `json:"id"`
 		Parent                string        `json:"parent,omitempty"`
+		RequestID             string        `json:"requestId,omitempty"`
 		Order                 int           `json:"order"`
 		CallerService         string        `json:"callerService"`
 		CallerOperation       string        `json:"callerOperation,omitempty"`
@@ -426,10 +527,12 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 		Error                 string        `json:"error,omitempty"`
 		Timestamp             time.Time     `json:"timestamp"`
 		Noisy                 bool          `json:"noisy,omitempty"`
+		Stack                 string        `json:"stack,omitempty"`
 	}
 	return json.Marshal(shadow{
 		ID:                    h.ID,
 		Parent:                h.Parent,
+		RequestID:             h.RequestID,
 		Order:                 h.Order,
 		CallerService:         h.CallerService,
 		CallerOperation:       h.CallerOperation,
@@ -446,5 +549,6 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 		Error:                 h.Error,
 		Timestamp:             h.Timestamp,
 		Noisy:                 h.Noisy,
+		Stack:                 h.Stack,
 	})
 }
