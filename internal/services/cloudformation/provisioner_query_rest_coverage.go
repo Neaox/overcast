@@ -1584,7 +1584,13 @@ func (h *iamUserHandler) Delete(ctx context.Context, router http.Handler, cfg *c
 		"Version":  "2010-05-08",
 		"UserName": physicalID,
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
+	// Reported rather than discarded, for the same reason as DeleteRole: IAM
+	// answers DeleteConflict while a dependency remains, and swallowing it
+	// leaves the user standing while the stack reports DELETE_COMPLETE.
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
+		return fmt.Errorf("iam DeleteUser %s: %w", physicalID, err)
+	}
 	return nil
 }
 

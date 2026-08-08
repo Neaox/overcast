@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -284,7 +285,12 @@ func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("UserName"))
 		return
 	}
-	if _, aerr := h.store.getUser(r.Context(), name); aerr != nil {
+	u, aerr := h.store.getUser(r.Context(), name)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.checkUserDeletable(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -547,7 +553,12 @@ func (h *Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("RoleName"))
 		return
 	}
-	if _, aerr := h.store.getRole(r.Context(), name); aerr != nil {
+	role, aerr := h.store.getRole(r.Context(), name)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.checkRoleDeletable(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -848,7 +859,12 @@ func (h *Handler) DeletePolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("PolicyArn"))
 		return
 	}
-	if _, aerr := h.store.getPolicy(r.Context(), arn); aerr != nil {
+	p, aerr := h.store.getPolicy(r.Context(), arn)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.checkPolicyDeletable(r.Context(), p); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -897,7 +913,12 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("GroupName"))
 		return
 	}
-	if _, aerr := h.store.getGroup(r.Context(), name); aerr != nil {
+	g, aerr := h.store.getGroup(r.Context(), name)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.checkGroupDeletable(r.Context(), g); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -1017,12 +1038,8 @@ func (h *Handler) ListGroups(w http.ResponseWriter, r *http.Request) {
 
 // GetGroup retrieves an IAM group and its members.
 func (h *Handler) GetGroup(w http.ResponseWriter, r *http.Request) {
-	name := r.FormValue("GroupName")
-	if name == "" {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("GroupName"))
-		return
-	}
-	g, aerr := h.store.getGroup(r.Context(), name)
+	maxItems, _ := strconv.Atoi(r.FormValue("MaxItems"))
+	page, aerr := h.resolveGroupPage(r.Context(), r.FormValue("GroupName"), r.FormValue("Marker"), maxItems)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1031,10 +1048,12 @@ func (h *Handler) GetGroup(w http.ResponseWriter, r *http.Request) {
 		Group       groupXML                `xml:"Group"`
 		Users       listMembersXML[userXML] `xml:"Users"`
 		IsTruncated bool                    `xml:"IsTruncated"`
+		Marker      string                  `xml:"Marker,omitempty"`
 	}{
-		Group:       toGroupXML(g),
-		Users:       listMembersXML[userXML]{Members: nil, Tag: "member"},
-		IsTruncated: false,
+		Group:       toGroupXML(page.group),
+		Users:       listMembersXML[userXML]{Members: page.users, Tag: "member"},
+		IsTruncated: page.isTruncated,
+		Marker:      page.marker,
 	})
 }
 

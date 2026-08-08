@@ -11,7 +11,7 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "GetUser", Category: "Users", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListUsers", Category: "Users", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "UpdateUser", Category: "Users", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "iam", Operation: "DeleteUser", Category: "Users", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "DeleteUser", Category: "Users", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while access keys, inline or attached policies, or group memberships remain"},
 		// Access keys
 		capabilities.Capability{Service: "iam", Operation: "CreateAccessKey", Category: "Access keys", Status: capabilities.StatusSupported, Notes: "Generates AKIA-prefixed key + secret"},
 		capabilities.Capability{Service: "iam", Operation: "ListAccessKeys", Category: "Access keys", Status: capabilities.StatusSupported},
@@ -33,7 +33,7 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "CreateRole", Category: "Roles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "GetRole", Category: "Roles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListRoles", Category: "Roles", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "iam", Operation: "DeleteRole", Category: "Roles", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "DeleteRole", Category: "Roles", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while an instance profile association or inline/attached policies remain"},
 		capabilities.Capability{Service: "iam", Operation: "UpdateAssumeRolePolicy", Category: "Roles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "CreateServiceLinkedRole", Category: "Roles", Status: capabilities.StatusSupported},
 		// Role inline policies
@@ -61,11 +61,11 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "CreatePolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "GetPolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListPolicies", Category: "Managed policies", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "iam", Operation: "DeletePolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "DeletePolicy", Category: "Managed policies", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while the policy is attached to any user, role or group"},
 		// Groups
 		capabilities.Capability{Service: "iam", Operation: "CreateGroup", Category: "Groups", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "iam", Operation: "GetGroup", Category: "Groups", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "iam", Operation: "DeleteGroup", Category: "Groups", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "GetGroup", Category: "Groups", Status: capabilities.StatusSupported, Notes: "Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000)"},
+		capabilities.Capability{Service: "iam", Operation: "DeleteGroup", Category: "Groups", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while members or inline/attached policies remain"},
 		capabilities.Capability{Service: "iam", Operation: "ListGroups", Category: "Groups", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "AddUserToGroup", Category: "Groups", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "RemoveUserFromGroup", Category: "Groups", Status: capabilities.StatusSupported},

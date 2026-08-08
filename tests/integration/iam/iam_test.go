@@ -1364,11 +1364,15 @@ func TestGetGroup_withMembers(t *testing.T) {
 	resp := iamCall(t, srv, "GetGroup", url.Values{"GroupName": {"developers"}})
 	defer resp.Body.Close()
 
-	// Then: 200 OK and the group is returned (user details are not resolved)
+	// Then: 200 OK and the group is returned with its member resolved.
+	// Pagination and malformed-record isolation live in iam_group_members_test.go.
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	body := helpers.ReadBody(t, resp)
 	if !strings.Contains(body, "developers") {
 		t.Errorf("expected group name in response, got: %s", body)
+	}
+	if !strings.Contains(body, "<UserName>alice</UserName>") {
+		t.Errorf("expected member alice in response, got: %s", body)
 	}
 }
 
