@@ -311,19 +311,21 @@ compat-registry-check:
 # These targets work identically on Mac, Linux, and Windows.
 # They require Docker but not a local Go installation.
 
+# These go through scripts/container-test.sh rather than calling docker compose
+# directly: it derives the container's CPU cap from the host and hands it to the
+# Compose file, which cannot compute one itself. See that script's header.
+
 ## container-test: run all tests inside a Linux container (cross-platform)
 container-test:
-	docker compose -f docker-compose.dev.yml run --rm test
+	bash scripts/container-test.sh
 
 ## container-test-unit: run unit tests inside a container
 container-test-unit:
-	docker compose -f docker-compose.dev.yml run --rm test \
-		go test -race -count=1 -timeout=900s ./internal/...
+	bash scripts/container-test.sh -race -count=1 -timeout=900s ./internal/...
 
 ## container-test-integration: run integration tests inside a container
 container-test-integration:
-	docker compose -f docker-compose.dev.yml run --rm test \
-		go test -race -count=1 -timeout=600s ./tests/...
+	bash scripts/container-test.sh -race -count=1 -timeout=600s ./tests/...
 
 ## dev: start the development server with source mounted (rebuilds on --build)
 dev:

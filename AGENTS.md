@@ -237,6 +237,14 @@ Go invocation (for example `docs-index`), read the target in `Makefile` and run
 its underlying `go` command through the wrapper. Do not hand-edit generated
 files because the host lacks `go` or `make`.
 
+Both wrappers cap the container at **half the available CPUs** and set
+`GOMAXPROCS` and `go test -p` to match, so a long run leaves the user's machine
+usable instead of pinning every core. You do not have to add your own `-p`: one
+is injected for `go test` unless you passed one, and an explicit `-p` always
+wins. Raise or lower it with `OVERCAST_GO_CPUS` / `OVERCAST_GO_TEST_P`, or set
+`OVERCAST_GO_CPUS=0` for the old uncapped behaviour — but do not do that on
+someone else's machine without asking.
+
 `make check` runs `fmt vet lint test` in one go and is the safest final gate — prefer it over assembling your own subset. Every command CI runs is in [.github/workflows/test.yml](./.github/workflows/test.yml); if your final check is narrower than that file, you have not verified the change.
 
 A `git push` from Claude Code or Codex runs [scripts/verify-changed.sh](./scripts/verify-changed.sh) first (wired as a `PreToolUse` hook in [.claude/settings.json](./.claude/settings.json) and [.codex/hooks.json](./.codex/hooks.json)) and blocks the push if it fails. It scopes to what the branch changed: golangci-lint when any `.go` file changed, `pnpm run typecheck` and `pnpm run lint` when `web/` changed. It takes a couple of minutes and it is a backstop, not a substitute for running the checks yourself — it deliberately does not run the test suite, and it stays out of the way (exit 0, with a warning) when a toolchain is unavailable. Run it directly any time: `make verify` (or `bash scripts/verify-changed.sh`).
