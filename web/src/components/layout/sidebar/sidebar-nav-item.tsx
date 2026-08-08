@@ -14,6 +14,7 @@ export interface SidebarNavEntry {
   label: string
   icon: LucideIcon
   children?: SubNavChild[]
+  exact?: boolean
 }
 
 /** Wiring handed down by the sortable wrapper — all applied to the row element. */
@@ -73,8 +74,12 @@ export function SidebarNavItem({
   badge,
   sortable,
 }: SidebarNavItemProps) {
-  const { to, label, icon: Icon, children } = item
-  const active = to === "/" ? pathname === "/" : pathname.startsWith(to)
+  const { to, label, icon: Icon, children, exact } = item
+  const active = exact
+    ? pathname === to
+    : to === "/"
+      ? pathname === "/"
+      : pathname.startsWith(to)
   const rowCls = rowVariants({ collapsed, active, tone })
   const iconCls = collapsed ? "h-[17px] w-[17px] shrink-0" : "h-4 w-4 shrink-0"
   const badgeNode = badge && badge.count > 0 && (

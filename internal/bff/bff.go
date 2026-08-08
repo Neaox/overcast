@@ -131,6 +131,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/debug/state/*", handleDebugNamespace)
 	r.Get("/api/debug/metrics", handleDebugMetrics)
 	r.Get("/api/debug/trace/{requestId}", handleDebugTrace)
+	r.Get("/api/debug/trace/{requestId}/events", handleDebugTraceEvents)
 	r.Get("/api/debug/traces", handleDebugTraces)
 	r.Get("/api/debug/traces/count", handleDebugTraceCount)
 	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_lambda/runtimes"))
@@ -395,6 +396,11 @@ func handleDebugMetrics(w http.ResponseWriter, r *http.Request) {
 func handleDebugTrace(w http.ResponseWriter, r *http.Request) {
 	requestID := chi.URLParam(r, "requestId")
 	proxyDebugJSON(w, r, "/_debug/trace/"+url.PathEscape(requestID))
+}
+
+func handleDebugTraceEvents(w http.ResponseWriter, r *http.Request) {
+	requestID := chi.URLParam(r, "requestId")
+	proxyDebugJSON(w, r, "/_events/request/"+url.PathEscape(requestID))
 }
 
 func handleDebugTraces(w http.ResponseWriter, r *http.Request) {

@@ -20,11 +20,12 @@ export function traceDetailQueryOptions(requestId: string) {
   })
 }
 
-export function traceListQueryOptions(params?: TraceListParams, enabled = true) {
+export function traceEventsQueryOptions(requestId: string) {
   return queryOptions({
-    queryKey: debugTraceKeys.list(params),
-    queryFn: () => debugTrace.list(params),
-    enabled,
+    queryKey: [...debugTraceKeys.detail(requestId), "events"] as const,
+    queryFn: () => debugTrace.events(requestId),
+    enabled: !!requestId,
+    retry: false,
   })
 }
 

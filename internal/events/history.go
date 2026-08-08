@@ -122,6 +122,22 @@ func (h *History) Len() int {
 	return h.order.Len()
 }
 
+// FindByRequestID returns all buffered events whose RequestReceived
+// payload carries the given request ID, in chronological order.
+func (h *History) FindByRequestID(requestID string) []Event {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	var out []Event
+	for el := h.order.Front(); el != nil; el = el.Next() {
+		e := el.Value.(*historyEntry).event
+		if p, ok := e.Payload.(RequestPayload); ok && p.RequestID == requestID {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // sanitizeForHistory returns a copy of e with known-large payload fields
 // stripped so the history buffer's memory footprint stays bounded
 // regardless of what individual events carry.

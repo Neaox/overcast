@@ -55,6 +55,8 @@ export interface BottomNavItem {
   icon: LucideIcon
   color: string
   debugOnly?: boolean
+  /** When true, the item is only active at exactly `to`, not at child paths. */
+  exact?: boolean
 }
 
 export const ALL_SERVICES: ServiceDefinition[] = Object.values(
@@ -119,6 +121,7 @@ export const BOTTOM_ITEMS: BottomNavItem[] = [
     icon: Bug,
     color: "text-rose-400",
     debugOnly: true,
+    exact: true,
   },
   {
     key: "/debug/traces",

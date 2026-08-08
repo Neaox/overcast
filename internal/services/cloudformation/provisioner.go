@@ -2233,6 +2233,16 @@ func (h *stubResourceHandler) Delete(_ context.Context, _ http.Handler, _ *confi
 
 // ── Concrete resource handlers ─────────────────────────────────────────────
 
+// setParentRequestID propagates the parent request ID from the context's
+// trace recorder (when debug tracing is on) so the child trace can link back
+// to the CloudFormation request that triggered it. Every internal dispatch
+// helper must call it.
+func setParentRequestID(ctx context.Context, req *http.Request) {
+	if id := trace.RecorderFromContext(ctx).RequestID(); id != "" {
+		req.Header.Set("X-Overcast-Parent-Request-Id", id)
+	}
+}
+
 // internalRequest dispatches an HTTP request to the emulator router.
 // The region parameter is forwarded via X-Overcast-Region so that services
 // build ARNs in the correct region.
@@ -2247,6 +2257,7 @@ func internalRequest(ctx context.Context, router http.Handler, region, method, p
 	if region != "" {
 		req.Header.Set("X-Overcast-Region", region)
 	}
+	setParentRequestID(ctx, req)
 	start := time.Now()
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -2262,6 +2273,7 @@ func internalRequest(ctx context.Context, router http.Handler, region, method, p
 			CallerService:  "cloudformation",
 			Service:        svc,
 			Operation:      method,
+			RequestID:      rec.Header().Get("X-Amzn-Requestid"),
 			TargetURI:      method + " " + path,
 			RequestBody:    body,
 			ResponseStatus: rec.Code,
@@ -2293,6 +2305,7 @@ func internalJSON(ctx context.Context, router http.Handler, region, target strin
 	if region != "" {
 		req.Header.Set("X-Overcast-Region", region)
 	}
+	setParentRequestID(ctx, req)
 	start := time.Now()
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -2308,6 +2321,7 @@ func internalJSON(ctx context.Context, router http.Handler, region, target strin
 			CallerService:  "cloudformation",
 			Service:        svc,
 			Operation:      op,
+			RequestID:      rec.Header().Get("X-Amzn-Requestid"),
 			TargetURI:      "POST / (X-Amz-Target: " + target + ")",
 			RequestBody:    data,
 			ResponseStatus: rec.Code,
@@ -2339,6 +2353,7 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 	if region != "" {
 		req.Header.Set("X-Overcast-Region", region)
 	}
+	setParentRequestID(ctx, req)
 	start := time.Now()
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -2355,6 +2370,7 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 			CallerService:  "cloudformation",
 			Service:        svc,
 			Operation:      action,
+			RequestID:      rec.Header().Get("X-Amzn-Requestid"),
 			TargetURI:      "POST /?Action=" + action,
 			RequestBody:    []byte(body),
 			ResponseStatus: rec.Code,

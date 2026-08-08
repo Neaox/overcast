@@ -66,6 +66,83 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.31] - 2026-08-07
+
+### Added
+
+- Resource tagging operations added across 25 services: AppConfig, Athena, Cognito, DynamoDB, ECS, EKS, ElastiCache, ELBv2, EventBridge, Firehose, Glue, IAM, KMS, Lambda, MSK, Pipes, RDS, Scheduler, Secrets Manager, Shield, SNS, SQS, SSM, Step Functions, and WAF. Includes shared `Taggable` interface, generic `ApplyTags`/`RemoveTags`/`ListTags` helpers in `serviceutil`, and `TagStore` + `NSStore` for separate-namespace tag storage. CloudFormation tag propagation is wired through for Lambda and Secrets Manager.
+
+- [router] new `/_debug/trace/*` endpoints for full request tracing — request/response bodies, per-handler structured log capture across 22 services, internal service-hop recording, stack traces captured during handler execution, and AWS errors. Active when `OVERCAST_DEBUG=true`; traces are looked up by the request ID already returned in every response (`x-amzn-requestid` / `x-amz-request-id`); `/_debug/traces` list and `/_debug/trace/{id}` detail endpoints support cursor-based bidirectional pagination; internal traces (health, inbox, SSE, debug polling) are capped at 20% of buffer capacity so they never crowd out user-facing requests; service/operation detection for Query-protocol services reads the request body via the generated `awsapi.Registry`; `GET /_events/request/{requestId}` queries the event history by request ID (`History.FindByRequestID`). Includes BFF proxy routes and a web UI at `/debug/traces` — infinite-scroll list with live polling, deduplication, service filter with counts, millisecond timestamps, and hop-count badges; per-trace tabs for overview (side-by-side request/response with copy buttons and referer), hops (upstream/downstream navigation via request IDs), logs, errors, and events (event-console matching layout); sequence diagram/waterfall/flow map views; Prism syntax highlighting for JSON, XML, form-encoded bodies, and Go stack traces; copy-as-curl; shared `CheckboxFilterDropdown` and `formatBodyForDisplay` used by the traces, events, and S3 preview pages; `OVERCAST_DEBUG_TRACE_BUFFER` env var for ring-buffer sizing.
+
+- [router] GET /_health now includes a `docker` block with per-service Docker connection status. Responses from Docker-backed describe endpoints carry `x-overcast-backing`, `x-overcast-backing-reason`, and `x-overcast-container-health` headers.
+
+- Web UI: S3 copy-URL buttons (S3 URI and path-style formats, actions-menu UX), header endpoint indicator with copy button, overhauled connection dialog with debounced endpoint validation and combobox suggestions, auto-detect API port (Docker socket, native, or 1:1 mapping), connection settings always visible, Docker connectivity banners on resource pages, and Docker health metrics on `/metrics`.
+
+- [bff] `normalizeEndpoint` rewrites all loopback endpoints to internal API port, fixing BFF proxying in Docker with remapped ports and no socket. `deriveAPIBaseURL` returns endpoint known/unknown alongside URL; handles native custom API port via default-UI-port fallback.
+
+- [combobox] add `allowFreeText` prop for editable-after-selection behaviour (seeds query from current value, commits on blur)
+
+- [kms] `UpdateKeyDescription`
+
+- [ci] a `Release branch base` check fails any pull request whose base is a `release/*` branch and puts the rebase-onto-`main` instructions in its job summary — the release bot is that branch's only writer, and a PR into it skips the test matrix, compat suite, changelog gate and breaking-change hold, which all run on pull requests into `main`
+
+### Changed
+
+- [ci] the release changelog gate runs on pull requests into `main` only, so a mis-based PR gets the base-branch message instead of advice to fold a fragment that was correct all along
+
+### Fixed
+
+- [cloudformation/dynamodb] Local secondary indexes are applied on table creation, while unsupported LSI updates now fail without mutating the table. DynamoDB table TTL configuration is validated, applied, and reconciled during stack create and update.
+
+- [cloudformation/cloudwatch-logs] Log group retention, resource tags, and propagated stack tags are applied when a stack creates or updates the group.
+
+- [cloudformation/kms] `AWS::KMS::Key` updates dispatch `PutKeyPolicy` only when `KeyPolicy` actually changed, so an unchanged caller-locking policy created with `BypassPolicyLockoutSafetyCheck` survives unrelated stack updates; a `KeyPolicy` given as a JSON string is forwarded verbatim instead of double-encoded; `Description` changes are applied through `UpdateKeyDescription` instead of being ignored
+
+- [ecs/rds/elasticache/msk] resources no longer report RUNNING/available/ACTIVE when Docker is unavailable.
+
+- **BREAKING** [kms/cloudformation] key-policy mutations apply AWS schema and caller lockout-safety validation.
+  migration: ensure custom policies retain `kms:PutKeyPolicy` for the caller, or explicitly set `BypassPolicyLockoutSafetyCheck`
+
+- [kms/cloudformation] KMS keys created by CloudFormation now honor `Enabled: false` on first deployment and restore the enabled default when the property is removed.
+
+- **BREAKING** [secretsmanager/cloudformation] generated-secret templates validate before mutation, while KMS key metadata and CloudFormation tags round-trip through the service APIs.
+  migration: use PasswordLength 1..4096 (or omit it for 32), and keep GenerateStringKey absent from the template object
+
+- [waf/stepfunctions/shield/glue/elbv2/rds] fix tag validation gaps: WAF no longer publishes spurious creation events on tag writes; Step Functions typed path validates tags; Shield and ELBv2 validate tag limits; Glue uses shared helpers; RDS fixes unbounded loop; removed dead TaggedResource and shieldTagsToList.
+
+- [waf] TagResource accepts and ListTagsForResource returns Tags/TagList as lists of {Key,Value} structs, matching the WAFv2 wire format that SDK clients send — previously tag operations were unusable via the SDK
+
+- [web] path-style S3 copy URLs percent-encode object keys, so keys with `#`, `?`, spaces, or unicode paste as working links
+
+- [web] bundled builds follow the server-injected API endpoint on boot instead of a stale stored one; only endpoints entered in the connection dialog persist as overrides
+
+- [web] reopening connection settings seeds the form from the active endpoint, so Connect keeps a custom endpoint instead of reverting it to the default
+
+- **BREAKING** [logs] `PutRetentionPolicy` validates `retentionInDays` against AWS's fixed value set and returns `InvalidParameterException` otherwise, matching real CloudWatch Logs
+  migration: use one of the AWS-documented retention values (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 or 3653 days)
+
+- [router] debug tracing no longer pins an oversized request body's full backing array in memory when truncating it into the trace ring buffer, and internal CloudFormation dispatch hop bodies are capped at 1 MiB and flagged truncated
+
+- [router] traces of responses written without an explicit status code record 200 instead of appearing in-flight forever in the debug UI
+
+- [sns] `TagResource` and `UntagResource` responses include the empty result element botocore requires, so the AWS CLI no longer fails client-side after a successful tagging call
+
+- [sns] tag operations answer a missing topic with error code ResourceNotFound as on real SNS; topic operations keep NotFound
+
+- [athena] TagResource validates tags (limit and reserved-prefix checks) with InvalidRequestException, matching real Athena
+
+- [eventbridge] tag operations no longer 500 (or panic) on a corrupt persisted tag blob, validate tags, surface store write failures, and answer ResourceNotFoundException for a rule or event bus that does not exist
+
+- [firehose] TagDeliveryStream accepts Tags as a list of {Key,Value} structs matching the real API instead of rejecting SDK requests with a 400; ListTagsForDeliveryStream serializes an untagged stream's Tags as [] rather than null
+
+- [pipes/router] the shared /tags/{resourceArn} route space now has a single dispatching owner that routes by the ARN's service prefix, so Pipes tag operations reach Pipes instead of silently landing in the API Gateway or EKS tag stores; Pipes tag responses use the real API's lowercase `tags` member, validate tags, and answer NotFoundException for a missing pipe
+
+- [rds] AddTagsToResource parses the wire form real SDKs send (`Tags.Tag.N.Key`, the RDS model's locationName) instead of silently dropping every tag; the member-indexed form remains a fallback. Tag operations now reject resources that do not exist (DBInstanceNotFound, DBClusterNotFoundFault, …) instead of minting a tag store for any string
+
+- [serviceutil] a corrupt persisted tag blob reads as empty instead of turning every tag operation on that resource into a 500, for all services using the shared tag store helpers
+
+- [ssm] tag operations answer a missing resource with InvalidResourceId instead of ParameterNotFound, and AddTagsToResource validates tags (TooManyTagsError above the 50-tag limit)
+
 ## [0.0.1-alpha.30] - 2026-08-04
 
 ### Added
@@ -944,7 +1021,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.30...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.31...HEAD
+[0.0.1-alpha.31]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.30...v0.0.1-alpha.31
 [0.0.1-alpha.30]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.29...v0.0.1-alpha.30
 [0.0.1-alpha.29]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.28...v0.0.1-alpha.29
 [0.0.1-alpha.28]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.27...v0.0.1-alpha.28

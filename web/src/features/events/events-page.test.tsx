@@ -103,4 +103,35 @@ describe("EventsPage", () => {
 
     expect(await screen.findByText("system")).toBeInTheDocument()
   })
+
+  // Regression test for the reversed bulk actions: "Hide all" used to be
+  // wired to the show-everything callback (and vice versa), so each button
+  // did the opposite of its label.
+  it("hides every source with Hide all and restores them with Show all", async () => {
+    const { user } = renderWithData(
+      <EventsPage />,
+      seedEvents([
+        {
+          type: "widget:Frobnicated",
+          source: "totally-new-service",
+          time: "2026-07-25T12:00:00Z",
+          payload: { id: "1" },
+        },
+      ]),
+    )
+
+    expect(screen.getByText("totally-new-service")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: /sources/i }))
+    await user.click(screen.getByRole("button", { name: "Hide all" }))
+
+    // Every source is now hidden: the event disappears and its checkbox unchecks.
+    expect(screen.queryByText("totally-new-service")).not.toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Totally New Service" })).not.toBeChecked()
+
+    await user.click(screen.getByRole("button", { name: "Show all" }))
+
+    expect(screen.getByText("totally-new-service")).toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Totally New Service" })).toBeChecked()
+  })
 })
