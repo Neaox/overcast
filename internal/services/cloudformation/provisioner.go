@@ -2033,6 +2033,8 @@ var errReplacementRequired = errors.New("cfn: replacement required")
 // already gone cannot wedge a stack teardown, and that is the behaviour worth
 // keeping — a resource refusing deletion is a different thing from a resource
 // that could not be reached.
+//
+// TODO(priority:P2): route EC2's DependencyViolation through this sentinel too — AWS::EC2::SecurityGroup, Subnet, VPC and InternetGateway all refuse deletion while dependents remain, and their handlers still swallow that refusal and report the resource deleted.
 var errDeletionBlocked = errors.New("cfn: deletion blocked by the resource")
 
 // updateFailure marks an update error the provisioner must answer by failing
@@ -4406,6 +4408,7 @@ func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _
 		}
 		return "", nil, fmt.Errorf("logs %s: %w", operation, operationErr)
 	}
+	// TODO(priority:P3): coerce a string RetentionInDays to a number before dispatching — a String-typed Ref or Parameter yields "7" rather than 7, which fails JSON decoding in the Logs service instead of being accepted as CloudFormation accepts it.
 	if rd, ok := props["RetentionInDays"]; ok && rd != nil {
 		body := map[string]any{
 			"logGroupName":    name,

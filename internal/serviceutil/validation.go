@@ -264,6 +264,7 @@ type TagValidationConfig struct {
 	InvalidCode string
 	// Limit overrides MaxTags for this service. Zero means use MaxTags.
 	Limit int
+	// TODO(priority:P2): add a charset pattern here so services can enforce their model's TagKey/TagValue pattern (Lambda's is ^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$); only lengths and the reserved aws: prefix are checked today, so invalid characters are accepted by every service that shares this validator.
 }
 
 // ValidateTags checks standard AWS tag constraints and returns an AWSError
