@@ -72,47 +72,21 @@ func (h *Handler) initOps() {
 
 // ---- P1 handlers -----------------------------------------------------------
 
-// CreateLogGroup creates a new log group.
+// CreateLogGroup creates a new log group, optionally with create-time tags.
+// Delegates to createLogGroupTyped (typed_logic.go) so the JSON and
+// CBOR/typed-operation paths share one implementation — including tag
+// validation and atomic create-time tagging. Keeping two copies is what let
+// the typed model silently drop `tags` (#676).
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_CreateLogGroup.html
 func (h *Handler) CreateLogGroup(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName string `json:"logGroupName"`
-	}
+	var req createLogGroupRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.LogGroupName == "" {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logGroupName is required"))
-		return
-	}
-
-	ctx := r.Context()
-
-	// Check for duplicates.
-	if _, aerr := h.store.getLogGroup(ctx, req.LogGroupName); aerr == nil {
-		protocol.WriteJSONError(w, r, errGroupAlreadyExists(req.LogGroupName))
-		return
-	}
-
-	g := &LogGroup{
-		Name:         req.LogGroupName,
-		ARN:          protocol.LogGroupARN(middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, req.LogGroupName),
-		CreationTime: h.clk.Now().UnixMilli(),
-	}
-	if aerr := h.store.putLogGroup(ctx, g); aerr != nil {
+	if _, aerr := h.createLogGroupTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	if h.bus != nil {
-		h.bus.Publish(ctx, eventsbus.Event{
-			Type:    eventsbus.LogGroupCreated,
-			Time:    h.clk.Now(),
-			Source:  "logs",
-			Payload: eventsbus.ResourcePayload{Name: req.LogGroupName},
-		})
-	}
-
 	protocol.WriteJSON(w, r, http.StatusOK, struct{}{})
 }
 
@@ -525,32 +499,16 @@ func (h *Handler) DeleteRetentionPolicy(w http.ResponseWriter, r *http.Request) 
 }
 
 // TagLogGroup adds tags to the specified log group.
+// Delegates to tagLogGroupTyped (typed_logic.go) — see CreateLogGroup's doc
+// comment for why the JSON and CBOR/typed-operation paths share one
+// implementation of the tag-validation contract.
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_TagLogGroup.html
 func (h *Handler) TagLogGroup(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName string            `json:"logGroupName"`
-		Tags         map[string]string `json:"tags"`
-	}
+	var req tagLogGroupRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.LogGroupName == "" {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logGroupName is required"))
-		return
-	}
-	ctx := r.Context()
-	g, aerr := h.store.getLogGroup(ctx, req.LogGroupName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if g.Tags == nil {
-		g.Tags = make(map[string]string)
-	}
-	for k, v := range req.Tags {
-		g.Tags[k] = v
-	}
-	if aerr := h.store.putLogGroup(ctx, g); aerr != nil {
+	if _, aerr := h.tagLogGroupTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -560,27 +518,11 @@ func (h *Handler) TagLogGroup(w http.ResponseWriter, r *http.Request) {
 // UntagLogGroup removes tags from the specified log group.
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_UntagLogGroup.html
 func (h *Handler) UntagLogGroup(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName string   `json:"logGroupName"`
-		Tags         []string `json:"tags"`
-	}
+	var req untagLogGroupRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.LogGroupName == "" {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logGroupName is required"))
-		return
-	}
-	ctx := r.Context()
-	g, aerr := h.store.getLogGroup(ctx, req.LogGroupName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	for _, k := range req.Tags {
-		delete(g.Tags, k)
-	}
-	if aerr := h.store.putLogGroup(ctx, g); aerr != nil {
+	if _, aerr := h.untagLogGroupTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -590,25 +532,14 @@ func (h *Handler) UntagLogGroup(w http.ResponseWriter, r *http.Request) {
 // ListTagsLogGroup returns the tags for a log group.
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_ListTagsLogGroup.html
 func (h *Handler) ListTagsLogGroup(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName string `json:"logGroupName"`
-	}
+	var req listTagsLogGroupRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.LogGroupName == "" {
-		protocol.WriteJSONError(w, r, errInvalidParameter("logGroupName is required"))
-		return
-	}
-	ctx := r.Context()
-	g, aerr := h.store.getLogGroup(ctx, req.LogGroupName)
+	resp, aerr := h.listTagsLogGroupTyped(r.Context(), &req)
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	tags := g.Tags
-	if tags == nil {
-		tags = map[string]string{}
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"tags": tags})
+	protocol.WriteJSON(w, r, http.StatusOK, resp)
 }

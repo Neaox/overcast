@@ -6104,7 +6104,7 @@
           "operation": "CreateLogGroup",
           "category": "Log groups",
           "status": "✅ Supported",
-          "notes": "Validates name; returns error on duplicate"
+          "notes": "Validates name; returns error on duplicate; applies create-time `tags` atomically with the group (`kmsKeyId`, `logGroupClass` and `deletionProtectionEnabled` are accepted but ignored)"
         },
         {
           "operation": "DescribeLogGroups",
@@ -6200,7 +6200,7 @@
           "operation": "TagLogGroup",
           "category": "Tagging",
           "status": "✅ Supported",
-          "notes": "Adds tags to a log group"
+          "notes": "Adds tags to a log group; enforces AWS's key/value length, reserved `aws:` prefix and 50-tag limits before mutating"
         },
         {
           "operation": "UntagLogGroup",

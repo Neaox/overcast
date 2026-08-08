@@ -3,16 +3,19 @@ import { useForm } from "@tanstack/react-form"
 import { z } from "zod"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { Eye, FileText, Trash2 } from "lucide-react"
+import { Eye, FileText, Plus, Trash2 } from "lucide-react"
 import {
   logsGroupsQueryOptions,
   logsKeys,
   createLogGroupMutationOptions,
   deleteLogGroupMutationOptions,
 } from "@/features/cloudwatch/logs/data"
+import { LOG_RETENTION_DAYS, retentionLabel } from "@/features/cloudwatch/logs/retention"
 import { logs } from "@/services/api"
+import type { CreateLogGroupInput } from "@/services/api/logs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import {
   Table,
@@ -66,10 +69,10 @@ export function LogGroupList() {
 
   const createMut = useMutation({
     ...createLogGroupMutationOptions(),
-    onSuccess: (_, name) => {
+    onSuccess: (_, input) => {
       void qc.invalidateQueries({ queryKey: logsKeys.groups() })
       setShowCreate(false)
-      toast({ title: "Log group created", description: name, variant: "success" })
+      toast({ title: "Log group created", description: input.name, variant: "success" })
     },
     onError: (err: Error) =>
       toast({ title: "Create failed", description: err.message, variant: "danger" }),
@@ -204,7 +207,7 @@ export function LogGroupList() {
                     </TableCell>
                     <TableCell className="text-fg-muted">{formatLogDate(g.creationTime)}</TableCell>
                     <TableCell className="text-fg-muted">
-                      {g.retentionInDays ? `${g.retentionInDays} days` : "Never expire"}
+                      {g.retentionInDays ? retentionLabel(g.retentionInDays) : "Never expire"}
                     </TableCell>
                     <TableCell className="max-w-xs truncate text-fg-muted" title={g.arn}>
                       {g.arn}
@@ -241,7 +244,7 @@ export function LogGroupList() {
         open={showCreate}
         onClose={() => setShowCreate(false)}
         isPending={createMut.isPending}
-        onSubmit={(name) => createMut.mutate(name)}
+        onSubmit={(input) => createMut.mutate(input)}
       />
 
       {/* ── Delete confirm dialog ── */}
@@ -316,7 +319,15 @@ const createGroupSchema = z.object({
     .min(1, "Name is required")
     .max(512, "Max 512 characters")
     .regex(/^[a-zA-Z0-9_./#-]+$/, "Letters, numbers, and . _ / # - only"),
+  // Empty string means "never expire" — CloudWatch Logs has no retention value
+  // for that, it is the absence of a retention policy.
+  retention: z.string(),
 })
+
+interface TagDraft {
+  key: string
+  value: string
+}
 
 function CreateLogGroupDialog({
   open,
@@ -326,18 +337,28 @@ function CreateLogGroupDialog({
 }: {
   open: boolean
   onClose: () => void
-  onSubmit: (name: string) => void
+  onSubmit: (input: CreateLogGroupInput) => void
   isPending: boolean
 }) {
+  const [tags, setTags] = useState<TagDraft[]>([])
+
   const form = useForm({
     validators: { onChange: createGroupSchema },
-    defaultValues: { name: "" },
-    onSubmit: ({ value }) => onSubmit(value.name),
+    defaultValues: { name: "", retention: "" },
+    onSubmit: ({ value }) =>
+      onSubmit({
+        name: value.name,
+        retentionInDays: value.retention ? Number(value.retention) : undefined,
+        tags: tagDraftsToMap(tags),
+      }),
   })
 
   function handleClose() {
     onClose()
-    setTimeout(() => form.reset(), 150)
+    setTimeout(() => {
+      form.reset()
+      setTags([])
+    }, 150)
   }
 
   return (
@@ -373,6 +394,32 @@ function CreateLogGroupDialog({
               </FormRow>
             )}
           </form.Field>
+
+          <form.Field name="retention">
+            {(field) => (
+              <FormRow>
+                <FormField
+                  label="Retention"
+                  hint="CloudWatch Logs accepts only these retention periods."
+                >
+                  <Select
+                    value={field.state.value}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                  >
+                    <option value="">Never expire</option>
+                    {LOG_RETENTION_DAYS.map((days) => (
+                      <option key={days} value={String(days)}>
+                        {retentionLabel(days)}
+                      </option>
+                    ))}
+                  </Select>
+                </FormField>
+              </FormRow>
+            )}
+          </form.Field>
+
+          <TagsField tags={tags} onChange={setTags} />
+
           <DialogFooter>
             <Button variant="ghost" type="button" onClick={onClose}>
               Cancel
@@ -385,5 +432,72 @@ function CreateLogGroupDialog({
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** Drops blank rows and collapses the drafts into the API's tag map. */
+function tagDraftsToMap(tags: TagDraft[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const { key, value } of tags) {
+    if (key.trim() === "") continue
+    out[key] = value
+  }
+  return out
+}
+
+/**
+ * Key/value rows for create-time tags. Deliberately unvalidated beyond
+ * "don't send blank rows": the service applies AWS's tag rules (length, the
+ * reserved `aws:` prefix, the 50-tag limit) and its InvalidParameterException
+ * is surfaced by the caller's error toast, so the UI does not maintain a
+ * second, drifting copy of them.
+ */
+function TagsField({ tags, onChange }: { tags: TagDraft[]; onChange: (tags: TagDraft[]) => void }) {
+  function update(index: number, patch: Partial<TagDraft>) {
+    onChange(tags.map((tag, i) => (i === index ? { ...tag, ...patch } : tag)))
+  }
+
+  return (
+    <FormRow>
+      <FormField label="Tags" hint="Optional. Applied when the log group is created.">
+        <div className="flex flex-col gap-2">
+          {tags.map((tag, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                aria-label={`Tag ${i + 1} key`}
+                placeholder="key"
+                value={tag.key}
+                onChange={(e) => update(i, { key: e.target.value })}
+              />
+              <Input
+                aria-label={`Tag ${i + 1} value`}
+                placeholder="value"
+                value={tag.value}
+                onChange={(e) => update(i, { value: e.target.value })}
+              />
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Remove tag ${i + 1}`}
+                onClick={() => onChange(tags.filter((_, j) => j !== i))}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="self-start"
+            onClick={() => onChange([...tags, { key: "", value: "" }])}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add tag
+          </Button>
+        </div>
+      </FormField>
+    </FormRow>
   )
 }

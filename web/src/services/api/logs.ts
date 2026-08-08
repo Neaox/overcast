@@ -9,7 +9,17 @@ import {
   GetLogEventsCommand,
   PutLogEventsCommand,
   FilterLogEventsCommand,
+  ListTagsLogGroupCommand,
+  PutRetentionPolicyCommand,
 } from "@aws-sdk/client-cloudwatch-logs"
+
+export interface CreateLogGroupInput {
+  name: string
+  /** Applied by CreateLogGroup itself, atomically with the group. */
+  tags?: Record<string, string>
+  /** One of the retention values CloudWatch Logs accepts; omit to never expire. */
+  retentionInDays?: number
+}
 
 export const logs = {
   listGroups: async (prefix?: string) => {
@@ -19,8 +29,27 @@ export const logs = {
     return res.logGroups ?? []
   },
 
-  createGroup: async (name: string) => {
-    await awsClients.logs().send(new CreateLogGroupCommand({ logGroupName: name }))
+  createGroup: async ({ name, tags, retentionInDays }: CreateLogGroupInput) => {
+    await awsClients.logs().send(
+      new CreateLogGroupCommand({
+        logGroupName: name,
+        // AWS's Tags shape has a minimum length of 1, so an empty map is not a
+        // valid request — send the field only when there is something in it.
+        ...(tags && Object.keys(tags).length > 0 ? { tags } : {}),
+      }),
+    )
+    // Retention is a separate operation in the CloudWatch Logs API — there is
+    // no create-time equivalent of CloudFormation's RetentionInDays property.
+    if (retentionInDays != null) {
+      await awsClients
+        .logs()
+        .send(new PutRetentionPolicyCommand({ logGroupName: name, retentionInDays }))
+    }
+  },
+
+  listGroupTags: async (name: string) => {
+    const res = await awsClients.logs().send(new ListTagsLogGroupCommand({ logGroupName: name }))
+    return res.tags ?? {}
   },
 
   deleteGroup: async (name: string) => {

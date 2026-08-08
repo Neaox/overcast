@@ -7,6 +7,7 @@ import { useNavigate } from "@tanstack/react-router"
 import { ArrowLeft, Plus, Trash2, RefreshCw, FileText, Search, X, ListFilter } from "lucide-react"
 import {
   logsGroupsQueryOptions,
+  logsGroupTagsQueryOptions,
   logsStreamsQueryOptions,
   logsKeys,
   logsFilterQueryOptions,
@@ -14,6 +15,7 @@ import {
   deleteLogStreamMutationOptions,
   deleteLogGroupMutationOptions,
 } from "@/features/cloudwatch/logs/data"
+import { retentionLabel } from "@/features/cloudwatch/logs/retention"
 import { logs } from "@/services/api"
 import {
   TimeRangeFilter,
@@ -73,6 +75,12 @@ export function LogGroupDetail({ groupName }: Props) {
     isFetching,
     refetch,
   } = useQuery(logsStreamsQueryOptions(groupName))
+
+  const { data: groupTags = {} } = useQuery(logsGroupTagsQueryOptions(groupName))
+  const tagEntries = useMemo(
+    () => Object.entries(groupTags).sort(([a], [b]) => a.localeCompare(b)),
+    [groupTags],
+  )
 
   const sortedStreams = useMemo(
     () =>
@@ -194,20 +202,39 @@ export function LogGroupDetail({ groupName }: Props) {
       {/* Group info card */}
       {group && (
         <Card>
-          <CardContent className="grid grid-cols-3 gap-4 py-4">
-            <div>
-              <p className="font-mono text-xs font-medium text-fg-muted">Created</p>
-              <p className="text-sm">{formatLogDate(group.creationTime)}</p>
+          <CardContent className="flex flex-col gap-4 py-4">
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <p className="font-mono text-xs font-medium text-fg-muted">Created</p>
+                <p className="text-sm">{formatLogDate(group.creationTime)}</p>
+              </div>
+              <div>
+                <p className="font-mono text-xs font-medium text-fg-muted">Retention</p>
+                <p className="text-sm">
+                  {group.retentionInDays ? retentionLabel(group.retentionInDays) : "Never expire"}
+                </p>
+              </div>
+              <div>
+                <p className="font-mono text-xs font-medium text-fg-muted">Log Streams</p>
+                <p className="text-sm">{streams.length}</p>
+              </div>
             </div>
             <div>
-              <p className="font-mono text-xs font-medium text-fg-muted">Retention</p>
-              <p className="text-sm">
-                {group.retentionInDays ? `${group.retentionInDays} days` : "Never expire"}
-              </p>
-            </div>
-            <div>
-              <p className="font-mono text-xs font-medium text-fg-muted">Log Streams</p>
-              <p className="text-sm">{streams.length}</p>
+              <p className="font-mono text-xs font-medium text-fg-muted">Tags</p>
+              {tagEntries.length === 0 ? (
+                <p className="text-sm text-fg-muted">None</p>
+              ) : (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {tagEntries.map(([key, value]) => (
+                    <span
+                      key={key}
+                      className="rounded-control border border-border bg-bg-muted px-2 py-0.5 font-mono text-xs"
+                    >
+                      {key}: {value || "—"}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

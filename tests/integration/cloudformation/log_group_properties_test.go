@@ -156,6 +156,87 @@ func TestUpdateStack_LogGroupInvalidRetentionRollsBack(t *testing.T) {
 	}
 }
 
+// Tag validity is the Logs service's business too. A template carrying a
+// reserved `aws:` key must fail through the normal dispatch path, roll the
+// stack back, and leave no log group behind — the tags travel with
+// CreateLogGroup, so there is nothing half-made to reconcile.
+func TestCreateStack_LogGroupInvalidTagRollsBack(t *testing.T) {
+	// Given: a stack template with a tag key AWS reserves
+	srv := helpers.NewTestServer(t)
+	const stackName = "log-group-invalid-tag-stack"
+	const logGroupName = "/cloudformation/invalid-tag"
+	const template = `{
+  "Resources": {
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/cloudformation/invalid-tag",
+        "Tags": [{"Key": "aws:created-by", "Value": "overcast"}]
+      }
+    }
+  }
+}`
+
+	// When: the stack is created
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {template},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+
+	// Then: the stack rolls back carrying the service's own error
+	waitForStackStatus(t, srv, stackName, "ROLLBACK_COMPLETE")
+	reasons := strings.Join(describeStackEventReasons(t, srv, stackName), "\n")
+	if !strings.Contains(reasons, "InvalidParameterException") {
+		t.Errorf("failure reasons do not carry InvalidParameterException:\n%s", reasons)
+	}
+
+	// And: no log group exists
+	if logGroupExists(t, srv, logGroupName) {
+		t.Error("log group survived rollback")
+	}
+}
+
+// Create-time tags are applied by CreateLogGroup itself, so they are readable
+// as soon as the stack completes.
+func TestCreateStack_LogGroupTagsAppliedAtCreate(t *testing.T) {
+	// Given: a stack template with resource tags
+	srv := helpers.NewTestServer(t)
+	const stackName = "log-group-create-tags-stack"
+	const logGroupName = "/cloudformation/tags-at-create"
+	const template = `{
+  "Resources": {
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "/cloudformation/tags-at-create",
+        "Tags": [{"Key": "environment", "Value": "development"}]
+      }
+    }
+  }
+}`
+
+	// When: the stack is created
+	createResp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":           {stackName},
+		"TemplateBody":        {template},
+		"Tags.member.1.Key":   {"team"},
+		"Tags.member.1.Value": {"platform"},
+	})
+	defer createResp.Body.Close()
+	helpers.AssertStatus(t, createResp, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// Then: resource and stack tags are both present on the new group
+	if got := listLogGroupTags(t, srv, logGroupName); !reflect.DeepEqual(got, map[string]string{
+		"environment": "development",
+		"team":        "platform",
+	}) {
+		t.Fatalf("tags = %#v", got)
+	}
+}
+
 func TestUpdateStack_LogGroupTags(t *testing.T) {
 	// Given: a stack log group with CloudFormation-owned tags
 	srv := helpers.NewTestServer(t)

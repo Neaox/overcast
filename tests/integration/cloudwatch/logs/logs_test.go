@@ -12,6 +12,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -128,6 +131,156 @@ func TestCreateLogGroup_duplicate(t *testing.T) {
 	// Then: 400 ResourceAlreadyExistsException
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 	helpers.AssertJSONError(t, resp, "ResourceAlreadyExistsException")
+}
+
+// CreateLogGroup takes a `tags` map in AWS, applied as part of creating the
+// group rather than by a follow-up TagLogGroup call.
+func TestCreateLogGroup_withTags(t *testing.T) {
+	// Given: no groups exist
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateLogGroup is called with create-time tags
+	resp := logsCall(t, srv, "CreateLogGroup", map[string]any{
+		"logGroupName": "/aws/lambda/tagged-on-create",
+		"tags":         map[string]string{"environment": "development", "owner": "platform"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the tags are readable without any further call
+	if got := listTagsLogGroup(t, srv, "/aws/lambda/tagged-on-create"); !reflect.DeepEqual(got, map[string]string{
+		"environment": "development",
+		"owner":       "platform",
+	}) {
+		t.Fatalf("tags = %#v", got)
+	}
+}
+
+// The typed request model carries `tags` too, so the CBOR path must apply them.
+func TestRPCv2CBOR_CreateLogGroup_withTags(t *testing.T) {
+	// Given: no groups exist
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateLogGroup is called over CBOR with create-time tags
+	resp := logsCBORCall(t, srv, "CreateLogGroup", map[string]any{
+		"logGroupName": "/aws/lambda/cbor-tagged",
+		"tags":         map[string]string{"environment": "development"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the tags are readable
+	if got := listTagsLogGroup(t, srv, "/aws/lambda/cbor-tagged"); !reflect.DeepEqual(got, map[string]string{
+		"environment": "development",
+	}) {
+		t.Fatalf("tags = %#v", got)
+	}
+}
+
+// invalidTagCases are the tag maps AWS's CloudWatch Logs model and tagging
+// rules reject: more than 50 pairs, an empty key, an over-length key or value,
+// and the reserved `aws:` key prefix.
+func invalidTagCases() map[string]map[string]string {
+	tooMany := make(map[string]string, 51)
+	for i := 0; i < 51; i++ {
+		tooMany["key"+strconv.Itoa(i)] = "value"
+	}
+	return map[string]map[string]string{
+		"more than 50 tags": tooMany,
+		"empty key":         {"": "value"},
+		"key over 128":      {strings.Repeat("k", 129): "value"},
+		"value over 256":    {"key": strings.Repeat("v", 257)},
+		"reserved prefix":   {"aws:created-by": "overcast"},
+	}
+}
+
+// A rejected CreateLogGroup must not leave a half-made log group behind — the
+// tags are part of the create, so failing validation fails the whole call.
+func TestCreateLogGroup_invalidTagsRejected(t *testing.T) {
+	for name, tags := range invalidTagCases() {
+		t.Run(name, func(t *testing.T) {
+			// Given: no groups exist
+			srv := helpers.NewTestServer(t)
+
+			// When: CreateLogGroup is called with tags AWS rejects
+			resp := logsCall(t, srv, "CreateLogGroup", map[string]any{
+				"logGroupName": "/aws/lambda/bad-tags",
+				"tags":         tags,
+			})
+			defer resp.Body.Close()
+
+			// Then: 400 InvalidParameterException
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterException")
+
+			// And: no log group was created
+			resp2 := logsCall(t, srv, "DescribeLogGroups", map[string]any{})
+			defer resp2.Body.Close()
+			var result struct {
+				LogGroups []struct {
+					LogGroupName string `json:"logGroupName"`
+				} `json:"logGroups"`
+			}
+			helpers.DecodeJSON(t, resp2, &result)
+			if len(result.LogGroups) != 0 {
+				t.Fatalf("log group created despite rejected tags: %+v", result.LogGroups)
+			}
+		})
+	}
+}
+
+// TagLogGroup applies the same validation, and a rejected call must leave the
+// group's existing tags exactly as they were.
+func TestTagLogGroup_invalidTagsRejected(t *testing.T) {
+	for name, tags := range invalidTagCases() {
+		t.Run(name, func(t *testing.T) {
+			// Given: a log group with one tag already applied
+			srv := helpers.NewTestServer(t)
+			createLogGroup(t, srv, "/aws/lambda/existing-tags")
+			resp := logsCall(t, srv, "TagLogGroup", map[string]any{
+				"logGroupName": "/aws/lambda/existing-tags",
+				"tags":         map[string]string{"environment": "development"},
+			})
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			resp.Body.Close()
+
+			// When: TagLogGroup is called with tags AWS rejects
+			resp = logsCall(t, srv, "TagLogGroup", map[string]any{
+				"logGroupName": "/aws/lambda/existing-tags",
+				"tags":         tags,
+			})
+			defer resp.Body.Close()
+
+			// Then: 400 InvalidParameterException
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			helpers.AssertJSONError(t, resp, "InvalidParameterException")
+
+			// And: the existing tags are untouched
+			if got := listTagsLogGroup(t, srv, "/aws/lambda/existing-tags"); !reflect.DeepEqual(got, map[string]string{
+				"environment": "development",
+			}) {
+				t.Fatalf("tags mutated by rejected call: %#v", got)
+			}
+		})
+	}
+}
+
+// Tag validation runs on the request before the log group is resolved, so an
+// invalid tag map on a missing group reports the parameter error.
+func TestTagLogGroup_invalidTagsBeatMissingGroup(t *testing.T) {
+	// Given: no log groups exist
+	srv := helpers.NewTestServer(t)
+
+	// When: TagLogGroup names a missing group with a reserved tag key
+	resp := logsCall(t, srv, "TagLogGroup", map[string]any{
+		"logGroupName": "/aws/lambda/no-such-group",
+		"tags":         map[string]string{"aws:created-by": "overcast"},
+	})
+	defer resp.Body.Close()
+
+	// Then: the parameter error wins
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterException")
 }
 
 func TestRPCv2CBOR_DescribeLogGroups(t *testing.T) {
@@ -1549,6 +1702,20 @@ func decodeCBORErrorType(t *testing.T, resp *http.Response) string {
 		t.Fatalf("decode CBOR error response: %v", err)
 	}
 	return body.Type
+}
+
+// listTagsLogGroup returns a log group's tags, failing the test if the call
+// does not succeed.
+func listTagsLogGroup(t *testing.T, srv *helpers.TestServer, name string) map[string]string {
+	t.Helper()
+	resp := logsCall(t, srv, "ListTagsLogGroup", map[string]any{"logGroupName": name})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var result struct {
+		Tags map[string]string `json:"tags"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	return result.Tags
 }
 
 // createLogGroup is a test setup helper that creates a log group and fails the

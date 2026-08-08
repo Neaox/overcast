@@ -7,7 +7,7 @@ import "github.com/Neaox/overcast/internal/capabilities"
 func init() {
 	capabilities.Default.Register(
 		// Log groups
-		capabilities.Capability{Service: "cloudwatch-logs", Operation: "CreateLogGroup", Category: "Log groups", Status: capabilities.StatusSupported, Notes: "Validates name; returns error on duplicate"},
+		capabilities.Capability{Service: "cloudwatch-logs", Operation: "CreateLogGroup", Category: "Log groups", Status: capabilities.StatusSupported, Notes: "Validates name; returns error on duplicate; applies create-time `tags` atomically with the group (`kmsKeyId`, `logGroupClass` and `deletionProtectionEnabled` are accepted but ignored)"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "DescribeLogGroups", Category: "Log groups", Status: capabilities.StatusSupported, Notes: "Optional `logGroupNamePrefix` filter"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "DeleteLogGroup", Category: "Log groups", Status: capabilities.StatusSupported, Notes: "Deletes group and all streams/events"},
 		// Log streams
@@ -28,7 +28,7 @@ func init() {
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "DeleteRetentionPolicy", Category: "Retention", Status: capabilities.StatusSupported, Notes: "Clears retention (sets to 0)"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "PutSubscriptionFilter", Category: "Retention", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		// Tagging
-		capabilities.Capability{Service: "cloudwatch-logs", Operation: "TagLogGroup", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Adds tags to a log group"},
+		capabilities.Capability{Service: "cloudwatch-logs", Operation: "TagLogGroup", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Adds tags to a log group; enforces AWS's key/value length, reserved `aws:` prefix and 50-tag limits before mutating"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "UntagLogGroup", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Removes tags from a log group"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "ListTagsLogGroup", Category: "Tagging", Status: capabilities.StatusSupported, Notes: "Returns tags for a log group"},
 	)
