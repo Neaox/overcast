@@ -75,8 +75,15 @@ devices, so the AWS conflicts for those cannot arise here.
 > `DeleteUserPolicy`, `DetachUserPolicy`, `RemoveUserFromGroup`,
 > `RemoveRoleFromInstanceProfile`, `DeleteRolePolicy`, `DetachRolePolicy`,
 > `DeleteGroupPolicy`, `DetachGroupPolicy` — exactly as you would against AWS. CloudFormation
-> stack teardown handles this itself: `AWS::IAM::Policy` removes its inline document from the
-> entities it named, and reverse dependency order puts instance profiles before their roles.
+> stack teardown handles the dependencies a stack owns itself: `AWS::IAM::Policy` removes its
+> inline document from the entities it named, and reverse dependency order puts instance
+> profiles before their roles.
+
+A `DeleteConflict` a stack cannot clear for itself — something outside the stack attached a
+policy, minted an access key, or added the user to a group — fails the stack. `DeleteStack`
+reports `DELETE_FAILED` with IAM's own message on the resource's event and status reason, and
+leaves the entity standing, as real CloudFormation does. Clear the dependency and delete the
+stack again. See [CloudFormation § Teardown failure](./cloudformation.md).
 
 ## Policy simulation
 

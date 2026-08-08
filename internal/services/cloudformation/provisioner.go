@@ -546,7 +546,21 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 		StatusUpdateCompleteCleanupInProgress, "")
 
 	// Delete removed resources, honouring DeletionPolicy=Retain.
-	for logicalID, old := range existing {
+	//
+	// Walked in reverse of the stack's own resource order, not over `existing`
+	// directly: that map's iteration order is random, and teardown order is not
+	// arbitrary. stack.Resources is still the pre-update list here (it is
+	// replaced below) and it is in dependency order, so reversing it deletes
+	// dependents before what they depend on — the same rule deleteStackResources
+	// follows. An update that drops a role and the instance profile holding it
+	// has to remove the profile first, or IAM refuses the role with
+	// DeleteConflict and it survives the update that was meant to remove it.
+	for i := len(stack.Resources) - 1; i >= 0; i-- {
+		logicalID := stack.Resources[i].LogicalID
+		old, stillToDelete := existing[logicalID]
+		if !stillToDelete {
+			continue
+		}
 		if old.shouldRetainOnDelete() {
 			log.Info("cfn: retaining removed resource (DeletionPolicy=Retain)",
 				zap.String("type", old.Type),
@@ -570,8 +584,10 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 
 	// The originals that replacements superseded, deleted here rather than at
 	// the point of replacement so that a failure anywhere earlier could still
-	// roll back to them.
-	for _, s := range superseded {
+	// roll back to them. Reversed for the same reason as the loop above: they
+	// were appended in dependency order as the update walked the template.
+	for i := len(superseded) - 1; i >= 0; i-- {
+		s := superseded[i]
 		p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteInProgress, "")
 		if err := p.deleteResource(ctx, s.LogicalID, s.Type, s.PhysicalID, s.Properties, rCtx); err != nil {
 			p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteFailed, err.Error())
@@ -2005,11 +2021,12 @@ type resourceStabilizer interface {
 var errReplacementRequired = errors.New("cfn: replacement required")
 
 // errDeletionBlocked is returned by a Delete implementation when the resource
-// itself refuses to be deleted — today only an RDS cluster with
-// DeletionProtection enabled. The provisioner reacts by failing the stack
-// operation instead of reporting a deletion that did not happen, which is what
-// AWS does: the delete fails, the resource survives, and the operator clears
-// the block and tries again.
+// itself refuses to be deleted: a non-empty S3 bucket, an RDS cluster with
+// DeletionProtection enabled, an IAM entity IAM answers DeleteConflict for, or
+// a nested stack whose own teardown failed. The provisioner reacts by failing
+// the stack operation instead of reporting a deletion that did not happen,
+// which is what AWS does: the delete fails, the resource survives, and the
+// operator clears the block and tries again.
 //
 // It is a sentinel rather than "any error fails the delete" on purpose. Every
 // other handler swallows its own teardown errors so that a resource which is
@@ -4131,6 +4148,47 @@ func mergeStackTags(stackTags []Tag, resourceTags map[string]string) map[string]
 	return out
 }
 
+// ── IAM teardown ───────────────────────────────────────────────────────────
+
+// iamTeardownError classifies the outcome of an IAM delete dispatched while
+// tearing a resource down, so that every IAM handler answers a refusal the same
+// way.
+//
+// Three outcomes, and the middle one is the point:
+//
+//   - HTTP 404 — the entity is already gone, which is a successful teardown.
+//     Nothing here may wedge a stack over a resource that no longer exists.
+//   - HTTP 409 — AWS's DeleteConflict: the entity still has dependencies, so
+//     IAM refuses and the entity survives. That refusal is wrapped in
+//     errDeletionBlocked, which is what makes deleteResource fail the stack
+//     rather than log the error and report DELETE_COMPLETE over an entity that
+//     is still standing. Real CloudFormation fails the stack here too, leaving
+//     the operator to clear the dependency and delete again.
+//   - Anything else — returned unwrapped, which leaves it swallowed on the
+//     teardown path (deleteResource logs it) and fatal on the rollback paths,
+//     exactly as before. A refusal by the entity is a different thing from a
+//     call that could not be made.
+//
+// The refusal's own code and message travel in the error so they reach the
+// stack event and the resource's status reason: tooling and operators key on
+// AWS's wording, not on the fact that something failed.
+func iamTeardownError(action, name string, rec *httptest.ResponseRecorder, err error) error {
+	if err == nil {
+		return nil
+	}
+	if rec != nil {
+		switch rec.Code {
+		case http.StatusNotFound:
+			return nil
+		case http.StatusConflict:
+			body := rec.Body.String()
+			return fmt.Errorf("%w: iam %s %s: %s: %s", errDeletionBlocked, action, name,
+				extractXMLValue(body, "Code"), extractXMLValue(body, "Message"))
+		}
+	}
+	return fmt.Errorf("iam %s %s: %w", action, name, err)
+}
+
 // ── IAM Role handler ───────────────────────────────────────────────────────
 
 type iamRoleHandler struct{}
@@ -4180,15 +4238,8 @@ func (h *iamRoleHandler) Delete(ctx context.Context, router http.Handler, _ *con
 		"RoleName": name,
 		"Version":  "2010-05-08",
 	}
-	// A refusal is reported so it reaches the teardown log. IAM answers
-	// DeleteConflict while a dependency remains, and a silently discarded one
-	// leaves the role standing while the stack reports DELETE_COMPLETE. A role
-	// that is already gone is not a failure.
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
-	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
-		return fmt.Errorf("iam DeleteRole %s: %w", name, err)
-	}
-	return nil
+	return iamTeardownError("DeleteRole", name, rec, err)
 }
 
 func (h *iamRoleHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -5083,6 +5134,14 @@ func (h *nestedStackHandler) Delete(ctx context.Context, _ http.Handler, _ *conf
 
 	childStack.Status = StatusDeleteInProgress
 	h.p.deleteStackResourcesCtx(ctx, childStack)
+	// A child that could not be torn down has to fail the parent. AWS reports
+	// the nested stack resource as DELETE_FAILED and the parent stack with it —
+	// swallowing it here would report the parent DELETE_COMPLETE over resources
+	// the child is still holding, which is the same lie a swallowed resource
+	// refusal tells one level down.
+	if childStack.Status == StatusDeleteFailed {
+		return fmt.Errorf("%w: nested stack %s: %s", errDeletionBlocked, childName, childStack.StatusReason)
+	}
 	return nil
 }
 
