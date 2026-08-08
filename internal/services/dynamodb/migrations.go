@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -59,11 +60,17 @@ import (
 // §3's index-structure landing: creates dynamodb_index_entries (Option A)
 // and backfills it for every GSI already declared on an existing table's
 // schema — see migrateCreateIndexEntriesTable's own doc comment.
+//
+// migrationDynamoDBRegionQualifyKeysVersion (24) is issue #673's data
+// migration: it rewrites table_name in all three dedicated tables from a bare
+// table name to the region-qualified key dynamoStore.tableKey now mints — see
+// migrateRegionQualifyTableKeys's own doc comment.
 const (
 	migrationDynamoDBItemsTableVersion          = 20
 	migrationDynamoDBStreamsTableVersion        = 21
 	migrationDynamoDBReencodeNumericKeysVersion = 22
 	migrationDynamoDBIndexEntriesTableVersion   = 23
+	migrationDynamoDBRegionQualifyKeysVersion   = 24
 )
 
 func init() {
@@ -108,6 +115,119 @@ func init() {
 		Name:    "create dynamodb_index_entries table + backfill existing GSIs",
 		Up:      migrateCreateIndexEntriesTable,
 	})
+
+	state.RegisterMigration(state.Migration{
+		Version: migrationDynamoDBRegionQualifyKeysVersion,
+		Name:    "region-qualify dynamodb item, index and stream table keys",
+		Up:      migrateRegionQualifyTableKeys,
+	})
+}
+
+// migrateRegionQualifyTableKeys is issue #673's on-disk half.
+//
+// Before it, dynamodb_items.table_name, dynamodb_index_entries.table_name and
+// dynamodb_stream_records.table_name all held a bare DynamoDB table name,
+// while the table *descriptor* in kv (namespace dynamodb:tables) was already
+// keyed "<region>/<name>". dynamoStore.tableKey now qualifies all four the same
+// way, so every pre-existing row has to be rewritten or it becomes unreachable.
+//
+// The region for each row comes from the descriptor's own kv key — the table
+// record is the only thing on disk that ever knew which region a table was
+// created in, and reading it inside this same transaction makes the region
+// lookup and the rewrite atomic.
+//
+// Three cases, all deliberate:
+//
+//   - The ordinary case — exactly one region declares the table name. Its rows
+//     are rewritten to "<region>/<name>" and stay exactly as reachable as they
+//     were, from that region.
+//   - The name exists in more than one region. Before this change those regions
+//     shared one pile of rows — that is the bug — and nothing on disk records
+//     which write came from where, so it cannot be split faithfully. Copying to
+//     both would preserve today's cross-region visibility, which is the
+//     behaviour being removed. The rows are assigned to the lexicographically
+//     first region, deterministically, and the other regions start empty. This
+//     is called out as a breaking change in the changelog fragment.
+//   - Rows whose table name matches no descriptor at all (an orphan from a
+//     partial delete, or a table dropped out of band). They are left untouched
+//     with their bare key: guessing a region would invent data, and deleting
+//     them would lose it. They are unreachable but inert — no list, scan or
+//     lookup can produce them, because every read now goes through a qualified
+//     key, which is exactly the isolation AGENTS.md § "Malformed persisted
+//     state must be isolated" asks for.
+//
+// Each UPDATE matches the *bare* name exactly, so an already-qualified row is
+// never touched twice: AWS restricts table names to [a-zA-Z0-9_.-], so a "/"
+// in table_name can only be a region prefix this migration (or a post-#673
+// write) already applied. That makes the migration safe to re-run and safe
+// against a database written by a mix of versions.
+//
+// The memory backend needs no equivalent: memItemBackend/memStreamBackend only
+// exist for state.MemoryStore, which has no persistence to migrate (same
+// reasoning as migrateReencodeNumericKeys).
+func migrateRegionQualifyTableKeys(ctx context.Context, tx *sql.Tx) error {
+	regionByTable, err := tableRegionsFromDescriptors(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if len(regionByTable) == 0 {
+		return nil // no tables declared — nothing to qualify
+	}
+
+	for name, region := range regionByTable {
+		qualified := region + "/" + name
+		for _, table := range []string{"dynamodb_items", "dynamodb_index_entries", "dynamodb_stream_records"} {
+			// OR IGNORE, because dynamodb_items and dynamodb_index_entries key
+			// on table_name as part of their primary key. A database that
+			// somehow holds both a bare and an already-qualified row for the
+			// same item would otherwise abort this migration — and with it
+			// startup — on a PRIMARY KEY conflict. Keeping the qualified row
+			// and leaving the stale bare one as an inert orphan is the same
+			// call the no-descriptor case makes, and it is strictly better
+			// than refusing to boot. (dynamodb_stream_records has no such
+			// constraint, so OR IGNORE is a no-op there.)
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE OR IGNORE `+table+` SET table_name = ? WHERE table_name = ?`,
+				qualified, name,
+			); err != nil {
+				return fmt.Errorf("region-qualify %s rows for table %q: %w", table, name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// tableRegionsFromDescriptors reads the dynamodb:tables kv namespace and
+// returns, for each bare table name, the region its rows should be assigned
+// to — the lexicographically first region declaring that name, so a database
+// where the same name exists in several regions migrates the same way every
+// time. Keys that carry no region prefix are ignored: there is nothing to
+// learn from them.
+func tableRegionsFromDescriptors(ctx context.Context, tx *sql.Tx) (map[string]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT key FROM kv WHERE namespace = ?`, nsTables)
+	if err != nil {
+		return nil, fmt.Errorf("read dynamodb table keys: %w", err)
+	}
+	defer rows.Close()
+
+	regionByTable := make(map[string]string)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan dynamodb table key: %w", err)
+		}
+		region, name := serviceutil.SplitRegionKey(key)
+		if region == "" || name == "" {
+			continue
+		}
+		if existing, ok := regionByTable[name]; !ok || region < existing {
+			regionByTable[name] = region
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate dynamodb table keys: %w", err)
+	}
+	return regionByTable, nil
 }
 
 // migrateReencodeNumericKeys is dynamodb-gsi-design.md §2/§7 phase 1's
@@ -161,11 +281,12 @@ func migrateReencodeNumericKeys(ctx context.Context, tx *sql.Tx) error {
 	}
 	rows.Close()
 
-	// De-duplicate by TableName: item storage is keyed purely by
-	// Table.TableName (not region — see dynamoStore.putItem/getItem), so if
-	// the same table name somehow appears in more than one region's schema
-	// record, processing it more than once would just repeat the same
-	// (idempotent) rewrite. Skip repeats rather than doing pointless work.
+	// De-duplicate by TableName. At this migration version item storage is
+	// still keyed by the bare Table.TableName — region qualification does not
+	// arrive until version 24 (migrateRegionQualifyTableKeys) — so if the same
+	// table name appears in more than one region's schema record, processing it
+	// again would just repeat the same (idempotent) rewrite. Skip repeats
+	// rather than doing pointless work.
 	seen := make(map[string]bool, len(schemas))
 
 	for _, raw := range schemas {
@@ -329,7 +450,8 @@ func migrateCreateIndexEntriesTable(ctx context.Context, tx *sql.Tx) error {
 	rows.Close()
 
 	// De-duplicate by TableName for the same reason migrateReencodeNumericKeys
-	// does: item storage is keyed purely by Table.TableName, not region.
+	// does: at this version item storage is still keyed by the bare
+	// Table.TableName, not by region (see version 24).
 	seen := make(map[string]bool, len(schemas))
 	for _, raw := range schemas {
 		var t Table

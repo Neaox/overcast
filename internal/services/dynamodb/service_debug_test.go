@@ -71,7 +71,12 @@ func TestDebugScanRawDisplay_NumberKey_ShowsRawDecimalNotEncodedForm(t *testing.
 		t.Fatalf("DebugStateKeys: %v", err)
 	}
 
-	const wantKey = "scores/g1/50"
+	// Item rows are keyed by the region-qualified table key
+	// (dynamoStore.tableKey — issue #673), so the debug key names the region
+	// too. That is deliberate rather than incidental: two same-named tables in
+	// different regions now hold different items, and /_debug/state has to be
+	// able to tell them apart.
+	const wantKey = "us-east-1/scores/g1/50"
 	if _, ok := values[wantKey]; !ok {
 		t.Fatalf("expected debug key %q with raw decimal display, got value keys: %v", wantKey, mapKeys(values))
 	}

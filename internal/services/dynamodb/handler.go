@@ -1335,8 +1335,8 @@ func (h *Handler) updateTableTyped(ctx context.Context, req *updateTableRequest)
 			// Clean up the removed GSI's index rows so a later GSI
 			// recreated under the same name doesn't inherit stale entries
 			// from this one's lifetime (dynamodb-gsi-design.md section 3).
-			if err := h.store.items.deleteAllIndexEntriesForIndex(ctx, table.TableName, update.Delete.IndexName); err != nil {
-				return nil, protocol.Wrap(protocol.ErrInternalError, err)
+			if aerr := h.store.deleteIndexEntriesForIndex(ctx, table.TableName, update.Delete.IndexName); aerr != nil {
+				return nil, aerr
 			}
 		}
 		if update.Update != nil {
@@ -1419,8 +1419,8 @@ func (h *Handler) backfillIndex(ctx context.Context, table *Table, idx *Secondar
 	if len(mutations) == 0 {
 		return nil
 	}
-	if err := h.store.items.applyIndexMutations(ctx, table.TableName, mutations); err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
+	if aerr := h.store.applyIndexMutations(ctx, table.TableName, mutations); aerr != nil {
+		return aerr
 	}
 	return nil
 }
@@ -1555,6 +1555,24 @@ func (h *Handler) applyStreamSpec(table *Table, spec *StreamSpecification, regio
 	)
 }
 
+// streamRecordRegion returns the region whose stream a table's change records
+// belong to, read back from the table's own ARNs rather than from the request
+// context.
+//
+// A table name alone does not identify a stream — the same name can exist in
+// several regions with independent streams (issue #673) — so every stream
+// event published on the bus carries this alongside the table name, and
+// subscribers (lambda's ESM stream handler, pipes' stream delivery) match on
+// both. Taking it from the stored ARN rather than from the context means a
+// record published by a background path that pinned a region (the TTL sweeper)
+// and one published from a request agree by construction.
+func streamRecordRegion(table *Table) string {
+	if region := serviceutil.ARNRegion(table.LatestStreamArn); region != "" {
+		return region
+	}
+	return serviceutil.ARNRegion(table.TableARN)
+}
+
 // extractKeys builds a key-only Item from a full item using the table's key schema.
 func extractKeys(table *Table, item Item) Item {
 	keys := make(Item, 2)
@@ -1609,6 +1627,7 @@ func (h *Handler) publishPutStreamRecord(ctx context.Context, table *Table, newI
 		if eventName == "MODIFY" {
 			evtType = events.DynamoDBStreamModify
 		}
+		streamRegion := streamRecordRegion(table)
 		seqStr := fmt.Sprintf("%021d", rec.SequenceNumber)
 		ddbRecord := map[string]any{
 			"ApproximateCreationDateTime": float64(rec.CreatedAt) / 1000.0,
@@ -1624,6 +1643,7 @@ func (h *Handler) publishPutStreamRecord(ctx context.Context, table *Table, newI
 			Source: "dynamodb",
 			Payload: events.DynamoDBStreamPayload{
 				Table:          table.TableName,
+				Region:         streamRegion,
 				EventName:      eventName,
 				SequenceNumber: rec.SequenceNumber,
 				Keys:           keys,
@@ -1640,6 +1660,7 @@ func (h *Handler) publishPutStreamRecord(ctx context.Context, table *Table, newI
 			Source: "dynamodb",
 			Payload: events.DynamoDBStreamRecordPayload{
 				Table:     table.TableName,
+				Region:    streamRegion,
 				EventName: eventName,
 				Dynamodb:  ddbRecord,
 			},
@@ -1665,6 +1686,7 @@ func (h *Handler) publishDeleteStreamRecord(ctx context.Context, table *Table, _
 	}
 
 	if h.bus != nil {
+		streamRegion := streamRecordRegion(table)
 		seqStr := fmt.Sprintf("%021d", rec.SequenceNumber)
 		ddbRecord := map[string]any{
 			"ApproximateCreationDateTime": float64(rec.CreatedAt) / 1000.0,
@@ -1679,6 +1701,7 @@ func (h *Handler) publishDeleteStreamRecord(ctx context.Context, table *Table, _
 			Source: "dynamodb",
 			Payload: events.DynamoDBStreamPayload{
 				Table:          table.TableName,
+				Region:         streamRegion,
 				EventName:      "REMOVE",
 				SequenceNumber: rec.SequenceNumber,
 				Keys:           keys,
@@ -1693,6 +1716,7 @@ func (h *Handler) publishDeleteStreamRecord(ctx context.Context, table *Table, _
 			Source: "dynamodb",
 			Payload: events.DynamoDBStreamRecordPayload{
 				Table:     table.TableName,
+				Region:    streamRegion,
 				EventName: "REMOVE",
 				Dynamodb:  ddbRecord,
 			},

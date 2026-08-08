@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/services/dynamodb"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -105,26 +106,40 @@ type getRecordsResponse struct {
 // ---- shardIterator token ---------------------------------------------------
 
 // shardToken is the opaque cursor encoded as base64(JSON).
+//
+// Region is carried alongside the table name because a DynamoDB stream is a
+// regional resource and stream records are stored under a region-qualified
+// table key (dynamodb's dynamoStore.tableKey — issue #673). Without it,
+// GetRecords would resolve the table name against whatever region the
+// GetRecords call itself happened to be signed for, which for two same-named
+// tables is the wrong stream. It is minted from the table's own stream ARN, so
+// it names the region the stream actually lives in rather than the region the
+// GetShardIterator caller claimed.
+//
+// A token minted before this field existed decodes with Region == "", which
+// getRecordsTyped treats as "use the request's region" — the pre-#673
+// behaviour — so iterators handed out before an upgrade keep working.
 type shardToken struct {
 	Table    string `json:"t"`
+	Region   string `json:"r,omitempty"`
 	AfterSeq int64  `json:"s"`
 }
 
-func encodeIterator(tableName string, afterSeq int64) string {
-	tok, _ := json.Marshal(shardToken{Table: tableName, AfterSeq: afterSeq})
+func encodeIterator(region, tableName string, afterSeq int64) string {
+	tok, _ := json.Marshal(shardToken{Table: tableName, Region: region, AfterSeq: afterSeq})
 	return base64.StdEncoding.EncodeToString(tok)
 }
 
-func decodeIterator(raw string) (string, int64, error) {
+func decodeIterator(raw string) (shardToken, error) {
 	b, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
-		return "", 0, fmt.Errorf("invalid shard iterator (base64): %w", err)
+		return shardToken{}, fmt.Errorf("invalid shard iterator (base64): %w", err)
 	}
 	var tok shardToken
 	if err := json.Unmarshal(b, &tok); err != nil {
-		return "", 0, fmt.Errorf("invalid shard iterator (json): %w", err)
+		return shardToken{}, fmt.Errorf("invalid shard iterator (json): %w", err)
 	}
-	return tok.Table, tok.AfterSeq, nil
+	return tok, nil
 }
 
 // shardID returns the canonical (single) shard ID for a table's stream.
@@ -260,6 +275,17 @@ func (h *handler) getShardIteratorTyped(ctx context.Context, req *getShardIterat
 		}
 	}
 
+	// The stream's own region, read back from the ARN GetStreamTable just
+	// matched. GetStreamTable only searches the caller's region, so this is
+	// always the caller's region too — reading it from the ARN rather than the
+	// context simply means the iterator names a region that a stream provably
+	// exists in.
+	region := serviceutil.ARNRegion(t.LatestStreamArn)
+	streamCtx := ctx
+	if region != "" {
+		streamCtx = middleware.ContextWithRegion(ctx, region)
+	}
+
 	var afterSeq int64
 	switch req.ShardIteratorType {
 	case "TRIM_HORIZON":
@@ -267,7 +293,7 @@ func (h *handler) getShardIteratorTyped(ctx context.Context, req *getShardIterat
 	case "LATEST":
 		// Position at the current end — records written after this iterator
 		// will be visible, records written before will not.
-		_, latest, sErr := h.ddb.GetStreamRecordsSince(ctx, t.TableName, 0, 0)
+		_, latest, sErr := h.ddb.GetStreamRecordsSince(streamCtx, t.TableName, 0, 0)
 		if sErr != nil {
 			return nil, protocol.Wrap(protocol.ErrInternalError, sErr)
 		}
@@ -307,9 +333,10 @@ func (h *handler) getShardIteratorTyped(ctx context.Context, req *getShardIterat
 		}
 	}
 
-	iter := encodeIterator(t.TableName, afterSeq)
+	iter := encodeIterator(region, t.TableName, afterSeq)
 	h.log.Debug("shard iterator created",
 		zap.String("table", t.TableName),
+		zap.String("region", region),
 		zap.String("type", req.ShardIteratorType),
 		zap.Int64("afterSeq", afterSeq),
 	)
@@ -337,7 +364,7 @@ func (h *handler) getRecordsTyped(ctx context.Context, req *getRecordsRequest) (
 	if req.ShardIterator == "" {
 		return nil, validationError("ShardIterator is required")
 	}
-	tableName, afterSeq, err := decodeIterator(req.ShardIterator)
+	tok, err := decodeIterator(req.ShardIterator)
 	if err != nil {
 		return nil, &protocol.AWSError{
 			Code:       "ValidationException",
@@ -345,13 +372,26 @@ func (h *handler) getRecordsTyped(ctx context.Context, req *getRecordsRequest) (
 			HTTPStatus: http.StatusBadRequest,
 		}
 	}
+	tableName, afterSeq := tok.Table, tok.AfterSeq
 
 	limit := req.Limit
 	if limit <= 0 {
 		limit = 1000
 	}
 
-	recs, latestSeq, sErr := h.ddb.GetStreamRecordsSince(ctx, tableName, afterSeq, limit)
+	// Read the stream in the region its iterator names, not the region this
+	// GetRecords call was signed for. The iterator could only have been minted
+	// by a GetShardIterator that found the stream in that region, so this
+	// resolves the same stream the caller paged from — for two same-named
+	// tables in two regions, the region is the only thing that tells them
+	// apart (issue #673). A legacy token carries no region and keeps the old
+	// context-derived behaviour.
+	streamCtx := ctx
+	if tok.Region != "" {
+		streamCtx = middleware.ContextWithRegion(ctx, tok.Region)
+	}
+
+	recs, latestSeq, sErr := h.ddb.GetStreamRecordsSince(streamCtx, tableName, afterSeq, limit)
 	if sErr != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, sErr)
 	}
@@ -375,13 +415,18 @@ func (h *handler) getRecordsTyped(ctx context.Context, req *getRecordsRequest) (
 			EventID:      fmt.Sprintf("%s-%d", tableName, rec.SequenceNumber),
 			EventVersion: "1.1",
 			EventSource:  "aws:dynamodb",
-			EventName:    rec.EventName,
-			Dynamodb:     body,
+			// AWS stamps every stream record with the region it came from;
+			// with streams now region-scoped there is a real region to report,
+			// and a consumer can tell two same-named tables' records apart.
+			// Omitted for a legacy region-less iterator (omitempty).
+			AWSRegion: tok.Region,
+			EventName: rec.EventName,
+			Dynamodb:  body,
 		})
 		_ = i
 	}
 
-	nextIter := encodeIterator(tableName, latestSeq)
+	nextIter := encodeIterator(tok.Region, tableName, latestSeq)
 	return &getRecordsResponse{
 		Records:           wireRecs,
 		NextShardIterator: nextIter,

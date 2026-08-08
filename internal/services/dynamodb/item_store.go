@@ -3,7 +3,17 @@ package dynamodb
 // itemBackend is the DynamoDB-specific storage layer for items.
 //
 // Items are indexed directly by (tableName, hashKey, sortKey) — mirroring
-// DynamoDB's actual storage model — which gives:
+// DynamoDB's actual storage model.
+//
+// tableName here is a *region-qualified* table key ("<region>/<name>"), minted
+// by dynamoStore.tableKey and never by a backend. A DynamoDB table is a
+// regional resource, so two same-named tables in different regions must not
+// share item rows or index entries (issue #673); folding the region into the
+// key the backends already partition on is what keeps them apart without every
+// method here having to grow a region parameter. Backends treat the value as
+// an opaque string — they neither parse nor construct it.
+//
+// The layout gives:
 //
 //   - GetItem:        O(1) / O(log n) — single map lookup or indexed SQL row read
 //   - Query by hash:  O(k) — loads only the items in one partition

@@ -145,12 +145,17 @@ func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, erro
 // to decode the encoded key.
 //
 // Table schemas are looked up once per call (not once per record) via
-// scanAllTables; item storage itself is not region-scoped (dynamoStore.items
-// keys purely by Table.TableName — see store.go), so a table found in any
-// region is used for display purposes. Best-effort: a record whose table
+// scanAllTables. Item rows and table records are both keyed by the same
+// region-qualified table key ("<region>/<name>" — dynamoStore.tableKey), so
+// the lookup is keyed on kv.Key directly and a record is always matched to the
+// schema of the table in *its own* region. Best-effort: a record whose table
 // can't be found/decoded keeps whatever debugScan returned as-is, per
 // CLAUDE.md's isolation rule — this is a debug-introspection path, not a
 // client-facing one, so degrading gracefully beats failing the whole scan.
+// That branch also covers rows left behind by a pre-#673 database whose keys
+// were never region-qualified (see migrations.go's region-qualification
+// migration): they display with their bare table name and no schema-aware key
+// decoding, rather than breaking the scan.
 func (s *Service) debugScanRawDisplay(ctx context.Context) ([]debugItemRecord, error) {
 	records, err := s.handler.store.items.debugScan(ctx)
 	if err != nil {
@@ -166,18 +171,18 @@ func (s *Service) debugScanRawDisplay(ctx context.Context) ([]debugItemRecord, e
 		// rather than failing debug output entirely.
 		return records, nil
 	}
-	byName := make(map[string]*Table, len(pairs))
+	byKey := make(map[string]*Table, len(pairs))
 	for _, kv := range pairs {
 		var t Table
 		if err := json.Unmarshal([]byte(kv.Value), &t); err != nil {
 			continue // malformed table record — isolate, skip (CLAUDE.md isolation rule)
 		}
-		byName[t.TableName] = &t
+		byKey[kv.Key] = &t
 	}
 
 	out := make([]debugItemRecord, len(records))
 	for i, record := range records {
-		if table, ok := byName[record.TableName]; ok {
+		if table, ok := byKey[record.TableName]; ok {
 			if h, sk, aerr := resolveKeys(table, record.Item); aerr == nil {
 				record.HashKey, record.SortKey = h, sk
 			}
@@ -201,38 +206,42 @@ func dynamoDebugItemKey(record debugItemRecord) string {
 
 // ---- Exported methods for the dynamodbstreams service ----------------------
 
-// ListStreamEnabledTables returns all tables that have streaming enabled.
+// ListStreamEnabledTables returns the stream-enabled tables in ctx's region.
+//
+// DynamoDB Streams is a regional endpoint: ListStreams in eu-west-1 must not
+// report a us-east-1 table's stream. This therefore scans that one region's
+// partition (listTables) rather than every region (scanAllTables), which is
+// what it used to do — issue #673.
 func (s *Service) ListStreamEnabledTables(ctx context.Context) ([]*Table, error) {
-	pairs, err := s.handler.store.scanAllTables(ctx)
-	if err != nil {
-		return nil, err
+	tables, aerr := s.handler.store.listTables(ctx, "")
+	if aerr != nil {
+		return nil, aerr
 	}
 	var result []*Table
-	for _, kv := range pairs {
-		var t Table
-		if err := json.Unmarshal([]byte(kv.Value), &t); err != nil {
-			continue
-		}
+	for _, t := range tables {
 		if t.streamEnabled() {
-			result = append(result, &t)
+			result = append(result, t)
 		}
 	}
 	return result, nil
 }
 
-// GetStreamTable returns the table descriptor for a given stream ARN.
+// GetStreamTable returns the table descriptor for a given stream ARN, looking
+// only in ctx's region.
+//
+// A stream ARN embeds its region, so matching on the ARN alone already refuses
+// to confuse two same-named tables' streams. Scoping the search as well is what
+// makes a cross-region ARN a ResourceNotFoundException instead of a successful
+// read of another region's stream, which is how AWS's regional endpoints
+// behave.
 func (s *Service) GetStreamTable(ctx context.Context, streamArn string) (*Table, error) {
-	pairs, err := s.handler.store.scanAllTables(ctx)
-	if err != nil {
-		return nil, err
+	tables, aerr := s.handler.store.listTables(ctx, "")
+	if aerr != nil {
+		return nil, aerr
 	}
-	for _, kv := range pairs {
-		var t Table
-		if err := json.Unmarshal([]byte(kv.Value), &t); err != nil {
-			continue
-		}
+	for _, t := range tables {
 		if t.LatestStreamArn == streamArn {
-			return &t, nil
+			return t, nil
 		}
 	}
 	return nil, fmt.Errorf("stream not found: %s", streamArn)

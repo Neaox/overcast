@@ -115,7 +115,7 @@ func (s *dynamoStore) scanItemsSegmentPage(ctx context.Context, table *Table, ex
 	chunk := segmentWalkChunk(limit, totalSegments)
 	items = []Item{}
 	for {
-		fetched, err := s.items.scanPage(ctx, table.TableName, hasAfter, afterHash, afterSort, chunk)
+		fetched, err := s.items.scanPage(ctx, s.tableKey(ctx, table.TableName), hasAfter, afterHash, afterSort, chunk)
 		if err != nil {
 			return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
 		}
@@ -172,7 +172,7 @@ func (s *dynamoStore) scanIndexSegmentPage(ctx context.Context, table *Table, id
 	chunk := segmentWalkChunk(limit, totalSegments)
 	items = []Item{}
 	for {
-		fetched, err := s.items.scanIndexPage(ctx, table.TableName, idx.IndexName, hasAfter, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort, chunk)
+		fetched, err := s.items.scanIndexPage(ctx, s.tableKey(ctx, table.TableName), idx.IndexName, hasAfter, afterIndexHash, afterIndexSort, afterBaseHash, afterBaseSort, chunk)
 		if err != nil {
 			return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
 		}
