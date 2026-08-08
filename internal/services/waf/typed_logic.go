@@ -68,9 +68,10 @@ type deleteWebACLRequest struct {
 	LockToken string `json:"LockToken"`
 }
 
+// Real WAFv2 sends Tags as a LIST of {Key,Value} structs, never a map.
 type tagResourceRequest struct {
-	ResourceARN string            `json:"ResourceARN"`
-	Tags        map[string]string `json:"Tags"`
+	ResourceARN string                `json:"ResourceARN"`
+	Tags        []serviceutil.TagPair `json:"Tags"`
 }
 type tagResourceResponse struct{}
 
@@ -83,11 +84,16 @@ type untagResourceResponse struct{}
 type listTagsForResourceRequest struct {
 	ResourceARN string `json:"ResourceARN"`
 }
+
+// tagInfoForResource mirrors WAFv2's TagInfoForResource: TagList is a LIST
+// of Tag structs, never a map.
+type tagInfoForResource struct {
+	ResourceARN string                `json:"ResourceARN"`
+	TagList     []serviceutil.TagPair `json:"TagList"`
+}
+
 type listTagsForResourceResponse struct {
-	TagInfoForResource struct {
-		ResourceARN string            `json:"ResourceARN"`
-		TagList     map[string]string `json:"TagList"`
-	} `json:"TagInfoForResource"`
+	TagInfoForResource tagInfoForResource `json:"TagInfoForResource"`
 }
 
 func (h *Handler) createWebACLTyped(ctx context.Context, req *createWebACLRequest) (*createWebACLResponse, *protocol.AWSError) {
@@ -198,11 +204,7 @@ func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest)
 	getter := func(ctx context.Context, _ string) (*WebACL, *protocol.AWSError) {
 		return h.getACL(ctx, scope, id)
 	}
-	incoming := make([]serviceutil.TagPair, 0, len(req.Tags))
-	for k, v := range req.Tags {
-		incoming = append(incoming, serviceutil.TagPair{Key: k, Value: v})
-	}
-	if aerr := serviceutil.ApplyTags(ctx, wafTagCfg, scope+"/"+id, incoming, getter, h.putACL); aerr != nil {
+	if aerr := serviceutil.ApplyTags(ctx, wafTagCfg, scope+"/"+id, req.Tags, getter, h.putACL); aerr != nil {
 		return nil, aerr
 	}
 	return &tagResourceResponse{}, nil
@@ -231,14 +233,10 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsFor
 	if aerr != nil {
 		return nil, aerr
 	}
-	tags := acl.Tags
-	if tags == nil {
-		tags = make(map[string]string)
-	}
 	return &listTagsForResourceResponse{
-		TagInfoForResource: struct {
-			ResourceARN string            `json:"ResourceARN"`
-			TagList     map[string]string `json:"TagList"`
-		}{ResourceARN: req.ResourceARN, TagList: tags},
+		TagInfoForResource: tagInfoForResource{
+			ResourceARN: req.ResourceARN,
+			TagList:     serviceutil.TagsToList(acl.Tags),
+		},
 	}, nil
 }
