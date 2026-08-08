@@ -4,12 +4,12 @@ package s3
 // PutBucketLifecycleConfiguration and DeleteBucketLifecycle, plus the
 // validation that decides which rule constructs Overcast will accept.
 //
-// The validation is the load-bearing part. Overcast's object store keeps
-// exactly one live object per key: it has no version history and no delete
-// markers (see ListObjectVersions in handler_bucket.go). Version-dependent
-// constructs are accepted only when the service model can preserve and echo
-// them; otherwise they are refused rather than quietly ignored. The sweeper
-// has no noncurrent versions to act on until true version history is added.
+// Every action AWS models here is now evaluated: Expiration (including
+// ExpiredObjectDeleteMarker), Transition, AbortIncompleteMultipartUpload,
+// NoncurrentVersionExpiration and NoncurrentVersionTransition. Nothing is
+// stored-and-ignored — if a construct were ever accepted that the sweeper
+// cannot act on, it would have to be refused here instead, because a rule that
+// silently never runs is worse than one that is rejected.
 
 import (
 	"encoding/xml"
@@ -73,8 +73,6 @@ type lifecycleRuleXML struct {
 	Transition                     []lifecycleTransitionXML `xml:"Transition"`
 	AbortIncompleteMultipartUpload *lifecycleAbortMPUXML    `xml:"AbortIncompleteMultipartUpload"`
 
-	// Refused constructs. They are parsed so that supplying one produces a
-	// specific, named error instead of being silently dropped by the decoder.
 	NoncurrentVersionExpiration *lifecycleNoncurrentExpirationXML  `xml:"NoncurrentVersionExpiration"`
 	NoncurrentVersionTransition []lifecycleNoncurrentTransitionXML `xml:"NoncurrentVersionTransition"`
 }
@@ -125,8 +123,9 @@ type lifecycleNoncurrentExpirationXML struct {
 }
 
 type lifecycleNoncurrentTransitionXML struct {
-	NoncurrentDays *int   `xml:"NoncurrentDays"`
-	StorageClass   string `xml:"StorageClass"`
+	NoncurrentDays          *int   `xml:"NoncurrentDays"`
+	NewerNoncurrentVersions *int   `xml:"NewerNoncurrentVersions,omitempty"`
+	StorageClass            string `xml:"StorageClass"`
 }
 
 // ---- Errors ----------------------------------------------------------------
@@ -145,16 +144,6 @@ func errNoSuchLifecycleConfiguration() *protocol.AWSError {
 		Message:    "The lifecycle configuration does not exist",
 		HTTPStatus: http.StatusNotFound,
 	}
-}
-
-// errUnevaluatedLifecycleConstruct refuses a rule element the sweeper cannot
-// act on. The message names the element and says why, so a user reading a
-// 400 knows this is an Overcast boundary rather than an AWS schema violation.
-func errUnevaluatedLifecycleConstruct(element, reason string) *protocol.AWSError {
-	return protocol.ErrInvalidArgument(fmt.Sprintf(
-		"%s is not evaluated by this emulator (%s). It is refused rather than stored, "+
-			"so a rule that would never run cannot be mistaken for one that does.",
-		element, reason))
 }
 
 // ---- Handlers --------------------------------------------------------------
@@ -312,10 +301,6 @@ func parseLifecycleConfiguration(body *lifecycleConfigurationXML) (*LifecycleCon
 }
 
 func parseLifecycleRule(in *lifecycleRuleXML, index int) (*LifecycleRule, *protocol.AWSError) {
-	if aerr := refuseUnevaluatedConstructs(in); aerr != nil {
-		return nil, aerr
-	}
-
 	switch in.Status {
 	case lifecycleStatusEnabled, lifecycleStatusDisabled:
 	default:
@@ -375,6 +360,14 @@ func parseLifecycleRule(in *lifecycleRuleXML, index int) (*LifecycleRule, *proto
 		out.Transitions = append(out.Transitions, *transition)
 	}
 
+	for i := range in.NoncurrentVersionTransition {
+		transition, tErr := parseLifecycleNoncurrentTransition(&in.NoncurrentVersionTransition[i], in.Filter != nil)
+		if tErr != nil {
+			return nil, tErr
+		}
+		out.NoncurrentVersionTransitions = append(out.NoncurrentVersionTransitions, *transition)
+	}
+
 	if in.AbortIncompleteMultipartUpload != nil {
 		days := in.AbortIncompleteMultipartUpload.DaysAfterInitiation
 		if days == nil || *days <= 0 {
@@ -384,7 +377,8 @@ func parseLifecycleRule(in *lifecycleRuleXML, index int) (*LifecycleRule, *proto
 		out.AbortIncompleteMultipartUpload = &LifecycleAbortMPU{DaysAfterInitiation: *days}
 	}
 
-	if out.Expiration == nil && out.NoncurrentVersionExpiration == nil && len(out.Transitions) == 0 && out.AbortIncompleteMultipartUpload == nil {
+	if out.Expiration == nil && out.NoncurrentVersionExpiration == nil && len(out.Transitions) == 0 &&
+		len(out.NoncurrentVersionTransitions) == 0 && out.AbortIncompleteMultipartUpload == nil {
 		return nil, &protocol.AWSError{
 			Code:       "InvalidRequest",
 			Message:    "At least one action needs to be specified in a rule",
@@ -392,23 +386,6 @@ func parseLifecycleRule(in *lifecycleRuleXML, index int) (*LifecycleRule, *proto
 		}
 	}
 	return out, nil
-}
-
-// refuseUnevaluatedConstructs rejects version-dependent actions that cannot
-// yet be represented in the stored model. NoncurrentVersionExpiration is
-// represented and round-tripped even though the current one-version store has
-// no eligible versions for the sweeper to act on.
-func refuseUnevaluatedConstructs(in *lifecycleRuleXML) *protocol.AWSError {
-	const noVersions = "this emulator's object store keeps one live object per key, " +
-		"with no version history or delete markers"
-
-	if len(in.NoncurrentVersionTransition) > 0 {
-		return errUnevaluatedLifecycleConstruct("NoncurrentVersionTransition", noVersions)
-	}
-	if in.Expiration != nil && in.Expiration.ExpiredObjectDeleteMarker != nil {
-		return errUnevaluatedLifecycleConstruct("ExpiredObjectDeleteMarker", noVersions)
-	}
-	return nil
 }
 
 func parseLifecycleNoncurrentExpiration(in *lifecycleNoncurrentExpirationXML, hasFilter bool) (*LifecycleNoncurrentVersionExpiration, *protocol.AWSError) {
@@ -420,16 +397,8 @@ func parseLifecycleNoncurrentExpiration(in *lifecycleNoncurrentExpirationXML, ha
 			"'NoncurrentDays' for NoncurrentVersionExpiration action must be a positive integer")
 	}
 	if newer := in.NewerNoncurrentVersions; newer != nil {
-		if *newer < 1 || *newer > 100 {
-			return nil, protocol.ErrInvalidArgument(
-				"'NewerNoncurrentVersions' for NoncurrentVersionExpiration action must be between 1 and 100")
-		}
-		if !hasFilter {
-			return nil, &protocol.AWSError{
-				Code:       "InvalidRequest",
-				Message:    "A Filter must be specified when NewerNoncurrentVersions is specified for NoncurrentVersionExpiration",
-				HTTPStatus: http.StatusBadRequest,
-			}
+		if aerr := validateNewerNoncurrentVersions(*newer, hasFilter, "NoncurrentVersionExpiration"); aerr != nil {
+			return nil, aerr
 		}
 	}
 	return &LifecycleNoncurrentVersionExpiration{
@@ -495,6 +464,20 @@ func parseLifecycleExpiration(in *lifecycleExpirationXML) (*LifecycleExpiration,
 		return nil, nil
 	}
 	hasDate := in.Date != ""
+	// ExpiredObjectDeleteMarker is a third, mutually exclusive form of
+	// Expiration: it names no age at all, it only says "clean up a delete
+	// marker that is hiding nothing". AWS refuses it alongside Days or Date.
+	if in.ExpiredObjectDeleteMarker != nil && *in.ExpiredObjectDeleteMarker {
+		if in.Days != nil || hasDate {
+			return nil, &protocol.AWSError{
+				Code:       "InvalidRequest",
+				Message:    "'ExpiredObjectDeleteMarker' cannot be specified with 'Days' or 'Date' in a Lifecycle Expiration Policy",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		return &LifecycleExpiration{ExpiredObjectDeleteMarker: true}, nil
+	}
+
 	switch {
 	case in.Days != nil && hasDate:
 		return nil, errMalformedLifecycleXML("Expiration cannot carry both Days and Date")
@@ -545,6 +528,47 @@ func parseLifecycleTransition(in *lifecycleTransitionXML) (*LifecycleTransition,
 	return &LifecycleTransition{Date: &date, StorageClass: in.StorageClass}, nil
 }
 
+// parseLifecycleNoncurrentTransition validates a NoncurrentVersionTransition:
+// a storage class from the transition set, a positive NoncurrentDays, and the
+// same NewerNoncurrentVersions bounds AWS puts on NoncurrentVersionExpiration.
+func parseLifecycleNoncurrentTransition(in *lifecycleNoncurrentTransitionXML, hasFilter bool) (*LifecycleNoncurrentVersionTransition, *protocol.AWSError) {
+	if !lifecycleTransitionStorageClasses[in.StorageClass] {
+		return nil, errMalformedLifecycleXML(
+			"NoncurrentVersionTransition StorageClass is not a valid value: " + in.StorageClass)
+	}
+	if in.NoncurrentDays == nil || *in.NoncurrentDays <= 0 {
+		return nil, protocol.ErrInvalidArgument(
+			"'NoncurrentDays' for NoncurrentVersionTransition action must be a positive integer")
+	}
+	if newer := in.NewerNoncurrentVersions; newer != nil {
+		if aerr := validateNewerNoncurrentVersions(*newer, hasFilter, "NoncurrentVersionTransition"); aerr != nil {
+			return nil, aerr
+		}
+	}
+	return &LifecycleNoncurrentVersionTransition{
+		NoncurrentDays:          *in.NoncurrentDays,
+		NewerNoncurrentVersions: in.NewerNoncurrentVersions,
+		StorageClass:            in.StorageClass,
+	}, nil
+}
+
+// validateNewerNoncurrentVersions applies the bounds AWS puts on the retained-
+// version count, shared by both noncurrent actions that accept it.
+func validateNewerNoncurrentVersions(newer int, hasFilter bool, action string) *protocol.AWSError {
+	if newer < 1 || newer > 100 {
+		return protocol.ErrInvalidArgument(
+			"'NewerNoncurrentVersions' for " + action + " action must be between 1 and 100")
+	}
+	if !hasFilter {
+		return &protocol.AWSError{
+			Code:       "InvalidRequest",
+			Message:    "A Filter must be specified when NewerNoncurrentVersions is specified for " + action,
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	return nil
+}
+
 // parseLifecycleDate accepts the ISO-8601 forms S3 accepts and enforces AWS's
 // rule that a lifecycle Date must be midnight UTC.
 func parseLifecycleDate(raw, action string) (time.Time, *protocol.AWSError) {
@@ -585,9 +609,13 @@ func lifecycleRulesToXML(rules []LifecycleRule) []lifecycleRuleXML {
 		}
 		if rule.Expiration != nil {
 			xmlRule.Expiration = &lifecycleExpirationXML{}
-			if rule.Expiration.Date != nil {
+			switch {
+			case rule.Expiration.ExpiredObjectDeleteMarker:
+				marker := true
+				xmlRule.Expiration.ExpiredObjectDeleteMarker = &marker
+			case rule.Expiration.Date != nil:
 				xmlRule.Expiration.Date = rule.Expiration.Date.UTC().Format("2006-01-02T15:04:05.000Z")
-			} else {
+			default:
 				days := rule.Expiration.Days
 				xmlRule.Expiration.Days = &days
 			}
@@ -609,6 +637,15 @@ func lifecycleRulesToXML(rules []LifecycleRule) []lifecycleRuleXML {
 				xmlTransition.Days = &days
 			}
 			xmlRule.Transition = append(xmlRule.Transition, xmlTransition)
+		}
+		for j := range rule.NoncurrentVersionTransitions {
+			t := rule.NoncurrentVersionTransitions[j]
+			days := t.NoncurrentDays
+			xmlRule.NoncurrentVersionTransition = append(xmlRule.NoncurrentVersionTransition, lifecycleNoncurrentTransitionXML{
+				NoncurrentDays:          &days,
+				NewerNoncurrentVersions: t.NewerNoncurrentVersions,
+				StorageClass:            t.StorageClass,
+			})
 		}
 		if rule.AbortIncompleteMultipartUpload != nil {
 			days := rule.AbortIncompleteMultipartUpload.DaysAfterInitiation

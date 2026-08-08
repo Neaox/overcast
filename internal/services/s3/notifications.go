@@ -223,9 +223,11 @@ type s3BucketInfo struct {
 }
 
 type s3ObjectInfo struct {
-	Key  string `json:"key"`
-	Size int64  `json:"size"`
-	ETag string `json:"eTag"`
+	Key       string `json:"key"`
+	Size      int64  `json:"size"`
+	ETag      string `json:"eTag"`
+	VersionID string `json:"versionId,omitempty"`
+	Sequencer string `json:"sequencer,omitempty"`
 }
 
 type s3NotificationEnvelope struct {
@@ -268,17 +270,23 @@ func buildNotificationJSON(p events.S3ObjectPayload, eventTime time.Time, config
 // detail-type naming the change: "Object Created" or "Object Deleted".
 //
 // The detail below is deliberately partial. version, bucket.name, object.key,
-// object.size, object.etag, reason and deletion-type are all values Overcast
-// genuinely has. request-id, requester, source-ip-address, sequencer and
-// version-id are omitted rather than invented: there is no versioned object
-// store to source a version-id or sequencer from, and a fabricated request ID
+// object.size, object.etag, object.version-id, object.sequencer, reason and
+// deletion-type are all values Overcast genuinely has — version-id and
+// sequencer since object version history landed, which is what gives a
+// consumer something real to order events by. request-id, requester and
+// source-ip-address stay omitted rather than invented: a fabricated request ID
 // would look like a real one to a consumer correlating events.
 
 const (
-	eventBridgeSource            = "aws.s3"
-	eventBridgeObjectCreated     = "Object Created"
-	eventBridgeObjectDeleted     = "Object Deleted"
-	eventBridgeDeletionPermanent = "Permanently Deleted"
+	eventBridgeSource        = "aws.s3"
+	eventBridgeObjectCreated = "Object Created"
+	eventBridgeObjectDeleted = "Object Deleted"
+
+	// AWS's two deletion-type values. A delete against a versioning-enabled
+	// bucket writes a tombstone and removes nothing, which is the distinction
+	// this field exists to carry.
+	eventBridgeDeletionPermanent   = "Permanently Deleted"
+	eventBridgeDeletionMarkerAdded = "Delete Marker Created"
 )
 
 // eventBridgeReasons maps the S3 event names Overcast publishes onto the
@@ -305,9 +313,11 @@ type eventBridgeBucketDetail struct {
 }
 
 type eventBridgeObjectDetail struct {
-	Key  string `json:"key"`
-	Size int64  `json:"size"`
-	ETag string `json:"etag,omitempty"`
+	Key       string `json:"key"`
+	Size      int64  `json:"size"`
+	ETag      string `json:"etag,omitempty"`
+	VersionID string `json:"version-id,omitempty"`
+	Sequencer string `json:"sequencer,omitempty"`
 }
 
 // buildEventBridgeEntry renders one object mutation as an EventBridge entry.
@@ -329,17 +339,19 @@ func buildEventBridgeEntry(p events.S3ObjectPayload) (events.BusEntry, bool) {
 		Version: "0",
 		Bucket:  eventBridgeBucketDetail{Name: p.Bucket},
 		Object: eventBridgeObjectDetail{
-			Key:  p.Key,
-			Size: p.Size,
-			ETag: strings.Trim(p.ETag, `"`),
+			Key:       p.Key,
+			Size:      p.Size,
+			ETag:      strings.Trim(p.ETag, `"`),
+			VersionID: p.VersionID,
+			Sequencer: p.Sequencer,
 		},
 		Reason: eventBridgeReasons[p.EventName],
 	}
 	if detailType == eventBridgeObjectDeleted {
-		// Overcast's object store keeps one live object per key, so a delete
-		// is always the permanent kind; AWS's other value, "Delete Marker
-		// Created", needs version history.
 		detail.DeletionType = eventBridgeDeletionPermanent
+		if p.EventName == "ObjectRemoved:DeleteMarkerCreated" {
+			detail.DeletionType = eventBridgeDeletionMarkerAdded
+		}
 	}
 
 	raw, err := json.Marshal(detail)

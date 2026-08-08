@@ -10,6 +10,7 @@ package s3
 //   https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjectTagging.html
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"sort"
@@ -114,11 +115,25 @@ func (h *Handler) DeleteBucketTagging(w http.ResponseWriter, r *http.Request) {
 
 // DeleteBucketTagging --------------------------------------------------------
 
+// currentObjectForTagging loads the key's current version for a tagging
+// operation. A key whose current version is a delete marker has nothing to tag,
+// and AWS answers it as it answers any other read hidden behind a marker.
+func (h *Handler) currentObjectForTagging(ctx context.Context, bucket, key string) (*Object, *protocol.AWSError) {
+	obj, aerr := h.store.getObjectMeta(ctx, bucket, key)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if obj.DeleteMarker {
+		return nil, errNoSuchKey(key)
+	}
+	return obj, nil
+}
+
 // GetObjectTagging handles GET /{bucket}/{key}?tagging.
 func (h *Handler) GetObjectTagging(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 	key := objectKey(r)
-	obj, aerr := h.store.getObjectMeta(r.Context(), bucket, key)
+	obj, aerr := h.currentObjectForTagging(r.Context(), bucket, key)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
@@ -136,13 +151,13 @@ func (h *Handler) PutObjectTagging(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument("malformed XML"))
 		return
 	}
-	obj, aerr := h.store.getObjectMeta(r.Context(), bucket, key)
+	obj, aerr := h.currentObjectForTagging(r.Context(), bucket, key)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
 	obj.Tags = tagsFromXML(req.TagSet.Tags)
-	if aerr := h.store.putObjectMeta(r.Context(), obj); aerr != nil {
+	if aerr := h.saveCurrentObject(r.Context(), obj); aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
@@ -153,13 +168,13 @@ func (h *Handler) PutObjectTagging(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteObjectTagging(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 	key := objectKey(r)
-	obj, aerr := h.store.getObjectMeta(r.Context(), bucket, key)
+	obj, aerr := h.currentObjectForTagging(r.Context(), bucket, key)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
 	obj.Tags = nil
-	if aerr := h.store.putObjectMeta(r.Context(), obj); aerr != nil {
+	if aerr := h.saveCurrentObject(r.Context(), obj); aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}

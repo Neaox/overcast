@@ -6,7 +6,7 @@ package s3
 // Dispatchers (ObjectGet, ObjectDelete, …, PutObjectOrCopy) live in handler.go.
 
 import (
-	"encoding/json"
+	"context"
 	"encoding/xml"
 	"io"
 	"net/http"
@@ -113,13 +113,9 @@ func (h *Handler) PutObject(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 	key := objectKey(r)
 
-	exists, aerr := h.store.bucketExists(r.Context(), bucket)
+	b, aerr := h.store.getBucket(r.Context(), bucket)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
-		return
-	}
-	if !exists {
-		protocol.WriteXMLError(w, r, errNoSuchBucket(bucket))
 		return
 	}
 
@@ -151,6 +147,12 @@ func (h *Handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		Expires:            r.Header.Get("Expires"),
 	}
 
+	stamp, aerr := h.beginVersion(r.Context(), b, obj, obj.LastModified)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+
 	// Decode aws-chunked streaming uploads (SDK for .NET v4, Rust, newer
 	// Java) transparently so we store the raw object bytes, not the chunk
 	// framing. See aws_chunked.go.
@@ -163,25 +165,42 @@ func (h *Handler) PutObject(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
+	if aerr := h.commitVersion(r.Context(), b, obj); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
 
-	h.bus.Publish(r.Context(), events.Event{
-		Type:   events.S3ObjectCreated,
-		Time:   obj.LastModified,
-		Source: "s3",
-		Payload: events.S3ObjectPayload{
-			Bucket:    bucket,
-			Key:       key,
-			Size:      size,
-			ETag:      etag,
-			EventName: "ObjectCreated:Put",
-		},
-	})
+	h.publishObjectEvent(r, events.S3ObjectCreated, obj, stamp, "ObjectCreated:Put", size, etag)
 
 	w.Header().Set("ETag", etag)
+	setVersionIDHeader(w, obj)
 	// AWS tells the caller, on the write itself, when a lifecycle rule will
 	// expire the object it just stored.
 	h.setExpirationHeader(r.Context(), w, obj)
 	protocol.WriteEmpty(w, r, http.StatusOK)
+}
+
+// publishObjectEvent emits one object mutation onto the bus with the version
+// identity S3 attaches to a notification: the version id (only for a versioned
+// bucket) and the sequencer, which consumers compare to order events for a key.
+func (h *Handler) publishObjectEvent(r *http.Request, typ events.Type, obj *Object, stamp versionStamp, eventName string, size int64, etag string) {
+	payload := events.S3ObjectPayload{
+		Bucket:    obj.Bucket,
+		Key:       obj.Key,
+		Size:      size,
+		ETag:      etag,
+		EventName: eventName,
+		Sequencer: stamp.sequencer(),
+	}
+	if obj.Seq != "" {
+		payload.VersionID = obj.wireVersionID()
+	}
+	h.bus.Publish(r.Context(), events.Event{
+		Type:    typ,
+		Time:    obj.LastModified,
+		Source:  "s3",
+		Payload: payload,
+	})
 }
 
 // GetObject handles GET /{bucket}/{key}.
@@ -191,14 +210,13 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	key := objectKey(r)
 
 	// Load metadata only — body is streamed separately.
-	obj, aerr := h.store.getObjectMeta(r.Context(), bucket, key)
-	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+	obj, ok := h.readTarget(w, r, bucket, key)
+	if !ok {
 		return
 	}
 
 	// Open the body file for streaming.
-	f, aerr := h.store.openBody(bucket, key)
+	f, aerr := h.store.openBody(obj)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
@@ -210,6 +228,7 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", obj.ETag)
 	w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
 	w.Header().Set("x-amz-request-id", protocol.RequestIDFromContext(r.Context()))
+	setVersionIDHeader(w, obj)
 	writeObjectStorageClass(w, obj)
 	h.setExpirationHeader(r.Context(), w, obj)
 
@@ -276,6 +295,79 @@ func (h *Handler) GetObject(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, f)
+}
+
+// readTarget resolves the version a GET or HEAD addresses — the key's current
+// version, or the one named by ?versionId= — and writes the AWS response itself
+// when there is nothing to read, reporting false.
+//
+// The two "nothing to read" answers are different operations on AWS's side and
+// both matter to clients:
+//
+//   - the current version is a delete marker: 404 NoSuchKey, plus
+//     x-amz-delete-marker so a caller can tell a deleted object from one that
+//     never existed;
+//   - the request names a delete marker's own version id: 405 MethodNotAllowed
+//     with Allow: DELETE, because that version exists and simply cannot be read.
+func (h *Handler) readTarget(w http.ResponseWriter, r *http.Request, bucket, key string) (*Object, bool) {
+	versionID := serviceutil.QueryString(r, "versionId", "")
+
+	if versionID == "" {
+		obj, aerr := h.store.getObjectMeta(r.Context(), bucket, key)
+		if aerr != nil {
+			protocol.WriteXMLError(w, r, aerr)
+			return nil, false
+		}
+		if obj.DeleteMarker {
+			w.Header().Set("x-amz-delete-marker", "true")
+			setVersionIDHeader(w, obj)
+			protocol.WriteXMLError(w, r, errNoSuchKey(key))
+			return nil, false
+		}
+		return obj, true
+	}
+
+	obj, aerr := h.resolveVersion(r.Context(), bucket, key, versionID)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return nil, false
+	}
+	if obj.DeleteMarker {
+		w.Header().Set("x-amz-delete-marker", "true")
+		w.Header().Set("Allow", "DELETE")
+		setVersionIDHeader(w, obj)
+		protocol.WriteXMLError(w, r, errMethodNotAllowedOnDeleteMarker())
+		return nil, false
+	}
+	return obj, true
+}
+
+// resolveVersion returns the named version of a key.
+func (h *Handler) resolveVersion(ctx context.Context, bucket, key, versionID string) (*Object, *protocol.AWSError) {
+	b, aerr := h.store.getBucket(ctx, bucket)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if !b.versioned() {
+		// A bucket that has never been versioned holds exactly one version of
+		// each key, and AWS calls it "null". Any other id names a version that
+		// cannot exist there.
+		if versionID != nullVersionID {
+			return nil, errNoSuchVersion()
+		}
+		return h.store.getObjectMeta(ctx, bucket, key)
+	}
+	if aerr := h.ensureVersionHistory(ctx, b); aerr != nil {
+		return nil, aerr
+	}
+	obj, found, aerr := h.store.findVersion(ctx, bucket, key, versionID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if !found {
+		return nil, errNoSuchVersion()
+	}
+	return obj, nil
 }
 
 // parseByteRange parses a "Range: bytes=X-Y" header value and returns the
@@ -353,9 +445,8 @@ func (h *Handler) HeadObject(w http.ResponseWriter, r *http.Request) {
 	key := objectKey(r)
 
 	// Metadata only — no body read from disk.
-	obj, aerr := h.store.getObjectMeta(r.Context(), bucket, key)
-	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
+	obj, ok := h.readTarget(w, r, bucket, key)
+	if !ok {
 		return
 	}
 
@@ -364,6 +455,7 @@ func (h *Handler) HeadObject(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", obj.ETag)
 	w.Header().Set("Last-Modified", obj.LastModified.UTC().Format(http.TimeFormat))
 	w.Header().Set("x-amz-request-id", protocol.RequestIDFromContext(r.Context()))
+	setVersionIDHeader(w, obj)
 	writeObjectStorageClass(w, obj)
 	h.setExpirationHeader(r.Context(), w, obj)
 	if obj.ContentDisposition != "" {
@@ -406,8 +498,15 @@ type deleteObjectsResponse struct {
 	Errors  []deleteObjectError `xml:"Error,omitempty"`
 }
 
+// deletedObject mirrors com.amazonaws.s3#DeletedObject. DeleteMarker and
+// DeleteMarkerVersionId only appear when the delete created a marker (or
+// removed one); VersionId only for a bucket with version history, which is why
+// all three are omitempty.
 type deletedObject struct {
-	Key string `xml:"Key"`
+	Key                   string `xml:"Key"`
+	VersionId             string `xml:"VersionId,omitempty"`
+	DeleteMarker          bool   `xml:"DeleteMarker,omitempty"`
+	DeleteMarkerVersionId string `xml:"DeleteMarkerVersionId,omitempty"`
 }
 
 type deleteObjectError struct {
@@ -421,13 +520,9 @@ type deleteObjectError struct {
 func (h *Handler) DeleteObjects(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 
-	exists, aerr := h.store.bucketExists(r.Context(), bucket)
+	b, aerr := h.store.getBucket(r.Context(), bucket)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
-		return
-	}
-	if !exists {
-		protocol.WriteXMLError(w, r, errNoSuchBucket(bucket))
 		return
 	}
 
@@ -446,30 +541,33 @@ func (h *Handler) DeleteObjects(w http.ResponseWriter, r *http.Request) {
 		XMLNS: "http://s3.amazonaws.com/doc/2006-03-01/",
 	}
 
-	now := h.clk.Now().UTC()
-
-	for _, obj := range req.Objects {
-		if delErr := h.store.deleteObject(r.Context(), bucket, obj.Key); delErr != nil {
+	for _, entry := range req.Objects {
+		outcome, delErr := h.deleteOne(r, b, entry.Key, entry.VersionId)
+		if delErr != nil {
 			resp.Errors = append(resp.Errors, deleteObjectError{
-				Key:     obj.Key,
+				Key:     entry.Key,
 				Code:    delErr.Code,
 				Message: delErr.Message,
 			})
-		} else {
-			if !req.Quiet {
-				resp.Deleted = append(resp.Deleted, deletedObject{Key: obj.Key})
-			}
-			h.bus.Publish(r.Context(), events.Event{
-				Type:   events.S3ObjectRemoved,
-				Time:   now,
-				Source: "s3",
-				Payload: events.S3ObjectPayload{
-					Bucket:    bucket,
-					Key:       obj.Key,
-					EventName: "ObjectRemoved:Delete",
-				},
-			})
+			continue
 		}
+		if req.Quiet {
+			continue
+		}
+		// AWS reports a created delete marker under DeleteMarkerVersionId and
+		// a permanently removed version under VersionId. A version-targeted
+		// delete that removed a marker sets both flags, which is why the
+		// outcome carries the distinction rather than the request shape.
+		deleted := deletedObject{Key: entry.Key, DeleteMarker: outcome.deleteMarker}
+		if entry.VersionId != "" {
+			deleted.VersionId = outcome.versionID
+			if outcome.deleteMarker {
+				deleted.DeleteMarkerVersionId = outcome.versionID
+			}
+		} else {
+			deleted.DeleteMarkerVersionId = outcome.versionID
+		}
+		resp.Deleted = append(resp.Deleted, deleted)
 	}
 
 	protocol.WriteXML(w, r, http.StatusOK, resp)
@@ -482,34 +580,144 @@ func (h *Handler) DeleteObject(w http.ResponseWriter, r *http.Request) {
 	key := objectKey(r)
 
 	// Verify bucket exists first (AWS returns NoSuchBucket, not NoSuchKey).
-	exists, aerr := h.store.bucketExists(r.Context(), bucket)
+	b, aerr := h.store.getBucket(r.Context(), bucket)
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
-	if !exists {
-		protocol.WriteXMLError(w, r, errNoSuchBucket(bucket))
-		return
-	}
 
-	// AWS DeleteObject is idempotent — deleting a non-existent key returns 204.
-	if aerr := h.store.deleteObject(r.Context(), bucket, key); aerr != nil {
+	outcome, aerr := h.deleteOne(r, b, key, serviceutil.QueryString(r, "versionId", ""))
+	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
-
-	h.bus.Publish(r.Context(), events.Event{
-		Type:   events.S3ObjectRemoved,
-		Time:   h.clk.Now().UTC(),
-		Source: "s3",
-		Payload: events.S3ObjectPayload{
-			Bucket:    bucket,
-			Key:       key,
-			EventName: "ObjectRemoved:Delete",
-		},
-	})
-
+	if outcome.deleteMarker {
+		w.Header().Set("x-amz-delete-marker", "true")
+	}
+	if outcome.versionID != "" {
+		w.Header().Set("x-amz-version-id", outcome.versionID)
+	}
 	protocol.WriteEmpty(w, r, http.StatusNoContent)
+}
+
+// deleteOutcome is what a single delete produced, so DeleteObject can set the
+// response headers and DeleteObjects can fill in one Deleted entry.
+type deleteOutcome struct {
+	// deleteMarker is true when the delete created a delete marker, and when a
+	// version-targeted delete removed one. AWS uses the same flag for both.
+	deleteMarker bool
+	// versionID is the delete marker's version id, or the version id that was
+	// permanently removed. Empty for a bucket with no version history, where
+	// AWS sends no version id at all.
+	versionID string
+}
+
+// deleteOne performs one DeleteObject, in whichever of AWS's three shapes the
+// bucket's versioning state and the request select.
+//
+// All three are idempotent, which is why none of them reports a missing key:
+// AWS answers 204 for a key that was never there, and — in a versioning-enabled
+// bucket — still creates a delete marker for one, because a later PUT would
+// otherwise be un-deletable in the caller's mental model.
+func (h *Handler) deleteOne(r *http.Request, b *Bucket, key, versionID string) (deleteOutcome, *protocol.AWSError) {
+	ctx := r.Context()
+
+	if !b.versioned() {
+		// A bucket that has never been versioned only has null versions, so a
+		// versionId is either that or a version that cannot exist.
+		if versionID != "" && versionID != nullVersionID {
+			return deleteOutcome{}, errInvalidVersionID()
+		}
+		obj, aerr := h.store.lookupObjectMeta(ctx, b.Name, key)
+		if aerr != nil {
+			return deleteOutcome{}, aerr
+		}
+		if aerr := h.store.deleteObject(ctx, b.Name, key); aerr != nil {
+			return deleteOutcome{}, aerr
+		}
+		h.publishDelete(r, b.Name, key, obj, newVersionStamp(h.clk.Now().UTC()), "ObjectRemoved:Delete")
+		return deleteOutcome{}, nil
+	}
+
+	if aerr := h.ensureVersionHistory(ctx, b); aerr != nil {
+		return deleteOutcome{}, aerr
+	}
+	if versionID == "" {
+		return h.createDeleteMarker(r, b, key)
+	}
+	return h.deleteVersionPermanently(r, b, key, versionID)
+}
+
+// createDeleteMarker is a delete with no version id against a versioned bucket:
+// nothing is removed, a new version with no body becomes current, and the
+// versions beneath it stay exactly where they are.
+func (h *Handler) createDeleteMarker(r *http.Request, b *Bucket, key string) (deleteOutcome, *protocol.AWSError) {
+	ctx := r.Context()
+	now := h.clk.Now().UTC()
+
+	marker := &Object{
+		Bucket:       b.Name,
+		Key:          key,
+		LastModified: now,
+		DeleteMarker: true,
+	}
+	stamp, aerr := h.beginVersion(ctx, b, marker, now)
+	if aerr != nil {
+		return deleteOutcome{}, aerr
+	}
+	if aerr := h.store.putObjectMeta(ctx, marker); aerr != nil {
+		return deleteOutcome{}, aerr
+	}
+	if aerr := h.commitVersion(ctx, b, marker); aerr != nil {
+		return deleteOutcome{}, aerr
+	}
+
+	h.publishDelete(r, b.Name, key, marker, stamp, "ObjectRemoved:DeleteMarkerCreated")
+	return deleteOutcome{deleteMarker: true, versionID: marker.wireVersionID()}, nil
+}
+
+// deleteVersionPermanently is a delete that names a version id: that one
+// version really goes, and if it was the current one the newest version left
+// takes its place.
+func (h *Handler) deleteVersionPermanently(r *http.Request, b *Bucket, key, versionID string) (deleteOutcome, *protocol.AWSError) {
+	ctx := r.Context()
+
+	target, found, aerr := h.store.findVersion(ctx, b.Name, key, versionID)
+	if aerr != nil {
+		return deleteOutcome{}, aerr
+	}
+	if !found {
+		// Idempotent, as everywhere else in DeleteObject.
+		return deleteOutcome{versionID: versionID}, nil
+	}
+	if aerr := h.store.deleteVersion(ctx, target); aerr != nil {
+		return deleteOutcome{}, aerr
+	}
+
+	current, aerr := h.store.lookupObjectMeta(ctx, b.Name, key)
+	if aerr != nil {
+		return deleteOutcome{}, aerr
+	}
+	if current != nil && current.Seq == target.Seq {
+		if aerr := h.promoteNewestVersion(ctx, b.Name, key); aerr != nil {
+			return deleteOutcome{}, aerr
+		}
+	}
+
+	h.publishDelete(r, b.Name, key, target, newVersionStamp(h.clk.Now().UTC()), "ObjectRemoved:Delete")
+	return deleteOutcome{deleteMarker: target.DeleteMarker, versionID: target.wireVersionID()}, nil
+}
+
+// publishDelete emits one removal event, timestamped when the delete happened
+// rather than when the version it removed was written. removed may be nil when
+// the key was not there — AWS still answers 204, and the notification then
+// carries no version id because there is none to report.
+func (h *Handler) publishDelete(r *http.Request, bucket, key string, removed *Object, stamp versionStamp, eventName string) {
+	subject := &Object{Bucket: bucket, Key: key, LastModified: h.clk.Now().UTC()}
+	if removed != nil {
+		subject.Seq, subject.VersionID = removed.Seq, removed.VersionID
+	}
+	h.publishObjectEvent(r, events.S3ObjectRemoved, subject, stamp, eventName, 0, "")
 }
 
 // copyObjectResponse is the XML for a successful CopyObject.
@@ -517,6 +725,19 @@ type copyObjectResponse struct {
 	XMLName      xml.Name  `xml:"CopyObjectResult"`
 	LastModified time.Time `xml:"LastModified"`
 	ETag         string    `xml:"ETag"`
+}
+
+// copySourceVersion is the ?versionId= a copy source may carry.
+func copySourceVersion(key string) (bareKey, versionID string) {
+	idx := strings.Index(key, "?")
+	if idx < 0 {
+		return key, ""
+	}
+	values, err := url.ParseQuery(key[idx+1:])
+	if err != nil {
+		return key, ""
+	}
+	return key[:idx], values.Get("versionId")
 }
 
 // CopyObject handles PUT /{bucket}/{key} with x-amz-copy-source header.
@@ -530,9 +751,29 @@ func (h *Handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument("Invalid copy source"))
 		return
 	}
+	srcKey, srcVersionID := copySourceVersion(srcKey)
+
+	destB, aerr := h.store.getBucket(r.Context(), destBucket)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
 
 	// Load source metadata only — body is streamed via copyBody.
-	src, aerr := h.store.getObjectMeta(r.Context(), srcBucket, srcKey)
+	var src *Object
+	if srcVersionID == "" {
+		src, aerr = h.store.getObjectMeta(r.Context(), srcBucket, srcKey)
+		if aerr == nil && src.DeleteMarker {
+			// The source key's current version is a delete marker, so there is
+			// nothing to copy — the same answer a GET of that key gives.
+			aerr = errNoSuchKey(srcKey)
+		}
+	} else {
+		src, aerr = h.resolveVersion(r.Context(), srcBucket, srcKey, srcVersionID)
+		if aerr == nil && src.DeleteMarker {
+			aerr = errMethodNotAllowedOnDeleteMarker()
+		}
+	}
 	if aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
@@ -546,49 +787,45 @@ func (h *Handler) CopyObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stream source body to destination file, computing MD5 incrementally.
-	etag, n, err := h.store.copyBody(srcBucket, srcKey, destBucket, destKey)
-	if err != nil {
-		protocol.WriteXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
-		return
-	}
-
 	now := h.clk.Now().UTC()
 	dest := &Object{
-		Bucket:        destBucket,
-		Key:           destKey,
-		StorageClass:  storageClass,
-		ContentType:   src.ContentType,
-		ContentLength: n,
-		ETag:          etag,
-		LastModified:  now,
-		Metadata:      src.Metadata,
+		Bucket:       destBucket,
+		Key:          destKey,
+		StorageClass: storageClass,
+		ContentType:  src.ContentType,
+		LastModified: now,
+		Metadata:     src.Metadata,
+	}
+	stamp, aerr := h.beginVersion(r.Context(), destB, dest, now)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
 	}
 
-	// Persist destination metadata (body already on disk from copyBody).
-	raw, err := json.Marshal(dest)
+	// Stream source body to destination file, computing MD5 incrementally.
+	etag, n, err := h.store.copyBody(src, dest)
 	if err != nil {
 		protocol.WriteXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	if err := h.store.store.Set(r.Context(), nsObjects, objectStoreKey(destBucket, destKey), string(raw)); err != nil {
-		protocol.WriteXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+	dest.ETag, dest.ContentLength = etag, n
+
+	// Persist destination metadata (body already on disk from copyBody).
+	if aerr := h.store.putObjectMeta(r.Context(), dest); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+	if aerr := h.commitVersion(r.Context(), destB, dest); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
 
-	h.bus.Publish(r.Context(), events.Event{
-		Type:   events.S3ObjectCreated,
-		Time:   now,
-		Source: "s3",
-		Payload: events.S3ObjectPayload{
-			Bucket:    destBucket,
-			Key:       destKey,
-			Size:      n,
-			ETag:      etag,
-			EventName: "ObjectCreated:Copy",
-		},
-	})
+	h.publishObjectEvent(r, events.S3ObjectCreated, dest, stamp, "ObjectCreated:Copy", n, etag)
 
+	setVersionIDHeader(w, dest)
+	if src.Seq != "" {
+		w.Header().Set("x-amz-copy-source-version-id", src.wireVersionID())
+	}
 	h.setExpirationHeader(r.Context(), w, dest)
 
 	protocol.WriteXML(w, r, http.StatusOK, &copyObjectResponse{

@@ -7,7 +7,6 @@ package s3
 
 import (
 	"crypto/md5"
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -257,8 +256,29 @@ func (h *Handler) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request
 		orderedParts = append(orderedParts, found)
 	}
 
+	// The finished object is a new version of the key, so its identity has to
+	// be settled before its body is assembled — the body path depends on it.
+	b, aerr := h.store.getBucket(r.Context(), bucket)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+	now := h.clk.Now().UTC()
+	obj := &Object{
+		Bucket:       bucket,
+		Key:          key,
+		ContentType:  upload.ContentType,
+		LastModified: now,
+		Metadata:     upload.Metadata,
+	}
+	stamp, aerr := h.beginVersion(r.Context(), b, obj, now)
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+
 	// Stream all part bodies to the final object body path, computing MD5.
-	finalPath := h.store.bodyPath(bucket, key)
+	finalPath := h.store.bodyPath(bucket, key, obj.VersionID)
 	if mkdirErr := os.MkdirAll(filepath.Dir(finalPath), 0o755); mkdirErr != nil {
 		protocol.WriteXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, mkdirErr))
 		return
@@ -299,23 +319,13 @@ func (h *Handler) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request
 	etag := fmt.Sprintf(`"%x-%d"`, mhash.Sum(nil), len(orderedParts))
 
 	// Save final object metadata.
-	now := h.clk.Now().UTC()
-	obj := &Object{
-		Bucket:        bucket,
-		Key:           key,
-		ContentType:   upload.ContentType,
-		ContentLength: totalSize,
-		ETag:          etag,
-		LastModified:  now,
-		Metadata:      upload.Metadata,
-	}
-	rawMeta, jsonErr := json.Marshal(obj)
-	if jsonErr != nil {
-		protocol.WriteXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, jsonErr))
+	obj.ContentLength, obj.ETag = totalSize, etag
+	if aerr := h.store.putObjectMeta(r.Context(), obj); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
-	if storeErr := h.store.store.Set(r.Context(), nsObjects, objectStoreKey(bucket, key), string(rawMeta)); storeErr != nil {
-		protocol.WriteXMLError(w, r, protocol.Wrap(protocol.ErrInternalError, storeErr))
+	if aerr := h.commitVersion(r.Context(), b, obj); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
 
@@ -324,19 +334,9 @@ func (h *Handler) CompleteMultipartUpload(w http.ResponseWriter, r *http.Request
 	_ = h.store.deleteMultipartUpload(r.Context(), uploadID) // best-effort cleanup
 
 	// Emit S3ObjectCreated event.
-	h.bus.Publish(r.Context(), events.Event{
-		Type:   events.S3ObjectCreated,
-		Time:   now,
-		Source: "s3",
-		Payload: events.S3ObjectPayload{
-			Bucket:    bucket,
-			Key:       key,
-			Size:      totalSize,
-			ETag:      etag,
-			EventName: "ObjectCreated:CompleteMultipartUpload",
-		},
-	})
+	h.publishObjectEvent(r, events.S3ObjectCreated, obj, stamp, "ObjectCreated:CompleteMultipartUpload", totalSize, etag)
 
+	setVersionIDHeader(w, obj)
 	location := fmt.Sprintf("/%s/%s", bucket, key)
 	protocol.WriteXML(w, r, http.StatusOK, &xmlCompleteMultipartUploadResult{
 		NS:       s3XMLNamespace,

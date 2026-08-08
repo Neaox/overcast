@@ -98,6 +98,12 @@ type Bucket struct {
 	CORSRules        []CORSRule             `json:"cors_rules,omitempty"`
 	Policy           string                 `json:"policy,omitempty"`
 	EncryptionRules  []BucketEncryptionRule `json:"encryption_rules,omitempty"`
+
+	// VersionHistoryReady records that every object already in this bucket has
+	// been given a place in s3:versions. See ensureVersionHistory in
+	// version.go — it is the completion flag for that backfill, not a feature
+	// switch, and it is meaningless on a bucket that is not versioned.
+	VersionHistoryReady bool `json:"version_history_ready,omitempty"`
 }
 
 // Object represents a stored S3 object.
@@ -123,6 +129,25 @@ type Object struct {
 	// which reads as STANDARD. A lifecycle Transition sets it as a synthetic
 	// marker — no bytes move (docs/plans/full-emulation-priority.md §7).
 	StorageClass string `json:"storage_class,omitempty"`
+
+	// VersionID is the version id S3 reports for this version, or "" for the
+	// null version — the one AWS gives an object stored while its bucket was
+	// unversioned or version-suspended. See version.go.
+	VersionID string `json:"version_id,omitempty"`
+
+	// Seq orders a key's versions newest-first and forms the s3:versions
+	// storage key. Empty on a record written before version history existed,
+	// and on every object in a bucket that has never been versioned.
+	Seq string `json:"seq,omitempty"`
+
+	// DeleteMarker marks this version as a delete marker: a version with no
+	// body that hides the versions beneath it. See version.go.
+	DeleteMarker bool `json:"delete_marker,omitempty"`
+
+	// IsLatest is derived at list time, never stored: which version is current
+	// is a property of the key's history, not of one record, and persisting it
+	// would be a second source of truth to keep in step.
+	IsLatest bool `json:"-"`
 }
 
 // effectiveStorageClass returns the class S3 reports for the object, defaulting
@@ -259,12 +284,25 @@ func (s *s3Store) getObjectMeta(ctx context.Context, bucket, key string) (*Objec
 	return &obj, nil
 }
 
-// openBody returns an open file handle for the object's body.
+// lookupObjectMeta is getObjectMeta without the not-found error, for callers
+// that treat an absent key as an ordinary case rather than a client error.
+func (s *s3Store) lookupObjectMeta(ctx context.Context, bucket, key string) (*Object, *protocol.AWSError) {
+	obj, aerr := s.getObjectMeta(ctx, bucket, key)
+	if aerr != nil {
+		if aerr.Code == "NoSuchKey" {
+			return nil, nil
+		}
+		return nil, aerr
+	}
+	return obj, nil
+}
+
+// openBody returns an open file handle for the given version's body.
 // The caller is responsible for closing it.
-func (s *s3Store) openBody(bucket, key string) (*os.File, *protocol.AWSError) {
-	f, err := os.Open(s.bodyPath(bucket, key))
+func (s *s3Store) openBody(obj *Object) (*os.File, *protocol.AWSError) {
+	f, err := os.Open(s.bodyPath(obj.Bucket, obj.Key, obj.VersionID))
 	if err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: open body %s/%s: %w", bucket, key, err))
+		return nil, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: open body %s/%s: %w", obj.Bucket, obj.Key, err))
 	}
 	return f, nil
 }
@@ -273,7 +311,7 @@ func (s *s3Store) openBody(bucket, key string) (*os.File, *protocol.AWSError) {
 // MD5 in a single pass, then persists metadata to the store. This avoids
 // buffering the entire body in memory.
 func (s *s3Store) putObjectStream(ctx context.Context, obj *Object, body io.Reader) (etag string, n int64, aerr *protocol.AWSError) {
-	p := s.bodyPath(obj.Bucket, obj.Key)
+	p := s.bodyPath(obj.Bucket, obj.Key, obj.VersionID)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", 0, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: create body dir for %s/%s: %w", obj.Bucket, obj.Key, err))
 	}
@@ -324,12 +362,16 @@ func (s *s3Store) putObjectMeta(ctx context.Context, obj *Object) *protocol.AWSE
 	return nil
 }
 
+// deleteObject removes a key's current record and its body. This is the
+// unversioned path: a key in a versioned bucket is never removed this way,
+// because a delete there either adds a delete marker or removes one specific
+// version — see handler_object.go's DeleteObject.
 func (s *s3Store) deleteObject(ctx context.Context, bucket, key string) *protocol.AWSError {
 	if err := s.store.Delete(ctx, nsObjects, objectStoreKey(bucket, key)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	// Remove body file — ignore "not found" since DeleteObject is idempotent.
-	p := s.bodyPath(bucket, key)
+	p := s.bodyPath(bucket, key, "")
 	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: remove body %s/%s: %w", bucket, key, err))
 	}
@@ -339,39 +381,59 @@ func (s *s3Store) deleteObject(ctx context.Context, bucket, key string) *protoco
 	return nil
 }
 
-// ---- Body file helpers -----------------------------------------------------
-
-// bodyPath returns the on-disk path for an object's body.
-// Uses SHA-256 of the key to avoid filesystem issues with special characters,
-// deeply nested paths, or path traversal.
-func (s *s3Store) bodyPath(bucket, key string) string {
-	h := sha256.Sum256([]byte(key))
-	return filepath.Join(s.bodyDir, bucket, hex.EncodeToString(h[:]))
+// deleteObjectRecord removes only the key's current-version pointer, leaving
+// every s3:versions record and body file alone. Used when a version-targeted
+// delete removes the last version a key had.
+func (s *s3Store) deleteObjectRecord(ctx context.Context, bucket, key string) *protocol.AWSError {
+	if err := s.store.Delete(ctx, nsObjects, objectStoreKey(bucket, key)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
 }
 
-// copyBody copies one object's body file to another while computing the MD5
+// ---- Body file helpers -----------------------------------------------------
+
+// bodyPath returns the on-disk path for one version's body.
+//
+// Uses SHA-256 of the key to avoid filesystem issues with special characters,
+// deeply nested paths, or path traversal. The version id is appended for every
+// version but the null one, whose path is left exactly where an unversioned
+// object's body has always been — a key has at most one null version, so there
+// is nothing to disambiguate, and objects written before version history
+// existed stay readable without moving a byte.
+func (s *s3Store) bodyPath(bucket, key, versionID string) string {
+	h := sha256.Sum256([]byte(key))
+	name := hex.EncodeToString(h[:])
+	if versionID != "" {
+		name += "." + versionID
+	}
+	return filepath.Join(s.bodyDir, bucket, name)
+}
+
+// copyBody copies one version's body file to another while computing the MD5
 // ETag in a single streaming pass. Returns the ETag and byte count.
-func (s *s3Store) copyBody(srcBucket, srcKey, dstBucket, dstKey string) (etag string, n int64, err error) {
-	src, err := os.Open(s.bodyPath(srcBucket, srcKey))
+func (s *s3Store) copyBody(src, dst *Object) (etag string, n int64, err error) {
+	srcBucket, srcKey, dstBucket, dstKey := src.Bucket, src.Key, dst.Bucket, dst.Key
+	srcFile, err := os.Open(s.bodyPath(srcBucket, srcKey, src.VersionID))
 	if err != nil {
 		return "", 0, fmt.Errorf("s3: open source body %s/%s: %w", srcBucket, srcKey, err)
 	}
-	defer src.Close()
+	defer srcFile.Close()
 
-	dstPath := s.bodyPath(dstBucket, dstKey)
+	dstPath := s.bodyPath(dstBucket, dstKey, dst.VersionID)
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return "", 0, fmt.Errorf("s3: create body dir for %s/%s: %w", dstBucket, dstKey, err)
 	}
 
-	dst, err := os.Create(dstPath)
+	dstFile, err := os.Create(dstPath)
 	if err != nil {
 		return "", 0, fmt.Errorf("s3: create dest body %s/%s: %w", dstBucket, dstKey, err)
 	}
 
 	h := md5.New()
-	w := io.MultiWriter(dst, h)
-	n, err = io.Copy(w, src)
-	if cerr := dst.Close(); cerr != nil && err == nil {
+	w := io.MultiWriter(dstFile, h)
+	n, err = io.Copy(w, srcFile)
+	if cerr := dstFile.Close(); cerr != nil && err == nil {
 		err = cerr
 	}
 	if err != nil {

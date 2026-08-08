@@ -12,7 +12,6 @@ import (
 	"encoding/xml"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -464,6 +463,12 @@ func (h *Handler) buildListPage(ctx context.Context, bucket, prefix, delimiter, 
 		}
 
 		for _, obj := range objs {
+			if obj.DeleteMarker {
+				// A key whose current version is a delete marker is absent as
+				// far as ListObjects is concerned: AWS surfaces markers only
+				// through ListObjectVersions.
+				continue
+			}
 			effectiveKey := obj.Key
 			isPrefix := false
 			cpKey := ""
@@ -667,117 +672,14 @@ func (h *Handler) GetBucketVersioning(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteXML(w, r, http.StatusOK, resp)
 }
 
-// listVersionsResult is the XML envelope for ListObjectVersions.
-type listVersionsResult struct {
-	XMLName             xml.Name       `xml:"ListVersionsResult"`
-	Xmlns               string         `xml:"xmlns,attr"`
-	Name                string         `xml:"Name"`
-	Prefix              string         `xml:"Prefix"`
-	KeyMarker           string         `xml:"KeyMarker"`
-	VersionIdMarker     string         `xml:"VersionIdMarker"`
-	NextKeyMarker       string         `xml:"NextKeyMarker,omitempty"`
-	NextVersionIdMarker string         `xml:"NextVersionIdMarker,omitempty"`
-	MaxKeys             int            `xml:"MaxKeys"`
-	IsTruncated         bool           `xml:"IsTruncated"`
-	Versions            []versionEntry `xml:"Version"`
-}
-
-type versionEntry struct {
-	Key          string    `xml:"Key"`
-	VersionId    string    `xml:"VersionId"`
-	IsLatest     bool      `xml:"IsLatest"`
-	LastModified time.Time `xml:"LastModified"`
-	ETag         string    `xml:"ETag"`
-	Size         int64     `xml:"Size"`
-	StorageClass string    `xml:"StorageClass"`
-}
-
-// ListObjectVersions handles GET /{bucket}?versions.
-// AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html
-//
-// The store does not support true multi-versioning: each key has exactly one
-// live object stored. So every object is returned as a Version entry with
-// VersionId="null" and IsLatest=true. This satisfies the AWS SDK cleanup
-// pattern (ListObjectVersions → DeleteObjects) without requiring a full
-// versioning store redesign.
-func (h *Handler) ListObjectVersions(w http.ResponseWriter, r *http.Request) {
-	bucket := chi.URLParam(r, "bucket")
-	prefix := serviceutil.QueryString(r, "prefix", "")
-	keyMarker := serviceutil.QueryString(r, "key-marker", "")
-	maxKeys := serviceutil.QueryInt(r, "max-keys", 1000)
-
-	exists, aerr := h.store.bucketExists(r.Context(), bucket)
-	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
-		return
-	}
-	if !exists {
-		protocol.WriteXMLError(w, r, errNoSuchBucket(bucket))
-		return
-	}
-
-	allObjects, aerr := h.store.listObjects(r.Context(), bucket, prefix)
-	if aerr != nil {
-		protocol.WriteXMLError(w, r, aerr)
-		return
-	}
-
-	// Sort lexicographically for deterministic pagination.
-	sort.Slice(allObjects, func(i, j int) bool { return allObjects[i].Key < allObjects[j].Key })
-
-	// Apply key-marker: skip all keys <= keyMarker.
-	if keyMarker != "" {
-		i := 0
-		for i < len(allObjects) && allObjects[i].Key <= keyMarker {
-			i++
-		}
-		allObjects = allObjects[i:]
-	}
-
-	// Collect up to maxKeys+1 entries to detect truncation.
-	cap := maxKeys + 1
-	if len(allObjects) < cap {
-		cap = len(allObjects)
-	}
-	entries := allObjects[:cap]
-	truncated := len(entries) > maxKeys
-	if truncated {
-		entries = entries[:maxKeys]
-	}
-
-	versions := make([]versionEntry, len(entries))
-	for i, obj := range entries {
-		versions[i] = versionEntry{
-			Key:          obj.Key,
-			VersionId:    "null",
-			IsLatest:     true,
-			LastModified: obj.LastModified,
-			ETag:         obj.ETag,
-			Size:         obj.ContentLength,
-			StorageClass: obj.effectiveStorageClass(),
-		}
-	}
-
-	var nextKeyMarker string
-	if truncated && len(versions) > 0 {
-		nextKeyMarker = versions[len(versions)-1].Key
-	}
-
-	resp := &listVersionsResult{
-		Xmlns:         "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:          bucket,
-		Prefix:        prefix,
-		KeyMarker:     keyMarker,
-		NextKeyMarker: nextKeyMarker,
-		MaxKeys:       maxKeys,
-		IsTruncated:   truncated,
-		Versions:      versions,
-	}
-	protocol.WriteXML(w, r, http.StatusOK, resp)
-}
-
 // PutBucketVersioning handles PUT /{bucket}?versioning.
 // AWS docs: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html
+//
+// The three states are not a simple on/off. A bucket starts with no status at
+// all and has never had versions; Enabled mints a version id for every write;
+// Suspended keeps the versions already recorded and writes new objects as the
+// null version, which is a different thing from returning to the unversioned
+// state — that transition does not exist on AWS and does not exist here.
 func (h *Handler) PutBucketVersioning(w http.ResponseWriter, r *http.Request) {
 	bucket := chi.URLParam(r, "bucket")
 	var req versioningConfigurationXML
@@ -785,7 +687,7 @@ func (h *Handler) PutBucketVersioning(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteXMLError(w, r, protocol.ErrInvalidArgument("malformed XML"))
 		return
 	}
-	if req.Status != "Enabled" && req.Status != "Suspended" {
+	if req.Status != versioningEnabled && req.Status != versioningSuspended {
 		protocol.WriteXMLError(w, r, &protocol.AWSError{
 			Code:       "MalformedXML",
 			Message:    "The XML you provided was not well-formed or did not validate against our published schema",
@@ -800,6 +702,13 @@ func (h *Handler) PutBucketVersioning(w http.ResponseWriter, r *http.Request) {
 	}
 	b.VersioningStatus = req.Status
 	if aerr := h.store.putBucket(r.Context(), b); aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+	// Objects the bucket already held are the null versions of their keys, as
+	// on AWS. Giving them their place in the history here means the very next
+	// ListObjectVersions sees one ordered history rather than two half-worlds.
+	if aerr := h.ensureVersionHistory(r.Context(), b); aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
