@@ -2295,7 +2295,11 @@ func setParentRequestID(ctx context.Context, req *http.Request) {
 // internalRequest dispatches an HTTP request to the emulator router.
 // The region parameter is forwarded via X-Overcast-Region so that services
 // build ARNs in the correct region.
-func internalRequest(ctx context.Context, router http.Handler, region, method, path, contentType string, body []byte) (*httptest.ResponseRecorder, error) {
+//
+// extra carries operation parameters a service models as request headers
+// rather than in the body — S3's x-amz-transition-default-minimum-object-size,
+// for example. It is variadic so the common headerless call stays unchanged.
+func internalRequest(ctx context.Context, router http.Handler, region, method, path, contentType string, body []byte, extra ...http.Header) (*httptest.ResponseRecorder, error) {
 	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -2305,6 +2309,13 @@ func internalRequest(ctx context.Context, router http.Handler, region, method, p
 	}
 	if region != "" {
 		req.Header.Set("X-Overcast-Region", region)
+	}
+	for _, header := range extra {
+		for name, values := range header {
+			for _, value := range values {
+				req.Header.Add(name, value)
+			}
+		}
 	}
 	setParentRequestID(ctx, req)
 	start := time.Now()

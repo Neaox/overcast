@@ -85,9 +85,19 @@ type lifecycleNoncurrentExpirationXMLT struct {
 
 func putLifecycle(t *testing.T, srv *helpers.TestServer, bucket, body string) *http.Response {
 	t.Helper()
-	resp, err := http.DefaultClient.Do(put(srv, "/"+bucket+"?lifecycle", []byte(body), map[string]string{
-		"Content-Type": "application/xml",
-	}))
+	return putLifecycleWithHeaders(t, srv, bucket, body, nil)
+}
+
+// putLifecycleWithHeaders is putLifecycle plus request headers, for the
+// x-amz-transition-default-minimum-object-size parameter, which
+// PutBucketLifecycleConfiguration takes as a header rather than in the body.
+func putLifecycleWithHeaders(t *testing.T, srv *helpers.TestServer, bucket, body string, extra map[string]string) *http.Response {
+	t.Helper()
+	headers := map[string]string{"Content-Type": "application/xml"}
+	for name, value := range extra {
+		headers[name] = value
+	}
+	resp, err := http.DefaultClient.Do(put(srv, "/"+bucket+"?lifecycle", []byte(body), headers))
 	if err != nil {
 		t.Fatalf("PutBucketLifecycleConfiguration %q: %v", bucket, err)
 	}
@@ -364,6 +374,112 @@ func TestPutBucketLifecycleConfiguration_replacesPreviousConfiguration(t *testin
 	if len(cfg.Rules) != 1 || cfg.Rules[0].ID != "second" || cfg.Rules[0].Status != "Disabled" {
 		t.Fatalf("rules = %+v, want the single replacement rule", cfg.Rules)
 	}
+}
+
+// ---- Transition default minimum object size --------------------------------
+//
+// x-amz-transition-default-minimum-object-size is a request header on
+// PutBucketLifecycleConfiguration and a response header on both that operation
+// and GetBucketLifecycleConfiguration
+// (com.amazonaws.s3#PutBucketLifecycleConfigurationRequest,
+// #PutBucketLifecycleConfigurationOutput and
+// #GetBucketLifecycleConfigurationOutput in the pinned model). Its enum is
+// varies_by_storage_class | all_storage_classes_128K
+// (com.amazonaws.s3#TransitionDefaultMinimumObjectSize).
+
+const transitionMinimumHeader = "x-amz-transition-default-minimum-object-size"
+
+func TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeRoundTrip(t *testing.T) {
+	// Given: a bucket and a configuration sent with the non-default behaviour
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lc-min-size")
+
+	// When: the header selects varies_by_storage_class
+	putResp := putLifecycleWithHeaders(t, srv, "lc-min-size", oneDayExpiryConfig, map[string]string{
+		transitionMinimumHeader: "varies_by_storage_class",
+	})
+	defer putResp.Body.Close()
+	helpers.AssertStatus(t, putResp, http.StatusOK)
+
+	// Then: Put echoes it back, as PutBucketLifecycleConfigurationOutput does
+	if got := putResp.Header.Get(transitionMinimumHeader); got != "varies_by_storage_class" {
+		t.Errorf("Put %s = %q, want varies_by_storage_class", transitionMinimumHeader, got)
+	}
+
+	// And: Get reports the stored setting on the same header
+	getResp := getLifecycle(t, srv, "lc-min-size")
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusOK)
+	if got := getResp.Header.Get(transitionMinimumHeader); got != "varies_by_storage_class" {
+		t.Errorf("Get %s = %q, want varies_by_storage_class", transitionMinimumHeader, got)
+	}
+}
+
+func TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeDefaults(t *testing.T) {
+	// Given: a bucket and a configuration sent without the header
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lc-min-size-default")
+
+	// When: the configuration is stored
+	putResp := putLifecycle(t, srv, "lc-min-size-default", oneDayExpiryConfig)
+	defer putResp.Body.Close()
+	helpers.AssertStatus(t, putResp, http.StatusOK)
+
+	// Then: both operations report AWS's default behaviour rather than nothing
+	if got := putResp.Header.Get(transitionMinimumHeader); got != "all_storage_classes_128K" {
+		t.Errorf("Put %s = %q, want all_storage_classes_128K", transitionMinimumHeader, got)
+	}
+	getResp := getLifecycle(t, srv, "lc-min-size-default")
+	defer getResp.Body.Close()
+	if got := getResp.Header.Get(transitionMinimumHeader); got != "all_storage_classes_128K" {
+		t.Errorf("Get %s = %q, want all_storage_classes_128K", transitionMinimumHeader, got)
+	}
+}
+
+func TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeIsReplaced(t *testing.T) {
+	// Given: a bucket configured with the non-default behaviour
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lc-min-size-replace")
+	first := putLifecycleWithHeaders(t, srv, "lc-min-size-replace", oneDayExpiryConfig, map[string]string{
+		transitionMinimumHeader: "varies_by_storage_class",
+	})
+	first.Body.Close()
+	helpers.AssertStatus(t, first, http.StatusOK)
+
+	// When: a later Put omits the header
+	second := putLifecycle(t, srv, "lc-min-size-replace", oneDayExpiryConfig)
+	defer second.Body.Close()
+	helpers.AssertStatus(t, second, http.StatusOK)
+
+	// Then: the configuration is replaced wholesale, so the setting reverts to
+	// the default rather than surviving from the previous configuration
+	getResp := getLifecycle(t, srv, "lc-min-size-replace")
+	defer getResp.Body.Close()
+	if got := getResp.Header.Get(transitionMinimumHeader); got != "all_storage_classes_128K" {
+		t.Errorf("Get %s = %q, want all_storage_classes_128K after a Put without the header",
+			transitionMinimumHeader, got)
+	}
+}
+
+func TestPutBucketLifecycleConfiguration_rejectsUnknownTransitionDefaultMinimumObjectSize(t *testing.T) {
+	// Given: a bucket and a value outside the model's enum
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lc-min-size-invalid")
+
+	// When: the configuration is put with it
+	resp := putLifecycleWithHeaders(t, srv, "lc-min-size-invalid", oneDayExpiryConfig, map[string]string{
+		transitionMinimumHeader: "all_storage_classes_1M",
+	})
+	defer resp.Body.Close()
+
+	// Then: S3 refuses the request rather than storing an unmodelled behaviour
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertXMLError(t, resp, "InvalidArgument")
+
+	// And: nothing was stored
+	getResp := getLifecycle(t, srv, "lc-min-size-invalid")
+	defer getResp.Body.Close()
+	helpers.AssertStatus(t, getResp, http.StatusNotFound)
 }
 
 // ---- Validation ------------------------------------------------------------

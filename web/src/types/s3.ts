@@ -80,6 +80,40 @@ export interface S3LifecycleRule {
 
 export interface BucketLifecycleConfiguration {
   rules: S3LifecycleRule[]
+  /**
+   * The x-amz-transition-default-minimum-object-size behaviour in force. S3
+   * reports one on every GetBucketLifecycleConfiguration, defaulting to
+   * `all_storage_classes_128K`.
+   */
+  transitionDefaultMinimumObjectSize: string
+}
+
+export interface S3WebsiteRedirect {
+  hostName?: string
+  httpRedirectCode?: string
+  protocol?: string
+  replaceKeyPrefixWith?: string
+  replaceKeyWith?: string
+}
+
+export interface S3WebsiteRoutingRule {
+  condition?: {
+    httpErrorCodeReturnedEquals?: string
+    keyPrefixEquals?: string
+  }
+  redirect: S3WebsiteRedirect
+}
+
+/**
+ * The bucket's website configuration. AWS's two forms are mutually exclusive:
+ * `redirectAllRequestsTo` on its own, or an index document with an optional
+ * error document and routing rules.
+ */
+export interface BucketWebsiteConfiguration {
+  indexDocument?: string
+  errorDocument?: string
+  redirectAllRequestsTo?: { hostName: string; protocol?: string }
+  routingRules: S3WebsiteRoutingRule[]
 }
 
 export interface NotificationFilterRule {
@@ -112,4 +146,10 @@ export interface BucketNotificationConfig {
   queueConfigurations: QueueNotificationConfig[]
   topicConfigurations: TopicNotificationConfig[]
   lambdaConfigurations: LambdaNotificationConfig[]
+  /**
+   * Whether the bucket sends every object event to the default EventBridge
+   * bus. AWS models this as the presence of an empty `EventBridgeConfiguration`
+   * element, so there is nothing else to carry.
+   */
+  eventBridgeEnabled: boolean
 }

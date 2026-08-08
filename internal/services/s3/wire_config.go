@@ -44,12 +44,5 @@ func MarshalCORSConfiguration(rules []CORSRule) ([]byte, error) {
 
 // MarshalWebsiteConfiguration serializes a PutBucketWebsite request.
 func MarshalWebsiteConfiguration(cfg *WebsiteConfiguration) ([]byte, error) {
-	request := websiteConfigurationXML{Xmlns: s3XMLNamespace}
-	if cfg.IndexDocument != "" {
-		request.IndexDocument = &indexDocumentXML{Suffix: cfg.IndexDocument}
-	}
-	if cfg.ErrorDocument != "" {
-		request.ErrorDocument = &errorDocumentXML{Key: cfg.ErrorDocument}
-	}
-	return xml.Marshal(request)
+	return xml.Marshal(websiteConfigurationToXML(cfg, s3XMLNamespace))
 }

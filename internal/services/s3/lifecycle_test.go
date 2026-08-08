@@ -362,9 +362,13 @@ func TestSweepLifecycle_disabledRuleIsInert(t *testing.T) {
 }
 
 func TestSweepLifecycle_transitionMarksStorageClassWithoutDeleting(t *testing.T) {
-	// Given: a transition-only rule
+	// Given: a transition-only rule and an object above AWS's 128 KB default
+	// minimum transition size, so the rule is the only thing under test
 	h, mock, ctx := newLifecycleTestHandler(t)
-	seedObject(t, h, ctx, &Object{Bucket: "b", Key: "cold.bin", LastModified: mock.Now().UTC()})
+	seedObject(t, h, ctx, &Object{
+		Bucket: "b", Key: "cold.bin", LastModified: mock.Now().UTC(),
+		ContentLength: transitionDefaultMinimumBytes,
+	})
 	rule := enabledRule("chill", "")
 	rule.Transitions = []LifecycleTransition{{Days: 1, StorageClass: "GLACIER"}}
 	seedLifecycle(t, h, ctx, "b", &LifecycleConfiguration{Rules: []LifecycleRule{rule}})
@@ -383,6 +387,91 @@ func TestSweepLifecycle_transitionMarksStorageClassWithoutDeleting(t *testing.T)
 		t.Errorf("storage class = %q, want GLACIER", got)
 	}
 }
+
+// ---- Transition default minimum object size --------------------------------
+//
+// AWS: "all_storage_classes_128K — Objects smaller than 128 KB will not
+// transition to any storage class by default. varies_by_storage_class —
+// Objects smaller than 128 KB will transition to Glacier Flexible Retrieval or
+// Glacier Deep Archive storage classes. By default, all other storage classes
+// will prevent transitions smaller than 128 KB. […] To customize the minimum
+// object size for any transition you can add a filter that specifies a custom
+// ObjectSizeGreaterThan or ObjectSizeLessThan in the body of your transition
+// rule. Custom filters always take precedence over the default transition
+// behavior." (com.amazonaws.s3#PutBucketLifecycleConfigurationRequest
+// $TransitionDefaultMinimumObjectSize, pinned model revision in
+// models/aws/VERSION.)
+
+// seedSmallTransitioningBucket seeds one sub-128 KB object under a due
+// transition to storageClass, with the given default-minimum behaviour.
+func seedSmallTransitioningBucket(t *testing.T, defaultMinimum, storageClass string, filter *LifecycleFilter) (*Handler, context.Context) {
+	t.Helper()
+	h, mock, ctx := newLifecycleTestHandler(t)
+	seedObject(t, h, ctx, &Object{
+		Bucket: "b", Key: "small.bin", LastModified: mock.Now().UTC(),
+		ContentLength: transitionDefaultMinimumBytes - 1,
+	})
+	rule := LifecycleRule{ID: "chill", Status: lifecycleStatusEnabled, Filter: filter}
+	if filter == nil {
+		rule.Filter = &LifecycleFilter{}
+	}
+	rule.Transitions = []LifecycleTransition{{Days: 1, StorageClass: storageClass}}
+	seedLifecycle(t, h, ctx, "b", &LifecycleConfiguration{
+		Rules:                              []LifecycleRule{rule},
+		TransitionDefaultMinimumObjectSize: defaultMinimum,
+	})
+	mock.Add(50 * time.Hour)
+	h.sweepLifecycle(ctx)
+	return h, ctx
+}
+
+func assertStorageClass(t *testing.T, h *Handler, ctx context.Context, want string) {
+	t.Helper()
+	obj, aerr := h.store.getObjectMeta(ctx, "b", "small.bin")
+	if aerr != nil {
+		t.Fatalf("object was deleted by a transition-only rule: %v", aerr)
+	}
+	if got := obj.effectiveStorageClass(); got != want {
+		t.Errorf("storage class = %q, want %q", got, want)
+	}
+}
+
+func TestSweepLifecycle_defaultMinimumSizeBlocksSmallTransitions(t *testing.T) {
+	// Given/When: a sub-128 KB object under the default behaviour
+	h, ctx := seedSmallTransitioningBucket(t, transitionDefaultMinimumAll128K, "GLACIER", nil)
+
+	// Then: it stays in STANDARD — AWS does not transition it
+	assertStorageClass(t, h, ctx, storageClassStandard)
+}
+
+func TestSweepLifecycle_variesByStorageClassTransitionsSmallObjectsToGlacier(t *testing.T) {
+	// Given/When: the same object under varies_by_storage_class
+	h, ctx := seedSmallTransitioningBucket(t, transitionDefaultMinimumVaries, "DEEP_ARCHIVE", nil)
+
+	// Then: the Glacier classes are exempted from the 128 KB minimum
+	assertStorageClass(t, h, ctx, "DEEP_ARCHIVE")
+}
+
+func TestSweepLifecycle_variesByStorageClassStillBlocksOtherClasses(t *testing.T) {
+	// Given/When: varies_by_storage_class but a non-Glacier destination
+	h, ctx := seedSmallTransitioningBucket(t, transitionDefaultMinimumVaries, "STANDARD_IA", nil)
+
+	// Then: "all other storage classes will prevent transitions smaller than
+	// 128 KB" — the object is untouched
+	assertStorageClass(t, h, ctx, storageClassStandard)
+}
+
+func TestSweepLifecycle_explicitSizeFilterOverridesTheDefaultMinimum(t *testing.T) {
+	// Given/When: a rule whose own filter names an object-size bound
+	h, ctx := seedSmallTransitioningBucket(t, transitionDefaultMinimumAll128K, "GLACIER",
+		&LifecycleFilter{ObjectSizeGreaterThan: int64Ptr(0)})
+
+	// Then: "custom filters always take precedence over the default transition
+	// behavior" — the small object transitions
+	assertStorageClass(t, h, ctx, "GLACIER")
+}
+
+func int64Ptr(v int64) *int64 { return &v }
 
 func TestSweepLifecycle_expirationBeatsTransition(t *testing.T) {
 	// Given: a rule that both transitions and expires the same object, with

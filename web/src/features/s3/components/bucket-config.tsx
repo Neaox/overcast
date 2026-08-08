@@ -18,12 +18,15 @@ import {
   Check,
   Plus,
   Timer,
+  Globe,
+  Radio,
 } from "lucide-react"
 import { useNavigate } from "@tanstack/react-router"
 import { Route } from "@/routes/s3/$bucket/config"
 import {
   s3BucketNotificationQueryOptions,
   s3BucketLifecycleQueryOptions,
+  s3BucketWebsiteQueryOptions,
   s3Keys,
   putBucketNotificationMutationOptions,
 } from "@/features/s3/data"
@@ -53,6 +56,8 @@ import type {
   NotificationFilterRule,
   BucketNotificationConfig,
   S3LifecycleRule,
+  BucketWebsiteConfiguration,
+  S3WebsiteRoutingRule,
   SQSQueue,
 } from "@/types"
 import { sectionLabel } from "@/lib/typography"
@@ -178,6 +183,7 @@ function AddNotificationDialog({
       queueConfigurations,
       topicConfigurations: existing.topicConfigurations,
       lambdaConfigurations: existing.lambdaConfigurations,
+      eventBridgeEnabled: existing.eventBridgeEnabled,
     })
   }
 
@@ -337,6 +343,7 @@ export function BucketConfig() {
 
   const { data, isLoading } = useQuery(s3BucketNotificationQueryOptions(bucket))
   const { data: lifecycle } = useQuery(s3BucketLifecycleQueryOptions(bucket))
+  const { data: website } = useQuery(s3BucketWebsiteQueryOptions(bucket))
 
   const deleteMut = useMutation({
     ...putBucketNotificationMutationOptions(bucket),
@@ -354,13 +361,15 @@ export function BucketConfig() {
       queueConfigurations: data.queueConfigurations.filter((q) => q.queueArn !== arn),
       topicConfigurations: data.topicConfigurations,
       lambdaConfigurations: data.lambdaConfigurations,
+      eventBridgeEnabled: data.eventBridgeEnabled,
     })
   }
 
   const hasConfig =
     (data?.queueConfigurations.length ?? 0) > 0 ||
     (data?.topicConfigurations.length ?? 0) > 0 ||
-    (data?.lambdaConfigurations.length ?? 0) > 0
+    (data?.lambdaConfigurations.length ?? 0) > 0 ||
+    (data?.eventBridgeEnabled ?? false)
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -398,7 +407,11 @@ export function BucketConfig() {
               </Button>
             }
           />
-          <LifecycleRules rules={lifecycle?.rules ?? []} />
+          <LifecycleRules
+            rules={lifecycle?.rules ?? []}
+            transitionDefaultMinimumObjectSize={lifecycle?.transitionDefaultMinimumObjectSize}
+          />
+          <WebsiteConfigurationPanel config={website ?? null} />
         </div>
       ) : (
         <div className="flex flex-col gap-6">
@@ -433,6 +446,19 @@ export function BucketConfig() {
             </ConfigSection>
           )}
 
+          {data?.eventBridgeEnabled && (
+            <ConfigSection title="EventBridge" icon={<Radio className="h-4 w-4 text-orange-400" />}>
+              <div className="flex flex-col gap-3 px-4 py-3">
+                <ConfigRow label="Destination">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <ArnLink arn="arn:aws:events:::event-bus/default" />
+                    <span className="text-xs text-fg-subtle">every object event, unfiltered</span>
+                  </span>
+                </ConfigRow>
+              </div>
+            </ConfigSection>
+          )}
+
           {(data?.lambdaConfigurations.length ?? 0) > 0 && (
             <ConfigSection
               title="Lambda Destinations"
@@ -444,7 +470,11 @@ export function BucketConfig() {
             </ConfigSection>
           )}
 
-          <LifecycleRules rules={lifecycle?.rules ?? []} />
+          <LifecycleRules
+            rules={lifecycle?.rules ?? []}
+            transitionDefaultMinimumObjectSize={lifecycle?.transitionDefaultMinimumObjectSize}
+          />
+          <WebsiteConfigurationPanel config={website ?? null} />
         </div>
       )}
 
@@ -455,7 +485,12 @@ export function BucketConfig() {
           setEditingQueue(undefined)
         }}
         existing={
-          data ?? { queueConfigurations: [], topicConfigurations: [], lambdaConfigurations: [] }
+          data ?? {
+            queueConfigurations: [],
+            topicConfigurations: [],
+            lambdaConfigurations: [],
+            eventBridgeEnabled: false,
+          }
         }
         bucket={bucket}
         editing={editingQueue}
@@ -473,11 +508,33 @@ export function BucketConfig() {
  * CDK/CloudFormation stack rather than here; what this panel is for is making
  * visible that objects in this bucket are on a clock.
  */
-function LifecycleRules({ rules }: { rules: S3LifecycleRule[] }) {
+function LifecycleRules({
+  rules,
+  transitionDefaultMinimumObjectSize,
+}: {
+  rules: S3LifecycleRule[]
+  transitionDefaultMinimumObjectSize?: string
+}) {
   if (rules.length === 0) return null
 
   return (
     <ConfigSection title="Lifecycle Rules" icon={<Timer className="h-4 w-4 text-sky-400" />}>
+      {transitionDefaultMinimumObjectSize && (
+        <div className="flex flex-col gap-3 px-4 py-3">
+          <ConfigRow label="Default minimum transition size">
+            <span className="flex flex-wrap items-center gap-2">
+              <Badge variant="default" className="font-mono text-[10px]">
+                {transitionDefaultMinimumObjectSize}
+              </Badge>
+              <span className="text-xs text-fg-subtle">
+                {transitionDefaultMinimumObjectSize === "varies_by_storage_class"
+                  ? "objects under 128 KB still transition to the Glacier classes"
+                  : "objects under 128 KB do not transition"}
+              </span>
+            </span>
+          </ConfigRow>
+        </div>
+      )}
       {rules.map((rule) => {
         const actions = describeLifecycleActions(rule)
         return (
@@ -514,6 +571,109 @@ function LifecycleRules({ rules }: { rules: S3LifecycleRule[] }) {
         )
       })}
     </ConfigSection>
+  )
+}
+
+// ─── Website configuration ────────────────────────────────────────────────────
+
+/**
+ * WebsiteConfigurationPanel — read-only view of `GetBucketWebsite`.
+ *
+ * Overcast stores and returns the whole document but serves no S3 website
+ * endpoint, so this panel is what makes a deployed redirect or routing rule
+ * visible at all.
+ */
+function WebsiteConfigurationPanel({ config }: { config: BucketWebsiteConfiguration | null }) {
+  if (!config) return null
+
+  return (
+    <ConfigSection
+      title="Website Configuration"
+      icon={<Globe className="h-4 w-4 text-emerald-400" />}
+    >
+      {config.redirectAllRequestsTo && (
+        <div className="flex flex-col gap-3 px-4 py-3">
+          <ConfigRow label="Redirect all requests to">
+            <span className="font-mono text-xs text-fg">
+              {config.redirectAllRequestsTo.protocol
+                ? `${config.redirectAllRequestsTo.protocol}://${config.redirectAllRequestsTo.hostName}`
+                : config.redirectAllRequestsTo.hostName}
+            </span>
+          </ConfigRow>
+        </div>
+      )}
+
+      {(config.indexDocument ?? config.errorDocument) && (
+        <div className="flex flex-col gap-3 px-4 py-3">
+          {config.indexDocument && (
+            <ConfigRow label="Index document">
+              <span className="font-mono text-xs text-fg">{config.indexDocument}</span>
+            </ConfigRow>
+          )}
+          {config.errorDocument && (
+            <ConfigRow label="Error document">
+              <span className="font-mono text-xs text-fg">{config.errorDocument}</span>
+            </ConfigRow>
+          )}
+        </div>
+      )}
+
+      {config.routingRules.map((rule, i) => (
+        <RoutingRuleRow key={i} index={i} rule={rule} />
+      ))}
+    </ConfigSection>
+  )
+}
+
+function RoutingRuleRow({ index, rule }: { index: number; rule: S3WebsiteRoutingRule }) {
+  const conditions: string[] = []
+  if (rule.condition?.keyPrefixEquals) {
+    conditions.push(`KeyPrefixEquals=${rule.condition.keyPrefixEquals}`)
+  }
+  if (rule.condition?.httpErrorCodeReturnedEquals) {
+    conditions.push(`HttpErrorCodeReturnedEquals=${rule.condition.httpErrorCodeReturnedEquals}`)
+  }
+
+  const redirect: string[] = []
+  if (rule.redirect.protocol) redirect.push(`Protocol=${rule.redirect.protocol}`)
+  if (rule.redirect.hostName) redirect.push(`HostName=${rule.redirect.hostName}`)
+  if (rule.redirect.httpRedirectCode) {
+    redirect.push(`HttpRedirectCode=${rule.redirect.httpRedirectCode}`)
+  }
+  if (rule.redirect.replaceKeyWith) redirect.push(`ReplaceKeyWith=${rule.redirect.replaceKeyWith}`)
+  if (rule.redirect.replaceKeyPrefixWith) {
+    redirect.push(`ReplaceKeyPrefixWith=${rule.redirect.replaceKeyPrefixWith}`)
+  }
+
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <ChevronRight className="h-3 w-3 shrink-0 text-fg-subtle" />
+        <span className="truncate font-mono text-sm text-fg">Routing rule {index + 1}</span>
+      </div>
+      <ConfigRow label="When">
+        {conditions.length === 0 ? (
+          <span className="font-mono text-xs text-fg-subtle">every request</span>
+        ) : (
+          <BadgeList values={conditions} />
+        )}
+      </ConfigRow>
+      <ConfigRow label="Redirect">
+        <BadgeList values={redirect} />
+      </ConfigRow>
+    </div>
+  )
+}
+
+function BadgeList({ values }: { values: string[] }) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {values.map((value) => (
+        <Badge key={value} variant="default" className="font-mono text-[10px]">
+          {value}
+        </Badge>
+      ))}
+    </div>
   )
 }
 

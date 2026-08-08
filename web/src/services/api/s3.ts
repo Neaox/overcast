@@ -12,6 +12,7 @@ import {
   GetBucketNotificationConfigurationCommand,
   PutBucketNotificationConfigurationCommand,
   GetBucketLifecycleConfigurationCommand,
+  GetBucketWebsiteCommand,
   type Event as S3Event,
   type BucketLocationConstraint,
   type FilterRuleName,
@@ -25,6 +26,7 @@ import type {
   NotificationFilterRule,
   BucketNotificationConfig,
   BucketLifecycleConfiguration,
+  BucketWebsiteConfiguration,
   S3LifecycleFilter,
   S3LifecycleRule,
 } from "@/types"
@@ -264,6 +266,7 @@ export const s3 = {
             value: r.Value ?? "",
           })) ?? [],
       })),
+      eventBridgeEnabled: res.EventBridgeConfiguration !== undefined,
     } as BucketNotificationConfig
   },
 
@@ -302,6 +305,10 @@ export const s3 = {
             Events: l.events as S3Event[],
             Filter: toFilterRules(l.filterRules),
           })),
+          // Put replaces the whole configuration, so an omitted element turns
+          // EventBridge delivery off. Echo it back rather than clearing it
+          // behind the user's back when they edit an SQS destination.
+          EventBridgeConfiguration: config.eventBridgeEnabled ? {} : undefined,
         },
       }),
     )
@@ -318,9 +325,52 @@ export const s3 = {
       const res = await awsClients
         .s3()
         .send(new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }))
-      return { rules: (res.Rules ?? []).map(toLifecycleRule) }
+      return {
+        rules: (res.Rules ?? []).map(toLifecycleRule),
+        transitionDefaultMinimumObjectSize:
+          res.TransitionDefaultMinimumObjectSize ?? "all_storage_classes_128K",
+      }
     } catch (err) {
       if ((err as { name?: string }).name === "NoSuchLifecycleConfiguration") return null
+      throw err
+    }
+  },
+
+  /**
+   * Returns the bucket's website configuration, or null when it has none.
+   * S3 answers NoSuchWebsiteConfiguration rather than an empty document, and
+   * "not a website bucket" is a normal state rather than an error.
+   */
+  getBucketWebsite: async (bucket: string): Promise<BucketWebsiteConfiguration | null> => {
+    try {
+      const res = await awsClients.s3().send(new GetBucketWebsiteCommand({ Bucket: bucket }))
+      return {
+        indexDocument: res.IndexDocument?.Suffix,
+        errorDocument: res.ErrorDocument?.Key,
+        redirectAllRequestsTo: res.RedirectAllRequestsTo?.HostName
+          ? {
+              hostName: res.RedirectAllRequestsTo.HostName,
+              protocol: res.RedirectAllRequestsTo.Protocol,
+            }
+          : undefined,
+        routingRules: (res.RoutingRules ?? []).map((rule) => ({
+          condition: rule.Condition
+            ? {
+                httpErrorCodeReturnedEquals: rule.Condition.HttpErrorCodeReturnedEquals,
+                keyPrefixEquals: rule.Condition.KeyPrefixEquals,
+              }
+            : undefined,
+          redirect: {
+            hostName: rule.Redirect?.HostName,
+            httpRedirectCode: rule.Redirect?.HttpRedirectCode,
+            protocol: rule.Redirect?.Protocol,
+            replaceKeyPrefixWith: rule.Redirect?.ReplaceKeyPrefixWith,
+            replaceKeyWith: rule.Redirect?.ReplaceKeyWith,
+          },
+        })),
+      }
+    } catch (err) {
+      if ((err as { name?: string }).name === "NoSuchWebsiteConfiguration") return null
       throw err
     }
   },

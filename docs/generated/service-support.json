@@ -72,13 +72,13 @@
           "operation": "GetBucketWebsite",
           "category": "Website",
           "status": "⚠️ Partial",
-          "notes": "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"
+          "notes": "Returns the whole configuration — IndexDocument, ErrorDocument, RedirectAllRequestsTo and RoutingRules; Overcast serves no website endpoint, so nothing is actually redirected"
         },
         {
           "operation": "PutBucketWebsite",
           "category": "Website",
           "status": "⚠️ Partial",
-          "notes": "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"
+          "notes": "Stores IndexDocument, ErrorDocument, RedirectAllRequestsTo and RoutingRules with AWS's mutual exclusion and Protocol enum enforced; HttpRedirectCode values are not validated, and Overcast serves no website endpoint"
         },
         {
           "operation": "DeleteBucketWebsite",
@@ -273,13 +273,13 @@
           "operation": "GetBucketLifecycleConfiguration",
           "category": "Lifecycle",
           "status": "✅ Supported",
-          "notes": "NoSuchLifecycleConfiguration when none is set"
+          "notes": "NoSuchLifecycleConfiguration when none is set; reports x-amz-transition-default-minimum-object-size"
         },
         {
           "operation": "PutBucketLifecycleConfiguration",
           "category": "Lifecycle",
           "status": "⚠️ Partial",
-          "notes": "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"
+          "notes": "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; x-amz-transition-default-minimum-object-size gates transitions of objects under 128 KB; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"
         },
         {
           "operation": "DeleteBucketLifecycle",
@@ -296,7 +296,7 @@
           "operation": "PutBucketNotificationConfiguration",
           "category": "Notifications",
           "status": "✅ Supported",
-          "notes": "SQS, SNS, Lambda targets; prefix/suffix filters"
+          "notes": "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. EventBridge events carry AWS's Object Created/Object Deleted shape minus the fields Overcast has no value for"
         }
       ]
     },

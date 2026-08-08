@@ -34,9 +34,9 @@ func init() {
 
 		// Website
 		capabilities.Capability{Service: "s3", Operation: "GetBucketWebsite", Category: "Website",
-			Status: capabilities.StatusPartial, Notes: "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"},
+			Status: capabilities.StatusPartial, Notes: "Returns the whole configuration — IndexDocument, ErrorDocument, RedirectAllRequestsTo and RoutingRules; Overcast serves no website endpoint, so nothing is actually redirected"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketWebsite", Category: "Website",
-			Status: capabilities.StatusPartial, Notes: "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"},
+			Status: capabilities.StatusPartial, Notes: "Stores IndexDocument, ErrorDocument, RedirectAllRequestsTo and RoutingRules with AWS's mutual exclusion and Protocol enum enforced; HttpRedirectCode values are not validated, and Overcast serves no website endpoint"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketWebsite", Category: "Website",
 			Status: capabilities.StatusSupported},
 
@@ -120,9 +120,9 @@ func init() {
 
 		// Lifecycle
 		capabilities.Capability{Service: "s3", Operation: "GetBucketLifecycleConfiguration", Category: "Lifecycle",
-			Status: capabilities.StatusSupported, Notes: "NoSuchLifecycleConfiguration when none is set"},
+			Status: capabilities.StatusSupported, Notes: "NoSuchLifecycleConfiguration when none is set; reports x-amz-transition-default-minimum-object-size"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketLifecycleConfiguration", Category: "Lifecycle",
-			Status: capabilities.StatusPartial, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"},
+			Status: capabilities.StatusPartial, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; x-amz-transition-default-minimum-object-size gates transitions of objects under 128 KB; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketLifecycle", Category: "Lifecycle",
 			Status: capabilities.StatusSupported},
 
@@ -130,6 +130,6 @@ func init() {
 		capabilities.Capability{Service: "s3", Operation: "GetBucketNotificationConfiguration", Category: "Notifications",
 			Status: capabilities.StatusSupported, Notes: "Returns empty config if none set"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketNotificationConfiguration", Category: "Notifications",
-			Status: capabilities.StatusSupported, Notes: "SQS, SNS, Lambda targets; prefix/suffix filters"},
+			Status: capabilities.StatusSupported, Notes: "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. EventBridge events carry AWS's Object Created/Object Deleted shape minus the fields Overcast has no value for"},
 	)
 }

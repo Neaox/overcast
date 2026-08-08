@@ -2,7 +2,7 @@ service: s3
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-05
+last_updated: 2026-08-08
 protocols: [rest_xml]
 implementation: [internal/services/s3]
 integration_tests: [tests/integration/s3]
@@ -81,6 +81,37 @@ operations:
       - name: invalid status enum
         status: fixed
         notes: Values outside Enabled and Suspended return the S3 REST-XML MalformedXML schema-validation error and are not persisted.
+  PutBucketLifecycleConfiguration:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
+    implementation:
+      - internal/services/s3/handler_lifecycle.go
+      - internal/services/s3/lifecycle.go
+    tests:
+      - tests/integration/s3/s3_lifecycle_test.go::TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeRoundTrip
+      - tests/integration/s3/s3_lifecycle_test.go::TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeDefaults
+      - tests/integration/s3/s3_lifecycle_test.go::TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeIsReplaced
+      - tests/integration/s3/s3_lifecycle_test.go::TestPutBucketLifecycleConfiguration_rejectsUnknownTransitionDefaultMinimumObjectSize
+      - internal/services/s3/lifecycle_test.go::TestSweepLifecycle_defaultMinimumSizeBlocksSmallTransitions
+      - internal/services/s3/lifecycle_test.go::TestSweepLifecycle_variesByStorageClassTransitionsSmallObjectsToGlacier
+      - internal/services/s3/lifecycle_test.go::TestSweepLifecycle_variesByStorageClassStillBlocksOtherClasses
+      - internal/services/s3/lifecycle_test.go::TestSweepLifecycle_explicitSizeFilterOverridesTheDefaultMinimum
+      - tests/integration/cloudformation/s3_bucket_properties_test.go::TestS3BucketProperties_transitionDefaultMinimumObjectSizeDispatchesThroughS3
+    scenarios:
+      - name: x-amz-transition-default-minimum-object-size round trip
+        status: fixed
+        notes: >-
+          Accepted on Put and echoed on both Put and Get; an omitted header reads
+          back as AWS's all_storage_classes_128K default, and a value outside the
+          enum returns InvalidArgument without storing anything.
+      - name: default minimum applied by the sweeper
+        status: fixed
+        notes: >-
+          Sub-128 KB objects do not transition under all_storage_classes_128K;
+          under varies_by_storage_class they transition to GLACIER and
+          DEEP_ARCHIVE only. A rule carrying its own ObjectSizeGreaterThan or
+          ObjectSizeLessThan filter takes precedence over the default.
   DeleteBucketCors:
     status: fixed
     aws_docs:
@@ -94,6 +125,82 @@ operations:
       - name: configured bucket
         status: fixed
         notes: Returns 204 and subsequent GetBucketCors returns NoSuchCORSConfiguration.
+  PutBucketNotificationConfiguration:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketNotificationConfiguration.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/userguide/EventBridge.html
+    implementation:
+      - internal/services/s3/handler_notifications.go
+      - internal/services/s3/notifications.go
+    tests:
+      - tests/integration/s3/s3_eventbridge_notification_test.go::TestPutBucketNotificationConfiguration_eventBridgeRoundTrip
+      - tests/integration/s3/s3_eventbridge_notification_test.go::TestGetBucketNotificationConfiguration_omitsEventBridgeWhenNotEnabled
+      - tests/integration/s3/s3_eventbridge_notification_test.go::TestPutBucketNotificationConfiguration_eventBridgeIsClearedByReplacement
+      - tests/integration/s3/s3_eventbridge_notification_test.go::TestPutObject_deliversObjectCreatedToEventBridge
+      - tests/integration/s3/s3_eventbridge_notification_test.go::TestDeleteObject_deliversObjectDeletedToEventBridge
+      - tests/integration/s3/s3_eventbridge_notification_test.go::TestPutObject_noEventBridgeDeliveryWhenNotConfigured
+      - tests/integration/cloudformation/s3_bucket_properties_test.go::TestS3BucketProperties_eventBridgeNotificationDispatchesThroughS3
+    scenarios:
+      - name: EventBridgeConfiguration round trip
+        status: fixed
+        notes: >-
+          Preserved alongside queue, topic and Lambda destinations; omitted from
+          Get when unset, and cleared by a Put that omits it.
+      - name: object events reach the default event bus
+        status: fixed
+        notes: >-
+          Object Created and Object Deleted are published through EventBridge's
+          own delivery path, so rule matching, input transformers, retries and
+          DLQs behave as they do for PutEvents. Delivery is unfiltered, as on AWS.
+      - name: event detail completeness
+        status: intentionally_partial
+        gap: >-
+          request-id, requester, source-ip-address, sequencer and version-id are
+          omitted rather than fabricated. Restore, storage-class, tagging and ACL
+          detail-types have no corresponding Overcast operation and are not emitted.
+  PutBucketWebsite:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketWebsite.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketWebsite.html
+    implementation:
+      - internal/services/s3/handler_website.go
+    tests:
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_redirectAllRequestsToRoundTrip
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_routingRulesRoundTrip
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_replacesTheWholeConfiguration
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_validation
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_rejectedConfigurationIsNotStored
+      - tests/integration/cloudformation/s3_bucket_properties_test.go::TestS3BucketProperties_websiteRedirectAndRoutingRulesDispatchThroughS3
+      - tests/integration/cloudformation/s3_bucket_properties_test.go::TestS3BucketProperties_websiteRedirectAllDispatchesThroughS3
+    scenarios:
+      - name: RedirectAllRequestsTo round trip
+        status: fixed
+        notes: HostName and the optional Protocol are preserved; an omitted Protocol is not serialised as an empty enum.
+      - name: RoutingRules round trip
+        status: fixed
+        notes: >-
+          Condition (HttpErrorCodeReturnedEquals, KeyPrefixEquals) and Redirect
+          (HostName, HttpRedirectCode, Protocol, ReplaceKeyPrefixWith,
+          ReplaceKeyWith) survive in AWS's unflattened RoutingRules/RoutingRule shape.
+      - name: documented mutual exclusion and field constraints
+        status: fixed
+        notes: >-
+          RedirectAllRequestsTo cannot be combined with IndexDocument, ErrorDocument
+          or RoutingRules; one of RedirectAllRequestsTo and IndexDocument is required;
+          Protocol is restricted to the http/https enum; the IndexDocument Suffix must
+          be non-empty and slash-free; a Redirect must name a destination and cannot
+          carry both ReplaceKeyWith and ReplaceKeyPrefixWith; a Condition needs a
+          predicate. Refusals return InvalidArgument and store nothing.
+      - name: Redirect HttpRedirectCode value validation
+        status: intentionally_partial
+        gap: >-
+          Real S3 rejects a code that is not a valid HTTP redirect status. The model
+          does not pin the error, so the value is stored rather than refused.
+      - name: website endpoint serving
+        status: unsupported
+        gap: Overcast stores and returns the configuration but serves no S3 website endpoint.
   DeleteBucketWebsite:
     status: fixed
     aws_docs:
@@ -109,17 +216,19 @@ operations:
         notes: Returns 204 and subsequent GetBucketWebsite returns NoSuchWebsiteConfiguration.
 findings:
   fixed:
+    - PutBucketNotificationConfiguration preserves EventBridgeConfiguration and publishes object events to the default event bus (#635).
+    - PutBucketWebsite/GetBucketWebsite preserve RedirectAllRequestsTo and RoutingRules and enforce AWS's mutual exclusion (#637).
+    - PutBucketLifecycleConfiguration honours x-amz-transition-default-minimum-object-size, reports it on Put and Get, and gates sub-128 KB transitions on it (#636).
     - PutBucketVersioning now rejects invalid status enum values with MalformedXML instead of persisting arbitrary strings.
     - DeleteBucketCors and DeleteBucketWebsite now clear stored configurations and return 204.
     - CloudFormation AWS::S3::Bucket uses the S3 handlers for lifecycle, versioning, notifications, encryption, tags, CORS, and website configuration.
   remaining_gaps:
     - Finish ListObjectsV2 optional-parameter review before marking the operation reviewed.
     - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
-    - EventBridge notification configuration is unsupported (#635).
-    - Lifecycle TransitionDefaultMinimumObjectSize is unsupported (#636).
-    - Website RedirectAllRequestsTo and RoutingRules are unsupported (#637).
     - CORS rule Id and encryption BlockedEncryptionTypes are not represented by the current stored/wire models.
   intentionally_partial:
+    - EventBridge object-event detail omits request-id, requester, source-ip-address, sequencer and version-id, which Overcast has no truthful value for; only Object Created and Object Deleted are emitted.
+    - Website configuration is stored and returned in full, but Overcast serves no S3 website endpoint, so no request is redirected; Redirect HttpRedirectCode values are stored without validation because the model does not pin AWS's error.
     - Lifecycle NoncurrentVersionExpiration is validated and round-tripped, but cannot execute until the object store has version history (#645); NoncurrentVersionTransition and ExpiredObjectDeleteMarker remain refused.
 handoff:
   start_with: [ListObjectsV2 max-keys validation, ListObjectsV2 encoding-type, PutBucketPolicy, CDK bootstrap, issue 635, issue 636, issue 637]

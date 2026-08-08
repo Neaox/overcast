@@ -15,6 +15,7 @@ package s3
 //	      → match event type + key filter rules
 //	      → call MessageEnqueuer for each matching queue config
 //	      → call FunctionInvoker for each matching lambda config
+//	      → call BusPublisher once when EventBridge delivery is enabled
 
 import (
 	"context"
@@ -33,6 +34,7 @@ type NotificationDispatcher struct {
 	store    *s3Store
 	enqueuer events.MessageEnqueuer
 	invoker  events.FunctionInvoker // nil only when wired without Lambda (tests)
+	bus      events.BusPublisher    // nil only when wired without EventBridge (tests)
 	logger   *zap.Logger
 	region   string
 }
@@ -42,11 +44,13 @@ type NotificationDispatcher struct {
 // removes the subscriptions (useful in tests).
 //
 // invoker is nil only when wired without Lambda (tests); Lambda
-// notification configs will be skipped in that case.
+// notification configs will be skipped in that case. eventBus is nil only when
+// wired without EventBridge, and EventBridge configurations are skipped then.
 func NewNotificationDispatcher(
 	store *s3Store,
 	enqueuer events.MessageEnqueuer,
 	invoker events.FunctionInvoker,
+	eventBus events.BusPublisher,
 	bus *events.Bus,
 	logger *zap.Logger,
 	region string,
@@ -55,6 +59,7 @@ func NewNotificationDispatcher(
 		store:    store,
 		enqueuer: enqueuer,
 		invoker:  invoker,
+		bus:      eventBus,
 		logger:   logger,
 		region:   region,
 	}
@@ -105,6 +110,21 @@ func (d *NotificationDispatcher) handle(ctx context.Context, e events.Event) {
 				zap.String("queue", queueName),
 				zap.Error(err),
 			)
+		}
+	}
+
+	// EventBridge delivery. AWS sends *every* object event to the default bus
+	// while EventBridgeConfiguration is present: there is no per-event
+	// selection and no key filter on this destination, so nothing is matched
+	// here beyond the configuration being set.
+	if d.bus != nil && cfg.EventBridgeConfiguration != nil {
+		if entry, ok := buildEventBridgeEntry(p); ok {
+			if err := d.bus.PublishBusEvent(ctx, entry); err != nil {
+				d.logger.Warn("s3: notification delivery to EventBridge failed",
+					zap.String("bucket", p.Bucket),
+					zap.Error(err),
+				)
+			}
 		}
 	}
 
@@ -239,4 +259,97 @@ func buildNotificationJSON(p events.S3ObjectPayload, eventTime time.Time, config
 	}
 	raw, _ := json.Marshal(env)
 	return string(raw)
+}
+
+// ---- EventBridge envelope --------------------------------------------------
+//
+// AWS's S3 EventBridge events (docs.aws.amazon.com/AmazonS3/latest/userguide/
+// ev-events.html) carry source "aws.s3", the bucket ARN in resources, and a
+// detail-type naming the change: "Object Created" or "Object Deleted".
+//
+// The detail below is deliberately partial. version, bucket.name, object.key,
+// object.size, object.etag, reason and deletion-type are all values Overcast
+// genuinely has. request-id, requester, source-ip-address, sequencer and
+// version-id are omitted rather than invented: there is no versioned object
+// store to source a version-id or sequencer from, and a fabricated request ID
+// would look like a real one to a consumer correlating events.
+
+const (
+	eventBridgeSource            = "aws.s3"
+	eventBridgeObjectCreated     = "Object Created"
+	eventBridgeObjectDeleted     = "Object Deleted"
+	eventBridgeDeletionPermanent = "Permanently Deleted"
+)
+
+// eventBridgeReasons maps the S3 event names Overcast publishes onto the
+// API-operation names AWS puts in detail.reason.
+var eventBridgeReasons = map[string]string{
+	"ObjectCreated:Put":                     "PutObject",
+	"ObjectCreated:Post":                    "POST Object",
+	"ObjectCreated:Copy":                    "CopyObject",
+	"ObjectCreated:CompleteMultipartUpload": "CompleteMultipartUpload",
+	"ObjectRemoved:Delete":                  "DeleteObject",
+	"ObjectRemoved:DeleteMarkerCreated":     "DeleteObject",
+}
+
+type eventBridgeDetail struct {
+	Version      string                  `json:"version"`
+	Bucket       eventBridgeBucketDetail `json:"bucket"`
+	Object       eventBridgeObjectDetail `json:"object"`
+	Reason       string                  `json:"reason,omitempty"`
+	DeletionType string                  `json:"deletion-type,omitempty"`
+}
+
+type eventBridgeBucketDetail struct {
+	Name string `json:"name"`
+}
+
+type eventBridgeObjectDetail struct {
+	Key  string `json:"key"`
+	Size int64  `json:"size"`
+	ETag string `json:"etag,omitempty"`
+}
+
+// buildEventBridgeEntry renders one object mutation as an EventBridge entry.
+// It reports false for an event name outside the created/removed families,
+// so an unmapped event is skipped rather than published with an empty
+// detail-type that no rule could sensibly match.
+func buildEventBridgeEntry(p events.S3ObjectPayload) (events.BusEntry, bool) {
+	var detailType string
+	switch {
+	case strings.HasPrefix(p.EventName, "ObjectCreated:"):
+		detailType = eventBridgeObjectCreated
+	case strings.HasPrefix(p.EventName, "ObjectRemoved:"):
+		detailType = eventBridgeObjectDeleted
+	default:
+		return events.BusEntry{}, false
+	}
+
+	detail := eventBridgeDetail{
+		Version: "0",
+		Bucket:  eventBridgeBucketDetail{Name: p.Bucket},
+		Object: eventBridgeObjectDetail{
+			Key:  p.Key,
+			Size: p.Size,
+			ETag: strings.Trim(p.ETag, `"`),
+		},
+		Reason: eventBridgeReasons[p.EventName],
+	}
+	if detailType == eventBridgeObjectDeleted {
+		// Overcast's object store keeps one live object per key, so a delete
+		// is always the permanent kind; AWS's other value, "Delete Marker
+		// Created", needs version history.
+		detail.DeletionType = eventBridgeDeletionPermanent
+	}
+
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		return events.BusEntry{}, false
+	}
+	return events.BusEntry{
+		Source:     eventBridgeSource,
+		DetailType: detailType,
+		Detail:     string(raw),
+		Resources:  []string{"arn:aws:s3:::" + p.Bucket},
+	}, true
 }

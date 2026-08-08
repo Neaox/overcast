@@ -49,6 +49,60 @@ const lifecycleSweepPageSize = 1000
 // LifecycleConfiguration is a bucket's stored lifecycle rules.
 type LifecycleConfiguration struct {
 	Rules []LifecycleRule `json:"rules"`
+
+	// TransitionDefaultMinimumObjectSize carries the
+	// x-amz-transition-default-minimum-object-size parameter, which
+	// PutBucketLifecycleConfiguration takes as a request header rather than in
+	// the body. Empty means the caller supplied none, which reads as AWS's
+	// default — see transitionDefaultMinimum.
+	TransitionDefaultMinimumObjectSize string `json:"transition_default_minimum_object_size,omitempty"`
+}
+
+// The values of com.amazonaws.s3#TransitionDefaultMinimumObjectSize, and the
+// size the enum is named after.
+//
+// AWS documents them as: all_storage_classes_128K — objects smaller than
+// 128 KB will not transition to any storage class by default;
+// varies_by_storage_class — objects smaller than 128 KB will transition to
+// Glacier Flexible Retrieval or Glacier Deep Archive storage classes, and by
+// default all other storage classes will prevent transitions smaller than
+// 128 KB.
+const (
+	transitionDefaultMinimumAll128K = "all_storage_classes_128K"
+	transitionDefaultMinimumVaries  = "varies_by_storage_class"
+	transitionDefaultMinimumBytes   = 128 * 1024
+)
+
+// glacierTransitionStorageClasses are the two classes varies_by_storage_class
+// exempts from the 128 KB minimum: Glacier Flexible Retrieval (GLACIER) and
+// Glacier Deep Archive (DEEP_ARCHIVE). Glacier Instant Retrieval (GLACIER_IR)
+// is deliberately absent — AWS names only the other two.
+var glacierTransitionStorageClasses = map[string]bool{
+	"GLACIER":      true,
+	"DEEP_ARCHIVE": true,
+}
+
+// transitionDefaultMinimum resolves the behaviour in force, mapping the unset
+// case to AWS's default.
+func (c *LifecycleConfiguration) transitionDefaultMinimum() string {
+	if c.TransitionDefaultMinimumObjectSize == "" {
+		return transitionDefaultMinimumAll128K
+	}
+	return c.TransitionDefaultMinimumObjectSize
+}
+
+// allowsTransition reports whether the configuration's default minimum object
+// size lets obj transition to storageClass under rule.
+//
+// A rule whose own filter names an object-size bound opts out entirely:
+// "custom filters always take precedence over the default transition
+// behavior".
+func (c *LifecycleConfiguration) allowsTransition(rule *LifecycleRule, obj *Object, storageClass string) bool {
+	if obj.ContentLength >= transitionDefaultMinimumBytes || rule.hasObjectSizeFilter() {
+		return true
+	}
+	return c.transitionDefaultMinimum() == transitionDefaultMinimumVaries &&
+		glacierTransitionStorageClasses[storageClass]
 }
 
 // LifecycleRule is one lifecycle rule.
@@ -167,6 +221,19 @@ func (r *LifecycleRule) matches(obj *Object) bool {
 	return sizeWithin(obj.ContentLength, f.ObjectSizeGreaterThan, f.ObjectSizeLessThan)
 }
 
+// hasObjectSizeFilter reports whether the rule's own filter bounds object size,
+// in either the plain or the And form. Such a rule sets its own minimum, so
+// the bucket's default minimum transition size does not apply to it.
+func (r *LifecycleRule) hasObjectSizeFilter() bool {
+	if r.Filter == nil {
+		return false
+	}
+	if and := r.Filter.And; and != nil {
+		return and.ObjectSizeGreaterThan != nil || and.ObjectSizeLessThan != nil
+	}
+	return r.Filter.ObjectSizeGreaterThan != nil || r.Filter.ObjectSizeLessThan != nil
+}
+
 func objectHasTag(obj *Object, tag *LifecycleTag) bool {
 	v, ok := obj.Tags[tag.Key]
 	return ok && v == tag.Value
@@ -253,6 +320,10 @@ func (c *LifecycleConfiguration) expirationFor(obj *Object) (time.Time, *Lifecyc
 
 // transitionFor returns the storage class obj should carry as of now: the
 // class of the latest-firing transition that is already due.
+//
+// A transition the bucket's default minimum object size blocks is skipped as
+// though it were not due, so a small object keeps the class an earlier,
+// allowed transition gave it rather than being promoted past the minimum.
 func (c *LifecycleConfiguration) transitionFor(obj *Object, now time.Time) (string, bool) {
 	var (
 		latest time.Time
@@ -266,6 +337,9 @@ func (c *LifecycleConfiguration) transitionFor(obj *Object, now time.Time) (stri
 		for j := range rule.Transitions {
 			at := transitionAt(&rule.Transitions[j], obj)
 			if at.After(now) {
+				continue
+			}
+			if !c.allowsTransition(rule, obj, rule.Transitions[j].StorageClass) {
 				continue
 			}
 			if class == "" || at.After(latest) {

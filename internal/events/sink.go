@@ -16,6 +16,30 @@ type MessageEnqueuer interface {
 	EnqueueRaw(ctx context.Context, queueName string, body string) error
 }
 
+// BusEntry is one event to publish onto an EventBridge event bus. It mirrors
+// the PutEvents request entry an AWS service emits on a customer's behalf.
+//
+// Detail is the already-marshalled JSON detail document, matching PutEvents'
+// own string-typed Detail.
+type BusEntry struct {
+	Source     string
+	DetailType string
+	Detail     string
+	Resources  []string
+}
+
+// BusPublisher is the narrow interface a service uses to emit its own events
+// onto the default EventBridge bus, the way AWS services publish
+// service-originated events. It lives in the events package so both the
+// producing service and the EventBridge implementation can reference it
+// without an import cycle.
+//
+// Delivery is best effort from the producer's point of view: an error means
+// EventBridge could not accept the entry, not that no rule matched it.
+type BusPublisher interface {
+	PublishBusEvent(ctx context.Context, entry BusEntry) error
+}
+
 // ReceivedMessage is a single message received from an SQS queue by
 // the event source mapping (ESM) SQS poller.
 type ReceivedMessage struct {

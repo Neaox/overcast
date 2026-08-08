@@ -16,6 +16,10 @@ import (
 
 const s3ConfigurationContentType = "application/xml"
 
+// s3TransitionDefaultMinimumHeader is the S3 request header
+// LifecycleConfiguration.TransitionDefaultMinimumObjectSize maps to.
+const s3TransitionDefaultMinimumHeader = "x-amz-transition-default-minimum-object-size"
+
 var s3BucketSubresources = []struct {
 	property  string
 	query     string
@@ -55,8 +59,12 @@ type cfnS3BucketProperties struct {
 }
 
 type cfnS3LifecycleConfiguration struct {
-	Rules                              []cfnS3LifecycleRule `json:"Rules"`
-	TransitionDefaultMinimumObjectSize json.RawMessage      `json:"TransitionDefaultMinimumObjectSize,omitempty"`
+	Rules []cfnS3LifecycleRule `json:"Rules"`
+	// TransitionDefaultMinimumObjectSize maps to S3's
+	// x-amz-transition-default-minimum-object-size request header rather than
+	// to anything in the body, so it travels as an operation header. S3 owns
+	// the enum validation.
+	TransitionDefaultMinimumObjectSize *string `json:"TransitionDefaultMinimumObjectSize,omitempty"`
 }
 
 type cfnS3LifecycleRule struct {
@@ -103,10 +111,18 @@ type cfnS3VersioningConfiguration struct {
 }
 
 type cfnS3NotificationConfiguration struct {
-	EventBridgeConfiguration json.RawMessage            `json:"EventBridgeConfiguration,omitempty"`
-	LambdaConfigurations     []cfnS3LambdaConfiguration `json:"LambdaConfigurations,omitempty"`
-	QueueConfigurations      []cfnS3QueueConfiguration  `json:"QueueConfigurations,omitempty"`
-	TopicConfigurations      []cfnS3TopicConfiguration  `json:"TopicConfigurations,omitempty"`
+	EventBridgeConfiguration *cfnS3EventBridgeConfiguration `json:"EventBridgeConfiguration,omitempty"`
+	LambdaConfigurations     []cfnS3LambdaConfiguration     `json:"LambdaConfigurations,omitempty"`
+	QueueConfigurations      []cfnS3QueueConfiguration      `json:"QueueConfigurations,omitempty"`
+	TopicConfigurations      []cfnS3TopicConfiguration      `json:"TopicConfigurations,omitempty"`
+}
+
+// cfnS3EventBridgeConfiguration is CloudFormation's EventBridgeConfiguration.
+// EventBridgeEnabled is required and CloudFormation accepts only true, so a
+// present property always means "on"; S3's own API models the same thing as
+// the presence of an empty element.
+type cfnS3EventBridgeConfiguration struct {
+	EventBridgeEnabled bool `json:"EventBridgeEnabled"`
 }
 
 type cfnS3LambdaConfiguration struct {
@@ -198,10 +214,36 @@ func (n *cfnS3Int) UnmarshalJSON(data []byte) error {
 }
 
 type cfnS3WebsiteConfiguration struct {
-	ErrorDocument         string          `json:"ErrorDocument,omitempty"`
-	IndexDocument         string          `json:"IndexDocument,omitempty"`
-	RedirectAllRequestsTo json.RawMessage `json:"RedirectAllRequestsTo,omitempty"`
-	RoutingRules          json.RawMessage `json:"RoutingRules,omitempty"`
+	ErrorDocument         string                      `json:"ErrorDocument,omitempty"`
+	IndexDocument         string                      `json:"IndexDocument,omitempty"`
+	RedirectAllRequestsTo *cfnS3RedirectAllRequestsTo `json:"RedirectAllRequestsTo,omitempty"`
+	RoutingRules          []cfnS3WebsiteRoutingRule   `json:"RoutingRules,omitempty"`
+}
+
+type cfnS3RedirectAllRequestsTo struct {
+	HostName string `json:"HostName"`
+	Protocol string `json:"Protocol,omitempty"`
+}
+
+// cfnS3WebsiteRoutingRule is CloudFormation's spelling of S3's RoutingRule:
+// the condition and redirect containers carry different names from the API's
+// Condition and Redirect.
+type cfnS3WebsiteRoutingRule struct {
+	RedirectRule         cfnS3WebsiteRedirectRule   `json:"RedirectRule"`
+	RoutingRuleCondition *cfnS3RoutingRuleCondition `json:"RoutingRuleCondition,omitempty"`
+}
+
+type cfnS3WebsiteRedirectRule struct {
+	HostName             string `json:"HostName,omitempty"`
+	HttpRedirectCode     string `json:"HttpRedirectCode,omitempty"`
+	Protocol             string `json:"Protocol,omitempty"`
+	ReplaceKeyPrefixWith string `json:"ReplaceKeyPrefixWith,omitempty"`
+	ReplaceKeyWith       string `json:"ReplaceKeyWith,omitempty"`
+}
+
+type cfnS3RoutingRuleCondition struct {
+	HttpErrorCodeReturnedEquals string `json:"HttpErrorCodeReturnedEquals,omitempty"`
+	KeyPrefixEquals             string `json:"KeyPrefixEquals,omitempty"`
 }
 
 type cfnS3PublicAccessBlockConfiguration struct {
@@ -217,6 +259,9 @@ type s3BucketOperation struct {
 	query       string
 	contentType string
 	body        []byte
+	// headers carries operation parameters S3 models as request headers rather
+	// than in the body. Nil for every sub-resource that has none.
+	headers http.Header
 }
 
 func decodeS3BucketProperties(props map[string]any) (*cfnS3BucketProperties, error) {
@@ -281,6 +326,7 @@ func planS3BucketOperations(props, oldProps *cfnS3BucketProperties) ([]s3BucketO
 	if err != nil {
 		return nil, err
 	}
+	headers := s3BucketPropertyHeaders(props)
 
 	operations := make([]s3BucketOperation, 0, len(s3BucketSubresources))
 	for _, subresource := range s3BucketSubresources {
@@ -296,6 +342,7 @@ func planS3BucketOperations(props, oldProps *cfnS3BucketProperties) ([]s3BucketO
 			operations = append(operations, s3BucketOperation{
 				api: subresource.putAPI, method: http.MethodPut, query: subresource.query,
 				contentType: s3ConfigurationContentType, body: bodies[subresource.property],
+				headers: headers[subresource.property],
 			})
 			continue
 		}
@@ -333,7 +380,11 @@ func planS3BucketOperations(props, oldProps *cfnS3BucketProperties) ([]s3BucketO
 
 func applyS3BucketOperations(ctx context.Context, router http.Handler, region, bucket string, operations []s3BucketOperation) (int, error) {
 	for i, operation := range operations {
-		if _, err := internalRequest(ctx, router, region, operation.method, "/"+bucket+"?"+operation.query, operation.contentType, operation.body); err != nil {
+		var extra []http.Header
+		if operation.headers != nil {
+			extra = append(extra, operation.headers)
+		}
+		if _, err := internalRequest(ctx, router, region, operation.method, "/"+bucket+"?"+operation.query, operation.contentType, operation.body, extra...); err != nil {
 			return i, fmt.Errorf("s3 %s: %w", operation.api, err)
 		}
 	}
@@ -434,10 +485,19 @@ func marshalS3BucketPropertyBodies(props *cfnS3BucketProperties) (map[string][]b
 	return bodies, nil
 }
 
-func translateS3LifecycleConfiguration(in *cfnS3LifecycleConfiguration) (*s3service.LifecycleConfiguration, error) {
-	if len(in.TransitionDefaultMinimumObjectSize) != 0 {
-		return nil, fmt.Errorf("TransitionDefaultMinimumObjectSize cannot be represented by the current S3 API handler")
+// s3BucketPropertyHeaders returns, per property, the S3 request headers its
+// Put operation needs. Only LifecycleConfiguration has one today.
+func s3BucketPropertyHeaders(props *cfnS3BucketProperties) map[string]http.Header {
+	lifecycle := props.LifecycleConfiguration
+	if lifecycle == nil || lifecycle.TransitionDefaultMinimumObjectSize == nil {
+		return nil
 	}
+	header := http.Header{}
+	header.Set(s3TransitionDefaultMinimumHeader, *lifecycle.TransitionDefaultMinimumObjectSize)
+	return map[string]http.Header{"LifecycleConfiguration": header}
+}
+
+func translateS3LifecycleConfiguration(in *cfnS3LifecycleConfiguration) (*s3service.LifecycleConfiguration, error) {
 	out := &s3service.LifecycleConfiguration{Rules: make([]s3service.LifecycleRule, 0, len(in.Rules))}
 	for i := range in.Rules {
 		rule, err := translateS3LifecycleRule(&in.Rules[i])
@@ -616,10 +676,16 @@ func parseOptionalInt64(value *string) (*int64, error) {
 }
 
 func translateS3NotificationConfiguration(in *cfnS3NotificationConfiguration) (*s3service.NotificationConfig, error) {
-	if len(in.EventBridgeConfiguration) != 0 {
-		return nil, fmt.Errorf("EventBridgeConfiguration cannot be represented by the current S3 notification handler")
-	}
 	out := &s3service.NotificationConfig{}
+	if eb := in.EventBridgeConfiguration; eb != nil {
+		// CloudFormation's schema allows only true. An explicit false has no
+		// S3 API spelling — the element's absence is what turns delivery off —
+		// so refuse it rather than silently enabling delivery.
+		if !eb.EventBridgeEnabled {
+			return nil, fmt.Errorf("EventBridgeConfiguration.EventBridgeEnabled must be true")
+		}
+		out.EventBridgeConfiguration = &s3service.EventBridgeNotificationConfig{}
+	}
 	for _, config := range in.QueueConfigurations {
 		out.QueueConfigurations = append(out.QueueConfigurations, s3service.QueueNotificationConfig{
 			ARN: config.Queue, Events: []string{config.Event}, Filter: translateS3NotificationFilter(config.Filter),
@@ -693,17 +759,40 @@ func translateS3CorsConfiguration(in *cfnS3CorsConfiguration) ([]s3service.CORSR
 	return out, nil
 }
 
+// translateS3WebsiteConfiguration maps CloudFormation's spelling onto S3's.
+// The exclusion between RedirectAllRequestsTo and the index/error/routing form
+// is S3's to enforce, so it is not repeated here.
 func translateS3WebsiteConfiguration(in *cfnS3WebsiteConfiguration) (*s3service.WebsiteConfiguration, error) {
-	if len(in.RedirectAllRequestsTo) != 0 {
-		return nil, fmt.Errorf("RedirectAllRequestsTo cannot be represented by the current S3 website handler")
-	}
-	if len(in.RoutingRules) != 0 {
-		return nil, fmt.Errorf("RoutingRules cannot be represented by the current S3 website handler")
-	}
-	return &s3service.WebsiteConfiguration{
+	out := &s3service.WebsiteConfiguration{
 		IndexDocument: in.IndexDocument,
 		ErrorDocument: in.ErrorDocument,
-	}, nil
+	}
+	if in.RedirectAllRequestsTo != nil {
+		out.RedirectAllRequestsTo = &s3service.WebsiteRedirectAll{
+			HostName: in.RedirectAllRequestsTo.HostName,
+			Protocol: in.RedirectAllRequestsTo.Protocol,
+		}
+	}
+	for i := range in.RoutingRules {
+		rule := &in.RoutingRules[i]
+		translated := s3service.WebsiteRoutingRule{
+			Redirect: s3service.WebsiteRedirect{
+				HostName:             rule.RedirectRule.HostName,
+				HTTPRedirectCode:     rule.RedirectRule.HttpRedirectCode,
+				Protocol:             rule.RedirectRule.Protocol,
+				ReplaceKeyPrefixWith: rule.RedirectRule.ReplaceKeyPrefixWith,
+				ReplaceKeyWith:       rule.RedirectRule.ReplaceKeyWith,
+			},
+		}
+		if condition := rule.RoutingRuleCondition; condition != nil {
+			translated.Condition = &s3service.WebsiteRoutingCondition{
+				HTTPErrorCodeReturnedEquals: condition.HttpErrorCodeReturnedEquals,
+				KeyPrefixEquals:             condition.KeyPrefixEquals,
+			}
+		}
+		out.RoutingRules = append(out.RoutingRules, translated)
+	}
+	return out, nil
 }
 
 func s3BucketPropertyPresent(props *cfnS3BucketProperties, property string) bool {

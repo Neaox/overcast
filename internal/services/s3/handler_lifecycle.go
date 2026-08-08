@@ -29,6 +29,12 @@ const (
 
 	// maxLifecycleRuleIDLength is AWS's documented limit for a rule ID.
 	maxLifecycleRuleIDLength = 255
+
+	// transitionDefaultMinimumHeader carries
+	// com.amazonaws.s3#TransitionDefaultMinimumObjectSize: a request header on
+	// PutBucketLifecycleConfiguration and a response header on both that
+	// operation and GetBucketLifecycleConfiguration.
+	transitionDefaultMinimumHeader = "x-amz-transition-default-minimum-object-size"
 )
 
 // lifecycleTransitionStorageClasses are the classes S3 accepts on a
@@ -172,6 +178,7 @@ func (h *Handler) getBucketLifecycleConfiguration(w http.ResponseWriter, r *http
 		return
 	}
 
+	w.Header().Set(transitionDefaultMinimumHeader, cfg.transitionDefaultMinimum())
 	protocol.WriteXML(w, r, http.StatusOK, lifecycleConfigurationXML{
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 		Rules: lifecycleRulesToXML(cfg.Rules),
@@ -189,6 +196,12 @@ func (h *Handler) putBucketLifecycleConfiguration(w http.ResponseWriter, r *http
 		return
 	}
 
+	minimum, aerr := parseTransitionDefaultMinimum(r.Header.Get(transitionDefaultMinimumHeader))
+	if aerr != nil {
+		protocol.WriteXMLError(w, r, aerr)
+		return
+	}
+
 	var body lifecycleConfigurationXML
 	if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
 		protocol.WriteXMLError(w, r, errMalformedLifecycleXML(""))
@@ -200,6 +213,7 @@ func (h *Handler) putBucketLifecycleConfiguration(w http.ResponseWriter, r *http
 		protocol.WriteXMLError(w, r, aerr)
 		return
 	}
+	cfg.TransitionDefaultMinimumObjectSize = minimum
 
 	if aerr := h.store.putLifecycle(r.Context(), bucket, cfg); aerr != nil {
 		protocol.WriteXMLError(w, r, aerr)
@@ -207,7 +221,31 @@ func (h *Handler) putBucketLifecycleConfiguration(w http.ResponseWriter, r *http
 	}
 	h.invalidateLifecycleIndex(r)
 
+	// PutBucketLifecycleConfigurationOutput carries the behaviour in force, so
+	// a caller that omitted the header still learns which default applies.
+	w.Header().Set(transitionDefaultMinimumHeader, cfg.transitionDefaultMinimum())
 	w.WriteHeader(http.StatusOK)
+}
+
+// parseTransitionDefaultMinimum validates the
+// x-amz-transition-default-minimum-object-size header. An absent header is
+// legal and stores nothing, which reads back as AWS's default; a value outside
+// com.amazonaws.s3#TransitionDefaultMinimumObjectSize is refused rather than
+// stored, because storing it would claim a transition behaviour the sweeper
+// cannot apply.
+func parseTransitionDefaultMinimum(raw string) (string, *protocol.AWSError) {
+	switch strings.TrimSpace(raw) {
+	case "":
+		return "", nil
+	case transitionDefaultMinimumAll128K:
+		return transitionDefaultMinimumAll128K, nil
+	case transitionDefaultMinimumVaries:
+		return transitionDefaultMinimumVaries, nil
+	default:
+		return "", protocol.ErrInvalidArgument(fmt.Sprintf(
+			"The %s header value must be %s or %s",
+			transitionDefaultMinimumHeader, transitionDefaultMinimumAll128K, transitionDefaultMinimumVaries))
+	}
 }
 
 // deleteBucketLifecycle handles DELETE /{bucket}?lifecycle.
