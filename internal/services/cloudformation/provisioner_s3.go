@@ -75,8 +75,8 @@ type cfnS3LifecycleRule struct {
 	ID                                string                               `json:"Id,omitempty"`
 	NoncurrentVersionExpiration       *cfnS3NoncurrentVersionExpiration    `json:"NoncurrentVersionExpiration,omitempty"`
 	NoncurrentVersionExpirationInDays *cfnS3Int                            `json:"NoncurrentVersionExpirationInDays,omitempty"`
-	NoncurrentVersionTransition       json.RawMessage                      `json:"NoncurrentVersionTransition,omitempty"`
-	NoncurrentVersionTransitions      json.RawMessage                      `json:"NoncurrentVersionTransitions,omitempty"`
+	NoncurrentVersionTransition       *cfnS3NoncurrentVersionTransition    `json:"NoncurrentVersionTransition,omitempty"`
+	NoncurrentVersionTransitions      *[]cfnS3NoncurrentVersionTransition  `json:"NoncurrentVersionTransitions,omitempty"`
 	ObjectSizeGreaterThan             *string                              `json:"ObjectSizeGreaterThan,omitempty"`
 	ObjectSizeLessThan                *string                              `json:"ObjectSizeLessThan,omitempty"`
 	Prefix                            *string                              `json:"Prefix,omitempty"`
@@ -92,6 +92,15 @@ type cfnS3AbortIncompleteMultipartUpload struct {
 
 type cfnS3NoncurrentVersionExpiration struct {
 	NoncurrentDays          cfnS3Int  `json:"NoncurrentDays"`
+	NewerNoncurrentVersions *cfnS3Int `json:"NewerNoncurrentVersions,omitempty"`
+}
+
+// cfnS3NoncurrentVersionTransition is CloudFormation's
+// NoncurrentVersionTransition, which carries the same three members S3's own
+// element does.
+type cfnS3NoncurrentVersionTransition struct {
+	StorageClass            string    `json:"StorageClass"`
+	TransitionInDays        cfnS3Int  `json:"TransitionInDays"`
 	NewerNoncurrentVersions *cfnS3Int `json:"NewerNoncurrentVersions,omitempty"`
 }
 
@@ -510,14 +519,8 @@ func translateS3LifecycleConfiguration(in *cfnS3LifecycleConfiguration) (*s3serv
 }
 
 func translateS3LifecycleRule(in *cfnS3LifecycleRule) (s3service.LifecycleRule, error) {
-	if len(in.NoncurrentVersionTransition) != 0 {
-		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionTransition cannot be represented by the current S3 lifecycle handler")
-	}
-	if len(in.NoncurrentVersionTransitions) != 0 {
-		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionTransitions cannot be represented by the current S3 lifecycle handler")
-	}
-	if in.ExpiredObjectDeleteMarker != nil {
-		return s3service.LifecycleRule{}, fmt.Errorf("ExpiredObjectDeleteMarker cannot be represented by the current S3 lifecycle handler")
+	if in.NoncurrentVersionTransition != nil && in.NoncurrentVersionTransitions != nil {
+		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionTransition and NoncurrentVersionTransitions are mutually exclusive")
 	}
 	if in.Transition != nil && in.Transitions != nil {
 		return s3service.LifecycleRule{}, fmt.Errorf("Transition and Transitions are mutually exclusive")
@@ -542,6 +545,15 @@ func translateS3LifecycleRule(in *cfnS3LifecycleRule) (s3service.LifecycleRule, 
 		rule.Expiration = &s3service.LifecycleExpiration{Date: &date}
 	} else if in.ExpirationInDays != nil {
 		rule.Expiration = &s3service.LifecycleExpiration{Days: int(*in.ExpirationInDays)}
+	}
+	// CloudFormation hangs ExpiredObjectDeleteMarker off the rule, while S3
+	// nests it inside Expiration and refuses it beside an age. Translate the
+	// shape and let S3 decide whether the combination is legal.
+	if in.ExpiredObjectDeleteMarker != nil && *in.ExpiredObjectDeleteMarker {
+		if rule.Expiration == nil {
+			rule.Expiration = &s3service.LifecycleExpiration{}
+		}
+		rule.Expiration.ExpiredObjectDeleteMarker = true
 	}
 	if in.NoncurrentVersionExpiration != nil && in.NoncurrentVersionExpirationInDays != nil {
 		return s3service.LifecycleRule{}, fmt.Errorf("NoncurrentVersionExpiration and NoncurrentVersionExpirationInDays are mutually exclusive")
@@ -571,6 +583,31 @@ func translateS3LifecycleRule(in *cfnS3LifecycleRule) (s3service.LifecycleRule, 
 		rule.AbortIncompleteMultipartUpload = &s3service.LifecycleAbortMPU{
 			DaysAfterInitiation: int(in.AbortIncompleteMultipartUpload.DaysAfterInitiation),
 		}
+	}
+
+	noncurrentTransitions := make([]cfnS3NoncurrentVersionTransition, 0, 1)
+	if in.NoncurrentVersionTransition != nil {
+		noncurrentTransitions = append(noncurrentTransitions, *in.NoncurrentVersionTransition)
+	}
+	if in.NoncurrentVersionTransitions != nil {
+		noncurrentTransitions = append(noncurrentTransitions, (*in.NoncurrentVersionTransitions)...)
+	}
+	for i := range noncurrentTransitions {
+		nct := &noncurrentTransitions[i]
+		out := s3service.LifecycleNoncurrentVersionTransition{
+			NoncurrentDays: int(nct.TransitionInDays),
+			StorageClass:   nct.StorageClass,
+		}
+		if nct.NewerNoncurrentVersions != nil {
+			newer := int(*nct.NewerNoncurrentVersions)
+			out.NewerNoncurrentVersions = &newer
+			// Same Filter requirement S3 puts on the expiration action above.
+			if rule.Filter == nil && rule.Prefix != nil {
+				rule.Filter = &s3service.LifecycleFilter{Prefix: *rule.Prefix}
+				rule.Prefix = nil
+			}
+		}
+		rule.NoncurrentVersionTransitions = append(rule.NoncurrentVersionTransitions, out)
 	}
 
 	transitions := make([]cfnS3Transition, 0, 1)
