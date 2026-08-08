@@ -37,31 +37,10 @@ if ($args.Count -eq 0) {
 # binary inherits GOMAXPROCS, so the default squares the parallelism).
 #
 # The counts are derived, never hardcoded -- `docker run --cpus=N` is rejected
-# when N exceeds the CPUs the daemon reports. The daemon's own count is
-# preferred over [Environment]::ProcessorCount because Docker Desktop's VM can
-# have fewer CPUs than the host.
-function Get-CpuTotal {
-    $reported = $null
-    try { $reported = (& docker info --format "{{.NCPU}}") } catch { $reported = $null }
-    $parsed = 0
-    if ($reported -and [int]::TryParse(($reported | Select-Object -First 1).ToString().Trim(), [ref]$parsed) -and $parsed -ge 1) {
-        return $parsed
-    }
-    $hostCount = [Environment]::ProcessorCount
-    if ($hostCount -ge 1) { return $hostCount }
-    return 2
-}
-
-$goCpus = $env:OVERCAST_GO_CPUS
-$goTestP = $env:OVERCAST_GO_TEST_P
-if ($goCpus -eq "0") {
-    # Explicit opt-out: no cap, and no -p either, unless -p was asked for.
-    if (-not $goTestP) { $goTestP = "0" }
-} elseif ((-not $goCpus) -or (-not $goTestP)) {
-    $cpuTotal = Get-CpuTotal
-    if (-not $goCpus) { $goCpus = [string][Math]::Max(1, [Math]::Floor($cpuTotal / 2)) }
-    if (-not $goTestP) { $goTestP = [string][Math]::Max(1, [Math]::Floor($cpuTotal / 4)) }
-}
+# when N exceeds the CPUs the daemon reports. The detection and the derivation
+# live in lib\go-cpu-bound.ps1, shared with scripts\container-test.ps1; it sets
+# $goCpus and $goTestP.
+. "$PSScriptRoot\lib\go-cpu-bound.ps1"
 
 # GOFLAGS=-buildvcs=false: see docker-go.sh's comment -- git inside the
 # container refuses the bind-mounted repo ("dubious ownership"), which

@@ -417,6 +417,19 @@ a quarter for `-p`, both clamped to at least 1.
 not: `--cpus` has nothing to bound on the host, and a host toolchain is yours to
 schedule.
 
+`docker-compose.dev.yml`'s `test` service is capped too, but it needs a helper to
+do it: a Compose file can only carry a literal or a `${VAR}`, and `docker compose
+run` has no `--cpus` flag, so the number cannot be derived where it is used.
+`make container-test`, `make container-test-unit`,
+`make container-test-integration` and their `task` equivalents go through
+[scripts/container-test.sh](./scripts/container-test.sh) (`.ps1` on Windows),
+which computes the same numbers and exports `OVERCAST_GO_CPUS` and
+`OVERCAST_GO_TEST_P` for Compose to substitute into `cpus:`, `GOMAXPROCS` and
+`GOFLAGS`. `-p` travels via `GOFLAGS` rather than the service's `command:` so it
+survives a command override; it is spelled as an empty value rather than `0`
+because `go test -p 0` is an error. Invoking `docker compose` by hand still
+works and stays unbounded.
+
 ### Step debugging
 
 Full step debugging is supported. Set a breakpoint (click left of line number),
@@ -1245,7 +1258,17 @@ manifest.
 >   `go test -count=1 ./tests/integration/s3/` etc.
 > - Run the full race-enabled suite (`make test`) only before pushing/merging — ideally
 >   inside the container where the filesystem is local:
->   `docker compose -f docker-compose.dev.yml run --rm test`
+>   `make container-test` (or `task container-test`).
+
+Prefer `make container-test` over `docker compose -f docker-compose.dev.yml run --rm test`.
+The `test` service is CPU-capped the same way the Go-in-Docker wrappers are, but a Compose
+file cannot derive the cap itself: `--cpus=N` is rejected outright when N exceeds the CPUs
+the daemon reports, so the number cannot be hardcoded, and `docker compose run` has no
+`--cpus` flag to pass one through. So [scripts/container-test.sh](./scripts/container-test.sh)
+(and its `.ps1` twin) computes it and exports `OVERCAST_GO_CPUS` / `OVERCAST_GO_TEST_P`,
+which the Compose file substitutes into the service's `cpus:`, `GOMAXPROCS` and `GOFLAGS`.
+The same `OVERCAST_GO_CPUS=0` opt-out applies. Calling `docker compose` directly still
+works and is exactly as unbounded as it always was — it just does not get the cap.
 
 ---
 

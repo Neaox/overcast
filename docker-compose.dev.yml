@@ -23,9 +23,11 @@
 #   docker compose -f docker-compose.dev.yml down -v
 #
 # To run tests:
-#   docker compose -f docker-compose.dev.yml run --rm test
-
-version: "3.9"
+#   make container-test          (or: task container-test)
+#
+# Prefer those over `docker compose -f docker-compose.dev.yml run --rm test`:
+# they go through scripts/container-test.sh, which bounds the container's CPU
+# use. See the `test` service's comments below.
 
 services:
 
@@ -36,6 +38,21 @@ services:
       context: .
       dockerfile: .devcontainer/Dockerfile
     working_dir: /workspace
+    # CPU bound. Uncapped, this service takes the whole machine, the same way
+    # the Go-in-Docker wrappers used to (CONTRIBUTING.md § "No local Go
+    # toolchain?" has the measurements). A Compose file can only carry a literal
+    # or a ${VAR}, and the cap has to be derived from the host at run time —
+    # `--cpus=N` is rejected outright when N exceeds the CPUs the daemon
+    # reports, so a hardcoded number would break smaller machines. And
+    # `docker compose run` has no --cpus flag of its own. So the number is
+    # computed by scripts/container-test.sh (or its .ps1 twin) and arrives here
+    # as an environment variable; `make container-test` and `task container-test`
+    # route through it.
+    #
+    # Left unset the substitution yields 0, which Compose treats as "no limit"
+    # and the Go runtime ignores, so a bare `docker compose run --rm test`
+    # behaves exactly as it always has.
+    cpus: ${OVERCAST_GO_CPUS:-0}
     volumes:
       - type: bind
         source: .
@@ -44,7 +61,21 @@ services:
         # Fastest option for read-heavy workloads like `go test`.
         consistency: cached
     environment:
-      CGO_ENABLED: "0"
+      # The race detector needs cgo. With CGO_ENABLED=0 the command below fails
+      # outright: "go: -race requires cgo; enable cgo by setting CGO_ENABLED=1".
+      CGO_ENABLED: "1"
+      # Has to be set by hand to match cpus:. Container-aware GOMAXPROCS — the
+      # runtime reading the cgroup CPU quota — arrived in Go 1.25, and this image
+      # is golang:1.24-bookworm, so the cap alone would leave the runtime seeing
+      # every host core and thrashing on context switches instead of running
+      # slower cleanly.
+      GOMAXPROCS: ${OVERCAST_GO_CPUS:-0}
+      # -p bounds concurrent test *binaries* and defaults to GOMAXPROCS; each
+      # binary then inherits GOMAXPROCS, so leaving it alone squares the
+      # parallelism. It rides GOFLAGS rather than the command below so it still
+      # applies when a caller overrides the command. Must be empty or a positive
+      # integer: `go test -p 0` is an error, so "no -p" is spelled as unset.
+      GOFLAGS: ${OVERCAST_GO_TEST_P:+-p=${OVERCAST_GO_TEST_P}}
     command: go test -race -count=1 -timeout=120s ./...
     # No port mapping — this is a one-shot test runner.
 

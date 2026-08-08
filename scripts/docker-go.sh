@@ -81,46 +81,9 @@ fi
 # Overrides: OVERCAST_GO_CPUS (0 = no cap, no GOMAXPROCS and no -p — the old
 # behaviour), OVERCAST_GO_TEST_P (0 = never inject -p).
 
-# detect_cpus — how many CPUs the container may be given. The Docker daemon's
-# count comes first: that is the number --cpus is validated against, and on
-# Docker Desktop the VM can have fewer CPUs than the host. Host detection is the
-# fallback — nproc (Linux, Git Bash), sysctl (macOS), NUMBER_OF_PROCESSORS
-# (Windows) — and a conservative 2 if nothing answers. Costs one `docker info`
-# per invocation (~0.5s), which is small next to starting the container; set
-# OVERCAST_GO_CPUS and OVERCAST_GO_TEST_P to skip it entirely.
-detect_cpus() {
-    for candidate in \
-        "$(docker info --format '{{.NCPU}}' 2>/dev/null || true)" \
-        "$(nproc 2>/dev/null || true)" \
-        "$(sysctl -n hw.ncpu 2>/dev/null || true)" \
-        "${NUMBER_OF_PROCESSORS:-}"; do
-        case "$candidate" in
-        '' | *[!0-9]*) continue ;;
-        esac
-        if [ "$candidate" -ge 1 ]; then
-            echo "$candidate"
-            return 0
-        fi
-    done
-    echo 2
-}
-
-GO_CPUS="${OVERCAST_GO_CPUS:-}"
-GO_TEST_P="${OVERCAST_GO_TEST_P:-}"
-if [ "$GO_CPUS" = "0" ]; then
-    # Explicit opt-out: no cap, and no -p either, unless -p was asked for.
-    GO_TEST_P="${OVERCAST_GO_TEST_P:-0}"
-elif [ -z "$GO_CPUS" ] || [ -z "$GO_TEST_P" ]; then
-    cpu_total=$(detect_cpus)
-    if [ -z "$GO_CPUS" ]; then
-        GO_CPUS=$((cpu_total / 2))
-        [ "$GO_CPUS" -ge 1 ] || GO_CPUS=1
-    fi
-    if [ -z "$GO_TEST_P" ]; then
-        GO_TEST_P=$((cpu_total / 4))
-        [ "$GO_TEST_P" -ge 1 ] || GO_TEST_P=1
-    fi
-fi
+# The detection ladder and the GO_CPUS / GO_TEST_P derivation live in
+# lib/go-cpu-bound.sh, shared with scripts/go.sh and scripts/container-test.sh.
+. "$script_dir/lib/go-cpu-bound.sh"
 
 cpus_flag=""
 gomaxprocs_flag=""
@@ -151,17 +114,6 @@ run() {
         -e GOFLAGS=-buildvcs=false \
         -w /src \
         "$IMAGE" "$@"
-}
-
-# has_p_flag — did the caller pass their own -p? Silently overriding an explicit
-# flag would be worse than not capping at all.
-has_p_flag() {
-    for arg in "$@"; do
-        case "$arg" in
-        -p | -p=* | --p | --p=*) return 0 ;;
-        esac
-    done
-    return 1
 }
 
 if [ "$1" = "shell" ]; then

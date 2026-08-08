@@ -311,20 +311,34 @@ tasks:
   # These targets work identically on Mac, Linux, and Windows.
   # Require Docker but not a local Go installation.
 
+  # These go through scripts/container-test.{sh,ps1} rather than calling docker
+  # compose directly: the wrapper derives the container's CPU cap from the host
+  # and hands it to the Compose file, which cannot compute one itself. See that
+  # script's header.
+
   container-test:
     desc: Run all tests inside a Linux container (works on any OS with Docker)
     cmds:
-      - docker compose -f docker-compose.dev.yml run --rm test
+      - cmd: bash scripts/container-test.sh
+        platforms: [darwin, linux]
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\container-test.ps1
+        platforms: [windows]
 
   container-test-unit:
     desc: Run unit tests inside a container
     cmds:
-      - docker compose -f docker-compose.dev.yml run --rm test go test -race -count=1 -timeout=60s ./internal/...
+      - cmd: bash scripts/container-test.sh -race -count=1 -timeout=60s ./internal/...
+        platforms: [darwin, linux]
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\container-test.ps1 -race -count=1 -timeout=60s ./internal/...
+        platforms: [windows]
 
   container-test-integration:
     desc: Run integration tests inside a container
     cmds:
-      - docker compose -f docker-compose.dev.yml run --rm test go test -race -count=1 -timeout=120s ./tests/...
+      - cmd: bash scripts/container-test.sh -race -count=1 -timeout=120s ./tests/...
+        platforms: [darwin, linux]
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\container-test.ps1 -race -count=1 -timeout=120s ./tests/...
+        platforms: [windows]
 
   dev:
     desc: Start the dev server with source mounted (no local Go needed)

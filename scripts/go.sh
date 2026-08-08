@@ -42,39 +42,9 @@ BUILD_CACHE_VOLUME="${OVERCAST_GO_BUILD_CACHE:-overcast-go-build-cache}"
 
 # CPU bound: uncapped, the container takes the whole machine. See
 # scripts/docker-go.sh's "CPU bound" section for why all three of --cpus,
-# GOMAXPROCS and -p are needed and how the defaults are derived.
-detect_cpus() {
-    for candidate in \
-        "$(docker info --format '{{.NCPU}}' 2>/dev/null || true)" \
-        "$(nproc 2>/dev/null || true)" \
-        "$(sysctl -n hw.ncpu 2>/dev/null || true)" \
-        "${NUMBER_OF_PROCESSORS:-}"; do
-        case "$candidate" in
-        '' | *[!0-9]*) continue ;;
-        esac
-        if [ "$candidate" -ge 1 ]; then
-            echo "$candidate"
-            return 0
-        fi
-    done
-    echo 2
-}
-
-GO_CPUS="${OVERCAST_GO_CPUS:-}"
-GO_TEST_P="${OVERCAST_GO_TEST_P:-}"
-if [ "$GO_CPUS" = "0" ]; then
-    GO_TEST_P="${OVERCAST_GO_TEST_P:-0}"
-elif [ -z "$GO_CPUS" ] || [ -z "$GO_TEST_P" ]; then
-    cpu_total=$(detect_cpus)
-    if [ -z "$GO_CPUS" ]; then
-        GO_CPUS=$((cpu_total / 2))
-        [ "$GO_CPUS" -ge 1 ] || GO_CPUS=1
-    fi
-    if [ -z "$GO_TEST_P" ]; then
-        GO_TEST_P=$((cpu_total / 4))
-        [ "$GO_TEST_P" -ge 1 ] || GO_TEST_P=1
-    fi
-fi
+# GOMAXPROCS and -p are needed and how the defaults are derived; the code is
+# shared in lib/go-cpu-bound.sh.
+. "$script_dir/lib/go-cpu-bound.sh"
 
 cpus_flag=""
 gomaxprocs_flag=""
@@ -104,16 +74,6 @@ run() {
         -w /src \
         "$IMAGE" \
         sh -c "git config --global --add safe.directory /src 2>/dev/null; exec \"\$@\"" -- "$@"
-}
-
-# has_p_flag — did the caller pass their own -p? Never override an explicit flag.
-has_p_flag() {
-    for arg in "$@"; do
-        case "$arg" in
-        -p | -p=* | --p | --p=*) return 0 ;;
-        esac
-    done
-    return 1
 }
 
 if [ "$1" = "shell" ]; then
