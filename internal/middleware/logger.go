@@ -33,15 +33,7 @@ func detectService(r *http.Request, body ...[]byte) string {
 
 	// 2. Well-known URL prefixes — covers REST-protocol services.
 	switch {
-	case strings.HasPrefix(r.URL.Path, "/2015-03-31/"),
-		strings.HasPrefix(r.URL.Path, "/2017-03-31/"),
-		strings.HasPrefix(r.URL.Path, "/2017-10-31/"),
-		strings.HasPrefix(r.URL.Path, "/2018-10-31/"),
-		strings.HasPrefix(r.URL.Path, "/2019-09-30/"),
-		strings.HasPrefix(r.URL.Path, "/2020-04-22/"),
-		strings.HasPrefix(r.URL.Path, "/2020-06-30/"),
-		strings.HasPrefix(r.URL.Path, "/2021-10-31/"),
-		strings.HasPrefix(r.URL.Path, "/2021-11-15/"):
+	case isLambdaAPIVersionPrefix(r.URL.Path):
 		return "lambda"
 	case strings.HasPrefix(r.URL.Path, "/2015-02-01/"):
 		return "efs"
@@ -120,6 +112,41 @@ func detectService(r *http.Request, body ...[]byte) string {
 	return "s3"
 }
 
+// isLambdaAPIVersionPrefix reports whether a path is under one of Lambda's
+// dated API version prefixes. Lambda is the one service that spreads its REST
+// surface across many of them, and a prefix missing here sends that whole
+// operation family into the S3 fallback's bucket/object shapes.
+//
+// The list is every version the pinned AWS models bind a Lambda operation to,
+// not only the ones Overcast routes today: an unrouted Lambda path still gets
+// a protocol-correct 501 from the generated registry, so labelling it lambda
+// is what actually happened to it. TestDetectServiceCoversModeledLambdaVersions
+// fails if a model refresh introduces one that is missing. No other modeled
+// service shares any of these prefixes (only Lambda MicroVMs, which Overcast
+// does not implement, shares /2017-03-31).
+func isLambdaAPIVersionPrefix(path string) bool {
+	switch {
+	case strings.HasPrefix(path, "/2014-11-13/"),
+		strings.HasPrefix(path, "/2015-03-31/"),
+		strings.HasPrefix(path, "/2016-08-19/"),
+		strings.HasPrefix(path, "/2017-03-31/"),
+		strings.HasPrefix(path, "/2017-10-31/"),
+		strings.HasPrefix(path, "/2018-10-31/"),
+		strings.HasPrefix(path, "/2019-09-25/"),
+		strings.HasPrefix(path, "/2019-09-30/"),
+		strings.HasPrefix(path, "/2020-04-22/"),
+		strings.HasPrefix(path, "/2020-06-30/"),
+		strings.HasPrefix(path, "/2021-07-20/"),
+		strings.HasPrefix(path, "/2021-10-31/"),
+		strings.HasPrefix(path, "/2021-11-15/"),
+		strings.HasPrefix(path, "/2024-08-31/"),
+		strings.HasPrefix(path, "/2025-11-30/"),
+		strings.HasPrefix(path, "/2025-12-01/"):
+		return true
+	}
+	return false
+}
+
 // middlewareServiceKey translates the generated registry's service identity
 // to the key middleware has always used where the two differ. CloudWatch Logs
 // is modeled as "cloudwatch-logs" (its capability key), but its SigV4 signing
@@ -169,13 +196,32 @@ func serviceFromAuthCredential(r *http.Request) string {
 	return ""
 }
 
-// detectOperation infers the operation name from the request.
+// detectOperation infers the operation name from the request. It classifies
+// the service first; callers that already have one should use
+// detectOperationForService rather than paying for it twice.
+func detectOperation(r *http.Request, body ...[]byte) string {
+	return detectOperationForService(r, detectService(r, body...), body...)
+}
+
+// detectOperationForService infers the AWS operation name from a request that
+// has already been classified as belonging to svc.
 //
 // Priority:
 //  1. X-Amz-Target suffix  ("AmazonSQS.CreateQueue" → "CreateQueue")
-//  2. x-id query param     ("?x-id=ListBuckets"    → "ListBuckets")
-//  3. Method + path shape  (PUT /{bucket}/{key}     → "PutObject")
-func detectOperation(r *http.Request, body ...[]byte) string {
+//  2. x-id query param     ("?x-id=ListBuckets"     → "ListBuckets")
+//  3. Query-protocol Action parameter (needs the body)
+//  4. Method + path, resolved against svc
+//
+// Step 4 is where this used to go wrong. It ran one flat switch whose Lambda
+// arm handled two methods under one path prefix and whose S3 arm was reachable
+// by anything the arms above it failed to claim, so every other Lambda method
+// and API version was labelled — and metered — as an S3 object operation.
+// Resolution is now scoped to the classified service throughout: restOperation
+// answers for a REST-routed service from the pinned Smithy models, the S3
+// shape rules are reachable only when the request is S3's, and a path neither
+// recognises yields "" instead of borrowing a name from whichever service's
+// heuristics happened to sit lower in the switch.
+func detectOperationForService(r *http.Request, svc string, body ...[]byte) string {
 	// 1. Target-based (all JSON-protocol services).
 	if t := r.Header.Get("X-Amz-Target"); t != "" {
 		if claim, ok := awsapi.NewRegistry().ClaimTarget(t); ok && claim.Operation != "" {
@@ -184,11 +230,11 @@ func detectOperation(r *http.Request, body ...[]byte) string {
 	}
 
 	// 2. x-id query param (S3 SDK sends this for several operations)
-	if xid := r.URL.Query().Get("x-id"); xid != "" {
+	if xid := rawQueryValue(r.URL.RawQuery, "x-id"); xid != "" {
 		return xid
 	}
 
-	// 2b. Query-protocol Action parameter.
+	// 3. Query-protocol Action parameter.
 	if len(body) > 0 && len(body[0]) > 0 && bytes.Contains(body[0][:min(len(body[0]), 256)], []byte("Action=")) {
 		values, err := url.ParseQuery(string(body[0]))
 		if err == nil {
@@ -198,72 +244,57 @@ func detectOperation(r *http.Request, body ...[]byte) string {
 		}
 	}
 
-	if r.URL.Path == "/_events" {
+	switch r.URL.Path {
+	case "/_events":
 		return "Subscribe"
-	}
-
-	if r.URL.Path == "/_metrics" {
+	case "/_metrics":
 		return "GetMetrics"
 	}
 
-	// Emulator-internal paths — don't fall through to S3/Lambda heuristics.
+	// Emulator-internal paths — never a modeled AWS operation, and S3 bucket
+	// names cannot begin with '_', so nothing below can apply.
 	if strings.HasPrefix(r.URL.Path, "/_") {
 		return ""
 	}
 
-	// AppSync, CloudFront, API Gateway v1/v2 — REST services where operation
-	// names cannot be reliably inferred from path/method without full routing.
-	// Return "" (no operation) rather than misidentifying as an S3 operation.
-	if strings.HasPrefix(r.URL.Path, "/v1/apis") ||
-		strings.HasPrefix(r.URL.Path, "/2020-05-31/") ||
-		strings.HasPrefix(r.URL.Path, "/restapis") ||
-		strings.HasPrefix(r.URL.Path, "/v2/apis") ||
-		strings.HasPrefix(r.URL.Path, "/2015-02-01/") {
+	// Host-routed data-plane traffic (execute-api, lambda-url, appsync-api,
+	// CloudFront, ELB). The path belongs to the customer's own API, not to an
+	// AWS control-plane operation, so there is nothing to name — and without
+	// this the request would be scored against whatever service the host claim
+	// named it.
+	if claim, ok := HostClaimFromContext(r.Context()); ok && claim.Kind == HostClaimHostRoute {
 		return ""
 	}
 
-	// Pipes REST API
-	if strings.HasPrefix(r.URL.Path, "/v1/pipes") {
-		trimmed := strings.TrimPrefix(r.URL.Path, "/v1/pipes")
-		trimmed = strings.Trim(trimmed, "/")
-		switch {
-		case trimmed == "" && r.Method == http.MethodGet:
-			return "ListPipes"
-		case trimmed != "" && r.Method == http.MethodPost:
-			return "CreatePipe"
-		case trimmed != "" && r.Method == http.MethodGet:
-			return "DescribePipe"
-		case trimmed != "" && r.Method == http.MethodDelete:
-			return "DeletePipe"
-		case trimmed != "" && r.Method == http.MethodPatch:
-			return "UpdatePipe"
-		}
+	// 4. Method + path, resolved against the classified service.
+	if svc != "s3" {
+		return restOperation(svc, r.Method, r.URL.Path, r.URL.RawQuery)
 	}
+	return s3ShapeOperation(r)
+}
 
-	// 3. Heuristic from method + path depth for S3 / Lambda
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	depth := len(parts)
-	q := r.URL.Query()
+// s3ShapeOperation names an S3 request from its method, path depth and
+// sub-resource query parameters. S3 alone needs shape rules rather than the
+// generated model bindings: it has no distinguishing header or path prefix,
+// and in the shared model trie its own `/{Bucket}/{Key+}` bindings sit behind
+// other services' greedy bindings, so a lookup for "/my-bucket/key" answers
+// with MediaStore Data's GetObject long before it reaches S3's.
+//
+// Reachable only for requests detectService classified as S3 — which is the
+// same determination the router makes when it decides S3 keeps a path.
+func s3ShapeOperation(r *http.Request) string {
+	depth := pathDepth(r.URL.Path)
+	query := r.URL.RawQuery
 
 	switch {
-	// Lambda
-	case r.URL.Path == "/2015-03-31/functions" && r.Method == http.MethodGet:
-		return "ListFunctions"
-	case r.URL.Path == "/2015-03-31/event-source-mappings" && r.Method == http.MethodGet:
-		return "ListEventSourceMappings"
-	case strings.HasPrefix(r.URL.Path, "/2015-03-31/functions") && r.Method == http.MethodPost:
-		return "InvokeFunction"
-	case strings.HasPrefix(r.URL.Path, "/2015-03-31/functions") && r.Method == http.MethodGet:
-		return "GetFunction"
-
-	// S3 bucket-level
+	// Bucket-level
 	case depth == 1 && r.Method == http.MethodGet && r.URL.Path == "/":
 		return "ListBuckets"
-	case depth == 1 && r.Method == http.MethodPut && q.Has("versioning"):
+	case depth == 1 && r.Method == http.MethodPut && rawQueryHas(query, "versioning"):
 		return "PutBucketVersioning"
-	case depth == 1 && r.Method == http.MethodGet && q.Has("location"):
+	case depth == 1 && r.Method == http.MethodGet && rawQueryHas(query, "location"):
 		return "GetBucketLocation"
-	case depth == 1 && r.Method == http.MethodGet && (q.Has("list-type") || q.Has("prefix")):
+	case depth == 1 && r.Method == http.MethodGet && (rawQueryHas(query, "list-type") || rawQueryHas(query, "prefix")):
 		return "ListObjectsV2"
 	case depth == 1 && r.Method == http.MethodPut:
 		return "CreateBucket"
@@ -272,26 +303,26 @@ func detectOperation(r *http.Request, body ...[]byte) string {
 	case depth == 1 && r.Method == http.MethodHead:
 		return "HeadBucket"
 
-	// S3 object-level
+	// Object-level
 	case depth >= 2 && r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "":
 		return "CopyObject"
-	case depth >= 2 && r.Method == http.MethodPut && q.Has("uploadId"):
+	case depth >= 2 && r.Method == http.MethodPut && rawQueryHas(query, "uploadId"):
 		return "UploadPart"
 	case depth >= 2 && r.Method == http.MethodPut:
 		return "PutObject"
-	case depth >= 2 && r.Method == http.MethodGet && q.Has("uploadId"):
+	case depth >= 2 && r.Method == http.MethodGet && rawQueryHas(query, "uploadId"):
 		return "ListParts"
 	case depth >= 2 && r.Method == http.MethodGet:
 		return "GetObject"
 	case depth >= 2 && r.Method == http.MethodHead:
 		return "HeadObject"
-	case depth >= 2 && r.Method == http.MethodDelete && q.Has("uploadId"):
+	case depth >= 2 && r.Method == http.MethodDelete && rawQueryHas(query, "uploadId"):
 		return "AbortMultipartUpload"
 	case depth >= 2 && r.Method == http.MethodDelete:
 		return "DeleteObject"
-	case depth >= 2 && r.Method == http.MethodPost && q.Has("uploads"):
+	case depth >= 2 && r.Method == http.MethodPost && rawQueryHas(query, "uploads"):
 		return "CreateMultipartUpload"
-	case depth >= 2 && r.Method == http.MethodPost && q.Has("delete"):
+	case depth >= 2 && r.Method == http.MethodPost && rawQueryHas(query, "delete"):
 		return "DeleteObjects"
 	}
 
@@ -395,7 +426,7 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 			reqID := protocol.RequestIDFromContext(r.Context())
 			duration := clk.Since(start)
 			svc := detectService(r)
-			op := detectOperation(r)
+			op := detectOperationForService(r, svc)
 
 			log := serviceutil.NewServiceLogger(logger, svc)
 			if op != "" {

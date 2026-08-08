@@ -52,7 +52,7 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 			// request yet. The Logger middleware sets the final values after
 			// the handler runs.
 			svc := detectService(r, requestBody)
-			op := detectOperation(r, requestBody)
+			op := detectOperationForService(r, svc, requestBody)
 			rec.SetServiceInfo(svc, op, RegionFromContext(r.Context(), cfg.Region))
 
 			ctx := withRequestCapture(trace.ContextWithRecorder(r.Context(), rec), capture)
