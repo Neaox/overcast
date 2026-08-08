@@ -234,6 +234,20 @@ type Function struct {
 	// ReservedConcurrency is the reserved concurrency limit. nil = unreserved,
 	// 0 = throttled (no executions).
 	ReservedConcurrency *int `json:"reserved_concurrency,omitempty"`
+	// TracingMode is the X-Ray tracing mode ("Active" or "PassThrough"), or ""
+	// for a function that never set one. There is no X-Ray service in Overcast,
+	// so the mode is recorded and echoed and changes nothing about execution —
+	// accepting it claims nothing a caller can observe as false, and rejecting
+	// it broke every CDK deploy with tracing enabled.
+	TracingMode string `json:"tracing_mode,omitempty"`
+	// EphemeralStorageSize is the configured /tmp size in MB, or 0 for a
+	// function that never set one (AWS's default is 512). Recorded and echoed;
+	// the container's /tmp is not actually capped to it.
+	EphemeralStorageSize int `json:"ephemeral_storage_size,omitempty"`
+	// KMSKeyArn is the customer managed key recorded for the function.
+	// Environment variables are stored in plaintext regardless — Overcast is
+	// not a security boundary — so this is association metadata only.
+	KMSKeyArn string `json:"kms_key_arn,omitempty"`
 }
 
 // functionImagePullGeneration identifies the exact deployment generation a

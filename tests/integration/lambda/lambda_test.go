@@ -5141,10 +5141,12 @@ func TestPutFunctionConcurrency_missingValueReturnsInvalidParameter(t *testing.T
 
 func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *testing.T) {
 	srv := helpers.NewTestServer(t)
+	// TracingConfig, EphemeralStorage and KMSKeyArn are deliberately absent:
+	// they are stored and echoed now, and covered by
+	// tracing_storage_kms_test.go. Everything still listed here would promise
+	// behaviour Overcast does not deliver — see CreateFunction's gate.
 	createFunctionFields := map[string]any{
-		"DeadLetterConfig": map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
-		"TracingConfig":    map[string]any{"Mode": "Active"}, "EphemeralStorage": map[string]any{"Size": 1024},
-		"KMSKeyArn":              "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"DeadLetterConfig":       map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
 		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
 		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
 		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
@@ -5189,9 +5191,7 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 	var baselineConfig functionConfiguration
 	decodeJSON(t, baseline, &baselineConfig)
 	updateConfigurationFields := map[string]any{
-		"DeadLetterConfig": map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
-		"TracingConfig":    map[string]any{"Mode": "Active"}, "EphemeralStorage": map[string]any{"Size": 1024},
-		"KMSKeyArn":              "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
+		"DeadLetterConfig":       map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
 		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
 		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
 		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},

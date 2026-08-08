@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -72,6 +73,32 @@ type functionConfiguration struct {
 	ImageConfigResponse *imageConfigResponseWire `json:"ImageConfigResponse,omitempty"`
 	VpcConfig           *vpcConfigResponse       `json:"VpcConfig,omitempty"`
 	FileSystemConfigs   []FileSystemConfig       `json:"FileSystemConfigs,omitempty"`
+	// TracingConfig and EphemeralStorage are always populated by
+	// functionToConfig, carrying AWS's defaults for a function that set
+	// neither, because AWS always returns both.
+	TracingConfig    *tracingConfigWire    `json:"TracingConfig,omitempty"`
+	EphemeralStorage *ephemeralStorageWire `json:"EphemeralStorage,omitempty"`
+	KMSKeyArn        string                `json:"KMSKeyArn,omitempty"`
+}
+
+// tracingConfigWire is the AWS wire format for TracingConfig, in both the
+// request and the response.
+// https://docs.aws.amazon.com/lambda/latest/api/API_TracingConfig.html
+type tracingConfigWire struct {
+	Mode string `json:"Mode,omitempty"`
+}
+
+// ephemeralStorageWire is the AWS response format for EphemeralStorage.
+// https://docs.aws.amazon.com/lambda/latest/api/API_EphemeralStorage.html
+type ephemeralStorageWire struct {
+	Size int `json:"Size"`
+}
+
+// ephemeralStorageRequest is the same shape on the way in, with Size as a
+// pointer: Size is a `required` member, so an omitted one and an explicit 0
+// are two different validation errors rather than the same zero value.
+type ephemeralStorageRequest struct {
+	Size *int `json:"Size"`
 }
 
 // imageConfigWire is the AWS wire format for ImageConfig.
@@ -142,11 +169,13 @@ type createFunctionRequest struct {
 	// Optional; AWS requires only FunctionName, Role and Code.
 	CodeSigningConfigArn string `json:"CodeSigningConfigArn,omitempty"`
 	// Layers is a list of layer version ARNs to attach to the function at creation.
-	Layers                 []string        `json:"Layers,omitempty"`
+	Layers           []string                 `json:"Layers,omitempty"`
+	TracingConfig    *tracingConfigWire       `json:"TracingConfig,omitempty"`
+	EphemeralStorage *ephemeralStorageRequest `json:"EphemeralStorage,omitempty"`
+	KMSKeyArn        *string                  `json:"KMSKeyArn"`
+	// Each of these still answers 501 rather than being stored and echoed like
+	// the three above; the reason for each is at CreateFunction's gate.
 	DeadLetterConfig       json.RawMessage `json:"DeadLetterConfig"`
-	TracingConfig          json.RawMessage `json:"TracingConfig"`
-	EphemeralStorage       json.RawMessage `json:"EphemeralStorage"`
-	KMSKeyArn              json.RawMessage `json:"KMSKeyArn"`
 	SnapStart              json.RawMessage `json:"SnapStart"`
 	CapacityProviderConfig json.RawMessage `json:"CapacityProviderConfig"`
 	DurableConfig          json.RawMessage `json:"DurableConfig"`
@@ -202,15 +231,17 @@ type updateFunctionConfigurationRequest struct {
 	ImageConfig *imageConfigWire  `json:"ImageConfig,omitempty"`
 	// FileSystemConfigs replaces the function's EFS mounts. An empty slice
 	// clears them; a nil field means "no change".
-	FileSystemConfigs      []FileSystemConfig `json:"FileSystemConfigs,omitempty"`
-	DeadLetterConfig       json.RawMessage    `json:"DeadLetterConfig"`
-	TracingConfig          json.RawMessage    `json:"TracingConfig"`
-	EphemeralStorage       json.RawMessage    `json:"EphemeralStorage"`
-	KMSKeyArn              json.RawMessage    `json:"KMSKeyArn"`
-	SnapStart              json.RawMessage    `json:"SnapStart"`
-	CapacityProviderConfig json.RawMessage    `json:"CapacityProviderConfig"`
-	DurableConfig          json.RawMessage    `json:"DurableConfig"`
-	RevisionId             json.RawMessage    `json:"RevisionId"`
+	FileSystemConfigs []FileSystemConfig       `json:"FileSystemConfigs,omitempty"`
+	TracingConfig     *tracingConfigWire       `json:"TracingConfig,omitempty"`
+	EphemeralStorage  *ephemeralStorageRequest `json:"EphemeralStorage,omitempty"`
+	KMSKeyArn         *string                  `json:"KMSKeyArn"`
+	// Each of these still answers 501 rather than being stored and echoed like
+	// the three above; the reason for each is at CreateFunction's gate.
+	DeadLetterConfig       json.RawMessage `json:"DeadLetterConfig"`
+	SnapStart              json.RawMessage `json:"SnapStart"`
+	CapacityProviderConfig json.RawMessage `json:"CapacityProviderConfig"`
+	DurableConfig          json.RawMessage `json:"DurableConfig"`
+	RevisionId             json.RawMessage `json:"RevisionId"`
 }
 
 // getFunctionResponse matches AWS GetFunction response body.
@@ -435,6 +466,107 @@ func validateArchitectures(architectures []string) *protocol.AWSError {
 	return nil
 }
 
+// ─── advanced configuration: tracing, ephemeral storage, KMS key ─────────────
+//
+// These three members are stored and echoed rather than refused, because
+// accepting them claims nothing a caller can observe as false:
+//
+//   - TracingConfig — there is no X-Ray service in Overcast at all, so no trace
+//     is produced or missing whichever mode is set. Rejecting it broke every
+//     CDK deploy with `tracing` enabled, since CDK emits the member whenever
+//     the construct sets it.
+//   - EphemeralStorage — the size is recorded and echoed, not enforced on the
+//     container's /tmp. A function cannot observe a wrong answer from the API;
+//     it would only observe more space than it asked for.
+//   - KMSKeyArn — recorded as an association. Environment variables are stored
+//     in plaintext regardless, as everything in Overcast is; encryption at rest
+//     is a security-boundary promise Overcast never makes anywhere.
+//
+// The members that remain 501 are listed at CreateFunction's gate, with the
+// reason each one stays refused.
+
+// tracingModes is AWS's TracingMode enum.
+var tracingModes = []string{"Active", "PassThrough"}
+
+// defaultTracingMode and defaultEphemeralStorageSize are what AWS reports for a
+// function that never set either member.
+const (
+	defaultTracingMode          = "PassThrough"
+	defaultEphemeralStorageSize = 512
+)
+
+// kmsKeyARNPattern is AWS's own pattern for the Lambda KMSKeyArn member. The
+// empty alternative is AWS's: passing "" is how a key association is removed.
+var kmsKeyARNPattern = regexp.MustCompile(`^((arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|())$`)
+
+const kmsKeyARNConstraint = `(arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|()`
+
+// validateTracingConfig checks Mode against the modeled enum. Mode is optional
+// in AWS's request shape, so an empty object is accepted and means "default".
+func validateTracingConfig(config *tracingConfigWire) *protocol.AWSError {
+	if config == nil || config.Mode == "" {
+		return nil
+	}
+	if !slices.Contains(tracingModes, config.Mode) {
+		return smithyEnumConstraint("tracingConfig.mode", config.Mode, tracingModes...)
+	}
+	return nil
+}
+
+// validateEphemeralStorage checks Size against AWS's modeled range. Size is a
+// required member of EphemeralStorage, so an empty object is an error.
+// https://docs.aws.amazon.com/lambda/latest/api/API_EphemeralStorage.html
+func validateEphemeralStorage(storage *ephemeralStorageRequest) *protocol.AWSError {
+	if storage == nil {
+		return nil
+	}
+	if storage.Size == nil {
+		return smithyRequiredMember("ephemeralStorage.size")
+	}
+	if *storage.Size < 512 || *storage.Size > 10240 {
+		return smithyIntegerConstraint("ephemeralStorage.size", *storage.Size, 512, 10240)
+	}
+	return nil
+}
+
+func validateKMSKeyArn(arn *string) *protocol.AWSError {
+	if arn == nil {
+		return nil
+	}
+	if !kmsKeyARNPattern.MatchString(*arn) {
+		return smithyPatternConstraint("kMSKeyArn", *arn, kmsKeyARNConstraint)
+	}
+	return nil
+}
+
+// validateAdvancedConfiguration runs the three members' modeled constraints in
+// the order AWS declares them, so CreateFunction and
+// UpdateFunctionConfiguration cannot drift on which error a request gets.
+func validateAdvancedConfiguration(tracing *tracingConfigWire, storage *ephemeralStorageRequest, kmsKeyArn *string) *protocol.AWSError {
+	if aerr := validateTracingConfig(tracing); aerr != nil {
+		return aerr
+	}
+	if aerr := validateEphemeralStorage(storage); aerr != nil {
+		return aerr
+	}
+	return validateKMSKeyArn(kmsKeyArn)
+}
+
+// applyAdvancedConfiguration writes the three members onto the function. Each
+// is presence-aware: a nil member leaves the stored value alone, which is what
+// UpdateFunctionConfiguration needs and what CreateFunction gets for free.
+func applyAdvancedConfiguration(fn *Function, tracing *tracingConfigWire, storage *ephemeralStorageRequest, kmsKeyArn *string) {
+	if tracing != nil && tracing.Mode != "" {
+		fn.TracingMode = tracing.Mode
+	}
+	if storage != nil && storage.Size != nil {
+		fn.EphemeralStorageSize = *storage.Size
+	}
+	if kmsKeyArn != nil {
+		fn.KMSKeyArn = *kmsKeyArn
+	}
+}
+
 type unsupportedRequestField struct {
 	present bool
 }
@@ -548,6 +680,20 @@ func functionToConfig(fn *Function) *functionConfiguration {
 	if len(fn.FileSystemConfigs) > 0 {
 		cfg.FileSystemConfigs = fn.FileSystemConfigs
 	}
+	// AWS reports both of these on every function, defaulted when unset, so a
+	// function created before these members were stored reads as an AWS default
+	// rather than as an absent field.
+	tracingMode := fn.TracingMode
+	if tracingMode == "" {
+		tracingMode = defaultTracingMode
+	}
+	cfg.TracingConfig = &tracingConfigWire{Mode: tracingMode}
+	ephemeralStorageSize := fn.EphemeralStorageSize
+	if ephemeralStorageSize == 0 {
+		ephemeralStorageSize = defaultEphemeralStorageSize
+	}
+	cfg.EphemeralStorage = &ephemeralStorageWire{Size: ephemeralStorageSize}
+	cfg.KMSKeyArn = fn.KMSKeyArn
 	return cfg
 }
 
@@ -605,9 +751,24 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("Role"))
 		return
 	}
+	// The members below stay 501 because accepting one would promise behaviour
+	// a caller can observe Overcast not delivering — unlike TracingConfig,
+	// EphemeralStorage and KMSKeyArn, which are stored and echoed:
+	//
+	//   - DeadLetterConfig — accepting it says failed async invocations reach
+	//     the target queue or topic. They do not: async retry and on-failure
+	//     delivery are not emulated outside event source mappings, so the DLQ
+	//     would stay silently empty and the caller would never learn why.
+	//   - SnapStart — promises a restored snapshot and the init-phase semantics
+	//     that come with it; execution environments here always cold start.
+	//   - CapacityProviderConfig, DurableConfig, TenancyConfig — each selects an
+	//     execution substrate Overcast has no equivalent of.
+	//   - Publish and PublishTo — publishing on create must report the resulting
+	//     version, and functionConfiguration has no Version member to report it
+	//     in. PublishVersion exists, so this is implementable; adding Version to
+	//     the shared response shape is the work, and it is not this fix.
 	if hasUnsupportedRequestField(
-		rawRequestField(req.DeadLetterConfig), rawRequestField(req.TracingConfig),
-		rawRequestField(req.EphemeralStorage), rawRequestField(req.KMSKeyArn),
+		rawRequestField(req.DeadLetterConfig),
 		rawRequestField(req.SnapStart), rawRequestField(req.CapacityProviderConfig),
 		rawRequestField(req.DurableConfig), rawRequestField(req.Publish), rawRequestField(req.PublishTo),
 		rawRequestField(req.TenancyConfig),
@@ -616,6 +777,10 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		rawRequestField(req.Code.SourceKMSKeyArn),
 	)) {
 		protocol.NotImplementedJSON(w, r)
+		return
+	}
+	if aerr := validateAdvancedConfiguration(req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	if aerr := validateVpcConfig(req.VpcConfig); aerr != nil {
@@ -789,6 +954,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		Tags:            copyTags(req.Tags),
 	}
 	applyLoggingConfig(fn, loggingConfig)
+	applyAdvancedConfiguration(fn, req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn)
 	if req.CodeSigningConfigArn != "" {
 		exists, aerr := h.codeSigningConfigExists(r, req.CodeSigningConfigArn)
 		if aerr != nil {
@@ -1440,13 +1606,19 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Same 501 rationale as CreateFunction's gate, plus one member only this
+	// operation takes: RevisionId is an optimistic-concurrency precondition, so
+	// accepting it would silently skip the very check the caller asked for.
 	if hasUnsupportedRequestField(
-		rawRequestField(req.DeadLetterConfig), rawRequestField(req.TracingConfig),
-		rawRequestField(req.EphemeralStorage), rawRequestField(req.KMSKeyArn),
+		rawRequestField(req.DeadLetterConfig),
 		rawRequestField(req.SnapStart), rawRequestField(req.CapacityProviderConfig),
 		rawRequestField(req.DurableConfig), rawRequestField(req.RevisionId),
 	) {
 		protocol.NotImplementedJSON(w, r)
+		return
+	}
+	if aerr := validateAdvancedConfiguration(req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	loggingConfig, aerr := normalizeLoggingConfig(req.LoggingConfig, name)
@@ -1575,6 +1747,7 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		if req.LoggingConfig != nil {
 			applyLoggingConfig(current, loggingConfig)
 		}
+		applyAdvancedConfiguration(current, req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn)
 		if req.Layers != nil {
 			current.Layers = layerLinks
 		}
