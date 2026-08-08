@@ -23,6 +23,9 @@ import {
   ListEventSourceMappingsCommand,
   UpdateEventSourceMappingCommand,
   DeleteEventSourceMappingCommand,
+  ListTagsCommand,
+  TagResourceCommand,
+  UntagResourceCommand,
   type CreateFunctionCommandInput,
   type UpdateFunctionConfigurationCommandInput,
   type CreateAliasCommandInput,
@@ -169,8 +172,28 @@ export const lambda = {
     return res.Configuration ?? {}
   },
 
-  deleteFunction: async (name: string) => {
-    await awsClients.lambda().send(new DeleteFunctionCommand({ FunctionName: name }))
+  // Qualifier deletes only that published version; without one the whole
+  // function goes, versions and aliases included.
+  deleteFunction: async (name: string, qualifier?: string) => {
+    await awsClients
+      .lambda()
+      .send(new DeleteFunctionCommand({ FunctionName: name, Qualifier: qualifier }))
+  },
+
+  // Tags hang off the unqualified function ARN — never a version or an alias.
+  listTags: async (resourceArn: string) => {
+    const res = await awsClients.lambda().send(new ListTagsCommand({ Resource: resourceArn }))
+    return res.Tags ?? {}
+  },
+
+  tagResource: async (resourceArn: string, tags: Record<string, string>) => {
+    await awsClients.lambda().send(new TagResourceCommand({ Resource: resourceArn, Tags: tags }))
+  },
+
+  untagResource: async (resourceArn: string, tagKeys: string[]) => {
+    await awsClients
+      .lambda()
+      .send(new UntagResourceCommand({ Resource: resourceArn, TagKeys: tagKeys }))
   },
 
   invoke: async (name: string, payload: string) => {

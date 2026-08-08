@@ -39,6 +39,7 @@ export const lambdaKeys = {
   layerVersionMetadata: (layerName: string, version: number) =>
     [...lambdaKeys.layerVersions(layerName), version, "metadata"] as const,
   esms: (functionName: string) => [...lambdaKeys.all(), "esms", functionName] as const,
+  tags: (resourceArn: string) => [...lambdaKeys.all(), "tags", resourceArn] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -67,10 +68,53 @@ export function createFunctionMutationOptions() {
   })
 }
 
+/**
+ * Deletes a whole function, or — with a qualifier — only that published
+ * version. AWS refuses a qualifier that names $LATEST or a version an alias
+ * references, so the error surfaces to the caller rather than being swallowed.
+ */
 export function deleteFunctionMutationOptions() {
   return mutationOptions({
     mutationKey: [...lambdaKeys.functions(), "delete"] as const,
-    mutationFn: (name: string) => lambda.deleteFunction(name),
+    mutationFn: ({ name, qualifier }: { name: string; qualifier?: string }) =>
+      lambda.deleteFunction(name, qualifier),
+  })
+}
+
+// ─── Tags ──────────────────────────────────────────────────────────────────
+
+export function functionTagsQueryOptions(resourceArn: string) {
+  return queryOptions({
+    queryKey: lambdaKeys.tags(resourceArn),
+    queryFn: () => lambda.listTags(resourceArn),
+    enabled: !!resourceArn,
+  })
+}
+
+/**
+ * Saves an edited tag set as the two AWS calls it really is: TagResource for
+ * added or changed keys, UntagResource for removed ones. TagResource merges,
+ * so a key dropped in the editor has to be untagged explicitly.
+ */
+export function updateFunctionTagsMutationOptions() {
+  return mutationOptions({
+    mutationKey: [...lambdaKeys.all(), "tags", "update"] as const,
+    mutationFn: async ({
+      resourceArn,
+      tags,
+      previous,
+    }: {
+      resourceArn: string
+      tags: Record<string, string>
+      previous: Record<string, string>
+    }) => {
+      const removed = Object.keys(previous).filter((key) => !(key in tags))
+      if (removed.length > 0) await lambda.untagResource(resourceArn, removed)
+      const changed = Object.fromEntries(
+        Object.entries(tags).filter(([key, value]) => previous[key] !== value),
+      )
+      if (Object.keys(changed).length > 0) await lambda.tagResource(resourceArn, changed)
+    },
   })
 }
 

@@ -632,12 +632,13 @@
           "operation": "CreateFunction",
           "category": "Function management",
           "status": "✅ Supported",
-          "notes": "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647)"
+          "notes": "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing"
         },
         {
           "operation": "DeleteFunction",
           "category": "Function management",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function"
         },
         {
           "operation": "GetFunction",
@@ -919,19 +920,19 @@
           "operation": "TagResource",
           "category": "Tags",
           "status": "✅ Supported",
-          "notes": "Merges tags; max 50; validates key/value lengths"
+          "notes": "Function and event-source-mapping ARNs; merges tags; max 50; validates key/value lengths; rejects qualified ARNs and non-ARN resources"
         },
         {
           "operation": "UntagResource",
           "category": "Tags",
           "status": "✅ Supported",
-          "notes": "Removes specified keys; idempotent on missing keys"
+          "notes": "Removes specified keys; idempotent on missing keys; tagKeys is required"
         },
         {
           "operation": "ListTags",
           "category": "Tags",
           "status": "✅ Supported",
-          "notes": "Returns all tags for the function"
+          "notes": "Returns the resource's tags; code-signing-config, capacity-provider and network-connector ARNs return 501"
         }
       ]
     },

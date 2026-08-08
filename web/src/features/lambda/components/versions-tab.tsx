@@ -12,6 +12,7 @@ import {
   createAliasMutationOptions,
   updateAliasMutationOptions,
   deleteAliasMutationOptions,
+  deleteFunctionMutationOptions,
   lambdaKeys,
 } from "@/features/lambda/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
@@ -61,6 +62,17 @@ export function VersionsTab({ name }: { name: string }) {
       setEditingAlias(null)
       setAliasVersion("")
     },
+  })
+
+  // Deleting a published version is DeleteFunction with a Qualifier. AWS
+  // refuses a version an alias still references, so the error is worth showing
+  // rather than optimistically dropping the row.
+  const { mutate: deleteVersion, isPending: isDeletingVersion } = useResourceMutation({
+    options: deleteFunctionMutationOptions(),
+    invalidateKeys: [lambdaKeys.versions(name), lambdaKeys.functions()],
+    successTitle: "Version deleted",
+    successDescription: ({ qualifier }) => `Version ${qualifier} of ${name}`,
+    errorTitle: "Delete version failed",
   })
 
   const { mutate: deleteAlias } = useResourceMutation({
@@ -122,6 +134,7 @@ export function VersionsTab({ name }: { name: string }) {
                 <th className="pb-1 text-left">Description</th>
                 <th className="pb-1 text-left">ARN</th>
                 <th className="pb-1 text-left">SHA-256</th>
+                <th className="pb-1" />
               </tr>
             </thead>
             <tbody>
@@ -139,6 +152,16 @@ export function VersionsTab({ name }: { name: string }) {
                   </td>
                   <td className="py-1.5 font-mono text-xs text-fg-muted">
                     {v.CodeSha256?.slice(0, 12)}…
+                  </td>
+                  <td className="py-1.5 text-right">
+                    <button
+                      className="text-xs text-fg-muted hover:text-danger"
+                      disabled={isDeletingVersion}
+                      onClick={() => deleteVersion({ name, qualifier: v.Version ?? "" })}
+                      title={`Delete version ${v.Version} only — the function and its other versions stay`}
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}

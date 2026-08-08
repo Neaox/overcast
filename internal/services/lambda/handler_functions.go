@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -309,6 +310,12 @@ func smithyStringLengthConstraint(member, value string, maximum int) *protocol.A
 
 func smithyStringMinimumLengthConstraint(member, value string, minimum int) *protocol.AWSError {
 	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must have length greater than or equal to " + strconv.Itoa(minimum))
+}
+
+// smithyRequiredMember reports an omitted `required` member the way AWS's
+// generated request validation does.
+func smithyRequiredMember(member string) *protocol.AWSError {
+	return lambdaInvalidParameter("1 validation error detected: Value null at '" + member + "' failed to satisfy constraint: Member must not be null")
 }
 
 func smithyPatternConstraint(member, value, pattern string) *protocol.AWSError {
@@ -805,22 +812,32 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		fn.CodeS3Key = req.Code.S3Key
 		fn.ImageUri = req.Code.ImageUri
 
-		// Eagerly fetch the code from S3 when the caller provided
-		// S3Bucket/S3Key but no inline ZipFile. CDK deploys upload the zip
-		// to S3 *before* CreateFunction, so the s3SyncWatcher (which only
-		// fires on subsequent PutObjects) wouldn't otherwise see this code
-		// and the function would invoke with an empty zip.
-		if len(fn.CodeZip) == 0 && fn.CodeS3Bucket != "" && fn.CodeS3Key != "" && h.s3Fetch != nil {
-			if zip, err := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key); err == nil {
-				fn.setCode(zip)
-			} else {
-				log.Warn("lambda: create function: s3 fetch failed",
+		// Fetch the code from S3 when the caller provided S3Bucket/S3Key but
+		// no inline ZipFile. CDK deploys upload the zip to S3 *before*
+		// CreateFunction, so the s3SyncWatcher (which only fires on
+		// subsequent PutObjects) wouldn't otherwise see this code and the
+		// function would invoke with an empty zip.
+		//
+		// A GetObject failure fails the whole create, as on AWS. Nothing is
+		// persisted before this point, so the caller is left with no function
+		// at all rather than one whose code is missing.
+		if len(fn.CodeZip) == 0 && fn.CodeS3Bucket != "" && fn.CodeS3Key != "" {
+			if h.s3Fetch == nil {
+				protocol.NotImplementedJSON(w, r)
+				return
+			}
+			zip, fetchErr := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key)
+			if fetchErr != nil {
+				log.Debug("lambda: create function: s3 fetch failed",
 					zap.String("function", fn.Name),
 					zap.String("bucket", fn.CodeS3Bucket),
 					zap.String("key", fn.CodeS3Key),
-					zap.Error(err),
+					zap.Error(fetchErr),
 				)
+				protocol.WriteJSONError(w, r, lambdaS3CodeFetchError(fetchErr))
+				return
 			}
+			fn.setCode(zip)
 		}
 	}
 	if req.VpcConfig != nil {
@@ -1653,12 +1670,31 @@ func (h *Handler) retireExecutionEnvironment(fn *Function, previousIdentity stri
 	h.proactive.NoteFunctionChanged(fn)
 }
 
-// DeleteFunction handles DELETE /2015-03-31/functions/{name}.
+// DeleteFunction handles DELETE /2015-03-31/functions/{name}[?Qualifier=].
+//
+// AWS: "Deletes a Lambda function. To delete a specific function version, use
+// the Qualifier parameter. Otherwise, all versions and aliases are deleted."
+// (API_DeleteFunction.html). The qualifier may equally arrive as part of the
+// NamespacedFunctionName path label — "my-function:1".
 func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
-	name := chi.URLParam(r, "name")
-	log.Debug("delete function", zap.String("function", name))
+	identifier := chi.URLParam(r, "name")
+	name, qualifier := splitFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
+	log.Debug("delete function", zap.String("function", name), zap.String("qualifier", qualifier))
 	ctx := r.Context()
+
+	// NumericLatestPublishedOrAliasQualifier, the shape DeleteFunctionRequest's
+	// Qualifier targets in the pinned Lambda model.
+	if qualifier != "" {
+		if len(qualifier) > 128 {
+			protocol.WriteJSONError(w, r, smithyStringLengthConstraint("qualifier", qualifier, 128))
+			return
+		}
+		if !qualifierPattern.MatchString(qualifier) {
+			protocol.WriteJSONError(w, r, smithyPatternConstraint("qualifier", qualifier, qualifierConstraint))
+			return
+		}
+	}
 
 	fn, aerr := h.ls.getFunction(ctx, name)
 	if aerr != nil {
@@ -1666,11 +1702,12 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if fn == nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    "Function not found: " + name,
-			HTTPStatus: http.StatusNotFound,
-		})
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(qualifiedResourceName(name, qualifier)))
+		return
+	}
+
+	if qualifier != "" {
+		h.deleteFunctionVersion(w, r, fn, qualifier)
 		return
 	}
 
@@ -1697,6 +1734,98 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteFunctionVersion removes a single published version, leaving $LATEST,
+// the function record, its other versions, its aliases and every unrelated
+// policy in place.
+func (h *Handler) deleteFunctionVersion(w http.ResponseWriter, r *http.Request, fn *Function, qualifier string) {
+	ctx := r.Context()
+
+	// AWS's Qualifier "can specify a function version, but not the $LATEST
+	// version" — the unpublished version only goes when the function does.
+	if qualifier == "$LATEST" || qualifier == "$LATEST.PUBLISHED" {
+		protocol.WriteJSONError(w, r, lambdaInvalidParameter("$LATEST version cannot be deleted without deleting the function."))
+		return
+	}
+
+	version, err := strconv.Atoi(qualifier)
+	if err != nil {
+		// Not a version number. DeleteFunction's Qualifier names a version to
+		// delete, and an alias only ever names a version it references — which
+		// AWS refuses to delete. So a live alias is a conflict, and a name that
+		// is neither a version nor an alias is simply absent.
+		alias, aerr := h.ls.getAlias(ctx, fn.Name, qualifier)
+		if aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+		if alias == nil {
+			protocol.WriteJSONError(w, r, lambdaFunctionNotFound(qualifiedResourceName(fn.Name, qualifier)))
+			return
+		}
+		protocol.WriteJSONError(w, r, lambdaVersionReferencedByAliases([]string{alias.Name}))
+		return
+	}
+
+	versions, aerr := h.ls.listVersions(ctx, fn.Name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	published := false
+	for _, candidate := range versions {
+		if candidate.Version == version {
+			published = true
+			break
+		}
+	}
+	if !published {
+		protocol.WriteJSONError(w, r, lambdaFunctionNotFound(qualifiedResourceName(fn.Name, qualifier)))
+		return
+	}
+
+	// AWS: "You can't delete a version that an alias references."
+	aliases, aerr := h.ls.listAliases(ctx, fn.Name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	var referencing []string
+	for _, alias := range aliases {
+		if alias.FunctionVersion == strconv.Itoa(version) {
+			referencing = append(referencing, alias.Name)
+		}
+	}
+	if len(referencing) > 0 {
+		sort.Strings(referencing)
+		protocol.WriteJSONError(w, r, lambdaVersionReferencedByAliases(referencing))
+		return
+	}
+
+	if aerr := h.ls.deleteVersion(ctx, fn.Name, version); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// qualifiedResourceName renders a function reference the way AWS's messages do:
+// "my-function" unqualified, "my-function:1" with a qualifier.
+func qualifiedResourceName(name, qualifier string) string {
+	if qualifier == "" {
+		return name
+	}
+	return name + ":" + qualifier
+}
+
+func lambdaVersionReferencedByAliases(aliases []string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceConflictException",
+		Message:    "Unable to delete version because the following aliases reference it: [" + strings.Join(aliases, ", ") + "]",
+		HTTPStatus: http.StatusConflict,
+	}
 }
 
 // ─── Invoke ───────────────────────────────────────────────────────────────────

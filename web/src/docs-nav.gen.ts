@@ -3554,6 +3554,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Deleting a version, and where tags live",
+        "id": "deleting-a-version-and-where-tags-live"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },

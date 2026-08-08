@@ -49,6 +49,13 @@ containers, communicate with the Lambda Runtime API, and return real response pa
   function extension startup is not yet wrapped.
 - Extension Logs API support is limited to HTTP destinations and best-effort
   delivery. Telemetry API subscriptions are not yet implemented.
+- An unqualified `DeleteFunction` removes the function record, its deployment
+  package and its resource policies, but published versions, aliases and
+  version counters for that name are left behind. Recreating a function under
+  the same name therefore inherits them.
+- Tags are stored for functions and event source mappings only. The other
+  taggable Lambda resources — code signing configurations, capacity providers
+  and network connectors — return `501` from the tag operations.
 
 ---
 
@@ -600,6 +607,35 @@ environment on AWS. Creation only proceeds when capacity is idle: it never
 queues ahead of a real invocation, respects the instance and memory budgets,
 and the environment ages out through the normal idle sweep.
 
+---
+
+## Deleting a version, and where tags live
+
+`DeleteFunction` means two different things depending on whether you pass a
+qualifier — either as `?Qualifier=` or inside the function name itself
+(`my-function:2`):
+
+| Request                                            | Effect                                                                        |
+| -------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `DELETE /functions/my-function`                     | Deletes the function, its package and its resource policies                    |
+| `DELETE /functions/my-function?Qualifier=2`         | Deletes **only** published version 2, its qualified policy and its provisioned concurrency |
+| `DELETE /functions/my-function?Qualifier=$LATEST`   | `400 InvalidParameterValueException` — `$LATEST` only goes with the function   |
+| Qualifier naming a version an alias points at       | `409 ResourceConflictException` naming the aliases                             |
+| Qualifier naming an alias                           | `409 ResourceConflictException` — `DeleteFunction` never deletes an alias      |
+| Qualifier naming neither                            | `404 ResourceNotFoundException`                                                |
+
+A qualified delete never touches `$LATEST`, the function record, other
+versions, aliases or unqualified policies, and it does not rewind the version
+counter — AWS never reuses a version number.
+
+Tags are attached to the **unqualified** function ARN, never to a version or an
+alias, so `TagResource`, `UntagResource` and `ListTags` reject a qualified ARN
+with `InvalidParameterValueException`. They take an ARN, not a bare function
+name: a name that is not a Lambda ARN fails the `TaggableResource` pattern.
+Event source mappings are taggable through the same three operations; their
+tags are stored separately and never appear in
+`EventSourceMappingConfiguration`, which has no `Tags` member.
+
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary
@@ -623,18 +659,18 @@ and the environment ages out through the normal idle sweep.
 
 ### Function management
 
-| Operation                         | Status       | Notes                                                                                                                                                                                                                              | AWS Docs                                                                                      |
-| --------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `ListFunctions`                   | ✅ Supported | Returns all stored functions; empty list if none                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctions.html)                   |
-| `CreateFunction`                  | ✅ Supported | Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647) | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunction.html)                  |
-| `DeleteFunction`                  | ✅ Supported |                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)                  |
-| `GetFunction`                     | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                                                                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                     |
-| `GetFunctionConfiguration`        | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)        |
-| `UpdateFunctionCode`              | ✅ Supported | Updates code zip or image URI and Architectures; generates new RevisionId                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
-| `UpdateFunctionConfiguration`     | ✅ Supported | Presence-aware updates for supported configuration; unsupported advanced fields fail before mutation                                                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
-| `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                                                                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
-| `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                                                                                                                           | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
-| `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                                                                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
+| Operation                         | Status       | Notes                                                                                                                                                                                                                                                                                                        | AWS Docs                                                                                      |
+| --------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `ListFunctions`                   | ✅ Supported | Returns all stored functions; empty list if none                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctions.html)                   |
+| `CreateFunction`                  | ✅ Supported | Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunction.html)                  |
+| `DeleteFunction`                  | ✅ Supported | Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function                                                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)                  |
+| `GetFunction`                     | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                     |
+| `GetFunctionConfiguration`        | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)        |
+| `UpdateFunctionCode`              | ✅ Supported | Updates code zip or image URI and Architectures; generates new RevisionId                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
+| `UpdateFunctionConfiguration`     | ✅ Supported | Presence-aware updates for supported configuration; unsupported advanced fields fail before mutation                                                                                                                                                                                                         | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
+| `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
+| `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                                                                                                                                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
+| `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
 
 ### Resource-based policies
 
@@ -719,10 +755,10 @@ and the environment ages out through the normal idle sweep.
 
 ### Tags
 
-| Operation       | Status       | Notes                                              | AWS Docs                                                                    |
-| --------------- | ------------ | -------------------------------------------------- | --------------------------------------------------------------------------- |
-| `TagResource`   | ✅ Supported | Merges tags; max 50; validates key/value lengths   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_TagResource.html)   |
-| `UntagResource` | ✅ Supported | Removes specified keys; idempotent on missing keys | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UntagResource.html) |
-| `ListTags`      | ✅ Supported | Returns all tags for the function                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListTags.html)      |
+| Operation       | Status       | Notes                                                                                                                                  | AWS Docs                                                                    |
+| --------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `TagResource`   | ✅ Supported | Function and event-source-mapping ARNs; merges tags; max 50; validates key/value lengths; rejects qualified ARNs and non-ARN resources | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_TagResource.html)   |
+| `UntagResource` | ✅ Supported | Removes specified keys; idempotent on missing keys; tagKeys is required                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UntagResource.html) |
+| `ListTags`      | ✅ Supported | Returns the resource's tags; code-signing-config, capacity-provider and network-connector ARNs return 501                              | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListTags.html)      |
 
 <!-- END overcast:capabilities -->
