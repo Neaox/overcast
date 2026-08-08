@@ -38,5 +38,20 @@ func init() {
 			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_streams_GetShardIterator.html)"},
 		capabilities.Capability{Service: "dynamodb", Operation: "RestoreTableFromBackup", Category: "Table management", Status: capabilities.StatusUnsupported, DocOnly: true,
 			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_RestoreTableFromBackup.html)"},
+		// Global tables are modeled by AWS, so they answer 501 rather than
+		// UnknownOperationException — see the Known limitations section of
+		// docs/services/dynamodb.md.
+		capabilities.Capability{Service: "dynamodb", Operation: "CreateGlobalTable", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateGlobalTable.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "DescribeGlobalTable", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeGlobalTable.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "DescribeGlobalTableSettings", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeGlobalTableSettings.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "ListGlobalTables", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListGlobalTables.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "UpdateGlobalTable", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTable.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "UpdateGlobalTableSettings", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTableSettings.html)"},
 	)
 }

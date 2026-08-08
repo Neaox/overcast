@@ -28,6 +28,7 @@ serialisation round-trip issues.
 - **GSI consistency**: real DynamoDB GSIs are eventually consistent; the emulator is immediately consistent — items are visible in GSI queries the instant they are written. Asking for a strongly consistent read on a GSI (`ConsistentRead=true` with a GSI `IndexName`) is still rejected with a `ValidationException`, exactly as AWS does, so code written against the emulator cannot come to depend on a read mode AWS has no way to serve.
 - **TTL expiry** is not enforced in real-time. Items with expired TTL are removed by a background sweeper (runs hourly), not lazily on read.
 - **PartiQL** (`ExecuteStatement`, `ExecuteTransaction`, `BatchExecuteStatement`) is explicitly out of scope for v1.
+- **Every other modeled DynamoDB operation** — global tables, backups, exports and imports, resource policies, contributor insights, PartiQL — answers `501 Not Implemented` with `x-emulator-unsupported: true`, in DynamoDB's own AWS JSON 1.0 error envelope. Only an `X-Amz-Target` naming no AWS operation at all gets `400 UnknownOperationException`. The endpoint tables below name the global-table operations explicitly; the rest follow the same rule without being listed one by one.
 
 <!-- BEGIN overcast:capabilities -->
 
@@ -41,6 +42,7 @@ serialisation round-trip issues.
 | Transactions             | 2            |                |
 | Tags                     | 3            |                |
 | Streams interoperability | 1            |                |
+| Global tables            |              | 6              |
 
 ---
 
@@ -97,5 +99,16 @@ serialisation round-trip issues.
 | Operation          | Status       | Notes                                          | AWS Docs                                                                                                 |
 | ------------------ | ------------ | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `GetShardIterator` | ✅ Supported | TRIM_HORIZON, LATEST, AT/AFTER_SEQUENCE_NUMBER | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_streams_GetShardIterator.html) |
+
+### Global tables
+
+| Operation                     | Status         | Notes                             | AWS Docs                                                                                                    |
+| ----------------------------- | -------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `CreateGlobalTable`           | ❌ Unsupported | Overcast emulates a single region | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateGlobalTable.html)           |
+| `DescribeGlobalTable`         | ❌ Unsupported | Overcast emulates a single region | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeGlobalTable.html)         |
+| `DescribeGlobalTableSettings` | ❌ Unsupported | Overcast emulates a single region | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeGlobalTableSettings.html) |
+| `ListGlobalTables`            | ❌ Unsupported | Overcast emulates a single region | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListGlobalTables.html)            |
+| `UpdateGlobalTable`           | ❌ Unsupported | Overcast emulates a single region | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTable.html)           |
+| `UpdateGlobalTableSettings`   | ❌ Unsupported | Overcast emulates a single region | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTableSettings.html)   |
 
 <!-- END overcast:capabilities -->

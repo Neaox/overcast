@@ -7,7 +7,7 @@ protocols: [aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/dynamodb]
 integration_tests: [tests/integration/dynamodb]
 capability_docs: docs/services/dynamodb.md
-operation_count_estimate: 19 tracked; 18 supported, 1 unsupported
+operation_count_estimate: 28 tracked; 21 supported, 7 unsupported
 current_support_level: Strong table, item, query, transaction, index, and stream support; PartiQL out of scope.
 operations: {}
 findings:
@@ -68,6 +68,17 @@ findings:
         tests:
           - tests/integration/dynamodb/create_table_billing_test.go
           - tests/integration/cloudformation/dynamodb_table_billing_test.go
+    - scenario: >-
+        A DynamoDB operation AWS models but Overcast has not implemented (CreateGlobalTable,
+        DescribeGlobalTable, backups, exports, PartiQL, resource policies, ...) answers 501 with
+        x-emulator-unsupported: true in the AWS JSON 1.0 error envelope, instead of the 400
+        UnknownOperationException it used to fall through to. UnknownOperationException is preserved
+        for an X-Amz-Target that names no modeled operation. Ownership is read from the generated
+        registry in internal/awsapi, so the set cannot drift from the pinned models.
+      evidence:
+        aws_docs: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Operations.html
+        tests:
+          - tests/integration/dynamodb/unsupported_operations_test.go
   remaining_gaps:
     - Review expression edge cases, pagination semantics, and GSI/LSI behavior.
     - Review CBOR coverage against SDK expectations.
