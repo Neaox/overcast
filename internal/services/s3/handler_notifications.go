@@ -29,7 +29,17 @@ type xmlNotificationConfiguration struct {
 	QueueConfigurations  []xmlQueueConfiguration          `xml:"QueueConfiguration"`
 	TopicConfigurations  []xmlTopicConfiguration          `xml:"TopicConfiguration"`
 	LambdaConfigurations []xmlLambdaFunctionConfiguration `xml:"CloudFunctionConfiguration"`
+
+	// EventBridgeConfiguration is an empty element; a pointer distinguishes
+	// "present, so EventBridge delivery is on" from absent. omitempty keeps an
+	// unset one out of the response — emitting it would turn delivery on for
+	// any client that read the configuration back and put it again.
+	EventBridgeConfiguration *xmlEventBridgeConfiguration `xml:"EventBridgeConfiguration,omitempty"`
 }
+
+// xmlEventBridgeConfiguration is com.amazonaws.s3#EventBridgeConfiguration: a
+// structure with no members.
+type xmlEventBridgeConfiguration struct{}
 
 type xmlQueueConfiguration struct {
 	ID     string     `xml:"Id,omitempty"`
@@ -141,6 +151,10 @@ func (h *Handler) PutBucketNotificationConfiguration(w http.ResponseWriter, r *h
 func notificationConfigFromXML(in *xmlNotificationConfiguration) *NotificationConfig {
 	cfg := &NotificationConfig{}
 
+	if in.EventBridgeConfiguration != nil {
+		cfg.EventBridgeConfiguration = &EventBridgeNotificationConfig{}
+	}
+
 	for _, qc := range in.QueueConfigurations {
 		q := QueueNotificationConfig{
 			ID:     qc.ID,
@@ -183,6 +197,10 @@ func notificationConfigFromXML(in *xmlNotificationConfiguration) *NotificationCo
 func notificationConfigToXML(cfg *NotificationConfig) *xmlNotificationConfiguration {
 	out := &xmlNotificationConfiguration{
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
+	}
+
+	if cfg.EventBridgeConfiguration != nil {
+		out.EventBridgeConfiguration = &xmlEventBridgeConfiguration{}
 	}
 
 	for _, qc := range cfg.QueueConfigurations {

@@ -111,10 +111,18 @@ type cfnS3VersioningConfiguration struct {
 }
 
 type cfnS3NotificationConfiguration struct {
-	EventBridgeConfiguration json.RawMessage            `json:"EventBridgeConfiguration,omitempty"`
-	LambdaConfigurations     []cfnS3LambdaConfiguration `json:"LambdaConfigurations,omitempty"`
-	QueueConfigurations      []cfnS3QueueConfiguration  `json:"QueueConfigurations,omitempty"`
-	TopicConfigurations      []cfnS3TopicConfiguration  `json:"TopicConfigurations,omitempty"`
+	EventBridgeConfiguration *cfnS3EventBridgeConfiguration `json:"EventBridgeConfiguration,omitempty"`
+	LambdaConfigurations     []cfnS3LambdaConfiguration     `json:"LambdaConfigurations,omitempty"`
+	QueueConfigurations      []cfnS3QueueConfiguration      `json:"QueueConfigurations,omitempty"`
+	TopicConfigurations      []cfnS3TopicConfiguration      `json:"TopicConfigurations,omitempty"`
+}
+
+// cfnS3EventBridgeConfiguration is CloudFormation's EventBridgeConfiguration.
+// EventBridgeEnabled is required and CloudFormation accepts only true, so a
+// present property always means "on"; S3's own API models the same thing as
+// the presence of an empty element.
+type cfnS3EventBridgeConfiguration struct {
+	EventBridgeEnabled bool `json:"EventBridgeEnabled"`
 }
 
 type cfnS3LambdaConfiguration struct {
@@ -668,10 +676,16 @@ func parseOptionalInt64(value *string) (*int64, error) {
 }
 
 func translateS3NotificationConfiguration(in *cfnS3NotificationConfiguration) (*s3service.NotificationConfig, error) {
-	if len(in.EventBridgeConfiguration) != 0 {
-		return nil, fmt.Errorf("EventBridgeConfiguration cannot be represented by the current S3 notification handler")
-	}
 	out := &s3service.NotificationConfig{}
+	if eb := in.EventBridgeConfiguration; eb != nil {
+		// CloudFormation's schema allows only true. An explicit false has no
+		// S3 API spelling — the element's absence is what turns delivery off —
+		// so refuse it rather than silently enabling delivery.
+		if !eb.EventBridgeEnabled {
+			return nil, fmt.Errorf("EventBridgeConfiguration.EventBridgeEnabled must be true")
+		}
+		out.EventBridgeConfiguration = &s3service.EventBridgeNotificationConfig{}
+	}
 	for _, config := range in.QueueConfigurations {
 		out.QueueConfigurations = append(out.QueueConfigurations, s3service.QueueNotificationConfig{
 			ARN: config.Queue, Events: []string{config.Event}, Filter: translateS3NotificationFilter(config.Filter),

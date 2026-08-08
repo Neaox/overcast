@@ -296,7 +296,7 @@
           "operation": "PutBucketNotificationConfiguration",
           "category": "Notifications",
           "status": "✅ Supported",
-          "notes": "SQS, SNS, Lambda targets; prefix/suffix filters"
+          "notes": "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. EventBridge events carry AWS's Object Created/Object Deleted shape minus the fields Overcast has no value for"
         }
       ]
     },

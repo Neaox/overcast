@@ -459,6 +459,27 @@ func TestS3BucketProperties_transitionDefaultMinimumObjectSizeDispatchesThroughS
 	}
 }
 
+func TestS3BucketProperties_eventBridgeNotificationDispatchesThroughS3(t *testing.T) {
+	// Given: NotificationConfiguration.EventBridgeConfiguration, which
+	// CloudFormation spells as an EventBridgeEnabled flag and S3's own API as
+	// the presence of an empty element.
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-eventbridge","NotificationConfiguration":{"EventBridgeConfiguration":{"EventBridgeEnabled":true},"QueueConfigurations":[{"Event":"s3:ObjectCreated:*","Queue":"arn:aws:sqs:us-east-1:000000000000:cfn-eb-events"}]}}}}}`
+
+	// When: CloudFormation creates the stack.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {"cfn-s3-eventbridge"},
+		"TemplateBody": {template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-eventbridge", "CREATE_COMPLETE")
+
+	// Then: S3 owns and exposes it, alongside the queue destination.
+	assertS3SubresourceContains(t, srv, "cfn-s3-eventbridge", "notification", http.StatusOK,
+		"<EventBridgeConfiguration>", "<Queue>arn:aws:sqs:us-east-1:000000000000:cfn-eb-events</Queue>")
+}
+
 func TestS3BucketProperties_websiteRedirectAndRoutingRulesDispatchThroughS3(t *testing.T) {
 	// Given: CloudFormation's spelling of a routing rule — RedirectRule and
 	// RoutingRuleCondition rather than the API's Redirect and Condition.

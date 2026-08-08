@@ -502,7 +502,18 @@ type NotificationConfig struct {
 	QueueConfigurations  []QueueNotificationConfig  `json:"queue_configurations,omitempty"`
 	LambdaConfigurations []LambdaNotificationConfig `json:"lambda_configurations,omitempty"`
 	TopicConfigurations  []TopicNotificationConfig  `json:"topic_configurations,omitempty"`
+
+	// EventBridgeConfiguration mirrors com.amazonaws.s3#EventBridgeConfiguration,
+	// which is an empty structure: its presence is the whole signal, and while
+	// it is set S3 sends every object event to the default event bus with no
+	// event-type or key filtering. A pointer models that presence; the struct
+	// stays empty so a future member lands here rather than changing the shape.
+	EventBridgeConfiguration *EventBridgeNotificationConfig `json:"event_bridge_configuration,omitempty"`
 }
+
+// EventBridgeNotificationConfig enables delivery of the bucket's events to
+// Amazon EventBridge. AWS models it as a structure with no members.
+type EventBridgeNotificationConfig struct{}
 
 // QueueNotificationConfig maps one set of S3 events to an SQS queue ARN.
 type QueueNotificationConfig struct {

@@ -146,4 +146,10 @@ export interface BucketNotificationConfig {
   queueConfigurations: QueueNotificationConfig[]
   topicConfigurations: TopicNotificationConfig[]
   lambdaConfigurations: LambdaNotificationConfig[]
+  /**
+   * Whether the bucket sends every object event to the default EventBridge
+   * bus. AWS models this as the presence of an empty `EventBridgeConfiguration`
+   * element, so there is nothing else to carry.
+   */
+  eventBridgeEnabled: boolean
 }

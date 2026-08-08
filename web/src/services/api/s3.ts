@@ -266,6 +266,7 @@ export const s3 = {
             value: r.Value ?? "",
           })) ?? [],
       })),
+      eventBridgeEnabled: res.EventBridgeConfiguration !== undefined,
     } as BucketNotificationConfig
   },
 
@@ -304,6 +305,10 @@ export const s3 = {
             Events: l.events as S3Event[],
             Filter: toFilterRules(l.filterRules),
           })),
+          // Put replaces the whole configuration, so an omitted element turns
+          // EventBridge delivery off. Echo it back rather than clearing it
+          // behind the user's back when they edit an SQS destination.
+          EventBridgeConfiguration: config.eventBridgeEnabled ? {} : undefined,
         },
       }),
     )

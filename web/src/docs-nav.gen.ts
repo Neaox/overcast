@@ -4053,6 +4053,11 @@ export const DOCS_NAV = [
         "id": "website-redirects-and-routing-rules"
       },
       {
+        "depth": 3,
+        "text": "Notifications: EventBridge",
+        "id": "notifications-eventbridge"
+      },
+      {
         "depth": 2,
         "text": "Summary",
         "id": "summary"

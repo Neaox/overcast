@@ -130,6 +130,6 @@ func init() {
 		capabilities.Capability{Service: "s3", Operation: "GetBucketNotificationConfiguration", Category: "Notifications",
 			Status: capabilities.StatusSupported, Notes: "Returns empty config if none set"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketNotificationConfiguration", Category: "Notifications",
-			Status: capabilities.StatusSupported, Notes: "SQS, SNS, Lambda targets; prefix/suffix filters"},
+			Status: capabilities.StatusSupported, Notes: "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. EventBridge events carry AWS's Object Created/Object Deleted shape minus the fields Overcast has no value for"},
 	)
 }

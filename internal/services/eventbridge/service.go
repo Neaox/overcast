@@ -112,6 +112,31 @@ func (s *Service) InitBus(bus *events.Bus) {
 	s.bus = bus
 }
 
+// BusPublisher returns the narrow interface another service uses to emit its
+// own events onto the default bus, the way AWS services publish
+// service-originated events — S3's EventBridge bucket notifications, for
+// example. It goes through exactly the path PutEvents uses, so rule matching,
+// input transformers, retries and dead-lettering behave identically.
+func (s *Service) BusPublisher() events.BusPublisher { return (*busPublisher)(s) }
+
+// busPublisher keeps PublishBusEvent off Service's own method set, so the
+// service-to-service entry point is reached only through BusPublisher.
+type busPublisher Service
+
+func (p *busPublisher) PublishBusEvent(ctx context.Context, entry events.BusEntry) error {
+	resources := make([]any, 0, len(entry.Resources))
+	for _, resource := range entry.Resources {
+		resources = append(resources, resource)
+	}
+	(*Service)(p).deliverEntries(ctx, []string{uuid.New().String()}, []map[string]any{{
+		"Source":     entry.Source,
+		"DetailType": entry.DetailType,
+		"Detail":     entry.Detail,
+		"Resources":  resources,
+	}})
+	return nil
+}
+
 // publish emits an event if the bus is wired.
 func (s *Service) publish(r *http.Request, t events.Type, payload any) {
 	if s.bus != nil {

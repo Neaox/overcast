@@ -19,6 +19,7 @@ import {
   Plus,
   Timer,
   Globe,
+  Radio,
 } from "lucide-react"
 import { useNavigate } from "@tanstack/react-router"
 import { Route } from "@/routes/s3/$bucket/config"
@@ -182,6 +183,7 @@ function AddNotificationDialog({
       queueConfigurations,
       topicConfigurations: existing.topicConfigurations,
       lambdaConfigurations: existing.lambdaConfigurations,
+      eventBridgeEnabled: existing.eventBridgeEnabled,
     })
   }
 
@@ -359,13 +361,15 @@ export function BucketConfig() {
       queueConfigurations: data.queueConfigurations.filter((q) => q.queueArn !== arn),
       topicConfigurations: data.topicConfigurations,
       lambdaConfigurations: data.lambdaConfigurations,
+      eventBridgeEnabled: data.eventBridgeEnabled,
     })
   }
 
   const hasConfig =
     (data?.queueConfigurations.length ?? 0) > 0 ||
     (data?.topicConfigurations.length ?? 0) > 0 ||
-    (data?.lambdaConfigurations.length ?? 0) > 0
+    (data?.lambdaConfigurations.length ?? 0) > 0 ||
+    (data?.eventBridgeEnabled ?? false)
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -442,6 +446,19 @@ export function BucketConfig() {
             </ConfigSection>
           )}
 
+          {data?.eventBridgeEnabled && (
+            <ConfigSection title="EventBridge" icon={<Radio className="h-4 w-4 text-orange-400" />}>
+              <div className="flex flex-col gap-3 px-4 py-3">
+                <ConfigRow label="Destination">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <ArnLink arn="arn:aws:events:::event-bus/default" />
+                    <span className="text-xs text-fg-subtle">every object event, unfiltered</span>
+                  </span>
+                </ConfigRow>
+              </div>
+            </ConfigSection>
+          )}
+
           {(data?.lambdaConfigurations.length ?? 0) > 0 && (
             <ConfigSection
               title="Lambda Destinations"
@@ -468,7 +485,12 @@ export function BucketConfig() {
           setEditingQueue(undefined)
         }}
         existing={
-          data ?? { queueConfigurations: [], topicConfigurations: [], lambdaConfigurations: [] }
+          data ?? {
+            queueConfigurations: [],
+            topicConfigurations: [],
+            lambdaConfigurations: [],
+            eventBridgeEnabled: false,
+          }
         }
         bucket={bucket}
         editing={editingQueue}
