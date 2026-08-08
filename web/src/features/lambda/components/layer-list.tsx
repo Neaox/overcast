@@ -235,7 +235,11 @@ function PublishLayerDialog({
   const { data: runtimesList = [], isLoading: runtimesLoading } = useQuery(
     lambdaRuntimesQueryOptions(),
   )
-  const runtimeItems: LambdaRuntimeInfo[] = runtimesList.filter((rt) => !rt.deprecated)
+  // A layer is only useful against a function you can still create, so offer
+  // the same set the create wizard does rather than a separate rule.
+  const runtimeItems: LambdaRuntimeInfo[] = runtimesList.filter(
+    (rt) => rt.supported && !rt.createBlocked,
+  )
 
   const handlePublish = useCallback(async () => {
     let zipBase64: string | undefined

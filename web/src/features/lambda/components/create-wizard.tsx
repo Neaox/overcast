@@ -55,25 +55,12 @@ import {
 } from "@/features/lambda/data"
 import { logsGroupsQueryOptions } from "@/features/cloudwatch/logs/data"
 import { lambda } from "@/services/api"
-import type { LambdaRuntimeInfo } from "@/types"
 import type { Runtime } from "@aws-sdk/client-lambda"
+import { buildRuntimeItems, type RuntimeItem } from "@/features/lambda/runtime-items"
 import { canReadClipboardText, readClipboardText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 // ─── Runtime data ────────────────────────────────────────────────────────────
-
-interface RuntimeItem {
-  value: string
-  group: string
-  defaultHandler: string
-}
-
-/** Build the grouped runtime items from the dynamic catalog. */
-function buildRuntimeItems(runtimes: LambdaRuntimeInfo[]): RuntimeItem[] {
-  return runtimes
-    .filter((rt) => !rt.deprecated)
-    .map((rt) => ({ value: rt.id, group: rt.family, defaultHandler: rt.defaultHandler }))
-}
 
 /** Fallback defaults when runtimes haven't loaded yet. */
 const DEFAULT_RUNTIME = "nodejs22.x"
@@ -84,6 +71,7 @@ function runtimeLanguage(runtime: string): string {
   if (runtime.startsWith("python")) return "python"
   if (runtime.startsWith("java")) return "java"
   if (runtime.startsWith("dotnet")) return "csharp"
+  if (runtime.startsWith("ruby")) return "ruby"
   return "plaintext"
 }
 
@@ -109,6 +97,14 @@ function defaultSource(runtime: string, handler: string): { source: string; file
     return {
       filename: "Handler.java",
       source: `package example;\n\nimport com.amazonaws.services.lambda.runtime.Context;\nimport com.amazonaws.services.lambda.runtime.RequestHandler;\n\npublic class Handler implements RequestHandler<Object, String> {\n    @Override\n    public String handleRequest(Object event, Context context) {\n        context.getLogger().log("Event: " + event);\n        return "Hello from Lambda!";\n    }\n}\n`,
+    }
+  }
+  if (runtime.startsWith("ruby")) {
+    const file = (parts[0] || "lambda_function") + ".rb"
+    const fn = parts[1] || "lambda_handler"
+    return {
+      filename: file,
+      source: `require 'json'\n\ndef ${fn}(event:, context:)\n  puts "Event: #{event.to_json}"\n  { statusCode: 200, body: JSON.generate({ message: 'Hello from Lambda!' }) }\nend\n`,
     }
   }
   if (runtime.startsWith("dotnet")) {
@@ -490,8 +486,21 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
                             }
                             getItemValue={(item) => item.value}
                             renderItem={(item, { selected, active }) => (
-                              <div className="flex items-center justify-between">
-                                <span className={cn(active && "text-white")}>{item.value}</span>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className={cn(active && "text-white")}>
+                                  {item.value}
+                                  {item.deprecated && (
+                                    <span
+                                      className={cn(
+                                        "ml-2 text-xs",
+                                        active ? "text-white" : "text-fg-muted",
+                                      )}
+                                      title="AWS has ended support for this runtime. It still deploys until AWS blocks new functions."
+                                    >
+                                      deprecated
+                                    </span>
+                                  )}
+                                </span>
                                 {selected && (
                                   <Check
                                     className={cn(
