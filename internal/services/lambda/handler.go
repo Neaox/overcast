@@ -44,7 +44,6 @@ type Handler struct {
 	logWriter     events.LogWriter
 	bus           *events.Bus
 	tracker       *instanceTracker
-	rtCache       *runtimeCache
 	esm           *esmStore
 	esmDelivery   *esmDeliveryManager
 	asyncWg       sync.WaitGroup // tracks in-flight async invocations
@@ -138,8 +137,8 @@ type VPCNetworkResolver interface {
 	DockerNetworkForVpc(ctx context.Context, vpcID string) string
 }
 
-func newHandler(cfg *config.Config, log *serviceutil.ServiceLogger, clk clock.Clock, runtimes *runtimeRegistry, ls *lambdaStore, tracker *instanceTracker, rtCache *runtimeCache) *Handler {
-	return &Handler{cfg: cfg, log: log, clk: clk, runtimes: runtimes, ls: ls, tracker: tracker, rtCache: rtCache}
+func newHandler(cfg *config.Config, log *serviceutil.ServiceLogger, clk clock.Clock, runtimes *runtimeRegistry, ls *lambdaStore, tracker *instanceTracker) *Handler {
+	return &Handler{cfg: cfg, log: log, clk: clk, runtimes: runtimes, ls: ls, tracker: tracker}
 }
 
 // accountID returns the configured AWS account ID, falling back to the standard

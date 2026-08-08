@@ -458,28 +458,24 @@ func hasUnsupportedRequestField(fields ...unsupportedRequestField) bool {
 
 // ─── runtime metadata ────────────────────────────────────────────────────────
 
-// RuntimeInfo describes a Lambda runtime with its metadata.
+// RuntimeInfo describes a Lambda runtime with its metadata. Built from
+// lambdaRuntimeCatalog — see runtime_catalog.go.
 type RuntimeInfo struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	Family         string `json:"family"`
 	DefaultHandler string `json:"defaultHandler"`
 	ImageURI       string `json:"imageUri,omitempty"`
-	Deprecated     bool   `json:"deprecated"`
+	// Deprecated reports that AWS has ended support for this runtime. AWS
+	// still accepts it until CreateBlocked.
+	Deprecated bool `json:"deprecated"`
+	// CreateBlocked and UpdateBlocked report AWS's two later deprecation
+	// phases: no new functions, then no updates to existing ones.
+	CreateBlocked bool `json:"createBlocked"`
+	UpdateBlocked bool `json:"updateBlocked"`
 	// Supported indicates the emulator can actually execute this runtime.
 	Supported bool `json:"supported"`
 }
-
-// deprecatedRuntimes is used for O(1) validation lookups in CreateFunction and
-// UpdateFunctionConfiguration. Sourced from the known-deprecated set plus
-// legacy runtime IDs that are too old to appear on ECR.
-var deprecatedRuntimes = func() map[string]bool {
-	m := make(map[string]bool, len(knownDeprecated))
-	for id := range knownDeprecated {
-		m[id] = true
-	}
-	return m
-}()
 
 // ─── conversion helpers ───────────────────────────────────────────────────────
 
@@ -578,10 +574,11 @@ func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(listFunctionsResponse{Functions: configs})
 }
 
-// ListRuntimes handles GET /_lambda/runtimes (emulator-only).
-// Fetches available runtimes from ECR Public on first call and caches the result.
+// ListRuntimes handles GET /_lambda/runtimes (emulator-only). The catalog is
+// the same table CreateFunction validates against, so what the web UI offers
+// and what the API accepts cannot disagree.
 func (h *Handler) ListRuntimes(w http.ResponseWriter, _ *http.Request) {
-	catalog := h.rtCache.get(h.runtimes.get())
+	catalog := runtimeCatalog(h.clk.Now())
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.WriteHeader(http.StatusOK)
@@ -709,12 +706,13 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Reject deprecated runtimes after modeled request-shape validation. The
-	// check applies only when a runtime is specified (image functions omit it).
-	if req.Runtime != "" && deprecatedRuntimes[req.Runtime] {
-		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
-			"The runtime "+req.Runtime+" is no longer supported. Please update your function to a supported runtime.",
-		))
+	// Reject runtimes AWS has blocked from CreateFunction, after modeled
+	// request-shape validation. This is AWS's second deprecation phase: a
+	// runtime past its deprecation date but before its block-create date is
+	// still accepted, so this is a date comparison and not a "deprecated" flag.
+	// The check applies only when a runtime is specified (image functions omit it).
+	if req.Runtime != "" && runtimeCreateBlocked(req.Runtime, h.clk.Now()) {
+		protocol.WriteJSONError(w, r, lambdaDeprecatedRuntimeError(req.Runtime))
 		return
 	}
 	if req.CodeSigningConfigArn != "" && !codeSigningConfigARNPattern.MatchString(req.CodeSigningConfigArn) {
@@ -1462,10 +1460,11 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 			protocol.WriteJSONError(w, r, aerr)
 			return
 		}
-		if deprecatedRuntimes[*req.Runtime] {
-			protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument(
-				"The runtime "+*req.Runtime+" is no longer supported.",
-			))
+		// AWS's third deprecation phase blocks updates. It lands after
+		// block-create by design: between the two, functions on a runtime that
+		// can no longer be created can still be reconfigured.
+		if runtimeUpdateBlocked(*req.Runtime, h.clk.Now()) {
+			protocol.WriteJSONError(w, r, lambdaDeprecatedRuntimeError(*req.Runtime))
 			return
 		}
 		if !lambdaRuntimeExecutionSupported(*req.Runtime) {

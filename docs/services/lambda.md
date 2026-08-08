@@ -59,6 +59,71 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 
 ---
 
+## Runtimes
+
+Every runtime identifier Overcast knows about comes from one table in
+`internal/services/lambda/runtime_catalog.go`. Request validation, the
+runtime-to-image mapping used to execute a function, the AWS deprecation dates,
+and the list the web UI's create wizard offers are all derived from it, so those
+views cannot disagree with one another.
+
+Two upstream sources feed that table:
+
+- **Runtime identifiers** are `com.amazonaws.lambda#Runtime` from the pinned AWS
+  Smithy model (see `models/aws/VERSION`), in the model's own order.
+- **Deprecation, block-create and block-update dates**, and the successor AWS
+  recommends, come from AWS's published Lambda runtime lifecycle table.
+
+### The three answers a runtime can get
+
+| Situation                                                                | Response                                                                                            |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Not a value of the modeled `Runtime` enum, and not a runtime-version ARN  | `400 InvalidParameterValueException` with AWS's enum-validation message listing every modeled value |
+| Modeled, but past AWS's deprecation phase for the operation              | `400 InvalidParameterValueException` with AWS's message naming the recommended successor            |
+| Modeled and accepted by AWS, but Overcast has no execution image for it  | `501 NotImplemented` — an honest emulator gap; nothing is persisted                                 |
+
+The third case is the important one: a missing execution image is **not** a bad
+request. Overcast never invents a `400` for it, because that would report a
+request AWS accepts as invalid.
+
+### Deprecation follows AWS's phases, not a single flag
+
+AWS retires a runtime in three steps, and Overcast observes each of them against
+the current date:
+
+1. **Deprecation date** — end of support. The runtime still deploys and still
+   invokes. Overcast marks it deprecated in the runtime catalog and the web UI
+   labels it, but `CreateFunction` keeps working.
+2. **Block function create** — `CreateFunction` starts returning
+   `InvalidParameterValueException`. Existing functions are untouched.
+3. **Block function update** — `UpdateFunctionConfiguration` starts returning the
+   same error, so a function can no longer be moved onto that runtime.
+
+A deprecated runtime is therefore not automatically refused. `python3.9`, for
+example, lost support in December 2025 but stays deployable on AWS — and on
+Overcast — until its block-create date.
+
+### Execution coverage
+
+Overcast maps an official Lambda base image (`public.ecr.aws/lambda/…`) to every
+runtime AWS still accepts for `CreateFunction`, across Node.js, Python, Java
+(including the Amazon Linux 2023 variants), .NET, Ruby and the `provided` custom
+runtimes. Runtimes AWS has already blocked from `CreateFunction` — `go1.x`,
+`java8`, `python3.7` and older, `nodejs14.x` and older, the `dotnetcore` family,
+`ruby2.x`, and `provided` — carry no image: Overcast will never create a
+function on one, so the `400` above is the only response they can produce.
+
+`LAMBDA_SEED_RUNTIME_IMAGES=true` pre-pulls only the images for runtimes AWS
+still supports. A deprecated-but-deployable runtime is pulled on demand at its
+first cold start instead, so enabling the seed does not download several extra
+gigabytes of end-of-life images.
+
+`GET /_lambda/runtimes` (emulator-only, used by the web UI) returns the catalog
+with each runtime's `supported`, `deprecated`, `createBlocked` and
+`updateBlocked` flags.
+
+---
+
 ## Concurrency and execution environments
 
 Overcast reuses containers for sequential invocations and scales out to one
@@ -578,7 +643,7 @@ cdk.Tags.of(fn).add("overcast:hot-reload-path", path.resolve(__dirname, "src"));
 | `LAMBDA_MAX_INSTANCES_PER_FUNCTION`   | _(auto)_\*\*     | Max concurrent containers for one function              |
 | `LAMBDA_MAX_MEMORY_MB`                | _(auto)_\*\*     | Aggregate Σ `MemorySize` budget for live containers, MB |
 | `LAMBDA_MAX_WARM_INSTANCES`           | `10`             | Idle containers kept warm per function                  |
-| `LAMBDA_SEED_RUNTIME_IMAGES`          | `false`          | Pre-pull every managed runtime image at startup         |
+| `LAMBDA_SEED_RUNTIME_IMAGES`          | `false`          | Pre-pull every currently-supported runtime image at startup |
 | `LAMBDA_TAR_CACHE_MB`                 | `256`            | In-memory cache of pre-built code/layer tars (0 = off)  |
 | `LAMBDA_PROACTIVE_INIT`               | `false`          | Pre-initialize an environment after config settles      |
 | `LAMBDA_INIT_TIMEOUT_SECONDS`         | `10`             | Max seconds to wait for runtime INIT before invocation  |
@@ -659,18 +724,18 @@ tags are stored separately and never appear in
 
 ### Function management
 
-| Operation                         | Status       | Notes                                                                                                                                                                                                                                                                                                        | AWS Docs                                                                                      |
-| --------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `ListFunctions`                   | ✅ Supported | Returns all stored functions; empty list if none                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctions.html)                   |
-| `CreateFunction`                  | ✅ Supported | Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunction.html)                  |
-| `DeleteFunction`                  | ✅ Supported | Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function                                                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)                  |
-| `GetFunction`                     | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                     |
-| `GetFunctionConfiguration`        | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)        |
-| `UpdateFunctionCode`              | ✅ Supported | Updates code zip or image URI and Architectures; generates new RevisionId                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
-| `UpdateFunctionConfiguration`     | ✅ Supported | Presence-aware updates for supported configuration; unsupported advanced fields fail before mutation                                                                                                                                                                                                         | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
-| `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
-| `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                                                                                                                                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
-| `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
+| Operation                         | Status       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                 | AWS Docs                                                                                      |
+| --------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ListFunctions`                   | ✅ Supported | Returns all stored functions; empty list if none                                                                                                                                                                                                                                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctions.html)                   |
+| `CreateFunction`                  | ✅ Supported | Stores metadata; validates Runtime against the pinned model and refuses runtimes past AWS's block-create date; a modeled runtime with no execution image returns 501 and persists nothing; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunction.html)                  |
+| `DeleteFunction`                  | ✅ Supported | Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function                                                                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)                  |
+| `GetFunction`                     | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                     |
+| `GetFunctionConfiguration`        | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                                                                                                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)        |
+| `UpdateFunctionCode`              | ✅ Supported | Updates code zip or image URI and Architectures; generates new RevisionId                                                                                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
+| `UpdateFunctionConfiguration`     | ✅ Supported | Presence-aware updates for supported configuration; a Runtime past AWS's block-update date is refused; unsupported advanced fields fail before mutation                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
+| `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
+| `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                                                                                                                                                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
+| `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
 
 ### Resource-based policies
 

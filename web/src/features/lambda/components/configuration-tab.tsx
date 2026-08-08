@@ -157,11 +157,15 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
               ) : (
                 <>
                   <option value="">— keep current —</option>
+                  {/* UpdateFunctionConfiguration is gated on AWS's block-update
+                      date, not on deprecation: a deprecated runtime stays a
+                      valid target until then. */}
                   {runtimes
-                    .filter((r) => r.supported && !r.deprecated)
+                    .filter((r) => r.supported && !r.updateBlocked)
                     .map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name}
+                        {r.deprecated ? " (deprecated)" : ""}
                       </option>
                     ))}
                 </>

@@ -139,7 +139,12 @@ func TestCreateFunction_runtimeValidationDoesNotPersist(t *testing.T) {
 }
 
 func TestCreateFunction_modeledRuntimeWithoutExecutionImageIsUnsupported(t *testing.T) {
+	// go1.x is modeled and, at this date, AWS still accepted CreateFunction for
+	// it (block-create was 2024-02-08). Overcast has no execution image for it,
+	// so the only honest answer is the emulator's 501 — never an invented 400
+	// that would misreport a valid AWS request as invalid.
 	clk := clock.NewMock()
+	clk.Set(time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC))
 	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clk)
 	h := &Handler{
 		cfg: &config.Config{Region: "us-east-1", AccountID: "000000000000"},
@@ -149,8 +154,8 @@ func TestCreateFunction_modeledRuntimeWithoutExecutionImageIsUnsupported(t *test
 	}
 	body, _ := json.Marshal(map[string]any{
 		"FunctionName": "modeled-runtime",
-		"Runtime":      "python3.14",
-		"Handler":      "lambda_function.handler",
+		"Runtime":      "go1.x",
+		"Handler":      "bootstrap",
 		"Role":         "arn:aws:iam::000000000000:role/lambda-role",
 		"Code":         map[string]any{"ZipFile": []byte("code")},
 	})
@@ -173,6 +178,99 @@ func TestCreateFunction_modeledRuntimeWithoutExecutionImageIsUnsupported(t *test
 	stored, aerr := ls.getFunction(context.Background(), "modeled-runtime")
 	if aerr != nil || stored != nil {
 		t.Fatalf("unsupported function persisted: fn=%v err=%v", stored, aerr)
+	}
+}
+
+// runtimeLifecycleHandler builds a bare CreateFunction handler whose clock is
+// pinned to now, so deprecation-phase behaviour is asserted against a fixed
+// date rather than whenever the suite happens to run.
+func runtimeLifecycleHandler(t *testing.T, now time.Time) (*Handler, *lambdaStore) {
+	t.Helper()
+	clk := clock.NewMock()
+	clk.Set(now)
+	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clk)
+	return &Handler{
+		cfg: &config.Config{Region: "us-east-1", AccountID: "000000000000"},
+		log: serviceutil.NewServiceLogger(zap.NewNop(), "lambda"),
+		clk: clk,
+		ls:  ls,
+	}, ls
+}
+
+func createRuntimeFunction(t *testing.T, h *Handler, name, runtime string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"FunctionName": name,
+		"Runtime":      runtime,
+		"Handler":      "index.handler",
+		"Role":         "arn:aws:iam::000000000000:role/lambda-role",
+		"Code":         map[string]any{"ZipFile": []byte("code")},
+	})
+	rec := httptest.NewRecorder()
+	h.CreateFunction(rec, httptest.NewRequest(http.MethodPost, "/2015-03-31/functions", bytes.NewReader(body)))
+	return rec
+}
+
+func TestCreateFunction_runtimeDeprecationPhasesFollowAWS(t *testing.T) {
+	// AWS deprecates in phases. python3.9 lost support on 2025-12-15 but AWS
+	// keeps accepting CreateFunction until 2027-02-01, so on this date it must
+	// still create. nodejs14.x passed block-create on 2024-01-09 and must be
+	// refused with the message AWS returns, naming the successor.
+	now := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+
+	t.Run("deprecated but before block-create is accepted", func(t *testing.T) {
+		h, ls := runtimeLifecycleHandler(t, now)
+		rec := createRuntimeFunction(t, h, "still-creatable", "python3.9")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+		}
+		stored, aerr := ls.getFunction(context.Background(), "still-creatable")
+		if aerr != nil || stored == nil {
+			t.Fatalf("function not persisted: fn=%v err=%v", stored, aerr)
+		}
+	})
+
+	t.Run("after block-create is refused with the AWS message", func(t *testing.T) {
+		h, ls := runtimeLifecycleHandler(t, now)
+		rec := createRuntimeFunction(t, h, "blocked", "nodejs14.x")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+		}
+		var got map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		want := "The runtime parameter of nodejs14.x is no longer supported for creating or updating AWS Lambda functions. " +
+			"We recommend you use the new runtime (nodejs24.x) while creating or updating functions."
+		if got["__type"] != "InvalidParameterValueException" || got["message"] != want {
+			t.Fatalf("response = %#v, want InvalidParameterValueException with message %q", got, want)
+		}
+		stored, aerr := ls.getFunction(context.Background(), "blocked")
+		if aerr != nil || stored != nil {
+			t.Fatalf("blocked function persisted: fn=%v err=%v", stored, aerr)
+		}
+	})
+}
+
+func TestCreateFunction_newlySupportedRuntimesPerFamily(t *testing.T) {
+	// One newly mapped runtime per family. All are current on the pinned model
+	// date, so CreateFunction must accept and persist each of them.
+	now := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	for _, runtime := range []string{"python3.14", "java25", "java17.al2023", "dotnet10", "ruby3.4", "ruby4.0", "nodejs24.x", "provided.al2023"} {
+		t.Run(runtime, func(t *testing.T) {
+			h, ls := runtimeLifecycleHandler(t, now)
+			rec := createRuntimeFunction(t, h, "fn-"+runtime, runtime)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+			}
+			stored, aerr := ls.getFunction(context.Background(), "fn-"+runtime)
+			if aerr != nil || stored == nil {
+				t.Fatalf("function not persisted: fn=%v err=%v", stored, aerr)
+			}
+			if stored.Runtime != runtime {
+				t.Fatalf("stored runtime = %q, want %q", stored.Runtime, runtime)
+			}
+		})
 	}
 }
 
@@ -213,8 +311,11 @@ func TestUpdateFunctionConfiguration_runtimeValidation(t *testing.T) {
 	}{
 		{name: "invalid runtime", runtime: "not-a-runtime", wantStatus: http.StatusBadRequest, wantMessage: invalidLambdaRuntimeMessage},
 		{name: "valid runtime ARN unavailable", runtime: "arn:aws:lambda:us-east-1::runtime:0123456789abcdef", wantStatus: http.StatusNotImplemented},
-		{name: "modeled runtime unavailable", runtime: "python3.14", wantStatus: http.StatusNotImplemented},
+		// go1.x is modeled but has no execution image. The handler's clock sits
+		// before every AWS block date, so nothing masks the emulator gap.
+		{name: "modeled runtime unavailable", runtime: "go1.x", wantStatus: http.StatusNotImplemented},
 		{name: "supported runtime", runtime: "nodejs24.x", wantStatus: http.StatusOK},
+		{name: "newly supported runtime", runtime: "python3.14", wantStatus: http.StatusOK},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -249,6 +350,46 @@ func TestUpdateFunctionConfiguration_runtimeValidation(t *testing.T) {
 				}
 			} else if stored.Runtime != "nodejs22.x" || stored.Description != "" {
 				t.Fatalf("rejected update mutated function: runtime=%q description=%q", stored.Runtime, stored.Description)
+			}
+		})
+	}
+}
+
+func TestUpdateFunctionConfiguration_runtimeDeprecationPhasesFollowAWS(t *testing.T) {
+	// UpdateFunctionConfiguration is governed by AWS's block-update date, which
+	// lands after block-create: the window between them is exactly when
+	// existing functions on a blocked runtime can still be reconfigured.
+	// python3.8: block-create 2027-02-01, block-update 2027-03-03.
+	tests := []struct {
+		name       string
+		now        time.Time
+		wantStatus int
+	}{
+		{"after block-create, before block-update", time.Date(2027, 2, 15, 0, 0, 0, 0, time.UTC), http.StatusOK},
+		{"after block-update", time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC), http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// The date is set at construction, not afterwards: winding a mock
+			// clock that already owns the pool and tracker tickers forward by
+			// years never finishes. See lifecycleTestHandlerAt.
+			h, _ := lifecycleTestHandlerAt(t, tc.now)
+			seedLifecycleFunction(t, h, nil)
+			rec := updateFunctionConfiguration(t, h, "lifecycle-fn", map[string]any{"Runtime": "python3.8"})
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.wantStatus != http.StatusBadRequest {
+				return
+			}
+			var got map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			want := "The runtime parameter of python3.8 is no longer supported for creating or updating AWS Lambda functions. " +
+				"We recommend you use the new runtime (python3.14) while creating or updating functions."
+			if got["__type"] != "InvalidParameterValueException" || got["message"] != want {
+				t.Fatalf("response = %#v, want InvalidParameterValueException with message %q", got, want)
 			}
 		})
 	}

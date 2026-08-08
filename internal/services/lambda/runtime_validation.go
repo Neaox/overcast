@@ -10,19 +10,17 @@ import (
 // lambdaRuntimeValues mirrors com.amazonaws.lambda#Runtime in the pinned AWS
 // Smithy model (models/aws/VERSION, model date 2026-07-27). Raw models are not
 // vendored and the generated operation manifest does not retain enum metadata,
-// so this small request-validation set must live beside the Lambda service.
-// Keep it in model order so invalid-value responses remain deterministic and
-// AWS-shaped.
-var lambdaRuntimeValues = []string{
-	"nodejs", "nodejs4.3", "nodejs6.10", "nodejs8.10", "nodejs10.x", "nodejs12.x", "nodejs14.x", "nodejs16.x", "nodejs18.x", "nodejs20.x", "nodejs22.x", "nodejs24.x",
-	"java8", "java8.al2", "java11", "java17", "java21", "java25",
-	"python2.7", "python3.6", "python3.7", "python3.8", "python3.9", "python3.10", "python3.11", "python3.12", "python3.13", "python3.14",
-	"dotnetcore1.0", "dotnetcore2.0", "dotnetcore2.1", "dotnetcore3.1", "dotnet6", "dotnet8", "dotnet10",
-	"nodejs4.3-edge", "go1.x",
-	"ruby2.5", "ruby2.7", "ruby3.2", "ruby3.3", "ruby3.4", "ruby4.0",
-	"provided", "provided.al2", "provided.al2023",
-	"java8.al2023", "java11.al2023", "java17.al2023",
-}
+// so the values live beside the Lambda service — in lambdaRuntimeCatalog, which
+// carries each runtime's execution image and AWS lifecycle dates alongside its
+// identifier. Model order is preserved so invalid-value responses stay
+// deterministic and AWS-shaped.
+var lambdaRuntimeValues = func() []string {
+	values := make([]string, 0, len(lambdaRuntimeCatalog))
+	for _, spec := range lambdaRuntimeCatalog {
+		values = append(values, spec.ID)
+	}
+	return values
+}()
 
 var lambdaRuntimeValueSet = func() map[string]struct{} {
 	values := make(map[string]struct{}, len(lambdaRuntimeValues))
@@ -53,4 +51,18 @@ func validateLambdaRuntime(runtime string) *protocol.AWSError {
 func lambdaRuntimeExecutionSupported(runtime string) bool {
 	_, supported := activeRuntimes[runtime]
 	return supported
+}
+
+// lambdaDeprecatedRuntimeError returns the response AWS gives once a runtime
+// has passed the relevant deprecation phase. AWS names the recommended
+// successor; the newest runtime of a family has none, in which case the
+// recommendation sentence is omitted rather than invented.
+func lambdaDeprecatedRuntimeError(runtime string) *protocol.AWSError {
+	message := "The runtime parameter of " + runtime +
+		" is no longer supported for creating or updating AWS Lambda functions."
+	if successor := runtimeLifecycles[runtime].successor; successor != "" {
+		message += " We recommend you use the new runtime (" + successor +
+			") while creating or updating functions."
+	}
+	return lambdaInvalidParameter(message)
 }

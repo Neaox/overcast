@@ -280,34 +280,9 @@ func (cr *ContainerRuntime) tryAcquireColdStartSlot() (func(), error) {
 // the caller (e.g. an SSE endpoint streaming progress to the UI).
 type ProgressFunc func(step string)
 
-// activeRuntimes lists runtime IDs that ContainerRuntime supports.
-// These have official images on public.ecr.aws/lambda/.
-var activeRuntimes = map[string]string{
-	// Node.js
-	"nodejs20.x": "public.ecr.aws/lambda/nodejs:20",
-	"nodejs22.x": "public.ecr.aws/lambda/nodejs:22",
-	"nodejs24.x": "public.ecr.aws/lambda/nodejs:24",
-	// Python
-	"python3.9":  "public.ecr.aws/lambda/python:3.9",
-	"python3.10": "public.ecr.aws/lambda/python:3.10",
-	"python3.11": "public.ecr.aws/lambda/python:3.11",
-	"python3.12": "public.ecr.aws/lambda/python:3.12",
-	"python3.13": "public.ecr.aws/lambda/python:3.13",
-	// Java
-	"java11": "public.ecr.aws/lambda/java:11",
-	"java17": "public.ecr.aws/lambda/java:17",
-	"java21": "public.ecr.aws/lambda/java:21",
-	// .NET
-	"dotnet8": "public.ecr.aws/lambda/dotnet:8",
-	// Ruby
-	"ruby3.2": "public.ecr.aws/lambda/ruby:3.2",
-	"ruby3.3": "public.ecr.aws/lambda/ruby:3.3",
-	// Custom runtime
-	"provided.al2023": "public.ecr.aws/lambda/provided:al2023",
-}
-
-// CanHandle returns true for all active (non-deprecated) runtime IDs that have
-// official ECR images, and for PackageType=Image functions (runtimeID "image").
+// CanHandle returns true for every runtime the catalog maps to an official
+// Lambda base image — activeRuntimes is derived from lambdaRuntimeCatalog in
+// runtime_catalog.go — and for PackageType=Image functions (runtimeID "image").
 func (cr *ContainerRuntime) CanHandle(runtimeID string) bool {
 	if runtimeID == "image" {
 		return true
@@ -898,8 +873,7 @@ func volumeMount(volume, subpath, target string, readOnly bool) docker.Mount {
 
 // ─── Image management ──────────────────────────────────────────────────────
 
-// SeedImages pre-pulls Docker images for all active runtimes (nodejs, python,
-// java, dotnet, ruby, provided) in parallel so the first cold start of any
+// SeedImages pre-pulls Docker images in parallel so the first cold start of a
 // runtime skips the image pull entirely. The seed runs in a background goroutine
 // with a detached context — it does not block startup or callers. Call after
 // the ContainerRuntime is fully wired (i.e. after initDockerRuntime).
@@ -908,12 +882,20 @@ func volumeMount(volume, subpath, target string, readOnly bool) docker.Mount {
 // the base images are 200–500 MB and pulling them on the first Invoke path can
 // take minutes. By the time the user creates a function and invokes it the
 // images are already cached locally.
+//
+// Only runtimes AWS still supports are seeded. Overcast can execute every
+// runtime AWS still lets you deploy, including ones already past their
+// deprecation date, but pre-pulling all of them would cost several extra
+// gigabytes for images almost nobody deploys. A deprecated runtime is still
+// pulled on demand at its first cold start.
 func (cr *ContainerRuntime) SeedImages() {
-	// Deduplicate images — activeRuntimes maps distinct runtimes to the same
-	// underlying image (e.g. python3.9 and python3.10 both resolve to
-	// public.ecr.aws/lambda/python:3.9 and 3.10). Pull only unique images.
+	now := cr.clk.Now()
+	// Deduplicate: distinct runtimes may share one underlying image.
 	uniq := make(map[string]struct{}, len(activeRuntimes))
-	for _, image := range activeRuntimes {
+	for runtimeID, image := range activeRuntimes {
+		if runtimeDeprecated(runtimeID, now) {
+			continue
+		}
 		uniq[image] = struct{}{}
 	}
 	images := make([]string, 0, len(uniq))

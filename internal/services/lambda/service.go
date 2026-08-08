@@ -542,13 +542,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	log := serviceutil.NewServiceLogger(logger, "lambda")
 	ls := newLambdaStore(store, cfg.Region, clk)
 	tracker := newInstanceTracker(clk, logger)
-	rtCache := newRuntimeCache(logger)
 
 	// Start with the stub runtime so the service is immediately available.
 	rr := newRuntimeRegistry([]Runtime{newNodeRuntime(clk, logger)})
 
 	esmSt := newESMStore(ls)
-	h := newHandler(cfg, log, clk, rr, ls, tracker, rtCache)
+	h := newHandler(cfg, log, clk, rr, ls, tracker)
 	h.esm = esmSt
 
 	s := &Service{

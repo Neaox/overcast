@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -527,7 +528,22 @@ func TestDeleteFunction_dropsTrackedInstance(t *testing.T) {
 
 func lifecycleTestHandler(t *testing.T) (*Handler, *InstancePool) {
 	t.Helper()
+	return lifecycleTestHandlerAt(t, time.Time{})
+}
+
+// lifecycleTestHandlerAt builds the same handler with the mock clock already
+// wound to now. A test that needs a specific date must set it here rather than
+// afterwards: the instance pool and tracker sweep loops run on mock-clock
+// tickers, and clock.Mock.Set fires every tick between the old time and the new
+// one, sleeping 1ms apiece — so moving a clock that already owns tickers from
+// the mock's 1970 epoch to a date years out never finishes. A zero now leaves
+// the mock at its default.
+func lifecycleTestHandlerAt(t *testing.T, now time.Time) (*Handler, *InstancePool) {
+	t.Helper()
 	clk := clock.NewMock()
+	if !now.IsZero() {
+		clk.Set(now)
+	}
 	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clk)
 	pool := NewInstancePool(poolTestRuntime{}, zap.NewNop(), clk, PoolLimits{})
 	t.Cleanup(pool.Stop)
