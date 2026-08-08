@@ -318,8 +318,10 @@ export function LoggingConfigSection({ fn }: { fn: LambdaFunction }) {
       </div>
 
       {editing ? (
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
-          <div className="col-span-2 flex flex-col gap-1">
+        // The three selects share one row: the two levels are peers governed by
+        // the format beside them, and a two-column grid orphans one of them.
+        <div className="flex flex-col gap-4 text-sm">
+          <div className="flex flex-col gap-1">
             <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-log-group">
               Log group
             </label>
@@ -331,72 +333,74 @@ export function LoggingConfigSection({ fn }: { fn: LambdaFunction }) {
               className="font-mono text-xs"
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-log-format">
-              Log format
-            </label>
-            <Select
-              id="logging-log-format"
-              value={form.logFormat}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  logFormat: e.target.value as LoggingConfigForm["logFormat"],
-                }))
-              }
-            >
-              {LOG_FORMATS.map((format) => (
-                <option key={format} value={format}>
-                  {format}
-                </option>
-              ))}
-            </Select>
+          <div className="grid grid-cols-3 gap-x-6">
+            <div className="flex flex-col gap-1">
+              <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-log-format">
+                Log format
+              </label>
+              <Select
+                id="logging-log-format"
+                value={form.logFormat}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    logFormat: e.target.value as LoggingConfigForm["logFormat"],
+                  }))
+                }
+              >
+                {LOG_FORMATS.map((format) => (
+                  <option key={format} value={format}>
+                    {format}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-app-level">
+                Application log level
+              </label>
+              <Select
+                id="logging-app-level"
+                value={form.applicationLogLevel}
+                disabled={!isJSON}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    applicationLogLevel: e.target.value as LoggingConfigForm["applicationLogLevel"],
+                  }))
+                }
+              >
+                {APPLICATION_LOG_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-system-level">
+                System log level
+              </label>
+              <Select
+                id="logging-system-level"
+                value={form.systemLogLevel}
+                disabled={!isJSON}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    systemLogLevel: e.target.value as LoggingConfigForm["systemLogLevel"],
+                  }))
+                }
+              >
+                {SYSTEM_LOG_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
-          <div className="flex flex-col gap-1">
-            <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-app-level">
-              Application log level
-            </label>
-            <Select
-              id="logging-app-level"
-              value={form.applicationLogLevel}
-              disabled={!isJSON}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  applicationLogLevel: e.target.value as LoggingConfigForm["applicationLogLevel"],
-                }))
-              }
-            >
-              {APPLICATION_LOG_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-system-level">
-              System log level
-            </label>
-            <Select
-              id="logging-system-level"
-              value={form.systemLogLevel}
-              disabled={!isJSON}
-              onChange={(e) =>
-                setForm((prev) => ({
-                  ...prev,
-                  systemLogLevel: e.target.value as LoggingConfigForm["systemLogLevel"],
-                }))
-              }
-            >
-              {SYSTEM_LOG_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <p className="col-span-2 text-xs text-fg-muted">
+          <p className="text-xs text-fg-muted">
             {isJSON
               ? "Platform records are emitted as JSON events and both streams are filtered at the selected level."
               : "Log levels apply to the JSON format only — Lambda rejects them for Text."}
@@ -942,6 +946,18 @@ function LayersSection({
 // ─── Tags section ─────────────────────────────────────────────────────────
 
 /**
+ * Stands in for the tag set until ListTags answers.
+ *
+ * It has to be this one object rather than a `= {}` default in the destructure:
+ * that default is re-evaluated on every render, so while the query is pending
+ * it hands back a new object each time, and the render-phase sync below — which
+ * compares by identity — then schedules an update on every render and never
+ * converges. React gives up at 25 passes and throws "Too many re-renders",
+ * which took out the whole Configuration tab on first paint.
+ */
+const NO_TAGS: Record<string, string> = {}
+
+/**
  * Lambda tags live on the unqualified function ARN — AWS rejects a version or
  * alias ARN — and are read and written through ListTags/TagResource/
  * UntagResource rather than UpdateFunctionConfiguration.
@@ -950,7 +966,7 @@ function TagsSection({ fn }: { fn: LambdaFunction }) {
   const resourceArn = fn.FunctionArn ?? ""
   const [editing, setEditing] = useState(false)
 
-  const { data: tags = {}, isLoading } = useQuery(functionTagsQueryOptions(resourceArn))
+  const { data: tags = NO_TAGS, isLoading } = useQuery(functionTagsQueryOptions(resourceArn))
 
   const toRows = (source: Record<string, string>): EnvPair[] =>
     Object.entries(source).map(([key, value]) => ({ key, value }))
