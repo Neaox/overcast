@@ -6152,7 +6152,7 @@
           "operation": "CreateLogGroup",
           "category": "Log groups",
           "status": "✅ Supported",
-          "notes": "Validates name; returns error on duplicate"
+          "notes": "Validates name; returns error on duplicate; applies create-time `tags` atomically with the group (`kmsKeyId`, `logGroupClass` and `deletionProtectionEnabled` are accepted but ignored)"
         },
         {
           "operation": "DescribeLogGroups",
@@ -6230,7 +6230,7 @@
           "operation": "PutRetentionPolicy",
           "category": "Retention",
           "status": "✅ Supported",
-          "notes": "Sets retentionInDays on log group"
+          "notes": "Sets retentionInDays on log group; values outside AWS's documented set are rejected with `InvalidParameterException` before any state change"
         },
         {
           "operation": "DeleteRetentionPolicy",
@@ -6248,7 +6248,7 @@
           "operation": "TagLogGroup",
           "category": "Tagging",
           "status": "✅ Supported",
-          "notes": "Adds tags to a log group"
+          "notes": "Adds tags to a log group; enforces AWS's key/value length, reserved `aws:` prefix and 50-tag limits before mutating"
         },
         {
           "operation": "UntagLogGroup",

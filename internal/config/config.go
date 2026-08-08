@@ -540,6 +540,10 @@ type Config struct {
 	// in shared or production environments.
 	Debug bool
 
+	// DebugTraceBuffer is the capacity of the request-trace ring buffer
+	// (OVERCAST_DEBUG_TRACE_BUFFER). Only read when Debug is true.
+	DebugTraceBuffer int
+
 	// TLSCertFile is the path to the TLS certificate file.
 	// When set (together with TLSKeyFile), the server uses HTTPS.
 	TLSCertFile string
@@ -1291,6 +1295,7 @@ func Load() (*Config, error) {
 
 	// Debug endpoints
 	cfg.Debug = envBool("OVERCAST_DEBUG", false)
+	cfg.DebugTraceBuffer = envInt("OVERCAST_DEBUG_TRACE_BUFFER", 1000)
 
 	// TLS
 	cfg.TLSCertFile = os.Getenv("OVERCAST_TLS_CERT")

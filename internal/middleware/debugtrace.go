@@ -3,7 +3,6 @@ package middleware
 import (
 	"bufio"
 	"bytes"
-	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -31,23 +30,19 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 			start := clk.Now()
 			reqID := protocol.RequestIDFromContext(r.Context())
 
-			requestHeaders := r.Header.Clone()
-			var requestBody []byte
-			if r.Body != nil {
-				var readErr error
-				requestBody, readErr = io.ReadAll(r.Body)
-				r.Body.Close()
-				r.Body = io.NopCloser(bytes.NewReader(requestBody))
-				if readErr != nil {
-					requestBody = nil
-				}
-			}
+			// One bounded read of the request, shared: the Logger middleware
+			// downstream picks this capture up off the context rather than
+			// reading and holding the body a second time. The read has to be
+			// eager here — service/operation detection and the early push both
+			// need the body before the handler runs. See bodycapture.go.
+			capture := readRequestBody(r, maxTraceBody)
+			requestBody := capture.buf
 
-			rec := trace.NewRecorder(reqID, start, r.Method, r.URL.Path, r.Host, r.URL.RawQuery, requestHeaders)
+			rec := trace.NewRecorder(reqID, start, r.Method, r.URL.Path, r.Host, r.URL.RawQuery, capture.headers)
 			if pid := r.Header.Get("X-Overcast-Parent-Request-Id"); pid != "" {
 				rec.SetParentRequestID(pid)
 			}
-			rec.SetRequestBody(requestBody, maxTraceBody)
+			rec.SetRequestBody(requestBody, capture.truncated, capture.size())
 			rec.SetMeta(r.RemoteAddr, r.UserAgent(), r.Header.Get("Referer"), "", "")
 			if r.Header.Get("X-Overcast-Client") == "webui" {
 				rec.AddMeta("source", "webui")
@@ -60,7 +55,7 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 			op := detectOperation(r, requestBody)
 			rec.SetServiceInfo(svc, op, RegionFromContext(r.Context(), cfg.Region))
 
-			ctx := trace.ContextWithRecorder(r.Context(), rec)
+			ctx := withRequestCapture(trace.ContextWithRecorder(r.Context(), rec), capture)
 			r = r.WithContext(ctx)
 
 			// Early push: store a partial entry before the handler runs so the

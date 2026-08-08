@@ -11,31 +11,46 @@ func newTestRecorder() *Recorder {
 	return NewRecorder("req-1", time.Unix(0, 0), "PUT", "/bucket/key", "localhost", "", http.Header{})
 }
 
-// A truncated request body must be copied out of the caller's slice: keeping
-// body[:maxBody] aliases the full backing array, pinning an arbitrarily large
-// upload in the ring buffer until eviction.
-func TestSetRequestBody_truncationDoesNotAliasOriginalBackingArray(t *testing.T) {
-	// Given: a request body far larger than the capture cap
-	const maxBody = 16
-	body := bytes.Repeat([]byte("x"), 4096)
+// The recorder records what the capture hands it: bounding and copying belong
+// to the middleware, which is the only party that can decide how much of a
+// body to read off the wire at all. (The bounded-copy guarantee itself is
+// covered by TestReadRequestBody_truncatedCaptureDoesNotAliasReadBuffer in
+// internal/middleware.)
+func TestSetRequestBody_truncatedCapture(t *testing.T) {
+	// Given: a capture that was truncated, from a request whose full size is
+	// known from Content-Length
+	body := bytes.Repeat([]byte("x"), 16)
 	rec := newTestRecorder()
 
-	// When: the body is captured with truncation
-	rec.SetRequestBody(body, maxBody)
+	// When: it is recorded
+	rec.SetRequestBody(body, true, 4096)
 
-	// Then: the stored slice is a bounded copy, not a view of the original
+	// Then: the entry reports the captured prefix, the truncation, and the
+	// full request size rather than the captured length
 	entry := rec.Entry()
-	if len(entry.RequestBody) != maxBody {
-		t.Fatalf("len(RequestBody) = %d, want %d", len(entry.RequestBody), maxBody)
+	if len(entry.RequestBody) != len(body) {
+		t.Fatalf("len(RequestBody) = %d, want %d", len(entry.RequestBody), len(body))
 	}
 	if !entry.RequestBodyTruncated {
 		t.Error("expected RequestBodyTruncated true")
 	}
-	if got := cap(rec.entry.RequestBody); got >= len(body) {
-		t.Errorf("cap(RequestBody) = %d, aliases the %d-byte original backing array", got, len(body))
+	if entry.RequestSize != 4096 {
+		t.Errorf("RequestSize = %d, want 4096", entry.RequestSize)
 	}
-	if entry.RequestSize != int64(len(body)) {
-		t.Errorf("RequestSize = %d, want %d", entry.RequestSize, len(body))
+}
+
+// An unknown size (a chunked upload declares no Content-Length) falls back to
+// what was actually captured.
+func TestSetRequestBody_unknownSize(t *testing.T) {
+	// Given: a capture of a body whose full size the caller could not know
+	rec := newTestRecorder()
+
+	// When: it is recorded with an unknown size
+	rec.SetRequestBody([]byte("hello"), false, -1)
+
+	// Then: the captured length stands in
+	if got := rec.Entry().RequestSize; got != 5 {
+		t.Errorf("RequestSize = %d, want 5", got)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -64,6 +65,20 @@ type Entry struct {
 // dispatch cannot pin its full body in the ring buffer.
 const MaxHopBody = 1 << 20 // 1 MiB
 
+// MaxHopStacks bounds how many goroutine stacks one trace captures for its
+// hops. A CloudFormation or CDK deploy dispatches hundreds of internal calls
+// through a single trace, and runtime.Stack costs both CPU and a multi-KiB
+// string every time — so capturing per hop makes the largest traces the most
+// expensive ones and pins megabytes in the ring buffer. The first hops already
+// show where the dispatch loop lives, which is what the stack is read for;
+// hops past the budget record no stack.
+const MaxHopStacks = 20
+
+// MaxFailedHopStacks is a second, independent budget for hops that failed.
+// A failure at hop 300 of a deploy is exactly the one worth a stack, so it
+// must not be starved by the 300 successful hops ahead of it.
+const MaxFailedHopStacks = 20
+
 // Hop records one internal service-to-service call made during request
 // processing.
 type Hop struct {
@@ -105,11 +120,24 @@ type Recorder struct {
 	mu       sync.Mutex
 	entry    Entry
 	hopOrder int
+
+	// Stack-capture budgets. These are atomics rather than fields under mu so
+	// that the decision to capture — and the capture itself, which is the
+	// expensive part — happen outside the lock, as they did when every hop
+	// captured unconditionally.
+	stackTaken      atomic.Bool
+	hopStacks       atomic.Int64
+	failedHopStacks atomic.Int64
 }
 
 // NewRecorder creates a Recorder primed with the request metadata known before
 // the handler runs. callers may set additional fields (RequestBody, Region,
 // etc.) after creation.
+//
+// requestHeaders must be a snapshot the caller no longer mutates — the
+// Recorder retains it rather than cloning. Handlers do rewrite request headers
+// (SQS's Query adapter resets Content-Type), so pass a clone of r.Header, not
+// r.Header itself.
 func NewRecorder(requestID string, timestamp time.Time, method, path, host, query string, requestHeaders http.Header) *Recorder {
 	return &Recorder{
 		entry: Entry{
@@ -119,7 +147,7 @@ func NewRecorder(requestID string, timestamp time.Time, method, path, host, quer
 			Path:           path,
 			Host:           host,
 			Query:          query,
-			RequestHeaders: requestHeaders.Clone(),
+			RequestHeaders: requestHeaders,
 		},
 	}
 }
@@ -143,32 +171,44 @@ func CaptureStack() string {
 	return string(big[:n])
 }
 
-// SetStack captures a goroutine stack trace for the entry.
-func (r *Recorder) SetStack(s string) {
-	if r == nil {
+// CaptureStackOnce records the calling goroutine's stack as the entry's stack,
+// the first time it is called for this request. Later calls neither capture
+// nor overwrite.
+//
+// Two response-writer wrappers sit in the chain (Logger's and RequestEvents'),
+// they nest, and both want the stack at WriteHeader time. Capturing on every
+// call meant paying runtime.Stack twice and keeping the *outer* one — the
+// wrapper further from the handler, so the less informative of the two.
+// First-write-wins keeps the innermost stack and makes the second call an
+// atomic load.
+func (r *Recorder) CaptureStackOnce() {
+	if r == nil || !r.stackTaken.CompareAndSwap(false, true) {
 		return
 	}
+	s := CaptureStack()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.entry.Stack = s
 }
 
-// SetRequestBody stores the request body, capping at maxBody.
-func (r *Recorder) SetRequestBody(body []byte, maxBody int) {
+// SetRequestBody stores an already-bounded copy of the request body. The
+// caller owns bounding and copying — it is the only party that can decide how
+// much of a body to read off the wire in the first place. truncated reports
+// whether bytes were dropped; size is the full request size, or -1 when it is
+// unknown (a chunked upload with no Content-Length), in which case the
+// captured length stands in.
+func (r *Recorder) SetRequestBody(body []byte, truncated bool, size int64) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(body) > maxBody {
-		// Copy: slicing would alias the full backing array and pin an
-		// arbitrarily large request body in memory until eviction.
-		r.entry.RequestBody = append([]byte(nil), body[:maxBody]...)
-		r.entry.RequestBodyTruncated = true
-	} else {
-		r.entry.RequestBody = body
+	r.entry.RequestBody = body
+	r.entry.RequestBodyTruncated = truncated
+	if size < 0 {
+		size = int64(len(body))
 	}
-	r.entry.RequestSize = int64(len(body))
+	r.entry.RequestSize = size
 }
 
 // SetResponse populates response fields after the handler returns.
@@ -256,11 +296,17 @@ func (r *Recorder) SetDuration(d time.Duration) {
 
 // AddHop appends an internal service-to-service hop. Safe to call from any
 // goroutine. Returns the assigned Hop ID.
+//
+// A stack is captured for the hop only while this trace still has budget —
+// see MaxHopStacks and MaxFailedHopStacks. A hop that arrives with a Stack
+// already set keeps it and spends no budget.
 func (r *Recorder) AddHop(h Hop) string {
 	if r == nil {
 		return ""
 	}
-	h.Stack = CaptureStack()
+	if h.Stack == "" && r.hopStackBudget(hopFailed(h)) {
+		h.Stack = CaptureStack()
+	}
 	if len(h.RequestBody) > MaxHopBody {
 		h.RequestBody = append([]byte(nil), h.RequestBody[:MaxHopBody]...)
 		h.RequestBodyTruncated = true
@@ -282,6 +328,20 @@ func (r *Recorder) AddHop(h Hop) string {
 
 func hopID(order int) string {
 	return "hop-" + strconv.Itoa(order)
+}
+
+// hopFailed reports whether a hop is one a reader would go looking for.
+func hopFailed(h Hop) bool {
+	return h.Error != "" || h.ResponseStatus >= 400
+}
+
+// hopStackBudget claims one stack capture from the appropriate per-trace
+// budget, reporting whether the claim succeeded.
+func (r *Recorder) hopStackBudget(failed bool) bool {
+	if failed {
+		return r.failedHopStacks.Add(1) <= MaxFailedHopStacks
+	}
+	return r.hopStacks.Add(1) <= MaxHopStacks
 }
 
 // AddLog appends a structured log entry. Safe to call from any goroutine.

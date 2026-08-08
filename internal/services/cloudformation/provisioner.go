@@ -4195,7 +4195,15 @@ func (h *iamRoleHandler) Update(ctx context.Context, router http.Handler, _ *con
 type logsLogGroupHandler struct{}
 
 // logsLogGroupTagMap converts CloudFormation's [{Key, Value}] Tags shape to
-// CloudWatch Logs' string map used by TagLogGroup.
+// CloudWatch Logs' string map used by CreateLogGroup and TagLogGroup.
+//
+// This is shape translation only. Whether a key or value is *acceptable* —
+// length, the reserved `aws:` prefix, an empty key, the 50-tag limit — is the
+// Logs service's business and is checked there, so an invalid tag surfaces as
+// the same InvalidParameterException a direct SDK caller would see. The
+// duplicate-key check stays: CloudFormation's Tags is a list, and collapsing
+// two entries with the same key into one map entry would silently pick a
+// winner the template never asked for.
 func logsLogGroupTagMap(raw any) (map[string]string, error) {
 	tags := make(map[string]string)
 	if raw == nil {
@@ -4211,8 +4219,8 @@ func logsLogGroupTagMap(raw any) (map[string]string, error) {
 			return nil, fmt.Errorf("Logs::LogGroup Tags[%d] must be an object", i)
 		}
 		key, ok := tag["Key"].(string)
-		if !ok || key == "" {
-			return nil, fmt.Errorf("Logs::LogGroup Tags[%d].Key must be a non-empty string", i)
+		if !ok {
+			return nil, fmt.Errorf("Logs::LogGroup Tags[%d].Key must be a string", i)
 		}
 		value, ok := tag["Value"].(string)
 		if !ok {
@@ -4290,7 +4298,12 @@ func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _
 	}
 	tags := mergeStackTags(rCtx.StackTags, resourceTags)
 
+	// CreateLogGroup takes the tags itself, so the group and its tags are one
+	// atomic write and a rejected tag map creates nothing to clean up.
 	body := map[string]any{"logGroupName": name}
+	if len(tags) > 0 {
+		body["tags"] = tags
+	}
 	_, err = internalJSON(ctx, router, rCtx.Region, "Logs_20140328.CreateLogGroup", body)
 	if err != nil {
 		return "", nil, fmt.Errorf("logs CreateLogGroup: %w", err)
@@ -4313,9 +4326,6 @@ func (h *logsLogGroupHandler) Create(ctx context.Context, router http.Handler, _
 		if _, err := internalJSON(ctx, router, rCtx.Region, "Logs_20140328.PutRetentionPolicy", body); err != nil {
 			return cleanup("PutRetentionPolicy", err)
 		}
-	}
-	if err := putLogsLogGroupTags(ctx, router, rCtx.Region, name, tags); err != nil {
-		return cleanup("TagLogGroup", err)
 	}
 	arn := fmt.Sprintf("arn:aws:logs:%s:%s:log-group:%s:*", rCtx.Region, rCtx.AccountID, name)
 	attrs := map[string]string{

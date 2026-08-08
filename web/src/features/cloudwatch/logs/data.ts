@@ -6,10 +6,12 @@
  *   logsKeys.groups()                       -> ["logs", "groups"]
  *   logsKeys.streams(groupName)             -> ["logs", "streams", groupName]
  *   logsKeys.filter(groupName)              -> ["logs", "filter", groupName]
+ *   logsKeys.tags(groupName)                -> ["logs", "tags", groupName]
  */
 
 import { queryOptions, mutationOptions } from "@tanstack/react-query"
 import { logs } from "@/services/api"
+import type { CreateLogGroupInput } from "@/services/api/logs"
 import { endpointStore } from "@/services/endpoint-store"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
@@ -19,6 +21,7 @@ export const logsKeys = {
   groups: () => [...logsKeys.all(), "groups"] as const,
   streams: (groupName: string) => [...logsKeys.all(), "streams", groupName] as const,
   filter: (groupName: string) => [...logsKeys.all(), "filter", groupName] as const,
+  tags: (groupName: string) => [...logsKeys.all(), "tags", groupName] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -27,6 +30,13 @@ export function logsGroupsQueryOptions() {
   return queryOptions({
     queryKey: logsKeys.groups(),
     queryFn: () => logs.listGroups(),
+  })
+}
+
+export function logsGroupTagsQueryOptions(groupName: string) {
+  return queryOptions({
+    queryKey: logsKeys.tags(groupName),
+    queryFn: () => logs.listGroupTags(groupName),
   })
 }
 
@@ -58,7 +68,7 @@ export function logsFilterQueryOptions(
 export function createLogGroupMutationOptions() {
   return mutationOptions({
     mutationKey: [...logsKeys.groups(), "create"] as const,
-    mutationFn: (name: string) => logs.createGroup(name),
+    mutationFn: (input: CreateLogGroupInput) => logs.createGroup(input),
   })
 }
 
