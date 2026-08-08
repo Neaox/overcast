@@ -107,6 +107,8 @@ Use this shape unless the repository has a more specific PR template:
 
 ## Screenshots
 - <only when the change is visual — see "Visual Evidence" below; omit the section otherwise>
+- <one line naming the theme/width variations you captured and why those are the axes this
+  change moves>
 
 ## Verification
 - <tests, builds, docs generation, manual checks>
@@ -128,7 +130,7 @@ Use this shape unless the repository has a more specific PR template:
 - Include docs generation when capability tables or service docs changed.
 - Say when a verification step was not run and why.
 - Do not paste full passing output unless it contains useful context.
-- For visual changes, say the screenshots were captured against a running emulator and dev server, not mocked up.
+- For visual changes, say the screenshots were captured from a real browser driven against an emulator built from the branch, not mocked up.
 
 ### Notes guidance
 
@@ -235,6 +237,7 @@ A prose description of a layout, a font, or a spacing change is not reviewable. 
 - New components, pages, panels, dialogs, or empty/loading/error states.
 - Anything where "does this look correct?" is the actual review question.
 - Theme or responsive behavior — see the light/dark and breakpoint guidance below.
+- Anything whose value depends on it having really run — a Lambda invocation's output, its log records, an ECS task's state. Prose can claim the emulator produced that; a screenshot of it is the proof, and it is the hardest kind to fake.
 
 ### When to skip them
 
@@ -261,14 +264,84 @@ Capture more than one width when the change crosses a breakpoint — responsive 
 
 Show the narrowest width where the layout still has to work and the widest where it changes again; the intermediate steps are usually noise. One width is enough for a change that renders identically at every size.
 
-Be honest about the combinatorics: two themes times three widths is six images nobody reads. Pick the axis the change actually moves, and show the other axis once.
+#### Choosing the variations — and saying which you chose
+
+Deciding which images to take is part of the change, not packaging applied afterwards. Work through both axes explicitly, against this diff:
+
+- **Does it touch anything the theme controls?** Colour, contrast, borders, shadows, overlays, focus rings, opacity against a background, or a token whose light and dark values differ. If yes, capture both themes.
+- **Does it cross a breakpoint?** Responsive grids and column counts, sidebars and navigation that collapse, tables that scroll or restack, anything using `sm:`/`md:`/`lg:` variants. If yes, capture more than one width.
+- **If neither**, one image is the right answer, and the PR should say why one was enough.
+
+Be honest about the combinatorics: two themes times three widths is six images nobody reads, and the one carrying the argument is buried among the five that do not. Pick the axis the change actually moves, and show the other axis once.
+
+**State the decision in the PR body, in one line.** Not the mechanics — the reasoning: which axes you captured, and why those. A reviewer should be able to tell the selection was reasoned about rather than swept, and should be told when an axis was deliberately left out. Blanket-capturing every combination is as much a failure as capturing nothing.
+
+A worked example, from a branch that genuinely needed both axes for different shots and different reasons:
+
+> Widths 375/1280, one theme: the grid orphaned a field onto its own row and a hint wrapped
+> inside a narrow column — both pure layout, so the theme cannot change the verdict. Both
+> themes at 1280 for the level-select controls: they render `disabled` at reduced opacity,
+> and opacity against a background is exactly what reads fine on the dark ground and fails
+> contrast on the light one.
+
+Three images, each answering a question a reviewer would otherwise have to run the branch to settle. The six-image sweep would have contained the same three and buried them.
 
 ### Capturing
 
-- Run the emulator and the dev server, and seed a real resource. Screenshot the running app, never a mockup.
-- Capture the "after" first, while the branch is checked out.
-- Drive theme and width from the browser tooling rather than by hand, so the pair really is identical apart from the axis under test — the preview browser's `resize_window` takes both a `colorScheme` and explicit `width`/`height`.
-- To capture the "before", stash **only your own tracked changes** (`git stash push -- <paths>`), screenshot, then restore.
+Screenshots come from a real browser, driven against a real emulator, headlessly — so an agent with no display can produce them and a reviewer gets the same image every time.
+
+The repo declares the **`chrome-devtools` MCP server** for both agent clients: [`.mcp.json`](../../../.mcp.json) for Claude Code, [`opencode.json`](../../../opencode.json) for opencode. Claude Code's runs `--headless --isolated` — no window, throwaway profile — because a background agent has no display; opencode's is headful because a human is watching. If the tools are not there, the client has not picked the file up yet — restart the session (and approve the server if prompted) rather than reaching for another mechanism. Nothing is added to `web/package.json` and no browser is installed by the repo.
+
+- **Build the image from the branch and run it on a free loopback port, with the Docker socket mounted** — never 4566/4567, which belong to the user's own instance. Start and stop the container in the same step, so a failed capture cannot leave one running:
+
+  ```sh
+  docker build -t overcast-shot:dev .
+  docker run -d --rm --name overcast-shot \
+      -p 127.0.0.1:4590:4566 -p 127.0.0.1:4591:4567 \
+      -v /var/run/docker.sock:/var/run/docker.sock overcast-shot:dev
+  # ... seed, capture ...
+  docker stop overcast-shot && docker rmi overcast-shot:dev
+  ```
+
+  Chrome runs on the host, so a loopback-published port is reachable directly — no second container and no Docker networking to arrange. A dev server works too; the image is preferred because it is what a reviewer runs, and it puts the branch's SPA and the emulator in one place.
+
+  **The socket mount is not optional dressing, and skipping it costs you twice.** A container cannot see its own port mapping from the inside, so on remapped ports Overcast cannot tell the SPA where the API is: `deriveAPIBaseURL` returns `endpointKnown: false` and the console shows the *Connect to Overcast* screen instead of your page. With the socket, `resolvePublishedPort` asks Docker for the container's own bindings, recovers `4590`, and the console connects to it unprompted. The socket is also what lets the instance run **Lambda and ECS** at all — and a screenshot of a real invocation, with genuine output and real platform log records, is the least fakeable visual evidence there is.
+
+- **Seed a real resource** through `scripts/awslocal.sh` against the published API port before capturing. An empty table is a different screenshot from a populated one, and usually not the one under review.
+
+- **If you cannot mount the socket** — a sandbox or a locked-down CI runner may refuse it — the console will show the connect screen, and a screenshot of *that* is the classic wasted capture. Seed the endpoint yourself in `navigate_page`'s `initScript`, which runs before the SPA does:
+
+  ```js
+  localStorage.setItem('overcast:endpoint', JSON.stringify({
+    baseUrl: 'http://127.0.0.1:4590', label: 'shot', explicit: true }))
+  ```
+
+  This is a fallback, not the normal path: it fixes the console's endpoint but does nothing for Lambda or ECS, which stay unavailable without the socket.
+
+- **Drive the browser to the state worth showing.** This is the point of using the MCP rather than a URL-to-PNG tool: dialogs, tab switches, hover and focus states, validation errors, an empty state, a mid-flow step — none of them has a URL, and they are usually the states the change is actually about. `take_snapshot` gives the accessibility tree with a `uid` per element; `click`, `hover`, `fill`, `fill_form`, `press_key` and `handle_dialog` take those uids. Reach the state, then shoot it.
+
+- **Wait for the page, do not guess.** `wait_for` blocks until given text appears — use the text that only exists once the state is real (a seeded resource's name, the dialog's own heading). A screenshot of a spinner is worse than none.
+
+- **Set the axes with `emulate`, never by hand**, so a pair really is the same state photographed twice, differing only in the axis under test. It takes `colorScheme: "light" | "dark"` and `viewport: "<width>x<height>x<dpr>"`. Shoot each variant with `take_screenshot` and its `filePath`; `uid` scopes the shot to a single element when the surrounding page is noise.
+
+  **`emulate` first, then navigate — not the other way round.** Changing the viewport under a page that has already rendered leaves layout the app measured at mount at the old width, which is exactly the responsive behaviour a width pair is meant to show. One variant is one full pass:
+
+  ```text
+  emulate colorScheme=light viewport=375x900x1
+  navigate_page /sqs (initScript) -> wait_for "<seeded name>" -> take_screenshot after-375.png
+  emulate colorScheme=light viewport=1280x900x1
+  navigate_page /sqs (initScript) -> wait_for "<seeded name>" -> take_screenshot after-1280.png
+  ```
+
+  For a state you reached by clicking, emulate first and then drive to it again; a reload throws the state away and a bare resize leaves it stale.
+
+  Write the files into the gitignored `screenshots/` directory. If `filePath` is refused as "not within any of the configured workspace roots", the client did not hand the server a root — write to the OS temp directory and move the files.
+
+- **Capture the "after" first**, while the branch is checked out.
+
+- **Capture the "before" from a second worktree at the base commit** — with headless capture this is now the easy path as well as the safe one. Add a worktree at the base commit, build and run a second image from it under a different container name and port pair, and repeat the same navigation, the same interaction and the same `emulate` values. Nothing in your working tree moves, both containers can be up at once, and repeating the steps exactly is what makes the pair comparable.
+
+  If you nevertheless stash, stash **only your own tracked changes** (`git stash push -- <paths>`), screenshot, then restore.
 
   Beware: `git stash` is shared across all worktrees of a repo. A concurrent session can push its own stash on top of yours between your push and your pop, so `git stash pop` may restore the wrong one. Prefer capturing "before" from a separate checkout of the base branch, and if you must stash, apply by commit hash (`git stash apply <sha>`) rather than by position.
 
@@ -339,7 +412,7 @@ gh pr comment <number> --body '/no-changelog CI-only: pins the release action to
 - The reason is required and is kept as the record of the decision — write the actual reason, not a placeholder. `n/a` is refused.
 - Comment it as soon as the PR is opened. The check reads the PR's comments when it runs, so a waiver already there means it passes first time instead of going red and being cleared.
 - `/needs-changelog` puts the question back. Do that yourself if you push work to the PR afterwards that users would want to read about: the waiver covers the PR, not the commit it was written on.
-- No comment is needed when **every** file the PR touches is in an area that never produces a release note: `compat/`, `cmd/compat/`, `tests/`, test files anywhere (`*_test.go`, `*_test.py`, `*.test.tsx`, `*.spec.ts`), `docs/plans/`, `docs/dev/`, `.agents/`, `.claude/`, `.vscode/`, `.devcontainer/`, contributor docs (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`), and local tooling (`.golangci.yml`, `.air.toml`, `opencode.json`, `.gitignore`, `.gitattributes`). One file outside them and the check asks.
+- No comment is needed when **every** file the PR touches is in an area that never produces a release note: `compat/`, `cmd/compat/`, `tests/`, test files anywhere (`*_test.go`, `*_test.py`, `*.test.tsx`, `*.spec.ts`), `docs/plans/`, `docs/dev/`, `.agents/`, `.claude/`, `.vscode/`, `.devcontainer/`, contributor docs (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`), and local tooling (`.golangci.yml`, `.air.toml`, `opencode.json`, `.mcp.json`, `.gitignore`, `.gitattributes`). One file outside them and the check asks.
 - Adding the fragment is always the better answer when the change is release-note-worthy. Do not waive to make a red check go away.
 
 ### During a release window
@@ -424,7 +497,7 @@ Before creating the PR:
 5. Run scoped tests and required docs generation for changed areas.
 6. Run final verification. Prefer `make check` (`fmt vet lint test`) over assembling a subset — "targeted equivalents" is how a required CI job gets skipped. At minimum: `go build ./...`, `go vet ./...`, `make lint-go`, and the scoped tests. Lint is not optional and is not implied by the others: CI runs it as its own job, and staticcheck findings pass build, vet and tests. For `web/` changes add `pnpm run typecheck` and `pnpm run lint` — never bare `tsc --noEmit`, which resolves the solution-style `web/tsconfig.json`, compiles zero files and always exits 0 (`tsc -b` is a correct alternative).
 7. Ensure no secrets, local config, or throwaway debug output are included.
-8. For visual changes, capture screenshots and confirm any capture harness (temporary pages under `web/public/`, seeded fixtures) is removed from the branch.
+8. For visual changes, capture screenshots with the `chrome-devtools` MCP against a container built from the branch, and confirm nothing the capture needed is left behind: the container and image stopped and removed, any temporary page under `web/public/` or seeded fixture removed from the branch, and the images themselves outside the repo tree (`screenshots/` is gitignored).
 9. Run [the surprise check](#the-surprise-check--run-this-before-opening-the-pr) over the branch, and disclose anything it turns up under `Notes`.
 10. Confirm every statement the description makes about real AWS behavior links to its source — see [AWS Compatibility Evidence](#aws-compatibility-evidence).
 

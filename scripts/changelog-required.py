@@ -144,7 +144,10 @@ EXEMPT_FILES = frozenset(
         # the image.
         ".golangci.yml",
         ".air.toml",
+        # The same MCP server declared twice because the two clients read
+        # different files with different schemas; neither is built or shipped.
         "opencode.json",
+        ".mcp.json",
         ".codex",
         ".gitignore",
         ".gitattributes",

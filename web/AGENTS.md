@@ -204,6 +204,20 @@ Effects carry a high bar. Before adding `useEffect`, read and apply
 
 ---
 
+## Visual changes need screenshots
+
+A prose description of a layout or a colour change is not reviewable. When a change alters what
+the console looks like, capture it — the repo declares the `chrome-devtools` MCP server
+(`.mcp.json` for Claude Code, `opencode.json` for opencode) so a headless Chrome can be driven to
+the state worth showing, including dialogs, hover and focus states, and validation errors that no
+URL reaches.
+
+Which themes and widths to capture is a judgement call the PR has to state and defend. Both the
+mechanism and that guidance are in the
+[`pull-request` skill § Visual Evidence](../.agents/skills/pull-request/SKILL.md#visual-evidence).
+
+---
+
 ## Testing
 
 ### Stack

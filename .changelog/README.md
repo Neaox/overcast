@@ -210,8 +210,8 @@ files anywhere (`*_test.go`, `*_test.py`, `*.test.tsx`, `*.spec.ts`),
 `docs/plans/` and `docs/dev/`, `.agents/`, `.claude/`, `.vscode/`,
 `.devcontainer/`, this README, the contributor and agent guidance
 (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `.github/copilot-instructions.md`),
-and local tooling (`.golangci.yml`, `.air.toml`, `opencode.json`, `.codex`,
-`.gitignore`, `.gitattributes`).
+and local tooling (`.golangci.yml`, `.air.toml`, `opencode.json`, `.mcp.json`,
+`.codex`, `.gitignore`, `.gitattributes`).
 
 Every file: one path outside them puts the whole PR back in scope, because that
 path is the one that might ship. The list is deliberately short of things it

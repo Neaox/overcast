@@ -37,6 +37,24 @@ opencode and Claude Code both discover them without prompting.
 - `release`: Use for cutting a release — curating changelog fragments, bumping `VERSION`, and smoke/regression testing the release candidate before it ships.
 - `stacked-prs`: Use when a PR depends on another PR that has not merged yet — building, linking, syncing and landing a chain of dependent PRs.
 
+### Repo-local MCP servers
+
+The repo declares one MCP server, `chrome-devtools`, in two places — [.mcp.json](./.mcp.json) for
+Claude Code and the `mcp` block of [opencode.json](./opencode.json) for opencode. The two clients
+read different files with different schemas, so the definition is duplicated on purpose.
+
+**The two are deliberately not identical, and the difference is the point.** Claude Code's runs
+with `--headless --isolated`: Chrome starts with no window and a throwaway profile, which is what
+lets a background agent — which has no display to composite a window onto — drive a browser and
+capture screenshots at all. opencode's is left headful because a human is sitting in front of it
+and watching the browser is often the reason they reached for it. Match the flags to whether
+there is a display, not to each other.
+
+Adding or changing either file does not affect a session already running: the client reads it at
+startup, so restart (and approve the server if prompted) before concluding the tools are
+unavailable. Screenshot workflow and the judgement about which themes and widths to capture are
+in the [`pull-request` skill § Visual Evidence](./.agents/skills/pull-request/SKILL.md#visual-evidence).
+
 ### Worktree policy
 
 All repository mutations must happen in a dedicated, task-owned git worktree. Derive the default

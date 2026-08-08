@@ -52,6 +52,11 @@ compat-report.txt
 # document-major — one line or one object per doc — so a docs edit rewrites
 # only that doc's entry and branches that touch different docs merge cleanly.
 
+# Web console screenshots captured for PR review. They belong on a throwaway
+# assets/<branch> branch referenced from the PR body, never in the repo tree —
+# see .agents/skills/pull-request/SKILL.md § Hosting.
+screenshots/
+
 # log files
 *.log
 logs.txt
