@@ -4896,7 +4896,7 @@
           "operation": "DeleteStack",
           "category": "Stacks",
           "status": "✅ Supported",
-          "notes": "Async resource cleanup in reverse dependency order"
+          "notes": "Async resource cleanup in reverse dependency order; DELETE_FAILED when a resource refuses deletion"
         },
         {
           "operation": "DescribeStacks",
@@ -4979,7 +4979,7 @@
           "operation": "DescribeStackResources",
           "category": "Resources and events",
           "status": "✅ Supported",
-          "notes": "Lists resources for a stack"
+          "notes": "Lists resources for a stack, with status and reason"
         },
         {
           "operation": "ListStackResources",

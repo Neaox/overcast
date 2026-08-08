@@ -236,8 +236,8 @@ func (h *iamManagedPolicyHandler) Delete(ctx context.Context, router http.Handle
 		"Version":   "2010-05-08",
 		"PolicyArn": physicalID,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return iamTeardownError("DeletePolicy", physicalID, rec, err)
 }
 
 func (h *iamManagedPolicyHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, _ map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -341,8 +341,8 @@ func (h *iamInstanceProfileHandler) Delete(ctx context.Context, router http.Hand
 		"Version":             "2010-05-08",
 		"InstanceProfileName": name,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return iamTeardownError("DeleteInstanceProfile", name, rec, err)
 }
 
 func (h *iamInstanceProfileHandler) Update(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, oldProps map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -470,8 +470,8 @@ func (h *iamServiceLinkedRoleHandler) Delete(ctx context.Context, router http.Ha
 		"Version":  "2010-05-08",
 		"RoleName": roleName,
 	}
-	_, err := internalQuery(ctx, router, rCtx.Region, params)
-	return err
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	return iamTeardownError("DeleteRole", roleName, rec, err)
 }
 
 // ── AWS::Events::EventBus ──────────────────────────────────────────────────
