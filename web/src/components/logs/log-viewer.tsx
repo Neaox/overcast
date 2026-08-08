@@ -6,8 +6,10 @@ import { stripAnsi } from "@/lib/ansi"
 import {
   detectLogLevel,
   formatLogTime,
+  formatPlatformRecord,
   highlightJSON,
   logLevelRowClass,
+  parsePlatformRecord,
   stringifyJSON,
   tryParseJSON,
 } from "@/lib/log-format"
@@ -67,11 +69,14 @@ export function LogViewer({
         // Level detection and JSON parsing read the message as it *reads*: a
         // colourised line starts with an escape sequence, not with `{`.
         const plain = stripAnsi(msg)
+        // A Lambda system log record reads as the START / END / REPORT line it
+        // replaced; ticking Format swaps in the record itself.
+        const platform = parsePlatformRecord(plain)
         return {
           timestamp: event.timestamp,
           ingestionTime: event.ingestionTime,
           logStreamName: event.logStreamName,
-          message: msg,
+          message: (platform && formatPlatformRecord(platform)) ?? msg,
           level: detectLogLevel(plain),
           json: formatted ? tryParseJSON(plain) : null,
         }

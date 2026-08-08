@@ -46,6 +46,11 @@ export function formatLogDate(ts?: number | null): string {
  * that logged "retrying after ERROR response" is not itself an error.
  */
 export function detectLogLevel(msg: string): LogLevel | null {
+  // A Lambda system log record carries no "level" of its own; AWS assigns it
+  // one, and that assignment is the only thing that distinguishes a failed
+  // invocation's report from a successful one.
+  const platform = parsePlatformRecord(msg)
+  if (platform) return platformRecordLevel(platform)
   const levelMatch = /"level"\s*:\s*"(\w+)"/i.exec(msg)
   if (levelMatch) {
     const l = levelMatch[1].toLowerCase()
@@ -104,4 +109,162 @@ export function stringifyJSON(obj: object, pretty: boolean): string {
 /** PrismJS-highlighted JSON, as HTML. */
 export function highlightJSON(text: string): string {
   return Prism.highlight(text, Prism.languages.json, "json")
+}
+
+// ─── Lambda system log records ─────────────────────────────────────────────
+//
+// A Lambda function whose `LogFormat` is `JSON` no longer writes the plain-text
+// START / END / REPORT lines. It writes one Telemetry-API-shaped event per line
+// instead, and every viewer that shows a Lambda log stream has to cope:
+//
+//   {"time":"2026-08-09T08:37:29.512Z","type":"platform.report","record":{…}}
+//
+// Rendered raw that is a blob in the middle of the function's own output, so
+// the viewers show the summary line these helpers produce and keep the record
+// itself behind the "Format" toggle. Shapes and level assignment mirror
+// internal/services/lambda/logging_json.go, which cites AWS's references.
+
+/** One system log record: the Telemetry API event envelope, unwrapped. */
+export interface PlatformLogRecord {
+  /** Event type, always prefixed `platform.` — e.g. `platform.report`. */
+  type: string
+  /** Millisecond-precision UTC timestamp the record carries. */
+  time?: string
+  record: Record<string, unknown>
+}
+
+/**
+ * The substring every system log record contains and almost nothing else does.
+ * Checked before paying for a parse, because this runs once per log line and
+ * most lines are the function's own output.
+ */
+const PLATFORM_TYPE_HINT = '"platform.'
+
+/**
+ * Reads one log line as a system log record, or null if it is anything else —
+ * an application record, plain text, a truncated line. Never throws.
+ */
+export function parsePlatformRecord(msg: string): PlatformLogRecord | null {
+  if (!msg.includes(PLATFORM_TYPE_HINT)) return null
+  const parsed = tryParseJSON(msg)
+  if (!parsed || Array.isArray(parsed)) return null
+  const { type, time, record } = parsed as {
+    type?: unknown
+    time?: unknown
+    record?: unknown
+  }
+  if (typeof type !== "string" || !type.startsWith("platform.")) return null
+  if (record == null || typeof record !== "object" || Array.isArray(record)) return null
+  return {
+    type,
+    time: typeof time === "string" ? time : undefined,
+    record: record as Record<string, unknown>,
+  }
+}
+
+/**
+ * The level AWS assigns a system log record — its "System log level event
+ * mapping" table. A run that did not succeed is a warning, which is what makes
+ * a failed invocation's rows worth tinting; everything else is routine.
+ */
+export function platformRecordLevel(rec: PlatformLogRecord): LogLevel {
+  const succeeded = rec.record.status === "success"
+  if (rec.type === "platform.runtimeDone") return succeeded ? "debug" : "warn"
+  if (rec.type === "platform.report") return succeeded ? "info" : "warn"
+  return "info"
+}
+
+function textField(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined
+}
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function metricsOf(rec: PlatformLogRecord): Record<string, unknown> {
+  const metrics = rec.record.metrics
+  return metrics != null && typeof metrics === "object" && !Array.isArray(metrics)
+    ? (metrics as Record<string, unknown>)
+    : {}
+}
+
+function labelled(label: string, value: string | undefined): string | undefined {
+  return value == null ? undefined : `${label}: ${value}`
+}
+
+function millis(label: string, value: unknown): string | undefined {
+  const ms = numberField(value)
+  return ms == null ? undefined : `${label}: ${ms.toFixed(2)} ms`
+}
+
+function whole(label: string, value: unknown, unit: string): string | undefined {
+  const n = numberField(value)
+  return n == null ? undefined : `${label}: ${n} ${unit}`
+}
+
+/** Tab-separated, the way AWS separates the fields of a plain-text REPORT. */
+function joinFields(parts: (string | undefined)[]): string {
+  return parts.filter((p): p is string => p != null).join("\t")
+}
+
+/**
+ * A system log record as the one line it replaced under the Text log format,
+ * plus what the record carries and the text line had nowhere to put — the
+ * invocation status and the size of the response.
+ *
+ * Returns null for a `platform.*` type Overcast does not emit, so a viewer
+ * falls back to the record itself rather than to an invented summary.
+ */
+export function formatPlatformRecord(rec: PlatformLogRecord): string | null {
+  const requestId = textField(rec.record.requestId)
+  const head = (verb: string) => (requestId ? `${verb} RequestId: ${requestId}` : verb)
+  const metrics = metricsOf(rec)
+  switch (rec.type) {
+    case "platform.start": {
+      const version = textField(rec.record.version)
+      return version ? `${head("START")} Version: ${version}` : head("START")
+    }
+    case "platform.runtimeDone":
+      return joinFields([
+        head("END"),
+        labelled("Status", textField(rec.record.status)),
+        labelled("Error Type", textField(rec.record.errorType)),
+        millis("Duration", metrics.durationMs),
+        whole("Produced Bytes", metrics.producedBytes, "bytes"),
+      ])
+    case "platform.report":
+      return joinFields([
+        head("REPORT"),
+        millis("Duration", metrics.durationMs),
+        whole("Billed Duration", metrics.billedDurationMs, "ms"),
+        whole("Memory Size", metrics.memorySizeMB, "MB"),
+        whole("Max Memory Used", metrics.maxMemoryUsedMB, "MB"),
+        millis("Init Duration", metrics.initDurationMs),
+        // AWS's text REPORT names a status only when the environment itself
+        // ended the invocation, so a successful one stays unadorned here too.
+        rec.record.status === "success"
+          ? undefined
+          : labelled("Status", textField(rec.record.status)),
+        labelled("Error Type", textField(rec.record.errorType)),
+      ])
+    default:
+      return null
+  }
+}
+
+/**
+ * A block of Lambda log output — an `X-Amz-Log-Result` tail, say — with every
+ * system log record replaced by its summary. Application records and plain-text
+ * output pass through byte for byte.
+ */
+export function summarisePlatformRecords(text: string): string {
+  if (!text.includes(PLATFORM_TYPE_HINT)) return text
+  return text
+    .split("\n")
+    .map((line) => {
+      const rec = parsePlatformRecord(line)
+      return (rec && formatPlatformRecord(rec)) ?? line
+    })
+    .join("\n")
 }
