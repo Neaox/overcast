@@ -407,14 +407,7 @@ func (h *Handler) listStacksTyped(ctx context.Context, _ *listStacksReq) (*listS
 	}
 	var summaries []stackSummaryXML
 	for _, s := range stacks {
-		summaries = append(summaries, stackSummaryXML{
-			StackName:   s.StackName,
-			StackID:     s.StackID,
-			ParentID:    s.ParentStackID,
-			RootID:      s.RootID,
-			StackStatus: s.Status,
-			CreatedAt:   s.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		})
+		summaries = append(summaries, toStackSummaryXML(s))
 	}
 	return &listStacksResp{
 		Xmlns:  cfnXMLNS,
