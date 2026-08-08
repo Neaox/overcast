@@ -44,7 +44,9 @@ type describeStacksReq struct {
 	StackName string `json:"StackName"`
 }
 
-type listStacksReq struct{}
+type listStacksReq struct {
+	StackStatusFilter []string `json:"StackStatusFilter"`
+}
 
 type getTemplateReq struct {
 	StackName string `json:"StackName"`
@@ -400,13 +402,13 @@ func (h *Handler) describeStacksTyped(ctx context.Context, req *describeStacksRe
 	}, nil
 }
 
-func (h *Handler) listStacksTyped(ctx context.Context, _ *listStacksReq) (*listStacksResp, *protocol.AWSError) {
+func (h *Handler) listStacksTyped(ctx context.Context, req *listStacksReq) (*listStacksResp, *protocol.AWSError) {
 	stacks, aerr := h.store.listStacks(ctx)
 	if aerr != nil {
 		return nil, cfnerr("InternalFailure", "failed to list stacks", http.StatusInternalServerError)
 	}
 	var summaries []stackSummaryXML
-	for _, s := range stacks {
+	for _, s := range filterStacksByStatus(stacks, req.StackStatusFilter) {
 		summaries = append(summaries, toStackSummaryXML(s))
 	}
 	return &listStacksResp{
