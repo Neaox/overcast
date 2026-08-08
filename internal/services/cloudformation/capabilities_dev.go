@@ -10,7 +10,7 @@ func init() {
 		capabilities.Capability{Service: "cloudformation", Operation: "CreateStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Async provisioner; JSON templates; intrinsic functions"},
 		capabilities.Capability{Service: "cloudformation", Operation: "UpdateStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Re-provisions with updated template"},
 		capabilities.Capability{Service: "cloudformation", Operation: "RollbackStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Rolls a CREATE_FAILED, UPDATE_FAILED, or UPDATE_ROLLBACK_FAILED stack back to a terminal rollback state"},
-		capabilities.Capability{Service: "cloudformation", Operation: "DeleteStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Async resource cleanup in reverse dependency order"},
+		capabilities.Capability{Service: "cloudformation", Operation: "DeleteStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Async resource cleanup in reverse dependency order; DELETE_FAILED when a resource refuses deletion"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DescribeStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Status, parameters, outputs, tags"},
 		capabilities.Capability{Service: "cloudformation", Operation: "ListStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Filter by status"},
 		capabilities.Capability{Service: "cloudformation", Operation: "ContinueUpdateRollback", Category: "Stacks", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
@@ -26,7 +26,7 @@ func init() {
 		capabilities.Capability{Service: "cloudformation", Operation: "DeleteChangeSet", Category: "Change sets", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "cloudformation", Operation: "ListChangeSets", Category: "Change sets", Status: capabilities.StatusSupported, Notes: "Lists active change sets for a stack"},
 		// Resources and events
-		capabilities.Capability{Service: "cloudformation", Operation: "DescribeStackResources", Category: "Resources and events", Status: capabilities.StatusSupported, Notes: "Lists resources for a stack"},
+		capabilities.Capability{Service: "cloudformation", Operation: "DescribeStackResources", Category: "Resources and events", Status: capabilities.StatusSupported, Notes: "Lists resources for a stack, with status and reason"},
 		capabilities.Capability{Service: "cloudformation", Operation: "ListStackResources", Category: "Resources and events", Status: capabilities.StatusSupported, Notes: "Lists resources with status"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DescribeStackEvents", Category: "Resources and events", Status: capabilities.StatusSupported, Notes: "Returns stack provisioning events"},
 		// Templates
