@@ -71,13 +71,16 @@ var (
 
 const (
 	policyFunctionNameConstraint = `(arn:(aws[a-zA-Z-]*)?:lambda:)?([a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}:)?(\d{12}:)?(function:)?([a-zA-Z0-9-_\.]+)(:(\$LATEST(\.PUBLISHED)?|[a-zA-Z0-9-_]+))?`
-	statementIDConstraint        = `([a-zA-Z0-9-_]+)`
-	permissionActionConstraint   = `(lambda:[*]|lambda:[a-zA-Z]+|[*])`
-	principalConstraint          = `[^\s]+`
-	sourceAccountConstraint      = `\d{12}`
-	sourceARNConstraint          = `arn:(aws[a-zA-Z0-9-]*):([a-zA-Z0-9\-])+:([a-z]{2}(-gov)?-[a-z]+-\d{1})?:(\d{12})?:(.*)`
-	principalOrgIDConstraint     = `o-[a-z0-9]{10,32}`
-	eventSourceTokenConstraint   = `[a-zA-Z0-9._\-]+`
+	// qualifierConstraint is the Qualifier / NumericLatestPublishedOrAliasQualifier
+	// pattern from the pinned Lambda model, reported verbatim in validation errors.
+	qualifierConstraint        = `\$(LATEST(\.PUBLISHED)?)|[a-zA-Z0-9-_$]+`
+	statementIDConstraint      = `([a-zA-Z0-9-_]+)`
+	permissionActionConstraint = `(lambda:[*]|lambda:[a-zA-Z]+|[*])`
+	principalConstraint        = `[^\s]+`
+	sourceAccountConstraint    = `\d{12}`
+	sourceARNConstraint        = `arn:(aws[a-zA-Z0-9-]*):([a-zA-Z0-9\-])+:([a-z]{2}(-gov)?-[a-z]+-\d{1})?:(\d{12})?:(.*)`
+	principalOrgIDConstraint   = `o-[a-z0-9]{10,32}`
+	eventSourceTokenConstraint = `[a-zA-Z0-9._\-]+`
 )
 
 func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
@@ -147,7 +150,7 @@ func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
 	identifier := chi.URLParam(r, "name")
-	name, qualifier := policyFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
+	name, qualifier := splitFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
 	log.Debug("add permission", zap.String("function", name), zap.String("qualifier", qualifier))
 	var req addPermissionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -209,7 +212,7 @@ func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 	identifier := chi.URLParam(r, "name")
-	name, qualifier := policyFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
+	name, qualifier := splitFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
 	if _, aerr := h.validatePolicyTarget(r.Context(), identifier, name, qualifier); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -234,7 +237,7 @@ func (h *Handler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) RemovePermission(w http.ResponseWriter, r *http.Request) {
 	identifier := chi.URLParam(r, "name")
-	name, qualifier := policyFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
+	name, qualifier := splitFunctionIdentifier(identifier, r.URL.Query().Get("Qualifier"))
 	statementID := chi.URLParam(r, "statementId")
 	if len(statementID) > 100 {
 		protocol.WriteJSONError(w, r, smithyStringLengthConstraint("statementId", statementID, 100))
@@ -292,7 +295,7 @@ func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qu
 		return nil, smithyStringLengthConstraint("qualifier", qualifier, 128)
 	}
 	if qualifier != "" && !qualifierPattern.MatchString(qualifier) {
-		return nil, smithyPatternConstraint("qualifier", qualifier, `\$(LATEST(\.PUBLISHED)?)|[a-zA-Z0-9-_$]+`)
+		return nil, smithyPatternConstraint("qualifier", qualifier, qualifierConstraint)
 	}
 	if reference, ok := parsePolicyFunctionReference(identifier, ""); ok {
 		expectedRegion := middleware.RegionFromContext(ctx, h.cfg.Region)
@@ -362,7 +365,11 @@ func parsePolicyFunctionReference(identifier, queryQualifier string) (policyFunc
 	return reference, true
 }
 
-func policyFunctionIdentifier(identifier, queryQualifier string) (string, string) {
+// splitFunctionIdentifier separates a NamespacedFunctionName — a bare name, a
+// name:qualifier, a partial ARN or a full ARN — into the function name and its
+// qualifier, letting an explicit Qualifier query parameter win. Shared by the
+// resource-policy handlers and DeleteFunction, both of which accept every form.
+func splitFunctionIdentifier(identifier, queryQualifier string) (string, string) {
 	reference, ok := parsePolicyFunctionReference(identifier, queryQualifier)
 	if !ok {
 		return identifier, queryQualifier
@@ -424,11 +431,7 @@ func policyRevisionMismatch() *protocol.AWSError {
 }
 
 func policyFunctionNotFound(name, qualifier string) *protocol.AWSError {
-	resource := name
-	if qualifier != "" {
-		resource += ":" + qualifier
-	}
-	return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Function not found: " + resource, HTTPStatus: http.StatusNotFound}
+	return lambdaFunctionNotFound(qualifiedResourceName(name, qualifier))
 }
 
 func policyFunctionNotFoundIdentifier(identifier, qualifier string) *protocol.AWSError {
@@ -440,9 +443,5 @@ func policyFunctionNotFoundIdentifier(identifier, qualifier string) *protocol.AW
 }
 
 func policyNotFoundError(name, qualifier string) *protocol.AWSError {
-	resource := name
-	if qualifier != "" {
-		resource += ":" + qualifier
-	}
-	return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "The resource you requested does not exist: " + resource, HTTPStatus: http.StatusNotFound}
+	return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "The resource you requested does not exist: " + qualifiedResourceName(name, qualifier), HTTPStatus: http.StatusNotFound}
 }

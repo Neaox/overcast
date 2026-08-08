@@ -500,6 +500,29 @@ func (s *lambdaStore) listVersions(ctx context.Context, functionName string) ([]
 	return out, nil
 }
 
+// deleteVersion removes one published version along with the state scoped to
+// that qualifier: its resource policy and its provisioned-concurrency config.
+// The version counter is deliberately left alone — AWS never reuses a version
+// number, so the next PublishVersion must not fall back onto a deleted one.
+func (s *lambdaStore) deleteVersion(ctx context.Context, functionName string, version int) *protocol.AWSError {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	region := s.region(ctx)
+	qualifier := strconv.Itoa(version)
+	if err := s.store.Delete(ctx, nsFunctionPolicies, serviceutil.RegionKey(region, policyStoreKey(functionName, qualifier))); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if aerr := s.deleteProvisionedConcurrencyConfig(ctx, functionName, qualifier); aerr != nil {
+		return aerr
+	}
+	// The version record goes last. If cleanup fails before this point the
+	// version is still addressable and the delete can simply be retried.
+	if err := s.store.Delete(ctx, nsVersions, serviceutil.RegionKey(region, versionKey(functionName, version))); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return nil
+}
+
 // ─── Aliases ───────────────────────────────────────────────────────────────
 
 const (
