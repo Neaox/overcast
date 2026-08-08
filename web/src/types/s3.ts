@@ -88,6 +88,34 @@ export interface BucketLifecycleConfiguration {
   transitionDefaultMinimumObjectSize: string
 }
 
+export interface S3WebsiteRedirect {
+  hostName?: string
+  httpRedirectCode?: string
+  protocol?: string
+  replaceKeyPrefixWith?: string
+  replaceKeyWith?: string
+}
+
+export interface S3WebsiteRoutingRule {
+  condition?: {
+    httpErrorCodeReturnedEquals?: string
+    keyPrefixEquals?: string
+  }
+  redirect: S3WebsiteRedirect
+}
+
+/**
+ * The bucket's website configuration. AWS's two forms are mutually exclusive:
+ * `redirectAllRequestsTo` on its own, or an index document with an optional
+ * error document and routing rules.
+ */
+export interface BucketWebsiteConfiguration {
+  indexDocument?: string
+  errorDocument?: string
+  redirectAllRequestsTo?: { hostName: string; protocol?: string }
+  routingRules: S3WebsiteRoutingRule[]
+}
+
 export interface NotificationFilterRule {
   name: string
   value: string

@@ -125,6 +125,48 @@ operations:
       - name: configured bucket
         status: fixed
         notes: Returns 204 and subsequent GetBucketCors returns NoSuchCORSConfiguration.
+  PutBucketWebsite:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketWebsite.html
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketWebsite.html
+    implementation:
+      - internal/services/s3/handler_website.go
+    tests:
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_redirectAllRequestsToRoundTrip
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_routingRulesRoundTrip
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_replacesTheWholeConfiguration
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_validation
+      - tests/integration/s3/s3_website_test.go::TestPutBucketWebsite_rejectedConfigurationIsNotStored
+      - tests/integration/cloudformation/s3_bucket_properties_test.go::TestS3BucketProperties_websiteRedirectAndRoutingRulesDispatchThroughS3
+      - tests/integration/cloudformation/s3_bucket_properties_test.go::TestS3BucketProperties_websiteRedirectAllDispatchesThroughS3
+    scenarios:
+      - name: RedirectAllRequestsTo round trip
+        status: fixed
+        notes: HostName and the optional Protocol are preserved; an omitted Protocol is not serialised as an empty enum.
+      - name: RoutingRules round trip
+        status: fixed
+        notes: >-
+          Condition (HttpErrorCodeReturnedEquals, KeyPrefixEquals) and Redirect
+          (HostName, HttpRedirectCode, Protocol, ReplaceKeyPrefixWith,
+          ReplaceKeyWith) survive in AWS's unflattened RoutingRules/RoutingRule shape.
+      - name: documented mutual exclusion and field constraints
+        status: fixed
+        notes: >-
+          RedirectAllRequestsTo cannot be combined with IndexDocument, ErrorDocument
+          or RoutingRules; one of RedirectAllRequestsTo and IndexDocument is required;
+          Protocol is restricted to the http/https enum; the IndexDocument Suffix must
+          be non-empty and slash-free; a Redirect must name a destination and cannot
+          carry both ReplaceKeyWith and ReplaceKeyPrefixWith; a Condition needs a
+          predicate. Refusals return InvalidArgument and store nothing.
+      - name: Redirect HttpRedirectCode value validation
+        status: intentionally_partial
+        gap: >-
+          Real S3 rejects a code that is not a valid HTTP redirect status. The model
+          does not pin the error, so the value is stored rather than refused.
+      - name: website endpoint serving
+        status: unsupported
+        gap: Overcast stores and returns the configuration but serves no S3 website endpoint.
   DeleteBucketWebsite:
     status: fixed
     aws_docs:
@@ -140,6 +182,7 @@ operations:
         notes: Returns 204 and subsequent GetBucketWebsite returns NoSuchWebsiteConfiguration.
 findings:
   fixed:
+    - PutBucketWebsite/GetBucketWebsite preserve RedirectAllRequestsTo and RoutingRules and enforce AWS's mutual exclusion (#637).
     - PutBucketLifecycleConfiguration honours x-amz-transition-default-minimum-object-size, reports it on Put and Get, and gates sub-128 KB transitions on it (#636).
     - PutBucketVersioning now rejects invalid status enum values with MalformedXML instead of persisting arbitrary strings.
     - DeleteBucketCors and DeleteBucketWebsite now clear stored configurations and return 204.
@@ -148,9 +191,9 @@ findings:
     - Finish ListObjectsV2 optional-parameter review before marking the operation reviewed.
     - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
     - EventBridge notification configuration is unsupported (#635).
-    - Website RedirectAllRequestsTo and RoutingRules are unsupported (#637).
     - CORS rule Id and encryption BlockedEncryptionTypes are not represented by the current stored/wire models.
   intentionally_partial:
+    - Website configuration is stored and returned in full, but Overcast serves no S3 website endpoint, so no request is redirected; Redirect HttpRedirectCode values are stored without validation because the model does not pin AWS's error.
     - Lifecycle NoncurrentVersionExpiration is validated and round-tripped, but cannot execute until the object store has version history (#645); NoncurrentVersionTransition and ExpiredObjectDeleteMarker remain refused.
 handoff:
   start_with: [ListObjectsV2 max-keys validation, ListObjectsV2 encoding-type, PutBucketPolicy, CDK bootstrap, issue 635, issue 636, issue 637]

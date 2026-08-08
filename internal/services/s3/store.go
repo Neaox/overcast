@@ -27,9 +27,49 @@ const (
 )
 
 // WebsiteConfiguration stores S3 website configuration for a bucket.
+//
+// It mirrors com.amazonaws.s3#WebsiteConfiguration: either
+// RedirectAllRequestsTo on its own, or IndexDocument with an optional
+// ErrorDocument and optional RoutingRules. handler_website.go enforces the
+// exclusion, so a stored configuration never carries both forms.
 type WebsiteConfiguration struct {
-	IndexDocument string `json:"index_document,omitempty"`
-	ErrorDocument string `json:"error_document,omitempty"`
+	IndexDocument         string               `json:"index_document,omitempty"`
+	ErrorDocument         string               `json:"error_document,omitempty"`
+	RedirectAllRequestsTo *WebsiteRedirectAll  `json:"redirect_all_requests_to,omitempty"`
+	RoutingRules          []WebsiteRoutingRule `json:"routing_rules,omitempty"`
+}
+
+// WebsiteRedirectAll redirects every request to the bucket's website endpoint.
+// HostName is required; Protocol is com.amazonaws.s3#Protocol (http | https)
+// and is empty when the caller omitted it.
+type WebsiteRedirectAll struct {
+	HostName string `json:"host_name"`
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// WebsiteRoutingRule is one conditional redirect. Condition is optional; a
+// rule without one applies to every request.
+type WebsiteRoutingRule struct {
+	Condition *WebsiteRoutingCondition `json:"condition,omitempty"`
+	Redirect  WebsiteRedirect          `json:"redirect"`
+}
+
+// WebsiteRoutingCondition selects the requests a routing rule redirects. At
+// least one predicate is set; both together mean both must hold.
+type WebsiteRoutingCondition struct {
+	HTTPErrorCodeReturnedEquals string `json:"http_error_code_returned_equals,omitempty"`
+	KeyPrefixEquals             string `json:"key_prefix_equals,omitempty"`
+}
+
+// WebsiteRedirect is where a routing rule sends a matching request. At least
+// one field is set, and ReplaceKeyWith and ReplaceKeyPrefixWith are mutually
+// exclusive.
+type WebsiteRedirect struct {
+	HostName             string `json:"host_name,omitempty"`
+	HTTPRedirectCode     string `json:"http_redirect_code,omitempty"`
+	Protocol             string `json:"protocol,omitempty"`
+	ReplaceKeyPrefixWith string `json:"replace_key_prefix_with,omitempty"`
+	ReplaceKeyWith       string `json:"replace_key_with,omitempty"`
 }
 
 // CORSRule stores a single CORS rule for an S3 bucket.

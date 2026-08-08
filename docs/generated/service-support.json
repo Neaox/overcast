@@ -72,13 +72,13 @@
           "operation": "GetBucketWebsite",
           "category": "Website",
           "status": "⚠️ Partial",
-          "notes": "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"
+          "notes": "Returns the whole configuration — IndexDocument, ErrorDocument, RedirectAllRequestsTo and RoutingRules; Overcast serves no website endpoint, so nothing is actually redirected"
         },
         {
           "operation": "PutBucketWebsite",
           "category": "Website",
           "status": "⚠️ Partial",
-          "notes": "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"
+          "notes": "Stores IndexDocument, ErrorDocument, RedirectAllRequestsTo and RoutingRules with AWS's mutual exclusion and Protocol enum enforced; HttpRedirectCode values are not validated, and Overcast serves no website endpoint"
         },
         {
           "operation": "DeleteBucketWebsite",

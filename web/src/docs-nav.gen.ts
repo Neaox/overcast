@@ -4048,6 +4048,11 @@ export const DOCS_NAV = [
         "id": "lifecycle-default-minimum-transition-size"
       },
       {
+        "depth": 3,
+        "text": "Website: redirects and routing rules",
+        "id": "website-redirects-and-routing-rules"
+      },
+      {
         "depth": 2,
         "text": "Summary",
         "id": "summary"

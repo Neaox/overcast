@@ -206,10 +206,36 @@ func (n *cfnS3Int) UnmarshalJSON(data []byte) error {
 }
 
 type cfnS3WebsiteConfiguration struct {
-	ErrorDocument         string          `json:"ErrorDocument,omitempty"`
-	IndexDocument         string          `json:"IndexDocument,omitempty"`
-	RedirectAllRequestsTo json.RawMessage `json:"RedirectAllRequestsTo,omitempty"`
-	RoutingRules          json.RawMessage `json:"RoutingRules,omitempty"`
+	ErrorDocument         string                      `json:"ErrorDocument,omitempty"`
+	IndexDocument         string                      `json:"IndexDocument,omitempty"`
+	RedirectAllRequestsTo *cfnS3RedirectAllRequestsTo `json:"RedirectAllRequestsTo,omitempty"`
+	RoutingRules          []cfnS3WebsiteRoutingRule   `json:"RoutingRules,omitempty"`
+}
+
+type cfnS3RedirectAllRequestsTo struct {
+	HostName string `json:"HostName"`
+	Protocol string `json:"Protocol,omitempty"`
+}
+
+// cfnS3WebsiteRoutingRule is CloudFormation's spelling of S3's RoutingRule:
+// the condition and redirect containers carry different names from the API's
+// Condition and Redirect.
+type cfnS3WebsiteRoutingRule struct {
+	RedirectRule         cfnS3WebsiteRedirectRule   `json:"RedirectRule"`
+	RoutingRuleCondition *cfnS3RoutingRuleCondition `json:"RoutingRuleCondition,omitempty"`
+}
+
+type cfnS3WebsiteRedirectRule struct {
+	HostName             string `json:"HostName,omitempty"`
+	HttpRedirectCode     string `json:"HttpRedirectCode,omitempty"`
+	Protocol             string `json:"Protocol,omitempty"`
+	ReplaceKeyPrefixWith string `json:"ReplaceKeyPrefixWith,omitempty"`
+	ReplaceKeyWith       string `json:"ReplaceKeyWith,omitempty"`
+}
+
+type cfnS3RoutingRuleCondition struct {
+	HttpErrorCodeReturnedEquals string `json:"HttpErrorCodeReturnedEquals,omitempty"`
+	KeyPrefixEquals             string `json:"KeyPrefixEquals,omitempty"`
 }
 
 type cfnS3PublicAccessBlockConfiguration struct {
@@ -719,17 +745,40 @@ func translateS3CorsConfiguration(in *cfnS3CorsConfiguration) ([]s3service.CORSR
 	return out, nil
 }
 
+// translateS3WebsiteConfiguration maps CloudFormation's spelling onto S3's.
+// The exclusion between RedirectAllRequestsTo and the index/error/routing form
+// is S3's to enforce, so it is not repeated here.
 func translateS3WebsiteConfiguration(in *cfnS3WebsiteConfiguration) (*s3service.WebsiteConfiguration, error) {
-	if len(in.RedirectAllRequestsTo) != 0 {
-		return nil, fmt.Errorf("RedirectAllRequestsTo cannot be represented by the current S3 website handler")
-	}
-	if len(in.RoutingRules) != 0 {
-		return nil, fmt.Errorf("RoutingRules cannot be represented by the current S3 website handler")
-	}
-	return &s3service.WebsiteConfiguration{
+	out := &s3service.WebsiteConfiguration{
 		IndexDocument: in.IndexDocument,
 		ErrorDocument: in.ErrorDocument,
-	}, nil
+	}
+	if in.RedirectAllRequestsTo != nil {
+		out.RedirectAllRequestsTo = &s3service.WebsiteRedirectAll{
+			HostName: in.RedirectAllRequestsTo.HostName,
+			Protocol: in.RedirectAllRequestsTo.Protocol,
+		}
+	}
+	for i := range in.RoutingRules {
+		rule := &in.RoutingRules[i]
+		translated := s3service.WebsiteRoutingRule{
+			Redirect: s3service.WebsiteRedirect{
+				HostName:             rule.RedirectRule.HostName,
+				HTTPRedirectCode:     rule.RedirectRule.HttpRedirectCode,
+				Protocol:             rule.RedirectRule.Protocol,
+				ReplaceKeyPrefixWith: rule.RedirectRule.ReplaceKeyPrefixWith,
+				ReplaceKeyWith:       rule.RedirectRule.ReplaceKeyWith,
+			},
+		}
+		if condition := rule.RoutingRuleCondition; condition != nil {
+			translated.Condition = &s3service.WebsiteRoutingCondition{
+				HTTPErrorCodeReturnedEquals: condition.HttpErrorCodeReturnedEquals,
+				KeyPrefixEquals:             condition.KeyPrefixEquals,
+			}
+		}
+		out.RoutingRules = append(out.RoutingRules, translated)
+	}
+	return out, nil
 }
 
 func s3BucketPropertyPresent(props *cfnS3BucketProperties, property string) bool {

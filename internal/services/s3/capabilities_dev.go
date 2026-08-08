@@ -34,9 +34,9 @@ func init() {
 
 		// Website
 		capabilities.Capability{Service: "s3", Operation: "GetBucketWebsite", Category: "Website",
-			Status: capabilities.StatusPartial, Notes: "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"},
+			Status: capabilities.StatusPartial, Notes: "Returns the whole configuration — IndexDocument, ErrorDocument, RedirectAllRequestsTo and RoutingRules; Overcast serves no website endpoint, so nothing is actually redirected"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketWebsite", Category: "Website",
-			Status: capabilities.StatusPartial, Notes: "IndexDocument and ErrorDocument; redirects and routing rules are not yet supported"},
+			Status: capabilities.StatusPartial, Notes: "Stores IndexDocument, ErrorDocument, RedirectAllRequestsTo and RoutingRules with AWS's mutual exclusion and Protocol enum enforced; HttpRedirectCode values are not validated, and Overcast serves no website endpoint"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketWebsite", Category: "Website",
 			Status: capabilities.StatusSupported},
 

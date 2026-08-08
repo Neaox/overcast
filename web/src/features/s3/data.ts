@@ -44,6 +44,8 @@ export const s3Keys = {
   bucketNotification: (bucket: string) => [...s3Keys.notification(), bucket] as const,
   lifecycle: () => [...s3Keys.all(), "lifecycle"] as const,
   bucketLifecycle: (bucket: string) => [...s3Keys.lifecycle(), bucket] as const,
+  website: () => [...s3Keys.all(), "website"] as const,
+  bucketWebsite: (bucket: string) => [...s3Keys.website(), bucket] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -95,6 +97,19 @@ export function s3BucketLifecycleQueryOptions(bucket: string) {
   return queryOptions({
     queryKey: s3Keys.bucketLifecycle(bucket),
     queryFn: () => s3.getBucketLifecycle(bucket),
+  })
+}
+
+/**
+ * The bucket's website configuration, or null when it is not a website bucket.
+ * Redirect-all and routing rules are read-only here: they are set through
+ * `PutBucketWebsite` or a CloudFormation stack, and the panel exists to make
+ * visible that requests to this bucket's site would be redirected.
+ */
+export function s3BucketWebsiteQueryOptions(bucket: string) {
+  return queryOptions({
+    queryKey: s3Keys.bucketWebsite(bucket),
+    queryFn: () => s3.getBucketWebsite(bucket),
   })
 }
 

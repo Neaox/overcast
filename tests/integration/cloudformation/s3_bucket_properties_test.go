@@ -241,11 +241,13 @@ func TestS3BucketProperties_unknownAndUntranslatablePropertiesFailBeforeBucketCr
 			wantReason: "PublicAccessBlockConfiguration is not supported unless all settings are true",
 		},
 		{
+			// RoutingRules used to sit here; it now dispatches through S3.
+			// CORS rule Ids remain unrepresentable by the stored CORS model.
 			name:       "known shape unsupported by S3 codec",
 			stackName:  "cfn-s3-untranslatable-property",
 			bucketName: "cfn-s3-untranslatable-property",
-			property:   `"WebsiteConfiguration": {"RoutingRules": []}`,
-			wantReason: "RoutingRules cannot be represented by the current S3 website handler",
+			property:   `"CorsConfiguration": {"CorsRules": [{"Id": "rule-1", "AllowedMethods": ["GET"], "AllowedOrigins": ["*"]}]}`,
+			wantReason: "CorsRules[0].Id cannot be represented by the current S3 CORS handler",
 		},
 	}
 
@@ -455,6 +457,50 @@ func TestS3BucketProperties_transitionDefaultMinimumObjectSizeDispatchesThroughS
 	if got := get.Header.Get("x-amz-transition-default-minimum-object-size"); got != "varies_by_storage_class" {
 		t.Fatalf("x-amz-transition-default-minimum-object-size = %q, want varies_by_storage_class", got)
 	}
+}
+
+func TestS3BucketProperties_websiteRedirectAndRoutingRulesDispatchThroughS3(t *testing.T) {
+	// Given: CloudFormation's spelling of a routing rule — RedirectRule and
+	// RoutingRuleCondition rather than the API's Redirect and Condition.
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-website-routing","WebsiteConfiguration":{"IndexDocument":"index.html","RoutingRules":[{"RoutingRuleCondition":{"KeyPrefixEquals":"docs/"},"RedirectRule":{"ReplaceKeyPrefixWith":"documents/","HttpRedirectCode":"301"}}]}}}}}`
+
+	// When: CloudFormation creates the stack.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {"cfn-s3-website-routing"},
+		"TemplateBody": {template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-website-routing", "CREATE_COMPLETE")
+
+	// Then: S3 exposes it in the API's own shape.
+	assertS3SubresourceContains(t, srv, "cfn-s3-website-routing", "website", http.StatusOK,
+		"<Suffix>index.html</Suffix>",
+		"<RoutingRules>", "<RoutingRule>",
+		"<KeyPrefixEquals>docs/</KeyPrefixEquals>",
+		"<ReplaceKeyPrefixWith>documents/</ReplaceKeyPrefixWith>",
+		"<HttpRedirectCode>301</HttpRedirectCode>")
+}
+
+func TestS3BucketProperties_websiteRedirectAllDispatchesThroughS3(t *testing.T) {
+	// Given: the redirect-only website configuration.
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-website-redirect-all","WebsiteConfiguration":{"RedirectAllRequestsTo":{"HostName":"example.test","Protocol":"https"}}}}}}`
+
+	// When: CloudFormation creates the stack.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {"cfn-s3-website-redirect-all"},
+		"TemplateBody": {template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-website-redirect-all", "CREATE_COMPLETE")
+
+	// Then: S3 owns and exposes the redirect.
+	assertS3SubresourceContains(t, srv, "cfn-s3-website-redirect-all", "website", http.StatusOK,
+		"<RedirectAllRequestsTo>", "<HostName>example.test</HostName>", "<Protocol>https</Protocol>")
+	assertS3SubresourceExcludes(t, srv, "cfn-s3-website-redirect-all", "website", "<IndexDocument>")
 }
 
 func TestS3BucketProperties_removingExplicitNameReplacesBucket(t *testing.T) {
