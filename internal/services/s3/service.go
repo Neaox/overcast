@@ -118,10 +118,17 @@ func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, invoker eve
 // such as the Lambda S3-reactive sync watcher.
 // Returns an error if the bucket or key does not exist.
 func (s *Service) GetObjectBytes(ctx context.Context, bucket, key string) ([]byte, *protocol.AWSError) {
-	if _, aerr := s.handler.store.getObjectMeta(ctx, bucket, key); aerr != nil {
+	obj, aerr := s.handler.store.getObjectMeta(ctx, bucket, key)
+	if aerr != nil {
 		return nil, aerr
 	}
-	f, aerr := s.handler.store.openBody(bucket, key)
+	if obj.DeleteMarker {
+		// The key's current version is a delete marker, so from a reader's
+		// point of view the object is not there — the same answer GetObject
+		// gives over HTTP.
+		return nil, errNoSuchKey(key)
+	}
+	f, aerr := s.handler.store.openBody(obj)
 	if aerr != nil {
 		return nil, aerr
 	}

@@ -95,7 +95,7 @@
           "operation": "GetObject",
           "category": "Objects",
           "status": "✅ Supported",
-          "notes": "Returns body, ETag, metadata headers"
+          "notes": "Returns body, ETag, metadata headers; versionId selects a specific version, and a delete-marked key answers 404 with x-amz-delete-marker"
         },
         {
           "operation": "HeadObject",
@@ -106,12 +106,13 @@
           "operation": "DeleteObject",
           "category": "Objects",
           "status": "✅ Supported",
-          "notes": "Idempotent — 204 for missing keys"
+          "notes": "Idempotent — 204 for missing keys; in a versioned bucket a delete adds a delete marker, and versionId removes one version permanently"
         },
         {
           "operation": "CopyObject",
           "category": "Objects",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "x-amz-copy-source may name a source versionId"
         },
         {
           "operation": "ListObjectsV2",
@@ -123,7 +124,7 @@
           "operation": "DeleteObjects",
           "category": "Objects",
           "status": "✅ Supported",
-          "notes": "Batch delete up to 1000 keys; quiet mode supported"
+          "notes": "Batch delete up to 1000 keys; quiet mode supported; per-entry VersionId, DeleteMarker and DeleteMarkerVersionId reported"
         },
         {
           "operation": "ListObjects",
@@ -247,12 +248,14 @@
         {
           "operation": "PutBucketVersioning",
           "category": "Versioning",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Enabled and Suspended, with AWS's semantics for both; objects that predate the change become their key's null version"
         },
         {
           "operation": "ListObjectVersions",
           "category": "Versioning",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Versions and delete markers in AWS's order (key ascending, then most recent first), with prefix, delimiter, max-keys and key-marker/version-id-marker pagination"
         },
         {
           "operation": "GetBucketTagging",
@@ -279,7 +282,7 @@
           "operation": "PutBucketLifecycleConfiguration",
           "category": "Lifecycle",
           "status": "⚠️ Partial",
-          "notes": "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; x-amz-transition-default-minimum-object-size gates transitions of objects under 128 KB; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"
+          "notes": "Expiration, Transition, NoncurrentVersionExpiration, NoncurrentVersionTransition, ExpiredObjectDeleteMarker, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; x-amz-transition-default-minimum-object-size gates transitions of objects under 128 KB, noncurrent ones included; expiring the current version of a versioned object adds a delete marker rather than deleting it"
         },
         {
           "operation": "DeleteBucketLifecycle",
@@ -296,7 +299,7 @@
           "operation": "PutBucketNotificationConfiguration",
           "category": "Notifications",
           "status": "✅ Supported",
-          "notes": "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. EventBridge events carry AWS's Object Created/Object Deleted shape minus the fields Overcast has no value for"
+          "notes": "SQS, SNS, Lambda and EventBridge destinations; prefix/suffix filters. Records carry versionId and sequencer; EventBridge events carry AWS's Object Created/Object Deleted shape, including deletion-type, minus the fields Overcast has no value for"
         }
       ]
     },

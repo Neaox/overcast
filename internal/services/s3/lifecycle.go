@@ -8,10 +8,15 @@ package s3
 // transitions stop at a synthetic storage-class marker. There is no Glacier
 // retrieval-delay simulation and no replication.
 //
-// Anything the sweeper below cannot act on is either preserved as truthful
-// service-owned configuration (when no modeled object can currently qualify)
-// or refused by handler_lifecycle.go rather than silently dropped. Keep the
-// model, validation, wire response and capability note in step.
+// Versioned buckets are swept differently from unversioned ones, because on AWS
+// the same rule means different things there: expiring the current version of a
+// versioned object adds a delete marker rather than removing anything, and the
+// noncurrent actions only have anything to act on once a key has history. The
+// two sweeps are sweepBucketObjects and sweepBucketVersions below.
+//
+// Anything the sweeper cannot act on must be refused by handler_lifecycle.go
+// rather than silently dropped. Keep the model, validation, wire response and
+// capability note in step.
 
 import (
 	"context"
@@ -119,10 +124,11 @@ type LifecycleRule struct {
 	Prefix *string          `json:"prefix,omitempty"`
 	Filter *LifecycleFilter `json:"filter,omitempty"`
 
-	Expiration                     *LifecycleExpiration                  `json:"expiration,omitempty"`
-	NoncurrentVersionExpiration    *LifecycleNoncurrentVersionExpiration `json:"noncurrent_version_expiration,omitempty"`
-	Transitions                    []LifecycleTransition                 `json:"transitions,omitempty"`
-	AbortIncompleteMultipartUpload *LifecycleAbortMPU                    `json:"abort_incomplete_multipart_upload,omitempty"`
+	Expiration                     *LifecycleExpiration                   `json:"expiration,omitempty"`
+	NoncurrentVersionExpiration    *LifecycleNoncurrentVersionExpiration  `json:"noncurrent_version_expiration,omitempty"`
+	NoncurrentVersionTransitions   []LifecycleNoncurrentVersionTransition `json:"noncurrent_version_transitions,omitempty"`
+	Transitions                    []LifecycleTransition                  `json:"transitions,omitempty"`
+	AbortIncompleteMultipartUpload *LifecycleAbortMPU                     `json:"abort_incomplete_multipart_upload,omitempty"`
 }
 
 // LifecycleFilter selects which objects a rule applies to. AWS models it as a
@@ -150,21 +156,53 @@ type LifecycleTag struct {
 	Value string `json:"value"`
 }
 
-// LifecycleExpiration deletes matching objects. Exactly one of Days and Date
-// is set — AWS rejects a rule carrying both.
+// LifecycleExpiration deletes matching objects. Exactly one of Days, Date and
+// ExpiredObjectDeleteMarker is set — AWS rejects a rule carrying more.
+//
+// ExpiredObjectDeleteMarker is not an age at all: it removes a delete marker
+// that has become the only version of its key, which is the tidy-up AWS offers
+// for a versioned bucket whose noncurrent versions have already expired away
+// beneath their marker.
 type LifecycleExpiration struct {
-	Days int        `json:"days,omitempty"`
-	Date *time.Time `json:"date,omitempty"`
+	Days                      int        `json:"days,omitempty"`
+	Date                      *time.Time `json:"date,omitempty"`
+	ExpiredObjectDeleteMarker bool       `json:"expired_object_delete_marker,omitempty"`
 }
 
-// LifecycleNoncurrentVersionExpiration records the version-dependent action
-// even though Overcast's current object store has no noncurrent versions for
-// the sweeper to delete. Keeping the validated action in service-owned state
-// makes Put/Get wire behavior faithful without pretending CloudFormation owns
-// lifecycle execution. True version-history execution is tracked separately.
+// LifecycleNoncurrentVersionExpiration permanently removes versions that have
+// been noncurrent for NoncurrentDays.
+//
+// NewerNoncurrentVersions is how many noncurrent versions must sit above one
+// before it is eligible — "retain this many, then start expiring" — and is nil
+// when the caller set none, which AWS reads as zero.
 type LifecycleNoncurrentVersionExpiration struct {
 	NoncurrentDays          int  `json:"noncurrent_days"`
 	NewerNoncurrentVersions *int `json:"newer_noncurrent_versions,omitempty"`
+}
+
+// LifecycleNoncurrentVersionTransition marks noncurrent versions with a storage
+// class, on the same eligibility rules as the expiration above.
+type LifecycleNoncurrentVersionTransition struct {
+	NoncurrentDays          int    `json:"noncurrent_days"`
+	NewerNoncurrentVersions *int   `json:"newer_noncurrent_versions,omitempty"`
+	StorageClass            string `json:"storage_class"`
+}
+
+// retained returns how many newer noncurrent versions must exist before the
+// action applies, mapping AWS's unset case to zero.
+func (e *LifecycleNoncurrentVersionExpiration) retained() int {
+	if e == nil || e.NewerNoncurrentVersions == nil {
+		return 0
+	}
+	return *e.NewerNoncurrentVersions
+}
+
+// retained is LifecycleNoncurrentVersionExpiration.retained for transitions.
+func (t *LifecycleNoncurrentVersionTransition) retained() int {
+	if t == nil || t.NewerNoncurrentVersions == nil {
+		return 0
+	}
+	return *t.NewerNoncurrentVersions
 }
 
 // LifecycleTransition marks matching objects with a storage class. Exactly one
@@ -258,7 +296,10 @@ func sizeWithin(size int64, greaterThan, lessThan *int64) bool {
 // calendar days later, not 24 hours later. A Date rule expires at the date
 // itself, which validation has already pinned to UTC midnight.
 func (r *LifecycleRule) expiresAt(obj *Object) (time.Time, bool) {
-	if r.Expiration == nil {
+	if r.Expiration == nil || r.Expiration.ExpiredObjectDeleteMarker {
+		// An ExpiredObjectDeleteMarker rule sets no age, so it schedules
+		// nothing here — it is evaluated against a key's whole history in
+		// expiresDeleteMarker instead.
 		return time.Time{}, false
 	}
 	if r.Expiration.Date != nil {
@@ -377,14 +418,104 @@ func (c *LifecycleConfiguration) abortIncompleteAfter(key string) (int, bool) {
 // AbortIncompleteMultipartUpload rule never justifies paging the bucket.
 func (c *LifecycleConfiguration) hasObjectActions() bool {
 	for i := range c.Rules {
-		if !c.Rules[i].enabled() {
+		rule := &c.Rules[i]
+		if !rule.enabled() {
 			continue
 		}
-		if c.Rules[i].Expiration != nil || len(c.Rules[i].Transitions) > 0 {
+		if rule.Expiration != nil || len(rule.Transitions) > 0 ||
+			rule.NoncurrentVersionExpiration != nil || len(rule.NoncurrentVersionTransitions) > 0 {
 			return true
 		}
 	}
 	return false
+}
+
+// noncurrentActionFor returns the rule and eligibility time for permanently
+// expiring one noncurrent version.
+//
+// rank is the version's position among the key's noncurrent versions, newest
+// first, which is what NewerNoncurrentVersions counts. noncurrentSince is when
+// the version stopped being current, which AWS defines as the moment its
+// successor was written — not when the version itself was written.
+func (c *LifecycleConfiguration) noncurrentExpiryFor(obj *Object, noncurrentSince time.Time, rank int) (time.Time, *LifecycleRule) {
+	var (
+		soonest time.Time
+		winner  *LifecycleRule
+	)
+	for i := range c.Rules {
+		rule := &c.Rules[i]
+		action := rule.NoncurrentVersionExpiration
+		if !rule.enabled() || action == nil || rank < action.retained() || !rule.matches(obj) {
+			continue
+		}
+		at := noncurrentAt(noncurrentSince, action.NoncurrentDays)
+		if winner == nil || at.Before(soonest) {
+			soonest, winner = at, rule
+		}
+	}
+	return soonest, winner
+}
+
+// noncurrentTransitionFor returns the storage class a noncurrent version should
+// carry as of now: the class of the latest-firing eligible transition.
+//
+// It composes with the bucket's default minimum object size exactly as the
+// current-version transition does — a small version is skipped as though its
+// transition were not due, so it keeps whatever class an earlier allowed
+// transition gave it.
+func (c *LifecycleConfiguration) noncurrentTransitionFor(obj *Object, noncurrentSince time.Time, rank int, now time.Time) (string, bool) {
+	var (
+		latest time.Time
+		class  string
+	)
+	for i := range c.Rules {
+		rule := &c.Rules[i]
+		if !rule.enabled() || len(rule.NoncurrentVersionTransitions) == 0 || !rule.matches(obj) {
+			continue
+		}
+		for j := range rule.NoncurrentVersionTransitions {
+			action := &rule.NoncurrentVersionTransitions[j]
+			if rank < action.retained() {
+				continue
+			}
+			at := noncurrentAt(noncurrentSince, action.NoncurrentDays)
+			if at.After(now) {
+				continue
+			}
+			if !c.allowsTransition(rule, obj, action.StorageClass) {
+				continue
+			}
+			if class == "" || at.After(latest) {
+				latest, class = at, action.StorageClass
+			}
+		}
+	}
+	return class, class != ""
+}
+
+// noncurrentAt is expiresAt's day arithmetic for a noncurrent version: the same
+// "add the days, round up to the next UTC midnight" rule, counted from when the
+// version became noncurrent.
+func noncurrentAt(noncurrentSince time.Time, days int) time.Time {
+	return nextUTCMidnight(noncurrentSince.UTC().AddDate(0, 0, days))
+}
+
+// expiresDeleteMarker reports whether an enabled ExpiredObjectDeleteMarker rule
+// covers this marker. The caller is responsible for the other half of AWS's
+// condition — that the marker has no noncurrent versions under it — because
+// that is a property of the key's history rather than of the marker.
+func (c *LifecycleConfiguration) expiresDeleteMarker(obj *Object) *LifecycleRule {
+	for i := range c.Rules {
+		rule := &c.Rules[i]
+		if !rule.enabled() || rule.Expiration == nil || !rule.Expiration.ExpiredObjectDeleteMarker {
+			continue
+		}
+		if !rule.matches(obj) {
+			continue
+		}
+		return rule
+	}
+	return nil
 }
 
 // hasAbortActions reports whether any enabled rule aborts incomplete uploads.
@@ -583,9 +714,210 @@ func (h *Handler) sweepLifecycle(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		h.sweepBucketObjects(ctx, bucket, cfg, now)
+		// A versioned bucket is swept over its history rather than over its
+		// current objects: the same actions mean different things there, and
+		// the noncurrent ones are not visible from the current-object namespace
+		// at all. A bucket record that will not load — including a
+		// configuration left behind for a bucket that no longer exists — falls
+		// through to the unversioned sweep, which is what a bucket with no
+		// versioning status gets anyway.
+		b, aerr := h.store.getBucket(ctx, bucket)
+		if aerr == nil && b.versioned() {
+			if aerr := h.ensureVersionHistory(ctx, b); aerr != nil {
+				h.log.Error("lifecycle: prepare version history",
+					zap.String("bucket", bucket), zap.Error(aerr))
+			} else {
+				h.sweepBucketVersions(ctx, b, cfg, now)
+			}
+		} else {
+			h.sweepBucketObjects(ctx, bucket, cfg, now)
+		}
 		h.sweepBucketUploads(ctx, bucket, cfg, now)
 	}
+}
+
+// sweepBucketVersions applies one versioned bucket's rules over its whole
+// version history.
+//
+// It pages s3:versions, whose order groups every version of a key together
+// newest-first — so the sweep can hand one key's complete history to
+// applyLifecycleToVersions while holding only that key plus one page in memory.
+// A group that straddles a page boundary is carried forward rather than split.
+func (h *Handler) sweepBucketVersions(ctx context.Context, b *Bucket, cfg *LifecycleConfiguration, now time.Time) {
+	if !cfg.hasObjectActions() {
+		return
+	}
+
+	var (
+		cursor  string
+		group   []*Object
+		groupOf string
+	)
+	for {
+		versions, next, aerr := h.store.listVersionsPage(ctx, b.Name, "", cursor, lifecycleSweepPageSize)
+		if aerr != nil {
+			h.log.Error("lifecycle: list object versions",
+				zap.String("bucket", b.Name), zap.Error(aerr))
+			return
+		}
+		for _, v := range versions {
+			if ctx.Err() != nil {
+				return
+			}
+			if v.Key != groupOf && len(group) > 0 {
+				h.applyLifecycleToVersions(ctx, b, cfg, group, now)
+				group = nil
+			}
+			groupOf = v.Key
+			group = append(group, v)
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(group) > 0 {
+		h.applyLifecycleToVersions(ctx, b, cfg, group, now)
+	}
+}
+
+// applyLifecycleToVersions applies every version-aware action to one key's
+// complete history, newest version first.
+//
+// Three things happen here, in AWS's own order of precedence:
+//
+//   - the current version is expired or transitioned. Expiring it in a versioned
+//     bucket deletes nothing: S3 "adds a delete marker", which becomes the new
+//     current version and pushes the old one into the noncurrent set.
+//   - a current version that is a delete marker with nothing under it is removed
+//     outright by an ExpiredObjectDeleteMarker rule. That is the whole point of
+//     the action — clearing the tombstone left behind once every version it hid
+//     has expired away.
+//   - each noncurrent version is expired or transitioned on its own clock, which
+//     starts when its successor was written rather than when it was.
+func (h *Handler) applyLifecycleToVersions(ctx context.Context, b *Bucket, cfg *LifecycleConfiguration, group []*Object, now time.Time) {
+	current := group[0]
+	noncurrent := group[1:]
+
+	if current.DeleteMarker {
+		if len(group) == 1 {
+			if rule := cfg.expiresDeleteMarker(current); rule != nil {
+				h.expireDeleteMarker(ctx, current, rule)
+				return
+			}
+		}
+	} else if at, rule := cfg.expirationFor(current); rule != nil && !at.After(now) {
+		// The current version becomes noncurrent as of now, so it is not yet
+		// eligible for any noncurrent action on this tick — which is why the
+		// loop below still walks the pre-sweep noncurrent set.
+		h.expireCurrentVersion(ctx, b, current, rule)
+	} else if class, ok := cfg.transitionFor(current, now); ok && class != current.effectiveStorageClass() {
+		h.transitionVersion(ctx, current, class, true)
+	}
+
+	for i, v := range noncurrent {
+		if ctx.Err() != nil {
+			return
+		}
+		// group[i] is v's successor: the version that displaced it, and so the
+		// moment v stopped being current.
+		noncurrentSince := group[i].LastModified.UTC()
+		if at, rule := cfg.noncurrentExpiryFor(v, noncurrentSince, i); rule != nil && !at.After(now) {
+			if aerr := h.store.deleteVersion(ctx, v); aerr != nil {
+				h.log.Error("lifecycle: expire noncurrent version",
+					zap.String("bucket", v.Bucket), zap.String("key", v.Key),
+					zap.String("version_id", v.wireVersionID()), zap.Error(aerr))
+				continue
+			}
+			h.log.Trace("lifecycle: noncurrent version expired",
+				zap.String("bucket", v.Bucket), zap.String("key", v.Key),
+				zap.String("version_id", v.wireVersionID()), zap.String("rule", rule.ID))
+			continue
+		}
+		if v.DeleteMarker {
+			// A delete marker has no bytes to move, so no transition applies.
+			continue
+		}
+		if class, ok := cfg.noncurrentTransitionFor(v, noncurrentSince, i, now); ok && class != v.effectiveStorageClass() {
+			h.transitionVersion(ctx, v, class, false)
+		}
+	}
+}
+
+// expireCurrentVersion is what an Expiration rule does to a versioned object:
+// it adds a delete marker rather than removing anything.
+func (h *Handler) expireCurrentVersion(ctx context.Context, b *Bucket, current *Object, rule *LifecycleRule) {
+	now := h.clk.Now().UTC()
+	marker := &Object{
+		Bucket:       current.Bucket,
+		Key:          current.Key,
+		LastModified: now,
+		DeleteMarker: true,
+		Seq:          newVersionStamp(now).sortToken(),
+	}
+	if b.VersioningStatus == versioningEnabled {
+		marker.VersionID = marker.Seq
+	} else if aerr := h.discardNullVersion(ctx, marker.Bucket, marker.Key); aerr != nil {
+		// A suspended bucket keeps one null version per key and the marker it
+		// is about to store is one, so any existing null version goes first.
+		h.log.Error("lifecycle: replace null version",
+			zap.String("bucket", marker.Bucket), zap.String("key", marker.Key), zap.Error(aerr))
+		return
+	}
+
+	if aerr := h.store.putVersion(ctx, marker); aerr != nil {
+		h.log.Error("lifecycle: add expiration delete marker",
+			zap.String("bucket", marker.Bucket), zap.String("key", marker.Key), zap.Error(aerr))
+		return
+	}
+	if aerr := h.store.putObjectMeta(ctx, marker); aerr != nil {
+		h.log.Error("lifecycle: promote expiration delete marker",
+			zap.String("bucket", marker.Bucket), zap.String("key", marker.Key), zap.Error(aerr))
+		return
+	}
+	h.log.Trace("lifecycle: current version expired to a delete marker",
+		zap.String("bucket", marker.Bucket), zap.String("key", marker.Key),
+		zap.String("rule", rule.ID))
+}
+
+// expireDeleteMarker removes a delete marker that is hiding nothing, along with
+// the key's current-version record — the key is then gone entirely.
+func (h *Handler) expireDeleteMarker(ctx context.Context, marker *Object, rule *LifecycleRule) {
+	if aerr := h.store.deleteVersion(ctx, marker); aerr != nil {
+		h.log.Error("lifecycle: expire delete marker",
+			zap.String("bucket", marker.Bucket), zap.String("key", marker.Key), zap.Error(aerr))
+		return
+	}
+	if aerr := h.store.deleteObjectRecord(ctx, marker.Bucket, marker.Key); aerr != nil {
+		h.log.Error("lifecycle: clear expired delete marker",
+			zap.String("bucket", marker.Bucket), zap.String("key", marker.Key), zap.Error(aerr))
+		return
+	}
+	h.log.Trace("lifecycle: expired object delete marker removed",
+		zap.String("bucket", marker.Bucket), zap.String("key", marker.Key),
+		zap.String("rule", rule.ID))
+}
+
+// transitionVersion records a storage class on one version. isCurrent also
+// updates the key's current-version record, which is a denormalised copy of it.
+func (h *Handler) transitionVersion(ctx context.Context, v *Object, class string, isCurrent bool) {
+	v.StorageClass = class
+	if aerr := h.store.putVersion(ctx, v); aerr != nil {
+		h.log.Error("lifecycle: transition version",
+			zap.String("bucket", v.Bucket), zap.String("key", v.Key),
+			zap.String("version_id", v.wireVersionID()), zap.Error(aerr))
+		return
+	}
+	if isCurrent {
+		if aerr := h.store.putObjectMeta(ctx, v); aerr != nil {
+			h.log.Error("lifecycle: transition current version",
+				zap.String("bucket", v.Bucket), zap.String("key", v.Key), zap.Error(aerr))
+			return
+		}
+	}
+	h.log.Trace("lifecycle: version transitioned",
+		zap.String("bucket", v.Bucket), zap.String("key", v.Key),
+		zap.String("version_id", v.wireVersionID()), zap.String("storage_class", class))
 }
 
 // sweepBucketObjects expires and transitions the objects of one bucket. It

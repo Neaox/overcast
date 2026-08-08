@@ -550,6 +550,16 @@ type S3ObjectPayload struct {
 	Size      int64
 	ETag      string
 	EventName string // e.g. "ObjectCreated:Put", "ObjectRemoved:Delete"
+
+	// VersionID is the version the event concerns, empty for a bucket with no
+	// version history — which is also when S3 omits it from a notification.
+	VersionID string
+
+	// Sequencer orders events for one key. S3 documents it as a hex string
+	// consumers compare (longer string first, then lexicographically) to work
+	// out which of two events for the same key happened later. It is not
+	// comparable across keys.
+	Sequencer string
 }
 
 // DynamoDBStreamPayload carries the full details of a DynamoDB Streams change record.

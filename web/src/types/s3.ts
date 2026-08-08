@@ -15,6 +15,34 @@ export interface S3Prefix {
   prefix: string
 }
 
+/** A bucket's versioning state. "" is a bucket that has never been versioned. */
+export type S3VersioningStatus = "" | "Enabled" | "Suspended"
+
+/**
+ * One entry from ListObjectVersions. A delete marker is the same shape minus
+ * the body-derived fields, so `isDeleteMarker` is what tells the two apart —
+ * without it a tombstone is indistinguishable from an object that is simply
+ * gone, which is the whole reason the version listing exists.
+ */
+export interface S3ObjectVersion {
+  key: string
+  versionId: string
+  isLatest: boolean
+  isDeleteMarker: boolean
+  lastModified: string
+  size: number
+  etag: string
+  storageClass: string
+}
+
+export interface ListObjectVersionsResult {
+  versions: S3ObjectVersion[]
+  prefixes: S3Prefix[]
+  isTruncated: boolean
+  nextKeyMarker?: string
+  nextVersionIdMarker?: string
+}
+
 export interface ListObjectsResult {
   objects: S3Object[]
   prefixes: S3Prefix[]

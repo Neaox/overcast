@@ -74,13 +74,68 @@ operations:
       - tests/integration/s3/s3_test.go::TestPutBucketVersioning_enable
       - tests/integration/s3/s3_test.go::TestPutBucketVersioning_suspend
       - tests/integration/s3/s3_bucket_configuration_test.go::TestPutBucketVersioning_invalidStatusReturnsMalformedXML
+      - tests/integration/s3/s3_versioning_test.go::TestVersioningSuspended_writesTheNullVersion
+      - tests/integration/s3/s3_versioning_test.go::TestVersioningEnabled_afterObjectsExistTreatsThemAsNullVersions
       - tests/integration/cloudformation/s3_bucket_properties_test.go
     scenarios:
       - name: enabled and suspended state
         status: fixed
+        notes: >-
+          Enabled mints a version id per write; Suspended keeps existing versions,
+          writes the single null version, and still creates a null-id delete marker
+          on delete. Objects stored before the bucket was versioned become their
+          key's null version (#645).
       - name: invalid status enum
         status: fixed
         notes: Values outside Enabled and Suspended return the S3 REST-XML MalformedXML schema-validation error and are not persisted.
+  ListObjectVersions:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html
+    implementation:
+      - internal/services/s3/handler_versions.go
+      - internal/services/s3/version.go
+    tests:
+      - tests/integration/s3/s3_versioning_test.go::TestListObjectVersions_orderIsKeyThenRecency
+      - tests/integration/s3/s3_versioning_test.go::TestListObjectVersions_paginatesByKeyAndVersion
+      - tests/integration/s3/s3_versioning_test.go::TestListObjectVersions_interleavesDeleteMarkers
+      - tests/integration/s3/s3_versioning_test.go::TestListObjectVersions_delimiterCollapsesToCommonPrefixes
+      - tests/integration/s3/s3_versioning_test.go::TestListObjectVersions_versionIdMarkerWithoutKeyMarker
+      - tests/integration/s3/s3_test.go::TestListObjectVersions_nonVersionedBucket
+    scenarios:
+      - name: ordering
+        status: fixed
+        notes: Keys ascending, then versions most recently stored first, with Version and DeleteMarker elements interleaved.
+      - name: key-marker and version-id-marker pagination
+        status: fixed
+        notes: >-
+          Markers resume the scan without duplicating or dropping entries. A
+          version-id-marker without a key-marker, or one naming no version of the
+          marker key, returns InvalidArgument.
+      - name: encoding-type=url
+        status: unsupported
+        gap: Response values are never URL-encoded, matching ListObjectsV2's existing gap.
+  DeleteObject:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html
+    implementation:
+      - internal/services/s3/handler_object.go
+      - internal/services/s3/version.go
+    tests:
+      - tests/integration/s3/s3_versioning_test.go::TestDeleteObject_versionedBucketCreatesADeleteMarker
+      - tests/integration/s3/s3_versioning_test.go::TestDeleteObject_removingADeleteMarkerRestoresTheObject
+      - tests/integration/s3/s3_versioning_test.go::TestDeleteObject_versionTargetedDeletePromotesTheNewestSurvivor
+    scenarios:
+      - name: delete marker creation
+        status: fixed
+        notes: A delete with no versionId against a versioned bucket removes nothing and reports x-amz-delete-marker with the marker's version id.
+      - name: version-targeted delete
+        status: fixed
+        notes: Removes exactly that version and promotes the newest survivor when it was current.
+      - name: unknown versionId
+        status: intentionally_partial
+        gap: Treated as idempotent (204) rather than pinned to a modelled error, matching DeleteObject's documented idempotency.
   PutBucketLifecycleConfiguration:
     status: fixed
     aws_docs:
@@ -220,6 +275,7 @@ findings:
     - PutBucketWebsite/GetBucketWebsite preserve RedirectAllRequestsTo and RoutingRules and enforce AWS's mutual exclusion (#637).
     - PutBucketLifecycleConfiguration honours x-amz-transition-default-minimum-object-size, reports it on Put and Get, and gates sub-128 KB transitions on it (#636).
     - PutBucketVersioning now rejects invalid status enum values with MalformedXML instead of persisting arbitrary strings.
+    - Object version history, delete markers, version-targeted reads/deletes, ListObjectVersions ordering/pagination, and sweeper execution of NoncurrentVersionExpiration, NoncurrentVersionTransition and ExpiredObjectDeleteMarker (#645).
     - DeleteBucketCors and DeleteBucketWebsite now clear stored configurations and return 204.
     - CloudFormation AWS::S3::Bucket uses the S3 handlers for lifecycle, versioning, notifications, encryption, tags, CORS, and website configuration.
   remaining_gaps:
@@ -227,10 +283,10 @@ findings:
     - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
     - CORS rule Id and encryption BlockedEncryptionTypes are not represented by the current stored/wire models.
   intentionally_partial:
-    - EventBridge object-event detail omits request-id, requester, source-ip-address, sequencer and version-id, which Overcast has no truthful value for; only Object Created and Object Deleted are emitted.
+    - EventBridge object-event detail omits request-id, requester and source-ip-address, which Overcast has no truthful value for; version-id and sequencer are now populated from the object version history (#645), and only Object Created and Object Deleted are emitted.
     - Website configuration is stored and returned in full, but Overcast serves no S3 website endpoint, so no request is redirected; Redirect HttpRedirectCode values are stored without validation because the model does not pin AWS's error.
-    - Lifecycle NoncurrentVersionExpiration is validated and round-tripped, but cannot execute until the object store has version history (#645); NoncurrentVersionTransition and ExpiredObjectDeleteMarker remain refused.
+    - GetObjectAttributes, RestoreObject and SelectObjectContent remain unimplemented, so no version-aware behaviour is claimed for them.
 handoff:
   start_with: [ListObjectsV2 max-keys validation, ListObjectsV2 encoding-type, PutBucketPolicy, CDK bootstrap, issue 635, issue 636, issue 637]
-  do_not_redo: [ListObjectsV2 start-after, ListObjectsV2 continuation-token happy path, DeleteBucketCors, DeleteBucketWebsite, PutBucketVersioning status validation, CloudFormation S3 bucket seven-property dispatch]
+  do_not_redo: [ListObjectsV2 start-after, ListObjectsV2 continuation-token happy path, DeleteBucketCors, DeleteBucketWebsite, PutBucketVersioning status validation, CloudFormation S3 bucket seven-property dispatch, object version history and noncurrent lifecycle execution]
   commands: [go test -count=1 ./internal/services/s3/... ./tests/integration/s3/...]

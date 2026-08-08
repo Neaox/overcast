@@ -36,6 +36,10 @@ export const s3Keys = {
   buckets: () => [...s3Keys.all(), "buckets"] as const,
   objects: () => [...s3Keys.all(), "objects"] as const,
   objectList: (bucket: string, prefix: string) => [...s3Keys.objects(), bucket, prefix] as const,
+  versions: () => [...s3Keys.all(), "versions"] as const,
+  versionList: (bucket: string, prefix: string) => [...s3Keys.versions(), bucket, prefix] as const,
+  versioning: () => [...s3Keys.all(), "versioning"] as const,
+  bucketVersioning: (bucket: string) => [...s3Keys.versioning(), bucket] as const,
   meta: () => [...s3Keys.all(), "meta"] as const,
   objectMeta: (bucket: string, key: string) => [...s3Keys.meta(), bucket, key] as const,
   objectPreview: (bucket: string, key: string) =>
@@ -64,6 +68,37 @@ export function s3ObjectsQueryOptions(bucket: string, prefix: string) {
       s3.listObjects(bucket, { prefix, delimiter: "/", token: pageParam }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextContinuationToken ?? undefined,
+  })
+}
+
+/**
+ * Every version and delete marker under a prefix. Separate from
+ * s3ObjectsQueryOptions because it answers a different question: that one shows
+ * what the bucket currently holds, this one shows what it is still storing.
+ */
+export function s3ObjectVersionsQueryOptions(bucket: string, prefix: string) {
+  return infiniteQueryOptions({
+    queryKey: s3Keys.versionList(bucket, prefix),
+    queryFn: ({ pageParam }) =>
+      s3.listObjectVersions(bucket, {
+        prefix,
+        delimiter: "/",
+        keyMarker: pageParam?.keyMarker,
+        versionIdMarker: pageParam?.versionIdMarker,
+      }),
+    initialPageParam: undefined as { keyMarker?: string; versionIdMarker?: string } | undefined,
+    getNextPageParam: (lastPage) =>
+      lastPage.isTruncated && lastPage.nextKeyMarker
+        ? { keyMarker: lastPage.nextKeyMarker, versionIdMarker: lastPage.nextVersionIdMarker }
+        : undefined,
+  })
+}
+
+/** The bucket's versioning state, which decides whether versions exist at all. */
+export function s3BucketVersioningQueryOptions(bucket: string) {
+  return queryOptions({
+    queryKey: s3Keys.bucketVersioning(bucket),
+    queryFn: () => s3.getBucketVersioning(bucket),
   })
 }
 
@@ -148,6 +183,14 @@ export function deleteObjectMutationOptions(bucket: string) {
   return mutationOptions({
     mutationKey: [...s3Keys.objectList(bucket, "*"), "delete"] as const,
     mutationFn: (key: string) => s3.deleteObject(bucket, key),
+  })
+}
+
+export function deleteObjectVersionMutationOptions(bucket: string) {
+  return mutationOptions({
+    mutationKey: [...s3Keys.versionList(bucket, "*"), "delete"] as const,
+    mutationFn: ({ key, versionId }: { key: string; versionId: string }) =>
+      s3.deleteObjectVersion(bucket, key, versionId),
   })
 }
 

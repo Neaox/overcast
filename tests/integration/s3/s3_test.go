@@ -4297,57 +4297,6 @@ func TestPutBucketVersioning_suspend(t *testing.T) {
 
 // ---- ListObjectVersions ---------------------------------------------------
 
-// listVersionsResult is the XML envelope for ListObjectVersions.
-type listVersionsResult struct {
-	XMLName             xml.Name       `xml:"ListVersionsResult"`
-	Name                string         `xml:"Name"`
-	Prefix              string         `xml:"Prefix"`
-	MaxKeys             int            `xml:"MaxKeys"`
-	IsTruncated         bool           `xml:"IsTruncated"`
-	KeyMarker           string         `xml:"KeyMarker"`
-	NextKeyMarker       string         `xml:"NextKeyMarker"`
-	VersionIdMarker     string         `xml:"VersionIdMarker"`
-	NextVersionIdMarker string         `xml:"NextVersionIdMarker"`
-	Versions            []versionEntry `xml:"Version"`
-	DeleteMarkers       []deleteMarker `xml:"DeleteMarker"`
-}
-
-type versionEntry struct {
-	Key          string    `xml:"Key"`
-	VersionId    string    `xml:"VersionId"`
-	IsLatest     bool      `xml:"IsLatest"`
-	LastModified time.Time `xml:"LastModified"`
-	ETag         string    `xml:"ETag"`
-	Size         int64     `xml:"Size"`
-	StorageClass string    `xml:"StorageClass"`
-}
-
-type deleteMarker struct {
-	Key       string `xml:"Key"`
-	VersionId string `xml:"VersionId"`
-	IsLatest  bool   `xml:"IsLatest"`
-}
-
-func listVersions(t *testing.T, srv *helpers.TestServer, bucket, query string) listVersionsResult {
-	t.Helper()
-	path := "/" + bucket + "?versions"
-	if query != "" {
-		path += "&" + query
-	}
-	resp, err := http.DefaultClient.Do(get(srv, path))
-	if err != nil {
-		t.Fatalf("ListObjectVersions: %v", err)
-	}
-	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusOK)
-	var result listVersionsResult
-	body, _ := io.ReadAll(resp.Body)
-	if err := xml.Unmarshal(body, &result); err != nil {
-		t.Fatalf("ListObjectVersions: unmarshal XML: %v\nbody: %s", err, body)
-	}
-	return result
-}
-
 // TestListObjectVersions_nonVersionedBucket verifies that objects in a bucket
 // without versioning are returned as Version entries with VersionId="null".
 func TestListObjectVersions_nonVersionedBucket(t *testing.T) {

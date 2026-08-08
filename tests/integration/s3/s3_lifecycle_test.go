@@ -36,6 +36,7 @@ type lifecycleRuleXMLT struct {
 	Filter               *lifecycleFilterXMLT               `xml:"Filter"`
 	Expiration           *lifecycleExpiryXMLT               `xml:"Expiration"`
 	NoncurrentExpiration *lifecycleNoncurrentExpirationXMLT `xml:"NoncurrentVersionExpiration"`
+	NoncurrentTransition []lifecycleNoncurrentTransXMLT     `xml:"NoncurrentVersionTransition"`
 	Transition           []lifecycleTransXMLT               `xml:"Transition"`
 	AbortMPU             *lifecycleAbortMPUXMLT             `xml:"AbortIncompleteMultipartUpload"`
 }
@@ -74,6 +75,12 @@ type lifecycleTransXMLT struct {
 
 type lifecycleAbortMPUXMLT struct {
 	DaysAfterInitiation int `xml:"DaysAfterInitiation"`
+}
+
+type lifecycleNoncurrentTransXMLT struct {
+	NoncurrentDays          int    `xml:"NoncurrentDays"`
+	NewerNoncurrentVersions *int   `xml:"NewerNoncurrentVersions"`
+	StorageClass            string `xml:"StorageClass"`
 }
 
 type lifecycleNoncurrentExpirationXMLT struct {
@@ -603,27 +610,94 @@ func TestPutBucketLifecycleConfiguration_validation(t *testing.T) {
 	}
 }
 
-// TestPutBucketLifecycleConfiguration_refusesUnevaluatedConstructs covers the
-// §2.1 fidelity-risk veto: Overcast's object store keeps exactly one live
-// object per key and has no version history or delete markers, so the two
-// remaining unrepresented version-dependent constructs cannot be acted on.
-// They are refused at Put time rather than stored and silently ignored.
-func TestPutBucketLifecycleConfiguration_refusesUnevaluatedConstructs(t *testing.T) {
+// TestPutBucketLifecycleConfiguration_versionDependentActions covers the two
+// constructs Overcast used to refuse because it had no version history to act
+// on. Both are now evaluated by the sweeper, so both must round-trip.
+func TestPutBucketLifecycleConfiguration_versionDependentActions(t *testing.T) {
+	// Given: a bucket
+	srv := helpers.NewTestServer(t)
+	createBucket(t, srv, "lc-version-actions")
+
+	// When: a configuration using both version-dependent actions is stored
+	putLifecycleOK(t, srv, "lc-version-actions", `<?xml version="1.0" encoding="UTF-8"?>
+<LifecycleConfiguration>
+  <Rule><ID>archive-old</ID><Filter><Prefix>logs/</Prefix></Filter><Status>Enabled</Status>
+    <NoncurrentVersionTransition><NoncurrentDays>3</NoncurrentDays><NewerNoncurrentVersions>2</NewerNoncurrentVersions><StorageClass>GLACIER</StorageClass></NoncurrentVersionTransition>
+    <NoncurrentVersionExpiration><NoncurrentDays>10</NoncurrentDays></NoncurrentVersionExpiration></Rule>
+  <Rule><ID>tidy-markers</ID><Filter/><Status>Enabled</Status>
+    <Expiration><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration></Rule>
+</LifecycleConfiguration>`)
+
+	// Then: Get returns both actions in AWS's shape
+	resp := getLifecycle(t, srv, "lc-version-actions")
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var got lifecycleConfigurationXML
+	if err := xml.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	resp.Body.Close()
+
+	if len(got.Rules) != 2 {
+		t.Fatalf("want 2 rules, got %d", len(got.Rules))
+	}
+	nct := got.Rules[0].NoncurrentTransition
+	if len(nct) != 1 {
+		t.Fatalf("want 1 NoncurrentVersionTransition, got %d", len(nct))
+	}
+	if nct[0].NoncurrentDays != 3 || nct[0].StorageClass != "GLACIER" {
+		t.Errorf("NoncurrentVersionTransition = %+v, want 3 days to GLACIER", nct[0])
+	}
+	if nct[0].NewerNoncurrentVersions == nil || *nct[0].NewerNoncurrentVersions != 2 {
+		t.Errorf("NewerNoncurrentVersions = %v, want 2", nct[0].NewerNoncurrentVersions)
+	}
+	if got.Rules[1].Expiration == nil || got.Rules[1].Expiration.ExpiredObjectDeleteMarker == nil ||
+		!*got.Rules[1].Expiration.ExpiredObjectDeleteMarker {
+		t.Errorf("ExpiredObjectDeleteMarker did not round-trip: %+v", got.Rules[1].Expiration)
+	}
+}
+
+// TestPutBucketLifecycleConfiguration_versionDependentValidation covers the
+// value rules AWS applies to the two newly-evaluated actions.
+func TestPutBucketLifecycleConfiguration_versionDependentValidation(t *testing.T) {
 	cases := []struct {
-		name string
-		body string
+		name     string
+		body     string
+		wantCode string
 	}{
 		{
-			name: "NoncurrentVersionTransition",
+			name: "ExpiredObjectDeleteMarker with Days",
 			body: `<LifecycleConfiguration><Rule><ID>a</ID><Filter/><Status>Enabled</Status>` +
-				`<NoncurrentVersionTransition><NoncurrentDays>3</NoncurrentDays><StorageClass>GLACIER</StorageClass></NoncurrentVersionTransition>` +
+				`<Expiration><Days>3</Days><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration>` +
 				`</Rule></LifecycleConfiguration>`,
+			wantCode: "InvalidRequest",
 		},
 		{
-			name: "ExpiredObjectDeleteMarker",
+			name: "NoncurrentVersionTransition with a bad storage class",
 			body: `<LifecycleConfiguration><Rule><ID>a</ID><Filter/><Status>Enabled</Status>` +
-				`<Expiration><ExpiredObjectDeleteMarker>true</ExpiredObjectDeleteMarker></Expiration>` +
+				`<NoncurrentVersionTransition><NoncurrentDays>3</NoncurrentDays><StorageClass>NOPE</StorageClass></NoncurrentVersionTransition>` +
 				`</Rule></LifecycleConfiguration>`,
+			wantCode: "MalformedXML",
+		},
+		{
+			name: "NoncurrentVersionTransition with zero days",
+			body: `<LifecycleConfiguration><Rule><ID>a</ID><Filter/><Status>Enabled</Status>` +
+				`<NoncurrentVersionTransition><NoncurrentDays>0</NoncurrentDays><StorageClass>GLACIER</StorageClass></NoncurrentVersionTransition>` +
+				`</Rule></LifecycleConfiguration>`,
+			wantCode: "InvalidArgument",
+		},
+		{
+			name: "NewerNoncurrentVersions out of range on a transition",
+			body: `<LifecycleConfiguration><Rule><ID>a</ID><Filter><Prefix>x/</Prefix></Filter><Status>Enabled</Status>` +
+				`<NoncurrentVersionTransition><NoncurrentDays>3</NoncurrentDays><NewerNoncurrentVersions>101</NewerNoncurrentVersions><StorageClass>GLACIER</StorageClass></NoncurrentVersionTransition>` +
+				`</Rule></LifecycleConfiguration>`,
+			wantCode: "InvalidArgument",
+		},
+		{
+			name: "NewerNoncurrentVersions on a transition without a Filter",
+			body: `<LifecycleConfiguration><Rule><ID>a</ID><Prefix>x/</Prefix><Status>Enabled</Status>` +
+				`<NoncurrentVersionTransition><NoncurrentDays>3</NoncurrentDays><NewerNoncurrentVersions>2</NewerNoncurrentVersions><StorageClass>GLACIER</StorageClass></NoncurrentVersionTransition>` +
+				`</Rule></LifecycleConfiguration>`,
+			wantCode: "InvalidRequest",
 		},
 	}
 
@@ -631,21 +705,15 @@ func TestPutBucketLifecycleConfiguration_refusesUnevaluatedConstructs(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			// Given: a bucket
 			srv := helpers.NewTestServer(t)
-			createBucket(t, srv, "lc-refuse")
+			createBucket(t, srv, "lc-version-validate")
 
-			// When + Then: refused, with a message naming the construct.
-			// The body is read once and asserted on directly — the shared
-			// AssertXMLError helper consumes it.
-			resp := putLifecycle(t, srv, "lc-refuse", tc.body)
-			helpers.AssertStatus(t, resp, http.StatusBadRequest)
-			body := helpers.ReadBody(t, resp)
-			resp.Body.Close()
-			if !strings.Contains(body, "<Code>InvalidArgument</Code>") {
-				t.Errorf("error code is not InvalidArgument: %s", body)
-			}
-			if !strings.Contains(body, tc.name) {
-				t.Errorf("error message does not name %s: %s", tc.name, body)
-			}
+			// When + Then: the configuration is refused with the AWS code
+			assertPutLifecycleRejected(t, srv, "lc-version-validate", tc.body, tc.wantCode)
+
+			// And: nothing was stored
+			resp := getLifecycle(t, srv, "lc-version-validate")
+			defer resp.Body.Close()
+			helpers.AssertStatus(t, resp, http.StatusNotFound)
 		})
 	}
 }
