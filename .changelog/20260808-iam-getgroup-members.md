@@ -1,0 +1,2 @@
+* [iam] `GetGroup` returns the group's members. Membership recorded by `AddUserToGroup` was stored but never surfaced, so every `GetGroup` answered with an empty `Users` collection; it now resolves each member's user record and pages over them with `Marker`/`MaxItems`. A membership entry whose user record has gone or cannot be decoded is skipped rather than failing the call
++ [web/iam] group rows on the IAM page expand to list their members

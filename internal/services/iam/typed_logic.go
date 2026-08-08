@@ -169,6 +169,8 @@ type createGroupReq struct {
 
 type getGroupReq struct {
 	GroupName string `json:"GroupName"`
+	Marker    string `json:"Marker"`
+	MaxItems  int    `json:"MaxItems"`
 }
 
 type deleteGroupReq struct {
@@ -611,6 +613,8 @@ type getGroupResult struct {
 	Group       groupXML                `xml:"Group"`
 	Users       listMembersXML[userXML] `xml:"Users"`
 	IsTruncated bool                    `xml:"IsTruncated"`
+	// Marker is present only on a truncated response, as on AWS.
+	Marker string `xml:"Marker,omitempty"`
 }
 
 type deleteGroupResp struct {
@@ -1385,12 +1389,15 @@ func (h *Handler) createGroupTyped(ctx context.Context, req *createGroupReq) (*c
 }
 
 func (h *Handler) getGroupTyped(ctx context.Context, req *getGroupReq) (*getGroupResp, *protocol.AWSError) {
-	g, aerr := h.store.getGroup(ctx, req.GroupName)
+	page, aerr := h.resolveGroupPage(ctx, req.GroupName, req.Marker, req.MaxItems)
 	if aerr != nil {
 		return nil, aerr
 	}
 	return &getGroupResp{Xmlns: iamXMLNS, Result: getGroupResult{
-		Group: toGroupXML(g), Users: listMembersXML[userXML]{Members: nil, Tag: "member"}, IsTruncated: false,
+		Group:       toGroupXML(page.group),
+		Users:       listMembersXML[userXML]{Members: page.users, Tag: "member"},
+		IsTruncated: page.isTruncated,
+		Marker:      page.marker,
 	}, Meta: metaFromCtx(ctx)}, nil
 }
 

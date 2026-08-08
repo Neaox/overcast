@@ -3741,7 +3741,8 @@
         {
           "operation": "GetGroup",
           "category": "Groups",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000)"
         },
         {
           "operation": "DeleteGroup",

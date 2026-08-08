@@ -32,6 +32,12 @@ validated**.
 
 - **No policy versions.** `CreatePolicy` stores the document but there is no `CreatePolicyVersion`
   or version history.
+- **`GetGroup` returns the group's members.** Membership recorded by `AddUserToGroup` /
+  `RemoveUserFromGroup` is resolved into the response's `Users` collection, paginated with
+  `Marker` / `MaxItems` (AWS's documented default of 100 and cap of 1000). A membership entry
+  whose user record has since gone, or cannot be decoded, is skipped rather than failing the
+  call — one bad stored record cannot make a group unreadable. A `Marker` that does not decode
+  is rejected with `InvalidInput` instead of silently restarting at the first page.
 - **Event bus integration.** User, role, policy and group lifecycle events are published to the
   internal event bus for topology/UI updates.
 
@@ -224,15 +230,15 @@ for catching missing permissions early, not a security control.
 
 ### Groups
 
-| Operation             | Status       | Notes | AWS Docs                                                                                 |
-| --------------------- | ------------ | ----- | ---------------------------------------------------------------------------------------- |
-| `CreateGroup`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateGroup.html)         |
-| `GetGroup`            | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetGroup.html)            |
-| `DeleteGroup`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteGroup.html)         |
-| `ListGroups`          | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListGroups.html)          |
-| `AddUserToGroup`      | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_AddUserToGroup.html)      |
-| `RemoveUserFromGroup` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_RemoveUserFromGroup.html) |
-| `ListGroupsForUser`   | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListGroupsForUser.html)   |
+| Operation             | Status       | Notes                                                                               | AWS Docs                                                                                 |
+| --------------------- | ------------ | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `CreateGroup`         | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateGroup.html)         |
+| `GetGroup`            | ✅ Supported | Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000) | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetGroup.html)            |
+| `DeleteGroup`         | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteGroup.html)         |
+| `ListGroups`          | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListGroups.html)          |
+| `AddUserToGroup`      | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_AddUserToGroup.html)      |
+| `RemoveUserFromGroup` | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_RemoveUserFromGroup.html) |
+| `ListGroupsForUser`   | ✅ Supported |                                                                                     | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListGroupsForUser.html)   |
 
 ### Group inline policies
 

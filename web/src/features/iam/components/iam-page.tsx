@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Users, Plus, Trash2, RefreshCw, Search } from "lucide-react"
+import { Users, Plus, Trash2, RefreshCw, Search, ChevronDown, ChevronRight } from "lucide-react"
 import {
   iamUsersQueryOptions,
   iamRolesQueryOptions,
   iamPoliciesQueryOptions,
   iamGroupsQueryOptions,
+  iamGroupMembersQueryOptions,
   iamKeys,
   deleteUserMutationOptions,
   deleteRoleMutationOptions,
@@ -456,9 +457,45 @@ function PoliciesTab() {
 
 // ─── Groups Tab ────────────────────────────────────────────────────────────
 
+/**
+ * The members of one group, from GetGroup. Group membership is only visible
+ * through GetGroup — ListGroups does not carry it — so this is fetched lazily
+ * when a group row is expanded.
+ */
+function GroupMembers({ groupName }: { groupName: string }) {
+  const { data: members = [], isLoading } = useQuery(iamGroupMembersQueryOptions(groupName))
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-4">
+        <Spinner className="h-4 w-4" />
+      </div>
+    )
+  }
+  if (members.length === 0) {
+    return <p className="py-2 text-xs text-fg-muted">No members. Add users with AddUserToGroup.</p>
+  }
+  return (
+    <div className="flex flex-col gap-1 py-1">
+      <p className="text-xs font-medium text-fg-muted">
+        {members.length} {members.length === 1 ? "member" : "members"}
+      </p>
+      <ul className="flex flex-col gap-0.5">
+        {members.map((m) => (
+          <li key={m.UserName} className="flex items-baseline gap-2 text-xs">
+            <span className="font-medium text-fg">{m.UserName}</span>
+            <span className="font-mono text-fg-muted">{m.Arn}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function GroupsTab() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string>()
+  const [expanded, setExpanded] = useState<string>()
   const [filter, setFilter] = useState("")
   const { data: groups = [], isLoading, isFetching, refetch } = useQuery(iamGroupsQueryOptions())
 
@@ -527,23 +564,50 @@ function GroupsTab() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((g) => (
-              <TableRow key={g.GroupName}>
-                <TableCell>{g.GroupName}</TableCell>
-                <TableCell className="text-fg-muted">{g.Arn}</TableCell>
-                <TableCell>{g.Path}</TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-danger hover:text-danger"
-                    onClick={() => setDeleteTarget(g.GroupName)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
+            {filtered.flatMap((g) => {
+              const name = g.GroupName ?? ""
+              const isExpanded = expanded === name
+              return [
+                <TableRow key={name}>
+                  <TableCell>
+                    <button
+                      type="button"
+                      aria-expanded={isExpanded}
+                      onClick={() => setExpanded(isExpanded ? undefined : name)}
+                      className="flex items-center gap-1.5 text-left font-medium text-fg hover:text-accent"
+                    >
+                      {isExpanded ? (
+                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      {name}
+                    </button>
+                  </TableCell>
+                  <TableCell className="text-fg-muted">{g.Arn}</TableCell>
+                  <TableCell>{g.Path}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-danger hover:text-danger"
+                      onClick={() => setDeleteTarget(name)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TableCell>
+                </TableRow>,
+                ...(isExpanded
+                  ? [
+                      <TableRow key={`${name}-members`}>
+                        <TableCell colSpan={4} className="bg-bg-subtle">
+                          <GroupMembers groupName={name} />
+                        </TableCell>
+                      </TableRow>,
+                    ]
+                  : []),
+              ]
+            })}
           </TableBody>
         </Table>
       )}

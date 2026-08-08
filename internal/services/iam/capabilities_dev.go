@@ -64,7 +64,7 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "DeletePolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
 		// Groups
 		capabilities.Capability{Service: "iam", Operation: "CreateGroup", Category: "Groups", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "iam", Operation: "GetGroup", Category: "Groups", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "GetGroup", Category: "Groups", Status: capabilities.StatusSupported, Notes: "Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000)"},
 		capabilities.Capability{Service: "iam", Operation: "DeleteGroup", Category: "Groups", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListGroups", Category: "Groups", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "AddUserToGroup", Category: "Groups", Status: capabilities.StatusSupported},

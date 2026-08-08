@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -1017,12 +1018,8 @@ func (h *Handler) ListGroups(w http.ResponseWriter, r *http.Request) {
 
 // GetGroup retrieves an IAM group and its members.
 func (h *Handler) GetGroup(w http.ResponseWriter, r *http.Request) {
-	name := r.FormValue("GroupName")
-	if name == "" {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrMissingParameter("GroupName"))
-		return
-	}
-	g, aerr := h.store.getGroup(r.Context(), name)
+	maxItems, _ := strconv.Atoi(r.FormValue("MaxItems"))
+	page, aerr := h.resolveGroupPage(r.Context(), r.FormValue("GroupName"), r.FormValue("Marker"), maxItems)
 	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1031,10 +1028,12 @@ func (h *Handler) GetGroup(w http.ResponseWriter, r *http.Request) {
 		Group       groupXML                `xml:"Group"`
 		Users       listMembersXML[userXML] `xml:"Users"`
 		IsTruncated bool                    `xml:"IsTruncated"`
+		Marker      string                  `xml:"Marker,omitempty"`
 	}{
-		Group:       toGroupXML(g),
-		Users:       listMembersXML[userXML]{Members: nil, Tag: "member"},
-		IsTruncated: false,
+		Group:       toGroupXML(page.group),
+		Users:       listMembersXML[userXML]{Members: page.users, Tag: "member"},
+		IsTruncated: page.isTruncated,
+		Marker:      page.marker,
 	})
 }
 

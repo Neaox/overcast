@@ -915,7 +915,7 @@ var AllCapabilities = []Capability{
 	{Service: "iam", Operation: "DetachRolePolicy", Category: "Role managed policies", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "iam", Operation: "DetachUserPolicy", Category: "User managed policies", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "iam", Operation: "GetAccountAuthorizationDetails", Category: "Account details", Status: StatusSupported, Notes: "Returns all users, groups, roles, and managed policies in one call", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "iam", Operation: "GetGroup", Category: "Groups", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "iam", Operation: "GetGroup", Category: "Groups", Status: StatusSupported, Notes: "Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000)", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "iam", Operation: "GetGroupPolicy", Category: "Group inline policies", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "iam", Operation: "GetInstanceProfile", Category: "Instance profiles", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "iam", Operation: "GetPolicy", Category: "Managed policies", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

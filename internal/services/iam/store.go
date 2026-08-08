@@ -330,6 +330,36 @@ func (s *iamStore) deleteGroup(ctx context.Context, name string) *protocol.AWSEr
 	return nil
 }
 
+// resolveGroupMembers resolves a group's stored membership into full user
+// records, ordered by user name so that paging over them is stable.
+//
+// A membership entry can outlive the user record it names: the record may have
+// been removed out of band, or be undecodable. Neither makes the group
+// unreadable — the entry is skipped and returned in skipped so the caller can
+// report the gap. Only an actual store failure is an error. See AGENTS.md
+// § "Malformed persisted state must be isolated".
+func (s *iamStore) resolveGroupMembers(ctx context.Context, g *Group) (members []User, skipped []string, aerr *protocol.AWSError) {
+	members = make([]User, 0, len(g.Members))
+	for _, name := range g.Members {
+		raw, found, err := s.store.Get(ctx, nsUsers, name)
+		if err != nil {
+			return nil, nil, protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		if !found {
+			skipped = append(skipped, name)
+			continue
+		}
+		var u User
+		if err := json.Unmarshal([]byte(raw), &u); err != nil {
+			skipped = append(skipped, name)
+			continue
+		}
+		members = append(members, u)
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].UserName < members[j].UserName })
+	return members, skipped, nil
+}
+
 func (s *iamStore) listGroupsForUser(ctx context.Context, userName string) ([]Group, *protocol.AWSError) {
 	pairs, err := s.store.Scan(ctx, nsGroups, "")
 	if err != nil {

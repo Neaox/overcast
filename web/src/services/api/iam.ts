@@ -14,7 +14,9 @@ import {
   ListGroupsCommand,
   CreateGroupCommand,
   DeleteGroupCommand,
+  GetGroupCommand,
 } from "@aws-sdk/client-iam"
+import type { User } from "@aws-sdk/client-iam"
 
 export type {
   User as IAMUser,
@@ -110,6 +112,23 @@ export const iam = {
 
   deleteGroup: async (groupName: string) => {
     await awsClients.iam().send(new DeleteGroupCommand({ GroupName: groupName }))
+  },
+
+  /**
+   * Returns every member of a group, following GetGroup's Marker pagination to
+   * the last page. AWS returns at most 100 members per call by default.
+   */
+  listGroupMembers: async (groupName: string) => {
+    const members: User[] = []
+    let marker: string | undefined
+    do {
+      const res = await awsClients
+        .iam()
+        .send(new GetGroupCommand({ GroupName: groupName, Marker: marker }))
+      members.push(...(res.Users ?? []))
+      marker = res.IsTruncated ? res.Marker : undefined
+    } while (marker)
+    return members
   },
 
   /**
