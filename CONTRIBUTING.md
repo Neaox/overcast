@@ -384,6 +384,39 @@ They also work from git worktrees, which the devcontainer cannot see (it
 mounts only the main checkout). See the header comment in
 [scripts/docker-go.sh](./scripts/docker-go.sh) for cache/performance details.
 
+**They are CPU-capped.** Uncapped, the container takes the whole machine: on a
+24-core host `go test ./internal/services/...` through the wrapper peaked at
+**2269% CPU** — 22.7 of 24 cores — and held it there for the compile phase. The
+wrappers now bound three separate things, because one is not enough:
+`docker run --cpus` (what the container may consume), `GOMAXPROCS` (parallelism
+*inside* one process — the image is `golang:1.24-bookworm`, and container-aware
+`GOMAXPROCS` only arrived in Go 1.25, so the 1.24 runtime would otherwise still
+see all 24 cores), and `go test -p` (concurrent test *binaries*, which defaults
+to `GOMAXPROCS` and so squares the parallelism if left alone). Same run with the
+cap: **1049% peak**, under the 1200% ceiling, for roughly 15% more wall clock.
+
+> Measured 2026-08-08 (UTC) on Windows 11, 24 logical cores, Docker Desktop reporting
+> 24 CPUs, `golang:1.24-bookworm`. Both runs were
+> `docker-go.sh test -run '^$' -count=1 ./internal/services/...` against a
+> **cold** `OVERCAST_GO_BUILD_CACHE` volume, so the compile phase — the part
+> that saturates — is what is being compared. CPU is the peak of ~1 Hz
+> `docker stats --no-stream` samples of that run's container only; wall clock is
+> the sample count (22 uncapped vs 25 capped), not a stopwatch.
+
+Defaults are derived from the detected core count, never hardcoded — `--cpus=N`
+is rejected outright when N exceeds the CPUs the daemon reports, so a fixed
+number would break smaller machines. Half the cores for `--cpus`/`GOMAXPROCS`,
+a quarter for `-p`, both clamped to at least 1.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `OVERCAST_GO_CPUS` | half the detected cores | `docker run --cpus` and `GOMAXPROCS`. `0` removes the cap entirely — the pre-cap behaviour. |
+| `OVERCAST_GO_TEST_P` | a quarter of the detected cores | `-p`, injected after the `test` subcommand. `0` never injects. An explicit `-p` from the caller always wins. |
+
+`scripts/go.sh`'s Docker fallback is capped the same way. Its native path is
+not: `--cpus` has nothing to bound on the host, and a host toolchain is yours to
+schedule.
+
 ### Step debugging
 
 Full step debugging is supported. Set a breakpoint (click left of line number),
