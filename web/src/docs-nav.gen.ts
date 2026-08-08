@@ -2369,6 +2369,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Tables are region-scoped",
+        "id": "tables-are-region-scoped"
+      },
+      {
+        "depth": 2,
         "text": "Known limitations",
         "id": "known-limitations"
       },
@@ -2437,6 +2442,11 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "DynamoDB Streams",
         "id": "dynamodb-streams"
+      },
+      {
+        "depth": 2,
+        "text": "Streams are region-scoped",
+        "id": "streams-are-region-scoped"
       },
       {
         "depth": 2,

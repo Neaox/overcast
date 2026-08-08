@@ -23,6 +23,31 @@ serialisation round-trip issues.
 
 ---
 
+## Tables are region-scoped
+
+A DynamoDB table is a regional resource, and Overcast models it as one. A table
+created in `us-east-1` is invisible from `eu-west-1`: `ListTables` does not
+report it, `DescribeTable` answers `ResourceNotFoundException`, and the same
+table name can exist independently in both regions with entirely separate
+items, GSI index entries, `ItemCount` and stream records. Deleting the table in
+one region leaves the same-named table in the other untouched.
+
+The region comes from the request, exactly as on AWS — the SigV4 credential
+scope, a regional endpoint hostname, or `OVERCAST_DEFAULT_REGION` when the
+request names none. A create in one region and a list in another therefore
+correctly disagree; that is the emulated behaviour, not a bug.
+
+> **Upgrading an existing database.** Before this, item rows, GSI index entries
+> and stream records were keyed by table name alone, so same-named tables in
+> different regions shared them. A startup migration rewrites existing rows to
+> the region their table was created in, which is already recorded on disk, so
+> single-region data carries over untouched. If the same table name existed in
+> two regions, those regions genuinely shared one set of rows and nothing on
+> disk says which write came from where: the rows are assigned to the
+> alphabetically first of those regions and the others start out empty.
+
+---
+
 ## Known limitations
 
 - **GSI consistency**: real DynamoDB GSIs are eventually consistent; the emulator is immediately consistent — items are visible in GSI queries the instant they are written. Asking for a strongly consistent read on a GSI (`ConsistentRead=true` with a GSI `IndexName`) is still rejected with a `ValidationException`, exactly as AWS does, so code written against the emulator cannot come to depend on a read mode AWS has no way to serve.
@@ -55,7 +80,7 @@ serialisation round-trip issues.
 | `CreateTable`            | ✅ Supported   | Includes GSI/LSI definitions; an omitted `BillingMode` defaults to `PROVISIONED`, which requires `ProvisionedThroughput` on the table and on every GSI, while `PAY_PER_REQUEST` rejects it | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html)            |
 | `DeleteTable`            | ✅ Supported   |                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteTable.html)            |
 | `DescribeTable`          | ✅ Supported   |                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTable.html)          |
-| `ListTables`             | ✅ Supported   | Limit (default/max 100) and ExclusiveStartTableName honored; LastEvaluatedTableName echoed when more tables remain                                                                         | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTables.html)             |
+| `ListTables`             | ✅ Supported   | Region-scoped — lists only tables in the request's region; Limit (default/max 100) and ExclusiveStartTableName honored; LastEvaluatedTableName echoed when more tables remain              | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTables.html)             |
 | `UpdateTable`            | ✅ Supported   | BillingMode, ProvisionedThroughput, GSI create/delete/update-throughput, AttributeDefinitions, StreamSpecification                                                                         | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html)            |
 | `DescribeTimeToLive`     | ✅ Supported   |                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTimeToLive.html)     |
 | `UpdateTimeToLive`       | ✅ Supported   | TTL-based item expiry; sweeper deletes expired items hourly                                                                                                                                | [docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTimeToLive.html)       |

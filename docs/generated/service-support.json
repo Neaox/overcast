@@ -454,7 +454,7 @@
           "operation": "ListTables",
           "category": "Table management",
           "status": "✅ Supported",
-          "notes": "Limit (default/max 100) and ExclusiveStartTableName honored; LastEvaluatedTableName echoed when more tables remain"
+          "notes": "Region-scoped — lists only tables in the request's region; Limit (default/max 100) and ExclusiveStartTableName honored; LastEvaluatedTableName echoed when more tables remain"
         },
         {
           "operation": "UpdateTable",
@@ -7375,12 +7375,14 @@
         {
           "operation": "DescribeStream",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "A stream ARN from another region is a `ResourceNotFoundException`, as on AWS's regional endpoints"
         },
         {
           "operation": "GetRecords",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Reads the stream in the region its shard iterator names; each record carries `awsRegion`"
         },
         {
           "operation": "GetShardIterator",
@@ -7390,7 +7392,8 @@
         {
           "operation": "ListStreams",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Region-scoped — reports only streams for tables in the request's region"
         }
       ]
     },
