@@ -355,7 +355,16 @@ func TestDetectOperationOtherRESTServices(t *testing.T) {
 		// follow the caller and not the first service the trie happens to hold.
 		{"apigw v2 get apis", http.MethodGet, "/v2/apis", "apigateway", "apigateway", "GetApis"},
 		{"apigw v2 create api", http.MethodPost, "/v2/apis", "apigateway", "apigateway", "CreateApi"},
-		{"appsync events list apis", http.MethodGet, "/v2/apis", "appsync", "appsync", ""},
+		{"appsync events list apis", http.MethodGet, "/v2/apis", "appsync", "appsync", "ListApis"},
+
+		// The other shared bindings Overcast serves on both sides. Each names
+		// its operation differently per service, so a single retained name
+		// could only ever answer one of them.
+		{"appregistry get configuration", http.MethodGet, "/configuration", "appregistry", "appregistry", "GetConfiguration"},
+		{"apigw get tags", http.MethodGet, "/tags/arn%3Aaws%3Aapigateway%3A%3A%3Arestapis-a1", "apigateway", "apigateway", "GetTags"},
+		{"backup list tags", http.MethodGet, "/tags/arn%3Aaws%3Abackup%3A%3A%3Avault%3Av1", "backup", "backup", "ListTags"},
+		{"eks list tags for resource", http.MethodGet, "/tags/arn%3Aaws%3Aeks%3A%3A%3Acluster%3Ac1", "eks", "eks", "ListTagsForResource"},
+		{"scheduler get schedule", http.MethodGet, "/schedules/s1", "scheduler", "scheduler", "GetSchedule"},
 
 		// A REST service with no path prefix of its own, identified purely by
 		// the SigV4 credential scope. Before the fix these were S3 shapes.

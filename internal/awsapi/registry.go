@@ -175,6 +175,54 @@ func (r *Registry) ClaimRESTQuery(method, path, rawQuery string) (Claim, bool) {
 	}, true
 }
 
+// RESTOperation returns the operation the pinned models bind to this request
+// for one already-classified service, or "" when that service binds no
+// operation to this method and URI shape.
+//
+// It answers the question ClaimRESTQuery deliberately cannot. A Claim
+// describes the binding — enough to choose a 501 envelope — and where several
+// services share the binding it names no owner, because picking one would
+// invent an attribution the models do not support. A caller that has already
+// established the service (from the SigV4 credential scope, a path prefix, or
+// a matched route) does not need an owner picked for it: intersecting the
+// generated candidate set with that service is exact. Every service outside
+// the set gets "", so no request can borrow another service's operation name.
+//
+// service is an Overcast service key, as ServiceKey reports it. Where several
+// modeled identities alias to one key, the lowest modeled identity in the
+// binding's generated order wins; TestGeneratedRESTCandidates_haveOneOperationPerServiceKey
+// asserts that no such pair disagrees about the operation name.
+//
+// Like ClaimREST it walks static tables only and allocates nothing, so it
+// needs no request-path cache. Intersecting a candidate set is a scan, but the
+// sets are small: 285 shared bindings hold 1,062 candidates between them, and
+// three tag bindings account for a third of those. BenchmarkRegistryRESTOperation*
+// (Go 1.24 in Docker on a Ryzen 5900X, -benchtime=200000x, best of three)
+// measures 88ns for an unshared binding and 601ns for GET /tags/{resourceArn},
+// the 122-candidate worst case, both at zero allocations.
+func (r *Registry) RESTOperation(service, method, path, rawQuery string) string {
+	if service == "" || path == "" || path[0] != '/' {
+		return ""
+	}
+	operationIndex, ok := restTrieMatch(0, method, path, rawQuery, 1)
+	if !ok {
+		return ""
+	}
+	op := restOperations[operationIndex]
+	if !op.Ambiguous {
+		if overcastService(op.ModelService) != service {
+			return ""
+		}
+		return op.Operation
+	}
+	for _, candidate := range restCandidates[op.CandidateStart:op.CandidateEnd] {
+		if overcastService(candidate.ModelService) == service {
+			return candidate.Operation
+		}
+	}
+	return ""
+}
+
 // restTrieMatch walks one path without allocating a strings.Split result. A
 // Smithy greedy label can be followed by literal segments, so it tries each
 // possible number of consumed segments only after literal and simple-label
