@@ -805,22 +805,32 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		fn.CodeS3Key = req.Code.S3Key
 		fn.ImageUri = req.Code.ImageUri
 
-		// Eagerly fetch the code from S3 when the caller provided
-		// S3Bucket/S3Key but no inline ZipFile. CDK deploys upload the zip
-		// to S3 *before* CreateFunction, so the s3SyncWatcher (which only
-		// fires on subsequent PutObjects) wouldn't otherwise see this code
-		// and the function would invoke with an empty zip.
-		if len(fn.CodeZip) == 0 && fn.CodeS3Bucket != "" && fn.CodeS3Key != "" && h.s3Fetch != nil {
-			if zip, err := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key); err == nil {
-				fn.setCode(zip)
-			} else {
-				log.Warn("lambda: create function: s3 fetch failed",
+		// Fetch the code from S3 when the caller provided S3Bucket/S3Key but
+		// no inline ZipFile. CDK deploys upload the zip to S3 *before*
+		// CreateFunction, so the s3SyncWatcher (which only fires on
+		// subsequent PutObjects) wouldn't otherwise see this code and the
+		// function would invoke with an empty zip.
+		//
+		// A GetObject failure fails the whole create, as on AWS. Nothing is
+		// persisted before this point, so the caller is left with no function
+		// at all rather than one whose code is missing.
+		if len(fn.CodeZip) == 0 && fn.CodeS3Bucket != "" && fn.CodeS3Key != "" {
+			if h.s3Fetch == nil {
+				protocol.NotImplementedJSON(w, r)
+				return
+			}
+			zip, fetchErr := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key)
+			if fetchErr != nil {
+				log.Debug("lambda: create function: s3 fetch failed",
 					zap.String("function", fn.Name),
 					zap.String("bucket", fn.CodeS3Bucket),
 					zap.String("key", fn.CodeS3Key),
-					zap.Error(err),
+					zap.Error(fetchErr),
 				)
+				protocol.WriteJSONError(w, r, lambdaS3CodeFetchError(fetchErr))
+				return
 			}
+			fn.setCode(zip)
 		}
 	}
 	if req.VpcConfig != nil {
