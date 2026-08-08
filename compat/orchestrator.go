@@ -910,11 +910,7 @@ func (o *Orchestrator) startSuite(sp *SuiteProcess) error {
 		cmd.Dir = sp.Config.Dir
 	}
 
-	// Run suite subprocesses in their own process group so they do not
-	// receive SIGINT when the user presses Ctrl+C on the parent.  This
-	// lets the orchestrator gracefully send shutdown commands before
-	// the OS kills the child.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	detachProcGroup(cmd)
 
 	cmd.Env = append(os.Environ(), sp.Config.Env...)
 	cmd.Env = append(cmd.Env, "OVERCAST_COMPAT_INTERACTIVE=1")

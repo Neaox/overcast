@@ -107,14 +107,15 @@ func (h *Handler) getACL(ctx context.Context, scope, id string) (*WebACL, *proto
 }
 
 func (h *Handler) createWebACL(w http.ResponseWriter, r *http.Request) {
+	// Real WAFv2 sends Tags as a LIST of {Key,Value} structs, never a map.
 	var req struct {
-		Name             string            `json:"Name"`
-		Scope            string            `json:"Scope"`
-		Description      string            `json:"Description"`
-		DefaultAction    map[string]any    `json:"DefaultAction"`
-		VisibilityConfig map[string]any    `json:"VisibilityConfig"`
-		Rules            []any             `json:"Rules"`
-		Tags             map[string]string `json:"Tags"`
+		Name             string                `json:"Name"`
+		Scope            string                `json:"Scope"`
+		Description      string                `json:"Description"`
+		DefaultAction    map[string]any        `json:"DefaultAction"`
+		VisibilityConfig map[string]any        `json:"VisibilityConfig"`
+		Rules            []any                 `json:"Rules"`
+		Tags             []serviceutil.TagPair `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -123,6 +124,11 @@ func (h *Handler) createWebACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !serviceutil.RequireString(w, r, req.Scope, "Scope") {
+		return
+	}
+	tags := serviceutil.TagsFromList(req.Tags)
+	if aerr := serviceutil.ValidateTags(wafTagCfg, tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -138,7 +144,7 @@ func (h *Handler) createWebACL(w http.ResponseWriter, r *http.Request) {
 		DefaultAction:    req.DefaultAction,
 		VisibilityConfig: req.VisibilityConfig,
 		Rules:            req.Rules,
-		Tags:             req.Tags,
+		Tags:             tags,
 		CreatedAt:        h.clk.Now(),
 	}
 

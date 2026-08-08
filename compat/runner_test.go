@@ -5,10 +5,21 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+// crashArgv returns a platform-appropriate command that prints
+// "missing dependency" to stderr and exits 7, standing in for a suite
+// binary that dies before emitting any results.
+func crashArgv() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", "echo missing dependency 1>&2 & exit 7"}
+	}
+	return []string{"sh", "-c", "echo missing dependency >&2; exit 7"}
+}
 
 func TestRunSuite_crashBeforeResultsReturnsInfrastructureError(t *testing.T) {
 	// Given: a suite subprocess that exits before emitting any NDJSON test results.
@@ -22,7 +33,7 @@ func TestRunSuite_crashBeforeResultsReturnsInfrastructureError(t *testing.T) {
 	}
 	suite := SuiteConfig{
 		Name: "broken-suite",
-		Argv: []string{"sh", "-c", "echo missing dependency >&2; exit 7"},
+		Argv: crashArgv(),
 	}
 
 	// When: the runner executes the suite.
@@ -58,7 +69,7 @@ func TestRunnerRun_propagatesSuiteInfrastructureErrors(t *testing.T) {
 		suites: []SuiteConfig{
 			{
 				Name: "broken-suite",
-				Argv: []string{"sh", "-c", "echo missing dependency >&2; exit 7"},
+				Argv: crashArgv(),
 			},
 		},
 		logWriter: &bytes.Buffer{},

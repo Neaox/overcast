@@ -9,14 +9,15 @@ import (
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
+// Real WAFv2 sends Tags as a LIST of {Key,Value} structs, never a map.
 type createWebACLRequest struct {
-	Name             string            `json:"Name"`
-	Scope            string            `json:"Scope"`
-	Description      string            `json:"Description"`
-	DefaultAction    map[string]any    `json:"DefaultAction"`
-	VisibilityConfig map[string]any    `json:"VisibilityConfig"`
-	Rules            []any             `json:"Rules"`
-	Tags             map[string]string `json:"Tags"`
+	Name             string                `json:"Name"`
+	Scope            string                `json:"Scope"`
+	Description      string                `json:"Description"`
+	DefaultAction    map[string]any        `json:"DefaultAction"`
+	VisibilityConfig map[string]any        `json:"VisibilityConfig"`
+	Rules            []any                 `json:"Rules"`
+	Tags             []serviceutil.TagPair `json:"Tags"`
 }
 
 type createWebACLResponse struct {
@@ -103,6 +104,10 @@ func (h *Handler) createWebACLTyped(ctx context.Context, req *createWebACLReques
 	if req.Scope == "" {
 		return nil, protocol.ErrMissingParameter("Scope")
 	}
+	tags := serviceutil.TagsFromList(req.Tags)
+	if aerr := serviceutil.ValidateTags(wafTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
 
 	id := generateID()
 	token := generateID()
@@ -116,7 +121,7 @@ func (h *Handler) createWebACLTyped(ctx context.Context, req *createWebACLReques
 		DefaultAction:    req.DefaultAction,
 		VisibilityConfig: req.VisibilityConfig,
 		Rules:            req.Rules,
-		Tags:             req.Tags,
+		Tags:             tags,
 		CreatedAt:        h.clk.Now(),
 	}
 
