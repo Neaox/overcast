@@ -288,7 +288,7 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 
 	if aerr := serviceutil.ApplyInlineTags(r.Context(), resourceArn, incoming, snsTagCfg,
 		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
-			return h.snsStore.getTopicByARN(ctx, arn)
+			return h.snsStore.getTopicByARNForTagging(ctx, arn)
 		},
 		func(ctx context.Context, t *Topic) *protocol.AWSError { return h.snsStore.putTopic(ctx, t) },
 	); aerr != nil {
@@ -321,7 +321,7 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 
 	if aerr := serviceutil.RemoveInlineTags(r.Context(), resourceArn, tagKeys,
 		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
-			return h.snsStore.getTopicByARN(ctx, arn)
+			return h.snsStore.getTopicByARNForTagging(ctx, arn)
 		},
 		func(ctx context.Context, t *Topic) *protocol.AWSError { return h.snsStore.putTopic(ctx, t) },
 	); aerr != nil {
@@ -344,7 +344,7 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 
 	tags, aerr := serviceutil.ListInlineTags(r.Context(), resourceArn,
 		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
-			return h.snsStore.getTopicByARN(ctx, arn)
+			return h.snsStore.getTopicByARNForTagging(ctx, arn)
 		},
 	)
 	if aerr != nil {

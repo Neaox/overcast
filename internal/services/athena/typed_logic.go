@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type startQueryExecReq struct {
@@ -207,6 +208,9 @@ func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceReq) (*s
 	}
 	for _, t := range req.Tags {
 		tags[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(athenaTagCfg, tags); aerr != nil {
+		return nil, aerr
 	}
 	wg.SetTags(tags)
 	if err := s.store.putWorkGroup(ctx, wg); err != nil {

@@ -189,28 +189,28 @@ func (s *Service) listEventBusesTyped(ctx context.Context, _ *listEventBusesRequ
 }
 
 func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
-	existing, _ := tagStore.Load(ctx, req.ResourceARN)
+	incoming := make(map[string]string, len(req.Tags))
 	for _, t := range req.Tags {
-		existing[t.Key] = t.Value
+		incoming[t.Key] = t.Value
 	}
-	tagStore.Save(ctx, req.ResourceARN, existing) //nolint:errcheck
+	if aerr := s.applyResourceTags(ctx, req.ResourceARN, incoming); aerr != nil {
+		return nil, aerr
+	}
 	return &struct{}{}, nil
 }
 
 func (s *Service) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
-	existing, _ := tagStore.Load(ctx, req.ResourceARN)
-	for _, k := range req.TagKeys {
-		delete(existing, k)
+	if aerr := s.removeResourceTags(ctx, req.ResourceARN, req.TagKeys); aerr != nil {
+		return nil, aerr
 	}
-	tagStore.Save(ctx, req.ResourceARN, existing) //nolint:errcheck
 	return &struct{}{}, nil
 }
 
 func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
-	tagStore := &serviceutil.NSStore{Store: s.store, NS: nsTags}
-	stored, _ := tagStore.Load(ctx, req.ResourceARN)
+	stored, aerr := s.listResourceTags(ctx, req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
 	tags := make([]tagEntry, 0, len(stored))
 	for k, v := range stored {
 		tags = append(tags, tagEntry{Key: k, Value: v})
