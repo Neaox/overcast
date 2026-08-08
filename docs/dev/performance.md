@@ -73,6 +73,37 @@ slim target includes only the Go binary (Lambda functions run in their own
 Docker containers pulled from `public.ecr.aws/lambda/{runtime}`). Console
 target adds Node.js (for the BFF server), the web UI SPA, and BFF bundle.
 
+**Request-path allocation (`internal/middleware`, `internal/trace`):**
+`go test -bench` in-process against the middleware chain — no network, no
+server — so `B/op` and `allocs/op` count exactly what one request costs.
+`BenchmarkLoggerRequestBody` (`internal/middleware/logger_bench_test.go`)
+drives the `Logger` middleware with debug **off** across four request shapes;
+`BenchmarkRecorderAddHop_deploy` (`internal/trace/hopstack_bench_test.go`)
+records 200 hops into one trace, the shape of a CloudFormation/CDK deploy with
+debug **on**. Both **exclude** the rest of the chain (SigV4, IAM, routing) and
+any real handler work, and both count the per-iteration request/recorder
+objects the benchmark itself builds — so the deltas, not the absolute numbers,
+are the measurement.
+
+Measured 2026-08-08 (Linux x86-64, Go 1.24.7, `-benchmem`, the two
+implementations run interleaved on the same otherwise-idle host). `ns/op` on
+this host varies by more than the effect for the small cases, so it is quoted
+only where the effect clears the noise:
+
+| Case | Before | After |
+| --- | --- | --- |
+| bodyless request | 7065 B/op, 30 allocs | 6585 B/op, 28 allocs |
+| 1 KiB body, handler reads it | 9217 B/op, 31 allocs | 7480 B/op, 29 allocs |
+| 1 MiB body, handler reads it | 5 248 000 B/op, 59–62 allocs, ~3.4 ms/op | 72 250 B/op, 32 allocs, ~90 µs/op |
+| 1 MiB body, handler never reads it | 5 248 000 B/op, 59–62 allocs, ~3.0 ms/op | 6657 B/op, 31 allocs, ~9 µs/op |
+| 200 hops in one trace (debug on) | 398 600 B/op, 514 allocs, ~1.3 ms/op | 211 400 B/op, 331 allocs, ~0.2 ms/op |
+
+The 1 MiB rows are the point: the request body used to be read into memory in
+full on every request whether or not debug was on, so an S3 upload was
+buffered whole purely so a failure log could print it. It is now captured
+lazily and bounded at 64 KiB (`maxLoggedRequestBody`), and a request the
+handler rejects before reading its body buffers nothing at all.
+
 ---
 
 ## Startup budget — rules for service authors

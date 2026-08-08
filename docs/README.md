@@ -181,6 +181,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs                                                          |
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below      |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_debug/*` endpoints                                                         |
+| `OVERCAST_DEBUG_TRACE_BUFFER`    | `1000`                 | Request traces held in the in-memory ring buffer. Only read when `OVERCAST_DEBUG=true` |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
 | `OVERCAST_ENFORCE_IAM`           | `false`                | Evaluate the calling principal's IAM policies before each request and return AWS-shaped `AccessDenied` when they do not allow it. **Off by default**; with it off nothing is evaluated and no policy is read. See [iam.md § Request-time enforcement](./services/iam.md#request-time-enforcement-opt-in) |
 | `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests that exceed their usage plan's throttle or quota with AWS's `429`. Off by default: the limits are measured and reported (`GetUsage`, `apigateway:Throttled` events) but never rejected — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
@@ -481,6 +482,14 @@ Every response carries a request ID (`x-amzn-requestid` for most services,
 | `/_debug/trace/{requestId}` | GET    | Full trace for one request: bodies, headers, log entries, AWS errors |
 | `/_debug/traces`            | GET    | Paginated list of recent traces; filterable by `?service=`, `?method=`, `?path=`, `?status=`, `?search=` |
 | `/_debug/traces/count`      | GET    | Current trace buffer count and capacity               |
+
+Traces are held in a ring buffer sized by `OVERCAST_DEBUG_TRACE_BUFFER`
+(default 1000); the oldest is evicted once it is full. A trace records each
+internal service-to-service hop a request made, and captures a goroutine stack
+for the first 20 hops plus the first 20 hops that failed — a CloudFormation or
+CDK deploy dispatches hundreds of hops through one trace, and a stack for every
+one of them would cost more than it tells you. Hops past that budget show
+"Stack trace not captured" in the console.
 
 ---
 

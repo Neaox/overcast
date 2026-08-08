@@ -615,11 +615,18 @@ function HopsTab({ hops, requestId, navigate }: { hops: TraceHop[]; requestId: s
                         {hop.error && (
                           <div className="text-red-400 font-mono">{hop.error}</div>
                         )}
-                        {hop.stack && (
+                        {hop.stack ? (
                           <details className="mt-2">
                             <summary className="text-xs text-fg-muted cursor-pointer hover:text-fg">Stack trace</summary>
                             <pre className="bg-bg p-2 rounded text-xs font-mono overflow-x-auto max-h-48 mt-1 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: formatStackTrace(hop.stack) }} />
                           </details>
+                        ) : (
+                          // Stacks are budgeted per trace — a deploy with hundreds of hops
+                          // captures them only for the first hops and for failures. Say so
+                          // rather than leaving the reader to wonder where the panel went.
+                          <div className="text-fg-muted mt-2 text-xs">
+                            Stack trace not captured — only the first hops of a trace, and hops that failed, record one.
+                          </div>
                         )}
                       </div>
                     </td>
