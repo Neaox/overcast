@@ -297,9 +297,10 @@ func (h *Handler) putACL(ctx context.Context, acl *WebACL) *protocol.AWSError {
 }
 
 func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
+	// Real WAFv2 sends Tags as a LIST of {Key,Value} structs, never a map.
 	var req struct {
-		ResourceARN string            `json:"ResourceARN"`
-		Tags        map[string]string `json:"Tags"`
+		ResourceARN string                `json:"ResourceARN"`
+		Tags        []serviceutil.TagPair `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -313,11 +314,7 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 	getter := func(ctx context.Context, _ string) (*WebACL, *protocol.AWSError) {
 		return h.getACL(ctx, scope, id)
 	}
-	incoming := make([]serviceutil.TagPair, 0, len(req.Tags))
-	for k, v := range req.Tags {
-		incoming = append(incoming, serviceutil.TagPair{Key: k, Value: v})
-	}
-	if aerr := serviceutil.ApplyTags(ctx, wafTagCfg, scope+"/"+id, incoming, getter, h.putACL); aerr != nil {
+	if aerr := serviceutil.ApplyTags(ctx, wafTagCfg, scope+"/"+id, req.Tags, getter, h.putACL); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -366,9 +363,9 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	tags := acl.Tags
-	if tags == nil {
-		tags = make(map[string]string)
-	}
-	h.writeJSON(w, r, http.StatusOK, map[string]any{"TagInfoForResource": map[string]any{"ResourceARN": req.ResourceARN, "TagList": tags}})
+	// Real WAFv2 returns TagList as a LIST of Tag structs, never a map.
+	h.writeJSON(w, r, http.StatusOK, map[string]any{"TagInfoForResource": map[string]any{
+		"ResourceARN": req.ResourceARN,
+		"TagList":     serviceutil.TagsToList(acl.Tags),
+	}})
 }

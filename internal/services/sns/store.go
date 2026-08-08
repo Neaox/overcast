@@ -254,6 +254,27 @@ func errTopicNotFound(nameOrARN string) *protocol.AWSError {
 	}
 }
 
+// errTagResourceNotFound is the tag operations' missing-topic error: real SNS
+// answers TagResource/UntagResource/ListTagsForResource with the code
+// "ResourceNotFound", unlike the topic operations' "NotFound".
+func errTagResourceNotFound(arn string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceNotFound",
+		Message:    fmt.Sprintf("Resource %s does not exist", arn),
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+// getTopicByARNForTagging wraps getTopicByARN with the tag operations' error
+// shape. Only the tag paths use it — topic operations keep "NotFound".
+func (s *snsStore) getTopicByARNForTagging(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
+	topic, aerr := s.getTopicByARN(ctx, arn)
+	if aerr != nil && aerr.Code == "NotFound" {
+		return nil, errTagResourceNotFound(arn)
+	}
+	return topic, aerr
+}
+
 func errSubscriptionNotFound(arn string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "NotFound",

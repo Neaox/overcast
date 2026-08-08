@@ -122,6 +122,7 @@ func TestLiveModeListTagsBlocksLegacyMockClusterARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:cluster/legacy-mock")
 	req := httptest.NewRequest(http.MethodGet, "/tags/"+arn, nil)
@@ -150,6 +151,7 @@ func TestLiveModeListTagsBlocksLegacyMockNodegroupARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:nodegroup/legacy-mock/workers-a/mock-ng")
 	req := httptest.NewRequest(http.MethodGet, "/tags/"+arn, nil)
@@ -178,6 +180,7 @@ func TestLiveModeTagBlocksLegacyMockNodegroupARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{"tags": map[string]string{"env": "live"}})
 	if err != nil {
@@ -211,6 +214,7 @@ func TestLiveModeUntagBlocksLegacyMockNodegroupARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:nodegroup/legacy-mock/workers-a/mock-ng")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn+"?tagKeys=env", nil)
@@ -239,6 +243,7 @@ func TestLiveModeTagLegacyMockNodegroupMalformedRequestStillReturnsNotImplemente
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{})
 	if err != nil {
@@ -272,6 +277,7 @@ func TestLiveModeUntagLegacyMockNodegroupMissingTagKeysStillReturnsNotImplemente
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:nodegroup/legacy-mock/workers-a/mock-ng")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn, nil)
@@ -300,6 +306,7 @@ func TestLiveModeListTagsBlocksLegacyMockFargateProfileARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:fargateprofile/legacy-mock/fp-1/mock-fargate")
 	req := httptest.NewRequest(http.MethodGet, "/tags/"+arn, nil)
@@ -328,6 +335,7 @@ func TestLiveModeTagBlocksLegacyMockFargateProfileARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{"tags": map[string]string{"env": "live"}})
 	if err != nil {
@@ -361,6 +369,7 @@ func TestLiveModeUntagBlocksLegacyMockFargateProfileARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:fargateprofile/legacy-mock/fp-1/mock-fargate")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn+"?tagKeys=env", nil)
@@ -389,6 +398,7 @@ func TestLiveModeTagLegacyMockFargateProfileARNMalformedRequestStillReturnsNotIm
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{})
 	if err != nil {
@@ -422,6 +432,7 @@ func TestLiveModeUntagLegacyMockFargateProfileARNMissingTagKeysStillReturnsNotIm
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:fargateprofile/legacy-mock/fp-1/mock-fargate")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn, nil)
@@ -450,6 +461,7 @@ func TestLiveModeTagBlocksLegacyMockAddonARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{"tags": map[string]string{"env": "live"}})
 	if err != nil {
@@ -483,6 +495,7 @@ func TestLiveModeListTagsBlocksLegacyMockAddonARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:addon/legacy-mock/coredns/mock-addon")
 	req := httptest.NewRequest(http.MethodGet, "/tags/"+arn, nil)
@@ -511,6 +524,7 @@ func TestLiveModeUntagBlocksLegacyMockAddonARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:addon/legacy-mock/coredns/mock-addon")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn+"?tagKeys=env", nil)
@@ -539,6 +553,7 @@ func TestLiveModeTagLegacyMockAddonARNMalformedRequestStillReturnsNotImplemented
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{})
 	if err != nil {
@@ -572,6 +587,7 @@ func TestLiveModeUntagLegacyMockAddonARNMissingTagKeysStillReturnsNotImplemented
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:addon/legacy-mock/coredns/mock-addon")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn, nil)
@@ -600,6 +616,7 @@ func TestLiveModeTagBlocksLegacyMockClusterARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{"tags": map[string]string{"env": "live"}})
 	if err != nil {
@@ -633,6 +650,7 @@ func TestLiveModeListTagsBlocksLegacyMockIdentityProviderConfigARN(t *testing.T)
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:identityproviderconfig/legacy-mock/oidc/okta-main")
 	req := httptest.NewRequest(http.MethodGet, "/tags/"+arn, nil)
@@ -661,6 +679,7 @@ func TestLiveModeTagBlocksLegacyMockIdentityProviderConfigARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{"tags": map[string]string{"env": "live"}})
 	if err != nil {
@@ -694,6 +713,7 @@ func TestLiveModeTagLegacyMockIdentityProviderConfigARNMalformedRequestStillRetu
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{})
 	if err != nil {
@@ -727,6 +747,7 @@ func TestLiveModeUntagLegacyMockIdentityProviderConfigARNMissingTagKeysStillRetu
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:identityproviderconfig/legacy-mock/oidc/okta-main")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn, nil)
@@ -755,6 +776,7 @@ func TestLiveModeTagBlocksLegacyMockAccessEntryARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{"tags": map[string]string{"env": "live"}})
 	if err != nil {
@@ -788,6 +810,7 @@ func TestLiveModeTagLegacyMockAccessEntryARNMalformedRequestStillReturnsNotImple
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{})
 	if err != nil {
@@ -821,6 +844,7 @@ func TestLiveModeUntagLegacyMockAccessEntryARNMissingTagKeysStillReturnsNotImple
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:access-entry/legacy-mock/arn%3Aaws%3Aiam%3A%3A000000000000%3Arole%2Fdev")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn, nil)
@@ -849,6 +873,7 @@ func TestLiveModeListTagsBlocksLegacyMockAccessEntryARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:access-entry/legacy-mock/arn%3Aaws%3Aiam%3A%3A000000000000%3Arole%2Fdev")
 	req := httptest.NewRequest(http.MethodGet, "/tags/"+arn, nil)
@@ -875,6 +900,7 @@ func TestLiveModeListTagsAllowsNonEKSARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:s3:::example-bucket")
 	req := httptest.NewRequest(http.MethodGet, "/tags/"+arn, nil)
@@ -903,6 +929,7 @@ func TestLiveModeTagAllowsNonEKSARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{"tags": map[string]string{"env": "live"}})
 	if err != nil {
@@ -954,6 +981,7 @@ func TestLiveModeUntagBlocksLegacyMockPodIdentityAssociationARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:podidentityassociation/legacy-mock/pia-123")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn+"?tagKeys=env", nil)
@@ -982,6 +1010,7 @@ func TestLiveModeListTagsBlocksLegacyMockPodIdentityAssociationARN(t *testing.T)
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:podidentityassociation/legacy-mock/pia-123")
 	req := httptest.NewRequest(http.MethodGet, "/tags/"+arn, nil)
@@ -1010,6 +1039,7 @@ func TestLiveModeTagBlocksLegacyMockPodIdentityAssociationARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{"tags": map[string]string{"env": "live"}})
 	if err != nil {
@@ -1043,6 +1073,7 @@ func TestLiveModeTagLegacyMockPodIdentityAssociationARNMalformedRequestStillRetu
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{})
 	if err != nil {
@@ -1076,6 +1107,7 @@ func TestLiveModeUntagLegacyMockPodIdentityAssociationARNMissingTagKeysStillRetu
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:podidentityassociation/legacy-mock/pia-123")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn, nil)
@@ -1104,6 +1136,7 @@ func TestLiveModeUntagBlocksLegacyMockClusterARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:cluster/legacy-mock")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn+"?tagKeys=env", nil)
@@ -1132,6 +1165,7 @@ func TestLiveModeTagLegacyMockClusterMalformedRequestStillReturnsNotImplemented(
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	payload, err := json.Marshal(map[string]any{})
 	if err != nil {
@@ -1165,6 +1199,7 @@ func TestLiveModeUntagLegacyMockClusterMissingTagKeysStillReturnsNotImplemented(
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:cluster/legacy-mock")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn, nil)
@@ -1193,6 +1228,7 @@ func TestLiveModeUntagBlocksLegacyMockIdentityProviderConfigARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:identityproviderconfig/legacy-mock/oidc/okta-main")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn+"?tagKeys=env", nil)
@@ -1221,6 +1257,7 @@ func TestLiveModeUntagBlocksLegacyMockAccessEntryARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:access-entry/legacy-mock/arn%3Aaws%3Aiam%3A%3A000000000000%3Arole%2Fdev")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn+"?tagKeys=env", nil)
@@ -1247,6 +1284,7 @@ func TestLiveModeUntagAllowsNonEKSARN(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:s3:::example-bucket")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn+"?tagKeys=owner", nil)
@@ -1296,6 +1334,7 @@ func TestTagResourceRejectsEmptyTagsMap(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:cluster/demo-cluster")
 	payload, err := json.Marshal(map[string]any{})
@@ -1342,6 +1381,7 @@ func TestUntagResourceRejectsMissingTagKeys(t *testing.T) {
 
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
+	r.Mount("/tags", svc.TagsRouter())
 
 	arn := url.PathEscape("arn:aws:eks:us-east-1:000000000000:cluster/demo-cluster")
 	req := httptest.NewRequest(http.MethodDelete, "/tags/"+arn, nil)

@@ -91,12 +91,22 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Delete("/{name}", s.handler.DeletePipe)
 		r.Put("/{name}", s.handler.UpdatePipe)
 	})
-	r.Route("/tags", func(r chi.Router) {
-		r.Post("/*", s.handler.TagResource)
-		r.Delete("/*", s.handler.UntagResource)
-		r.Get("/*", s.handler.ListTagsForResource)
-	})
+	// NOTE: /tags routes are NOT registered here — see TagsRouter. The /tags
+	// path space is shared with API Gateway and EKS, so the main router owns
+	// it and dispatches by the resource ARN's service prefix.
 	s.handler.registerAdminRoutes(r)
+}
+
+// TagsRouter returns a chi.Router for the Pipes tagging routes that live
+// under the shared /tags/{resourceArn} path space. The main router mounts it
+// behind an ARN-dispatching owner rather than letting three services race
+// for the same chi patterns.
+func (s *Service) TagsRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Post("/*", s.handler.TagResource)
+	r.Delete("/*", s.handler.UntagResource)
+	r.Get("/*", s.handler.ListTagsForResource)
+	return r
 }
 
 // Sources wires the services a pipe reads from. Every member is optional: a
@@ -513,8 +523,10 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Real Pipes uses the lowercase "tags" member for its tagging trio,
+	// unlike the PascalCase members of the pipe CRUD operations.
 	var req struct {
-		Tags map[string]string `json:"Tags"`
+		Tags map[string]string `json:"tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -522,11 +534,6 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 
 	name, aerr := h.pipeNameFromARN(arn)
 	if aerr != nil {
-		writeError(w, r, aerr)
-		return
-	}
-
-	if aerr := serviceutil.ValidateTags(pipesTagCfg, req.Tags); aerr != nil {
 		writeError(w, r, aerr)
 		return
 	}
@@ -545,12 +552,12 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	for k, v := range req.Tags {
 		existing[k] = v
 	}
-	p.Tags = existing
 
-	if aerr := serviceutil.ValidateTags(pipesTagCfg, p.Tags); aerr != nil {
+	if aerr := serviceutil.ValidateTags(pipesTagCfg, existing); aerr != nil {
 		writeError(w, r, aerr)
 		return
 	}
+	p.Tags = existing
 
 	if aerr := h.store.putPipe(ctx, p); aerr != nil {
 		writeError(w, r, aerr)
@@ -567,8 +574,10 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Real Pipes sends the keys as repeated tagKeys query parameters; the
+	// lowercase JSON body member is kept as a tolerant fallback.
 	type untagBody struct {
-		TagKeys []string `json:"TagKeys"`
+		TagKeys []string `json:"tagKeys"`
 	}
 	var req untagBody
 	tagKeys := r.URL.Query()["tagKeys"]
@@ -631,7 +640,8 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 		tags = make(map[string]string)
 	}
 
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tags})
+	// Real Pipes returns the map under the lowercase "tags" member.
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"tags": tags})
 }
 
 // ---- State machine ----------------------------------------------------------
