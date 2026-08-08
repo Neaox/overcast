@@ -82,11 +82,15 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [combobox] add `allowFreeText` prop for editable-after-selection behaviour (seeds query from current value, commits on blur)
 
+- [kms] `UpdateKeyDescription`
+
 ### Fixed
 
 - [cloudformation/dynamodb] Local secondary indexes are applied on table creation, while unsupported LSI updates now fail without mutating the table. DynamoDB table TTL configuration is validated, applied, and reconciled during stack create and update.
 
 - [cloudformation/cloudwatch-logs] Log group retention, resource tags, and propagated stack tags are applied when a stack creates or updates the group.
+
+- [cloudformation/kms] `AWS::KMS::Key` updates dispatch `PutKeyPolicy` only when `KeyPolicy` actually changed, so an unchanged caller-locking policy created with `BypassPolicyLockoutSafetyCheck` survives unrelated stack updates; a `KeyPolicy` given as a JSON string is forwarded verbatim instead of double-encoded; `Description` changes are applied through `UpdateKeyDescription` instead of being ignored
 
 - [ecs/rds/elasticache/msk] resources no longer report RUNNING/available/ACTIVE when Docker is unavailable.
 
@@ -99,6 +103,39 @@ can be applied mechanically rather than reconstructed from memory.
   migration: use PasswordLength 1..4096 (or omit it for 32), and keep GenerateStringKey absent from the template object
 
 - [waf/stepfunctions/shield/glue/elbv2/rds] fix tag validation gaps: WAF no longer publishes spurious creation events on tag writes; Step Functions typed path validates tags; Shield and ELBv2 validate tag limits; Glue uses shared helpers; RDS fixes unbounded loop; removed dead TaggedResource and shieldTagsToList.
+
+- [waf] TagResource accepts and ListTagsForResource returns Tags/TagList as lists of {Key,Value} structs, matching the WAFv2 wire format that SDK clients send — previously tag operations were unusable via the SDK
+
+- [web] path-style S3 copy URLs percent-encode object keys, so keys with `#`, `?`, spaces, or unicode paste as working links
+
+- [web] bundled builds follow the server-injected API endpoint on boot instead of a stale stored one; only endpoints entered in the connection dialog persist as overrides
+
+- [web] reopening connection settings seeds the form from the active endpoint, so Connect keeps a custom endpoint instead of reverting it to the default
+
+- **BREAKING** [logs] `PutRetentionPolicy` validates `retentionInDays` against AWS's fixed value set and returns `InvalidParameterException` otherwise, matching real CloudWatch Logs
+  migration: use one of the AWS-documented retention values (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 or 3653 days)
+
+- [router] debug tracing no longer pins an oversized request body's full backing array in memory when truncating it into the trace ring buffer, and internal CloudFormation dispatch hop bodies are capped at 1 MiB and flagged truncated
+
+- [router] traces of responses written without an explicit status code record 200 instead of appearing in-flight forever in the debug UI
+
+- [sns] `TagResource` and `UntagResource` responses include the empty result element botocore requires, so the AWS CLI no longer fails client-side after a successful tagging call
+
+- [sns] tag operations answer a missing topic with error code ResourceNotFound as on real SNS; topic operations keep NotFound
+
+- [athena] TagResource validates tags (limit and reserved-prefix checks) with InvalidRequestException, matching real Athena
+
+- [eventbridge] tag operations no longer 500 (or panic) on a corrupt persisted tag blob, validate tags, surface store write failures, and answer ResourceNotFoundException for a rule or event bus that does not exist
+
+- [firehose] TagDeliveryStream accepts Tags as a list of {Key,Value} structs matching the real API instead of rejecting SDK requests with a 400; ListTagsForDeliveryStream serializes an untagged stream's Tags as [] rather than null
+
+- [pipes/router] the shared /tags/{resourceArn} route space now has a single dispatching owner that routes by the ARN's service prefix, so Pipes tag operations reach Pipes instead of silently landing in the API Gateway or EKS tag stores; Pipes tag responses use the real API's lowercase `tags` member, validate tags, and answer NotFoundException for a missing pipe
+
+- [rds] AddTagsToResource parses the wire form real SDKs send (`Tags.Tag.N.Key`, the RDS model's locationName) instead of silently dropping every tag; the member-indexed form remains a fallback. Tag operations now reject resources that do not exist (DBInstanceNotFound, DBClusterNotFoundFault, …) instead of minting a tag store for any string
+
+- [serviceutil] a corrupt persisted tag blob reads as empty instead of turning every tag operation on that resource into a 500, for all services using the shared tag store helpers
+
+- [ssm] tag operations answer a missing resource with InvalidResourceId instead of ParameterNotFound, and AddTagsToResource validates tags (TooManyTagsError above the 50-tag limit)
 
 ## [0.0.1-alpha.30] - 2026-08-04
 

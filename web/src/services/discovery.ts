@@ -7,7 +7,12 @@
  *   3. server         — OVERCAST_DEFAULT_REGION from GET /_/info (seeded at startup)
  *   4. static default — "us-east-1"
  *
- * The baseUrl and label are stored in localStorage and persist across tabs.
+ * The baseUrl and label are stored in localStorage and persist across tabs —
+ * but only when the user explicitly entered them in the connection dialog.
+ * Implicit writes (region seeding at startup, region switches) persist the
+ * region only, so a bundled build never pins the endpoint it derived for
+ * itself: if the deployment's host or port changes, the next boot follows the
+ * freshly injected value instead of dialing a dead stored one.
  * The active region is stored in sessionStorage (per-tab) and also mirrored
  * to localStorage as a cross-tab fallback for fresh sessions.
  *
@@ -95,11 +100,48 @@ const STORAGE_KEY = "overcast:endpoint"
 const REGION_SESSION_KEY = "overcast:region"
 const REGION_LOCAL_KEY = "overcast:last-region"
 
+/** The shape persisted under {@link STORAGE_KEY} (region is stored separately). */
+interface StoredEndpoint {
+  baseUrl: string
+  label?: string
+  /**
+   * True when the user typed this endpoint into the connection dialog.
+   * Absent on implicit writes from older builds, which persisted every
+   * `endpointStore.set` — including automatic region seeding — and thereby
+   * pinned bundled deployments to a stale endpoint.
+   */
+  explicit?: boolean
+}
+
+/**
+ * Whether a stored endpoint should win over {@link DEFAULT_ENDPOINT} on boot.
+ *
+ * In bundled builds the server injects a fresh `apiBaseUrl` on every page
+ * load, so a stored endpoint only wins when the user explicitly entered it —
+ * otherwise a deployment whose host or port changed would keep dialing the
+ * dead stored endpoint forever. When the bundled binary cannot determine its
+ * own endpoint (`endpointKnown === false`) there is nothing injected to
+ * prefer, so any stored endpoint (necessarily user-entered) wins.
+ *
+ * Non-bundled builds have no injected endpoint, so the stored value always
+ * wins, flag or no flag.
+ */
+function storedEndpointWins(stored: StoredEndpoint): boolean {
+  if (!isBundled()) return true
+  if (endpointIsUnknown()) return true
+  return stored.explicit === true
+}
+
 // ─── Resolver interface — swap for service-discovery in future ─────────────
+
+export interface SetEndpointOptions {
+  /** The user explicitly entered this endpoint — persist baseUrl and label. */
+  explicit?: boolean
+}
 
 interface Resolver {
   get(): EmulatorEndpoint
-  set(endpoint: EmulatorEndpoint): void
+  set(endpoint: EmulatorEndpoint, opts?: SetEndpointOptions): void
   clear(): void
 }
 
@@ -107,22 +149,32 @@ class LocalStorageResolver implements Resolver {
   get(): EmulatorEndpoint {
     try {
       const raw = localStorage.getItem(STORAGE_KEY)
-      const stored = raw ? (JSON.parse(raw) as EmulatorEndpoint) : DEFAULT_ENDPOINT
+      const stored = raw ? (JSON.parse(raw) as StoredEndpoint) : null
+      const base =
+        stored && storedEndpointWins(stored)
+          ? { baseUrl: stored.baseUrl, label: stored.label }
+          : DEFAULT_ENDPOINT
       // Priority: per-tab session → last known (localStorage) → static default.
       // Server default (tier 3) is seeded into localStorage at startup in main.tsx
       // so it naturally falls through this chain without special-casing here.
       const sessionRegion = sessionStorage.getItem(REGION_SESSION_KEY)
       const localRegion = localStorage.getItem(REGION_LOCAL_KEY)
-      return { ...stored, region: sessionRegion ?? localRegion ?? DEFAULT_ENDPOINT.region }
+      return { ...base, region: sessionRegion ?? localRegion ?? DEFAULT_ENDPOINT.region }
     } catch {
       return DEFAULT_ENDPOINT
     }
   }
 
-  set(endpoint: EmulatorEndpoint): void {
-    // baseUrl + label persist across tabs; region is per-tab AND cross-tab.
-    const { region, ...rest } = endpoint
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(rest))
+  set(endpoint: EmulatorEndpoint, opts?: SetEndpointOptions): void {
+    // baseUrl + label persist across tabs, but only for explicit user entries;
+    // implicit writes (region seeding, region switches) must not pin the
+    // endpoint a bundled build derived for itself. Region is per-tab AND
+    // cross-tab either way.
+    const { region, baseUrl, label } = endpoint
+    if (opts?.explicit) {
+      const stored: StoredEndpoint = { baseUrl, label, explicit: true }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
+    }
     localStorage.setItem(REGION_LOCAL_KEY, region)
     sessionStorage.setItem(REGION_SESSION_KEY, region)
   }

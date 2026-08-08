@@ -2,7 +2,7 @@ service: cloudformation
 status: implementation_mismatch
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-06
+last_updated: 2026-08-08
 protocols: [query]
 implementation: [internal/services/cloudformation]
 integration_tests: [tests/integration/cloudformation]
@@ -136,6 +136,8 @@ findings:
     - Review update/delete semantics and unsupported-resource stubbing.
     - Add support for S3 EventBridge notifications (#635), lifecycle transition minimum object size (#636), and website redirects/routing rules (#637); CloudFormation currently fails these shapes loudly.
     - AWS::Logs::LogGroup KmsKeyId, DataProtectionPolicy, LogGroupClass, and newer LogGroup properties need underlying CloudWatch Logs API/state support before CloudFormation can forward them.
+    - AWS::DynamoDB::Table GlobalSecondaryIndexes changes are silently ignored on stack updates (GSIs are forwarded on create only; no GlobalSecondaryIndexUpdates dispatch), and Tags are never forwarded to DynamoDB on create or update.
+    - AWS::KMS::Key Tags and EnableKeyRotation are not applied; see docs/dev/compatibility/services/kms.yaml.
     - Complete Secrets Manager generated-value updates (#678), replica regions (#679), target attachments (#680), and rotation schedules (#681).
   intentionally_partial: []
 handoff:

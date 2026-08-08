@@ -125,6 +125,35 @@ func TestDebugTraceMiddlewareRequestBodyCapture(t *testing.T) {
 	}
 }
 
+// A handler that writes the body without calling WriteHeader responds 200 via
+// net/http's implicit default; the trace must record 200 rather than 0, which
+// the UI renders as a request that never completed.
+func TestDebugTraceMiddlewareImplicitStatusDefaultsTo200(t *testing.T) {
+	cfg := &config.Config{Debug: true}
+	buf := trace.NewBuffer(100)
+	mw := DebugTrace(cfg, buf, clock.New())
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok")) // no explicit WriteHeader
+	})
+	handler := mw(next)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx := protocol.ContextWithRequestID(req.Context(), "implicit-status")
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	entry, found := buf.Get("implicit-status")
+	if !found {
+		t.Fatal("trace entry not found in buffer")
+	}
+	if entry.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want 200", entry.StatusCode)
+	}
+}
+
 func TestTraceResponseWriter(t *testing.T) {
 	inner := httptest.NewRecorder()
 	trw := &traceResponseWriter{

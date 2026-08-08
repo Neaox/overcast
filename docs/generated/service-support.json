@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1398,
+  "total_ops": 1399,
   "services": [
     {
       "service": "s3",
@@ -4246,8 +4246,8 @@
     {
       "service": "kms",
       "display_name": "KMS",
-      "total_ops": 32,
-      "implemented_ops": 32,
+      "total_ops": 33,
+      "implemented_ops": 33,
       "operations": [
         {
           "operation": "CreateKey",
@@ -4276,6 +4276,12 @@
           "operation": "DisableKey",
           "category": "Key lifecycle",
           "status": "✅ Supported"
+        },
+        {
+          "operation": "UpdateKeyDescription",
+          "category": "Key lifecycle",
+          "status": "✅ Supported",
+          "notes": "Also dispatched by CloudFormation when AWS::KMS::Key Description changes"
         },
         {
           "operation": "ScheduleKeyDeletion",

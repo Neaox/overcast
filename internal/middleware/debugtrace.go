@@ -75,6 +75,10 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 				ResponseWriter: w,
 				tee:            new(bytes.Buffer),
 				cap:            maxTraceBody,
+				// Default like Logger's wrapper: a handler that writes
+				// without an explicit WriteHeader responds 200, and a trace
+				// with StatusCode 0 reads as still in flight.
+				status: http.StatusOK,
 			}
 			next.ServeHTTP(trw, r)
 

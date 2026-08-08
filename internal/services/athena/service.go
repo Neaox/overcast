@@ -395,6 +395,13 @@ func (s *Service) deleteWorkGroup(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 
+// athenaTagCfg tunes shared tag validation to Athena's error shape.
+var athenaTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidRequestException",
+	InvalidCode:     "InvalidRequestException",
+	ExceededMessage: "Too many tags. A resource can hold a maximum of 50 tags.",
+}
+
 func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceARN string      `json:"ResourceARN"`
@@ -428,6 +435,10 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, t := range req.Tags {
 		wg.Tags[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(athenaTagCfg, wg.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
 	if err := s.store.putWorkGroup(r.Context(), wg); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)

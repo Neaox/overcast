@@ -1708,6 +1708,58 @@ func TestPutRetentionPolicy_notFound(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 }
 
+// Real AWS restricts retentionInDays to a fixed value set and returns
+// InvalidParameterException for anything else; arbitrary integers must not be
+// accepted, whether from SDK callers or the CloudFormation path.
+func TestPutRetentionPolicy_invalidValueRejected(t *testing.T) {
+	// Given: a log group exists
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/retention-invalid")
+
+	for _, days := range []int{-1, 0, 2, 6, 15, 366, 3654} {
+		// When: PutRetentionPolicy is called with a value outside the allowed set
+		resp := logsCall(t, srv, "PutRetentionPolicy", map[string]any{
+			"logGroupName":    "/aws/lambda/retention-invalid",
+			"retentionInDays": days,
+		})
+
+		// Then: 400 InvalidParameterException
+		helpers.AssertStatus(t, resp, http.StatusBadRequest)
+		helpers.AssertJSONError(t, resp, "InvalidParameterException")
+		resp.Body.Close()
+	}
+
+	// And: the group's retention is unchanged
+	resp := logsCall(t, srv, "DescribeLogGroups", map[string]any{
+		"logGroupNamePrefix": "/aws/lambda/retention-invalid",
+	})
+	defer resp.Body.Close()
+	var result struct {
+		LogGroups []struct {
+			RetentionInDays int `json:"retentionInDays"`
+		} `json:"logGroups"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	if len(result.LogGroups) != 1 || result.LogGroups[0].RetentionInDays != 0 {
+		t.Fatalf("retention mutated by rejected values: %+v", result.LogGroups)
+	}
+}
+
+// Every documented value must be accepted.
+func TestPutRetentionPolicy_allowedValuesAccepted(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/retention-allowed")
+
+	for _, days := range []int{1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653} {
+		resp := logsCall(t, srv, "PutRetentionPolicy", map[string]any{
+			"logGroupName":    "/aws/lambda/retention-allowed",
+			"retentionInDays": days,
+		})
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		resp.Body.Close()
+	}
+}
+
 // ---- DeleteRetentionPolicy -------------------------------------------------
 
 func TestDeleteRetentionPolicy_success(t *testing.T) {

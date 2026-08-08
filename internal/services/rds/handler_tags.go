@@ -1,9 +1,11 @@
 package rds
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -55,21 +57,71 @@ type rdsXMLRemoveTagsResponse struct {
 
 // ── Tagging handlers ──────────────────────────────────────────────────────────
 
+// parseIndexedTags collects 1-indexed Key/Value pairs under the given wire
+// prefix, e.g. "Tags.Tag" → Tags.Tag.1.Key / Tags.Tag.1.Value.
+func parseIndexedTags(r *http.Request, prefix string) map[string]string {
+	tags := map[string]string{}
+	for i := 1; ; i++ {
+		key := r.FormValue(fmt.Sprintf("%s.%d.Key", prefix, i))
+		val := r.FormValue(fmt.Sprintf("%s.%d.Value", prefix, i))
+		if key == "" && val == "" {
+			break
+		}
+		tags[key] = val
+	}
+	return tags
+}
+
+// requireTaggableResource resolves an RDS resource ARN to a stored resource
+// and returns the AWS-modeled error when it does not exist. Real RDS refuses
+// tag operations on unknown resources instead of minting a tag store for any
+// string.
+func (h *Handler) requireTaggableResource(ctx context.Context, arn string) *protocol.AWSError {
+	// arn:aws:rds:<region>:<account>:<type>:<name>
+	parts := strings.SplitN(arn, ":", 7)
+	if len(parts) != 7 || parts[0] != "arn" || parts[2] != "rds" {
+		return errInvalidParameterValue(fmt.Sprintf("Invalid resource name: %s", arn))
+	}
+	resourceType, name := parts[5], parts[6]
+	switch resourceType {
+	case "db":
+		_, aerr := h.store.getDBInstance(ctx, name)
+		return aerr
+	case "cluster":
+		_, aerr := h.store.getDBCluster(ctx, name)
+		return aerr
+	case "subgrp":
+		_, aerr := h.store.getDBSubnetGroup(ctx, name)
+		return aerr
+	case "pg":
+		_, aerr := h.store.getDBParameterGroup(ctx, name)
+		return aerr
+	default:
+		// Resource types the emulator does not model (option groups,
+		// snapshots, …) cannot exist here, so their ARNs never match a
+		// resource — the same InvalidParameterValue real RDS answers for an
+		// ARN that names nothing in this region.
+		return errInvalidParameterValue(fmt.Sprintf("Invalid resource name: %s", arn))
+	}
+}
+
 func (h *Handler) AddTagsToResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceName")
 	if arn == "" {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
+	if aerr := h.requireTaggableResource(r.Context(), arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
-	incoming := map[string]string{}
-	for i := 1; ; i++ {
-		key := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
-		val := r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
-		if key == "" && val == "" {
-			break
-		}
-		incoming[key] = val
+	// The RDS model gives TagList's member the locationName "Tag", so every
+	// SDK and the CLI send Tags.Tag.N.Key / Tags.Tag.N.Value. Keep the
+	// member-indexed form as a fallback for hand-rolled clients.
+	incoming := parseIndexedTags(r, "Tags.Tag")
+	if len(incoming) == 0 {
+		incoming = parseIndexedTags(r, "Tags.member")
 	}
 	if aerr := serviceutil.ApplyStoreTags(r.Context(), tagStore, arn, incoming, rdsTagCfg); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -86,6 +138,10 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceName")
 	if arn == "" {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
+		return
+	}
+	if aerr := h.requireTaggableResource(r.Context(), arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
@@ -111,7 +167,13 @@ func (h *Handler) RemoveTagsFromResource(w http.ResponseWriter, r *http.Request)
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("ResourceName is required"))
 		return
 	}
+	if aerr := h.requireTaggableResource(r.Context(), arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
 	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
+	// TagKeys is a plain KeyList with no locationName override, so clients
+	// send the standard Query form TagKeys.member.N.
 	var keys []string
 	for i := 1; ; i++ {
 		key := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))

@@ -321,7 +321,7 @@ func (h *Handler) addTagsToResourceTyped(ctx context.Context, req *addTagsToReso
 	if req.ResourceId == "" {
 		return nil, protocol.ErrMissingParameter("ResourceId")
 	}
-	rec, aerr := h.requireParameter(ctx, req.ResourceId)
+	rec, aerr := h.requireTaggableParameter(ctx, req.ResourceId)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -331,6 +331,9 @@ func (h *Handler) addTagsToResourceTyped(ctx context.Context, req *addTagsToReso
 	}
 	for _, t := range req.Tags {
 		tags[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(ssmTagCfg, tags); aerr != nil {
+		return nil, aerr
 	}
 	rec.SetTags(tags)
 	if err := h.store.Put(ctx, rec); err != nil {
@@ -343,7 +346,7 @@ func (h *Handler) removeTagsFromResourceTyped(ctx context.Context, req *removeTa
 	if req.ResourceId == "" {
 		return nil, protocol.ErrMissingParameter("ResourceId")
 	}
-	rec, aerr := h.requireParameter(ctx, req.ResourceId)
+	rec, aerr := h.requireTaggableParameter(ctx, req.ResourceId)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -362,7 +365,7 @@ func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *resourceIDR
 	if req.ResourceId == "" {
 		return nil, protocol.ErrMissingParameter("ResourceId")
 	}
-	rec, aerr := h.requireParameter(ctx, req.ResourceId)
+	rec, aerr := h.requireTaggableParameter(ctx, req.ResourceId)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -418,6 +421,17 @@ func (h *Handler) requireParameter(ctx context.Context, name string) (*Parameter
 		return nil, errParameterNotFound(name)
 	}
 	return rec, nil
+}
+
+// requireTaggableParameter is requireParameter with the tag operations' error
+// shape: real SSM answers a missing tag target with InvalidResourceId, not
+// ParameterNotFound.
+func (h *Handler) requireTaggableParameter(ctx context.Context, id string) (*ParameterRecord, *protocol.AWSError) {
+	rec, aerr := h.requireParameter(ctx, id)
+	if aerr != nil && aerr.Code == "ParameterNotFound" {
+		return nil, errInvalidResourceId(id)
+	}
+	return rec, aerr
 }
 
 func (h *Handler) publishCtx(ctx context.Context, t events.Type, name string) {

@@ -182,9 +182,10 @@ func (s *Service) putRecordBatchTyped(ctx context.Context, req *putRecordBatchRe
 
 // ─── Tag operations ──────────────────────────────────────────────────────────
 
+// Real Firehose sends Tags as a LIST of {Key,Value} structs, never a map.
 type tagDeliveryStreamReq struct {
-	DeliveryStreamName string            `json:"DeliveryStreamName" cbor:"DeliveryStreamName"`
-	Tags               map[string]string `json:"Tags" cbor:"Tags"`
+	DeliveryStreamName string        `json:"DeliveryStreamName" cbor:"DeliveryStreamName"`
+	Tags               []firehoseTag `json:"Tags" cbor:"Tags"`
 }
 
 type untagDeliveryStreamReq struct {
@@ -207,7 +208,11 @@ type firehoseTag struct {
 }
 
 func (s *Service) tagDeliveryStreamTyped(ctx context.Context, req *tagDeliveryStreamReq) (*struct{}, *protocol.AWSError) {
-	if aerr := serviceutil.ApplyInlineTags(ctx, req.DeliveryStreamName, req.Tags, firehoseTagCfg,
+	incoming := make(map[string]string, len(req.Tags))
+	for _, t := range req.Tags {
+		incoming[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ApplyInlineTags(ctx, req.DeliveryStreamName, incoming, firehoseTagCfg,
 		func(ctx context.Context, name string) (*DeliveryStream, *protocol.AWSError) {
 			ds, found := s.store.getStream(ctx, name)
 			if !found {

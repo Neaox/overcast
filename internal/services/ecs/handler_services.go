@@ -445,12 +445,13 @@ func (h *Handler) DescribeServices(w http.ResponseWriter, r *http.Request) {
 		found = append(found, *svc)
 	}
 
+	// Headers must be set before the body is written; late mutation only
+	// reaches the wire while DrainBody happens to buffer the response.
+	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"services": found,
 		"failures": failures,
 	}, "application/x-amz-json-1.1")
-
-	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
 }
 
 // ListServices handles AmazonEC2ContainerServiceV20141113.ListServices.

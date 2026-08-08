@@ -228,12 +228,10 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	})
 
 	// ---- REST API v1: Tags ------------------------------------------------
-	r.Put("/tags/*", h.TagResource)
-	// POST mirrors PUT — AWS AppRegistry uses POST for TagResource, and its
-	// SDK shares this router endpoint; see internal/services/appregistry/service.go.
-	r.Post("/tags/*", h.TagResource)
-	r.Delete("/tags/*", h.UntagResource)
-	r.Get("/tags/*", h.GetTags)
+	// NOTE: /tags routes are NOT registered here — see TagsRouter. The /tags
+	// path space is shared with Pipes and EKS, so the main router owns it and
+	// dispatches by the resource ARN's service prefix; API Gateway's router
+	// is the fallback owner for every ARN no other service claims.
 
 	// ---- HTTP API v2 management -------------------------------------------
 	// NOTE: /v2/apis routes are NOT registered here because they share the
@@ -273,6 +271,22 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// See handler_host_execute.go: middleware.HostDispatch rewrites
 	// {apiId}.execute-api.{region}.{base} requests onto this marker route.
 	r.HandleFunc("/_apigateway/execute-api/{apiId}/{region}/*", h.ExecuteByHost)
+}
+
+// TagsRouter returns a chi.Router for the REST API v1 tagging routes that
+// live under the shared /tags/{resourceArn} path space. The main router
+// mounts it behind an ARN-dispatching owner shared with Pipes and EKS, with
+// API Gateway as the fallback for unclaimed ARNs. POST mirrors PUT — AWS
+// AppRegistry uses POST for TagResource, and its SDK shares this endpoint;
+// see internal/services/appregistry/service.go.
+func (s *Service) TagsRouter() chi.Router {
+	h := s.handler
+	r := chi.NewRouter()
+	r.Put("/*", h.TagResource)
+	r.Post("/*", h.TagResource)
+	r.Delete("/*", h.UntagResource)
+	r.Get("/*", h.GetTags)
+	return r
 }
 
 // V2APIRouter returns a chi.Router for the API Gateway v2 /v2/apis management

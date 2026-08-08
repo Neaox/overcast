@@ -463,26 +463,27 @@ func (h *Handler) FilterLogEvents(w http.ResponseWriter, r *http.Request) {
 
 // ---- Retention policy -------------------------------------------------------
 
+// validRetentionDays is the fixed set of retentionInDays values AWS accepts
+// for PutRetentionPolicy; anything else is an InvalidParameterException.
+// AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutRetentionPolicy.html
+var validRetentionDays = map[int]bool{
+	1: true, 3: true, 5: true, 7: true, 14: true, 30: true, 60: true, 90: true,
+	120: true, 150: true, 180: true, 365: true, 400: true, 545: true, 731: true,
+	1096: true, 1827: true, 2192: true, 2557: true, 2922: true, 3288: true, 3653: true,
+}
+
 // PutRetentionPolicy sets the retention period for the specified log group.
+// Delegates to putRetentionPolicyTyped (typed_logic.go) so the JSON and
+// CBOR/typed-operation paths share one implementation, including the
+// retention value-set validation.
 // AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutRetentionPolicy.html
 func (h *Handler) PutRetentionPolicy(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName    string `json:"logGroupName"`
-		RetentionInDays int    `json:"retentionInDays"`
-	}
+	var req putRetentionPolicyRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	ctx := r.Context()
-	g, aerr := h.store.getLogGroup(ctx, req.LogGroupName)
-	if aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	g.RetentionInDays = req.RetentionInDays
-	if aerr := h.store.putLogGroup(ctx, g); aerr != nil {
+	if _, aerr := h.putRetentionPolicyTyped(r.Context(), &req); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}

@@ -243,15 +243,20 @@ type xmlTagMember struct {
 	Value string `xml:"Value"`
 }
 
+// The empty result elements are required by botocore — see the comment on
+// tagResourceResp in typed_logic.go, which serves the same envelope on the
+// typed dispatch path.
 type xmlTagResourceResponse struct {
 	XMLName          xml.Name                  `xml:"TagResourceResponse"`
 	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"TagResourceResult"`
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
 type xmlUntagResourceResponse struct {
 	XMLName          xml.Name                  `xml:"UntagResourceResponse"`
 	Xmlns            string                    `xml:"xmlns,attr"`
+	Result           struct{}                  `xml:"UntagResourceResult"`
 	ResponseMetadata protocol.ResponseMetadata `xml:"ResponseMetadata"`
 }
 
@@ -288,7 +293,7 @@ func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 
 	if aerr := serviceutil.ApplyInlineTags(r.Context(), resourceArn, incoming, snsTagCfg,
 		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
-			return h.snsStore.getTopicByARN(ctx, arn)
+			return h.snsStore.getTopicByARNForTagging(ctx, arn)
 		},
 		func(ctx context.Context, t *Topic) *protocol.AWSError { return h.snsStore.putTopic(ctx, t) },
 	); aerr != nil {
@@ -321,7 +326,7 @@ func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
 
 	if aerr := serviceutil.RemoveInlineTags(r.Context(), resourceArn, tagKeys,
 		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
-			return h.snsStore.getTopicByARN(ctx, arn)
+			return h.snsStore.getTopicByARNForTagging(ctx, arn)
 		},
 		func(ctx context.Context, t *Topic) *protocol.AWSError { return h.snsStore.putTopic(ctx, t) },
 	); aerr != nil {
@@ -344,7 +349,7 @@ func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 
 	tags, aerr := serviceutil.ListInlineTags(r.Context(), resourceArn,
 		func(ctx context.Context, arn string) (*Topic, *protocol.AWSError) {
-			return h.snsStore.getTopicByARN(ctx, arn)
+			return h.snsStore.getTopicByARNForTagging(ctx, arn)
 		},
 	)
 	if aerr != nil {

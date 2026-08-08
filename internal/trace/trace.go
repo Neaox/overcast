@@ -59,27 +59,34 @@ type Entry struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
+// MaxHopBody is the largest request or response body stored on a Hop.
+// AddHop copies and truncates anything larger so an oversized internal
+// dispatch cannot pin its full body in the ring buffer.
+const MaxHopBody = 1 << 20 // 1 MiB
+
 // Hop records one internal service-to-service call made during request
 // processing.
 type Hop struct {
-	ID              string        `json:"id"`
-	Parent          string        `json:"parent,omitempty"`
-	RequestID       string        `json:"requestId,omitempty"`
-	Order           int           `json:"order"`
-	CallerService   string        `json:"callerService"`
-	CallerOperation string        `json:"callerOperation,omitempty"`
-	Service         string        `json:"service"`
-	Operation       string        `json:"operation"`
-	TargetURI       string        `json:"targetUri,omitempty"`
-	RequestHeaders  http.Header   `json:"requestHeaders,omitempty"`
-	RequestBody     []byte        `json:"requestBody,omitempty"`
-	ResponseStatus  int           `json:"responseStatus"`
-	ResponseBody    []byte        `json:"responseBody,omitempty"`
-	Duration        time.Duration `json:"duration"`
-	Error           string        `json:"error,omitempty"`
-	Timestamp       time.Time     `json:"timestamp"`
-	Noisy           bool          `json:"noisy,omitempty"`
-	Stack           string        `json:"stack,omitempty"`
+	ID                    string        `json:"id"`
+	Parent                string        `json:"parent,omitempty"`
+	RequestID             string        `json:"requestId,omitempty"`
+	Order                 int           `json:"order"`
+	CallerService         string        `json:"callerService"`
+	CallerOperation       string        `json:"callerOperation,omitempty"`
+	Service               string        `json:"service"`
+	Operation             string        `json:"operation"`
+	TargetURI             string        `json:"targetUri,omitempty"`
+	RequestHeaders        http.Header   `json:"requestHeaders,omitempty"`
+	RequestBody           []byte        `json:"requestBody,omitempty"`
+	RequestBodyTruncated  bool          `json:"requestBodyTruncated,omitempty"`
+	ResponseStatus        int           `json:"responseStatus"`
+	ResponseBody          []byte        `json:"responseBody,omitempty"`
+	ResponseBodyTruncated bool          `json:"responseBodyTruncated,omitempty"`
+	Duration              time.Duration `json:"duration"`
+	Error                 string        `json:"error,omitempty"`
+	Timestamp             time.Time     `json:"timestamp"`
+	Noisy                 bool          `json:"noisy,omitempty"`
+	Stack                 string        `json:"stack,omitempty"`
 }
 
 // LogEntry is one structured log line captured for this request.
@@ -154,7 +161,9 @@ func (r *Recorder) SetRequestBody(body []byte, maxBody int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(body) > maxBody {
-		r.entry.RequestBody = body[:maxBody]
+		// Copy: slicing would alias the full backing array and pin an
+		// arbitrarily large request body in memory until eviction.
+		r.entry.RequestBody = append([]byte(nil), body[:maxBody]...)
 		r.entry.RequestBodyTruncated = true
 	} else {
 		r.entry.RequestBody = body
@@ -177,7 +186,9 @@ func (r *Recorder) SetResponse(headers http.Header, body []byte, status int, max
 		return
 	}
 	if len(body) > maxBody {
-		r.entry.ResponseBody = body[:maxBody]
+		// Copy: see SetRequestBody. The middleware's tee buffer is already
+		// capped, but this method must bound whatever it is handed.
+		r.entry.ResponseBody = append([]byte(nil), body[:maxBody]...)
 		r.entry.ResponseBodyTruncated = true
 	} else {
 		r.entry.ResponseBody = body
@@ -250,6 +261,14 @@ func (r *Recorder) AddHop(h Hop) string {
 		return ""
 	}
 	h.Stack = CaptureStack()
+	if len(h.RequestBody) > MaxHopBody {
+		h.RequestBody = append([]byte(nil), h.RequestBody[:MaxHopBody]...)
+		h.RequestBodyTruncated = true
+	}
+	if len(h.ResponseBody) > MaxHopBody {
+		h.ResponseBody = append([]byte(nil), h.ResponseBody[:MaxHopBody]...)
+		h.ResponseBodyTruncated = true
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.hopOrder++
@@ -489,43 +508,47 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 // fields.
 func (h Hop) MarshalJSON() ([]byte, error) {
 	type shadow struct {
-		ID              string        `json:"id"`
-		Parent          string        `json:"parent,omitempty"`
-		RequestID       string        `json:"requestId,omitempty"`
-		Order           int           `json:"order"`
-		CallerService   string        `json:"callerService"`
-		CallerOperation string        `json:"callerOperation,omitempty"`
-		Service         string        `json:"service"`
-		Operation       string        `json:"operation"`
-		TargetURI       string        `json:"targetUri,omitempty"`
-		RequestHeaders  http.Header   `json:"requestHeaders,omitempty"`
-		RequestBody     string        `json:"requestBody,omitempty"`
-		ResponseStatus  int           `json:"responseStatus"`
-		ResponseBody    string        `json:"responseBody,omitempty"`
-		Duration        time.Duration `json:"duration"`
-		Error           string        `json:"error,omitempty"`
-		Timestamp       time.Time     `json:"timestamp"`
-		Noisy           bool          `json:"noisy,omitempty"`
-		Stack           string        `json:"stack,omitempty"`
+		ID                    string        `json:"id"`
+		Parent                string        `json:"parent,omitempty"`
+		RequestID             string        `json:"requestId,omitempty"`
+		Order                 int           `json:"order"`
+		CallerService         string        `json:"callerService"`
+		CallerOperation       string        `json:"callerOperation,omitempty"`
+		Service               string        `json:"service"`
+		Operation             string        `json:"operation"`
+		TargetURI             string        `json:"targetUri,omitempty"`
+		RequestHeaders        http.Header   `json:"requestHeaders,omitempty"`
+		RequestBody           string        `json:"requestBody,omitempty"`
+		RequestBodyTruncated  bool          `json:"requestBodyTruncated,omitempty"`
+		ResponseStatus        int           `json:"responseStatus"`
+		ResponseBody          string        `json:"responseBody,omitempty"`
+		ResponseBodyTruncated bool          `json:"responseBodyTruncated,omitempty"`
+		Duration              time.Duration `json:"duration"`
+		Error                 string        `json:"error,omitempty"`
+		Timestamp             time.Time     `json:"timestamp"`
+		Noisy                 bool          `json:"noisy,omitempty"`
+		Stack                 string        `json:"stack,omitempty"`
 	}
 	return json.Marshal(shadow{
-		ID:              h.ID,
-		Parent:          h.Parent,
-		RequestID:       h.RequestID,
-		Order:           h.Order,
-		CallerService:   h.CallerService,
-		CallerOperation: h.CallerOperation,
-		Service:         h.Service,
-		Operation:       h.Operation,
-		TargetURI:       h.TargetURI,
-		RequestHeaders:  h.RequestHeaders,
-		RequestBody:     string(h.RequestBody),
-		ResponseStatus:  h.ResponseStatus,
-		ResponseBody:    string(h.ResponseBody),
-		Duration:        h.Duration,
-		Error:           h.Error,
-		Timestamp:       h.Timestamp,
-		Noisy:           h.Noisy,
-		Stack:           h.Stack,
+		ID:                    h.ID,
+		Parent:                h.Parent,
+		RequestID:             h.RequestID,
+		Order:                 h.Order,
+		CallerService:         h.CallerService,
+		CallerOperation:       h.CallerOperation,
+		Service:               h.Service,
+		Operation:             h.Operation,
+		TargetURI:             h.TargetURI,
+		RequestHeaders:        h.RequestHeaders,
+		RequestBody:           string(h.RequestBody),
+		RequestBodyTruncated:  h.RequestBodyTruncated,
+		ResponseStatus:        h.ResponseStatus,
+		ResponseBody:          string(h.ResponseBody),
+		ResponseBodyTruncated: h.ResponseBodyTruncated,
+		Duration:              h.Duration,
+		Error:                 h.Error,
+		Timestamp:             h.Timestamp,
+		Noisy:                 h.Noisy,
+		Stack:                 h.Stack,
 	})
 }

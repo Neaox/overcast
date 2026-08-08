@@ -844,7 +844,35 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 		if len(tagRouters) > 0 {
 			r.Route("/v1/tags", func(sub chi.Router) {
-				sub.HandleFunc("/*", tagsDispatch(tagRouters))
+				sub.HandleFunc("/*", tagsDispatch(tagRouters, nil))
+			})
+		}
+	}
+
+	// ---- /tags service dispatch ---------------------------------------------
+	// Pipes, EKS and API Gateway (whose endpoint AppRegistry's SDK shares)
+	// all answer tag operations at /tags/{resourceArn}. Left to their own
+	// RegisterRoutes they race for the same chi patterns and the last
+	// registration silently wins, so the main router owns the path and
+	// dispatches on the ARN's service prefix, exactly like /v1/tags above.
+	// API Gateway is the fallback owner: its ARN-keyed tag store historically
+	// answered every ARN no other service claims (AppRegistry among them),
+	// and that behavior is preserved.
+	{
+		tagRouters := map[string]http.Handler{}
+		if registeredForTest(cfg, "pipes") {
+			tagRouters["pipes"] = pipesSvc.TagsRouter()
+		}
+		if registeredForTest(cfg, "eks") {
+			tagRouters["eks"] = eksSvc.TagsRouter()
+		}
+		var apigwTags http.Handler
+		if registeredForTest(cfg, "apigateway") {
+			apigwTags = apigwSvc.TagsRouter()
+		}
+		if len(tagRouters) > 0 || apigwTags != nil {
+			r.Route("/tags", func(sub chi.Router) {
+				sub.HandleFunc("/*", tagsDispatch(tagRouters, apigwTags))
 			})
 		}
 	}
@@ -1314,12 +1342,14 @@ func v2APIsDispatch(apigwRouter, appsyncRouter http.Handler) http.HandlerFunc {
 	}
 }
 
-// tagsDispatch returns a handler that dispatches /v1/tags/{resourceArn}
-// requests to whichever service's tag router owns the resourceArn, as
-// identified by protocol.ServiceFromARN. A resourceArn that doesn't parse,
-// or whose service isn't one of the given routers, gets a 404 — no service
-// silently claims a request it doesn't recognize.
-func tagsDispatch(routers map[string]http.Handler) http.HandlerFunc {
+// tagsDispatch returns a handler that dispatches tag-route requests
+// (/v1/tags/{resourceArn}, /tags/{resourceArn}) to whichever service's tag
+// router owns the resourceArn, as identified by protocol.ServiceFromARN.
+// A resourceArn that doesn't parse, or whose service isn't one of the given
+// routers, goes to fallback when one is provided — API Gateway's ARN-keyed
+// tag store plays that role on /tags — and otherwise gets a 404, so no
+// service silently claims a request it doesn't recognize.
+func tagsDispatch(routers map[string]http.Handler, fallback http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceArn := chi.URLParam(r, "*")
 		// AWS SDKs URL-encode the ARN in the path (e.g. ":" as "%3A").
@@ -1328,6 +1358,10 @@ func tagsDispatch(routers map[string]http.Handler) http.HandlerFunc {
 		}
 		if router, ok := routers[protocol.ServiceFromARN(resourceArn)]; ok {
 			router.ServeHTTP(w, r)
+			return
+		}
+		if fallback != nil {
+			fallback.ServeHTTP(w, r)
 			return
 		}
 		http.NotFound(w, r)
