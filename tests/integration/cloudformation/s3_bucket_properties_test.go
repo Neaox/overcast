@@ -429,6 +429,34 @@ func TestS3BucketProperties_legacyNoncurrentExpirationDaysDispatchesThroughS3(t 
 		"<NoncurrentDays>30</NoncurrentDays>")
 }
 
+func TestS3BucketProperties_transitionDefaultMinimumObjectSizeDispatchesThroughS3(t *testing.T) {
+	// Given: LifecycleConfiguration.TransitionDefaultMinimumObjectSize, which
+	// maps to S3's x-amz-transition-default-minimum-object-size request header
+	// rather than to anything in the body.
+	srv := helpers.NewTestServer(t)
+	template := `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"cfn-s3-transition-minimum","LifecycleConfiguration":{"TransitionDefaultMinimumObjectSize":"varies_by_storage_class","Rules":[{"Id":"chill","Prefix":"","Status":"Enabled","Transitions":[{"StorageClass":"GLACIER","TransitionInDays":7}]}]}}}}}`
+
+	// When: CloudFormation creates the stack.
+	resp := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {"cfn-s3-transition-minimum"},
+		"TemplateBody": {template},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	waitForStackStatus(t, srv, "cfn-s3-transition-minimum", "CREATE_COMPLETE")
+
+	// Then: S3 owns the setting and reports it on GetBucketLifecycleConfiguration.
+	get, err := http.Get(srv.URL + "/cfn-s3-transition-minimum?lifecycle")
+	if err != nil {
+		t.Fatalf("GetBucketLifecycleConfiguration: %v", err)
+	}
+	defer get.Body.Close()
+	helpers.AssertStatus(t, get, http.StatusOK)
+	if got := get.Header.Get("x-amz-transition-default-minimum-object-size"); got != "varies_by_storage_class" {
+		t.Fatalf("x-amz-transition-default-minimum-object-size = %q, want varies_by_storage_class", got)
+	}
+}
+
 func TestS3BucketProperties_removingExplicitNameReplacesBucket(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 	stackName := "cfn-s3-name-replacement"

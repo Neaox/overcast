@@ -120,9 +120,9 @@ func init() {
 
 		// Lifecycle
 		capabilities.Capability{Service: "s3", Operation: "GetBucketLifecycleConfiguration", Category: "Lifecycle",
-			Status: capabilities.StatusSupported, Notes: "NoSuchLifecycleConfiguration when none is set"},
+			Status: capabilities.StatusSupported, Notes: "NoSuchLifecycleConfiguration when none is set; reports x-amz-transition-default-minimum-object-size"},
 		capabilities.Capability{Service: "s3", Operation: "PutBucketLifecycleConfiguration", Category: "Lifecycle",
-			Status: capabilities.StatusPartial, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"},
+			Status: capabilities.StatusPartial, Notes: "Expiration, Transition, AbortIncompleteMultipartUpload and prefix/tag/size filters are applied by an hourly sweeper; x-amz-transition-default-minimum-object-size gates transitions of objects under 128 KB; NoncurrentVersionExpiration is validated and round-tripped but has no eligible versions until true object-version history is implemented; NoncurrentVersionTransition and ExpiredObjectDeleteMarker are rejected"},
 		capabilities.Capability{Service: "s3", Operation: "DeleteBucketLifecycle", Category: "Lifecycle",
 			Status: capabilities.StatusSupported},
 

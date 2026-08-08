@@ -318,7 +318,11 @@ export const s3 = {
       const res = await awsClients
         .s3()
         .send(new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }))
-      return { rules: (res.Rules ?? []).map(toLifecycleRule) }
+      return {
+        rules: (res.Rules ?? []).map(toLifecycleRule),
+        transitionDefaultMinimumObjectSize:
+          res.TransitionDefaultMinimumObjectSize ?? "all_storage_classes_128K",
+      }
     } catch (err) {
       if ((err as { name?: string }).name === "NoSuchLifecycleConfiguration") return null
       throw err

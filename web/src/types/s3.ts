@@ -80,6 +80,12 @@ export interface S3LifecycleRule {
 
 export interface BucketLifecycleConfiguration {
   rules: S3LifecycleRule[]
+  /**
+   * The x-amz-transition-default-minimum-object-size behaviour in force. S3
+   * reports one on every GetBucketLifecycleConfiguration, defaulting to
+   * `all_storage_classes_128K`.
+   */
+  transitionDefaultMinimumObjectSize: string
 }
 
 export interface NotificationFilterRule {

@@ -398,7 +398,10 @@ export function BucketConfig() {
               </Button>
             }
           />
-          <LifecycleRules rules={lifecycle?.rules ?? []} />
+          <LifecycleRules
+            rules={lifecycle?.rules ?? []}
+            transitionDefaultMinimumObjectSize={lifecycle?.transitionDefaultMinimumObjectSize}
+          />
         </div>
       ) : (
         <div className="flex flex-col gap-6">
@@ -444,7 +447,10 @@ export function BucketConfig() {
             </ConfigSection>
           )}
 
-          <LifecycleRules rules={lifecycle?.rules ?? []} />
+          <LifecycleRules
+            rules={lifecycle?.rules ?? []}
+            transitionDefaultMinimumObjectSize={lifecycle?.transitionDefaultMinimumObjectSize}
+          />
         </div>
       )}
 
@@ -473,11 +479,33 @@ export function BucketConfig() {
  * CDK/CloudFormation stack rather than here; what this panel is for is making
  * visible that objects in this bucket are on a clock.
  */
-function LifecycleRules({ rules }: { rules: S3LifecycleRule[] }) {
+function LifecycleRules({
+  rules,
+  transitionDefaultMinimumObjectSize,
+}: {
+  rules: S3LifecycleRule[]
+  transitionDefaultMinimumObjectSize?: string
+}) {
   if (rules.length === 0) return null
 
   return (
     <ConfigSection title="Lifecycle Rules" icon={<Timer className="h-4 w-4 text-sky-400" />}>
+      {transitionDefaultMinimumObjectSize && (
+        <div className="flex flex-col gap-3 px-4 py-3">
+          <ConfigRow label="Default minimum transition size">
+            <span className="flex flex-wrap items-center gap-2">
+              <Badge variant="default" className="font-mono text-[10px]">
+                {transitionDefaultMinimumObjectSize}
+              </Badge>
+              <span className="text-xs text-fg-subtle">
+                {transitionDefaultMinimumObjectSize === "varies_by_storage_class"
+                  ? "objects under 128 KB still transition to the Glacier classes"
+                  : "objects under 128 KB do not transition"}
+              </span>
+            </span>
+          </ConfigRow>
+        </div>
+      )}
       {rules.map((rule) => {
         const actions = describeLifecycleActions(rule)
         return (

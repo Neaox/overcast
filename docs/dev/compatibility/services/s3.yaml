@@ -2,7 +2,7 @@ service: s3
 status: in_progress
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-05
+last_updated: 2026-08-08
 protocols: [rest_xml]
 implementation: [internal/services/s3]
 integration_tests: [tests/integration/s3]
@@ -81,6 +81,37 @@ operations:
       - name: invalid status enum
         status: fixed
         notes: Values outside Enabled and Suspended return the S3 REST-XML MalformedXML schema-validation error and are not persisted.
+  PutBucketLifecycleConfiguration:
+    status: fixed
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
+    implementation:
+      - internal/services/s3/handler_lifecycle.go
+      - internal/services/s3/lifecycle.go
+    tests:
+      - tests/integration/s3/s3_lifecycle_test.go::TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeRoundTrip
+      - tests/integration/s3/s3_lifecycle_test.go::TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeDefaults
+      - tests/integration/s3/s3_lifecycle_test.go::TestPutBucketLifecycleConfiguration_transitionDefaultMinimumObjectSizeIsReplaced
+      - tests/integration/s3/s3_lifecycle_test.go::TestPutBucketLifecycleConfiguration_rejectsUnknownTransitionDefaultMinimumObjectSize
+      - internal/services/s3/lifecycle_test.go::TestSweepLifecycle_defaultMinimumSizeBlocksSmallTransitions
+      - internal/services/s3/lifecycle_test.go::TestSweepLifecycle_variesByStorageClassTransitionsSmallObjectsToGlacier
+      - internal/services/s3/lifecycle_test.go::TestSweepLifecycle_variesByStorageClassStillBlocksOtherClasses
+      - internal/services/s3/lifecycle_test.go::TestSweepLifecycle_explicitSizeFilterOverridesTheDefaultMinimum
+      - tests/integration/cloudformation/s3_bucket_properties_test.go::TestS3BucketProperties_transitionDefaultMinimumObjectSizeDispatchesThroughS3
+    scenarios:
+      - name: x-amz-transition-default-minimum-object-size round trip
+        status: fixed
+        notes: >-
+          Accepted on Put and echoed on both Put and Get; an omitted header reads
+          back as AWS's all_storage_classes_128K default, and a value outside the
+          enum returns InvalidArgument without storing anything.
+      - name: default minimum applied by the sweeper
+        status: fixed
+        notes: >-
+          Sub-128 KB objects do not transition under all_storage_classes_128K;
+          under varies_by_storage_class they transition to GLACIER and
+          DEEP_ARCHIVE only. A rule carrying its own ObjectSizeGreaterThan or
+          ObjectSizeLessThan filter takes precedence over the default.
   DeleteBucketCors:
     status: fixed
     aws_docs:
@@ -109,6 +140,7 @@ operations:
         notes: Returns 204 and subsequent GetBucketWebsite returns NoSuchWebsiteConfiguration.
 findings:
   fixed:
+    - PutBucketLifecycleConfiguration honours x-amz-transition-default-minimum-object-size, reports it on Put and Get, and gates sub-128 KB transitions on it (#636).
     - PutBucketVersioning now rejects invalid status enum values with MalformedXML instead of persisting arbitrary strings.
     - DeleteBucketCors and DeleteBucketWebsite now clear stored configurations and return 204.
     - CloudFormation AWS::S3::Bucket uses the S3 handlers for lifecycle, versioning, notifications, encryption, tags, CORS, and website configuration.
@@ -116,7 +148,6 @@ findings:
     - Finish ListObjectsV2 optional-parameter review before marking the operation reviewed.
     - Verify CDK bootstrap bucket flows and policy/versioning/tagging edge cases.
     - EventBridge notification configuration is unsupported (#635).
-    - Lifecycle TransitionDefaultMinimumObjectSize is unsupported (#636).
     - Website RedirectAllRequestsTo and RoutingRules are unsupported (#637).
     - CORS rule Id and encryption BlockedEncryptionTypes are not represented by the current stored/wire models.
   intentionally_partial:

@@ -4039,6 +4039,16 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Bucket configuration behaviour",
+        "id": "bucket-configuration-behaviour"
+      },
+      {
+        "depth": 3,
+        "text": "Lifecycle: default minimum transition size",
+        "id": "lifecycle-default-minimum-transition-size"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
