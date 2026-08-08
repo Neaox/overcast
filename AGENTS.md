@@ -456,8 +456,12 @@ Merge with plain `gh pr merge --squash` (or `--rebase`). The main ruleset now
 enforces what used to be convention: required status checks, PR-only changes,
 linear history — and it has **no bypass actors**, so `--admin` cannot skip
 anything and must not be attempted. A quarantine PR under the compat flake flow
-still merges normally: its deliberate "Aggregate Compatibility Results" red is
-not a required check.
+still merges normally, but **not** for the reason this paragraph used to give:
+"Aggregate Compatibility Results" *is* a required check now. It merges because
+the flaky-list lint reads the `quarantine-approved` label live from the pull
+request, so once a reviewer applies it the lint passes, the aggregate goes green
+and the required check is satisfied. Before the label it is red and the pull
+request is blocked — which is the point of the label, not a bug.
 
 While `VERSION` on main names an **untagged** version (a release is pending or
 a release workflow has failed), merge only changes needed to get that release
