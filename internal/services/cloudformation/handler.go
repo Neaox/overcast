@@ -714,11 +714,12 @@ func (h *Handler) DescribeStackResources(w http.ResponseWriter, r *http.Request)
 	var resources []stackResourceXML
 	for _, res := range stack.Resources {
 		resources = append(resources, stackResourceXML{
-			LogicalID:  res.LogicalID,
-			PhysicalID: res.PhysicalID,
-			Type:       res.Type,
-			Status:     res.Status,
-			Timestamp:  res.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z"),
+			LogicalID:    res.LogicalID,
+			PhysicalID:   res.PhysicalID,
+			Type:         res.Type,
+			Status:       res.Status,
+			StatusReason: res.StatusReason,
+			Timestamp:    res.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z"),
 		})
 	}
 
@@ -1208,7 +1209,12 @@ type stackResourceXML struct {
 	PhysicalID string `xml:"PhysicalResourceId,omitempty"`
 	Type       string `xml:"ResourceType"`
 	Status     string `xml:"ResourceStatus"`
-	Timestamp  string `xml:"Timestamp"`
+	// AWS's StackResource carries the reason next to the status, and it is the
+	// only place a DescribeStackResources caller learns why a resource is
+	// DELETE_FAILED. ListStackResources has always reported it; this shape
+	// dropped it, so the CLI showed the failed status with no explanation.
+	StatusReason string `xml:"ResourceStatusReason,omitempty"`
+	Timestamp    string `xml:"Timestamp"`
 }
 
 type describeStackResourcesResult struct {
