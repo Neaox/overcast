@@ -1538,6 +1538,19 @@ func logsCBORCall(t *testing.T, srv *helpers.TestServer, operation string, body 
 	return resp
 }
 
+// decodeCBORErrorType returns the __type discriminator from an RPC v2 CBOR
+// error response body.
+func decodeCBORErrorType(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	var body struct {
+		Type string `cbor:"__type"`
+	}
+	if err := cbor.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode CBOR error response: %v", err)
+	}
+	return body.Type
+}
+
 // createLogGroup is a test setup helper that creates a log group and fails the
 // test immediately if the call does not succeed.
 func createLogGroup(t *testing.T, srv *helpers.TestServer, name string) {
@@ -1742,6 +1755,71 @@ func TestPutRetentionPolicy_invalidValueRejected(t *testing.T) {
 	helpers.DecodeJSON(t, resp, &result)
 	if len(result.LogGroups) != 1 || result.LogGroups[0].RetentionInDays != 0 {
 		t.Fatalf("retention mutated by rejected values: %+v", result.LogGroups)
+	}
+}
+
+// Request-shape validation runs ahead of the resource lookup, as it does in
+// AWS's own front end: an unsupported retention value on a log group that does
+// not exist is reported as InvalidParameterException, not ResourceNotFound.
+func TestPutRetentionPolicy_invalidValueBeatsMissingGroup(t *testing.T) {
+	// Given: no log groups exist
+	srv := helpers.NewTestServer(t)
+
+	// When: PutRetentionPolicy names a missing group with an invalid value
+	resp := logsCall(t, srv, "PutRetentionPolicy", map[string]any{
+		"logGroupName":    "/aws/lambda/no-such-group",
+		"retentionInDays": 2,
+	})
+	defer resp.Body.Close()
+
+	// Then: the parameter error wins
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "InvalidParameterException")
+}
+
+// The value set is enforced in the shared typed implementation, so the RPC v2
+// CBOR path must reject exactly what JSON 1.1 rejects — and must leave an
+// already-configured retention policy untouched when it does.
+func TestRPCv2CBOR_PutRetentionPolicy_invalidValueRejected(t *testing.T) {
+	// Given: a log group with a valid retention policy already applied
+	srv := helpers.NewTestServer(t)
+	createLogGroup(t, srv, "/aws/lambda/cbor-retention")
+	resp := logsCBORCall(t, srv, "PutRetentionPolicy", map[string]any{
+		"logGroupName":    "/aws/lambda/cbor-retention",
+		"retentionInDays": 30,
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	// When: PutRetentionPolicy is called over CBOR with a value outside the set
+	resp = logsCBORCall(t, srv, "PutRetentionPolicy", map[string]any{
+		"logGroupName":    "/aws/lambda/cbor-retention",
+		"retentionInDays": 2,
+	})
+	defer resp.Body.Close()
+
+	// Then: 400 InvalidParameterException in the CBOR error shape
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	if got := decodeCBORErrorType(t, resp); got != "InvalidParameterException" {
+		t.Fatalf("__type = %q, want InvalidParameterException", got)
+	}
+
+	// And: the previously applied retention policy is unchanged
+	resp2 := logsCBORCall(t, srv, "DescribeLogGroups", map[string]any{
+		"logGroupNamePrefix": "/aws/lambda/cbor-retention",
+	})
+	defer resp2.Body.Close()
+	helpers.AssertStatus(t, resp2, http.StatusOK)
+	var result struct {
+		LogGroups []struct {
+			RetentionInDays int `cbor:"retentionInDays"`
+		} `cbor:"logGroups"`
+	}
+	if err := cbor.NewDecoder(resp2.Body).Decode(&result); err != nil {
+		t.Fatalf("decode CBOR DescribeLogGroups response: %v", err)
+	}
+	if len(result.LogGroups) != 1 || result.LogGroups[0].RetentionInDays != 30 {
+		t.Fatalf("retention mutated by rejected CBOR value: %+v", result.LogGroups)
 	}
 }
 

@@ -24,7 +24,7 @@ func init() {
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "GetQueryResults", Category: "Insights", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "PutMetricFilter", Category: "Insights", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		// Retention
-		capabilities.Capability{Service: "cloudwatch-logs", Operation: "PutRetentionPolicy", Category: "Retention", Status: capabilities.StatusSupported, Notes: "Sets retentionInDays on log group"},
+		capabilities.Capability{Service: "cloudwatch-logs", Operation: "PutRetentionPolicy", Category: "Retention", Status: capabilities.StatusSupported, Notes: "Sets retentionInDays on log group; values outside AWS's documented set are rejected with `InvalidParameterException` before any state change"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "DeleteRetentionPolicy", Category: "Retention", Status: capabilities.StatusSupported, Notes: "Clears retention (sets to 0)"},
 		capabilities.Capability{Service: "cloudwatch-logs", Operation: "PutSubscriptionFilter", Category: "Retention", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		// Tagging

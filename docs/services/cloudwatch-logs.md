@@ -30,6 +30,12 @@ Storage and retention behavior:
 - `RetentionInDays` (set via `PutRetentionPolicy`) is **enforced**: a periodic background
   sweep deletes events older than the group's retention window in every storage mode. Groups
   with no retention policy keep events indefinitely.
+- `retentionInDays` must be one of the values AWS documents — 1, 3, 5, 7, 14, 30, 60, 90, 120,
+  150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653. Anything else is
+  rejected with `InvalidParameterException` before the log group is touched, over AWS JSON and
+  RPC v2 CBOR alike. `AWS::Logs::LogGroup` inherits that check from the service instead of
+  duplicating it, so a template carrying an unsupported `RetentionInDays` fails the resource
+  and rolls the stack back.
 - The same sweep also removes a log stream's metadata (its `DescribeLogStreams` entry) once
   its last event has aged out of the retention window and the stream has no events left
   anywhere — matching real CloudWatch Logs, which eventually deletes empty log streams rather
@@ -93,11 +99,11 @@ Storage and retention behavior:
 
 ### Retention
 
-| Operation               | Status         | Notes                             | AWS Docs                                                                                                    |
-| ----------------------- | -------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `PutRetentionPolicy`    | ✅ Supported   | Sets retentionInDays on log group | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutRetentionPolicy.html)    |
-| `DeleteRetentionPolicy` | ✅ Supported   | Clears retention (sets to 0)      | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DeleteRetentionPolicy.html) |
-| `PutSubscriptionFilter` | ❌ Unsupported | stub; returns 501                 | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutSubscriptionFilter.html) |
+| Operation               | Status         | Notes                                                                                                                                        | AWS Docs                                                                                                    |
+| ----------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `PutRetentionPolicy`    | ✅ Supported   | Sets retentionInDays on log group; values outside AWS's documented set are rejected with `InvalidParameterException` before any state change | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutRetentionPolicy.html)    |
+| `DeleteRetentionPolicy` | ✅ Supported   | Clears retention (sets to 0)                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_DeleteRetentionPolicy.html) |
+| `PutSubscriptionFilter` | ❌ Unsupported | stub; returns 501                                                                                                                            | [docs](https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutSubscriptionFilter.html) |
 
 ### Tagging
 

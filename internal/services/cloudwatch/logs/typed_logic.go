@@ -652,6 +652,11 @@ scanLoop:
 	return &filterLogEventsResponse{Events: matched, SearchedLogStreams: searched, NextToken: nextToken}, nil
 }
 
+// putRetentionPolicyTyped validates retentionInDays against AWS's fixed value
+// set (validRetentionDays, handler.go) BEFORE looking the log group up, so a
+// rejected request can never mutate an existing retention policy. Request
+// validation ahead of resource resolution matches how AWS reports the two
+// errors, and matches this package's other validators.
 func (h *Handler) putRetentionPolicyTyped(ctx context.Context, req *putRetentionPolicyRequest) (*struct{}, *protocol.AWSError) {
 	if !validRetentionDays[req.RetentionInDays] {
 		return nil, errInvalidParameter(

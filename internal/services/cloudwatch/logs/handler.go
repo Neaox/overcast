@@ -464,8 +464,15 @@ func (h *Handler) FilterLogEvents(w http.ResponseWriter, r *http.Request) {
 // ---- Retention policy -------------------------------------------------------
 
 // validRetentionDays is the fixed set of retentionInDays values AWS accepts
-// for PutRetentionPolicy; anything else is an InvalidParameterException.
-// AWS docs: https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutRetentionPolicy.html
+// for PutRetentionPolicy; anything else is an InvalidParameterException
+// (the only parameter error PutRetentionPolicy models).
+//
+// Evidence: the CloudWatch Logs Smithy model's `Days` shape — the target of
+// PutRetentionPolicyRequest$retentionInDays — is a plain integer whose
+// documentation enumerates the accepted values, so the restriction is
+// server-side rather than a constraint trait the SDK could enforce. The list
+// below is that enumeration, in model order.
+// https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_PutRetentionPolicy.html
 var validRetentionDays = map[int]bool{
 	1: true, 3: true, 5: true, 7: true, 14: true, 30: true, 60: true, 90: true,
 	120: true, 150: true, 180: true, 365: true, 400: true, 545: true, 731: true,

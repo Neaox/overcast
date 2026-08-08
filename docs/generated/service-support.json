@@ -6182,7 +6182,7 @@
           "operation": "PutRetentionPolicy",
           "category": "Retention",
           "status": "✅ Supported",
-          "notes": "Sets retentionInDays on log group"
+          "notes": "Sets retentionInDays on log group; values outside AWS's documented set are rejected with `InvalidParameterException` before any state change"
         },
         {
           "operation": "DeleteRetentionPolicy",
