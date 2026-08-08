@@ -1097,3 +1097,83 @@ func TestStopAll_RefusesDeliveryStartedDuringShutdown(t *testing.T) {
 		t.Errorf("after StopAll: %d delivery registration(s) left running, want 0", running)
 	}
 }
+
+// TestDynamoDBESM_IgnoresAnotherRegionsStream is issue #673's Lambda half. A
+// DynamoDB table is regional, so the same table name in two regions has two
+// independent streams; an ESM bound to one region's stream ARN must not fire on
+// the other region's writes.
+func TestDynamoDBESM_IgnoresAnotherRegionsStream(t *testing.T) {
+	// Given: an enabled ESM on the eu-west-1 SeedTable stream
+	store := state.NewMemoryStore()
+	ls := newLambdaStore(store, "eu-west-1", clock.New())
+	es := newESMStore(ls)
+
+	ctx := middleware.ContextWithRegion(context.Background(), "eu-west-1")
+	esmInst := &EventSourceMapping{
+		UUID:           "ddb-region-uuid",
+		FunctionArn:    "arn:aws:lambda:eu-west-1:000000000000:function:fn",
+		EventSourceArn: "arn:aws:dynamodb:eu-west-1:000000000000:table/SeedTable/stream/2024-01-01T00:00:00.000",
+		State:          esmStateEnabled,
+		BatchSize:      1,
+	}
+	if aerr := es.putESM(ctx, esmInst); aerr != nil {
+		t.Fatal(aerr)
+	}
+
+	bus := events.NewBus()
+	defer bus.Stop()
+	invoker := newRecordingInvoker()
+	mgr := newESMDeliveryManager(
+		es, invoker, noopReceiver{}, nil, bus,
+		serviceutil.NewServiceLogger(zap.NewNop(), "lambda"), clock.New(), &config.Config{},
+		context.Background(),
+	)
+	mgr.Start(esmInst)
+	defer stopAll(t, mgr)
+
+	publish := func(region string, seq int64) {
+		bus.Publish(ctx, events.Event{
+			Type: events.DynamoDBStreamInsert,
+			Payload: events.DynamoDBStreamPayload{
+				Table:          "SeedTable",
+				Region:         region,
+				EventName:      "INSERT",
+				SequenceNumber: seq,
+				Keys:           map[string]any{"PK": map[string]any{"S": "row"}},
+			},
+		})
+	}
+
+	// When: a same-named table in us-east-1 emits a record, and then the ESM's
+	// own region does. Waiting for the second delivery is what proves the first
+	// was dropped rather than merely slow — the mapping delivers in order, so a
+	// record that was going to arrive would have arrived first.
+	publish("us-east-1", 1)
+	publish("eu-west-1", 2)
+
+	select {
+	case <-invoker.invoked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the ESM's own region's record")
+	}
+
+	// Then: exactly one invoke happened — the other region's record was ignored.
+	select {
+	case extra := <-invoker.invoked:
+		t.Fatalf("ESM also fired for another region's stream record: %s", extra)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// recordingInvoker captures each invoke payload so a test can assert both that
+// a delivery happened and that no second one did.
+type recordingInvoker struct{ invoked chan []byte }
+
+func newRecordingInvoker() *recordingInvoker {
+	return &recordingInvoker{invoked: make(chan []byte, 8)}
+}
+
+func (i *recordingInvoker) Invoke(_ context.Context, _ string, payload []byte) (*events.InvokeOutcome, error) {
+	i.invoked <- payload
+	return &events.InvokeOutcome{}, nil
+}
