@@ -312,6 +312,12 @@ func smithyStringMinimumLengthConstraint(member, value string, minimum int) *pro
 	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must have length greater than or equal to " + strconv.Itoa(minimum))
 }
 
+// smithyRequiredMember reports an omitted `required` member the way AWS's
+// generated request validation does.
+func smithyRequiredMember(member string) *protocol.AWSError {
+	return lambdaInvalidParameter("1 validation error detected: Value null at '" + member + "' failed to satisfy constraint: Member must not be null")
+}
+
 func smithyPatternConstraint(member, value, pattern string) *protocol.AWSError {
 	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must satisfy regular expression pattern: " + pattern)
 }

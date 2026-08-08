@@ -10,9 +10,9 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "ListFunctions", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns all stored functions; empty list if none"},
 		capabilities.Capability{Service: "lambda", Operation: "CreateFunction", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647)"},
+			Status: capabilities.StatusSupported, Notes: "Stores metadata; validates runtime; deprecated runtimes rejected; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing"},
 		capabilities.Capability{Service: "lambda", Operation: "DeleteFunction", Category: "Function management",
-			Status: capabilities.StatusSupported},
+			Status: capabilities.StatusSupported, Notes: "Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunction", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns FunctionConfiguration + Code location block"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionConfiguration", Category: "Function management",
@@ -128,10 +128,10 @@ func init() {
 
 		// Tags
 		capabilities.Capability{Service: "lambda", Operation: "TagResource", Category: "Tags",
-			Status: capabilities.StatusSupported, Notes: "Merges tags; max 50; validates key/value lengths"},
+			Status: capabilities.StatusSupported, Notes: "Function and event-source-mapping ARNs; merges tags; max 50; validates key/value lengths; rejects qualified ARNs and non-ARN resources"},
 		capabilities.Capability{Service: "lambda", Operation: "UntagResource", Category: "Tags",
-			Status: capabilities.StatusSupported, Notes: "Removes specified keys; idempotent on missing keys"},
+			Status: capabilities.StatusSupported, Notes: "Removes specified keys; idempotent on missing keys; tagKeys is required"},
 		capabilities.Capability{Service: "lambda", Operation: "ListTags", Category: "Tags",
-			Status: capabilities.StatusSupported, Notes: "Returns all tags for the function"},
+			Status: capabilities.StatusSupported, Notes: "Returns the resource's tags; code-signing-config, capacity-provider and network-connector ARNs return 501"},
 	)
 }

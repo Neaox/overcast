@@ -14,6 +14,8 @@ import {
   layersQueryOptions,
   updateFunctionLayersMutationOptions,
   updateFunctionConfigurationMutationOptions,
+  functionTagsQueryOptions,
+  updateFunctionTagsMutationOptions,
 } from "@/features/lambda/data"
 import { ec2SubnetsQueryOptions, ec2SecurityGroupsQueryOptions } from "@/features/ec2/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
@@ -29,6 +31,7 @@ export function ConfigurationTab({ fn }: { fn: LambdaFunction }) {
       <GeneralConfigSection fn={fn} />
       <VpcConfigSection fn={fn} />
       <EnvVarsSection fn={fn} />
+      <TagsSection fn={fn} />
       <LayersSection functionName={fn.FunctionName ?? ""} attachedLayers={fn.Layers ?? []} />
     </div>
   )
@@ -748,6 +751,130 @@ function LayersSection({
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  )
+}
+
+// ─── Tags section ─────────────────────────────────────────────────────────
+
+/**
+ * Lambda tags live on the unqualified function ARN — AWS rejects a version or
+ * alias ARN — and are read and written through ListTags/TagResource/
+ * UntagResource rather than UpdateFunctionConfiguration.
+ */
+function TagsSection({ fn }: { fn: LambdaFunction }) {
+  const resourceArn = fn.FunctionArn ?? ""
+  const [editing, setEditing] = useState(false)
+
+  const { data: tags = {}, isLoading } = useQuery(functionTagsQueryOptions(resourceArn))
+
+  const toRows = (source: Record<string, string>): EnvPair[] =>
+    Object.entries(source).map(([key, value]) => ({ key, value }))
+
+  const [rows, setRows] = useState<EnvPair[]>([])
+  const [prevTags, setPrevTags] = useState<Record<string, string>>()
+  if (tags !== prevTags) {
+    setPrevTags(tags)
+    if (!editing) setRows(toRows(tags))
+  }
+
+  const updateMut = useResourceMutation({
+    options: updateFunctionTagsMutationOptions(),
+    invalidateKeys: [lambdaKeys.tags(resourceArn), lambdaKeys.functions()],
+    successTitle: "Tags saved",
+    errorTitle: "Save tags failed",
+    onSuccess: () => setEditing(false),
+  })
+
+  const handleSave = () => {
+    const next: Record<string, string> = {}
+    for (const { key, value } of rows) {
+      if (key.trim()) next[key.trim()] = value
+    }
+    updateMut.mutate({ resourceArn, tags: next, previous: tags })
+  }
+
+  const handleCancel = () => {
+    setEditing(false)
+    setRows(toRows(tags))
+  }
+
+  const addRow = () => setRows((r) => [...r, { key: "", value: "" }])
+  const removeRow = (i: number) => setRows((r) => r.filter((_, idx) => idx !== i))
+  const updateRow = (i: number, field: "key" | "value", val: string) =>
+    setRows((r) => r.map((row, idx) => (idx === i ? { ...row, [field]: val } : row)))
+
+  const hasTags = Object.keys(tags).length > 0
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-elevated p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="font-mono text-sm font-medium text-fg">Tags</h3>
+        {!editing ? (
+          <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+            Edit
+          </Button>
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleCancel}
+              disabled={updateMut.isPending}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={updateMut.isPending}>
+              {updateMut.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          {rows.length === 0 && <p className="text-xs text-fg-muted">No tags. Add one below.</p>}
+          {rows.map((row, i) => (
+            <div key={i} className="flex gap-2">
+              <Input
+                value={row.key}
+                onChange={(e) => updateRow(i, "key", e.target.value)}
+                placeholder="Key"
+                className="font-mono text-xs"
+              />
+              <Input
+                value={row.value}
+                onChange={(e) => updateRow(i, "value", e.target.value)}
+                placeholder="value"
+                className="font-mono text-xs"
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => removeRow(i)}
+                aria-label="Remove"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+          <div className="mt-1">
+            <Button size="sm" variant="secondary" onClick={addRow}>
+              <PlusIcon className="mr-1 h-3.5 w-3.5" /> Add tag
+            </Button>
+          </div>
+        </div>
+      ) : isLoading ? (
+        <Spinner className="h-4 w-4" />
+      ) : !hasTags ? (
+        <p className="text-xs text-fg-muted">No tags on this function.</p>
+      ) : (
+        <DefinitionList>
+          {Object.entries(tags).map(([key, val]) => (
+            <Definition key={key} label={key} value={val} />
+          ))}
+        </DefinitionList>
       )}
     </div>
   )

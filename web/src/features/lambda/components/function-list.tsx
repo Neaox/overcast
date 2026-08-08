@@ -51,7 +51,7 @@ export function FunctionList() {
     options: deleteFunctionMutationOptions(),
     invalidateKeys: [lambdaKeys.functions()],
     successTitle: "Function deleted",
-    successDescription: (name) => name,
+    successDescription: ({ name }) => name,
     successVariant: "default",
     errorTitle: "Delete failed",
     onSuccess: () => setDeleteTarget(undefined),
@@ -127,12 +127,13 @@ export function FunctionList() {
         title="Delete function"
         description={
           <>
-            Delete <span className="font-mono font-medium">{deleteTarget}</span>? This cannot be
-            undone.
+            Delete <span className="font-mono font-medium">{deleteTarget}</span>, including every
+            published version and alias? This cannot be undone. To remove a single version, use the
+            function's Versions tab.
           </>
         }
         isPending={deleteMut.isPending}
-        onConfirm={() => deleteTarget && deleteMut.mutate(deleteTarget)}
+        onConfirm={() => deleteTarget && deleteMut.mutate({ name: deleteTarget })}
       />
     </ResourceListPage>
   )

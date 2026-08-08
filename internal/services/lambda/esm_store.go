@@ -18,6 +18,11 @@ import (
 
 const nsESM = "lambda:esm"
 
+// nsESMTags stores event source mapping tags, keyed by UUID. They live outside
+// the mapping record because EventSourceMappingConfiguration has no Tags member
+// and the record is marshalled to the wire as-is.
+const nsESMTags = "lambda:esm-tags"
+
 // ScalingConfig controls the maximum concurrency for an SQS event source mapping.
 // It mirrors the AWS Lambda ScalingConfig wire format.
 type ScalingConfig struct {
@@ -152,12 +157,30 @@ func (e *esmStore) putESM(ctx context.Context, m *EventSourceMapping) *protocol.
 	return nil
 }
 
-// deleteESM removes the ESM from the store.
+// deleteESM removes the ESM and its tags from the store.
 func (e *esmStore) deleteESM(ctx context.Context, uuid string) *protocol.AWSError {
+	if err := e.s.store.Delete(ctx, nsESMTags, serviceutil.RegionKey(e.s.region(ctx), uuid)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("esm delete tags %s: %w", uuid, err))
+	}
+	// The mapping record goes last: while it exists the mapping is still
+	// addressable, so a failed cleanup can simply be retried.
 	if err := e.s.store.Delete(ctx, nsESM, serviceutil.RegionKey(e.s.region(ctx), uuid)); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("esm delete %s: %w", uuid, err))
 	}
 	return nil
+}
+
+// esmTags reads an event source mapping's tags. A malformed tag record reads as
+// empty rather than failing the request — one corrupt blob must not make the
+// mapping untaggable.
+func (s *lambdaStore) esmTags(ctx context.Context, uuid string) (map[string]string, *protocol.AWSError) {
+	return serviceutil.TagsFromStore(ctx, s.store, nsESMTags, serviceutil.RegionKey(s.region(ctx), uuid))
+}
+
+// putESMTags replaces an event source mapping's tags.
+func (s *lambdaStore) putESMTags(ctx context.Context, uuid string, tags map[string]string) *protocol.AWSError {
+	store := &serviceutil.NSStore{Store: s.store, NS: nsESMTags}
+	return store.Save(ctx, serviceutil.RegionKey(s.region(ctx), uuid), tags)
 }
 
 // listESMs returns all event source mappings, optionally filtered by

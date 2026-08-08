@@ -94,6 +94,7 @@ var namespaceTiers = map[string]Tier{
 	"lambda:versions":                TierHot,
 	"lambda:aliases":                 TierHot,
 	"lambda:esm":                     TierHot,
+	"lambda:esm-tags":                TierHot,
 	"lambda:layers":                  TierHot,
 	"lambda:provisioned-concurrency": TierHot,
 	"lambda:layer-counters":          TierCached,
