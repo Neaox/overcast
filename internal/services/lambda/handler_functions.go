@@ -635,8 +635,6 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	loggingUnsupported := loggingConfig != nil && loggingConfig.LogFormat == "JSON"
-
 	ctx := r.Context()
 
 	log.Debug("create function", zap.String("function", req.FunctionName), zap.String("runtime", req.Runtime))
@@ -735,13 +733,6 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-	}
-	if loggingUnsupported {
-		// JSON format affects both application and platform records. Defer this
-		// honest emulator gap until modeled request validation has completed so
-		// it cannot mask an AWS validation error. Tracked in #660.
-		protocol.NotImplementedJSON(w, r)
-		return
 	}
 	// Modeled request validation runs before state-dependent service checks.
 	existing, aerr := h.ls.getFunction(ctx, req.FunctionName)
@@ -1454,7 +1445,11 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	loggingUnsupported := req.LoggingConfig.empty() || (loggingConfig != nil && loggingConfig.LogFormat == "JSON")
+	// An explicitly present empty object still has uncaptured service semantics
+	// — AWS's behaviour for it has never been observed on the wire here, and
+	// guessing between "no-op" and "reset to defaults" would silently mutate a
+	// function either way. JSON logging itself is supported; see logging_json.go.
+	loggingUnsupported := req.LoggingConfig.empty()
 	if req.Runtime != nil {
 		if aerr := validateLambdaRuntime(*req.Runtime); aerr != nil {
 			protocol.WriteJSONError(w, r, aerr)
@@ -1516,9 +1511,8 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		}
 	}
 	if loggingUnsupported {
-		// Empty-object semantics are uncaptured, and JSON changes application
-		// and platform records. Defer the honest emulator gap until all modeled
-		// validation has passed, then reject before state mutation. Tracked in #660.
+		// Defer the honest emulator gap until all modeled validation has
+		// passed, then reject before any state mutation. Tracked in #660.
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
