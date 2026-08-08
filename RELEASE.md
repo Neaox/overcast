@@ -266,6 +266,34 @@ images and no changelog gate. The App is also what makes the PR author someone
 other than the maintainer, so the CODEOWNERS review on `VERSION` is a check a
 human can actually satisfy.
 
+### Nothing merges into the release branch
+
+The refresh job is the release branch's only writer, and a second one breaks it.
+So a pull request whose **base** is a `release/**` branch is refused by the
+`Release branch base` check (`.github/workflows/release-branch-base.yml`), which
+fails it and puts the reason in the job summary from
+`.github/release-bot/pr-into-release-branch.md`.
+
+That shape is worse than it looks. `test.yml`, `compat.yml`,
+`changelog-required.yml` and `release-hold.yml` are all `pull_request:
+branches: [main]`, so a PR based elsewhere gets no Go tests, no web build, no
+changelog gate and no breaking-change hold — the code closest to shipping would
+be the least checked in the repository. Its changelog fragment is never folded
+either: folding runs when `main` moves *into* the release branch, so a fragment
+arriving on the branch itself trips nothing and fails the release later, on
+`main`, as `Changelog fragments remain in .changelog`. And its diff never
+appears in a pull request into `main` at all, so it reaches `main` under the
+release PR's approval rather than its own.
+
+The fix is always the same: rebase onto `main` and retarget. The fragment stays
+exactly as written — while the release PR is open the bot folds it into the
+section on the next push, so the change still ships in that release. Pushing
+onto the release branch itself remains the escape hatch for a late fix that has
+to be *in* the release: it is reviewed as part of the release PR and checked by
+its CI, and its release note goes straight into the `## [x.y.z]` section rather
+than into a fragment — see [Breaking Changes During A Release
+Window](#breaking-changes-during-a-release-window) below.
+
 The steps below remain the manual path, and describe what the workflow does.
 
 For an alpha release:
@@ -499,6 +527,11 @@ it back.
 `Breaking-change hold` and `Changelog entry` must both be required status checks
 on `main`. Each runs on every PR — no path filter — so they always report, and
 renaming either silently stops enforcing it.
+
+`Release branch base` must **not** be one of them. It fires only on PRs whose
+base is a `release/**` branch, so on `main` it would never report at all — and a
+required check that never reports leaves every PR waiting for it forever. It
+enforces itself by failing where it does run.
 
 ## Manual Release Trigger
 

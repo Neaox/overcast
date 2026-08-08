@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+    # Into `main` only, as with every other gate here. The question this asks of
+    # a PR is "if this tree became the release, would the release gate pass?",
+    # and on a PR into a `release/**` branch it answers it with advice that does
+    # not apply — fold the fragment into the section, when the fragment is
+    # correct and the *base* is the mistake. `release-branch-base.yml` refuses
+    # that shape outright and says so in its own words.
+    branches: [main]
     paths:
       - VERSION
       - CHANGELOG.md
