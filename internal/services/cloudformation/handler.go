@@ -415,14 +415,7 @@ func (h *Handler) ListStacks(w http.ResponseWriter, r *http.Request) {
 	})
 	var summaries []stackSummaryXML
 	for _, s := range stacks {
-		summaries = append(summaries, stackSummaryXML{
-			StackName:   s.StackName,
-			StackID:     s.StackID,
-			ParentID:    s.ParentStackID,
-			RootID:      s.RootID,
-			StackStatus: s.Status,
-			CreatedAt:   s.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		})
+		summaries = append(summaries, toStackSummaryXML(s))
 	}
 	writeCFNResponse(w, r, "ListStacksResponse", "ListStacksResult",
 		listStacksResult{StackSummaries: summaries})
@@ -1117,6 +1110,10 @@ type listImportsResult struct {
 	Imports []string `xml:"Imports>member,omitempty"`
 }
 
+// stackXML is AWS's Stack shape. Its last-updated element is LastUpdatedTime —
+// LastUpdatedTimestamp is StackResourceSummary's spelling, and the SDKs' generated
+// deserialisers match these names literally, so the wrong one parses as an absent
+// field rather than as an error.
 type stackXML struct {
 	StackName    string      `xml:"StackName"`
 	StackID      string      `xml:"StackId"`
@@ -1125,7 +1122,7 @@ type stackXML struct {
 	StackStatus  string      `xml:"StackStatus"`
 	StatusReason string      `xml:"StackStatusReason,omitempty"`
 	CreatedAt    string      `xml:"CreationTime"`
-	UpdatedAt    string      `xml:"LastUpdatedTimestamp,omitempty"`
+	UpdatedAt    string      `xml:"LastUpdatedTime,omitempty"`
 	Parameters   []paramXML  `xml:"Parameters>member,omitempty"`
 	Outputs      []outputXML `xml:"Outputs>member,omitempty"`
 	Tags         []tagXML    `xml:"Tags>member,omitempty"`
@@ -1160,6 +1157,31 @@ type stackSummaryXML struct {
 	RootID      string `xml:"RootId,omitempty"`
 	StackStatus string `xml:"StackStatus"`
 	CreatedAt   string `xml:"CreationTime"`
+	UpdatedAt   string `xml:"LastUpdatedTime,omitempty"`
+	DeletedAt   string `xml:"DeletionTime,omitempty"`
+}
+
+// toStackSummaryXML builds the ListStacks view of a stack. ListStacks has two
+// entry points — the Query handler and the typed operation — and both answer
+// from this one place so a field cannot reach callers on only one of them.
+func toStackSummaryXML(s *Stack) stackSummaryXML {
+	summary := stackSummaryXML{
+		StackName:   s.StackName,
+		StackID:     s.StackID,
+		ParentID:    s.ParentStackID,
+		RootID:      s.RootID,
+		StackStatus: s.Status,
+		CreatedAt:   s.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+	}
+	// Both are absent until the stack has actually been updated or deleted: an
+	// empty element would deserialise to a zero timestamp rather than to nothing.
+	if s.UpdatedAt != nil {
+		summary.UpdatedAt = s.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+	if s.DeletedAt != nil {
+		summary.DeletedAt = s.DeletedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+	return summary
 }
 
 type listStacksResult struct {
