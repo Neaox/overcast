@@ -55,7 +55,11 @@ type createESMRequest struct {
 	DocumentDBEventSourceConfig         json.RawMessage    `json:"DocumentDBEventSourceConfig"`
 	LoggingConfig                       json.RawMessage    `json:"LoggingConfig"`
 	SelfManagedKafkaEventSourceConfig   json.RawMessage    `json:"SelfManagedKafkaEventSourceConfig"`
-	Tags                                json.RawMessage    `json:"Tags"`
+	// Tags are stored in the mapping's own tag namespace, not on the record:
+	// EventSourceMappingConfiguration has no Tags member, so they are readable
+	// only through ListTags. CloudFormation merges the stack's tags into this
+	// on every tagged deploy, so it is on the ordinary path, not an edge case.
+	Tags map[string]string `json:"Tags"`
 }
 
 const (
@@ -132,6 +136,42 @@ type updateESMRequest struct {
 	SelfManagedKafkaEventSourceConfig   json.RawMessage    `json:"SelfManagedKafkaEventSourceConfig"`
 }
 
+func (req *createESMRequest) unsupportedMembers() unsupportedRequestMembers {
+	return unsupportedRequestMembers{
+		"FunctionResponseTypes":               rawRequestField(req.FunctionResponseTypes),
+		"ParallelizationFactor":               rawRequestField(req.ParallelizationFactor),
+		"StartingPositionTimestamp":           rawRequestField(req.StartingPositionTimestamp),
+		"SourceAccessConfigurations":          rawRequestField(req.SourceAccessConfigurations),
+		"SelfManagedEventSource":              rawRequestField(req.SelfManagedEventSource),
+		"Topics":                              rawRequestField(req.Topics),
+		"Queues":                              rawRequestField(req.Queues),
+		"KMSKeyArn":                           rawRequestField(req.KMSKeyArn),
+		"MetricsConfig":                       rawRequestField(req.MetricsConfig),
+		"ProvisionedPollerConfig":             rawRequestField(req.ProvisionedPollerConfig),
+		"AmazonManagedKafkaEventSourceConfig": rawRequestField(req.AmazonManagedKafkaEventSourceConfig),
+		"DocumentDBEventSourceConfig":         rawRequestField(req.DocumentDBEventSourceConfig),
+		"LoggingConfig":                       rawRequestField(req.LoggingConfig),
+		"SelfManagedKafkaEventSourceConfig":   rawRequestField(req.SelfManagedKafkaEventSourceConfig),
+	}
+}
+
+func (req *updateESMRequest) unsupportedMembers() unsupportedRequestMembers {
+	return unsupportedRequestMembers{
+		"FunctionResponseTypes":               rawRequestField(req.FunctionResponseTypes),
+		"ParallelizationFactor":               rawRequestField(req.ParallelizationFactor),
+		"SourceAccessConfigurations":          rawRequestField(req.SourceAccessConfigurations),
+		"KMSKeyArn":                           rawRequestField(req.KMSKeyArn),
+		"MetricsConfig":                       rawRequestField(req.MetricsConfig),
+		"ProvisionedPollerConfig":             rawRequestField(req.ProvisionedPollerConfig),
+		"Topics":                              rawRequestField(req.Topics),
+		"Queues":                              rawRequestField(req.Queues),
+		"AmazonManagedKafkaEventSourceConfig": rawRequestField(req.AmazonManagedKafkaEventSourceConfig),
+		"DocumentDBEventSourceConfig":         rawRequestField(req.DocumentDBEventSourceConfig),
+		"LoggingConfig":                       rawRequestField(req.LoggingConfig),
+		"SelfManagedKafkaEventSourceConfig":   rawRequestField(req.SelfManagedKafkaEventSourceConfig),
+	}
+}
+
 // listESMResponse is the wire response for ListEventSourceMappings.
 type listESMResponse struct {
 	EventSourceMappings []*EventSourceMapping `json:"EventSourceMappings"`
@@ -144,14 +184,7 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if hasUnsupportedRequestField(
-		rawRequestField(req.FunctionResponseTypes), rawRequestField(req.ParallelizationFactor),
-		rawRequestField(req.StartingPositionTimestamp), rawRequestField(req.SourceAccessConfigurations),
-		rawRequestField(req.SelfManagedEventSource), rawRequestField(req.Topics), rawRequestField(req.Queues),
-		rawRequestField(req.KMSKeyArn), rawRequestField(req.MetricsConfig), rawRequestField(req.ProvisionedPollerConfig),
-		rawRequestField(req.AmazonManagedKafkaEventSourceConfig), rawRequestField(req.DocumentDBEventSourceConfig),
-		rawRequestField(req.LoggingConfig), rawRequestField(req.SelfManagedKafkaEventSourceConfig), rawRequestField(req.Tags),
-	) {
+	if req.unsupportedMembers().requested() {
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
@@ -161,6 +194,12 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	}
 	if req.EventSourceArn == "" {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ValidationException", Message: "EventSourceArn is required", HTTPStatus: http.StatusBadRequest})
+		return
+	}
+	// Tag constraints are request-shape validation, so they are checked with
+	// the rest of it — before anything is looked up or written.
+	if aerr := serviceutil.ValidateTags(lambdaTagCfg, req.Tags); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -240,6 +279,16 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		middleware.RegionFromContext(r.Context(), h.cfg.Region), h.cfg.AccountID, "lambda", "event-source-mapping:"+esm.UUID,
 	)
 
+	// Tags go in before the mapping record: while the record is absent nothing
+	// can observe the mapping, so a create that gets as far as being visible is
+	// always fully tagged. The reverse order would expose an untagged mapping.
+	// deleteESM tears the two down in the mirror order for the same reason.
+	if len(req.Tags) > 0 {
+		if aerr := h.ls.putESMTags(r.Context(), esm.UUID, req.Tags); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+	}
 	if aerr := h.esm.putESM(r.Context(), esm); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
@@ -321,14 +370,7 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	if hasUnsupportedRequestField(
-		rawRequestField(req.FunctionResponseTypes), rawRequestField(req.ParallelizationFactor),
-		rawRequestField(req.SourceAccessConfigurations), rawRequestField(req.KMSKeyArn),
-		rawRequestField(req.MetricsConfig), rawRequestField(req.ProvisionedPollerConfig),
-		rawRequestField(req.Topics), rawRequestField(req.Queues),
-		rawRequestField(req.AmazonManagedKafkaEventSourceConfig), rawRequestField(req.DocumentDBEventSourceConfig),
-		rawRequestField(req.LoggingConfig), rawRequestField(req.SelfManagedKafkaEventSourceConfig),
-	) {
+	if req.unsupportedMembers().requested() {
 		protocol.NotImplementedJSON(w, r)
 		return
 	}

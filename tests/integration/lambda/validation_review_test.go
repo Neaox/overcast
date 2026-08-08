@@ -196,25 +196,83 @@ func TestFunctionConfiguration_CollectionBoundaries(t *testing.T) {
 	}
 }
 
-func TestFunctionCode_S3ObjectVersionFailsBeforeMutation(t *testing.T) {
+// A modeled member Overcast does not implement is refused only when the caller
+// actually asked for it. AWS's own default for every gated flag below is the
+// falsy value, and SDKs, CloudFormation clear-values and hand-written clients
+// all send those explicitly — `"Publish": false` is a request to do nothing, so
+// refusing it makes an ordinary no-op call fail.
+func TestUnsupportedFields_ExplicitNoOpValuesAreNotRequests(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	createResp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
-		"FunctionName": "versioned-create", "Runtime": "nodejs20.x", "Handler": "index.handler",
-		"Role": "arn:aws:iam::000000000000:role/r", "Code": map[string]any{"S3Bucket": "code", "S3Key": "fn.zip", "S3ObjectVersion": "v1"},
-	})
-	assertLambdaUnsupported(t, createResp)
+	createFunction(t, srv, "explicit-noop-fn")
 
-	created := createFunction(t, srv, "versioned-update")
-	updateResp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/versioned-update/code"), map[string]any{
-		"S3Bucket": "code", "S3Key": "fn.zip", "S3ObjectVersion": "v1",
+	t.Run("CreateFunction", func(t *testing.T) {
+		resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
+			"FunctionName": "explicit-noop-create", "Runtime": "python3.12", "Handler": "index.handler",
+			"Role": "arn:aws:iam::000000000000:role/lambda-role",
+			"Code": map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="},
+			// Every one of these is a still-gated member whose value means
+			// "leave it alone". (TracingConfig, EphemeralStorage and KMSKeyArn
+			// are no longer gated at all — they are stored and echoed, and
+			// tracing_storage_kms_test.go owns them.)
+			"Publish": false, "PublishTo": nil,
+			"DeadLetterConfig": map[string]any{}, "SnapStart": map[string]any{},
+			"DurableConfig": map[string]any{},
+		})
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusCreated)
 	})
-	assertLambdaUnsupported(t, updateResp)
-	getResp := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/versioned-update/configuration"), nil)
-	var got functionConfiguration
-	decodeJSON(t, getResp, &got)
-	if got.RevisionId != created.RevisionId {
-		t.Fatalf("unsupported update mutated revision: got %q, want %q", got.RevisionId, created.RevisionId)
-	}
+
+	t.Run("UpdateFunctionCode", func(t *testing.T) {
+		resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/explicit-noop-fn/code"), map[string]any{
+			"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==", "DryRun": false, "Publish": false,
+		})
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusOK)
+	})
+
+	t.Run("CreateEventSourceMapping", func(t *testing.T) {
+		resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/event-source-mappings/"), map[string]any{
+			"FunctionName": "explicit-noop-fn", "EventSourceArn": sqsARN("explicit-noop-queue"),
+			// CloudFormation sends exactly these to clear an ESM's optional
+			// source configuration back to its default.
+			"FunctionResponseTypes": []any{}, "SourceAccessConfigurations": []any{},
+			"Topics": []any{}, "Queues": []any{}, "MetricsConfig": map[string]any{},
+		})
+		defer resp.Body.Close()
+		helpers.AssertStatus(t, resp, http.StatusAccepted)
+	})
+}
+
+// The other half of the same rule: a value that genuinely asks for an
+// unimplemented feature must still be an honest 501, not a silent success.
+func TestUnsupportedFields_RealRequestsStill501(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "real-request-fn")
+
+	t.Run("CreateFunction", func(t *testing.T) {
+		resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
+			"FunctionName": "real-request-create", "Runtime": "python3.12", "Handler": "index.handler",
+			"Role":    "arn:aws:iam::000000000000:role/lambda-role",
+			"Code":    map[string]any{"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA=="},
+			"Publish": true,
+		})
+		assertLambdaUnsupported(t, resp)
+	})
+
+	t.Run("UpdateFunctionCode", func(t *testing.T) {
+		resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/real-request-fn/code"), map[string]any{
+			"ZipFile": "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==", "DryRun": true,
+		})
+		assertLambdaUnsupported(t, resp)
+	})
+
+	t.Run("CreateEventSourceMapping", func(t *testing.T) {
+		resp := doJSON(t, http.MethodPost, lambdaURL(srv, "/event-source-mappings/"), map[string]any{
+			"FunctionName": "real-request-fn", "EventSourceArn": sqsARN("real-request-queue"),
+			"FunctionResponseTypes": []string{"ReportBatchItemFailures"},
+		})
+		assertLambdaUnsupported(t, resp)
+	})
 }
 
 func TestAddPermission_FieldSpecificValidationMessages(t *testing.T) {

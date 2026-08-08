@@ -5150,9 +5150,12 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
 		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
 		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
-		"Publish":                false,
-		"PublishTo":              "LATEST_PUBLISHED",
-		"TenancyConfig":          map[string]any{"TenantIsolationMode": "PER_TENANT"},
+		// Every value here has to be one that actually asks for the feature:
+		// an explicit falsy value means "do nothing" and is accepted (see
+		// TestUnsupportedFields_ExplicitNoOpValuesAreNotRequests).
+		"Publish":       true,
+		"PublishTo":     "LATEST_PUBLISHED",
+		"TenancyConfig": map[string]any{"TenantIsolationMode": "PER_TENANT"},
 	}
 	for field, value := range createFunctionFields {
 		t.Run("function/"+field, func(t *testing.T) {
@@ -5214,7 +5217,7 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 		})
 	}
 	for field, value := range map[string]any{
-		"DryRun": false, "Publish": false, "PublishTo": "LATEST_PUBLISHED", "RevisionId": "revision",
+		"DryRun": true, "Publish": true, "PublishTo": "LATEST_PUBLISHED", "RevisionId": "revision",
 		"S3ObjectStorageMode": "Zip", "SourceKMSKeyArn": "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
 	} {
 		t.Run("function-code-update/"+field, func(t *testing.T) {
@@ -5231,15 +5234,20 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 		})
 	}
 
+	// Tags is deliberately absent: CreateEventSourceMapping stores them (see
+	// TestCreateEventSourceMapping_StoresTags). Every value below is populated
+	// because an empty list or object means "do nothing" and is accepted.
 	esmFields := map[string]any{
 		"FunctionResponseTypes": []string{"ReportBatchItemFailures"}, "ParallelizationFactor": 2, "StartingPositionTimestamp": 1000,
-		"SourceAccessConfigurations": []any{}, "SelfManagedEventSource": map[string]any{"Endpoints": map[string]any{"KafkaBootstrapServers": []string{"host:9092"}}},
-		"Topics": []string{"topic"}, "Queues": []string{"queue"},
+		"SourceAccessConfigurations": []any{map[string]any{"Type": "BASIC_AUTH", "URI": "arn:aws:secretsmanager:us-east-1:000000000000:secret:kafka"}},
+		"SelfManagedEventSource":     map[string]any{"Endpoints": map[string]any{"KafkaBootstrapServers": []string{"host:9092"}}},
+		"Topics":                     []string{"topic"}, "Queues": []string{"queue"},
 		"KmsKeyArn":     "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000",
 		"MetricsConfig": map[string]any{"Metrics": []string{"EventCount"}}, "ProvisionedPollerConfig": map[string]any{"MinimumPollers": 1, "MaximumPollers": 2},
-		"AmazonManagedKafkaEventSourceConfig": map[string]any{}, "DocumentDBEventSourceConfig": map[string]any{},
-		"LoggingConfig": map[string]any{"SystemLogLevel": "INFO"}, "SelfManagedKafkaEventSourceConfig": map[string]any{},
-		"Tags": map[string]string{"stage": "test"},
+		"AmazonManagedKafkaEventSourceConfig": map[string]any{"ConsumerGroupId": "group"},
+		"DocumentDBEventSourceConfig":         map[string]any{"DatabaseName": "db"},
+		"LoggingConfig":                       map[string]any{"SystemLogLevel": "INFO"},
+		"SelfManagedKafkaEventSourceConfig":   map[string]any{"ConsumerGroupId": "group"},
 	}
 	for field, value := range esmFields {
 		t.Run("esm/"+field, func(t *testing.T) {
@@ -5254,9 +5262,11 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 	})
 	id := esm["UUID"].(string)
 	for field, value := range map[string]any{
-		"AmazonManagedKafkaEventSourceConfig": map[string]any{}, "DocumentDBEventSourceConfig": map[string]any{},
-		"LoggingConfig": map[string]any{"SystemLogLevel": "INFO"}, "SelfManagedKafkaEventSourceConfig": map[string]any{},
-		"Topics": []string{"topic"}, "Queues": []string{"queue"},
+		"AmazonManagedKafkaEventSourceConfig": map[string]any{"ConsumerGroupId": "group"},
+		"DocumentDBEventSourceConfig":         map[string]any{"DatabaseName": "db"},
+		"LoggingConfig":                       map[string]any{"SystemLogLevel": "INFO"},
+		"SelfManagedKafkaEventSourceConfig":   map[string]any{"ConsumerGroupId": "group"},
+		"Topics":                              []string{"topic"}, "Queues": []string{"queue"},
 	} {
 		t.Run("esm-update/"+field, func(t *testing.T) {
 			resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/event-source-mappings/"+id), map[string]any{

@@ -16,7 +16,10 @@ import (
 // S3FetchFunc retrieves the raw bytes of an S3 object from the emulated S3
 // service. Provided by the router as a closure over the S3 service so that the
 // lambda package does not import the s3 package directly.
-type S3FetchFunc func(ctx context.Context, bucket, key string) ([]byte, *protocol.AWSError)
+//
+// An empty versionID means the key's current version; a non-empty one is
+// Code.S3ObjectVersion and selects exactly that version.
+type S3FetchFunc func(ctx context.Context, bucket, key, versionID string) ([]byte, *protocol.AWSError)
 
 // s3SyncWatcher subscribes to S3ObjectCreated events on the shared bus and,
 // when the updated object matches the code location of a Lambda function,
@@ -151,6 +154,12 @@ func (w *s3SyncWatcher) onS3ObjectCreated(ctx context.Context, e events.Event) {
 		if fn.CodeS3Bucket != payload.Bucket || fn.CodeS3Key != payload.Key {
 			continue
 		}
+		if fn.CodeS3ObjectVersion != "" {
+			// The function names one immutable version of the key. A new
+			// version landing at that key does not change what it points at,
+			// so refreshing it would swap in code the deployer never asked for.
+			continue
+		}
 		w.syncFunctionCodeForEvent(ctx, fn, e.Seq)
 	}
 }
@@ -173,7 +182,7 @@ func (w *s3SyncWatcher) syncFunctionCodeForEvent(ctx context.Context, fn *Functi
 		w.next = eventRevision
 	}
 	w.mu.Unlock()
-	zip, err := w.fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key)
+	zip, err := w.fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key, "")
 	if err != nil {
 		w.log.Warn("s3 sync: fetch zip failed",
 			zap.String("function", fn.Name),
