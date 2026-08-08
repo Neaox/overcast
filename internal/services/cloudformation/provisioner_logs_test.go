@@ -87,44 +87,41 @@ func TestLogsLogGroupHandlerUpdate_retentionOmittedBeforeAndAfter(t *testing.T) 
 	}
 }
 
-func TestLogsLogGroupHandlerCreate_tagFailureDeletesCreatedGroup(t *testing.T) {
-	// Given: a Logs router that fails to tag a newly created log group
+// Tags travel with CreateLogGroup, so a tag the Logs service rejects fails the
+// create itself — there is no half-made group for the adapter to clean up.
+func TestLogsLogGroupHandlerCreate_tagFailureLeavesNothingToCleanUp(t *testing.T) {
+	// Given: a Logs router that rejects the create because of its tag map
 	var targets []string
 	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		target := r.Header.Get("X-Amz-Target")
 		targets = append(targets, target)
-		if target == "Logs_20140328.TagLogGroup" {
-			http.Error(w, "tagging failed", http.StatusInternalServerError)
+		if target == "Logs_20140328.CreateLogGroup" {
+			http.Error(w, "InvalidParameterException: rejected tag map", http.StatusBadRequest)
 		}
 	})
 	h := &logsLogGroupHandler{}
 
 	// When: CloudFormation creates a log group with tags
 	_, _, err := h.Create(context.Background(), router, nil, map[string]any{
-		"LogGroupName": "/cloudformation/cleanup-on-tag-failure",
-		"Tags":         []any{map[string]any{"Key": "environment", "Value": "test"}},
+		"LogGroupName": "/cloudformation/rejected-tags",
+		"Tags":         []any{map[string]any{"Key": "aws:reserved", "Value": "test"}},
 	}, &resolveContext{Region: "us-east-1", AccountID: "000000000000"})
 
-	// Then: creation fails and the partially created group is deleted
+	// Then: creation fails, and no cleanup delete is dispatched
 	if err == nil {
-		t.Fatal("Create returned nil error after TagLogGroup failed")
+		t.Fatal("Create returned nil error after CreateLogGroup failed")
 	}
-	wantTargets := []string{
-		"Logs_20140328.CreateLogGroup",
-		"Logs_20140328.TagLogGroup",
-		"Logs_20140328.DeleteLogGroup",
-	}
-	if !reflect.DeepEqual(targets, wantTargets) {
-		t.Errorf("dispatched targets = %v, want %v", targets, wantTargets)
+	if !reflect.DeepEqual(targets, []string{"Logs_20140328.CreateLogGroup"}) {
+		t.Errorf("dispatched targets = %v, want only CreateLogGroup", targets)
 	}
 }
 
 func TestLogsLogGroupHandlerCreate_cleanupFailureReturnsPhysicalIDForRollback(t *testing.T) {
-	// Given: tagging and the immediate cleanup delete both fail once
+	// Given: the retention call and the immediate cleanup delete both fail once
 	const name = "/cloudformation/cleanup-retry"
 	failures := map[string]int{
-		"Logs_20140328.TagLogGroup":    1,
-		"Logs_20140328.DeleteLogGroup": 1,
+		"Logs_20140328.PutRetentionPolicy": 1,
+		"Logs_20140328.DeleteLogGroup":     1,
 	}
 	var targets []string
 	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -139,12 +136,12 @@ func TestLogsLogGroupHandlerCreate_cleanupFailureReturnsPhysicalIDForRollback(t 
 
 	// When: CloudFormation creates the log group and cleanup cannot remove it
 	physicalID, _, err := h.Create(context.Background(), router, nil, map[string]any{
-		"LogGroupName": name,
-		"Tags":         []any{map[string]any{"Key": "environment", "Value": "test"}},
+		"LogGroupName":    name,
+		"RetentionInDays": 7,
 	}, &resolveContext{Region: "us-east-1", AccountID: "000000000000"})
 
 	// Then: the surviving resource identity is returned so rollback can retry deletion
-	if err == nil || physicalID != name || !strings.Contains(err.Error(), "TagLogGroup") || !strings.Contains(err.Error(), "cleanup DeleteLogGroup") {
+	if err == nil || physicalID != name || !strings.Contains(err.Error(), "PutRetentionPolicy") || !strings.Contains(err.Error(), "cleanup DeleteLogGroup") {
 		t.Fatalf("Create = physicalID %q, err %v", physicalID, err)
 	}
 	if err := h.Delete(context.Background(), router, nil, physicalID, &resolveContext{Region: "us-east-1"}); err != nil {
@@ -152,7 +149,7 @@ func TestLogsLogGroupHandlerCreate_cleanupFailureReturnsPhysicalIDForRollback(t 
 	}
 	wantTargets := []string{
 		"Logs_20140328.CreateLogGroup",
-		"Logs_20140328.TagLogGroup",
+		"Logs_20140328.PutRetentionPolicy",
 		"Logs_20140328.DeleteLogGroup",
 		"Logs_20140328.DeleteLogGroup",
 	}
@@ -163,13 +160,16 @@ func TestLogsLogGroupHandlerCreate_cleanupFailureReturnsPhysicalIDForRollback(t 
 
 func TestLogsLogGroupHandlerCreate_mergesStackTagsWithResourcePrecedence(t *testing.T) {
 	// Given: stack and resource tags overlap on environment
-	var tagBody map[string]any
+	var createBody map[string]any
+	var targets []string
 	router := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Amz-Target") != "Logs_20140328.TagLogGroup" {
+		target := r.Header.Get("X-Amz-Target")
+		targets = append(targets, target)
+		if target != "Logs_20140328.CreateLogGroup" {
 			return
 		}
-		if err := json.NewDecoder(r.Body).Decode(&tagBody); err != nil {
-			t.Errorf("decode TagLogGroup request: %v", err)
+		if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+			t.Errorf("decode CreateLogGroup request: %v", err)
 		}
 	})
 	h := &logsLogGroupHandler{}
@@ -183,12 +183,44 @@ func TestLogsLogGroupHandlerCreate_mergesStackTagsWithResourcePrecedence(t *test
 		StackTags: []Tag{{Key: "environment", Value: "stack"}, {Key: "team", Value: "platform"}},
 	})
 
-	// Then: stack tags propagate and the resource tag wins the collision
+	// Then: stack tags propagate and the resource tag wins the collision, all
+	// carried by the create itself rather than a follow-up TagLogGroup
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
-	if got := tagBody["tags"]; !reflect.DeepEqual(got, map[string]any{"environment": "resource", "team": "platform"}) {
-		t.Fatalf("TagLogGroup tags = %#v", got)
+	if got := createBody["tags"]; !reflect.DeepEqual(got, map[string]any{"environment": "resource", "team": "platform"}) {
+		t.Fatalf("CreateLogGroup tags = %#v", got)
+	}
+	if !reflect.DeepEqual(targets, []string{"Logs_20140328.CreateLogGroup"}) {
+		t.Fatalf("dispatched targets = %v, want only CreateLogGroup", targets)
+	}
+}
+
+// An untagged log group must not send an empty `tags` map — AWS's Tags shape
+// carries @length(min: 1), so an empty map is not a valid request.
+func TestLogsLogGroupHandlerCreate_untaggedGroupOmitsTags(t *testing.T) {
+	// Given: a Logs router that records the create body
+	var createBody map[string]any
+	router := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Amz-Target") != "Logs_20140328.CreateLogGroup" {
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&createBody); err != nil {
+			t.Errorf("decode CreateLogGroup request: %v", err)
+		}
+	})
+	h := &logsLogGroupHandler{}
+
+	// When: CloudFormation creates a log group with no tags anywhere
+	if _, _, err := h.Create(context.Background(), router, nil, map[string]any{
+		"LogGroupName": "/cloudformation/untagged",
+	}, &resolveContext{Region: "us-east-1", AccountID: "000000000000"}); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	// Then: the request omits `tags` entirely
+	if _, present := createBody["tags"]; present {
+		t.Fatalf("CreateLogGroup body carried tags: %#v", createBody)
 	}
 }
 

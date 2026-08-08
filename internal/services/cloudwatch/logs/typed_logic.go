@@ -10,10 +10,36 @@ import (
 	eventsbus "github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
+// logsTagCfg is the CloudWatch Logs dialect of the shared tag validator
+// (serviceutil.ValidateTags), used by every operation that accepts a tag map.
+//
+// Evidence, from the CloudWatch Logs Smithy model: the `Tags` map carries
+// @length(min: 1, max: 50); `TagKey` carries @length(min: 1, max: 128) and
+// `TagValue` @length(min: 0, max: 256) — so an empty tag VALUE is legal and an
+// empty tag KEY is not. Both CreateLogGroup and TagLogGroup model
+// InvalidParameterException and neither models TooManyTagsException, so the
+// count violation reports InvalidParameterException here too. The reserved
+// `aws:` key prefix is not in the model; it comes from the user guide:
+// https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/log-group-tagging.html
+// (which also gives the 50-tag limit and the 1–128 key length, and quotes the
+// value limit as 255 where the model says 256 — the model wins on the wire).
+//
+// AWS publishes no message text for any of these, and this service's reference
+// policy is docs-only, so the shared validator's wording is used rather than an
+// invented AWS-looking string; the exceeded message is the model's own
+// TooManyTagsException documentation.
+var logsTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidParameterException",
+	InvalidCode:     "InvalidParameterException",
+	ExceededMessage: "A resource can have no more than 50 tags.",
+}
+
 type createLogGroupRequest struct {
-	LogGroupName string `json:"logGroupName" cbor:"logGroupName"`
+	LogGroupName string            `json:"logGroupName" cbor:"logGroupName"`
+	Tags         map[string]string `json:"tags,omitempty" cbor:"tags,omitempty"`
 }
 
 type describeLogGroupsRequest struct {
@@ -161,9 +187,17 @@ type listTagsLogGroupResponse struct {
 	Tags map[string]string `json:"tags" cbor:"tags"`
 }
 
+// createLogGroupTyped creates a log group, applying any create-time `tags` in
+// the same store write as the group itself — on AWS a rejected CreateLogGroup
+// leaves nothing behind, so the tags cannot be a follow-up mutation that could
+// fail on its own. Tag validation runs before the duplicate-name check, since
+// request-shape validation precedes resource resolution.
 func (h *Handler) createLogGroupTyped(ctx context.Context, req *createLogGroupRequest) (*struct{}, *protocol.AWSError) {
 	if req.LogGroupName == "" {
 		return nil, errInvalidParameter("logGroupName is required")
+	}
+	if aerr := serviceutil.ValidateTags(logsTagCfg, req.Tags); aerr != nil {
+		return nil, aerr
 	}
 	if _, aerr := h.store.getLogGroup(ctx, req.LogGroupName); aerr == nil {
 		return nil, errGroupAlreadyExists(req.LogGroupName)
@@ -172,6 +206,12 @@ func (h *Handler) createLogGroupTyped(ctx context.Context, req *createLogGroupRe
 		Name:         req.LogGroupName,
 		ARN:          protocol.LogGroupARN(middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, req.LogGroupName),
 		CreationTime: h.clk.Now().UnixMilli(),
+	}
+	if len(req.Tags) > 0 {
+		g.Tags = make(map[string]string, len(req.Tags))
+		for k, v := range req.Tags {
+			g.Tags[k] = v
+		}
 	}
 	if aerr := h.store.putLogGroup(ctx, g); aerr != nil {
 		return nil, aerr
@@ -652,6 +692,11 @@ scanLoop:
 	return &filterLogEventsResponse{Events: matched, SearchedLogStreams: searched, NextToken: nextToken}, nil
 }
 
+// putRetentionPolicyTyped validates retentionInDays against AWS's fixed value
+// set (validRetentionDays, handler.go) BEFORE looking the log group up, so a
+// rejected request can never mutate an existing retention policy. Request
+// validation ahead of resource resolution matches how AWS reports the two
+// errors, and matches this package's other validators.
 func (h *Handler) putRetentionPolicyTyped(ctx context.Context, req *putRetentionPolicyRequest) (*struct{}, *protocol.AWSError) {
 	if !validRetentionDays[req.RetentionInDays] {
 		return nil, errInvalidParameter(
@@ -680,20 +725,34 @@ func (h *Handler) deleteRetentionPolicyTyped(ctx context.Context, req *deleteRet
 	return &struct{}{}, nil
 }
 
+// tagLogGroupTyped merges tags into a log group. The incoming map is validated
+// before the group is resolved — it is a request-shape constraint, so the
+// error must not depend on whether the group happens to exist — and the merged
+// result is validated before it is written, which is what enforces the
+// per-resource tag limit across repeated calls. Either rejection leaves the
+// existing tag set exactly as it was.
 func (h *Handler) tagLogGroupTyped(ctx context.Context, req *tagLogGroupRequest) (*struct{}, *protocol.AWSError) {
 	if req.LogGroupName == "" {
 		return nil, errInvalidParameter("logGroupName is required")
+	}
+	if aerr := serviceutil.ValidateTags(logsTagCfg, req.Tags); aerr != nil {
+		return nil, aerr
 	}
 	g, aerr := h.store.getLogGroup(ctx, req.LogGroupName)
 	if aerr != nil {
 		return nil, aerr
 	}
-	if g.Tags == nil {
-		g.Tags = make(map[string]string)
+	merged := make(map[string]string, len(g.Tags)+len(req.Tags))
+	for k, v := range g.Tags {
+		merged[k] = v
 	}
 	for k, v := range req.Tags {
-		g.Tags[k] = v
+		merged[k] = v
 	}
+	if aerr := serviceutil.ValidateTags(logsTagCfg, merged); aerr != nil {
+		return nil, aerr
+	}
+	g.Tags = merged
 	if aerr := h.store.putLogGroup(ctx, g); aerr != nil {
 		return nil, aerr
 	}

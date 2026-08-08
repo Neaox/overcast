@@ -3,6 +3,7 @@ package serviceutil
 import (
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/protocol"
@@ -268,6 +269,10 @@ type TagValidationConfig struct {
 // ValidateTags checks standard AWS tag constraints and returns an AWSError
 // that carries the service's own error codes via cfg. Each service should
 // define its own exported TagValidationConfig var so callers can see them.
+//
+// Keys are checked in sorted order so a map with several violations always
+// reports the same one — Go map iteration order is randomised, and a validator
+// whose error changes between identical requests is untestable.
 func ValidateTags(cfg TagValidationConfig, tags map[string]string) *protocol.AWSError {
 	limit := cfg.Limit
 	if limit == 0 {
@@ -280,7 +285,13 @@ func ValidateTags(cfg TagValidationConfig, tags map[string]string) *protocol.AWS
 			HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	for k, v := range tags {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := tags[k]
 		if k == "" {
 			return &protocol.AWSError{
 				Code:       cfg.InvalidCode,
