@@ -26,9 +26,11 @@ import { stripAnsi } from "@/lib/ansi"
 import {
   detectLogLevel,
   formatLogTime,
+  formatPlatformRecord,
   highlightJSON,
   logLevelBadgeClass,
   logLevelRowClass,
+  parsePlatformRecord,
   stringifyJSON,
   tryParseJSON,
   type LogLevel,
@@ -156,7 +158,15 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
         // detector reads, what the row height is estimated from, and what the
         // copy button puts on the clipboard.
         const plain = stripAnsi(msg)
-        return { msg, plain, level: detectLogLevel(plain) }
+        // A Lambda system log record reads as the START / END / REPORT line it
+        // replaced; ticking Format swaps in the record itself.
+        const platform = parsePlatformRecord(plain)
+        return {
+          msg,
+          plain,
+          level: detectLogLevel(plain),
+          summary: platform ? formatPlatformRecord(platform) : null,
+        }
       }),
     [events],
   )
@@ -451,6 +461,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                         <div className="min-w-0 flex-1 px-1 py-1.5">
                           <LogMessage
                             message={meta.msg}
+                            summary={meta.summary}
                             formatted={formatted}
                             syntaxHighlight={enableSyntax}
                             wrapLines={wrapLines}
@@ -464,6 +475,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                         <LogMessage
                           prefix={`${formatLogTime(evt.timestamp)}${evt.logStreamName ? ` ${evt.logStreamName}` : ""}`}
                           message={meta.msg}
+                          summary={meta.summary}
                           formatted={formatted}
                           syntaxHighlight={enableSyntax}
                           wrapLines={wrapLines}
@@ -510,6 +522,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
 function LogMessage({
   prefix,
   message,
+  summary = null,
   formatted,
   syntaxHighlight,
   wrapLines,
@@ -519,6 +532,8 @@ function LogMessage({
 }: {
   prefix?: string
   message: string
+  /** A Lambda system log record's summary line, when the message is one. */
+  summary?: string | null
   formatted: boolean
   syntaxHighlight: boolean
   wrapLines: boolean
@@ -534,8 +549,17 @@ function LogMessage({
     if (!json) return null
     return stringifyJSON(json, formatted)
   }, [formatted, message, syntaxHighlight])
-  const displayText = formatted && jsonText ? jsonText : `${prefix ? `${prefix} ` : ""}${message}`
-  const showSyntax = syntaxHighlight && jsonText
+  // A system log record would otherwise render as a JSON blob among the
+  // function's own output, so the summary is what shows until Format is ticked
+  // — which is the toggle that means "show me the document".
+  const asSummary = summary != null && !formatted
+  const withPrefix = (text: string) => `${prefix ? `${prefix} ` : ""}${text}`
+  const displayText = asSummary
+    ? withPrefix(summary)
+    : formatted && jsonText
+      ? jsonText
+      : withPrefix(message)
+  const showSyntax = !asSummary && syntaxHighlight && jsonText
 
   if (showSyntax) {
     return (

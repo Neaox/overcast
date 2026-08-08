@@ -7,12 +7,24 @@ import {
   detectLogLevel,
   formatLogDate,
   formatLogTime,
+  formatPlatformRecord,
   highlightJSON,
   logLevelBadgeClass,
   logLevelRowClass,
+  parsePlatformRecord,
   stringifyJSON,
+  summarisePlatformRecords,
   tryParseJSON,
 } from "./log-format"
+
+// The three system log records a JSON-format Lambda writes, verbatim in the
+// shapes internal/services/lambda/logging_json.go emits.
+const startRecord =
+  '{"time":"2026-08-09T08:37:29.512Z","type":"platform.start","record":{"requestId":"8f1c","version":"$LATEST"}}'
+const runtimeDoneRecord =
+  '{"time":"2026-08-09T08:37:29.612Z","type":"platform.runtimeDone","record":{"requestId":"8f1c","status":"success","metrics":{"durationMs":98.5,"producedBytes":42}}}'
+const reportRecord =
+  '{"time":"2026-08-09T08:37:29.613Z","type":"platform.report","record":{"requestId":"8f1c","status":"success","metrics":{"durationMs":98.5,"billedDurationMs":99,"memorySizeMB":128,"maxMemoryUsedMB":47}}}'
 
 describe("formatLogTime", () => {
   it("renders the clock time of an event to the millisecond", () => {
@@ -121,5 +133,123 @@ describe("highlightJSON", () => {
 
   it("escapes the text it highlights", () => {
     expect(highlightJSON('{"a": "<img src=x>"}')).not.toContain("<img")
+  })
+})
+
+describe("parsePlatformRecord", () => {
+  it("reads a system log record's type and payload", () => {
+    expect(parsePlatformRecord(reportRecord)).toMatchObject({
+      type: "platform.report",
+      time: "2026-08-09T08:37:29.613Z",
+    })
+  })
+
+  it("returns null for the function's own output, JSON or not", () => {
+    expect(parsePlatformRecord("hello from the handler")).toBeNull()
+    expect(parsePlatformRecord('{"level":"INFO","message":"hello"}')).toBeNull()
+  })
+
+  it("returns null for a Text-format platform line", () => {
+    expect(parsePlatformRecord("START RequestId: 8f1c Version: $LATEST")).toBeNull()
+  })
+
+  it("returns null rather than throwing on a truncated record", () => {
+    expect(parsePlatformRecord('{"type":"platform.report","record":')).toBeNull()
+  })
+
+  it("returns null when the record member is not an object", () => {
+    expect(parsePlatformRecord('{"type":"platform.report","record":"nope"}')).toBeNull()
+  })
+
+  it("is not fooled by application output that mentions the prefix", () => {
+    expect(parsePlatformRecord('{"level":"INFO","msg":"saw \\"platform.report\\""}')).toBeNull()
+  })
+})
+
+describe("detectLogLevel > system log records", () => {
+  it("gives a successful report the level AWS assigns it", () => {
+    expect(detectLogLevel(reportRecord)).toBe("info")
+  })
+
+  it("gives a successful runtimeDone DEBUG, so it stays out of the way", () => {
+    expect(detectLogLevel(runtimeDoneRecord)).toBe("debug")
+  })
+
+  it("raises a failed invocation's records to a warning", () => {
+    const failed = runtimeDoneRecord.replace('"status":"success"', '"status":"failure"')
+    expect(detectLogLevel(failed)).toBe("warn")
+    expect(detectLogLevel(reportRecord.replace('"success"', '"timeout"'))).toBe("warn")
+  })
+
+  it("treats an unmodelled platform event as routine rather than guessing", () => {
+    expect(detectLogLevel('{"type":"platform.extension","record":{"name":"ext"}}')).toBe("info")
+  })
+})
+
+describe("formatPlatformRecord", () => {
+  const summaryOf = (line: string) => formatPlatformRecord(parsePlatformRecord(line)!)
+
+  it("renders a start record as the START line it replaced", () => {
+    expect(summaryOf(startRecord)).toBe("START RequestId: 8f1c Version: $LATEST")
+  })
+
+  it("renders a runtimeDone record as END plus what the text line could not carry", () => {
+    expect(summaryOf(runtimeDoneRecord)).toBe(
+      "END RequestId: 8f1c\tStatus: success\tDuration: 98.50 ms\tProduced Bytes: 42 bytes",
+    )
+  })
+
+  it("renders a report record as the REPORT line it replaced", () => {
+    expect(summaryOf(reportRecord)).toBe(
+      "REPORT RequestId: 8f1c\tDuration: 98.50 ms\tBilled Duration: 99 ms\tMemory Size: 128 MB\tMax Memory Used: 47 MB",
+    )
+  })
+
+  it("leaves a successful report unadorned, as AWS's text REPORT does", () => {
+    expect(summaryOf(reportRecord)).not.toContain("Status")
+  })
+
+  it("names the status on a report that did not succeed", () => {
+    const failed = reportRecord.replace('"status":"success"', '"status":"error"')
+    expect(summaryOf(failed)).toContain("Status: error")
+  })
+
+  it("includes the init duration only on a cold start", () => {
+    const cold = reportRecord.replace(
+      '"maxMemoryUsedMB":47',
+      '"maxMemoryUsedMB":47,"initDurationMs":210.5',
+    )
+    expect(summaryOf(cold)).toContain("Init Duration: 210.50 ms")
+    expect(summaryOf(reportRecord)).not.toContain("Init Duration")
+  })
+
+  it("skips a field the record does not carry rather than printing undefined", () => {
+    expect(summaryOf('{"type":"platform.report","record":{"requestId":"8f1c"}}')).toBe(
+      "REPORT RequestId: 8f1c",
+    )
+  })
+
+  it("returns null for a platform event Overcast does not emit", () => {
+    expect(summaryOf('{"type":"platform.initStart","record":{"requestId":"8f1c"}}')).toBeNull()
+  })
+})
+
+describe("summarisePlatformRecords", () => {
+  it("summarises the system records in a log tail and leaves the rest alone", () => {
+    const tail = [startRecord, '{"level":"INFO","message":"hello"}', reportRecord].join("\n")
+    const lines = summarisePlatformRecords(tail).split("\n")
+    expect(lines[0]).toBe("START RequestId: 8f1c Version: $LATEST")
+    expect(lines[1]).toBe('{"level":"INFO","message":"hello"}')
+    expect(lines[2]).toMatch(/^REPORT RequestId: 8f1c\t/)
+  })
+
+  it("returns a Text-format tail byte for byte", () => {
+    const tail = "START RequestId: 8f1c Version: $LATEST\nhello\nEND RequestId: 8f1c\n"
+    expect(summarisePlatformRecords(tail)).toBe(tail)
+  })
+
+  it("leaves a platform record it cannot summarise as it found it", () => {
+    const line = '{"type":"platform.initStart","record":{"requestId":"8f1c"}}'
+    expect(summarisePlatformRecords(line)).toBe(line)
   })
 })

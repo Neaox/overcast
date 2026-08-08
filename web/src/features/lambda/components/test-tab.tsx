@@ -16,6 +16,7 @@ import { eventTemplates, templateCategories } from "@/features/lambda/event-temp
 import { lambda } from "@/services/api"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import type { InvokeResult } from "@/types"
+import { summarisePlatformRecords } from "@/lib/log-format"
 import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
@@ -128,6 +129,10 @@ export function TestTab({ name }: { name: string }) {
       parsedPayload = result.payload
     }
   }
+
+  // Under the JSON log format the tail's START / END / REPORT lines arrive as
+  // Telemetry-API-shaped records instead; each reads as the line it replaced.
+  const logOutput = result?.logResult ? summarisePlatformRecords(atob(result.logResult)) : null
 
   return (
     <div className="flex gap-6">
@@ -298,7 +303,7 @@ export function TestTab({ name }: { name: string }) {
               </pre>
             </div>
 
-            {result.logResult && (
+            {logOutput != null && (
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-xs font-medium text-fg-muted">Log output</span>
@@ -316,7 +321,7 @@ export function TestTab({ name }: { name: string }) {
                   )}
                 </div>
                 <pre className="max-h-48 overflow-auto rounded-md border border-border bg-bg-elevated p-3 font-mono text-xs text-fg">
-                  {atob(result.logResult)}
+                  {logOutput}
                 </pre>
               </div>
             )}
