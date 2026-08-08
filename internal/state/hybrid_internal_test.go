@@ -399,8 +399,12 @@ func TestHybridStore_FlushFailure_PendingLogSurvivesForReplay(t *testing.T) {
 	// Manual cleanup instead of s.Close(): the writer connection is
 	// permanently broken in this test, and Close()'s own final flush would
 	// hit the same failure again. The background goroutines are already
-	// stopped (waitForHybridSeedThenStopBackground), so only the pending log
-	// file is left to close.
+	// stopped (waitForHybridSeedThenStopBackground), so the read pool and
+	// the pending log file are left to close — both must be, or Windows
+	// refuses TempDir cleanup while a handle still holds overcast.db.
+	if s.sqliteRead != nil {
+		_ = s.sqliteRead.Close()
+	}
 	_ = s.closePendingFile()
 }
 

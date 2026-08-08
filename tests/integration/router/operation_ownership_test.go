@@ -2,6 +2,7 @@ package router_test
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -44,6 +45,12 @@ func TestGeneratedCorpus_noModeledOperationReachesS3(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s/%s: %v", op.Service, op.Name, err)
 		}
+		// Drain before closing so the transport reuses the connection. A
+		// close with unread body tears the connection down, and this loop
+		// makes one request per modeled operation — thousands of sockets in
+		// TIME_WAIT, which exhausts the Windows ephemeral port range and
+		// fails every later dial in the package (and its -p neighbours).
+		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusNotImplemented || resp.StatusCode == http.StatusServiceUnavailable {
 			return true

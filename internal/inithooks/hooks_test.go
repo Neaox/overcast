@@ -21,16 +21,31 @@ func writeScript(t *testing.T, dir, name, content string) string {
 	return path
 }
 
+// shellPath renders a path for embedding in a POSIX shell script: forward
+// slashes, so that on Windows the shell does not eat backslashes as escape
+// characters and write the output to a mangled filename in the CWD.
+func shellPath(path string) string { return filepath.ToSlash(path) }
+
+// requirePOSIXShell skips tests that execute hook scripts when the machine
+// cannot run them with POSIX semantics (Windows without a findable sh).
+func requirePOSIXShell(t *testing.T) {
+	t.Helper()
+	if !canExecHooks() {
+		t.Skip("no POSIX sh available to execute hook scripts")
+	}
+}
+
 func TestRun_alphabeticalOrder(t *testing.T) {
+	requirePOSIXShell(t)
 	// Given: a ready.d directory with scripts named out of alphabetical order
 	base := t.TempDir()
 	readyDir := filepath.Join(base, "ready.d")
 	require.NoError(t, os.MkdirAll(readyDir, 0o755))
 
 	outFile := filepath.Join(t.TempDir(), "order.txt")
-	writeScript(t, readyDir, "02_second.sh", "#!/bin/sh\necho second >> "+outFile+"\n")
-	writeScript(t, readyDir, "01_first.sh", "#!/bin/sh\necho first >> "+outFile+"\n")
-	writeScript(t, readyDir, "03_third.sh", "#!/bin/sh\necho third >> "+outFile+"\n")
+	writeScript(t, readyDir, "02_second.sh", "#!/bin/sh\necho second >> "+shellPath(outFile)+"\n")
+	writeScript(t, readyDir, "01_first.sh", "#!/bin/sh\necho first >> "+shellPath(outFile)+"\n")
+	writeScript(t, readyDir, "03_third.sh", "#!/bin/sh\necho third >> "+shellPath(outFile)+"\n")
 
 	runner := NewRunner([]string{base}, nil, 5*time.Second, zaptest.NewLogger(t))
 
@@ -44,6 +59,7 @@ func TestRun_alphabeticalOrder(t *testing.T) {
 }
 
 func TestRun_subdirectoriesDepthFirst(t *testing.T) {
+	requirePOSIXShell(t)
 	// Given: ready.d with a subdirectory — parent scripts first, then subdir
 	base := t.TempDir()
 	readyDir := filepath.Join(base, "ready.d")
@@ -51,9 +67,9 @@ func TestRun_subdirectoriesDepthFirst(t *testing.T) {
 	require.NoError(t, os.MkdirAll(subDir, 0o755))
 
 	outFile := filepath.Join(t.TempDir(), "order.txt")
-	writeScript(t, readyDir, "01_parent.sh", "#!/bin/sh\necho parent >> "+outFile+"\n")
-	writeScript(t, subDir, "01_child.sh", "#!/bin/sh\necho child >> "+outFile+"\n")
-	writeScript(t, readyDir, "zzz_last.sh", "#!/bin/sh\necho last >> "+outFile+"\n")
+	writeScript(t, readyDir, "01_parent.sh", "#!/bin/sh\necho parent >> "+shellPath(outFile)+"\n")
+	writeScript(t, subDir, "01_child.sh", "#!/bin/sh\necho child >> "+shellPath(outFile)+"\n")
+	writeScript(t, readyDir, "zzz_last.sh", "#!/bin/sh\necho last >> "+shellPath(outFile)+"\n")
 
 	runner := NewRunner([]string{base}, nil, 5*time.Second, zaptest.NewLogger(t))
 
@@ -68,15 +84,16 @@ func TestRun_subdirectoriesDepthFirst(t *testing.T) {
 }
 
 func TestRun_failedScriptDoesNotBlockOthers(t *testing.T) {
+	requirePOSIXShell(t)
 	// Given: three scripts where the middle one fails
 	base := t.TempDir()
 	readyDir := filepath.Join(base, "ready.d")
 	require.NoError(t, os.MkdirAll(readyDir, 0o755))
 
 	outFile := filepath.Join(t.TempDir(), "order.txt")
-	writeScript(t, readyDir, "01_ok.sh", "#!/bin/sh\necho first >> "+outFile+"\n")
+	writeScript(t, readyDir, "01_ok.sh", "#!/bin/sh\necho first >> "+shellPath(outFile)+"\n")
 	writeScript(t, readyDir, "02_fail.sh", "#!/bin/sh\nexit 1\n")
-	writeScript(t, readyDir, "03_ok.sh", "#!/bin/sh\necho third >> "+outFile+"\n")
+	writeScript(t, readyDir, "03_ok.sh", "#!/bin/sh\necho third >> "+shellPath(outFile)+"\n")
 
 	runner := NewRunner([]string{base}, nil, 5*time.Second, zaptest.NewLogger(t))
 
@@ -97,13 +114,14 @@ func TestRun_failedScriptDoesNotBlockOthers(t *testing.T) {
 }
 
 func TestRun_nonShFilesSkipped(t *testing.T) {
+	requirePOSIXShell(t)
 	// Given: a ready.d directory with .sh and non-.sh files
 	base := t.TempDir()
 	readyDir := filepath.Join(base, "ready.d")
 	require.NoError(t, os.MkdirAll(readyDir, 0o755))
 
 	outFile := filepath.Join(t.TempDir(), "order.txt")
-	writeScript(t, readyDir, "01_run.sh", "#!/bin/sh\necho ran >> "+outFile+"\n")
+	writeScript(t, readyDir, "01_run.sh", "#!/bin/sh\necho ran >> "+shellPath(outFile)+"\n")
 	writeScript(t, readyDir, "02_skip.txt", "this is not a script\n")
 	writeScript(t, readyDir, "03_skip.py", "print('should not run')\n")
 
@@ -151,6 +169,7 @@ func TestRun_missingDirectory(t *testing.T) {
 }
 
 func TestRun_multipleDirs(t *testing.T) {
+	requirePOSIXShell(t)
 	// Given: two base directories, each with ready.d scripts
 	base1 := t.TempDir()
 	base2 := t.TempDir()
@@ -158,8 +177,8 @@ func TestRun_multipleDirs(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(base2, "ready.d"), 0o755))
 
 	outFile := filepath.Join(t.TempDir(), "order.txt")
-	writeScript(t, filepath.Join(base1, "ready.d"), "01_dir1.sh", "#!/bin/sh\necho dir1 >> "+outFile+"\n")
-	writeScript(t, filepath.Join(base2, "ready.d"), "01_dir2.sh", "#!/bin/sh\necho dir2 >> "+outFile+"\n")
+	writeScript(t, filepath.Join(base1, "ready.d"), "01_dir1.sh", "#!/bin/sh\necho dir1 >> "+shellPath(outFile)+"\n")
+	writeScript(t, filepath.Join(base2, "ready.d"), "01_dir2.sh", "#!/bin/sh\necho dir2 >> "+shellPath(outFile)+"\n")
 
 	runner := NewRunner([]string{base1, base2}, nil, 5*time.Second, zaptest.NewLogger(t))
 
@@ -173,13 +192,14 @@ func TestRun_multipleDirs(t *testing.T) {
 }
 
 func TestRun_envVarsPassed(t *testing.T) {
+	requirePOSIXShell(t)
 	// Given: a script that writes an env var to a file
 	base := t.TempDir()
 	readyDir := filepath.Join(base, "ready.d")
 	require.NoError(t, os.MkdirAll(readyDir, 0o755))
 
 	outFile := filepath.Join(t.TempDir(), "env.txt")
-	writeScript(t, readyDir, "01_env.sh", "#!/bin/sh\necho $AWS_ENDPOINT_URL >> "+outFile+"\n")
+	writeScript(t, readyDir, "01_env.sh", "#!/bin/sh\necho $AWS_ENDPOINT_URL >> "+shellPath(outFile)+"\n")
 
 	runner := NewRunner(
 		[]string{base},
@@ -223,6 +243,7 @@ func TestDiscover_populatesAllStages(t *testing.T) {
 }
 
 func TestStatus_afterRun(t *testing.T) {
+	requirePOSIXShell(t)
 	// Given: a ready.d with one script
 	base := t.TempDir()
 	readyDir := filepath.Join(base, "ready.d")
@@ -276,13 +297,17 @@ func TestParseStage_invalid(t *testing.T) {
 }
 
 func TestRun_timeout(t *testing.T) {
+	requirePOSIXShell(t)
 	// Given: a script that sleeps longer than the timeout, using a trap to
 	// ensure the sleep process is cleaned up when the shell is killed.
 	base := t.TempDir()
 	readyDir := filepath.Join(base, "ready.d")
 	require.NoError(t, os.MkdirAll(readyDir, 0o755))
 
-	writeScript(t, readyDir, "01_slow.sh", "#!/bin/sh\ntrap 'exit 0' TERM\nsleep 30 &\nwait\n")
+	// The sleep only has to outlive the 100ms timeout. Keep it short: on
+	// Windows there is no process-group kill, so the orphaned sleep holds an
+	// inherited stdout handle and `go test` waits for it before reporting.
+	writeScript(t, readyDir, "01_slow.sh", "#!/bin/sh\ntrap 'exit 0' TERM\nsleep 5 &\nwait\n")
 
 	runner := NewRunner([]string{base}, nil, 100*time.Millisecond, zaptest.NewLogger(t))
 

@@ -26,9 +26,9 @@ func AppSync(c *clients.Clients) ServiceGroup {
 			"GetSchemaCreationStatus": g.GetSchemaCreationStatus,
 			// appsync-api-keys
 			"appsync-api-keys:CreateApiKey": g.CreateApiKey,
-			"ListApiKeys":  g.ListApiKeys,
-			"UpdateApiKey": g.UpdateApiKey,
-			"DeleteApiKey": g.DeleteApiKey,
+			"ListApiKeys":                   g.ListApiKeys,
+			"UpdateApiKey":                  g.UpdateApiKey,
+			"DeleteApiKey":                  g.DeleteApiKey,
 			// appsync-datasources
 			"CreateDataSource": g.CreateDataSource,
 			"GetDataSource":    g.GetDataSource,

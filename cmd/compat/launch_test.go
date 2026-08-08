@@ -13,24 +13,27 @@ import (
 	"time"
 )
 
-// listenOn binds a throwaway listener and returns its port. The listener is
-// closed when the test ends.
+// listenOn binds a throwaway listener inside the scanner's own window and
+// returns its port. An ephemeral :0 port won't do: the Windows dynamic range
+// runs to 65535, so it can land at or above portScanLimit, where freePort has
+// no room left to scan above it and the tests built on this fixture flake.
+// The listener is closed when the test ends. Loopback only: a wildcard bind
+// makes Windows Firewall prompt for the test binary.
 func listenOn(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", ":0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
+	for port := defaultPortBase; port < portScanLimit; port++ {
+		if isReservedPort(port) {
+			continue
+		}
+		ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+		if err != nil {
+			continue // held by someone else — keep scanning
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		return port
 	}
-	t.Cleanup(func() { _ = ln.Close() })
-	_, portStr, err := net.SplitHostPort(ln.Addr().String())
-	if err != nil {
-		t.Fatalf("split host port: %v", err)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		t.Fatalf("atoi: %v", err)
-	}
-	return port
+	t.Fatal("no bindable port in the scan window")
+	return 0
 }
 
 func TestIsReservedPort(t *testing.T) {
@@ -132,7 +135,7 @@ func TestResolveListenAddrNormalisesBarePort(t *testing.T) {
 // freeEphemeral returns a port that was free a moment ago.
 func freeEphemeral(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", ":0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
