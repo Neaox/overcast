@@ -13,24 +13,19 @@ on:
       - compat/baseline.json
   pull_request:
     branches: [main]
-    # A pull request that changes only prose cannot change how an SDK talks to
-    # the emulator, and the suites are ~14 runner-minutes across nine jobs
-    # against live instances. GitHub skips the run only when *every* changed
-    # file matches, so a PR touching a doc and a handler still runs in full.
+    # Deliberately no `paths-ignore:` here. There used to be one, skipping
+    # prose-only pull requests, and its stated premise was that no compat check
+    # sat in the branch ruleset's required set. That premise is no longer true:
+    # "Aggregate Compatibility Results" is required now. `paths-ignore:` skips
+    # the *whole workflow*, so the required check never reported and the pull
+    # request waited on it forever — merging #719, a `tests/AGENTS.md`-only
+    # change, failed with `Required status check "Aggregate Compatibility
+    # Results" is expected.` and no Markdown-only change could land at all.
     #
-    # This is safe here specifically because no compat check is in the branch
-    # ruleset's required set — a required check that is filtered out never
-    # reports, and the pull request waits on it forever. Do not copy this block
-    # into test.yml, whose checks are required.
-    #
-    # Generated files are the reason the list can be this short: editing a
-    # published doc also regenerates internal/docssearch/index.gen.go and
-    # web/src/docs-index.gen.ts, neither of which is matched here, so a docs
-    # change that touches the index still runs the suites.
-    paths-ignore:
-      - "**.md"
-      - docs/**
-      - .changelog/**
+    # The `changes` job below buys the same saving without that failure mode:
+    # every job keeps its name and still reports, and only the expensive steps
+    # are conditional. The rule lives in scripts/ci-scope.py and is shared
+    # unchanged with test.yml, which gates its own required jobs this way.
   release:
     types: [created]
   workflow_dispatch:
@@ -49,6 +44,70 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Does this pull request need the suites at all?
+  #
+  # Same job, same script and same reasoning as test.yml's `changes` — read the
+  # long comment there and scripts/ci-scope.py's docstring for why this is a
+  # classifier rather than a `paths-ignore:` or a twin "skip" workflow. The
+  # short version: a required check that never reports blocks the pull request
+  # forever, and a twin workflow reports twice under one name on the mixed
+  # doc-plus-handler change.
+  #
+  # Two things differ from test.yml, both because `compat` and `aggregate` run
+  # under `if: always()` and so cannot be skip-cascaded by a failure here:
+  #
+  #   * the dependent jobs read `code != 'false'`, not `code == 'true'`. A
+  #     failed `changes` job leaves the output empty, and empty must mean "run
+  #     the suites" — skipping requires positive proof that the change is
+  #     prose. `ci-scope.py` already biases this way for every input it sees;
+  #     this keeps the bias when it never got to answer.
+  #   * `prepare-matrix` does not wait on this job, so it stays off the
+  #     critical path: its output feeds the `if:` guards on `compat` and
+  #     `aggregate`, which must hold whatever the changed paths are.
+  changes:
+    name: Changed-path scope
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # --paginate so a pull request over 100 files is classified on all of
+          # them; a truncated list could read as prose-only. On anything that is
+          # not a pull request — a push to main, a release, a manual dispatch —
+          # the script answers true before reading stdin.
+          #
+          # `|| true` is load-bearing, exactly as in test.yml: a hard failure
+          # here would decide the compat gate on a GitHub API blip. An empty
+          # list means "could not tell", which ci-scope.py answers with
+          # code=true: run everything.
+          files=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' || true)
+          fi
+          printf '%s\n' "$files" | python3 scripts/ci-scope.py >> "$GITHUB_OUTPUT"
+      - name: What was decided
+        env:
+          CODE: ${{ steps.scope.outputs.code }}
+        run: |
+          if [ "$CODE" = "true" ]; then
+            echo "Code changed — running the compat suites."
+          else
+            echo "Prose only — an SDK cannot talk to the emulator any differently."
+          fi
+
+  # Not gated: one python step, no checkout, and both `compat` and `aggregate`
+  # guard themselves on `needs.prepare-matrix.result == 'success'`, so this has
+  # to run and succeed even when there is nothing to test.
   prepare-matrix:
     name: Prepare suite matrix
     runs-on: ubuntu-latest
@@ -86,10 +145,15 @@ jobs:
           print(f"suites={json.dumps(suites)}")
           PY
 
+  # A job-level `if:` rather than the step-level gate the jobs below use: this
+  # job already skips itself whenever rust-sdk is not in the matrix, so it
+  # demonstrably reports nothing anyone waits on, and `compat` tolerates it
+  # being skipped (`if: always()` plus an explicit result test on the two jobs
+  # it does need).
   rust-sdk-image:
     name: Prepare rust-sdk compat image
-    needs: prepare-matrix
-    if: contains(needs.prepare-matrix.outputs.suites, '"rust-sdk"')
+    needs: [changes, prepare-matrix]
+    if: needs.changes.outputs.code != 'false' && contains(needs.prepare-matrix.outputs.suites, '"rust-sdk"')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -181,38 +245,52 @@ jobs:
 
   build-binaries:
     name: Build Overcast compat binaries
-    needs: prepare-matrix
+    needs: [changes, prepare-matrix]
     runs-on: ubuntu-latest
+    # Named once, read by every step below. `!= 'false'` and not `== 'true'`:
+    # see the note on the `changes` job — anything other than a definite "this
+    # is prose" runs the suites.
+    env:
+      RUN_SUITES: ${{ needs.changes.outputs.code != 'false' }}
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: env.RUN_SUITES == 'true'
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: env.RUN_SUITES == 'true'
         with:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
 
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        if: env.RUN_SUITES == 'true'
         with:
           package_json_file: web/package.json
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: env.RUN_SUITES == 'true'
         with:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Build web assets
+        if: env.RUN_SUITES == 'true'
         run: pnpm install --frozen-lockfile && VITE_BUNDLED=true pnpm run build
         working-directory: web
 
       - name: Build binaries
+        if: env.RUN_SUITES == 'true'
         run: |
           mkdir -p bin
           go build -o bin/overcast ./cmd/overcast
           go build -o bin/compat ./cmd/compat
 
+      # if-no-files-found: error below is why this needs the gate rather than
+      # relying on an empty bin/ being harmless.
       - name: Upload binaries
+        if: env.RUN_SUITES == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: overcast-compat-binaries-${{ github.sha }}
@@ -225,11 +303,17 @@ jobs:
   compat:
     name: Compatibility Tests (${{ matrix.suite }})
     needs:
+      - changes
       - prepare-matrix
       - build-binaries
       - rust-sdk-image
     if: always() && needs.prepare-matrix.result == 'success' && needs.build-binaries.result == 'success'
     runs-on: ubuntu-latest
+    # The job keeps its name and still reports; only the steps are conditional.
+    # A gated-off build-binaries still concludes `success`, so the guard above
+    # is unaffected.
+    env:
+      RUN_SUITES: ${{ needs.changes.outputs.code != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -237,20 +321,24 @@ jobs:
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: env.RUN_SUITES == 'true'
 
       - name: Download binaries
+        if: env.RUN_SUITES == 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: overcast-compat-binaries-${{ github.sha }}
           path: bin
 
       - name: Make binaries executable
+        if: env.RUN_SUITES == 'true'
         run: chmod +x bin/overcast bin/compat
 
       # Must precede the Lambda runtime pre-pull below and every suite image:
       # this restarts the Docker daemon, so anything already running would be
       # torn down with it.
       - uses: ./.github/actions/docker-hub-mirror
+        if: env.RUN_SUITES == 'true'
 
       # ECS task definitions intentionally use the public-ECR nginx reference,
       # but Docker daemon registry mirrors only apply to Docker Hub. Seed a
@@ -259,12 +347,13 @@ jobs:
       # contents. ImagePuller still tries the configured reference, then safely
       # falls back to this local copy when public ECR throttles the request.
       - name: Pre-pull the ECS task image through the Docker Hub mirror
+        if: env.RUN_SUITES == 'true'
         run: |
           docker pull --quiet nginx:latest
           docker tag nginx:latest public.ecr.aws/nginx/nginx:latest
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        if: contains(fromJson('["go-sdk", "cli"]'), matrix.suite)
+        if: env.RUN_SUITES == 'true' && contains(fromJson('["go-sdk", "cli"]'), matrix.suite)
         with:
           go-version-file: go.mod
           cache: true
@@ -273,7 +362,7 @@ jobs:
             compat/suites/go-sdk/go.sum
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        if: contains(fromJson('["node-js-sdk", "cdk"]'), matrix.suite)
+        if: env.RUN_SUITES == 'true' && contains(fromJson('["node-js-sdk", "cdk"]'), matrix.suite)
         with:
           node-version: "24"
           cache: npm
@@ -282,29 +371,29 @@ jobs:
             compat/suites/cdk/package-lock.json
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        if: matrix.suite == 'python-sdk'
+        if: env.RUN_SUITES == 'true' && matrix.suite == 'python-sdk'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: compat/suites/python-sdk/requirements.txt
 
       - name: Install Node.js deps (node-js-sdk)
-        if: matrix.suite == 'node-js-sdk'
+        if: env.RUN_SUITES == 'true' && matrix.suite == 'node-js-sdk'
         run: npm ci
         working-directory: compat/suites/node-js-sdk
 
       - name: Install Node.js deps (cdk)
-        if: matrix.suite == 'cdk'
+        if: env.RUN_SUITES == 'true' && matrix.suite == 'cdk'
         run: npm ci
         working-directory: compat/suites/cdk
 
       - name: Type check cdk suite
-        if: matrix.suite == 'cdk'
+        if: env.RUN_SUITES == 'true' && matrix.suite == 'cdk'
         run: npm run typecheck
         working-directory: compat/suites/cdk
 
       - name: Install Python deps (python-sdk)
-        if: matrix.suite == 'python-sdk'
+        if: env.RUN_SUITES == 'true' && matrix.suite == 'python-sdk'
         run: pip install --quiet -r requirements.txt
         working-directory: compat/suites/python-sdk
 
@@ -318,6 +407,7 @@ jobs:
       # python pre-pull, cli/lambda-invoke's function sat in Pending behind a
       # cold pull for its whole invoke sequence (the R7 InvokeDryRun failure).
       - name: Pre-pull the Lambda runtime images
+        if: env.RUN_SUITES == 'true'
         run: |
           docker pull --quiet public.ecr.aws/lambda/nodejs:20 || true
           docker pull --quiet public.ecr.aws/lambda/python:3.12 || true
@@ -331,6 +421,7 @@ jobs:
       # all — issue #614 covers both getting compat back to live mode and the
       # Go-side integration test that should have been guarding it regardless.
       - name: Start Overcast
+        if: env.RUN_SUITES == 'true'
         run: |
           OVERCAST_PORT=4566 \
           OVERCAST_STATE=memory \
@@ -340,6 +431,7 @@ jobs:
           echo "OVERCAST_PID=$!" >> "$GITHUB_ENV"
 
       - name: Wait for Overcast to become healthy
+        if: env.RUN_SUITES == 'true'
         run: |
           for i in $(seq 1 30); do
             if curl -sf http://localhost:4566/_health > /dev/null; then
@@ -356,6 +448,7 @@ jobs:
       # entirely — the emulator answered from its stub and nothing noticed. It
       # stays available as a local opt-out for machines without a daemon.
       - name: Run compat suite
+        if: env.RUN_SUITES == 'true'
         env:
           OVERCAST_ENDPOINT: http://localhost:4566
           OVERCAST_COMPAT_RESULTS_FILE: compat-results-${{ matrix.suite }}.json
@@ -367,7 +460,7 @@ jobs:
             --results-file "compat-results-${{ matrix.suite }}.json"
 
       - name: Stop Overcast
-        if: always()
+        if: always() && env.RUN_SUITES == 'true'
         run: |
           if [[ -n "${OVERCAST_PID:-}" ]]; then
             kill "$OVERCAST_PID" 2>/dev/null || true
@@ -375,20 +468,36 @@ jobs:
 
       - name: Upload suite compat results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
+        if: always() && env.RUN_SUITES == 'true'
         with:
           name: compat-results-${{ matrix.suite }}-${{ github.sha }}
           path: compat-results-${{ matrix.suite }}.json
           if-no-files-found: error
           retention-days: 90
 
+  # This job's name is a required status check on main, which is what makes the
+  # shape below mandatory rather than stylistic: it must run, and report, on
+  # every pull request — including one that changed nothing worth testing. So
+  # the job is unconditional and its whole body is gated, and when there is
+  # nothing to aggregate it says so and succeeds. Nothing here runs against an
+  # empty result set: the download would match no artifact and --merge-results
+  # would be handed zero files, both of which fail.
+  #
+  # The baseline-promotion steps are the exception and deliberately carry no
+  # gate. They only ever run on a push to main, where the classifier answers
+  # true unconditionally, and each is already chained on a step output or
+  # outcome that a skipped predecessor cannot produce — so they are inert here
+  # without a fourth condition to keep in sync.
   aggregate:
     name: Aggregate Compatibility Results
     needs:
+      - changes
       - prepare-matrix
       - compat
     if: always() && needs.prepare-matrix.result == 'success'
     runs-on: ubuntu-latest
+    env:
+      RUN_SUITES: ${{ needs.changes.outputs.code != 'false' }}
     permissions:
       # contents: write — the baseline-promotion commit on main.
       # pull-requests: write — the sticky digest comment.
@@ -398,7 +507,14 @@ jobs:
       checks: write
 
     steps:
+      - name: Nothing to aggregate
+        if: env.RUN_SUITES != 'true'
+        run: |
+          echo "Prose-only pull request: no suite ran, so there are no results" \
+               "to merge and no baseline to compare. Reporting success."
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: env.RUN_SUITES == 'true'
 
       # The two lint steps below compare this PR's compat files against the
       # base revision, which the shallow checkout above (fetch-depth 1, the
@@ -416,7 +532,7 @@ jobs:
       # cannot pass one run and fail the next because main moved underneath it
       # — and so the lint agrees with the diff a reviewer sees on the PR.
       - name: Check out base compat files
-        if: github.event_name == 'pull_request'
+        if: env.RUN_SUITES == 'true' && github.event_name == 'pull_request'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.base.sha }}
@@ -424,12 +540,14 @@ jobs:
           sparse-checkout: compat
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: env.RUN_SUITES == 'true'
         with:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
 
       - name: Download suite results
+        if: env.RUN_SUITES == 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: compat-results-*-${{ github.sha }}
@@ -437,6 +555,7 @@ jobs:
           merge-multiple: true
 
       - name: Merge suite results
+        if: env.RUN_SUITES == 'true'
         run: |
           go run ./cmd/compat \
             --merge-results "compat-results/compat-results-*.json" \
@@ -449,6 +568,7 @@ jobs:
       # re-asserted in "Enforce compat gates" at the end of the job.
       - name: Compare compat baseline
         id: baseline
+        if: env.RUN_SUITES == 'true'
         continue-on-error: true
         run: |
           go run ./cmd/compat \
@@ -470,6 +590,7 @@ jobs:
       # render them from baseline-regressions.txt.
       - name: Enforce zero compat failures
         id: failures
+        if: env.RUN_SUITES == 'true'
         continue-on-error: true
         run: |
           go run ./cmd/compat \
@@ -478,6 +599,7 @@ jobs:
 
       - name: Check cross-suite parity
         id: parity
+        if: env.RUN_SUITES == 'true'
         continue-on-error: true
         run: |
           go run ./cmd/compat \
@@ -487,9 +609,13 @@ jobs:
             --results-file compat-results.json \
             2>parity-issues.txt
 
+      # Gating this lint and the flaky one below is safe for the same reason the
+      # whole gate is: compat/baseline.json and compat/flaky.json are not prose,
+      # so a pull request that edits either classifies as code and is linted
+      # exactly as today.
       - name: Lint compat baseline changes
         id: baseline-lint
-        if: github.event_name == 'pull_request'
+        if: env.RUN_SUITES == 'true' && github.event_name == 'pull_request'
         continue-on-error: true
         run: |
           if [[ -f base/compat/baseline.json ]]; then
@@ -511,7 +637,7 @@ jobs:
       # entries, still fail.
       - name: Lint compat flaky list changes
         id: flaky-lint
-        if: github.event_name == 'pull_request'
+        if: env.RUN_SUITES == 'true' && github.event_name == 'pull_request'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -536,11 +662,11 @@ jobs:
       # Regressions become JUnit failures; grandfathered gaps become skips, so
       # the check run shows what changed rather than 800 expected gaps.
       - name: Build compat report
-        if: always()
+        if: always() && env.RUN_SUITES == 'true'
         run: python3 scripts/compat-report.py
 
       - name: Publish JUnit check run
-        if: always() && hashFiles('compat-junit.xml') != ''
+        if: always() && env.RUN_SUITES == 'true' && hashFiles('compat-junit.xml') != ''
         uses: mikepenz/action-junit-report@65fe03598d8d251738592a497a9e8547a5c48eaa # v5.6.0
         with:
           report_paths: compat-junit.xml
@@ -554,7 +680,7 @@ jobs:
           annotate_only: true
 
       - name: Comment compat digest on the PR
-        if: always() && github.event_name == 'pull_request' && hashFiles('compat-comment.md') != ''
+        if: always() && env.RUN_SUITES == 'true' && github.event_name == 'pull_request' && hashFiles('compat-comment.md') != ''
         uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
         with:
           header: compat-results
@@ -563,7 +689,7 @@ jobs:
 
       - name: Upload merged compat results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
+        if: always() && env.RUN_SUITES == 'true'
         with:
           name: compat-results-${{ github.sha }}
           path: |
@@ -573,7 +699,7 @@ jobs:
           retention-days: 90
 
       - name: Attach results to release
-        if: github.event_name == 'release'
+        if: env.RUN_SUITES == 'true' && github.event_name == 'release'
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: compat-results.json
@@ -677,9 +803,10 @@ jobs:
           fi
 
       # continue-on-error above kept the surfacing steps running; the gates are
-      # asserted here so the job's conclusion reflects them.
+      # asserted here so the job's conclusion reflects them. Unchanged whenever
+      # the suites ran — every gate is read exactly as before.
       - name: Enforce compat gates
-        if: always()
+        if: always() && env.RUN_SUITES == 'true'
         run: |
           failed=0
           if [[ "${{ steps.baseline.outcome }}" == "failure" ]]; then
