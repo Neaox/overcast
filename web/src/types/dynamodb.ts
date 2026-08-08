@@ -39,6 +39,11 @@ export interface DynamoTable {
   keySchema: DynamoKeySchema[]
   attributeDefinitions: DynamoAttrDef[]
   billingMode: string
+  /** Present only for PROVISIONED tables — on-demand tables carry no capacity. */
+  provisionedThroughput?: {
+    readCapacityUnits: number
+    writeCapacityUnits: number
+  }
   creationDateTime: string
   globalSecondaryIndexes: DynamoGSI[]
   localSecondaryIndexes: DynamoGSI[]

@@ -2411,6 +2411,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Streams interoperability",
         "id": "streams-interoperability"
+      },
+      {
+        "depth": 3,
+        "text": "Global tables",
+        "id": "global-tables"
       }
     ]
   },

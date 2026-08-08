@@ -79,6 +79,7 @@ import (
 	"github.com/Neaox/overcast/internal/services/sts"
 	"github.com/Neaox/overcast/internal/services/transfer"
 	"github.com/Neaox/overcast/internal/services/waf"
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/smtp"
 	"github.com/Neaox/overcast/internal/state"
 	"github.com/Neaox/overcast/internal/trace"
@@ -1191,25 +1192,12 @@ func testOnlyAbsentHandler(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSONError(w, r, protocol.ErrNotImplemented)
 }
 
+// writeNotImplemented answers a modeled operation no service handler claimed.
+// The envelope choice lives in serviceutil so a service dispatching its own
+// operations refuses an unimplemented one identically — see
+// serviceutil.NotImplementedTarget.
 func writeNotImplemented(w http.ResponseWriter, r *http.Request, claim awsapi.Claim) {
-	switch claim.ErrorProfile {
-	case awsapi.ErrorProfileJSON:
-		protocol.NotImplementedJSON(w, r)
-	case awsapi.ErrorProfileEC2QueryXML:
-		protocol.NotImplementedEC2QueryXML(w, r)
-	case awsapi.ErrorProfileQueryXML:
-		protocol.NotImplementedQueryXML(w, r)
-	case awsapi.ErrorProfileXML:
-		protocol.NotImplementedXML(w, r)
-	case awsapi.ErrorProfileRPCV2CBOR:
-		codec.RPCv2CBOR.WriteError(w, r, protocol.ErrNotImplemented)
-	case awsapi.ErrorProfileRPCV2JSON:
-		codec.RPCv2JSON.WriteError(w, r, protocol.ErrNotImplemented)
-	default:
-		// Keep a JSON fallback for a malformed zero-value Claim while every
-		// declared ErrorProfile remains explicit for exhaustive checking.
-		protocol.NotImplementedJSON(w, r)
-	}
+	serviceutil.WriteNotImplemented(w, r, claim)
 }
 
 // restFallback owns no AWS operation itself. It is deliberately registered

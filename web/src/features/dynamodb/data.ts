@@ -85,6 +85,8 @@ export function createTableMutationOptions() {
       sortKeyName?: string
       sortKeyType?: "S" | "N" | "B"
       billingMode?: "PAY_PER_REQUEST" | "PROVISIONED"
+      readCapacityUnits?: number
+      writeCapacityUnits?: number
     }) => dynamodb.createTable(opts),
   })
 }

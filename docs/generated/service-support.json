@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1399,
+  "total_ops": 1405,
   "services": [
     {
       "service": "s3",
@@ -431,14 +431,14 @@
     {
       "service": "dynamodb",
       "display_name": "DynamoDB",
-      "total_ops": 22,
+      "total_ops": 28,
       "implemented_ops": 21,
       "operations": [
         {
           "operation": "CreateTable",
           "category": "Table management",
           "status": "✅ Supported",
-          "notes": "Includes GSI/LSI definitions"
+          "notes": "Includes GSI/LSI definitions; an omitted `BillingMode` defaults to `PROVISIONED`, which requires `ProvisionedThroughput` on the table and on every GSI, while `PAY_PER_REQUEST` rejects it"
         },
         {
           "operation": "DeleteTable",
@@ -564,6 +564,54 @@
           "category": "Table management",
           "status": "❌ Unsupported",
           "docs_url": "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_RestoreTableFromBackup.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "CreateGlobalTable",
+          "category": "Global tables",
+          "status": "❌ Unsupported",
+          "notes": "Overcast emulates a single region",
+          "docs_url": "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateGlobalTable.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "DescribeGlobalTable",
+          "category": "Global tables",
+          "status": "❌ Unsupported",
+          "notes": "Overcast emulates a single region",
+          "docs_url": "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeGlobalTable.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "DescribeGlobalTableSettings",
+          "category": "Global tables",
+          "status": "❌ Unsupported",
+          "notes": "Overcast emulates a single region",
+          "docs_url": "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeGlobalTableSettings.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "ListGlobalTables",
+          "category": "Global tables",
+          "status": "❌ Unsupported",
+          "notes": "Overcast emulates a single region",
+          "docs_url": "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListGlobalTables.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "UpdateGlobalTable",
+          "category": "Global tables",
+          "status": "❌ Unsupported",
+          "notes": "Overcast emulates a single region",
+          "docs_url": "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTable.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "UpdateGlobalTableSettings",
+          "category": "Global tables",
+          "status": "❌ Unsupported",
+          "notes": "Overcast emulates a single region",
+          "docs_url": "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTableSettings.html)",
           "doc_only": true
         }
       ]

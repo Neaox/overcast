@@ -317,6 +317,13 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 		fn(cw, r)
 		return
 	}
+	// A DynamoDB operation AWS models but Overcast has not implemented is
+	// refused as not implemented, not as unknown. The operation list comes from
+	// the generated AWS registry, so it never drifts from the models.
+	if serviceutil.NotImplementedTarget(cw, r, r.Header.Get("X-Amz-Target")) {
+		return
+	}
+	// A target naming no modeled operation keeps AWS's unknown-operation error.
 	protocol.WriteJSONError(cw, r, &protocol.AWSError{
 		Code:       "UnknownOperationException",
 		Message:    "Unknown operation: " + target,

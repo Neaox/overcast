@@ -1292,12 +1292,16 @@ func TestListTables_returnsAll(t *testing.T) {
 func TestUpdateTable_BillingMode(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
-	// Create table with PROVISIONED billing mode.
+	// Create table with PROVISIONED billing mode. AWS requires throughput with it.
 	resp := ddbCall(t, srv, "CreateTable", map[string]any{
 		"TableName":            "billing-test",
 		"AttributeDefinitions": []map[string]any{{"AttributeName": "id", "AttributeType": "S"}},
 		"KeySchema":            []map[string]any{{"AttributeName": "id", "KeyType": "HASH"}},
 		"BillingMode":          "PROVISIONED",
+		"ProvisionedThroughput": map[string]any{
+			"ReadCapacityUnits":  5,
+			"WriteCapacityUnits": 5,
+		},
 	})
 	resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)

@@ -7,7 +7,7 @@ import "github.com/Neaox/overcast/internal/capabilities"
 func init() {
 	capabilities.Default.Register(
 		// Table management
-		capabilities.Capability{Service: "dynamodb", Operation: "CreateTable", Category: "Table management", Status: capabilities.StatusSupported, Notes: "Includes GSI/LSI definitions"},
+		capabilities.Capability{Service: "dynamodb", Operation: "CreateTable", Category: "Table management", Status: capabilities.StatusSupported, Notes: "Includes GSI/LSI definitions; an omitted `BillingMode` defaults to `PROVISIONED`, which requires `ProvisionedThroughput` on the table and on every GSI, while `PAY_PER_REQUEST` rejects it"},
 		capabilities.Capability{Service: "dynamodb", Operation: "DeleteTable", Category: "Table management", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "dynamodb", Operation: "DescribeTable", Category: "Table management", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "dynamodb", Operation: "ListTables", Category: "Table management", Status: capabilities.StatusSupported, Notes: "Limit (default/max 100) and ExclusiveStartTableName honored; LastEvaluatedTableName echoed when more tables remain"},
@@ -38,5 +38,20 @@ func init() {
 			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_streams_GetShardIterator.html)"},
 		capabilities.Capability{Service: "dynamodb", Operation: "RestoreTableFromBackup", Category: "Table management", Status: capabilities.StatusUnsupported, DocOnly: true,
 			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_RestoreTableFromBackup.html)"},
+		// Global tables are modeled by AWS, so they answer 501 rather than
+		// UnknownOperationException — see the Known limitations section of
+		// docs/services/dynamodb.md.
+		capabilities.Capability{Service: "dynamodb", Operation: "CreateGlobalTable", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateGlobalTable.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "DescribeGlobalTable", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeGlobalTable.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "DescribeGlobalTableSettings", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeGlobalTableSettings.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "ListGlobalTables", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListGlobalTables.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "UpdateGlobalTable", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTable.html)"},
+		capabilities.Capability{Service: "dynamodb", Operation: "UpdateGlobalTableSettings", Category: "Global tables", Status: capabilities.StatusUnsupported, Notes: "Overcast emulates a single region", DocOnly: true,
+			DocsURL: "[docs](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateGlobalTableSettings.html)"},
 	)
 }

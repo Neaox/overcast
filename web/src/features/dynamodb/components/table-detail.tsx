@@ -824,6 +824,15 @@ export function TableDetail({ tableName }: Props) {
             <DefinitionList className="gap-y-2 rounded-md border border-border bg-bg-muted p-4">
               <Definition label="Status" value={table.tableStatus} />
               <Definition label="Billing mode" value={table.billingMode} />
+              {/* On-demand tables have no provisioned capacity to report. */}
+              <Definition
+                label="Capacity"
+                value={
+                  table.provisionedThroughput
+                    ? `${table.provisionedThroughput.readCapacityUnits.toLocaleString()} RCU / ${table.provisionedThroughput.writeCapacityUnits.toLocaleString()} WCU`
+                    : "On-demand"
+                }
+              />
               <Definition
                 label="Created"
                 value={
