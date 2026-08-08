@@ -22,13 +22,27 @@ export type PutCodePayload =
 
 // ── BFF-only types (emulator endpoints, not AWS SDK) ───────────────────────
 
+/**
+ * One entry of the emulator's Lambda runtime catalog (`GET /_lambda/runtimes`).
+ *
+ * The backend derives every field from the same table CreateFunction validates
+ * against, so `supported` and `createBlocked` are authoritative: an unsupported
+ * runtime answers 501 and a create-blocked one answers 400. Never hand-maintain
+ * a runtime list in the UI — offer what this endpoint reports.
+ */
 export interface LambdaRuntimeInfo {
   id: string
   name: string
   family: string
   defaultHandler: string
   imageUri?: string
+  /** AWS has ended support. Still deployable until `createBlocked`. */
   deprecated: boolean
+  /** AWS refuses CreateFunction for this runtime. */
+  createBlocked: boolean
+  /** AWS refuses UpdateFunctionConfiguration for this runtime. */
+  updateBlocked: boolean
+  /** Overcast has an execution image for this runtime. */
   supported: boolean
 }
 
