@@ -155,6 +155,13 @@ type runtimeDoneMetrics struct {
 // platformRuntimeDoneRecord reports that the runtime finished the invocation.
 // It replaces the plain text END line, and carries the status and response size
 // that END has nowhere to put.
+//
+// ErrorType is modeled but never set. AWS puts one of its own error-type names
+// there (Runtime.ExitError, Sandbox.Timedout and so on); Overcast knows the
+// invocation failed but not which of those AWS would have chosen, and an
+// invented name is worse than an absent optional field.
+//
+// TODO(priority:P3): populate errorType on Lambda platform.runtimeDone and platform.report records for failed invocations
 type platformRuntimeDoneRecord struct {
 	RequestID string              `json:"requestId"`
 	Status    string              `json:"status"`

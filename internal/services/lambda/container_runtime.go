@@ -1544,25 +1544,13 @@ func (ci *containerInstance) currentMemoryMB() int {
 	return int(bytes / (1024 * 1024))
 }
 
-// initDurationField returns the "\tInit Duration: X.XX ms" REPORT field for
-// the invocation that triggered this environment's init, and "" thereafter.
-// Real Lambda appends Init Duration only to the REPORT line of the cold-start
-// invocation; warm invokes and proactively initialised (provisioned)
-// environments omit it. The duration runs from container start to the RIC's
-// first GET /next — the same signal that drives readiness and the INIT-burst
-// throttle — so an environment whose RIC never polled (init failure) reports
-// nothing.
-func (ci *containerInstance) initDurationField() string {
-	initDur, ok := ci.takeInitDuration()
-	if !ok {
-		return ""
-	}
-	return fmt.Sprintf("\tInit Duration: %.2f ms", durationMillis(initDur))
-}
-
 // takeInitDuration returns how long this environment's initialization took, and
 // consumes the right to report it: only the first REPORT of an on-demand cold
-// start carries Init Duration, exactly as on AWS.
+// start carries Init Duration, exactly as on AWS. Warm invokes and proactively
+// initialised (provisioned) environments report nothing, and neither does an
+// environment whose RIC never polled (init failure) — the duration runs from
+// container start to the RIC's first GET /next, the same signal that drives
+// readiness and the INIT-burst throttle.
 func (ci *containerInstance) takeInitDuration() (time.Duration, bool) {
 	if ci.initReported || ci.initStartedAt.IsZero() {
 		return 0, false

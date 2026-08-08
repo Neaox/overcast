@@ -199,3 +199,49 @@ func TestResolvedLoggingConfigDefaults(t *testing.T) {
 		t.Errorf("resolveLogLevels(JSON, set) = (%v, %v), want (ERROR, WARN)", app, sys)
 	}
 }
+
+func TestFunctionInstanceIdentity_changesWithLoggingConfig(t *testing.T) {
+	// Given: a function configured for JSON logging at explicit levels. The
+	// three settings reach the container as AWS_LAMBDA_LOG_FORMAT and
+	// AWS_LAMBDA_LOG_LEVEL, and a process exec'd with the old values can never
+	// observe the new ones — so each has to move the execution environment's
+	// fingerprint and retire the warm containers baked with it.
+	base := &Function{
+		Name:                "fn",
+		Runtime:             "nodejs22.x",
+		Handler:             "index.handler",
+		Timeout:             3,
+		MemorySize:          128,
+		LogFormat:           logFormatJSON,
+		ApplicationLogLevel: "INFO",
+		SystemLogLevel:      "INFO",
+	}
+	baseID := functionInstanceIdentity(base)
+
+	// When/Then: changing any of them produces a different identity.
+	for _, tc := range []struct {
+		name  string
+		apply func(fn *Function)
+	}{
+		{"log format to text", func(fn *Function) { fn.LogFormat = logFormatText }},
+		{"application log level", func(fn *Function) { fn.ApplicationLogLevel = "ERROR" }},
+		{"system log level", func(fn *Function) { fn.SystemLogLevel = "DEBUG" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := *base
+			tc.apply(&mutated)
+			if got := functionInstanceIdentity(&mutated); got == baseID {
+				t.Fatalf("identity unchanged after %s change — a warm container would keep serving the old environment", tc.name)
+			}
+		})
+	}
+
+	// And: an unset level is AWS's INFO, so a configuration that only spells
+	// the defaults out is the same environment. Otherwise reading a function
+	// back and writing it again unchanged would cost a cold start.
+	implicit := *base
+	implicit.ApplicationLogLevel, implicit.SystemLogLevel = "", ""
+	if got := functionInstanceIdentity(&implicit); got != baseID {
+		t.Fatal("identity changed when the default levels were spelled out — a pointless cold start")
+	}
+}
