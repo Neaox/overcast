@@ -6,6 +6,8 @@ import {
   DeleteBucketCommand,
   HeadBucketCommand,
   ListObjectsV2Command,
+  ListObjectVersionsCommand,
+  GetBucketVersioningCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
@@ -23,6 +25,8 @@ import type {
   S3Bucket,
   S3ObjectMetadata,
   ListObjectsResult,
+  ListObjectVersionsResult,
+  S3VersioningStatus,
   NotificationFilterRule,
   BucketNotificationConfig,
   BucketLifecycleConfiguration,
@@ -107,26 +111,42 @@ export const s3 = {
 
   deleteBucket: async (name: string) => {
     const client = awsClients.s3()
-    // Drain all objects first so the backend's "bucket must be empty" check passes.
-    let token: string | undefined
+    // Drain the bucket first so the backend's "bucket must be empty" check
+    // passes. This walks ListObjectVersions rather than ListObjectsV2 and
+    // deletes each entry by version id: in a versioned bucket a plain delete
+    // adds a delete marker instead of removing anything, so a ListObjectsV2
+    // drain loops forever without ever emptying the bucket. An unversioned
+    // bucket reports one "null" version per key and behaves identically.
+    let keyMarker: string | undefined
+    let versionIdMarker: string | undefined
     do {
       const list = await client.send(
-        new ListObjectsV2Command({ Bucket: name, MaxKeys: 1000, ContinuationToken: token }),
+        new ListObjectVersionsCommand({
+          Bucket: name,
+          MaxKeys: 1000,
+          KeyMarker: keyMarker,
+          VersionIdMarker: versionIdMarker,
+        }),
       )
-      const keys = (list.Contents ?? []).map((o) => o.Key).filter(Boolean) as string[]
-      if (keys.length > 0) {
+      const targets = [...(list.Versions ?? []), ...(list.DeleteMarkers ?? [])]
+        .filter((v) => v.Key)
+        .map((v) => ({ Key: v.Key as string, VersionId: v.VersionId }))
+      if (targets.length > 0) {
         await client.send(
-          new DeleteObjectsCommand({
-            Bucket: name,
-            Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
-          }),
+          new DeleteObjectsCommand({ Bucket: name, Delete: { Objects: targets, Quiet: true } }),
         )
       }
-      token = list.IsTruncated ? list.NextContinuationToken : undefined
-    } while (token)
+      keyMarker = list.IsTruncated ? list.NextKeyMarker : undefined
+      versionIdMarker = list.IsTruncated ? list.NextVersionIdMarker : undefined
+    } while (keyMarker)
 
     await client.send(new DeleteBucketCommand({ Bucket: name }))
     return { ok: true }
+  },
+
+  getBucketVersioning: async (bucket: string): Promise<S3VersioningStatus> => {
+    const res = await awsClients.s3().send(new GetBucketVersioningCommand({ Bucket: bucket }))
+    return res.Status ?? ""
   },
 
   headBucket: async (name: string) => {
@@ -164,6 +184,73 @@ export const s3 = {
       isTruncated: res.IsTruncated ?? false,
       nextContinuationToken: res.NextContinuationToken,
     } as ListObjectsResult
+  },
+
+  /**
+   * Lists every version and delete marker under a prefix, in AWS's order:
+   * keys ascending, then most recently stored first.
+   */
+  listObjectVersions: async (
+    bucket: string,
+    opts: {
+      prefix?: string
+      delimiter?: string
+      maxKeys?: number
+      keyMarker?: string
+      versionIdMarker?: string
+    } = {},
+  ): Promise<ListObjectVersionsResult> => {
+    const res = await awsClients.s3().send(
+      new ListObjectVersionsCommand({
+        Bucket: bucket,
+        Prefix: opts.prefix || undefined,
+        Delimiter: opts.delimiter ?? "/",
+        MaxKeys: opts.maxKeys ?? 200,
+        KeyMarker: opts.keyMarker || undefined,
+        VersionIdMarker: opts.versionIdMarker || undefined,
+      }),
+    )
+    const versions = (res.Versions ?? []).map((v) => ({
+      key: v.Key ?? "",
+      versionId: v.VersionId ?? "null",
+      isLatest: v.IsLatest ?? false,
+      isDeleteMarker: false,
+      lastModified: v.LastModified?.toISOString() ?? "",
+      size: v.Size ?? 0,
+      etag: (v.ETag ?? "").replace(/"/g, ""),
+      storageClass: v.StorageClass ?? "STANDARD",
+    }))
+    const markers = (res.DeleteMarkers ?? []).map((m) => ({
+      key: m.Key ?? "",
+      versionId: m.VersionId ?? "null",
+      isLatest: m.IsLatest ?? false,
+      isDeleteMarker: true,
+      lastModified: m.LastModified?.toISOString() ?? "",
+      size: 0,
+      etag: "",
+      storageClass: "",
+    }))
+    // The SDK splits the interleaved response into two arrays, so the wire
+    // order has to be rebuilt: key ascending, then newest first. Version ids
+    // sort that way already for versions Overcast minted, but "null" does not,
+    // so the timestamp is the tiebreaker that works for both.
+    const all = [...versions, ...markers].sort(
+      (a, b) => a.key.localeCompare(b.key) || b.lastModified.localeCompare(a.lastModified),
+    )
+    return {
+      versions: all,
+      prefixes: (res.CommonPrefixes ?? []).map((p) => ({ prefix: p.Prefix ?? "" })),
+      isTruncated: res.IsTruncated ?? false,
+      nextKeyMarker: res.NextKeyMarker,
+      nextVersionIdMarker: res.NextVersionIdMarker,
+    }
+  },
+
+  deleteObjectVersion: async (bucket: string, key: string, versionId: string) => {
+    await awsClients
+      .s3()
+      .send(new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId: versionId }))
+    return { ok: true }
   },
 
   getObjectMetadata: async (bucket: string, key: string): Promise<S3ObjectMetadata> => {
