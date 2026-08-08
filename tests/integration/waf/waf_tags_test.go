@@ -83,6 +83,83 @@ func TestWAFTagResource_sdkListShape(t *testing.T) {
 	}
 }
 
+// TestWAFCreateWebACL_sdkTagListShape sends CreateWebACL with Tags in the
+// exact shape the WAFv2 SDK produces — a list of {Key,Value} structs — and
+// expects the tags to land on the resource.
+func TestWAFCreateWebACL_sdkTagListShape(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateWebACL is called with SDK list-shaped Tags
+	resp := wafCall(t, srv, "CreateWebACL", map[string]any{
+		"Name":          "create-tags-acl",
+		"Scope":         "REGIONAL",
+		"DefaultAction": map[string]any{"Allow": map[string]any{}},
+		"VisibilityConfig": map[string]any{
+			"SampledRequestsEnabled":   false,
+			"CloudWatchMetricsEnabled": false,
+			"MetricName":               "create-tags-acl",
+		},
+		"Rules": []any{},
+		"Tags": []wafTagPair{
+			{Key: "env", Value: "prod"},
+			{Key: "team", Value: "security"},
+		},
+	})
+	defer resp.Body.Close()
+
+	// Then: the call succeeds and the tags are visible via ListTagsForResource
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Summary struct {
+			ARN string `json:"ARN"`
+		} `json:"Summary"`
+	}
+	helpers.DecodeJSON(t, resp, &out)
+
+	listResp := wafCall(t, srv, "ListTagsForResource", map[string]any{"ResourceARN": out.Summary.ARN})
+	defer listResp.Body.Close()
+	helpers.AssertStatus(t, listResp, http.StatusOK)
+	var list struct {
+		TagInfoForResource struct {
+			TagList []wafTagPair `json:"TagList"`
+		} `json:"TagInfoForResource"`
+	}
+	helpers.DecodeJSON(t, listResp, &list)
+	got := map[string]string{}
+	for _, p := range list.TagInfoForResource.TagList {
+		got[p.Key] = p.Value
+	}
+	if got["env"] != "prod" || got["team"] != "security" {
+		t.Errorf("TagList after create: got %v, want env=prod team=security", got)
+	}
+}
+
+// TestWAFCreateWebACL_invalidTagRejected confirms create-time tags go through
+// tag validation: reserved aws: key prefixes are rejected as on real WAFv2.
+func TestWAFCreateWebACL_invalidTagRejected(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateWebACL carries a tag with the reserved aws: key prefix
+	resp := wafCall(t, srv, "CreateWebACL", map[string]any{
+		"Name":          "bad-tag-acl",
+		"Scope":         "REGIONAL",
+		"DefaultAction": map[string]any{"Allow": map[string]any{}},
+		"VisibilityConfig": map[string]any{
+			"SampledRequestsEnabled":   false,
+			"CloudWatchMetricsEnabled": false,
+			"MetricName":               "bad-tag-acl",
+		},
+		"Rules": []any{},
+		"Tags":  []wafTagPair{{Key: "aws:reserved", Value: "x"}},
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected with WAFInvalidParameterException
+	helpers.AssertJSONError(t, resp, "WAFInvalidParameterException")
+}
+
 // TestWAFUntagResource_removesKey confirms the UntagResource round trip
 // against list-shaped tags.
 func TestWAFUntagResource_removesKey(t *testing.T) {
