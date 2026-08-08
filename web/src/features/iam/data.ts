@@ -11,6 +11,7 @@ export const iamKeys = {
   roles: () => [...iamKeys.all(), "roles"] as const,
   policies: () => [...iamKeys.all(), "policies"] as const,
   groups: () => [...iamKeys.all(), "groups"] as const,
+  groupMembers: (groupName: string) => [...iamKeys.groups(), groupName, "members"] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -29,6 +30,15 @@ export function iamPoliciesQueryOptions() {
 
 export function iamGroupsQueryOptions() {
   return queryOptions({ queryKey: iamKeys.groups(), queryFn: () => iam.listGroups() })
+}
+
+/** Members of one group. Fetched lazily, when the group's row is expanded. */
+export function iamGroupMembersQueryOptions(groupName: string) {
+  return queryOptions({
+    queryKey: iamKeys.groupMembers(groupName),
+    queryFn: () => iam.listGroupMembers(groupName),
+    enabled: !!groupName,
+  })
 }
 
 // ─── Mutation definitions ──────────────────────────────────────────────────

@@ -306,6 +306,15 @@ public final class IamGroup implements ServiceGroup {
 
     private void deleteIamRole(TestContext ctx) throws Exception {
         String name = ctx.getString("iamRole");
+        // AWS refuses DeleteRole with DeleteConflict while the role is still in
+        // an instance profile, so clear that first — this group put it there in
+        // AddRoleToInstanceProfile.
+        String ipName = ctx.getString("iamInstanceProfile");
+        if (ipName != null) {
+            try { iam().removeRoleFromInstanceProfile(r -> r.instanceProfileName(ipName).roleName(name)); } catch (Exception ignored) {}
+            try { iam().deleteInstanceProfile(r -> r.instanceProfileName(ipName)); } catch (Exception ignored) {}
+            ctx.set("iamInstanceProfile", null);
+        }
         iam().deleteRole(r -> r.roleName(name));
         ctx.set("iamRole", null);
     }

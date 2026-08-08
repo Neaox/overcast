@@ -50,8 +50,61 @@ func (h *iamPolicyHandler) Create(ctx context.Context, router http.Handler, cfg 
 	return physicalID, nil, nil
 }
 
-func (h *iamPolicyHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	// Inline policies are cleaned up when the role is deleted.
+// Delete without the resource's properties cannot know which roles, users or
+// groups the inline policy was written to, so it does nothing. It is only
+// reached for a stack record stored before properties were persisted; a record
+// that carries them goes through DeleteWithProperties.
+func (h *iamPolicyHandler) Delete(_ context.Context, _ http.Handler, _ *config.Config, _ string, _ *resolveContext) error {
+	return nil
+}
+
+// DeleteWithProperties removes the inline policy document from every entity the
+// resource put it on, as real CloudFormation's AWS::IAM::Policy provider does.
+//
+// This has to happen now that IAM enforces AWS's DeleteConflict: an inline
+// policy left behind makes DeleteRole/DeleteUser/DeleteGroup refuse, and
+// CloudFormation deletes this resource before the role it names (the Ref
+// creates the dependency edge, and teardown runs in reverse), so the leftover
+// would strand the role and fail the stack teardown.
+//
+// A removal that fails is not reported: the entity may already be gone, which
+// is not an error. Deleting the entity itself is what surfaces a real leftover.
+func (h *iamPolicyHandler) DeleteWithProperties(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, props map[string]any, rCtx *resolveContext) error {
+	policyName, _ := props["PolicyName"].(string)
+	if policyName == "" {
+		// Unnamed in the template: Create generated the name and folded it into
+		// the physical ID, which is the only record of it.
+		policyName = physicalID
+		if prefix := rCtx.StackName + "-"; strings.HasPrefix(physicalID, prefix) {
+			policyName = physicalID[len(prefix):]
+		}
+	}
+	if policyName == "" {
+		return nil
+	}
+
+	for _, target := range []struct{ propKey, action, param string }{
+		{"Roles", "DeleteRolePolicy", "RoleName"},
+		{"Groups", "DeleteGroupPolicy", "GroupName"},
+		{"Users", "DeleteUserPolicy", "UserName"},
+	} {
+		entities, ok := props[target.propKey].([]any)
+		if !ok {
+			continue
+		}
+		for _, e := range entities {
+			entity, _ := e.(string)
+			if entity == "" {
+				continue
+			}
+			_, _ = internalQuery(ctx, router, rCtx.Region, map[string]string{
+				"Action":     target.action,
+				"Version":    "2010-05-08",
+				target.param: entity,
+				"PolicyName": policyName,
+			})
+		}
+	}
 	return nil
 }
 

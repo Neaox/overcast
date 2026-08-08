@@ -3578,7 +3578,8 @@
         {
           "operation": "DeleteUser",
           "category": "Users",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "DeleteConflict (409) while access keys, inline or attached policies, or group memberships remain"
         },
         {
           "operation": "CreateAccessKey",
@@ -3664,7 +3665,8 @@
         {
           "operation": "DeleteRole",
           "category": "Roles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "DeleteConflict (409) while an instance profile association or inline/attached policies remain"
         },
         {
           "operation": "UpdateAssumeRolePolicy",
@@ -3779,7 +3781,8 @@
         {
           "operation": "DeletePolicy",
           "category": "Managed policies",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "DeleteConflict (409) while the policy is attached to any user, role or group"
         },
         {
           "operation": "CreateGroup",
@@ -3789,12 +3792,14 @@
         {
           "operation": "GetGroup",
           "category": "Groups",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000)"
         },
         {
           "operation": "DeleteGroup",
           "category": "Groups",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "DeleteConflict (409) while members or inline/attached policies remain"
         },
         {
           "operation": "ListGroups",

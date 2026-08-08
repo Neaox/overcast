@@ -426,6 +426,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 					// so a later failure can still roll back to it.
 					superseded = append(superseded, supersededResource{
 						LogicalID: logicalID, Type: old.Type, PhysicalID: outcome.ReplacedPhysicalID,
+						Properties: old.Properties,
 					})
 				}
 			}
@@ -559,7 +560,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 		// roll back — so the event says the resource is still standing and the
 		// stack still completes, rather than either lying about the delete or
 		// failing an update that worked.
-		if err := p.deleteResource(ctx, logicalID, old.Type, old.PhysicalID, rCtx); err != nil {
+		if err := p.deleteResource(ctx, logicalID, old.Type, old.PhysicalID, old.Properties, rCtx); err != nil {
 			p.recordEvent(ctx, stack, logicalID, old.PhysicalID, old.Type, ResourceDeleteFailed, err.Error())
 			continue
 		}
@@ -572,7 +573,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 	// roll back to them.
 	for _, s := range superseded {
 		p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteInProgress, "")
-		if err := p.deleteResource(ctx, s.LogicalID, s.Type, s.PhysicalID, rCtx); err != nil {
+		if err := p.deleteResource(ctx, s.LogicalID, s.Type, s.PhysicalID, s.Properties, rCtx); err != nil {
 			p.recordEvent(ctx, stack, s.LogicalID, s.PhysicalID, s.Type, ResourceDeleteFailed, err.Error())
 			continue
 		}
@@ -651,7 +652,7 @@ func (p *provisioner) deleteStackResourcesCtx(ctx context.Context, stack *Stack)
 		}
 		stack.Resources[i].Status = ResourceDeleteInProgress
 		p.recordEvent(ctx, stack, r.LogicalID, r.PhysicalID, r.Type, ResourceDeleteInProgress, "")
-		if err := p.deleteResource(ctx, r.LogicalID, r.Type, r.PhysicalID, rCtx); err != nil {
+		if err := p.deleteResource(ctx, r.LogicalID, r.Type, r.PhysicalID, r.Properties, rCtx); err != nil {
 			// The resource refused. Leave it in the stack's resource list —
 			// AWS keeps a DELETE_FAILED resource visible so the retry, once
 			// the block is cleared, knows what is still standing.
@@ -899,6 +900,9 @@ type supersededResource struct {
 	LogicalID  string
 	Type       string
 	PhysicalID string
+	// Properties the superseded resource was provisioned with, for handlers
+	// whose teardown needs them (see resourcePropertiesDeleter).
+	Properties map[string]any
 }
 
 // resourceUpdateOutcome describes what an update did to a single resource.
@@ -983,7 +987,7 @@ func resourcePropertiesMatch(oldHash, resourceType string, props map[string]any,
 // It reports only a refusal by the resource itself (errDeletionBlocked); every
 // other teardown error is logged and swallowed, so a resource that has already
 // gone cannot wedge a stack teardown.
-func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, physicalID string, rCtx *resolveContext) error {
+func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, physicalID string, props map[string]any, rCtx *resolveContext) error {
 	log := p.log.WithRecorder(ctx)
 	p.mu.Lock()
 	router := p.router
@@ -997,7 +1001,7 @@ func (p *provisioner) deleteResource(ctx context.Context, logicalID, resType, ph
 		return nil // stub resources have nothing to delete
 	}
 
-	err := handler.Delete(ctx, router, p.cfg, physicalID, rCtx)
+	err := p.invokeDelete(ctx, handler, router, physicalID, props, rCtx)
 	if err == nil {
 		return nil
 	}
@@ -1182,7 +1186,7 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 		p.mu.Lock()
 		router := p.router
 		p.mu.Unlock()
-		if err := handler.Delete(ctx, router, p.cfg, r.PhysicalID, rCtx); err != nil {
+		if err := p.invokeDelete(ctx, handler, router, r.PhysicalID, r.Properties, rCtx); err != nil {
 			log.Warn("cfn: rollback: failed to delete resource",
 				zap.String("logicalId", r.LogicalID),
 				zap.String("type", r.Type),
@@ -1278,7 +1282,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 			router := p.router
 			p.mu.Unlock()
 			p.recordEvent(ctx, stack, r.LogicalID, newPhysID, r.Type, ResourceDeleteInProgress, "")
-			if err := handler.Delete(ctx, router, p.cfg, newPhysID, rCtx); err != nil {
+			if err := p.invokeDelete(ctx, handler, router, newPhysID, r.Properties, rCtx); err != nil {
 				log.Warn("cfn: update rollback: failed to delete replacement",
 					zap.String("logicalId", r.LogicalID),
 					zap.String("type", r.Type),
@@ -1324,7 +1328,7 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		p.mu.Lock()
 		router := p.router
 		p.mu.Unlock()
-		if err := handler.Delete(ctx, router, p.cfg, r.PhysicalID, rCtx); err != nil {
+		if err := p.invokeDelete(ctx, handler, router, r.PhysicalID, r.Properties, rCtx); err != nil {
 			log.Warn("cfn: update rollback: failed to delete new resource",
 				zap.String("logicalId", r.LogicalID),
 				zap.String("type", r.Type),
@@ -1571,7 +1575,7 @@ func (p *provisioner) deleteRollbackResource(ctx context.Context, stack *Stack, 
 	router := p.router
 	p.mu.Unlock()
 
-	if err := handler.Delete(ctx, router, p.cfg, r.PhysicalID, rCtx); err != nil {
+	if err := p.invokeDelete(ctx, handler, router, r.PhysicalID, r.Properties, rCtx); err != nil {
 		log.Warn("cfn: rollback: failed to delete resource",
 			zap.String("logicalId", r.LogicalID),
 			zap.String("type", r.Type),
@@ -1928,6 +1932,32 @@ func parseDependsOn(v any) []string {
 type resourceHandler interface {
 	Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (physicalID string, attrs map[string]string, err error)
 	Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error
+}
+
+// resourcePropertiesDeleter is implemented by resource handlers whose teardown
+// needs the properties the resource was provisioned with, because the physical
+// ID alone does not record what the resource attached itself to.
+//
+// AWS::IAM::Policy is the case this exists for: the resource is an inline
+// policy document written onto the roles, users and groups its properties name,
+// and nothing in its physical ID says which those were. Real CloudFormation's
+// provider removes the document from each of them on delete — which is what
+// lets the role underneath be deleted afterwards, now that IAM enforces
+// DeleteConflict as AWS does.
+//
+// Handlers that do not implement this fall back to plain Delete.
+type resourcePropertiesDeleter interface {
+	DeleteWithProperties(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, props map[string]any, rCtx *resolveContext) error
+}
+
+// invokeDelete tears down one resource, preferring the properties-aware
+// teardown when the handler implements it. Every delete path goes through
+// here so the choice is made in one place.
+func (p *provisioner) invokeDelete(ctx context.Context, handler resourceHandler, router http.Handler, physicalID string, props map[string]any, rCtx *resolveContext) error {
+	if pd, ok := handler.(resourcePropertiesDeleter); ok {
+		return pd.DeleteWithProperties(ctx, router, p.cfg, physicalID, props, rCtx)
+	}
+	return handler.Delete(ctx, router, p.cfg, physicalID, rCtx)
 }
 
 // resourceUpdater is implemented by resource handlers that support in-place
@@ -4150,7 +4180,14 @@ func (h *iamRoleHandler) Delete(ctx context.Context, router http.Handler, _ *con
 		"RoleName": name,
 		"Version":  "2010-05-08",
 	}
-	_, _ = internalQuery(ctx, router, rCtx.Region, params)
+	// A refusal is reported so it reaches the teardown log. IAM answers
+	// DeleteConflict while a dependency remains, and a silently discarded one
+	// leaves the role standing while the stack reports DELETE_COMPLETE. A role
+	// that is already gone is not a failure.
+	rec, err := internalQuery(ctx, router, rCtx.Region, params)
+	if err != nil && (rec == nil || rec.Code != http.StatusNotFound) {
+		return fmt.Errorf("iam DeleteRole %s: %w", name, err)
+	}
 	return nil
 }
 
