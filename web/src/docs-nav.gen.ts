@@ -4059,6 +4059,16 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Versioning: version ids, delete markers and suspended buckets",
+        "id": "versioning-version-ids-delete-markers-and-suspended-buckets"
+      },
+      {
+        "depth": 3,
+        "text": "Lifecycle: version-aware actions",
+        "id": "lifecycle-version-aware-actions"
+      },
+      {
+        "depth": 3,
         "text": "Lifecycle: default minimum transition size",
         "id": "lifecycle-default-minimum-transition-size"
       },
