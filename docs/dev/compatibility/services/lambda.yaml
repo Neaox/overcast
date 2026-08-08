@@ -42,7 +42,7 @@ operations:
         gap: Publish=true should publish initial version 1; not reviewed in this pass.
       advanced_configuration:
         status: intentionally_partial
-        gap: SnapStart, DeadLetterConfig, KMS, EphemeralStorage, TracingConfig, RuntimeManagementConfig, RecursiveLoop, JSON LoggingConfig, and empty-object LoggingConfig updates are rejected before mutation rather than silently discarded. Text LoggingConfig with explicit members and default or custom log groups, Architectures, VpcConfig (including Ipv6AllowedForDualStack), ImageConfig, FileSystemConfigs, and code-signing association are stored and returned. Coherent JSON platform/application formatting and exact empty-object/cross-field captures are tracked in #660.
+        gap: SnapStart, DeadLetterConfig, KMS, EphemeralStorage, TracingConfig, RuntimeManagementConfig, RecursiveLoop, and empty-object LoggingConfig updates are rejected before mutation rather than silently discarded. LoggingConfig in both formats is honoured end to end — Text keeps the plain-text START/END/REPORT lines, JSON emits Telemetry-API-shaped platform records filtered by SystemLogLevel and filters function output by ApplicationLogLevel — alongside Architectures, VpcConfig (including Ipv6AllowedForDualStack), ImageConfig, FileSystemConfigs, and code-signing association. The platform.initStart/initReport records and the exact empty-object/cross-field captures are still tracked in #660.
       lifecycle_state:
         status: intentionally_partial
         gap: Overcast can return Pending during Docker image prewarm and Active immediately otherwise; real Lambda provisioning state timing is not fully emulated.
