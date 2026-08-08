@@ -12,7 +12,7 @@ func init() {
 		capabilities.Capability{Service: "cloudformation", Operation: "RollbackStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Rolls a CREATE_FAILED, UPDATE_FAILED, or UPDATE_ROLLBACK_FAILED stack back to a terminal rollback state"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DeleteStack", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Async resource cleanup in reverse dependency order; DELETE_FAILED when a resource refuses deletion"},
 		capabilities.Capability{Service: "cloudformation", Operation: "DescribeStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Status, parameters, outputs, tags"},
-		capabilities.Capability{Service: "cloudformation", Operation: "ListStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Filter by status"},
+		capabilities.Capability{Service: "cloudformation", Operation: "ListStacks", Category: "Stacks", Status: capabilities.StatusSupported, Notes: "Filter by status; summaries carry StackStatusReason"},
 		capabilities.Capability{Service: "cloudformation", Operation: "ContinueUpdateRollback", Category: "Stacks", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "cloudformation", Operation: "CancelUpdateStack", Category: "Stacks", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "cloudformation", Operation: "SignalResource", Category: "Stacks", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
