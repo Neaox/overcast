@@ -20,6 +20,13 @@ name: Release hold
 # hold re-runs this workflow — and a re-run re-runs every job in the run. One
 # tiny job is cheap to replay; the CI matrix is not.
 
+# `main` only, and deliberately **not** `support/**`. Everything below reasons
+# about the release in flight on main — it reads main's VERSION and looks for
+# an open release PR — and a maintenance line has neither. The hold is also
+# answering a question a backport cannot raise: the fix it carries was already
+# reviewed and held, if it needed holding, on its way into main. See RELEASE.md
+# § Maintenance Releases, which records this as a gap rather than pretending
+# otherwise.
 on:
   pull_request:
     branches: [main]

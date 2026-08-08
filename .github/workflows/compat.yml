@@ -4,15 +4,27 @@ name: Compatibility Tests
 # failures are expected and recorded as coverage data; infrastructure failures
 # still fail the affected suite job.
 
+# `support/**` runs the full suite, exactly as `main` does. A maintenance
+# release is cut from one of those branches (RELEASE.md § Maintenance
+# Releases), and a fix cherry-picked onto a line that stopped moving months ago
+# is the change least like the code it lands on — which is the case for running
+# the suites, not against it. The branch carries the `compat/baseline.json` it
+# was cut from, so the ratchet it is measured against is its own line's, not
+# `main`'s. Inert until such a branch exists; nothing in the repository matches
+# it today.
+#
+# Baseline *promotion* stays on `main` alone — its step is already guarded on
+# `github.ref == 'refs/heads/main'` — because a support branch's baseline
+# describes an older line and must not drift.
 on:
   push:
-    branches: [main]
+    branches: [main, "support/**"]
     # The auto-merged baseline-promotion PR lands a commit touching only this
     # file; it must not trigger another full run — see "Publish promotion PR".
     paths-ignore:
       - compat/baseline.json
   pull_request:
-    branches: [main]
+    branches: [main, "support/**"]
     # Deliberately no `paths-ignore:` here. There used to be one, skipping
     # prose-only pull requests, and its stated premise was that no compat check
     # sat in the branch ruleset's required set. That premise is no longer true:

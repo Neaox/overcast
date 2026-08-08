@@ -1,10 +1,17 @@
 name: CI
 
+# `support/**` is the post-1.0 maintenance namespace (RELEASE.md § Maintenance
+# Releases): one long-lived branch per minor line, cut from its tag the first
+# time a fix has to be backported. A release is cut from it, so it needs the
+# same CI as `main` — a cherry-pick onto a branch that stopped moving months
+# ago is the change *least* like the code it lands on, and it would otherwise
+# reach users having run nothing at all. Inert until such a branch exists; no
+# branch in the repository matches it today.
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "support/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "support/**"]
 
 permissions:
   contents: read

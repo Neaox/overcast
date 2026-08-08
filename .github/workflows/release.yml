@@ -4,13 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
-    # Into `main` only, as with every other gate here. The question this asks of
-    # a PR is "if this tree became the release, would the release gate pass?",
-    # and on a PR into a `release/**` branch it answers it with advice that does
-    # not apply — fold the fragment into the section, when the fragment is
-    # correct and the *base* is the mistake. `release-branch-base.yml` refuses
-    # that shape outright and says so in its own words.
-    branches: [main]
+    # Into `main` and the `support/**` maintenance lines, both of which a
+    # release is cut from. Never into a `release/**` branch: the question this
+    # asks of a PR is "if this tree became the release, would the release gate
+    # pass?", and there it answers with advice that does not apply — fold the
+    # fragment into the section, when the fragment is correct and the *base* is
+    # the mistake. `release-branch-base.yml` refuses that shape outright and
+    # says so in its own words.
+    branches: [main, "support/**"]
     paths:
       - VERSION
       - CHANGELOG.md
@@ -37,10 +38,11 @@ jobs:
       version: ${{ steps.read.outputs.version }}
       tag: ${{ steps.read.outputs.tag }}
       is_prerelease: ${{ steps.read.outputs.is_prerelease }}
-      prerelease_channel: ${{ steps.read.outputs.prerelease_channel }}
       release_url: ${{ steps.read.outputs.release_url }}
       should_release: ${{ steps.decide.outputs.should_release }}
       release_reason: ${{ steps.decide.outputs.release_reason }}
+      floating_tags: ${{ steps.tags.outputs.floating_tags }}
+      floating_tag_list: ${{ steps.tags.outputs.floating_tag_list }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -66,24 +68,22 @@ jobs:
             echo "Release tag $TAG does not match VERSION ($FILE_VERSION)." >&2
             exit 1
           fi
+          # Only whether this is a prerelease, which is the flag the GitHub
+          # release carries. The *channel name* it publishes under is no longer
+          # derived here: scripts/release-channel-tags.py owns that, along with
+          # whether the channel tag is allowed to move at all, and reads it from
+          # the version string — the single source of truth for what a release
+          # is, and the one the tag/VERSION check above has already validated.
           if [ "$RELEASE_PRERELEASE" = "true" ] || [[ "$VERSION" == *-* ]]; then
-            CHANNEL="${VERSION#*-}"
-            CHANNEL="${CHANNEL%%.*}"
-            if [ "$CHANNEL" = "$VERSION" ]; then
-              CHANNEL="prerelease"
-            fi
             IS_PRERELEASE=true
-            PRERELEASE_CHANNEL=$CHANNEL
           else
             IS_PRERELEASE=false
-            PRERELEASE_CHANNEL=
           fi
           {
             echo "version=$VERSION"
             echo "tag=$TAG"
             echo "release_url=https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
             echo "is_prerelease=$IS_PRERELEASE"
-            echo "prerelease_channel=$PRERELEASE_CHANNEL"
           } >> "$GITHUB_OUTPUT"
 
       - name: Decide whether release is needed
@@ -131,6 +131,83 @@ jobs:
             echo "Skipping release: $RELEASE_REASON"
           fi
 
+      # Reachability, which is the thing a maintenance line actually depends on.
+      #
+      # The step above compares the tag to VERSION, and VERSION is just a file:
+      # it would pass a tag cut against any commit that happens to carry the
+      # right contents — an abandoned backport branch, a detached HEAD, a stale
+      # local checkout. Nothing about that commit is then reachable from a
+      # branch, so nothing stops it being garbage-collected out from under a
+      # published release. So assert what the branch protection is protecting:
+      # the commit being released is reachable from `main`, or from the
+      # `support/<major>.<minor>` branch that owns its line.
+      #
+      # `support/**` exists only for a line `main` has already left (RELEASE.md
+      # § Maintenance Releases), so the two cases cannot both be wrong: a
+      # mainline release is on `main` and a maintenance release is on its
+      # support branch. Absent a support branch this is the mainline check
+      # alone, which every release path today already satisfies.
+      - name: Check the release commit is reachable
+        if: steps.decide.outputs.should_release == 'true'
+        env:
+          VERSION: ${{ steps.read.outputs.version }}
+          TAG: ${{ steps.read.outputs.tag }}
+        run: |
+          CORE=${VERSION%%-*}
+          LINE=${CORE%.*}
+          BRANCH="support/$LINE"
+
+          git fetch --no-tags --quiet origin main
+          if git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "$GITHUB_SHA is reachable from main."
+            exit 0
+          fi
+
+          if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "::error::$TAG would be cut at $GITHUB_SHA, which is not on main and has no $BRANCH branch to be on. A release must be reachable from a protected branch or nothing keeps its history alive — see RELEASE.md § Maintenance Releases."
+            exit 1
+          fi
+
+          git fetch --no-tags --quiet origin "$BRANCH"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$TAG would be cut at $GITHUB_SHA, which is on neither main nor $BRANCH. Push the backport to $BRANCH and re-cut the release from its tip; a tag on an unreachable commit survives only until the next garbage collection."
+            exit 1
+          fi
+          echo "$GITHUB_SHA is reachable from $BRANCH — maintenance release."
+
+      # Which floating Docker tags this release may move. `:latest`, `:alpha`
+      # and the line tags `:1` / `:1.2` are pointers, and a pointer can move
+      # the wrong way: publishing `:latest` for any stable release walks it
+      # backwards the first time an older line is patched after a newer one has
+      # shipped. The rule is scripts/release-channel-tags.py — one function,
+      # unit tests beside it, the same shape as scripts/release-hold.py —
+      # because a policy expressed as inline YAML bash is neither testable nor
+      # reviewable. This step only carries the answer to the publish jobs.
+      #
+      # `git tag` rather than the releases API: fetch-depth 0 above already has
+      # every tag locally, and a tag is what "already released" means here —
+      # RELEASE.md requires every release, maintenance ones included, to be
+      # tagged.
+      - name: Decide floating Docker tags
+        id: tags
+        # Only when something is actually being published. On a pull request
+        # there is nothing to tag, and an unparseable VERSION is fatal to this
+        # script by design — that belongs to the release, not to every PR that
+        # touches CHANGELOG.md.
+        if: steps.decide.outputs.should_release == 'true'
+        env:
+          VERSION: ${{ steps.read.outputs.version }}
+        run: |
+          git tag --list 'v*' > "$RUNNER_TEMP/released.txt"
+          {
+            echo 'floating_tags<<FLOATING_TAGS_EOF'
+            python3 scripts/release-channel-tags.py "$VERSION" \
+              --released "$RUNNER_TEMP/released.txt" --format metadata
+            echo 'FLOATING_TAGS_EOF'
+            printf 'floating_tag_list=%s\n' "$(python3 scripts/release-channel-tags.py \
+              "$VERSION" --released "$RUNNER_TEMP/released.txt" | paste -sd, -)"
+          } >> "$GITHUB_OUTPUT"
+
       # Release-candidate detection is one predicate, shared with the CI
       # workflow's release-gate job: the checked-out VERSION has no v<VERSION>
       # tag yet. A "did this PR change VERSION" diff was used here before, and
@@ -159,8 +236,14 @@ jobs:
       # this PR would actually produce. Deliberately narrower than requiring
       # the branch be up to date: a merge that touches no changelog files
       # leaves this green rather than demanding a pointless rebase.
+      #
+      # `main` only. On a PR into a `support/**` line, `main` is not the base
+      # and never will be — the branch never merges back (RELEASE.md
+      # § Maintenance Releases) — so merge-treeing the two would compare the
+      # maintenance section against a changelog that has moved on by a whole
+      # minor and fail every time.
       - name: Validate changelog against current main
-        if: steps.pr-changes.outputs.release_candidate == 'true'
+        if: steps.pr-changes.outputs.release_candidate == 'true' && github.base_ref == 'main'
         env:
           VERSION: ${{ steps.read.outputs.version }}
         run: |
@@ -277,8 +360,7 @@ jobs:
           TAG: ${{ needs.check-version.outputs.tag }}
           OWNER: ${{ github.repository_owner }}
           REPOSITORY: ${{ github.repository }}
-          IS_PRERELEASE: ${{ needs.check-version.outputs.is_prerelease }}
-          PRERELEASE_CHANNEL: ${{ needs.check-version.outputs.prerelease_channel }}
+          FLOATING_TAGS: ${{ needs.check-version.outputs.floating_tag_list }}
           RELEASE_URL: ${{ needs.check-version.outputs.release_url }}
         run: |
           mkdir -p release-metadata
@@ -293,9 +375,15 @@ jobs:
           owner_lc = owner.lower()
           repository = os.environ["REPOSITORY"]
           repo_name = repository.split("/", 1)[1]
-          is_prerelease = os.environ["IS_PRERELEASE"] == "true"
-          channel = os.environ.get("PRERELEASE_CHANNEL", "")
           release_url = os.environ.get("RELEASE_URL", "")
+          # The tags that actually moved, as decided by
+          # scripts/release-channel-tags.py — not what a stable/prerelease flag
+          # implies. A maintenance release of an older line moves :1.2 and
+          # nothing else, and notes claiming `:latest` points here would be
+          # wrong in the one direction that costs a user a downgrade.
+          floating = [
+              name for name in os.environ.get("FLOATING_TAGS", "").split(",") if name
+          ]
 
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
 
@@ -330,17 +418,14 @@ jobs:
           for asset, digest in checksum_rows:
               asset_rows.append(f"| `{asset}` | `{digest}` |")
 
-          stable_or_channel = "latest" if not is_prerelease else channel
-          channel_line = (
-              f"- Channel tag: `ghcr.io/{owner_lc}/overcast:{stable_or_channel}`"
-              if stable_or_channel
-              else ""
-          )
-          slim_channel_line = (
-              f"- Channel tag: `ghcr.io/{owner_lc}/overcast-slim:{stable_or_channel}`"
-              if stable_or_channel
-              else ""
-          )
+          def moving_tag_lines(image: str) -> str:
+              return "\n".join(
+                  f"- Moving tag: `ghcr.io/{owner_lc}/{image}:{name}`"
+                  for name in floating
+              )
+
+          console_tag_lines = moving_tag_lines("overcast")
+          slim_tag_lines = moving_tag_lines("overcast-slim")
 
           body = f"""# Overcast {tag}
 
@@ -349,13 +434,13 @@ jobs:
           Full image with the web management console:
 
           - Pull: `ghcr.io/{owner_lc}/overcast:{version}`
-          {channel_line}
+          {console_tag_lines}
           - Registry: [overcast package](https://github.com/{repository}/pkgs/container/overcast)
 
           Headless slim image for CI pipelines:
 
           - Pull: `ghcr.io/{owner_lc}/overcast-slim:{version}`
-          {slim_channel_line}
+          {slim_tag_lines}
           - Registry: [overcast-slim package](https://github.com/{repository}/pkgs/container/overcast-slim)
 
           ```sh
@@ -422,10 +507,17 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/overcast
+          # The immutable tag is written here, where a reader can see that it
+          # is unconditional. Every moving tag — :latest, :alpha, :1, :1.2 —
+          # comes from the check-version job, which asked
+          # scripts/release-channel-tags.py whether this release is allowed to
+          # move each one. An `enable=` expression on `is_prerelease` alone,
+          # which is what used to be here, cannot answer that: it publishes
+          # :latest for *any* stable release, so the first patch of an older
+          # line after a newer minor shipped would take :latest backwards.
           tags: |
             type=raw,value=${{ needs.check-version.outputs.version }}
-            type=raw,value=${{ needs.check-version.outputs.prerelease_channel }},enable=${{ needs.check-version.outputs.is_prerelease == 'true' }}
-            type=raw,value=latest,enable=${{ needs.check-version.outputs.is_prerelease == 'false' }}
+            ${{ needs.check-version.outputs.floating_tags }}
 
       - name: Build & push image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -468,10 +560,10 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.OWNER }}/overcast-slim
+          # Same tag set as the console image — see the comment there.
           tags: |
             type=raw,value=${{ needs.check-version.outputs.version }}
-            type=raw,value=${{ needs.check-version.outputs.prerelease_channel }},enable=${{ needs.check-version.outputs.is_prerelease == 'true' }}
-            type=raw,value=latest,enable=${{ needs.check-version.outputs.is_prerelease == 'false' }}
+            ${{ needs.check-version.outputs.floating_tags }}
 
       - name: Build & push image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0

@@ -132,6 +132,128 @@ class CheckReleaseChangelogTest(unittest.TestCase):
 			errors,
 		)
 
+	# Sections are ordered by semver descending, not by date, so a maintenance
+	# release backported after a newer minor shipped is inserted between them.
+	# 1.3.0 was cut from v1.2.3 and its link still says so; the section
+	# directly below it is now v1.2.4. An exact document-order chain would fail
+	# every release from here on over a link that is correct.
+	def test_validate_accepts_a_maintenance_release_inserted_by_semver(self) -> None:
+		path = write_changelog(
+			"""
+# Changelog
+
+## [Unreleased]
+
+## [1.3.1] - 2026-09-02
+
+### Fixed
+
+- Fix.
+
+## [1.3.0] - 2026-08-01
+
+### Added
+
+- Feature.
+
+## [1.2.4] - 2026-08-20
+
+### Fixed
+
+- Backported fix.
+
+## [1.2.3] - 2026-07-01
+
+### Added
+
+- Initial.
+
+[Unreleased]: https://github.com/Neaox/overcast/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Neaox/overcast/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/Neaox/overcast/compare/v1.2.3...v1.3.0
+[1.2.4]: https://github.com/Neaox/overcast/compare/v1.2.3...v1.2.4
+[1.2.3]: https://github.com/Neaox/overcast/releases/tag/v1.2.3
+"""
+		)
+
+		self.assertEqual([], checker.validate(path, "1.3.1"))
+
+	# The loose rule still refuses a base that is not an older section: a
+	# typo'd version, or one that comes *later* in the file's ordering.
+	def test_validate_rejects_a_compare_base_that_is_not_an_older_section(self) -> None:
+		path = write_changelog(
+			"""
+# Changelog
+
+## [Unreleased]
+
+## [1.3.1] - 2026-09-02
+
+### Fixed
+
+- Fix.
+
+## [1.3.0] - 2026-08-01
+
+### Added
+
+- Feature.
+
+## [1.2.3] - 2026-07-01
+
+### Added
+
+- Initial.
+
+[Unreleased]: https://github.com/Neaox/overcast/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Neaox/overcast/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/Neaox/overcast/compare/v1.2.9...v1.3.0
+[1.2.3]: https://github.com/Neaox/overcast/releases/tag/v1.2.3
+"""
+		)
+
+		errors = checker.validate(path, "1.3.1")
+
+		self.assertTrue(
+			any("link [1.3.0] must compare an older release" in e for e in errors),
+			errors,
+		)
+
+	# The section being released stays pinned exactly — it is the one link
+	# nobody has written yet, and the one a release-prep edit gets wrong.
+	def test_validate_pins_the_released_section_to_the_one_below_it(self) -> None:
+		path = write_changelog(
+			"""
+# Changelog
+
+## [Unreleased]
+
+## [1.2.4] - 2026-08-20
+
+### Fixed
+
+- Backported fix.
+
+## [1.2.3] - 2026-07-01
+
+### Added
+
+- Initial.
+
+[Unreleased]: https://github.com/Neaox/overcast/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/Neaox/overcast/releases/tag/v1.2.4
+[1.2.3]: https://github.com/Neaox/overcast/releases/tag/v1.2.3
+"""
+		)
+
+		errors = checker.validate(path, "1.2.4")
+
+		self.assertIn(
+			"CHANGELOG.md link [1.2.4] must be "
+			"https://github.com/Neaox/overcast/compare/v1.2.3...v1.2.4.",
+			errors,
+		)
+
 	def test_validate_rejects_unconsumed_fragments(self) -> None:
 		path = write_changelog(
 			"""

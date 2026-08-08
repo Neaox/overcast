@@ -19,6 +19,15 @@ name: Changelog required
 # as release-hold.yml: a re-run re-runs every job in the run, and replaying one
 # tiny job is cheap where replaying the CI matrix is not.
 
+# `main` only, and deliberately **not** `support/**`. On a maintenance line a
+# fragment cannot work: the fix's fragment was consumed by the release that
+# shipped it on main, no release-prep run will ever fold one in, and one left
+# in .changelog/ fails the very release it describes. The note is written
+# straight into CHANGELOG.md there — which is precisely the answer this check
+# refuses to accept, by design, everywhere it does run. Asking the question on
+# a branch where the only correct answer is rejected would make `/no-changelog`
+# a reflex on every backport. See RELEASE.md § Maintenance Releases, which
+# records that nothing enforces the note on those branches.
 on:
   pull_request:
     branches: [main]
