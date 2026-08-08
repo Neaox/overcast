@@ -1,2 +1,0 @@
-+. [ci] a `Release branch base` check fails any pull request whose base is a `release/*` branch and puts the rebase-onto-`main` instructions in its job summary — the release bot is that branch's only writer, and a PR into it skips the test matrix, compat suite, changelog gate and breaking-change hold, which all run on pull requests into `main`
-~ [ci] the release changelog gate runs on pull requests into `main` only, so a mis-based PR gets the base-branch message instead of advice to fold a fragment that was correct all along
