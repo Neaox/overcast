@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,6 +29,29 @@ const (
 	loadGoroutines = 100
 	loadIterations = 10 // total = goroutines × iterations requests per service
 )
+
+// loadClient keeps connections alive across the whole thrash and caps how
+// many exist. http.DefaultClient retains only 2 idle connections per host, so
+// hundreds of goroutines re-dial on every iteration — thousands of TCP dials
+// whose only purpose is to reach the pool again. On Windows that burst
+// overflows the loopback accept backlog (immediate "connection refused"
+// rather than Linux's SYN queueing) and pins the ephemeral port range in
+// TIME_WAIT. MaxConnsPerHost also queues the opening dial storm inside the
+// transport, keeping simultaneous dials under the ~200-entry Windows backlog.
+// The load being tested is concurrent HTTP traffic: 128 in-flight requests
+// over reused connections, which connection churn added nothing to.
+var loadClient = &http.Client{Transport: &http.Transport{
+	MaxIdleConns:        0, // unlimited pool; per-host caps below are the limit
+	MaxConnsPerHost:     128,
+	MaxIdleConnsPerHost: 128,
+}}
+
+// drainClose reads the body to EOF before closing so the transport can reuse
+// the connection; closing with unread bytes tears it down instead.
+func drainClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
 
 // ---- Concurrent multi-service thrash ---------------------------------------
 
@@ -51,12 +75,12 @@ func TestLoad_MultiServiceThrash(t *testing.T) {
 				bucket := fmt.Sprintf("load-s3-%d-%d", id, i)
 				// Create bucket
 				req, _ := http.NewRequest(http.MethodPut, srv.URL+"/"+bucket, nil)
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := loadClient.Do(req)
 				if err != nil {
 					errs <- fmt.Sprintf("S3 CreateBucket %s: %v", bucket, err)
 					continue
 				}
-				resp.Body.Close()
+				drainClose(resp)
 				if resp.StatusCode != http.StatusOK {
 					errs <- fmt.Sprintf("S3 CreateBucket %s: status %d", bucket, resp.StatusCode)
 					continue
@@ -64,12 +88,12 @@ func TestLoad_MultiServiceThrash(t *testing.T) {
 				// Put object
 				body := []byte(fmt.Sprintf("load-data-%d-%d", id, i))
 				req, _ = http.NewRequest(http.MethodPut, srv.URL+"/"+bucket+"/key.txt", bytes.NewReader(body))
-				resp, err = http.DefaultClient.Do(req)
+				resp, err = loadClient.Do(req)
 				if err != nil {
 					errs <- fmt.Sprintf("S3 PutObject %s/key.txt: %v", bucket, err)
 					continue
 				}
-				resp.Body.Close()
+				drainClose(resp)
 				if resp.StatusCode != http.StatusOK {
 					errs <- fmt.Sprintf("S3 PutObject %s/key.txt: status %d", bucket, resp.StatusCode)
 				}
@@ -151,11 +175,11 @@ func TestLoad_MultiServiceThrash(t *testing.T) {
 
 	// Then: server still responds to a simple health-like operation.
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_health", nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loadClient.Do(req)
 	if err != nil {
 		t.Fatalf("server unreachable after thrash: %v", err)
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("server returned %d on health check after thrash", resp.StatusCode)
 	}
@@ -181,12 +205,12 @@ func TestLoad_S3Thrash(t *testing.T) {
 			bucket := fmt.Sprintf("load-s3-thrash-%d", id)
 			// Create bucket once per goroutine.
 			req, _ := http.NewRequest(http.MethodPut, srv.URL+"/"+bucket, nil)
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := loadClient.Do(req)
 			if err != nil {
 				errs <- fmt.Sprintf("CreateBucket %s: %v", bucket, err)
 				return
 			}
-			resp.Body.Close()
+			drainClose(resp)
 			if resp.StatusCode != http.StatusOK {
 				errs <- fmt.Sprintf("CreateBucket %s: status %d", bucket, resp.StatusCode)
 				return
@@ -195,12 +219,12 @@ func TestLoad_S3Thrash(t *testing.T) {
 				key := fmt.Sprintf("obj-%d", i)
 				body := []byte(fmt.Sprintf("body-%d-%d", id, i))
 				req, _ = http.NewRequest(http.MethodPut, srv.URL+"/"+bucket+"/"+key, bytes.NewReader(body))
-				resp, err = http.DefaultClient.Do(req)
+				resp, err = loadClient.Do(req)
 				if err != nil {
 					errs <- fmt.Sprintf("PutObject %s/%s: %v", bucket, key, err)
 					continue
 				}
-				resp.Body.Close()
+				drainClose(resp)
 				if resp.StatusCode != http.StatusOK {
 					errs <- fmt.Sprintf("PutObject %s/%s: status %d", bucket, key, resp.StatusCode)
 				}
@@ -253,12 +277,12 @@ func TestLoad_SMTPThrash(t *testing.T) {
 				form.Set("EmailAddress", from)
 				req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(form.Encode()))
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := loadClient.Do(req)
 				if err != nil {
 					errs <- fmt.Sprintf("VerifyEmailIdentity %s: %v", from, err)
 					continue
 				}
-				resp.Body.Close()
+				drainClose(resp)
 				if resp.StatusCode != http.StatusOK {
 					errs <- fmt.Sprintf("VerifyEmailIdentity %s: status %d", from, resp.StatusCode)
 					continue
@@ -273,12 +297,12 @@ func TestLoad_SMTPThrash(t *testing.T) {
 				form.Set("Message.Body.Text.Data", "load test body")
 				req, _ = http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(form.Encode()))
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-				resp, err = http.DefaultClient.Do(req)
+				resp, err = loadClient.Do(req)
 				if err != nil {
 					errs <- fmt.Sprintf("SendEmail %s→%s: %v", from, to, err)
 					continue
 				}
-				resp.Body.Close()
+				drainClose(resp)
 				if resp.StatusCode != http.StatusOK {
 					errs <- fmt.Sprintf("SendEmail %s→%s: status %d", from, to, resp.StatusCode)
 				}
@@ -311,11 +335,11 @@ func sqsCreateQueue(t *testing.T, srv *helpers.TestServer, name string) string {
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 	req.Header.Set("X-Amz-Target", "AmazonSQS.CreateQueue")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loadClient.Do(req)
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
@@ -333,11 +357,11 @@ func sqsSendMessage(t *testing.T, srv *helpers.TestServer, queueURL, body string
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 	req.Header.Set("X-Amz-Target", "AmazonSQS.SendMessage")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loadClient.Do(req)
 	if err != nil {
 		return
 	}
-	resp.Body.Close()
+	drainClose(resp)
 }
 
 func ddbCreateTable(t *testing.T, srv *helpers.TestServer, name string) bool {
@@ -356,11 +380,11 @@ func ddbCreateTable(t *testing.T, srv *helpers.TestServer, name string) bool {
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 	req.Header.Set("X-Amz-Target", "DynamoDB_20120810.CreateTable")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loadClient.Do(req)
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	drainClose(resp)
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -377,11 +401,11 @@ func ddbPutItem(t *testing.T, srv *helpers.TestServer, table, pk, val string) {
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 	req.Header.Set("X-Amz-Target", "DynamoDB_20120810.PutItem")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loadClient.Do(req)
 	if err != nil {
 		return
 	}
-	resp.Body.Close()
+	drainClose(resp)
 }
 
 func snsCreateTopic(t *testing.T, srv *helpers.TestServer, name string) string {
@@ -391,11 +415,11 @@ func snsCreateTopic(t *testing.T, srv *helpers.TestServer, name string) string {
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 	req.Header.Set("X-Amz-Target", "AmazonSNS.CreateTopic")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loadClient.Do(req)
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer drainClose(resp)
 	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
@@ -414,9 +438,9 @@ func snsPublish(t *testing.T, srv *helpers.TestServer, topicARN, msg string) {
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
 	req.Header.Set("X-Amz-Target", "AmazonSNS.Publish")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loadClient.Do(req)
 	if err != nil {
 		return
 	}
-	resp.Body.Close()
+	drainClose(resp)
 }

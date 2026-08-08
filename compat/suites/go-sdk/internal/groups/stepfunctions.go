@@ -16,11 +16,11 @@ func StepFunctions(c *clients.Clients) ServiceGroup {
 	g := &sfnGroup{c: c}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"CreateStateMachine":   g.CreateStateMachine,
-			"DescribeStateMachine": g.DescribeStateMachine,
-			"ListStateMachines":    g.ListStateMachines,
+			"CreateStateMachine":               g.CreateStateMachine,
+			"DescribeStateMachine":             g.DescribeStateMachine,
+			"ListStateMachines":                g.ListStateMachines,
 			"sfn-statemachines:StartExecution": g.StartExecution,
-			"DeleteStateMachine":   g.DeleteStateMachine,
+			"DeleteStateMachine":               g.DeleteStateMachine,
 
 			// sfn-executions — group-qualified so StartExecution does not
 			// collide with the sfn-statemachines test of the same name. This

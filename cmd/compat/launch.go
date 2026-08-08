@@ -84,12 +84,15 @@ func isReservedPort(port int) bool {
 	return port == reservedAPIPort || port == reservedUIPort
 }
 
-// portFree reports whether a TCP port can be bound on every interface. It
-// binds and immediately releases, so there is a small race between the probe
-// and the eventual listener — acceptable for a dev harness, and far better
-// than assuming a fixed port is available.
+// portFree reports whether a TCP port can be bound. The probe is loopback
+// only: a wildcard bind would make Windows Firewall prompt for every binary
+// that scans for a port, and a port held on another interface but free on
+// loopback is vanishingly rare on a dev machine. It binds and immediately
+// releases, so there is a small race between the probe and the eventual
+// listener — acceptable for a dev harness, and far better than assuming a
+// fixed port is available.
 func portFree(port int) bool {
-	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
 	if err != nil {
 		return false
 	}

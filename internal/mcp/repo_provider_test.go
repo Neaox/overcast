@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -916,12 +917,20 @@ func TestRuntimeListInstancesIncludesLiveDockerComposeMetadata(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bin dir: %v", err)
 	}
-	dockerScript := filepath.Join(binDir, "docker")
-	writeTestFile(t, root, "bin/docker", "#!/bin/sh\nprintf '[{\"Service\":\"overcast\",\"State\":\"running\",\"Status\":\"Up 12s\",\"Publishers\":[{\"URL\":\"0.0.0.0:4566\",\"TargetPort\":4566,\"PublishedPort\":4566,\"Protocol\":\"tcp\"}]},{\"Service\":\"redis\",\"State\":\"running\",\"Status\":\"Up 12s\",\"Publishers\":[]}]'")
-	if err := os.Chmod(dockerScript, 0o755); err != nil {
-		t.Fatalf("chmod fake docker: %v", err)
+	const composePS = `[{"Service":"overcast","State":"running","Status":"Up 12s","Publishers":[{"URL":"0.0.0.0:4566","TargetPort":4566,"PublishedPort":4566,"Protocol":"tcp"}]},{"Service":"redis","State":"running","Status":"Up 12s","Publishers":[]}]`
+	if runtime.GOOS == "windows" {
+		// LookPath("docker") resolves the .bat via PATHEXT. The payload has no
+		// batch metacharacters, so echo emits it verbatim (plus a CRLF the
+		// parser trims).
+		writeTestFile(t, root, "bin/docker.bat", "@echo off\r\necho "+composePS+"\r\n")
+	} else {
+		dockerScript := filepath.Join(binDir, "docker")
+		writeTestFile(t, root, "bin/docker", "#!/bin/sh\nprintf '"+composePS+"'")
+		if err := os.Chmod(dockerScript, 0o755); err != nil {
+			t.Fatalf("chmod fake docker: %v", err)
+		}
 	}
-	t.Setenv("PATH", binDir+":"+os.Getenv("PATH"))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	provider := NewRepoProvider(root)
 	out, err := provider.toolRuntimeListInstances(context.Background(), nil)
