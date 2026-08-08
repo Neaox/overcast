@@ -49,6 +49,16 @@ containers, communicate with the Lambda Runtime API, and return real response pa
   function extension startup is not yet wrapped.
 - Extension Logs API support is limited to HTTP destinations and best-effort
   delivery. Telemetry API subscriptions are not yet implemented.
+- Under the JSON log format, the init-phase platform records
+  (`platform.initStart`, `platform.initReport`) are not emitted. Both are
+  `DEBUG` at the default `SystemLogLevel`, so nothing is missing from a default
+  log stream, but lowering the level will not make them appear. Tracked in
+  [#660](https://github.com/Neaox/overcast/issues/660).
+- `UpdateFunctionConfiguration` with an explicitly empty `LoggingConfig: {}`
+  object returns `501`. AWS's semantics for that shape have not been captured,
+  and guessing between "no-op" and "reset to defaults" would mutate the function
+  either way. `LoggingConfig` with explicit members — including
+  `LogFormat: JSON` — applies normally.
 - An unqualified `DeleteFunction` removes the function record, its deployment
   package and its resource policies, but published versions, aliases and
   version counters for that name are left behind. Recreating a function under
@@ -263,6 +273,102 @@ the moment it is retired rather than lingering until the idle timeout.
 
 ---
 
+## Log format and log levels
+
+A function's `LoggingConfig` is honoured end to end. `LogFormat` decides what
+Overcast writes around each invocation, and under `JSON` the two log levels
+decide how much of it reaches CloudWatch Logs.
+
+`LogGroup` is respected as well: a function with a custom log group writes
+there, and the group is created on `CreateFunction` like the default
+`/aws/lambda/<function-name>` one.
+
+### Text
+
+The default, and unchanged: the plain-text `START`, `END` and `REPORT` lines
+real Lambda writes, byte for byte. `ApplicationLogLevel` and `SystemLogLevel`
+do not apply to Text on AWS, so Overcast filters nothing in this mode — every
+line the function writes reaches CloudWatch Logs.
+
+### JSON
+
+`LogFormat: JSON` replaces those three lines with the events AWS publishes
+through the Lambda Telemetry API, one JSON object per log line, each shaped
+`{"time", "type", "record"}` with a millisecond-precision UTC timestamp:
+
+| Event `type`           | Replaces | System log level                | Record                                                                                             |
+| ---------------------- | -------- | ------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `platform.start`       | `START`  | `INFO`                          | `requestId`, `version`                                                                             |
+| `platform.runtimeDone` | `END`    | `DEBUG` on success, else `WARN` | `requestId`, `status`, `metrics`: `durationMs`, `producedBytes`                                    |
+| `platform.report`      | `REPORT` | `INFO` on success, else `WARN`  | `requestId`, `status`, `metrics`: `durationMs`, `billedDurationMs`, `memorySizeMB`, `maxMemoryUsedMB` |
+
+The levels are AWS's own system-log-level event mapping, not an Overcast
+convention. `status` is `success`, `failure` (the handler returned an error),
+`error` (the execution environment ended the invocation) or `timeout`.
+`metrics.initDurationMs` appears in `platform.report` only on the first report
+of an on-demand cold start, exactly where the text `REPORT` carries
+`Init Duration`. Overcast emits only the subset of the Telemetry API schema it
+genuinely observes: the `errorType` member both records model is never
+populated, because nothing in the emulator knows an AWS error type to put
+there.
+
+At the default `SystemLogLevel` of `INFO`, a successful invocation therefore
+logs two records — `platform.runtimeDone` is `DEBUG` and only appears once you
+lower the level:
+
+```json
+{"time":"2026-08-09T04:21:07.512Z","type":"platform.start","record":{"requestId":"8f2a1c3e-…","version":"$LATEST"}}
+{"time":"2026-08-09T04:21:07.884Z","type":"platform.report","record":{"requestId":"8f2a1c3e-…","status":"success","metrics":{"durationMs":371.42,"billedDurationMs":372,"memorySizeMB":512,"maxMemoryUsedMB":78,"initDurationMs":214.88}}}
+```
+
+The **init-phase** records, `platform.initStart` and `platform.initReport`, are
+not emitted at all. Both are `DEBUG` at the default system log level, so a
+default log stream is complete without them, but asking for `DEBUG` will not
+produce them either. See [Known limitations](#known-limitations).
+
+### Filtering
+
+Both levels default to `INFO` when `LogFormat` is `JSON`, as on AWS. The level
+ordering is `TRACE` < `DEBUG` < `INFO` < `WARN` < `ERROR` < `FATAL`, and a
+record is kept when its own level is at or above the configured one.
+
+- **`SystemLogLevel`** filters the platform records above, by the level in the
+  table.
+- **`ApplicationLogLevel`** filters the function's own stdout and stderr, by the
+  `"level"` member of each record. A line that parses as a JSON object with a
+  recognised level is filtered on it; everything else — unstructured text,
+  malformed JSON, a missing or unknown `"level"` — is treated as `INFO`, which
+  is what AWS documents. Level names are matched case-insensitively, because a
+  runtime's logger picks its own casing.
+
+Filtering decides what reaches **CloudWatch Logs and the `X-Amz-Log-Result`
+tail** (the invoke response's log tail, and the web UI's test tab) only.
+Telemetry and Logs API subscribers receive the complete set of records either
+way — AWS is explicit that the CloudWatch system log level does not affect
+Telemetry API behaviour.
+
+### What the container sees
+
+The logging configuration is handed to the runtime the way AWS hands it over,
+because the managed runtimes and Powertools read it to structure their own
+output:
+
+| Variable                | Set when              | Value                                      |
+| ----------------------- | --------------------- | ------------------------------------------ |
+| `AWS_LAMBDA_LOG_FORMAT` | always                | `Text` or `JSON`                           |
+| `AWS_LAMBDA_LOG_LEVEL`  | `LogFormat` is `JSON` | the function's effective `ApplicationLogLevel` |
+
+In Text mode `AWS_LAMBDA_LOG_LEVEL` is not set, matching AWS — setting it would
+tell a runtime to filter output Lambda has not asked it to filter.
+
+Because those values are baked into a container at start, the logging
+configuration is part of the execution environment's identity: changing
+`LogFormat` or either level retires the warm environments the same way a memory
+or environment-variable change does. See
+[Environment lifecycle](#environment-lifecycle).
+
+---
+
 ## Lambda Layers
 
 When a function specifies layer ARNs (e.g. from CDK or CloudFormation), Overcast
@@ -409,8 +515,12 @@ warm container.
 
 Logs API subscriptions support HTTP destinations for `platform`, `function`,
 and `extension` log types. Function stdout/stderr is delivered as `function`
-records; synthesized START/END/REPORT lines are delivered as `platform`
-records. Delivery is best-effort and does not yet implement the full Lambda
+records; the synthesized invocation records are delivered as `platform`
+records — the START/END/REPORT lines under the Text log format, the JSON
+events under JSON. Subscribers receive **every** record regardless of
+`ApplicationLogLevel` and `SystemLogLevel`, which only filter CloudWatch Logs
+and the invoke tail; see [Log format and log levels](#log-format-and-log-levels).
+Delivery is best-effort and does not yet implement the full Lambda
 buffering/retry contract.
 
 ### Reaching Overcast from function code
@@ -724,18 +834,18 @@ tags are stored separately and never appear in
 
 ### Function management
 
-| Operation                         | Status       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                 | AWS Docs                                                                                      |
-| --------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `ListFunctions`                   | ✅ Supported | Returns all stored functions; empty list if none                                                                                                                                                                                                                                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctions.html)                   |
-| `CreateFunction`                  | ✅ Supported | Stores metadata; validates Runtime against the pinned model and refuses runtimes past AWS's block-create date; a modeled runtime with no execution image returns 501 and persists nothing; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunction.html)                  |
-| `DeleteFunction`                  | ✅ Supported | Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function                                                                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)                  |
-| `GetFunction`                     | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                     |
-| `GetFunctionConfiguration`        | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                                                                                                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)        |
-| `UpdateFunctionCode`              | ✅ Supported | Updates code zip or image URI and Architectures; generates new RevisionId                                                                                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
-| `UpdateFunctionConfiguration`     | ✅ Supported | Presence-aware updates for supported configuration; a Runtime past AWS's block-update date is refused; unsupported advanced fields fail before mutation                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
-| `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
-| `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                                                                                                                                                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
-| `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
+| Operation                         | Status       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | AWS Docs                                                                                      |
+| --------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ListFunctions`                   | ✅ Supported | Returns all stored functions; empty list if none                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctions.html)                   |
+| `CreateFunction`                  | ✅ Supported | Stores metadata; validates Runtime against the pinned model and refuses runtimes past AWS's block-create date; a modeled runtime with no execution image returns 501 and persists nothing; auto-creates CWL log group; VpcConfig and ImageConfig supported; LoggingConfig honoured for both Text and JSON LogFormat, with ApplicationLogLevel/SystemLogLevel filtering in JSON mode; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_CreateFunction.html)                  |
+| `DeleteFunction`                  | ✅ Supported | Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function                                                                                                                                                                                                                                                                                                                                                                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunction.html)                  |
+| `GetFunction`                     | ✅ Supported | Returns FunctionConfiguration + Code location block                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunction.html)                     |
+| `GetFunctionConfiguration`        | ✅ Supported | Returns FunctionConfiguration only (no Code block)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionConfiguration.html)        |
+| `UpdateFunctionCode`              | ✅ Supported | Updates code zip or image URI and Architectures; generates new RevisionId                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionCode.html)              |
+| `UpdateFunctionConfiguration`     | ✅ Supported | Presence-aware updates for supported configuration; a Runtime past AWS's block-update date is refused; LoggingConfig with explicit members applies, including LogFormat JSON, but an explicitly empty LoggingConfig object still returns 501 because AWS's semantics for it are uncaptured (#660); unsupported advanced fields fail before mutation                                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionConfiguration.html)     |
+| `GetFunctionCodeSigningConfig`    | ✅ Supported | Returns the associated config; ResourceNotFoundException when the function has none                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionCodeSigningConfig.html)    |
+| `PutFunctionCodeSigningConfig`    | ✅ Supported | Stores the association and validates the ARN shape; signature validation is not emulated                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionCodeSigningConfig.html)    |
+| `DeleteFunctionCodeSigningConfig` | ✅ Supported | Removes the association; idempotent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionCodeSigningConfig.html) |
 
 ### Resource-based policies
 
@@ -758,11 +868,11 @@ tags are stored separately and never appear in
 
 ### Invocation
 
-| Operation                  | Status         | Notes                                                                                                                                            | AWS Docs                                                                               |
-| -------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| `Invoke`                   | ✅ Supported   | Container-based execution via Docker; falls back to stub when Docker unavailable                                                                 | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)                   |
-| `InvokeAsync`              | ❌ Unsupported | stub; returns 501                                                                                                                                | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeAsync.html)              |
-| `InvokeWithResponseStream` | ✅ Supported   | Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeWithResponseStream.html) |
+| Operation                  | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                     | AWS Docs                                                                               |
+| -------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `Invoke`                   | ✅ Supported   | Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660) | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)                   |
+| `InvokeAsync`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                         | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeAsync.html)              |
+| `InvokeWithResponseStream` | ✅ Supported   | Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeWithResponseStream.html) |
 
 ### Aliases & versions
 

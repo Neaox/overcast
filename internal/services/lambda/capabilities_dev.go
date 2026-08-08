@@ -10,7 +10,7 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "ListFunctions", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns all stored functions; empty list if none"},
 		capabilities.Capability{Service: "lambda", Operation: "CreateFunction", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Stores metadata; validates Runtime against the pinned model and refuses runtimes past AWS's block-create date; a modeled runtime with no execution image returns 501 and persists nothing; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing"},
+			Status: capabilities.StatusSupported, Notes: "Stores metadata; validates Runtime against the pinned model and refuses runtimes past AWS's block-create date; a modeled runtime with no execution image returns 501 and persists nothing; auto-creates CWL log group; VpcConfig and ImageConfig supported; LoggingConfig honoured for both Text and JSON LogFormat, with ApplicationLogLevel/SystemLogLevel filtering in JSON mode; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing"},
 		capabilities.Capability{Service: "lambda", Operation: "DeleteFunction", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunction", Category: "Function management",
@@ -20,7 +20,7 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionCode", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Updates code zip or image URI and Architectures; generates new RevisionId"},
 		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionConfiguration", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Presence-aware updates for supported configuration; a Runtime past AWS's block-update date is refused; unsupported advanced fields fail before mutation"},
+			Status: capabilities.StatusSupported, Notes: "Presence-aware updates for supported configuration; a Runtime past AWS's block-update date is refused; LoggingConfig with explicit members applies, including LogFormat JSON, but an explicitly empty LoggingConfig object still returns 501 because AWS's semantics for it are uncaptured (#660); unsupported advanced fields fail before mutation"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionCodeSigningConfig", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns the associated config; ResourceNotFoundException when the function has none"},
 		capabilities.Capability{Service: "lambda", Operation: "PutFunctionCodeSigningConfig", Category: "Function management",
@@ -52,7 +52,7 @@ func init() {
 
 		// Invocation
 		capabilities.Capability{Service: "lambda", Operation: "Invoke", Category: "Invocation",
-			Status: capabilities.StatusSupported, Notes: "Container-based execution via Docker; falls back to stub when Docker unavailable"},
+			Status: capabilities.StatusSupported, Notes: "Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660)"},
 		capabilities.Capability{Service: "lambda", Operation: "InvokeAsync", Category: "Invocation",
 			Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "lambda", Operation: "InvokeWithResponseStream", Category: "Invocation",
