@@ -254,6 +254,15 @@ the hand that owns `CHANGELOG.md`, so its note goes into the `## [x.y.z]`
 section directly, a fragment there having nothing left to be folded into and
 failing the very release it is cutting.
 
+Note the difference between *pushing onto* the release branch and *opening a PR
+into* it. The first is the release PR carrying one more commit, reviewed and
+checked along with it. The second is refused outright by the `Release branch
+base` check: it would merge without any of the gates on this page, which run on
+PRs into `main` only, and its fragment would never be folded — folding happens
+when `main` moves into the release branch, and a fragment arriving on the branch
+itself moves nothing. Rebase onto `main` and retarget it. The fragment is right
+as written, and the bot folds it into the release that is going out.
+
 Only the second row is awkward, and it is meant to be rare: `main` in that state
 should be taking only what is needed to get the release out. If a change that
 belongs in the notes has to merge anyway, waive with a reason that says the

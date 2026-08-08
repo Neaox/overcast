@@ -1,0 +1,66 @@
+name: Release branch
+
+# Nothing merges *into* a release branch. `release-prep.yml`'s refresh job owns
+# it: on every push to `main` it merges main in, folds the new fragments into
+# the `## [x.y.z]` section and deletes the ones it consumed, which is what keeps
+# the release PR mergeable with nobody editing it. A second pull request based
+# on that branch opts out of all of it at once:
+#
+#   * It runs almost no CI. `test.yml`, `changelog-required.yml`,
+#     `release-hold.yml` and `compat.yml` are all `pull_request: branches:
+#     [main]`, so a PR based anywhere else gets no Go tests, no web build, no
+#     changelog gate and no breaking-change hold. What lands on the branch about
+#     to become a release would be the least-checked code in the repository.
+#   * Its fragment is never folded. Folding happens when `main` moves *into* the
+#     release branch; a fragment arriving on the branch itself triggers nothing,
+#     rides into `main` with the release commit, and fails the release gate with
+#     `Changelog fragments remain in .changelog`.
+#   * It merges under the release PR's review rather than its own, because its
+#     diff is against the release branch and never appears in a PR into `main`.
+#
+# The answer is always to retarget onto `main`: the change gets its own review
+# and its own CI, and while the release PR is open the bot folds its fragment
+# into the section on the next push, so it still ships in that release. A late
+# fix that genuinely must be *in* the release is pushed onto the release branch
+# itself, where the release PR's own checks see it — see RELEASE.md.
+#
+# Check-only, unlike every other gate here: it posts no comment. A base change
+# away from `release/**` does not re-trigger a run this workflow filtered *on*,
+# so a comment posted here would have no later run left to come back and delete
+# it. Fixing the PR properly rewrites its head commit anyway, and this check
+# disappears with the SHA that failed it.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+    branches:
+      - "release/**"
+
+permissions:
+  contents: read
+
+jobs:
+  base:
+    # A required status check on `main` would never run here — this fires only
+    # on PRs into a release branch, which is the shape it exists to refuse.
+    name: Release branch base
+    runs-on: ubuntu-latest
+    steps:
+      # The default branch, never the PR's merge ref: this reads one message
+      # template and must not run anything the pull request brought with it.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Say what to do instead
+        env:
+          BASE_BRANCH: ${{ github.base_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          RELEASE_VERSION="${BASE_BRANCH#release/}"
+          export RELEASE_VERSION
+          python3 scripts/render-template.py \
+            .github/release-bot/pr-into-release-branch.md >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::This pull request is based on '$BASE_BRANCH'. Nothing merges into a release branch but the release bot — rebase onto '$DEFAULT_BRANCH' and retarget it. The job summary says why, and what happens to the changelog fragment."
+          exit 1

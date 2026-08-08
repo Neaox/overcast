@@ -62,6 +62,10 @@ class RenderTest(unittest.TestCase):
 			"WAIVER_REASON": "CI-only: pins the release action to a digest",
 			# changelog-waiver.yml
 			"PROBLEM": "`/no-changelog` needs a reason after it.",
+			# release-branch-base.yml. RELEASE_VERSION above is the same name,
+			# derived there from BASE_BRANCH rather than read from VERSION.
+			"BASE_BRANCH": "release/1.2.0",
+			"DEFAULT_BRANCH": "main",
 		}
 		folder = Path(__file__).resolve().parent.parent / ".github" / "release-bot"
 		templates = [p for p in folder.glob("*.md") if p.name != "README.md"]
