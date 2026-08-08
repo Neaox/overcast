@@ -1,9 +1,12 @@
 package cloudformation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -520,4 +523,63 @@ func TestEventsRuleHandler_CustomBusTargetUpdateAndDelete(t *testing.T) {
 			t.Fatalf("expected %s call, got %#v", target, calls)
 		}
 	}
+}
+
+// TestIAMTeardownError covers the three outcomes every IAM handler's Delete
+// funnels through. The middle one is the behaviour change: a DeleteConflict is
+// a refusal by the entity and must reach the stack as errDeletionBlocked, while
+// an entity that is already gone and a call that simply failed must not.
+func TestIAMTeardownError(t *testing.T) {
+	newRec := func(code int, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		rec.Code = code
+		rec.Body = bytes.NewBufferString(body)
+		return rec
+	}
+	const conflictBody = `<ErrorResponse><Error><Type>Sender</Type>` +
+		`<Code>DeleteConflict</Code>` +
+		`<Message>Cannot delete entity, must detach all policies first.</Message>` +
+		`</Error><RequestId>req-1</RequestId></ErrorResponse>`
+
+	t.Run("success reports nothing", func(t *testing.T) {
+		if err := iamTeardownError("DeleteRole", "r", newRec(http.StatusOK, ""), nil); err != nil {
+			t.Fatalf("got %v, want nil", err)
+		}
+	})
+
+	t.Run("already gone is a successful teardown", func(t *testing.T) {
+		rec := newRec(http.StatusNotFound, `<ErrorResponse><Error><Code>NoSuchEntity</Code></Error></ErrorResponse>`)
+		if err := iamTeardownError("DeleteRole", "r", rec, errors.New("HTTP 404")); err != nil {
+			t.Fatalf("got %v, want nil for an entity that is already gone", err)
+		}
+	})
+
+	t.Run("DeleteConflict blocks the stack and carries AWS's message", func(t *testing.T) {
+		err := iamTeardownError("DeleteRole", "app-role", newRec(http.StatusConflict, conflictBody), errors.New("HTTP 409"))
+		if !errors.Is(err, errDeletionBlocked) {
+			t.Fatalf("got %v, want it to wrap errDeletionBlocked", err)
+		}
+		for _, want := range []string{"DeleteRole", "app-role", "DeleteConflict", "Cannot delete entity, must detach all policies first."} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+		}
+	})
+
+	t.Run("any other failure stays a plain error", func(t *testing.T) {
+		err := iamTeardownError("DeleteRole", "r", newRec(http.StatusInternalServerError, ""), errors.New("HTTP 500"))
+		if err == nil {
+			t.Fatal("got nil, want an error")
+		}
+		if errors.Is(err, errDeletionBlocked) {
+			t.Fatalf("got %v, want it NOT to block the stack", err)
+		}
+	})
+
+	t.Run("a request that never reached the router stays a plain error", func(t *testing.T) {
+		err := iamTeardownError("DeleteRole", "r", nil, errors.New("bad request"))
+		if err == nil || errors.Is(err, errDeletionBlocked) {
+			t.Fatalf("got %v, want a non-blocking error", err)
+		}
+	})
 }

@@ -671,11 +671,12 @@ func (h *Handler) describeStackResourcesTyped(ctx context.Context, req *describe
 	var resources []stackResourceXML
 	for _, res := range stack.Resources {
 		resources = append(resources, stackResourceXML{
-			LogicalID:  res.LogicalID,
-			PhysicalID: res.PhysicalID,
-			Type:       res.Type,
-			Status:     res.Status,
-			Timestamp:  res.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z"),
+			LogicalID:    res.LogicalID,
+			PhysicalID:   res.PhysicalID,
+			Type:         res.Type,
+			Status:       res.Status,
+			StatusReason: res.StatusReason,
+			Timestamp:    res.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z"),
 		})
 	}
 
