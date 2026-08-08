@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,9 +122,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	// Trace buffer — created here so the middleware can capture it at
 	// construction time. When cfg.Debug is false the middleware is identity
-	// and the buffer is never accessed. OVERCAST_DEBUG_TRACE_BUFFER sets the
-	// ring buffer capacity (default 1000).
-	traceBuf := trace.NewBuffer(envInt("OVERCAST_DEBUG_TRACE_BUFFER", 1000))
+	// and the buffer is never accessed. cfg.DebugTraceBuffer
+	// (OVERCAST_DEBUG_TRACE_BUFFER) sets the ring buffer capacity; NewBuffer
+	// applies the default of 1000 for a zero or negative value.
+	traceBuf := trace.NewBuffer(cfg.DebugTraceBuffer)
 
 	// ---- Middleware chain --------------------------------------------------
 	r.Use(chimiddleware.RealIP)
@@ -1366,13 +1366,4 @@ func tagsDispatch(routers map[string]http.Handler, fallback http.Handler) http.H
 		}
 		http.NotFound(w, r)
 	}
-}
-
-func envInt(key string, defaultVal int) int {
-	if s := os.Getenv(key); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			return n
-		}
-	}
-	return defaultVal
 }

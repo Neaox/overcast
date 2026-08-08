@@ -450,7 +450,7 @@ func TestRecorderAddLog(t *testing.T) {
 
 func TestRecorderNilSafe(t *testing.T) {
 	var rec *Recorder
-	rec.SetRequestBody([]byte("test"), 1024)
+	rec.SetRequestBody([]byte("test"), false, -1)
 	rec.SetResponse(http.Header{}, []byte("resp"), 200, 1024, false)
 	rec.SetServiceInfo("sqs", "SendMessage", "us-east-1")
 	rec.SetDuration(time.Second)
@@ -470,7 +470,7 @@ func TestRecorderBodyTruncation(t *testing.T) {
 	for i := range body {
 		body[i] = 'x'
 	}
-	rec.SetRequestBody(body, 1024)
+	rec.SetRequestBody(body[:1024], true, int64(len(body)))
 
 	e := rec.Entry()
 	if !e.RequestBodyTruncated {

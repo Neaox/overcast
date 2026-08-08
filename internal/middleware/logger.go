@@ -3,7 +3,6 @@ package middleware
 import (
 	"bufio"
 	"bytes"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -317,9 +316,10 @@ type responseWriter struct {
 
 func (rw *responseWriter) WriteHeader(status int) {
 	rw.status = status
-	if rec := trace.RecorderFromContext(rw.req.Context()); rec != nil {
-		rec.SetStack(trace.CaptureStack())
-	}
+	// Two of these wrappers nest in the chain (Logger's and RequestEvents'),
+	// so this runs twice per response. CaptureStackOnce keeps the innermost
+	// stack — the one closest to the handler — and makes the second call free.
+	trace.RecorderFromContext(rw.req.Context()).CaptureStackOnce()
 	rw.ResponseWriter.WriteHeader(status)
 }
 
@@ -378,17 +378,19 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := clk.Now()
-			requestHeaders := r.Header.Clone()
-			var requestBody []byte
-			var requestBodyReadErr error
-			if r.Body != nil {
-				requestBody, requestBodyReadErr = io.ReadAll(r.Body)
-				_ = r.Body.Close()
-				r.Body = io.NopCloser(bytes.NewReader(requestBody))
+			// The request snapshot is only ever printed for a 5xx, so nothing
+			// is read up front: DebugTrace's capture is reused when debug is
+			// on — which also means the failure log gets that capture's larger
+			// bound — and otherwise a lazy tee records only what the handler
+			// itself reads. See bodycapture.go.
+			capture := requestCaptureFromContext(r.Context())
+			if capture == nil {
+				capture = teeRequestBody(r, maxLoggedRequestBody)
 			}
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK, req: r}
 
 			next.ServeHTTP(rw, r)
+			capture.seal()
 
 			reqID := protocol.RequestIDFromContext(r.Context())
 			duration := clk.Since(start)
@@ -413,16 +415,20 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 				fields = append(fields, zap.String("target", t))
 			}
 			if rw.status >= 500 {
+				requestBody := capture.body()
 				fields = append(fields,
 					zap.String("request_uri", r.RequestURI),
 					zap.String("request_proto", r.Proto),
 					zap.String("request_host", r.Host),
 					zap.Int64("request_content_length", r.ContentLength),
-					zap.Any("request_headers", requestHeaders),
+					zap.Any("request_headers", capture.headers),
 					zap.ByteString("request_body", requestBody),
 				)
-				if requestBodyReadErr != nil {
-					fields = append(fields, zap.Error(requestBodyReadErr))
+				if capture.truncated {
+					fields = append(fields, zap.Bool("request_body_truncated", true))
+				}
+				if capture.err != nil {
+					fields = append(fields, zap.Error(capture.err))
 				}
 			}
 			if rw.awsErrorCode != "" {
