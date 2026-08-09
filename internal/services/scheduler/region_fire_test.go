@@ -8,7 +8,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
-	"sync"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,31 +16,16 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/state"
 )
-
-type capturingEnqueuer struct {
-	mu      sync.Mutex
-	regions []string
-	queues  []string
-}
-
-func (c *capturingEnqueuer) EnqueueRaw(ctx context.Context, queueName string, body string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.regions = append(c.regions, middleware.RegionFromContext(ctx, "MISSING"))
-	c.queues = append(c.queues, queueName)
-	return nil
-}
 
 func TestScheduleFire_nonDefaultRegion(t *testing.T) {
 	clk := clock.NewMock()
 	clk.Set(time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC))
 	st := state.NewMemoryStore()
 	s := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, st, zap.NewNop(), clk)
-	enq := &capturingEnqueuer{}
-	s.targets = TargetInvoker{SQS: enq}
+	router := &recordingRouter{}
+	s.initDispatcher(router)
 
 	ctx := context.Background()
 	sc := Schedule{
@@ -59,15 +44,14 @@ func TestScheduleFire_nonDefaultRegion(t *testing.T) {
 
 	s.tick()
 
-	enq.mu.Lock()
-	defer enq.mu.Unlock()
-	if len(enq.regions) != 1 {
-		t.Fatalf("fired %d deliveries, want 1", len(enq.regions))
+	calls := router.recorded()
+	if len(calls) != 1 {
+		t.Fatalf("fired %d deliveries, want 1", len(calls))
 	}
-	if enq.regions[0] != "eu-west-1" {
-		t.Fatalf("delivery context carried region %q, want eu-west-1 (fired into the default region)", enq.regions[0])
+	if calls[0].Region != "eu-west-1" {
+		t.Fatalf("delivery carried region %q, want eu-west-1 (fired into the default region)", calls[0].Region)
 	}
-	if enq.queues[0] != "q1" {
-		t.Fatalf("delivered to queue %q, want q1", enq.queues[0])
+	if !strings.Contains(calls[0].Body, `"QueueUrl":"q1"`) {
+		t.Fatalf("delivered to the wrong queue: %s", calls[0].Body)
 	}
 }

@@ -10,8 +10,10 @@
 // Routes are served under the /_scheduler/ path prefix (REST-JSON).
 //
 // A lightweight cron engine fires rate/cron/at expressions against their
-// declared targets (Lambda async, SQS enqueue, SNS publish) using the
-// injected clock — tests can fast-forward time without real sleeps.
+// declared targets using the injected clock — tests can fast-forward time
+// without real sleeps. Delivery goes through internal/eventtarget, so every
+// target kind an EventBridge rule can reach a schedule can reach too (see
+// delivery.go).
 package scheduler
 
 import (
@@ -26,12 +28,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
@@ -83,14 +84,15 @@ type Schedule struct {
 
 // scheduleTarget models the Target field of a Schedule.
 type scheduleTarget struct {
-	Arn               string         `json:"Arn"`
-	RoleArn           string         `json:"RoleArn"`
-	Input             string         `json:"Input,omitempty"`
-	DeadLetterConfig  *dlqConfig     `json:"DeadLetterConfig,omitempty"`
-	RetryPolicy       *retryPolicy   `json:"RetryPolicy,omitempty"`
-	SqsParameters     *sqsParameters `json:"SqsParameters,omitempty"`
-	KinesisParameters *kinesisParams `json:"KinesisParameters,omitempty"`
-	EcsParameters     *ecsParams     `json:"EcsParameters,omitempty"`
+	Arn                   string             `json:"Arn"`
+	RoleArn               string             `json:"RoleArn"`
+	Input                 string             `json:"Input,omitempty"`
+	DeadLetterConfig      *dlqConfig         `json:"DeadLetterConfig,omitempty"`
+	RetryPolicy           *retryPolicy       `json:"RetryPolicy,omitempty"`
+	SqsParameters         *sqsParameters     `json:"SqsParameters,omitempty"`
+	KinesisParameters     *kinesisParams     `json:"KinesisParameters,omitempty"`
+	EcsParameters         *ecsParams         `json:"EcsParameters,omitempty"`
+	EventBridgeParameters *eventBridgeParams `json:"EventBridgeParameters,omitempty"`
 }
 
 type dlqConfig struct {
@@ -110,22 +112,41 @@ type kinesisParams struct {
 	PartitionKey string `json:"PartitionKey,omitempty"`
 }
 
+// ecsParams is AWS's EcsParameters — the templated target for RunTask. Only
+// the members that shape the emulated RunTask call are modelled; the rest of
+// AWS's shape (tags, placement, capacity provider strategy) is accepted and
+// ignored, as it is everywhere else in this emulator.
 type ecsParams struct {
-	TaskDefinitionArn string `json:"TaskDefinitionArn"`
+	TaskDefinitionArn    string            `json:"TaskDefinitionArn"`
+	TaskCount            int               `json:"TaskCount,omitempty"`
+	LaunchType           string            `json:"LaunchType,omitempty"`
+	PlatformVersion      string            `json:"PlatformVersion,omitempty"`
+	Group                string            `json:"Group,omitempty"`
+	NetworkConfiguration *ecsNetworkConfig `json:"NetworkConfiguration,omitempty"`
+}
+
+type ecsNetworkConfig struct {
+	AwsvpcConfiguration *ecsAwsvpcConfig `json:"awsvpcConfiguration,omitempty"`
+}
+
+type ecsAwsvpcConfig struct {
+	Subnets        []string `json:"Subnets,omitempty"`
+	SecurityGroups []string `json:"SecurityGroups,omitempty"`
+	AssignPublicIp string   `json:"AssignPublicIp,omitempty"`
+}
+
+// eventBridgeParams is AWS's EventBridgeParameters — the routing fields a
+// schedule's PutEvents entry carries when its target is an event bus. Both
+// members are required by AWS, and a downstream rule filtering on source or
+// detail-type could never match without them.
+type eventBridgeParams struct {
+	DetailType string `json:"DetailType"`
+	Source     string `json:"Source"`
 }
 
 type flexibleTimeWindow struct {
 	Mode                   string `json:"Mode"`
 	MaximumWindowInMinutes int    `json:"MaximumWindowInMinutes,omitempty"`
-}
-
-// ─── Target dispatch interfaces ───────────────────────────────────────────────
-
-// TargetInvoker holds the optional cross-service invocation handles.
-// Each field is optional; if nil, that target type is logged and skipped.
-type TargetInvoker struct {
-	Lambda events.FunctionInvoker
-	SQS    events.MessageEnqueuer
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -136,12 +157,16 @@ type Service struct {
 	store   state.Store
 	clk     clock.Clock
 	log     *serviceutil.ServiceLogger
-	targets TargetInvoker
 	typedOp map[string]op.Operation
 
-	stopOnce sync.Once
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
+	// targets dispatches a firing to whatever the target ARN names. Built once
+	// from the root router in InitRouter; nil until then.
+	targets *eventtarget.Dispatcher
+
+	startOnce sync.Once
+	stopOnce  sync.Once
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
 }
 
 // New returns a configured Scheduler Service.
@@ -157,9 +182,32 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 	return s
 }
 
-// InitTargets wires the cross-service invocation handles.
-func (s *Service) InitTargets(ti TargetInvoker) {
-	s.targets = ti
+// InitRouter wires the root router so a schedule reaches its target through the
+// same path an SDK call would take, and starts the cron engine.
+//
+// The engine starts here rather than in RegisterRoutes so it never observes a
+// half-wired service: routes are registered before the composition root has a
+// dispatcher to hand over, and a tick in that window would read the field the
+// wiring is about to write.
+func (s *Service) InitRouter(router http.Handler) {
+	s.initDispatcher(router)
+	s.startEngine()
+}
+
+// initDispatcher wires target delivery without starting the engine, so unit
+// tests can drive fire() on their own schedule.
+func (s *Service) initDispatcher(router http.Handler) {
+	s.targets = eventtarget.NewDispatcher(router, s.cfg.Region)
+}
+
+// dispatcher returns the target dispatcher, or nil before InitRouter has run.
+func (s *Service) dispatcher() *eventtarget.Dispatcher { return s.targets }
+
+func (s *Service) startEngine() {
+	s.startOnce.Do(func() {
+		s.wg.Add(1)
+		go s.runEngine()
+	})
 }
 
 // Name satisfies router.Service.
@@ -206,10 +254,6 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		// List all schedules (optional ?ScheduleGroup= filter)
 		r.Get("/schedules", s.listSchedules)
 	})
-
-	// Start the cron engine.
-	s.wg.Add(1)
-	go s.runEngine()
 }
 
 // Stop shuts down the cron engine, waiting for the goroutine to exit.
@@ -602,6 +646,10 @@ func (s *Service) createSchedule(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if aerr := validateTarget(req.Target); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
 	state := req.State
 	if state == "" {
@@ -680,6 +728,13 @@ func (s *Service) updateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
+	}
+
+	if req.Target.Arn != "" {
+		if aerr := validateTarget(req.Target); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
 	}
 
 	if req.ScheduleExpression != "" {
@@ -860,57 +915,6 @@ func (s *Service) setLastFire(ctx context.Context, key string, t time.Time) {
 		return
 	}
 	_ = s.store.Set(ctx, nsLastFire, key, string(raw))
-}
-
-// fire dispatches a schedule to its configured target.
-func (s *Service) fire(ctx context.Context, sc *Schedule, now time.Time) {
-	target := sc.Target
-	targetArn := target.Arn
-	input := target.Input
-	if input == "" {
-		// Default event payload.
-		input = fmt.Sprintf(`{"source":"aws.scheduler","time":%q,"id":%q}`, now.UTC().Format(time.RFC3339), uuid.NewString())
-	}
-
-	arn := strings.ToLower(targetArn)
-	switch {
-	case strings.Contains(arn, ":lambda:") || strings.Contains(arn, ":function:"):
-		if s.targets.Lambda != nil {
-			if err := s.targets.Lambda.InvokeAsync(ctx, targetArn, []byte(input)); err != nil {
-				s.log.Error("scheduler: fire: lambda invoke", zap.String("arn", targetArn), zap.Error(err))
-			}
-		} else {
-			s.log.Warn("scheduler: fire: lambda invoker not configured, skipping",
-				zap.String("schedule", sc.Name), zap.String("arn", targetArn))
-		}
-	case strings.Contains(arn, ":sqs:") || strings.Contains(arn, ":queue/") || strings.HasSuffix(arn, ":sqs"):
-		if s.targets.SQS != nil {
-			queueName := arnToQueueName(targetArn)
-			if err := s.targets.SQS.EnqueueRaw(ctx, queueName, input); err != nil {
-				s.log.Error("scheduler: fire: sqs enqueue", zap.String("queue", queueName), zap.Error(err))
-			}
-		} else {
-			s.log.Warn("scheduler: fire: sqs enqueuer not configured, skipping",
-				zap.String("schedule", sc.Name), zap.String("arn", targetArn))
-		}
-	default:
-		s.log.Warn("scheduler: fire: unsupported target type — event logged only",
-			zap.String("schedule", sc.Name),
-			zap.String("target_arn", targetArn),
-		)
-	}
-}
-
-// arnToQueueName extracts the queue name from an SQS ARN or URL.
-// arn:aws:sqs:us-east-1:000000000000:my-queue → my-queue
-func arnToQueueName(arn string) string {
-	parts := strings.Split(arn, ":")
-	if len(parts) >= 6 {
-		return parts[5]
-	}
-	// Fallback: last segment of slash-separated URL.
-	segs := strings.Split(arn, "/")
-	return segs[len(segs)-1]
 }
 
 // ─── Schedule Expression Parser ───────────────────────────────────────────────
