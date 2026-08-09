@@ -7,34 +7,32 @@ import { traceCountQueryOptions, debugTraceKeys } from "@/features/debug-traces/
 import { debugTrace } from "@/services/api/misc"
 import { endpointResolver } from "@/services/api/base"
 import { nsToHuman, statusColor, statusMessage, formatTimestamp, shellQuote, traceRequestUrl, mergePolledTraces } from "@/features/debug-traces/utils"
+import {
+  METHOD_ITEMS,
+  NO_SELECTION,
+  STATUS_ITEMS,
+  filterListParam,
+  traceListParams,
+  validateTracesSearch,
+  type TracesSearch,
+} from "@/features/debug-traces/filters"
 import { serviceColor } from "@/features/debug-traces/service-color"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { CheckboxFilterDropdown, type CheckboxFilterItem } from "@/components/ui/checkbox-filter-dropdown"
+import { useCheckboxFilter } from "@/components/ui/use-checkbox-filter"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
 import { useCopyToClipboard } from "@/hooks/use-clipboard"
-import { useDebouncedValue } from "@/hooks/use-debounced-value"
+import { useDebouncedTextParam } from "@/hooks/use-debounced-text-param"
 import { cn } from "@/lib/utils"
 import { useDebugEnabled } from "@/hooks/use-server-info"
-import type { TraceListParams, TraceListResponse, TraceSummary } from "@/types"
-
-type TracesSearch = {
-  service?: string
-  method?: string
-  status?: string
-  search?: string
-}
+import type { TraceListResponse, TraceSummary } from "@/types"
 
 export const Route = createFileRoute("/debug/traces/")({
   head: () => ({ meta: [{ title: "Request Traces — Overcast" }] }),
-  validateSearch: (search: Record<string, unknown>): TracesSearch => ({
-    service: typeof search.service === "string" ? search.service : undefined,
-    method: typeof search.method === "string" ? search.method : undefined,
-    status: typeof search.status === "string" ? search.status : undefined,
-    search: typeof search.search === "string" ? search.search : undefined,
-  }),
+  validateSearch: validateTracesSearch,
   component: TracesPage,
 })
 
@@ -51,30 +49,31 @@ function curlCmd(t: TraceSummary): string {
 }
 
 function TracesPage() {
-  const { method, status, search } = Route.useSearch()
+  const search = Route.useSearch()
   const navigate = Route.useNavigate()
   const debugEnabled = useDebugEnabled()
   const queryClient = useQueryClient()
 
-  const [searchInput, setSearchInput] = useState(search ?? "")
-  const [statusFilter, setStatusFilter] = useState(status ?? "")
-  const [methodFilter, setMethodFilter] = useState(method ?? "")
   const [autoRefresh, setAutoRefresh] = useState(true)
-  const [hideInternal, setHideInternal] = useState(true)
-  // Deny-list of service keys: a service in the set is hidden from the table.
-  const [hiddenServices, setHiddenServices] = useState<Set<string>>(new Set())
   const { copy } = useCopyToClipboard()
 
-  // Debounce so the infinite query does not refire on every keystroke.
-  const debouncedSearch = useDebouncedValue(searchInput, 300)
+  // Every filter lives in the URL, so Back from a trace's detail page restores
+  // the whole filter bar with the history entry. `replace: true`: a session of
+  // ticking boxes must not bury the previous page under a dozen entries.
+  const setSearch = useCallback(
+    (patch: Partial<TracesSearch>) => {
+      void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true })
+    },
+    [navigate],
+  )
 
-  const params: TraceListParams = useMemo(() => {
-    const p: TraceListParams = { limit: 50 }
-    if (methodFilter) p.method = methodFilter
-    if (statusFilter) p.status = statusFilter
-    if (debouncedSearch) p.search = debouncedSearch
-    return p
-  }, [methodFilter, statusFilter, debouncedSearch])
+  // Debounced so typing costs one navigation, not one per keystroke.
+  const [searchInput, setSearchInput] = useDebouncedTextParam(
+    search.search ?? "",
+    useCallback((next: string) => setSearch({ search: next || undefined }), [setSearch]),
+  )
+
+  const params = useMemo(() => traceListParams(search, 50), [search])
 
   // Infinite-query: page 1 = newest, scroll down loads older via after-cursor.
   const infiniteOpts = infiniteQueryOptions({
@@ -134,27 +133,43 @@ function TracesPage() {
       .map(([id, count]) => ({ id, label: id.toUpperCase(), count }))
   }, [allTraces])
 
+  // Three dropdowns, one pattern: useCheckboxFilter owns the toggle,
+  // select-all/clear-all and trigger-label logic for all of them. Services is a
+  // deny-list ("hide these"), status and method are include-lists ("show only
+  // these") that the server applies — which is why they must not be filtered
+  // here: the list is server-paginated, and dropping rows after they arrive
+  // would produce sparse pages and starve the load-more sentinel.
+  const serviceFilter = useCheckboxFilter({
+    items: serviceOptions,
+    model: "hide",
+    value: search.hideServices ?? NO_SELECTION,
+    onChange: useCallback((next: string[]) => setSearch({ hideServices: filterListParam(next) }), [setSearch]),
+    noun: "services",
+  })
+  const statusFilter = useCheckboxFilter({
+    items: STATUS_ITEMS,
+    model: "show",
+    value: search.status ?? NO_SELECTION,
+    onChange: useCallback((next: string[]) => setSearch({ status: filterListParam(next) }), [setSearch]),
+    noun: "statuses",
+  })
+  const methodFilter = useCheckboxFilter({
+    items: METHOD_ITEMS,
+    model: "show",
+    value: search.method ?? NO_SELECTION,
+    onChange: useCallback((next: string[]) => setSearch({ method: filterListParam(next) }), [setSearch]),
+    noun: "methods",
+  })
+
+  const hiddenServices = serviceFilter.selected
+  const hideInternal = !search.showInternal
+
   const displayTraces = useMemo(() => {
     let filtered = allTraces
     if (hideInternal) filtered = filtered.filter((t) => !t.internal)
     if (hiddenServices.size > 0) filtered = filtered.filter((t) => !hiddenServices.has(serviceKey(t.service)))
     return filtered
   }, [allTraces, hideInternal, hiddenServices])
-
-  const toggleService = useCallback((id: string) => {
-    setHiddenServices((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
-  }, [])
-  const showAllServices = useCallback(() => setHiddenServices(new Set()), [])
-  const hideAllServices = useCallback(() => setHiddenServices(new Set(serviceOptions.map((s) => s.id))), [serviceOptions])
-  const visibleServiceCount = useMemo(
-    () => serviceOptions.filter((s) => !hiddenServices.has(s.id)).length,
-    [serviceOptions, hiddenServices],
-  )
-  const serviceTriggerLabel = useMemo(() => {
-    if (hiddenServices.size === 0) return "all services"
-    if (serviceOptions.length > 0 && visibleServiceCount === 0) return "no services"
-    return `${visibleServiceCount} selected`
-  }, [hiddenServices, serviceOptions, visibleServiceCount])
 
   if (!debugEnabled) {
     return (
@@ -166,7 +181,9 @@ function TracesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4 p-6">
+    // @container: the path column sizes itself against the page's own width,
+    // which changes when the sidebar collapses without the viewport moving.
+    <div className="@container flex flex-col gap-4 p-6">
       <div className="flex items-start justify-between">
         <PageHeader
           title="Request Traces"
@@ -188,26 +205,13 @@ function TracesPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-fg-muted" />
           <Input className="pl-8" placeholder="Search by request ID, path, or service…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
-        <CheckboxFilterDropdown items={serviceOptions} model="hide" selected={hiddenServices} onToggle={toggleService} onShowAll={showAllServices} onHideAll={hideAllServices} triggerLabel={serviceTriggerLabel} />
-        <select className="h-9 rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-fg" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-          <option value="">all status</option>
-          <option value="2xx">2xx</option>
-          <option value="4xx">4xx</option>
-          <option value="5xx">5xx</option>
-        </select>
-        <select className="h-9 rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-fg" value={methodFilter} onChange={(e) => setMethodFilter(e.target.value)}>
-          <option value="">all methods</option>
-          <option value="GET">GET</option>
-          <option value="POST">POST</option>
-          <option value="PUT">PUT</option>
-          <option value="DELETE">DELETE</option>
-          <option value="HEAD">HEAD</option>
-          <option value="PATCH">PATCH</option>
-        </select>
+        <CheckboxFilterDropdown {...serviceFilter} />
+        <CheckboxFilterDropdown {...statusFilter} />
+        <CheckboxFilterDropdown {...methodFilter} />
         <label className="flex items-center gap-1.5 rounded-md border border-border bg-bg-elevated px-2.5 py-1.5 text-sm cursor-pointer select-none">
           <EyeOff className="h-3.5 w-3.5 text-fg-muted" />
           <span className="text-fg-muted">Hide internal</span>
-          <input type="checkbox" checked={hideInternal} onChange={(e) => setHideInternal(e.target.checked)} className="ml-1" />
+          <input type="checkbox" checked={hideInternal} onChange={(e) => setSearch({ showInternal: e.target.checked ? undefined : true })} className="ml-1" />
         </label>
       </div>
 
@@ -217,7 +221,17 @@ function TracesPage() {
         <div className="text-red-400 text-sm">Failed to load traces.</div>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-border">
+          {/*
+            No nested horizontal scroller. A wide table used to scroll inside
+            this box, which put its scrollbar at the bottom of the table
+            content — the bottom of an infinite list, so reaching for it loaded
+            another page and moved it further away. Letting the table overflow
+            instead hands both axes to <main>, whose scrollbars sit on viewport
+            edges and stay put. `w-max min-w-full` keeps the border wrapped
+            around the table at its real width rather than clipping to the
+            visible column.
+          */}
+          <div className="w-max min-w-full rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-fg-muted text-left">
@@ -240,7 +254,18 @@ function TracesPage() {
                     <tr key={t.requestId} className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors" onClick={() => void navigate({ to: "/debug/traces/$requestId", params: { requestId: t.requestId } })}>
                       <td className="px-3 py-2 whitespace-nowrap text-fg-muted font-mono text-xs">{formatTimestamp(t.timestamp)}</td>
                       <td className="px-3 py-2"><Badge variant="outline" className="text-xs font-mono">{t.method}</Badge></td>
-                      <td className="px-3 py-2 truncate font-mono text-xs">{t.path}</td>
+                      {/*
+                        `truncate` cannot work on the <td> itself — a table cell
+                        has no width of its own to overflow. The wrapper carries
+                        the max-width, and it scales with the *page* container
+                        (@container on the page root), not the viewport, because
+                        the space available here depends on whether the sidebar
+                        is collapsed. The title attribute keeps the full path
+                        one hover away.
+                      */}
+                      <td className="px-3 py-2">
+                        <div className="max-w-40 truncate font-mono text-xs @lg:max-w-xs @3xl:max-w-md @5xl:max-w-xl" title={t.path}>{t.path}</div>
+                      </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
                           <Badge variant="outline" className="text-xs" style={{ borderColor: serviceColor(t.service || "") }}>{t.service || "—"}</Badge>
