@@ -502,6 +502,13 @@ class PowerShellTwin(unittest.TestCase):
 				self.assertEqual(result.code, 2, result.err or result.out)
 				self.assertIn("PATH", result.err)
 
+	# There is no twin of the .sh's bare-PATH case. Neither of the .ps1's probes
+	# is reached through PATH — Get-NetTCPConnection is a cmdlet and the
+	# fallback is a socket connect — so "this host cannot answer" cannot be
+	# staged here the way emptying PATH stages it for ss and netstat. What
+	# remains uncovered is the cmdlet erroring for a reason other than "no
+	# match", which needs a broken CIM service to provoke.
+
 	def test_never_lands_on_the_users_reserved_pair(self):
 		for host, ps in POWERSHELL_HOSTS:
 			for base in ("4565", "4566", "4567"):
