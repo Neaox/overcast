@@ -316,23 +316,26 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 
 // ── Update stack (async) ───────────────────────────────────────────────────
 
-func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previousStackTags []Tag, onComplete stackCompletionFunc, rec *trace.Recorder) {
+// updateStack applies tmpl to stack. previous is the generation the caller has
+// just overwritten on the stack record — see stackGeneration — and is what a
+// rollback restores.
+func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previous stackGeneration, onComplete stackCompletionFunc, rec *trace.Recorder) {
 	p.provisionAsync(stack, rec, func(ctx context.Context) {
-		p.updateStackResourcesCtx(ctx, stack, tmpl, previousStackTags)
+		p.updateStackResourcesCtx(ctx, stack, tmpl, previous)
 		if onComplete != nil {
 			onComplete(ctx, stack)
 		}
 	})
 }
 
-func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previousStackTags []Tag) {
-	p.updateStackResourcesCtx(p.regionCtx(stack.Region), stack, tmpl, previousStackTags)
+func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previous stackGeneration) {
+	p.updateStackResourcesCtx(p.regionCtx(stack.Region), stack, tmpl, previous)
 }
 
-func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template, previousStackTags []Tag) {
+func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template, previous stackGeneration) {
 	log := p.log.WithRecorder(ctx)
 	rCtx := p.buildResolveContext(stack, tmpl)
-	rCtx.PreviousStackTags = append([]Tag(nil), previousStackTags...)
+	rCtx.PreviousStackTags = previous.Tags
 
 	// Emit the initial stack UPDATE_IN_PROGRESS event.
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateInProgress, "User Initiated")
@@ -400,7 +403,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 				rCtx.Attributes[logicalID] = old.Attributes
 			}
 
-			if refErr == nil && resourcePropertiesMatch(old.PropertiesHash, res.Type, recordedProps, stack.Tags, previousStackTags) {
+			if refErr == nil && resourcePropertiesMatch(old.PropertiesHash, res.Type, recordedProps, stack.Tags, previous.Tags) {
 				// No change, or legacy resource without a recorded hash —
 				// treat as unchanged. (Stacks created before property
 				// hashing was added have no recorded hash; without a
@@ -482,7 +485,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 						fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 					return
 				}
-				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, dirtyUpdates, rCtx,
+				p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, dirtyUpdates, rCtx, previous,
 					fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 				return
 			}
@@ -534,7 +537,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			}
 			// Roll back: delete newly created resources (those not in `existing`)
 			// in reverse order, then restore the previous resource list.
-			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, dirtyUpdates, rCtx,
+			p.rollbackUpdate(ctx, stack, newResources, preUpdate, replacedBy, inPlaceUpdated, dirtyUpdates, rCtx, previous,
 				fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
 			return
 		}
@@ -1312,9 +1315,13 @@ func (p *provisioner) rollbackCreate(ctx context.Context, stack *Stack, rCtx *re
 //     whose reverse update fails here, are retained as UPDATE_FAILED and make
 //     the rollback fail truthfully.
 //
+// The stack's own metadata is restored alongside them, from
+// previousGeneration: the update overwrote the record with what it was
+// attempting before any of this began.
+//
 // replacedBy maps a logical ID to the physical ID of the replacement created
 // for it, for exactly that second case.
-func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated, dirtyUpdates map[string]bool, rCtx *resolveContext, reason string) {
+func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempted []StackResource, previous map[string]StackResource, replacedBy map[string]string, inPlaceUpdated, dirtyUpdates map[string]bool, rCtx *resolveContext, previousGeneration stackGeneration, reason string) {
 	log := p.log.WithRecorder(ctx)
 	stack.Status = StatusUpdateRollbackInProgress
 	stack.StatusReason = reason
@@ -1440,7 +1447,19 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 	}
 	restored = append(restored, orphaned...)
 	stack.Resources = restored
-	stack.Tags = append([]Tag(nil), rCtx.PreviousStackTags...)
+
+	// The resources are only half of what the update changed. The record was
+	// overwritten with the attempted template, parameters and tags before the
+	// first resource was touched, so a stack left holding them would report the
+	// attempt that failed over resources that have been put back: GetTemplate
+	// would serve the template that failed, and the next update would resolve
+	// its parameters from it.
+	if err := p.restoreStackGeneration(ctx, stack, previousGeneration); err != nil {
+		log.Warn("cfn: update rollback: failed to restore stack metadata",
+			zap.String("stack", stack.StackName), zap.Error(err))
+		rollbackFailed = true
+		rollbackErr = errors.Join(rollbackErr, err)
+	}
 
 	if rollbackFailed {
 		stack.Status = StatusUpdateRollbackFailed
@@ -1456,6 +1475,23 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 		log.Warn("cfn: failed to flush update rollback state", zap.String("stack", stack.StackName), zap.Error(err))
 	}
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+}
+
+// restoreStackGeneration puts the template, parameters and tags a failed update
+// superseded back on the stack, and persists them.
+//
+// The write is made here rather than left to the caller's terminal recordEvent
+// because its outcome decides that terminal status: a restoration that did not
+// reach the store has not happened, and the stack must not then report
+// UPDATE_ROLLBACK_COMPLETE over a record that still describes the attempt.
+func (p *provisioner) restoreStackGeneration(ctx context.Context, stack *Stack, previous stackGeneration) error {
+	stack.TemplateBody = previous.TemplateBody
+	stack.Parameters = append([]Parameter(nil), previous.Parameters...)
+	stack.Tags = append([]Tag(nil), previous.Tags...)
+	if err := p.store.putStack(ctx, stack); err != nil {
+		return fmt.Errorf("restore stack metadata: %w", err)
+	}
+	return nil
 }
 
 // rollbackInPlaceUpdate restores a resource that was successfully changed
@@ -5284,6 +5320,18 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 		return "", nil, fmt.Errorf("nested stack parse template: %w", err)
 	}
 
+	// Captured before the attempted values are written over it. The parent only
+	// reverses a child update it recorded as an in-place success, so a child
+	// whose own update fails is never handed back its metadata from above — its
+	// own rollback is the only thing that can restore it.
+	previous := captureStackGeneration(childStack)
+	if previous.Tags == nil {
+		// A child provisioned before nested-stack tags were recorded has none of
+		// its own. Its effective tags were the parent's previous tags merged
+		// with the resource's previous Tags property.
+		previous.Tags = mergeNestedStackTags(rCtx.PreviousStackTags, oldProps["Tags"])
+	}
+
 	childStack.Parameters = nil
 	if paramMap, ok := props["Parameters"].(map[string]any); ok {
 		for k, v := range paramMap {
@@ -5296,17 +5344,13 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 
 	childStack.TemplateBody = tmplBody
 	childStack.Status = StatusUpdateInProgress
-	previousChildTags := append([]Tag(nil), childStack.Tags...)
-	if previousChildTags == nil {
-		previousChildTags = mergeNestedStackTags(rCtx.PreviousStackTags, oldProps["Tags"])
-	}
 	childStack.Tags = mergeNestedStackTags(rCtx.StackTags, props["Tags"])
 
 	if err := h.p.store.putStack(storeCtx, childStack); err != nil {
 		return "", nil, fmt.Errorf("nested stack update store: %w", err)
 	}
 
-	h.p.updateStackResourcesCtx(ctx, childStack, tmpl, previousChildTags)
+	h.p.updateStackResourcesCtx(ctx, childStack, tmpl, previous)
 
 	if childStack.Status != StatusUpdateComplete {
 		return "", nil, fmt.Errorf("nested stack %s update failed: %s", childName, childStack.StatusReason)

@@ -307,7 +307,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
 	}
-	previousTags := append([]Tag(nil), stack.Tags...)
+	previous := captureStackGeneration(stack)
 
 	templateBody := req.TemplateBody
 	if req.TemplateURL != "" {
@@ -350,7 +350,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 	}
 
-	h.prov.updateStack(stack, tmpl, previousTags, nil, trace.RecorderFromContext(ctx))
+	h.prov.updateStack(stack, tmpl, previous, nil, trace.RecorderFromContext(ctx))
 
 	return &updateStackResp{
 		Xmlns:  cfnXMLNS,
@@ -596,7 +596,7 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 		return nil, cfnerr("ValidationError", err.Error(), http.StatusBadRequest)
 	}
 
-	previousTags := append([]Tag(nil), stack.Tags...)
+	previous := captureStackGeneration(stack)
 	if len(cs.Parameters) > 0 {
 		stack.Parameters = cs.Parameters
 	}
@@ -619,7 +619,7 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
-		h.prov.updateStack(stack, tmpl, previousTags, h.prov.completeChangeSet(cs), trace.RecorderFromContext(ctx))
+		h.prov.updateStack(stack, tmpl, previous, h.prov.completeChangeSet(cs), trace.RecorderFromContext(ctx))
 	}
 
 	return &struct{}{}, nil

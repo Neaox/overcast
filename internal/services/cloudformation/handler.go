@@ -226,7 +226,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
 		return
 	}
-	previousTags := append([]Tag(nil), stack.Tags...)
+	previous := captureStackGeneration(stack)
 
 	templateBody, tplErr := h.resolveTemplateBody(r)
 	if tplErr != nil {
@@ -266,7 +266,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.prov.updateStack(stack, tmpl, previousTags, nil, trace.RecorderFromContext(r.Context()))
+	h.prov.updateStack(stack, tmpl, previous, nil, trace.RecorderFromContext(r.Context()))
 
 	writeCFNResponse(w, r, "UpdateStackResponse", "UpdateStackResult", stackIdResult{StackId: stack.StackID})
 }
@@ -627,7 +627,7 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply change set parameters/tags to stack.
-	previousTags := append([]Tag(nil), stack.Tags...)
+	previous := captureStackGeneration(stack)
 	if len(cs.Parameters) > 0 {
 		stack.Parameters = cs.Parameters
 	}
@@ -650,7 +650,7 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
-		h.prov.updateStack(stack, tmpl, previousTags, h.prov.completeChangeSet(cs), trace.RecorderFromContext(r.Context()))
+		h.prov.updateStack(stack, tmpl, previous, h.prov.completeChangeSet(cs), trace.RecorderFromContext(r.Context()))
 	}
 
 	writeCFNResponse(w, r, "ExecuteChangeSetResponse", "ExecuteChangeSetResult", nil)
