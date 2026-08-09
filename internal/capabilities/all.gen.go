@@ -1312,7 +1312,7 @@ var AllCapabilities = []Capability{
 	{Service: "sns", Operation: "ConfirmSubscription", Category: "Subscriptions", Status: StatusSupported, Notes: "Emulator auto-confirms; any token accepted", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sns", Operation: "CreatePlatformApplication", Category: "Platform applications (mobile push)", Status: StatusUnsupported, Notes: "APNs, GCM/FCM, ADM", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
 	{Service: "sns", Operation: "CreatePlatformEndpoint", Category: "Platform applications (mobile push)", Status: StatusUnsupported, Notes: "Device registration", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
-	{Service: "sns", Operation: "CreateTopic", Category: "Topics", Status: StatusSupported, Notes: "Idempotent; attributes stored", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "sns", Operation: "CreateTopic", Category: "Topics", Status: StatusSupported, Notes: "Idempotent; attributes stored; inline `Tags` applied at creation and left untouched by a repeat call", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sns", Operation: "DeletePlatformApplication", Category: "Platform applications (mobile push)", Status: StatusUnsupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: true, Since: ""},
 	{Service: "sns", Operation: "DeleteTopic", Category: "Topics", Status: StatusSupported, Notes: "", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "sns", Operation: "GetSubscriptionAttributes", Category: "Subscriptions", Status: StatusSupported, Notes: "Returns SubscriptionArn, TopicArn, Protocol, Endpoint, Owner + custom attributes", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

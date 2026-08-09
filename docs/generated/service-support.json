@@ -3378,7 +3378,7 @@
           "operation": "CreateTopic",
           "category": "Topics",
           "status": "✅ Supported",
-          "notes": "Idempotent; attributes stored"
+          "notes": "Idempotent; attributes stored; inline `Tags` applied at creation and left untouched by a repeat call"
         },
         {
           "operation": "DeleteTopic",

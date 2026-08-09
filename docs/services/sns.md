@@ -78,16 +78,16 @@ completes to subscribers, matching the behaviour of real SNS.
 
 ### Topics
 
-| Operation             | Status       | Notes                                                      | AWS Docs                                                                        |
-| --------------------- | ------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `CreateTopic`         | ✅ Supported | Idempotent; attributes stored                              | [docs](https://docs.aws.amazon.com/sns/latest/api/API_CreateTopic.html)         |
-| `DeleteTopic`         | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html)         |
-| `GetTopicAttributes`  | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_GetTopicAttributes.html)  |
-| `SetTopicAttributes`  | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_SetTopicAttributes.html)  |
-| `ListTopics`          | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListTopics.html)          |
-| `TagResource`         | ✅ Supported | Tags are stored on the topic; member-indexed form encoding | [docs](https://docs.aws.amazon.com/sns/latest/api/API_TagResource.html)         |
-| `UntagResource`       | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_UntagResource.html)       |
-| `ListTagsForResource` | ✅ Supported |                                                            | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListTagsForResource.html) |
+| Operation             | Status       | Notes                                                                                                | AWS Docs                                                                        |
+| --------------------- | ------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `CreateTopic`         | ✅ Supported | Idempotent; attributes stored; inline `Tags` applied at creation and left untouched by a repeat call | [docs](https://docs.aws.amazon.com/sns/latest/api/API_CreateTopic.html)         |
+| `DeleteTopic`         | ✅ Supported |                                                                                                      | [docs](https://docs.aws.amazon.com/sns/latest/api/API_DeleteTopic.html)         |
+| `GetTopicAttributes`  | ✅ Supported |                                                                                                      | [docs](https://docs.aws.amazon.com/sns/latest/api/API_GetTopicAttributes.html)  |
+| `SetTopicAttributes`  | ✅ Supported |                                                                                                      | [docs](https://docs.aws.amazon.com/sns/latest/api/API_SetTopicAttributes.html)  |
+| `ListTopics`          | ✅ Supported |                                                                                                      | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListTopics.html)          |
+| `TagResource`         | ✅ Supported | Tags are stored on the topic; member-indexed form encoding                                           | [docs](https://docs.aws.amazon.com/sns/latest/api/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported |                                                                                                      | [docs](https://docs.aws.amazon.com/sns/latest/api/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported |                                                                                                      | [docs](https://docs.aws.amazon.com/sns/latest/api/API_ListTagsForResource.html) |
 
 ### Subscriptions
 

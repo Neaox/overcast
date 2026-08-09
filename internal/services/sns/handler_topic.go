@@ -25,6 +25,23 @@ var snsTagCfg = serviceutil.TagValidationConfig{
 	ExceededMessage: "Can't add more than 50 tags to a topic.",
 }
 
+// createTopicTags validates CreateTopic's inline Tags and flattens them into
+// the map a Topic stores. Returns nil for an untagged create so the stored
+// record keeps omitting the field.
+func createTopicTags(pairs []tagEntry) (map[string]string, *protocol.AWSError) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	tags := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		tags[p.Key] = p.Value
+	}
+	if aerr := serviceutil.ValidateTags(snsTagCfg, tags); aerr != nil {
+		return nil, aerr
+	}
+	return tags, nil
+}
+
 // ---- XML response types ----------------------------------------------------
 
 const snsXMLNS = "http://sns.amazonaws.com/doc/2010-03-31/"
@@ -88,13 +105,20 @@ func (h *Handler) CreateTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Idempotent: return existing topic if it already exists.
+	// Idempotent: return the existing topic if it already exists, with its tags
+	// untouched — AWS does not treat a repeat CreateTopic as a retag.
 	if existing, _ := h.snsStore.getTopic(r.Context(), name); existing != nil {
 		protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateTopicResponse{
 			Xmlns:            snsXMLNS,
 			Result:           xmlCreateTopicResult{TopicArn: existing.ARN},
 			ResponseMetadata: protocol.QueryResponseMetadata(r),
 		})
+		return
+	}
+
+	tags, aerr := createTopicTags(parseFormTagEntries(r, "Tags"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 
@@ -115,6 +139,7 @@ func (h *Handler) CreateTopic(w http.ResponseWriter, r *http.Request) {
 		Name:             name,
 		ARN:              arn,
 		Attributes:       attrs,
+		Tags:             tags,
 		CreatedTimestamp: h.clk.Now().Unix(),
 	}
 	if aerr := h.snsStore.putTopic(r.Context(), topic); aerr != nil {
@@ -273,22 +298,31 @@ type xmlListTagsForResourceResult struct {
 
 // ---- Tag handlers -----------------------------------------------------------
 
+// parseFormTagEntries reads a Query-protocol tag list out of the request form.
+// Members arrive as <field>.Tag.N.Key / <field>.Tag.N.Value (1-indexed): the
+// member's locationName is "Tag" in the SNS model, not the default "member".
+func parseFormTagEntries(r *http.Request, field string) []tagEntry {
+	var out []tagEntry
+	for i := 1; ; i++ {
+		key := r.FormValue(fmt.Sprintf("%s.Tag.%d.Key", field, i))
+		if key == "" {
+			return out
+		}
+		out = append(out, tagEntry{Key: key, Value: r.FormValue(fmt.Sprintf("%s.Tag.%d.Value", field, i))})
+	}
+}
+
 // TagResource handles SNS TagResource.
-// Tags arrive as Tags.Tag.N.Key / Tags.Tag.N.Value (1-indexed, the member
-// locationName is "Tag" in the SNS model).
 func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
 	resourceArn, ok := h.requireForm(w, r, "ResourceArn")
 	if !ok {
 		return
 	}
 
-	incoming := make(map[string]string)
-	for i := 1; ; i++ {
-		key := r.FormValue(fmt.Sprintf("Tags.Tag.%d.Key", i))
-		if key == "" {
-			break
-		}
-		incoming[key] = r.FormValue(fmt.Sprintf("Tags.Tag.%d.Value", i))
+	entries := parseFormTagEntries(r, "Tags")
+	incoming := make(map[string]string, len(entries))
+	for _, e := range entries {
+		incoming[e.Key] = e.Value
 	}
 
 	if aerr := serviceutil.ApplyInlineTags(r.Context(), resourceArn, incoming, snsTagCfg,
