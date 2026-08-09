@@ -24,8 +24,8 @@ import {
   type ImplMap,
   type ImplSource,
   type Registry,
-} from "./registry.js";
-import type { TestGroup } from "./harness.js";
+} from "./registry.ts";
+import type { TestGroup } from "./harness.ts";
 
 const noop = async () => {};
 
@@ -251,8 +251,8 @@ describe("the suite's real registrations", () => {
    * duplicate check.
    */
   it("merge without duplicate keys and resolve against registry.json", async () => {
-    const { makeAllGroups, makeImplMap } = await import("../groups/index.js");
-    const { loadRegistry } = await import("./registry.js");
+    const { makeAllGroups, makeImplMap } = await import("../groups/index.ts");
+    const { loadRegistry } = await import("./registry.ts");
 
     const impls = makeImplMap(makeAllGroups("node-js-sdk"), "node-js-sdk");
     assert.ok(Object.keys(impls).length > 0, "no impls collected");

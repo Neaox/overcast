@@ -32,9 +32,10 @@ import {
 import { GetParameterCommand } from "@aws-sdk/client-ssm";
 import { GetRestApisCommand } from "@aws-sdk/client-api-gateway";
 import assert from "node:assert/strict";
-import { execCmd } from "../lib/exec.js";
-import { makeClients } from "../lib/clients.js";
-import type { TestContext, TestGroup } from "../lib/harness.js";
+import { createRequire } from "node:module";
+import { execCmd } from "../lib/exec.ts";
+import { makeClients } from "../lib/clients.ts";
+import type { TestContext, TestGroup } from "../lib/harness.ts";
 
 function cdkEnv(
   ctx: TestContext,
@@ -53,12 +54,23 @@ function cdkEnv(
   };
 }
 
+// The CDK CLI is a local devDependency, so run its entry point with the Node
+// already running this suite rather than going through `npx`. On Windows npm
+// installs npx as a `npx.cmd` shim, which spawn cannot find under its bare
+// name and — since the CVE-2024-27980 fix — refuses to spawn even when it
+// can. Both failures land on Bootstrap, before a single test does anything.
+// Resolving the CLI ourselves sidesteps the shim on every platform, and saves
+// a process while it is at it.
+function cdkCliPath(): string {
+  return createRequire(import.meta.url).resolve("aws-cdk/bin/cdk");
+}
+
 async function runCdk(
   ctx: TestContext,
   args: string[],
   extraEnv?: Record<string, string>,
 ): Promise<void> {
-  await execCmd("npx", ["cdk", ...args], {
+  await execCmd(process.execPath, [cdkCliPath(), ...args], {
     cwd: process.cwd(),
     env: cdkEnv(ctx, extraEnv),
   });
