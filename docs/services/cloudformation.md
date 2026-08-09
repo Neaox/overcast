@@ -230,6 +230,7 @@ with unsupported resources can still partially deploy.
      - `AWS::SecretsManager::Secret` — `UpdateSecret` (Description, SecretString, KmsKeyId) plus tag reconciliation
      - `AWS::SSM::Parameter` — `PutParameter` with `Overwrite=true`
      - `AWS::Logs::LogGroup` — `PutRetentionPolicy` / `DeleteRetentionPolicy`
+     - `AWS::CloudWatch::Alarm` — `PutMetricAlarm`, plus `TagResource` / `UntagResource` for tag changes. The tag calls are not redundant: `PutMetricAlarm` applies `Tags` only when it creates an alarm and ignores them when it updates one, as on AWS (see [CloudWatch](./cloudwatch.md)), so an update that changed only the tags would otherwise change nothing
      - `AWS::IAM::Role` — `UpdateAssumeRolePolicy` + `UpdateRole` (Description)
      - `AWS::AppSync::GraphQLApi` — `UpdateGraphqlApi` for mutable API config
      - `AWS::AppSync::GraphQLSchema` — `StartSchemaCreation` for schema definition changes
