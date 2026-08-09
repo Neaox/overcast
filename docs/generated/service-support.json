@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1405,
+  "total_ops": 1409,
   "services": [
     {
       "service": "s3",
@@ -3556,8 +3556,8 @@
     {
       "service": "iam",
       "display_name": "IAM",
-      "total_ops": 62,
-      "implemented_ops": 62,
+      "total_ops": 66,
+      "implemented_ops": 66,
       "operations": [
         {
           "operation": "CreateUser",
@@ -3634,6 +3634,28 @@
         {
           "operation": "ListAttachedUserPolicies",
           "category": "User managed policies",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "PutUserPermissionsBoundary",
+          "category": "Permissions boundaries",
+          "status": "✅ Supported",
+          "notes": "Applied by SimulatePrincipalPolicy and by opt-in enforcement; NoSuchEntity if the policy does not exist"
+        },
+        {
+          "operation": "DeleteUserPermissionsBoundary",
+          "category": "Permissions boundaries",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "PutRolePermissionsBoundary",
+          "category": "Permissions boundaries",
+          "status": "✅ Supported",
+          "notes": "Applied by SimulatePrincipalPolicy and by opt-in enforcement; NoSuchEntity if the policy does not exist"
+        },
+        {
+          "operation": "DeleteRolePermissionsBoundary",
+          "category": "Permissions boundaries",
           "status": "✅ Supported"
         },
         {
@@ -3786,7 +3808,7 @@
           "operation": "DeletePolicy",
           "category": "Managed policies",
           "status": "✅ Supported",
-          "notes": "DeleteConflict (409) while the policy is attached to any user, role or group"
+          "notes": "DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries"
         },
         {
           "operation": "CreateGroup",

@@ -52,12 +52,19 @@ func createRole(t *testing.T, srv *helpers.TestServer, name string) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
-// createPolicy creates a managed policy and returns its ARN.
+// createPolicy creates a managed policy allowing all of S3 and returns its ARN.
 func createPolicy(t *testing.T, srv *helpers.TestServer, name string) string {
+	t.Helper()
+	return createPolicyWithDocument(t, srv, name,
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`)
+}
+
+// createPolicyWithDocument creates a managed policy and returns its ARN.
+func createPolicyWithDocument(t *testing.T, srv *helpers.TestServer, name, document string) string {
 	t.Helper()
 	resp := iamCall(t, srv, "CreatePolicy", url.Values{
 		"PolicyName":     {name},
-		"PolicyDocument": {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`},
+		"PolicyDocument": {document},
 	})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)

@@ -31,6 +31,9 @@ type User struct {
 	InlinePolicies   map[string]string `json:"InlinePolicies,omitempty"`
 	AttachedPolicies []AttachedPolicy  `json:"AttachedPolicies,omitempty"`
 	Tags             map[string]string `json:"Tags,omitempty"`
+	// PermissionsBoundary is the ARN of the managed policy that caps what this
+	// user's identity policies can grant. Empty when none is attached.
+	PermissionsBoundary string `json:"PermissionsBoundary,omitempty"`
 }
 
 func (u *User) GetTags() map[string]string     { return u.Tags }
@@ -56,6 +59,9 @@ type Role struct {
 	AttachedPolicies         []AttachedPolicy  `json:"AttachedPolicies,omitempty"`
 	InlinePolicies           map[string]string `json:"InlinePolicies,omitempty"`
 	Tags                     map[string]string `json:"Tags,omitempty"`
+	// PermissionsBoundary is the ARN of the managed policy that caps what this
+	// role's identity policies can grant. Empty when none is attached.
+	PermissionsBoundary string `json:"PermissionsBoundary,omitempty"`
 }
 
 // AttachedPolicy is a managed policy attached to a role.
@@ -296,8 +302,9 @@ func (s *iamStore) listPolicies(ctx context.Context) ([]Policy, *protocol.AWSErr
 }
 
 // policyIsAttached reports whether a managed policy ARN is attached to any
-// user, role or group. AWS's DeletePolicy refuses while any attachment
-// remains, so this is what stands in for ListEntitiesForPolicy's count.
+// user, role or group, or used as one of their permissions boundaries. AWS's
+// DeletePolicy refuses while any of those remain, so this is what stands in for
+// ListEntitiesForPolicy's count plus PermissionsBoundaryUsageCount.
 //
 // Records that cannot be decoded are skipped by the list helpers rather than
 // failing the scan; a policy whose only attachment is recorded in a corrupt
@@ -318,7 +325,7 @@ func (s *iamStore) policyIsAttached(ctx context.Context, arn string) (bool, *pro
 		return false, aerr
 	}
 	for i := range users {
-		if hasArn(users[i].AttachedPolicies) {
+		if hasArn(users[i].AttachedPolicies) || users[i].PermissionsBoundary == arn {
 			return true, nil
 		}
 	}
@@ -327,7 +334,7 @@ func (s *iamStore) policyIsAttached(ctx context.Context, arn string) (bool, *pro
 		return false, aerr
 	}
 	for i := range roles {
-		if hasArn(roles[i].AttachedPolicies) {
+		if hasArn(roles[i].AttachedPolicies) || roles[i].PermissionsBoundary == arn {
 			return true, nil
 		}
 	}

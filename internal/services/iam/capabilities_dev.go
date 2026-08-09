@@ -25,6 +25,11 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "AttachUserPolicy", Category: "User managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "DetachUserPolicy", Category: "User managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListAttachedUserPolicies", Category: "User managed policies", Status: capabilities.StatusSupported},
+		// Permissions boundaries
+		capabilities.Capability{Service: "iam", Operation: "PutUserPermissionsBoundary", Category: "Permissions boundaries", Status: capabilities.StatusSupported, Notes: "Applied by SimulatePrincipalPolicy and by opt-in enforcement; NoSuchEntity if the policy does not exist"},
+		capabilities.Capability{Service: "iam", Operation: "DeleteUserPermissionsBoundary", Category: "Permissions boundaries", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "PutRolePermissionsBoundary", Category: "Permissions boundaries", Status: capabilities.StatusSupported, Notes: "Applied by SimulatePrincipalPolicy and by opt-in enforcement; NoSuchEntity if the policy does not exist"},
+		capabilities.Capability{Service: "iam", Operation: "DeleteRolePermissionsBoundary", Category: "Permissions boundaries", Status: capabilities.StatusSupported},
 		// User tagging
 		capabilities.Capability{Service: "iam", Operation: "TagUser", Category: "User tagging", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "UntagUser", Category: "User tagging", Status: capabilities.StatusSupported},
@@ -61,7 +66,7 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "CreatePolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "GetPolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListPolicies", Category: "Managed policies", Status: capabilities.StatusSupported},
-		capabilities.Capability{Service: "iam", Operation: "DeletePolicy", Category: "Managed policies", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while the policy is attached to any user, role or group"},
+		capabilities.Capability{Service: "iam", Operation: "DeletePolicy", Category: "Managed policies", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries"},
 		// Groups
 		capabilities.Capability{Service: "iam", Operation: "CreateGroup", Category: "Groups", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "GetGroup", Category: "Groups", Status: capabilities.StatusSupported, Notes: "Returns the group's members, paginated with Marker/MaxItems (default 100, max 1000)"},

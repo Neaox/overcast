@@ -32,11 +32,44 @@ type Request struct {
 }
 
 // Input is one evaluation: a request, the principal's identity policies, and
-// optionally the resource-based policy attached to the resource.
+// optionally the resource-based policy attached to the resource and the
+// permissions boundary attached to the principal.
 type Input struct {
 	Request        Request
 	Identity       []Statement
 	ResourcePolicy []Statement
+	// Boundary is the principal's permissions boundary, or nil when it has
+	// none. A non-nil boundary always takes part in the decision — including
+	// one carrying no statements, which allows nothing. See [Boundary].
+	Boundary *Boundary
+}
+
+// Boundary is a principal's permissions boundary: the managed policy that caps
+// what its identity policies can grant.
+//
+// It is a distinct type rather than a bare statement slice because "no
+// boundary" and "a boundary that allows nothing" are opposite outcomes and a
+// nil slice cannot tell them apart. A boundary whose document could not be
+// resolved or parsed is deliberately represented as an empty one — see
+// [NewBoundary].
+type Boundary struct {
+	Statements []Statement
+}
+
+// NewBoundary compiles a permissions-boundary policy document. The boundary it
+// returns is always usable; the error is there to be reported, not to decide
+// what happens next.
+//
+// A document that cannot be parsed yields a boundary with no statements, which
+// allows nothing. That is the only safe reading: a boundary exists to withhold
+// permissions, so a boundary that cannot be read must never be read as absent —
+// that would grant exactly what it was attached to prevent.
+func NewBoundary(document string, src SourceRef) (*Boundary, error) {
+	stmts, err := ParseDocument(document, src)
+	if err != nil {
+		return &Boundary{}, err
+	}
+	return &Boundary{Statements: stmts}, nil
 }
 
 // Match records a statement that applied to the request. It maps onto AWS's
@@ -67,12 +100,18 @@ type Result struct {
 	// It is never empty-and-ignored: callers must surface it rather than treat
 	// the decision as authoritative.
 	Unsupported []string
+	// BoundaryApplied reports whether a permissions boundary took part in the
+	// decision, and AllowedByBoundary whether that boundary allowed the action.
+	// AWS reports the pair as PermissionsBoundaryDecisionDetail.
+	BoundaryApplied   bool
+	AllowedByBoundary bool
 }
 
 // Evaluate applies AWS's evaluation logic: an explicit deny anywhere wins;
 // otherwise an allow from either the identity policies or (within the same
 // account) the resource-based policy grants access; otherwise the default of
-// implicit deny applies.
+// implicit deny applies. A permissions boundary, when the principal has one,
+// then caps the result — see [capWithBoundary].
 //
 // Evaluation allocates only when something has to be reported, so a caller
 // that caches compiled statements can re-evaluate them on a hot request path.
@@ -125,6 +164,36 @@ func Evaluate(in Input) Result {
 	case allowed:
 		res.Decision = DecisionAllowed
 	default:
+		res.Decision = DecisionImplicitDeny
+	}
+	if in.Boundary == nil {
+		return res
+	}
+	return capWithBoundary(res, in.Request, in.Boundary)
+}
+
+// capWithBoundary intersects a decision with the principal's permissions
+// boundary, which is how AWS computes a bounded entity's effective
+// permissions: the action must be allowed by the identity policies *and* by
+// the boundary, and an explicit deny in either is final.
+//
+// An action the identity policies allow but the boundary does not becomes an
+// implicit deny — the boundary grants nothing of its own, so there is no
+// statement to point at, which is exactly what AWS reports.
+func capWithBoundary(res Result, req Request, boundary *Boundary) Result {
+	boundaryRes := Evaluate(Input{Request: req, Identity: boundary.Statements})
+	for _, msg := range boundaryRes.Unsupported {
+		if !containsString(res.Unsupported, msg) {
+			res.Unsupported = append(res.Unsupported, msg)
+		}
+	}
+
+	res.BoundaryApplied = true
+	res.AllowedByBoundary = boundaryRes.Decision == DecisionAllowed
+	switch {
+	case boundaryRes.Decision == DecisionExplicitDeny:
+		res.Decision = DecisionExplicitDeny
+	case !res.AllowedByBoundary && res.Decision == DecisionAllowed:
 		res.Decision = DecisionImplicitDeny
 	}
 	return res

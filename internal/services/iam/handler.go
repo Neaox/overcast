@@ -49,6 +49,13 @@ var iamMutateActions = map[string]bool{
 	"CreateAccessKey":        true,
 	"DeleteAccessKey":        true,
 	"UpdateAssumeRolePolicy": true,
+	// A permissions boundary caps what the principal's other policies grant, so
+	// attaching, replacing or removing one changes its effective permissions
+	// exactly as a policy change does.
+	"PutUserPermissionsBoundary":    true,
+	"DeleteUserPermissionsBoundary": true,
+	"PutRolePermissionsBoundary":    true,
+	"DeleteRolePermissionsBoundary": true,
 }
 
 const iamXMLNS = "https://iam.amazonaws.com/doc/2010-05-08/"
@@ -137,6 +144,11 @@ func (h *Handler) initOps() {
 		"ListAttachedUserPolicies": h.ListAttachedUserPolicies,
 		// Inline user policy listing
 		"ListUserPolicies": h.ListUserPolicies,
+		// Permissions boundaries
+		"PutUserPermissionsBoundary":    h.typedHandler("PutUserPermissionsBoundary"),
+		"DeleteUserPermissionsBoundary": h.typedHandler("DeleteUserPermissionsBoundary"),
+		"PutRolePermissionsBoundary":    h.typedHandler("PutRolePermissionsBoundary"),
+		"DeleteRolePermissionsBoundary": h.typedHandler("DeleteRolePermissionsBoundary"),
 		// Role tagging
 		"TagRole":      h.TagRole,
 		"UntagRole":    h.UntagRole,
@@ -224,12 +236,20 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errEntityAlreadyExists("user", name))
 		return
 	}
+	boundary := r.FormValue("PermissionsBoundary")
+	if boundary != "" {
+		if aerr := h.checkPermissionsBoundaryExists(r.Context(), boundary); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
+	}
 	u := &User{
-		UserName:   name,
-		UserId:     iamID("AIDA", 17),
-		Arn:        h.store.arnForUser(path, name),
-		Path:       path,
-		CreateDate: h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		UserName:            name,
+		UserId:              iamID("AIDA", 17),
+		Arn:                 h.store.arnForUser(path, name),
+		Path:                path,
+		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		PermissionsBoundary: boundary,
 	}
 	if aerr := h.store.putUser(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -491,6 +511,13 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, errEntityAlreadyExists("role", name))
 		return
 	}
+	boundary := r.FormValue("PermissionsBoundary")
+	if boundary != "" {
+		if aerr := h.checkPermissionsBoundaryExists(r.Context(), boundary); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
+	}
 	role := &Role{
 		RoleName:                 name,
 		RoleId:                   iamID("AROA", 17),
@@ -498,6 +525,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		Path:                     path,
 		AssumeRolePolicyDocument: assumeDoc,
 		CreateDate:               h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		PermissionsBoundary:      boundary,
 	}
 	if aerr := h.store.putRole(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -1781,11 +1809,33 @@ func (h *Handler) UpdateAssumeRolePolicy(w http.ResponseWriter, r *http.Request)
 // ─── XML wire types ───────────────────────────────────────────────────────────
 
 type userXML struct {
-	Path       string `xml:"Path"`
-	UserName   string `xml:"UserName"`
-	UserId     string `xml:"UserId"`
-	Arn        string `xml:"Arn"`
-	CreateDate string `xml:"CreateDate"`
+	Path                string                          `xml:"Path"`
+	UserName            string                          `xml:"UserName"`
+	UserId              string                          `xml:"UserId"`
+	Arn                 string                          `xml:"Arn"`
+	CreateDate          string                          `xml:"CreateDate"`
+	PermissionsBoundary *attachedPermissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
+}
+
+// attachedPermissionsBoundaryXML is AWS's AttachedPermissionsBoundary, the
+// shape User and Role carry their boundary in. The type member is AWS's
+// PermissionsBoundaryAttachmentType enum, whose only value is "Policy".
+type attachedPermissionsBoundaryXML struct {
+	PermissionsBoundaryType string `xml:"PermissionsBoundaryType"`
+	PermissionsBoundaryArn  string `xml:"PermissionsBoundaryArn"`
+}
+
+// toPermissionsBoundaryXML renders a stored boundary ARN, or nil when the
+// entity has none — AWS omits the member entirely rather than sending an empty
+// one.
+func toPermissionsBoundaryXML(arn string) *attachedPermissionsBoundaryXML {
+	if strings.TrimSpace(arn) == "" {
+		return nil
+	}
+	return &attachedPermissionsBoundaryXML{
+		PermissionsBoundaryType: permissionsBoundaryTypePolicy,
+		PermissionsBoundaryArn:  arn,
+	}
 }
 
 type accessKeyXML struct {
@@ -1797,12 +1847,13 @@ type accessKeyXML struct {
 }
 
 type roleXML struct {
-	Path                     string `xml:"Path"`
-	RoleName                 string `xml:"RoleName"`
-	RoleId                   string `xml:"RoleId"`
-	Arn                      string `xml:"Arn"`
-	CreateDate               string `xml:"CreateDate"`
-	AssumeRolePolicyDocument string `xml:"AssumeRolePolicyDocument"`
+	Path                     string                          `xml:"Path"`
+	RoleName                 string                          `xml:"RoleName"`
+	RoleId                   string                          `xml:"RoleId"`
+	Arn                      string                          `xml:"Arn"`
+	CreateDate               string                          `xml:"CreateDate"`
+	AssumeRolePolicyDocument string                          `xml:"AssumeRolePolicyDocument"`
+	PermissionsBoundary      *attachedPermissionsBoundaryXML `xml:"PermissionsBoundary,omitempty"`
 }
 
 type policyXML struct {
@@ -1871,11 +1922,12 @@ func (l listMembersXML[T]) MarshalXML(enc *xml.Encoder, start xml.StartElement) 
 
 func toUserXML(u *User) userXML {
 	return userXML{
-		Path:       u.Path,
-		UserName:   u.UserName,
-		UserId:     u.UserId,
-		Arn:        u.Arn,
-		CreateDate: u.CreateDate,
+		Path:                u.Path,
+		UserName:            u.UserName,
+		UserId:              u.UserId,
+		Arn:                 u.Arn,
+		CreateDate:          u.CreateDate,
+		PermissionsBoundary: toPermissionsBoundaryXML(u.PermissionsBoundary),
 	}
 }
 
@@ -1897,6 +1949,7 @@ func toRoleXML(r *Role) roleXML {
 		Arn:                      r.Arn,
 		CreateDate:               r.CreateDate,
 		AssumeRolePolicyDocument: r.AssumeRolePolicyDocument,
+		PermissionsBoundary:      toPermissionsBoundaryXML(r.PermissionsBoundary),
 	}
 }
 
@@ -2010,6 +2063,7 @@ type userDetailXML struct {
 	CreateDate              string                            `xml:"CreateDate"`
 	UserPolicyList          listMembersXML[inlinePolicyXML]   `xml:"UserPolicyList"`
 	AttachedManagedPolicies listMembersXML[attachedPolicyXML] `xml:"AttachedManagedPolicies"`
+	PermissionsBoundary     *attachedPermissionsBoundaryXML   `xml:"PermissionsBoundary,omitempty"`
 }
 
 type groupDetailXML struct {
@@ -2031,6 +2085,7 @@ type roleDetailXML struct {
 	AssumeRolePolicyDocument string                            `xml:"AssumeRolePolicyDocument"`
 	RolePolicyList           listMembersXML[inlinePolicyXML]   `xml:"RolePolicyList"`
 	AttachedManagedPolicies  listMembersXML[attachedPolicyXML] `xml:"AttachedManagedPolicies"`
+	PermissionsBoundary      *attachedPermissionsBoundaryXML   `xml:"PermissionsBoundary,omitempty"`
 }
 
 // inlinePolicyListXML packages a name→document map as an ordered XML member list.
