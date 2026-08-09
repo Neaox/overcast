@@ -301,6 +301,15 @@ func main() {
 // managed Overcast instance, the Vite dev server — always happens, which
 // os.Exit inside main would skip.
 func run() int {
+	// Settle the suite selection first: a mistyped --suite is worth saying so
+	// before building a UI or launching a throwaway Overcast for a run that
+	// cannot happen.
+	suites, err := resolveSuiteSelection(*suiteFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "compat: %v\n", err)
+		return 2
+	}
+
 	// --dev is the one-command loop: manage the emulator, serve the dashboard
 	// with a hot-reloading UI, open a browser.
 	if *dev {
@@ -322,8 +331,6 @@ func run() int {
 			*uiDir = uiDistDir()
 		}
 	}
-
-	suites := splitCSV(*suiteFlag)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -674,6 +681,17 @@ func writeRunReportFile(path string, report *compat.RunReport) error {
 		return fmt.Errorf("compat: write results: %w", err)
 	}
 	return nil
+}
+
+// resolveSuiteSelection turns the --suite flag into the list of suites to run.
+// An empty flag selects every suite; any name that no suite answers to is an
+// error naming it and listing the ones that exist.
+func resolveSuiteSelection(flagValue string) ([]string, error) {
+	names := splitCSV(flagValue)
+	if err := compat.ValidateSuiteNames(names); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
 func splitCSV(value string) []string {

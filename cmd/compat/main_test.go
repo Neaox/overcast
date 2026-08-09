@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,5 +153,52 @@ func TestArtifactNamedDistinguishesARequestFromADefault(t *testing.T) {
 			t.Errorf("%s: artifactNamed(%q, %q, %v) = %v, want %v",
 				tc.name, tc.value, tc.env, tc.flagGiven, got, tc.want)
 		}
+	}
+}
+
+func TestResolveSuiteSelection_acceptsKnownNamesAndTheEmptyDefault(t *testing.T) {
+	// Given: the built-in suite names, as --suite would carry them.
+	known := compat.KnownSuiteNames()
+	if len(known) < 2 {
+		t.Fatalf("KnownSuiteNames() = %v, want at least two built-in suites", known)
+	}
+
+	// When: the flag is empty, meaning "every suite".
+	got, err := resolveSuiteSelection("")
+
+	// Then: no selection is returned and nothing is rejected.
+	if err != nil || len(got) != 0 {
+		t.Fatalf("resolveSuiteSelection(\"\") = %v, %v; want nil, nil", got, err)
+	}
+
+	// When: real names are given, spacing and all.
+	got, err = resolveSuiteSelection(known[0] + ", " + known[1])
+
+	// Then: they are passed through trimmed.
+	if err != nil {
+		t.Fatalf("resolveSuiteSelection() error = %v, want nil", err)
+	}
+	if len(got) != 2 || got[0] != known[0] || got[1] != known[1] {
+		t.Fatalf("resolveSuiteSelection() = %v, want [%s %s]", got, known[0], known[1])
+	}
+}
+
+func TestResolveSuiteSelection_rejectsTypoEvenAlongsideARealSuite(t *testing.T) {
+	// Given: a suite list where one name is a typo of a real suite.
+	known := compat.KnownSuiteNames()
+
+	// When: the flag is resolved.
+	got, err := resolveSuiteSelection(known[0] + ",definitely-not-a-suite")
+
+	// Then: the whole selection is refused — running the half that matched
+	// would report green for coverage the caller never asked about.
+	if err == nil {
+		t.Fatalf("resolveSuiteSelection() = %v, nil; want an unknown-suite error", got)
+	}
+	if !strings.Contains(err.Error(), `"definitely-not-a-suite"`) {
+		t.Errorf("error = %q, want it to name the unknown suite", err.Error())
+	}
+	if !strings.Contains(err.Error(), known[0]) {
+		t.Errorf("error = %q, want it to list the valid suites", err.Error())
 	}
 }
