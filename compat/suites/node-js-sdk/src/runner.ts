@@ -22,18 +22,18 @@ import {
   emitEvent,
   Semaphore,
   runGroup,
-} from "./lib/harness.js";
-import type { TestContext, TestGroup, RunGroupOptions } from "./lib/harness.js";
-import { startCommandLoop } from "./lib/commands.js";
-import { makeClients } from "./lib/clients.js";
-import { sweepAll } from "./lib/cleanup.js";
+} from "./lib/harness.ts";
+import type { TestContext, TestGroup, RunGroupOptions } from "./lib/harness.ts";
+import { startCommandLoop } from "./lib/commands.ts";
+import { makeClients } from "./lib/clients.ts";
+import { sweepAll } from "./lib/cleanup.ts";
 import {
   loadRegistry,
   buildGroupsFromRegistry,
   validateImpls,
-} from "./lib/registry.js";
-import type { ImplMap } from "./lib/registry.js";
-import { makeAllGroups, makeImplMap } from "./groups/index.js";
+} from "./lib/registry.ts";
+import type { ImplMap } from "./lib/registry.ts";
+import { makeAllGroups, makeImplMap } from "./groups/index.ts";
 
 const SUITE = "node-js-sdk";
 

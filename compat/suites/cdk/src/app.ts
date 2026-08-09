@@ -1,5 +1,5 @@
 import * as cdk from "aws-cdk-lib";
-import { CdkCompatStack } from "./stack.js";
+import { CdkCompatStack } from "./stack.ts";
 
 const runId = process.env["OVERCAST_COMPAT_RUN_ID"] ?? "oc-local";
 const region = process.env["OVERCAST_DEFAULT_REGION"] ?? "us-east-1";

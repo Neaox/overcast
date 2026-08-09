@@ -5,37 +5,37 @@
  * imported, so tests can resolve the suite's real impl keys against the real
  * registry.json without running anything.
  */
-import type { TestGroup } from "../lib/harness.js";
-import type { ImplMap } from "../lib/registry.js";
-import { mergeImpls } from "../lib/registry.js";
-import { makeS3Groups } from "./s3.js";
-import { makeSQSGroups } from "./sqs.js";
-import { makeDynamoDBGroups } from "./dynamodb.js";
-import { makeSNSGroups } from "./sns.js";
-import { makeLambdaGroups } from "./lambda.js";
-import { makeCloudWatchLogsGroups } from "./cloudwatch-logs.js";
-import { makeSESGroups } from "./ses.js";
-import { makeIAMGroups } from "./iam.js";
-import { makeSTSGroups } from "./sts.js";
-import { makeSecretsManagerGroups } from "./secretsmanager.js";
-import { makeKMSGroups } from "./kms.js";
-import { makeSSMGroups } from "./ssm.js";
-import { makeKinesisGroups } from "./kinesis.js";
-import { makeEventBridgeGroups } from "./eventbridge.js";
-import { makePipesGroups } from "./pipes.js";
-import { makeCloudFormationGroups } from "./cloudformation.js";
-import { makeEC2Groups } from "./ec2.js";
-import { makeECSGroups } from "./ecs.js";
-import { makeCognitoGroups } from "./cognito.js";
-import { makeAppSyncGroups } from "./appsync.js";
-import { makeAPIGatewayGroups } from "./apigateway.js";
-import { makeCloudFrontGroups } from "./cloudfront.js";
-import { makeRDSGroups } from "./rds.js";
-import { makeElastiCacheGroups } from "./elasticache.js";
-import { makeStepFunctionsGroups } from "./stepfunctions.js";
-import { makeWAFGroups } from "./waf.js";
-import { makeShieldGroups } from "./shield.js";
-import { makeEFSGroups } from "./efs.js";
+import type { TestGroup } from "../lib/harness.ts";
+import type { ImplMap } from "../lib/registry.ts";
+import { mergeImpls } from "../lib/registry.ts";
+import { makeS3Groups } from "./s3.ts";
+import { makeSQSGroups } from "./sqs.ts";
+import { makeDynamoDBGroups } from "./dynamodb.ts";
+import { makeSNSGroups } from "./sns.ts";
+import { makeLambdaGroups } from "./lambda.ts";
+import { makeCloudWatchLogsGroups } from "./cloudwatch-logs.ts";
+import { makeSESGroups } from "./ses.ts";
+import { makeIAMGroups } from "./iam.ts";
+import { makeSTSGroups } from "./sts.ts";
+import { makeSecretsManagerGroups } from "./secretsmanager.ts";
+import { makeKMSGroups } from "./kms.ts";
+import { makeSSMGroups } from "./ssm.ts";
+import { makeKinesisGroups } from "./kinesis.ts";
+import { makeEventBridgeGroups } from "./eventbridge.ts";
+import { makePipesGroups } from "./pipes.ts";
+import { makeCloudFormationGroups } from "./cloudformation.ts";
+import { makeEC2Groups } from "./ec2.ts";
+import { makeECSGroups } from "./ecs.ts";
+import { makeCognitoGroups } from "./cognito.ts";
+import { makeAppSyncGroups } from "./appsync.ts";
+import { makeAPIGatewayGroups } from "./apigateway.ts";
+import { makeCloudFrontGroups } from "./cloudfront.ts";
+import { makeRDSGroups } from "./rds.ts";
+import { makeElastiCacheGroups } from "./elasticache.ts";
+import { makeStepFunctionsGroups } from "./stepfunctions.ts";
+import { makeWAFGroups } from "./waf.ts";
+import { makeShieldGroups } from "./shield.ts";
+import { makeEFSGroups } from "./efs.ts";
 
 /** Every group the suite implements, in registration order. */
 export function makeAllGroups(suite: string): TestGroup[] {

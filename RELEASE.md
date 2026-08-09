@@ -40,12 +40,16 @@ When a release is wanted:
    breaking entries flagged `**BREAKING**` and their `migration:` notes
    attached. Edit that draft into `CHANGELOG.md` in the house style, then
    delete every fragment file.
-3. **Open the PR.** CI treats any same-repo PR whose `VERSION` carries no tag
-   as a **release candidate** — **RC** throughout this document: it publishes
-   RC images and the native binaries and maintains one bot comment linking
-   them. Smoke test those bits — they are what CI built, not a local rebuild.
-   What to test, and how, is the `release` skill under
-   [.agents/skills/release](.agents/skills/release/SKILL.md).
+3. **Open the PR, then test the candidate.** CI treats any same-repo PR whose
+   `VERSION` carries no tag as a **release candidate** — **RC** throughout this
+   document: it publishes RC images and the native binaries and maintains one
+   bot comment linking them. Test those bits — they are what CI built, not a
+   local rebuild. **Whoever prepares the release runs that testing and posts the
+   evidence on the PR**, rather than handing a checklist to the approver; green
+   CI proves the build is sound, not that the changelog's claims are true. What
+   to test, and how, is the `release` skill under
+   [.agents/skills/release](.agents/skills/release/SKILL.md); what the evidence
+   has to contain is [Compatibility Evidence](#compatibility-evidence) below.
 4. **Re-curate whenever `main` moves.** A PR merged after this branch last
    changed does not re-trigger anything here, and its fragments would ride
    onto `main` through a clean union merge. The changelog gate fails the PR
@@ -344,8 +348,10 @@ For an alpha release:
    runs natively wherever it is smoke tested; `<n>`
    increments per build), uploads the ten native binaries as workflow
    artifacts, and maintains one bot comment on the PR with pull commands,
-   image digests, and the artifact table. Smoke test the RC image — the
-   exact bits CI built — rather than a local rebuild.
+   image digests, and the artifact table. Test the RC image — the
+   exact bits CI built — rather than a local rebuild, and post the evidence
+   on the PR before it is merged: see
+   [Compatibility Evidence](#compatibility-evidence).
 7. Merge the release-prep PR to `main`.
 8. Watch the `Release` workflow. It builds and tests unattended, then
    **pauses at the `release` environment** before publishing anything —
@@ -482,6 +488,33 @@ cases, not two — the release PR is one of them:
   an unconsumed fragment fails the release, so the ask changes wording: wait for
   the tag, or waive and add the fragment once it is out. It does not go quiet —
   this is the window where a shipping bug fix is most likely.
+- **Row 2b, merged and untagged, and the PR is what unblocks the release.**
+  The release-prep PR merged, the `Release` workflow failed, and the fix for
+  that failure is itself release-note-worthy. Neither Row 2 answer works:
+  waiting for the tag is circular, because this change *is* what the tag is
+  waiting on; and a fragment would sit unconsumed in `.changelog/`, which the
+  workflow fails on — so it would block the very release it exists to unblock.
+  Waiving and adding the fragment afterwards is not equivalent either: the code
+  ships **in this release**, so filing its note under the next one describes
+  behaviour users already have.
+
+  **Write the note straight into the `## [x.y.z]` section** of the release
+  being unblocked, add no fragment, and waive the `Changelog entry` check with
+  a reason saying so. Then confirm with
+  `python scripts/check-release-changelog.py x.y.z` before pushing.
+
+  This is the one case outside the release PR itself where editing
+  `CHANGELOG.md` is right, and it is safe for a specific reason: the release PR
+  has **merged**, so `release-prep.yml`'s refresh job — the second hand the
+  no-`CHANGELOG.md`-edits rule exists to protect — is no longer running. There
+  is no branch left for it to fold into and nothing for the edit to conflict
+  with. Do not generalise it to Row 1, where the bot is live and a second
+  writer aborts its merge.
+
+  Keep it rare and keep it minimal: one bullet describing the fix, in the
+  section being released, in the same PR as the fix. Everything else about the
+  window still holds — only changes needed to get the release out should be
+  merging at all.
 
 **No PR merging into `main` may answer with a `CHANGELOG.md` edit**, and the
 check will not take one in place of a fragment. Only the release PR touches that
@@ -972,12 +1005,39 @@ After the release workflow succeeds:
 Compatibility tests are not a 100% AWS parity gate. They are a regression and
 coverage signal.
 
-Before release, keep these artifacts for review:
+Before release, **post these as a comment on the release PR**, naming the exact
+RC tag and image digests tested. Keeping them in a session nobody else saw means
+the approval is made against nothing:
 
 - merged `compat-results.json`
 - GitHub workflow summary from Compatibility Tests
 - any baseline comparison output
+- a claim-by-claim account of the release section: every bullet, whether it was
+  verified, and the observed request and response — not an assertion that it
+  works
+- screenshots for any console change, captured headlessly (the `release` skill
+  § Console)
+- what was **not** tested, and why. The gaps matter more than the passes,
+  because they are the part nobody can infer from a green check
 
 Known unsupported APIs may remain as `fail` or `unimplemented`. A previously
 passing compat result becoming `fail` or `unimplemented` should block the
 release unless a maintainer explicitly accepts the regression.
+
+**Running the suite is two commands.** `--max-failures`, like
+`--compare-baseline`, `--report` and `--check-parity`, is a *gate mode*: it
+reads an existing `--results-file` and exits without running a single test. Pass
+it alongside the run flags and nothing executes — the gate then reads whatever
+`compat-results.json` is already on disk and prints `failure gate passed`,
+exit 0. A release can be signed off against a stale file having run nothing. Run
+first, gate second, and check the results file is freshly written before
+believing a pass. See `compat/AGENTS.md` § "Flags that read a results file
+instead of producing one".
+
+**Anything found that is neither a regression nor a blocker becomes a GitHub
+issue**, with the reproduction and an explicit pre-existing-versus-new
+determination — made by running the same probe against the previous release's
+image, and where it matters by dating the code with `git log -S` and
+`git tag --contains`. A fault present in every tag is not this release's problem
+and must not hold it up; a fault this release introduced is a blocker. Deciding
+which, in writing, is what makes the release notes trustworthy.

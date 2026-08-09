@@ -138,7 +138,7 @@ import {
   DeleteRepositoryCommand,
   type ECRClient,
 } from "@aws-sdk/client-ecr";
-import type { Clients } from "./clients.js";
+import type { Clients } from "./clients.ts";
 
 type Log = (msg: string) => void;
 

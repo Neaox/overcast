@@ -47,6 +47,11 @@ type SuiteConfig struct {
 	// stdin/stdout protocol (building → ready → run commands).
 	// Suites without this flag are skipped by the orchestrator.
 	Interactive bool
+	// ArgvErr records why Argv could not be resolved on this machine — a
+	// missing interpreter, say. The runner reports it as a suite
+	// infrastructure failure instead of starting a process that would die
+	// somewhere less legible.
+	ArgvErr error
 }
 
 // RunConfig controls how the runner executes suites.
@@ -136,16 +141,18 @@ func DefaultSuiteConfigs(endpoint, region string) []SuiteConfig {
 // defaultSuites returns the built-in suite list.
 // Suites that are filtered out by RunConfig.Suites are skipped in Run().
 func (r *Runner) defaultSuites() []SuiteConfig {
+	pythonArgv, pythonErr := pythonSuiteArgv()
 	return []SuiteConfig{
 		{
 			Name:        "node-js-sdk",
-			Argv:        []string{"node", "--import", "tsx/esm", "src/runner.ts"},
+			Argv:        []string{"node", "run.js"},
 			Dir:         "compat/suites/node-js-sdk",
 			Interactive: true,
 		},
 		{
 			Name:        "python-sdk",
-			Argv:        []string{"python3", "runner.py"},
+			Argv:        pythonArgv,
+			ArgvErr:     pythonErr,
 			Dir:         "compat/suites/python-sdk",
 			Interactive: true,
 		},
@@ -163,7 +170,7 @@ func (r *Runner) defaultSuites() []SuiteConfig {
 		},
 		{
 			Name:        "cdk",
-			Argv:        []string{"node", "--import", "tsx/esm", "src/runner.ts"},
+			Argv:        []string{"node", "run.js"},
 			Dir:         "compat/suites/cdk",
 			Interactive: true,
 		},
@@ -287,6 +294,9 @@ func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
 // parallelSlots controls how many test groups the suite may run concurrently
 // (injected as OVERCAST_COMPAT_PARALLEL_SLOTS into the subprocess environment).
 func (r *Runner) runSuite(ctx context.Context, s SuiteConfig, parallelSlots int) (*SuiteReport, error) {
+	if s.ArgvErr != nil {
+		return nil, fmt.Errorf("suite %q: %w", s.Name, s.ArgvErr)
+	}
 	if len(s.Argv) == 0 {
 		return nil, fmt.Errorf("suite %q: empty argv", s.Name)
 	}
