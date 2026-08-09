@@ -17,6 +17,7 @@ import { lambda } from "@/services/api"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import type { InvokeResult } from "@/types"
 import { decodeBase64Text } from "@/lib/base64"
+import { summarisePlatformRecords } from "@/lib/log-format"
 import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
 
@@ -132,7 +133,10 @@ export function TestTab({ name }: { name: string }) {
 
   // A log tail we cannot decode costs the log output and nothing else — the
   // status, the badge and the response payload are all still worth showing.
-  const logOutput = result?.logResult ? decodeBase64Text(result.logResult) : null
+  // Under the JSON log format the START / END / REPORT lines arrive as
+  // Telemetry-API-shaped records instead; each reads as the line it replaced.
+  const decodedLog = result?.logResult ? decodeBase64Text(result.logResult) : null
+  const logOutput = decodedLog === null ? null : summarisePlatformRecords(decodedLog)
 
   return (
     <div className="flex gap-6">

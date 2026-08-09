@@ -3474,6 +3474,31 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Log format and log levels",
+        "id": "log-format-and-log-levels"
+      },
+      {
+        "depth": 3,
+        "text": "Text",
+        "id": "text"
+      },
+      {
+        "depth": 3,
+        "text": "JSON",
+        "id": "json"
+      },
+      {
+        "depth": 3,
+        "text": "Filtering",
+        "id": "filtering"
+      },
+      {
+        "depth": 3,
+        "text": "What the container sees",
+        "id": "what-the-container-sees"
+      },
+      {
+        "depth": 2,
         "text": "Lambda Layers",
         "id": "lambda-layers"
       },
@@ -3499,13 +3524,13 @@ export const DOCS_NAV = [
       },
       {
         "depth": 1,
-        "text": "docker-compose.yml — Option A: mount just the layers directory",
-        "id": "docker-compose-yml-option-a-mount-just-the-layers-directory"
+        "text": "docker-compose.yml â€” Option A: mount just the layers directory",
+        "id": "docker-compose-yml-â-option-a-mount-just-the-layers-directory"
       },
       {
         "depth": 1,
-        "text": "docker-compose.yml — Option B: mount the whole data directory",
-        "id": "docker-compose-yml-option-b-mount-the-whole-data-directory"
+        "text": "docker-compose.yml â€” Option B: mount the whole data directory",
+        "id": "docker-compose-yml-â-option-b-mount-the-whole-data-directory"
       },
       {
         "depth": 3,

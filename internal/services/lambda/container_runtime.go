@@ -795,6 +795,7 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 	}
 	logCtx, logCancel := context.WithCancel(middleware.ContextWithRegion(context.Background(), logRegion))
 
+	appLogLevel, sysLogLevel := resolveLogLevels(fn)
 	ci := &containerInstance{
 		id:             id,
 		instanceID:     uuid.NewString(),
@@ -805,6 +806,9 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 		memorySize:     fn.MemorySize,
 		logStream:      logStream,
 		logGroupName:   fn.logGroupName(),
+		logFormat:      resolveLogFormat(fn),
+		appLogLevel:    appLogLevel,
+		sysLogLevel:    sysLogLevel,
 		docker:         cr.docker,
 		gc:             cr.gc,
 		runtimeAPI:     cr.runtimeAPI,
@@ -1059,6 +1063,11 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType, runtimeA
 		"AWS_LAMBDA_FUNCTION_MEMORY_SIZE": fmt.Sprint(fn.MemorySize),
 		"AWS_LAMBDA_LOG_GROUP_NAME":       fn.logGroupName(),
 		"AWS_LAMBDA_LOG_STREAM_NAME":      logStream,
+		// Lambda's advanced logging controls are delivered to the runtime as
+		// environment variables — the managed runtimes read them to decide
+		// whether to structure their own output, and AWS documents them as the
+		// integration point for custom runtimes.
+		"AWS_LAMBDA_LOG_FORMAT": resolveLogFormat(fn),
 		// Real Lambda always sets this; Powertools and other observability
 		// libraries use it for cold-start classification.
 		"AWS_LAMBDA_INITIALIZATION_TYPE": initType,
@@ -1110,6 +1119,13 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType, runtimeA
 	if fn.Runtime != "" && fn.Runtime != "image" {
 		env["AWS_EXECUTION_ENV"] = "AWS_Lambda_" + fn.Runtime
 	}
+	// Only JSON functions have an application log level to hand down; in Text
+	// mode AWS does not set the variable at all, and setting it would tell a
+	// runtime to filter output that Lambda has not asked it to filter.
+	if resolveLogFormat(fn) == logFormatJSON {
+		applicationLevel, _ := resolveLogLevels(fn)
+		env["AWS_LAMBDA_LOG_LEVEL"] = applicationLevel.String()
+	}
 
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -1136,6 +1152,12 @@ type containerInstance struct {
 	memorySize     int    // configured memory in MB
 	logStream      string
 	logGroupName   string
+	// Logging configuration, resolved from the function at creation time. The
+	// zero value (empty logFormat) is Text, which is what every containerInstance
+	// built outside newContainerInstance wants. See logging_json.go.
+	logFormat      string
+	appLogLevel    logLevel
+	sysLogLevel    logLevel
 	docker         *docker.Client
 	gc             *docker.GC // async fallback when direct removal fails
 	runtimeAPI     *RuntimeAPIServer
@@ -1299,8 +1321,8 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		zap.Int("event_bytes", len(event)),
 	)
 
-	// Emit the START line that real Lambda writes before every invocation.
-	ci.writeLogLine(ctx, fmt.Sprintf("START RequestId: %s Version: $LATEST", reqID))
+	// Emit the start record that real Lambda writes before every invocation.
+	ci.emitInvocationStart(reqID)
 
 	// Monitor container exit via the Docker event watcher (if wired) or fall
 	// back to a per-invocation WaitContainer goroutine. The watcher path
@@ -1345,11 +1367,7 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 			ci.waitForLogDrain(context.Background(), logDrainFirstReadGrace)
 		}
 		elapsed := ci.clk.Now().Sub(start)
-		ci.writeLogLine(context.Background(),
-			fmt.Sprintf("END RequestId: %s", reqID))
-		ci.writeLogLine(context.Background(),
-			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s\tStatus: error",
-				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.reportMemoryMB(memSample), ci.initDurationField()))
+		ci.emitInvocationEnd(reqID, outcomeCrashed, elapsed, ci.reportMemoryMB(memSample), 0)
 		return nil, fmt.Errorf("lambda container exited unexpectedly (exit code %s) — check container logs for details", exitCode)
 	case <-ctx.Done():
 		if waitCancel != nil {
@@ -1373,15 +1391,11 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 		// hunting for a handler bug that isn't there, with a REPORT line that
 		// contradicts the function's configured timeout.
 		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
-		status := "error"
+		outcome := outcomeCrashed
 		if timedOut {
-			status = "timeout"
+			outcome = outcomeTimedOut
 		}
-		ci.writeLogLine(context.Background(),
-			fmt.Sprintf("END RequestId: %s", reqID))
-		ci.writeLogLine(context.Background(),
-			fmt.Sprintf("REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s\tStatus: %s",
-				reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, ci.reportMemoryMB(memSample), ci.initDurationField(), status))
+		ci.emitInvocationEnd(reqID, outcome, elapsed, ci.reportMemoryMB(memSample), 0)
 		if timedOut {
 			return nil, &invokeTimeoutError{RequestID: reqID, Timeout: deadline.Sub(start), At: ci.clk.Now()}
 		}
@@ -1443,16 +1457,17 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 	}
 	logWait := ci.clk.Now().Sub(logWaitStart)
 
-	// Emit END + REPORT lines that real Lambda writes after every invocation.
-	// These are enqueued onto the synth channel for async batching alongside
-	// handler output — Invoke does not wait for their CWL delivery.
+	// Emit the END + REPORT records that real Lambda writes after every
+	// invocation. These are enqueued onto the synth channel for async batching
+	// alongside handler output — Invoke does not wait for their CWL delivery.
 	memWaitStart := ci.clk.Now()
 	memMB := ci.reportMemoryMB(memSample)
 	memWait := ci.clk.Now().Sub(memWaitStart)
-	ci.writeLogLine(ctx, fmt.Sprintf("END RequestId: %s", reqID))
-	ci.writeLogLine(ctx, fmt.Sprintf(
-		"REPORT RequestId: %s\tDuration: %.2f ms\tBilled Duration: %d ms\tMemory Size: %d MB\tMax Memory Used: %d MB%s",
-		reqID, float64(elapsed.Microseconds())/1000.0, billedDuration(elapsed), ci.memorySize, memMB, ci.initDurationField()))
+	outcome := outcomeSuccess
+	if result.FunctionError != "" {
+		outcome = outcomeHandlerError
+	}
+	ci.emitInvocationEnd(reqID, outcome, elapsed, memMB, len(result.Payload))
 
 	// Per-invocation timing breakdown (Phase 0 of
 	// docs/plans/lambda-cold-start.md): what the emulator added around the
@@ -1554,28 +1569,33 @@ func (ci *containerInstance) currentMemoryMB() int {
 	return int(bytes / (1024 * 1024))
 }
 
-// initDurationField returns the "\tInit Duration: X.XX ms" REPORT field for
-// the invocation that triggered this environment's init, and "" thereafter.
-// Real Lambda appends Init Duration only to the REPORT line of the cold-start
-// invocation; warm invokes and proactively initialised (provisioned)
-// environments omit it. The duration runs from container start to the RIC's
-// first GET /next — the same signal that drives readiness and the INIT-burst
-// throttle — so an environment whose RIC never polled (init failure) reports
-// nothing.
-func (ci *containerInstance) initDurationField() string {
+// takeInitDuration returns how long this environment's initialization took, and
+// consumes the right to report it: only the first REPORT of an on-demand cold
+// start carries Init Duration, exactly as on AWS. Warm invokes and proactively
+// initialised (provisioned) environments report nothing, and neither does an
+// environment whose RIC never polled (init failure) — the duration runs from
+// container start to the RIC's first GET /next, the same signal that drives
+// readiness and the INIT-burst throttle.
+func (ci *containerInstance) takeInitDuration() (time.Duration, bool) {
 	if ci.initReported || ci.initStartedAt.IsZero() {
-		return ""
+		return 0, false
 	}
 	firstNext, ok := ci.runtimeAPI.FirstNextAt(ci.containerIP)
 	if !ok {
-		return ""
+		return 0, false
 	}
 	ci.initReported = true
 	initDur := firstNext.Sub(ci.initStartedAt)
 	if initDur < 0 {
 		initDur = 0
 	}
-	return fmt.Sprintf("\tInit Duration: %.2f ms", float64(initDur.Microseconds())/1000.0)
+	return initDur, true
+}
+
+// durationMillis renders a duration in the fractional milliseconds Lambda uses
+// for every duration it reports.
+func durationMillis(d time.Duration) float64 {
+	return float64(d.Microseconds()) / 1000.0
 }
 
 // waitForScannerIdle waits for *this* invocation's container output to reach
@@ -1842,10 +1862,23 @@ func (ci *containerInstance) waitForLogDrain(ctx context.Context, firstReadGrace
 // and debounces persistence, so this synchronous path costs O(microseconds)
 // per call (cache lock + slice append + per-stream metadata update). Three
 // calls per invocation (START, END, REPORT) is negligible.
-func (ci *containerInstance) writeLogLine(ctx context.Context, line string) {
+func (ci *containerInstance) writeLogLine(_ context.Context, line string) {
+	ci.publishRuntimeLog("platform", line)
+	ci.deliverSynthLine(line)
+}
+
+// publishRuntimeLog hands a record to Telemetry/Logs API subscribers. It is
+// deliberately separate from delivery: subscribers always see the complete set
+// of records, whatever SystemLogLevel filters out of CloudWatch.
+func (ci *containerInstance) publishRuntimeLog(logType, line string) {
 	if ci.containerIP != "" {
-		ci.runtimeAPI.PublishExtensionLog(ci.containerIP, "platform", line)
+		ci.runtimeAPI.PublishExtensionLog(ci.containerIP, logType, line)
 	}
+}
+
+// deliverSynthLine writes a synthesised line to the rolling tail buffer and to
+// CloudWatch Logs.
+func (ci *containerInstance) deliverSynthLine(line string) {
 	// Append to the rolling tail buffer so these lines appear in the
 	// X-Amz-Log-Result (test tab) alongside the function's own stdout.
 	lineBytes := append([]byte(line), '\n')
@@ -2244,25 +2277,10 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 				ci.logInFlight.Add(-1)
 				continue
 			}
-			logType, logRecord := classifyRuntimeLogLine(line)
-			if ci.containerIP != "" {
-				ci.runtimeAPI.PublishExtensionLog(ci.containerIP, logType, logRecord)
+			if !ci.ingestContainerLine(line) {
+				ci.logInFlight.Add(-1)
+				continue
 			}
-
-			// Append to rolling tail buffer (capped at 4096 bytes). The
-			// watermark goes up here rather than at the read, because this is
-			// the point at which the line is something a tail snapshot can see;
-			// waitForScannerIdle is waiting on exactly this.
-			lineBytes := append([]byte(line), '\n')
-			ci.tailMu.Lock()
-			ci.tailBuf = append(ci.tailBuf, lineBytes...)
-			const maxTail = 4096
-			if n := len(ci.tailBuf); n > maxTail {
-				copy(ci.tailBuf, ci.tailBuf[n-maxTail:])
-				ci.tailBuf = ci.tailBuf[:maxTail]
-			}
-			ci.tailAppendAt.Store(ci.clk.Now().UnixNano())
-			ci.tailMu.Unlock()
 
 			batch = append(batch, events.LogEntry{
 				Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),
@@ -2305,20 +2323,10 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 						ci.logInFlight.Add(-1)
 						continue
 					}
-					logType, logRecord := classifyRuntimeLogLine(msg)
-					if ci.containerIP != "" {
-						ci.runtimeAPI.PublishExtensionLog(ci.containerIP, logType, logRecord)
+					if !ci.ingestContainerLine(msg) {
+						ci.logInFlight.Add(-1)
+						continue
 					}
-					lineBytes := append([]byte(msg), '\n')
-					ci.tailMu.Lock()
-					ci.tailBuf = append(ci.tailBuf, lineBytes...)
-					const maxTailDrain = 4096
-					if n := len(ci.tailBuf); n > maxTailDrain {
-						copy(ci.tailBuf, ci.tailBuf[n-maxTailDrain:])
-						ci.tailBuf = ci.tailBuf[:maxTailDrain]
-					}
-					ci.tailAppendAt.Store(ci.clk.Now().UnixNano())
-					ci.tailMu.Unlock()
 					batch = append(batch, events.LogEntry{
 						Timestamp: logEventTimestampMillis(ts, ci.clk.Now()),
 						Message:   msg,

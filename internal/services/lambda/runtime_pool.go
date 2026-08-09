@@ -263,6 +263,13 @@ func functionInstanceIdentity(fn *Function) string {
 	add("memory", strconv.Itoa(fn.MemorySize))
 	add("arch", strings.Join(fn.Architectures, ","))
 	add("loggroup", fn.logGroupName())
+	// The logging configuration reaches the container as environment variables
+	// (AWS_LAMBDA_LOG_FORMAT / AWS_LAMBDA_LOG_LEVEL), so changing it has to
+	// retire the environments baked with the old values.
+	add("logformat", resolveLogFormat(fn))
+	applicationLevel, systemLevel := resolveLogLevels(fn)
+	add("applicationloglevel", applicationLevel.String())
+	add("systemloglevel", systemLevel.String())
 
 	keys := make([]string, 0, len(fn.Environment))
 	for k := range fn.Environment {

@@ -34,7 +34,7 @@ func loggingConfigFromResponse(t *testing.T, resp *http.Response) map[string]any
 	return logging
 }
 
-func TestCreateFunction_LoggingConfigDefaultsAndJSONUnsupported(t *testing.T) {
+func TestCreateFunction_LoggingConfigDefaults(t *testing.T) {
 	// Given: no explicit logging configuration.
 	srv := helpers.NewTestServer(t)
 
@@ -52,13 +52,36 @@ func TestCreateFunction_LoggingConfigDefaultsAndJSONUnsupported(t *testing.T) {
 		t.Fatalf("plain-text config returned SystemLogLevel: %#v", logging)
 	}
 
-	// JSON changes both application and platform record formatting. Until #660
-	// implements that coherently, the valid AWS setting is rejected honestly.
-	resp = createFunctionWithLoggingConfig(t, srv, "json-log-unsupported", map[string]any{"LogFormat": "JSON"})
-	assertLambdaUnsupported(t, resp)
-	missing := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/json-log-unsupported/configuration"), nil)
-	helpers.AssertStatus(t, missing, http.StatusNotFound)
-	missing.Body.Close()
+	// When: JSON is requested without levels, both default to INFO — the levels
+	// only exist in JSON mode, so they appear here and nowhere else.
+	resp = createFunctionWithLoggingConfig(t, srv, "json-log-defaults", map[string]any{"LogFormat": "JSON"})
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	logging = loggingConfigFromResponse(t, resp)
+	if logging["LogGroup"] != "/aws/lambda/json-log-defaults" || logging["LogFormat"] != "JSON" ||
+		logging["ApplicationLogLevel"] != "INFO" || logging["SystemLogLevel"] != "INFO" {
+		t.Fatalf("LoggingConfig = %#v", logging)
+	}
+
+	// Then: the configuration round-trips through GetFunctionConfiguration.
+	get := doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/json-log-defaults/configuration"), nil)
+	helpers.AssertStatus(t, get, http.StatusOK)
+	if got := loggingConfigFromResponse(t, get); got["LogFormat"] != "JSON" ||
+		got["ApplicationLogLevel"] != "INFO" || got["SystemLogLevel"] != "INFO" ||
+		got["LogGroup"] != "/aws/lambda/json-log-defaults" {
+		t.Fatalf("round-tripped LoggingConfig = %#v", got)
+	}
+
+	// And: explicit levels are stored as given rather than re-defaulted.
+	resp = createFunctionWithLoggingConfig(t, srv, "json-log-levels", map[string]any{
+		"LogFormat": "JSON", "ApplicationLogLevel": "ERROR", "SystemLogLevel": "DEBUG",
+		"LogGroup": "/custom/json-group",
+	})
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	logging = loggingConfigFromResponse(t, resp)
+	if logging["LogGroup"] != "/custom/json-group" || logging["LogFormat"] != "JSON" ||
+		logging["ApplicationLogLevel"] != "ERROR" || logging["SystemLogLevel"] != "DEBUG" {
+		t.Fatalf("LoggingConfig = %#v", logging)
+	}
 }
 
 func TestFunctionConfiguration_LoggingConfigValidationAndNonMutation(t *testing.T) {
@@ -123,8 +146,9 @@ func TestUpdateFunctionConfiguration_LoggingConfigPresenceDefaults(t *testing.T)
 	helpers.AssertStatus(t, created, http.StatusCreated)
 	created.Body.Close()
 
-	// An explicitly present empty object has uncaptured service semantics. Until
-	// #660 captures them, reject it honestly without mutating the function.
+	// An explicitly present empty object has uncaptured service semantics —
+	// guessing between "no-op" and "reset to defaults" would silently mutate the
+	// function either way — so it is still rejected honestly, without mutating.
 	resp := doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/logging-presence/configuration"), map[string]any{
 		"Description": "must-not-stick-empty", "LoggingConfig": map[string]any{},
 	})
@@ -150,23 +174,48 @@ func TestUpdateFunctionConfiguration_LoggingConfigPresenceDefaults(t *testing.T)
 		t.Fatalf("updated LoggingConfig = %#v", logging)
 	}
 
-	// Valid JSON defaults are modeled, but applying them remains unsupported
-	// until #660 can reproduce JSON platform records and filtering end to end.
+	// Switching an existing function to JSON is applied, and the two levels the
+	// format brings with it default to INFO.
 	resp = doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/logging-presence/configuration"), map[string]any{
-		"Description": "must-not-stick", "LoggingConfig": map[string]any{"LogFormat": "JSON"},
+		"Description": "now-json", "LoggingConfig": map[string]any{"LogFormat": "JSON"},
 	})
-	assertLambdaUnsupported(t, resp)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	logging = loggingConfigFromResponse(t, resp)
+	if logging["LogFormat"] != "JSON" || logging["ApplicationLogLevel"] != "INFO" || logging["SystemLogLevel"] != "INFO" {
+		t.Fatalf("JSON update returned LoggingConfig = %#v", logging)
+	}
 	get = doJSON(t, http.MethodGet, lambdaURL(srv, "/functions/logging-presence/configuration"), nil)
 	var current map[string]any
 	decodeJSON(t, get, &current)
-	if current["Description"] == "must-not-stick" {
-		t.Fatal("unsupported JSON logging update mutated Description")
+	if current["Description"] != "now-json" {
+		t.Fatalf("JSON logging update did not persist Description: %#v", current["Description"])
+	}
+	if got := current["LoggingConfig"].(map[string]any); got["LogFormat"] != "JSON" ||
+		got["ApplicationLogLevel"] != "INFO" || got["SystemLogLevel"] != "INFO" {
+		t.Fatalf("JSON logging update did not persist: %#v", got)
+	}
+
+	// And back to Text: the two levels only exist in JSON mode, so they leave
+	// the configuration with it rather than lingering at their last value.
+	resp = doJSON(t, http.MethodPut, lambdaURL(srv, "/functions/logging-presence/configuration"), map[string]any{
+		"LoggingConfig": map[string]any{"LogFormat": "Text"},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	logging = loggingConfigFromResponse(t, resp)
+	if logging["LogFormat"] != "Text" {
+		t.Fatalf("Text update returned LoggingConfig = %#v", logging)
+	}
+	if _, ok := logging["ApplicationLogLevel"]; ok {
+		t.Fatalf("plain-text config returned ApplicationLogLevel: %#v", logging)
+	}
+	if _, ok := logging["SystemLogLevel"]; ok {
+		t.Fatalf("plain-text config returned SystemLogLevel: %#v", logging)
 	}
 }
 
-func TestFunctionConfiguration_LoggingUnsupportedWaitsForModeledValidation(t *testing.T) {
-	// A valid-but-unsupported JSON logging request must not mask an earlier
-	// modeled CreateFunction constraint failure.
+func TestFunctionConfiguration_LoggingWaitsForModeledValidation(t *testing.T) {
+	// A LoggingConfig that is itself acceptable must not let a request through
+	// that an earlier modeled CreateFunction constraint rejects.
 	srv := helpers.NewTestServer(t)
 	invalidCreate := doJSON(t, http.MethodPost, lambdaURL(srv, "/functions"), map[string]any{
 		"FunctionName": "mixed-invalid-logging", "Runtime": "nodejs20.x", "Handler": "index.handler",

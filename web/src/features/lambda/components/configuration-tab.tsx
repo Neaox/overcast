@@ -8,6 +8,7 @@ import { Combobox, type ComboboxRenderContext } from "@/components/ui/combobox"
 import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { Spinner } from "@/components/ui/primitives"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
 import {
   lambdaKeys,
   lambdaRuntimesQueryOptions,
@@ -17,6 +18,14 @@ import {
   functionTagsQueryOptions,
   updateFunctionTagsMutationOptions,
 } from "@/features/lambda/data"
+import {
+  APPLICATION_LOG_LEVELS,
+  buildLoggingConfig,
+  loggingConfigForm,
+  LOG_FORMATS,
+  SYSTEM_LOG_LEVELS,
+  type LoggingConfigForm,
+} from "@/features/lambda/logging-config"
 import { ec2SubnetsQueryOptions, ec2SecurityGroupsQueryOptions } from "@/features/ec2/data"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import type { LambdaFunction, LambdaLayer } from "@/types"
@@ -29,6 +38,7 @@ export function ConfigurationTab({ fn }: { fn: LambdaFunction }) {
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <GeneralConfigSection fn={fn} />
+      <LoggingConfigSection fn={fn} />
       <VpcConfigSection fn={fn} />
       <EnvVarsSection fn={fn} />
       <TagsSection fn={fn} />
@@ -224,10 +234,6 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
           <Definition label="Last modified" value={fn.LastModified} />
           <Definition label="State" value={fn.State} />
           <Definition
-            label="Log group"
-            value={fn.LoggingConfig?.LogGroup ? <ArnLink arn={fn.LoggingConfig.LogGroup} /> : null}
-          />
-          <Definition
             label="Function ARN"
             value={fn.FunctionArn ? <ArnText arn={fn.FunctionArn} /> : null}
             full
@@ -235,6 +241,183 @@ function GeneralConfigSection({ fn }: { fn: LambdaFunction }) {
           <Definition label="Role" value={fn.Role} full />
           {fn.Description && (
             <Definition label="Description" value={fn.Description} variant="prose" full />
+          )}
+        </DefinitionList>
+      )}
+    </div>
+  )
+}
+
+// ─── Logging configuration section ────────────────────────────────────────
+
+/**
+ * Log destination, log format, and the level filtering the JSON format unlocks.
+ *
+ * The whole configuration is sent on every save, log group included:
+ * UpdateFunctionConfiguration rebuilds all four members from the request and
+ * defaults the ones it does not find, so a payload naming only the format would
+ * move a custom log group back to `/aws/lambda/<function name>`.
+ */
+export function LoggingConfigSection({ fn }: { fn: LambdaFunction }) {
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState<LoggingConfigForm>(() => loggingConfigForm(fn.LoggingConfig))
+
+  // Same "adjust state during render" sync as the sections above.
+  const [prevFn, setPrevFn] = useState(fn)
+  if (fn !== prevFn) {
+    setPrevFn(fn)
+    if (!editing) setForm(loggingConfigForm(fn.LoggingConfig))
+  }
+
+  const updateMut = useResourceMutation({
+    options: updateFunctionConfigurationMutationOptions(),
+    invalidateKeys: [lambdaKeys.functions()],
+    successTitle: "Logging configuration saved",
+    errorTitle: "Save failed",
+    onSuccess: () => setEditing(false),
+  })
+
+  const handleSave = () => {
+    updateMut.mutate({
+      FunctionName: fn.FunctionName,
+      LoggingConfig: buildLoggingConfig(form),
+    })
+  }
+
+  const handleCancel = () => {
+    setEditing(false)
+    setForm(loggingConfigForm(fn.LoggingConfig))
+  }
+
+  const isJSON = form.logFormat === "JSON"
+  const saved = loggingConfigForm(fn.LoggingConfig)
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-elevated p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="font-mono text-sm font-medium text-fg">Logging configuration</h3>
+        {!editing ? (
+          <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+            Edit
+          </Button>
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleCancel}
+              disabled={updateMut.isPending}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={updateMut.isPending}>
+              {updateMut.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {editing ? (
+        // The three selects share one row: the two levels are peers governed by
+        // the format beside them, and a two-column grid orphans one of them.
+        <div className="flex flex-col gap-4 text-sm">
+          <div className="flex flex-col gap-1">
+            <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-log-group">
+              Log group
+            </label>
+            <Input
+              id="logging-log-group"
+              value={form.logGroup}
+              onChange={(e) => setForm((prev) => ({ ...prev, logGroup: e.target.value }))}
+              placeholder={`/aws/lambda/${fn.FunctionName ?? "my-function"}`}
+              className="font-mono text-xs"
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-x-6">
+            <div className="flex flex-col gap-1">
+              <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-log-format">
+                Log format
+              </label>
+              <Select
+                id="logging-log-format"
+                value={form.logFormat}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    logFormat: e.target.value as LoggingConfigForm["logFormat"],
+                  }))
+                }
+              >
+                {LOG_FORMATS.map((format) => (
+                  <option key={format} value={format}>
+                    {format}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-app-level">
+                Application log level
+              </label>
+              <Select
+                id="logging-app-level"
+                value={form.applicationLogLevel}
+                disabled={!isJSON}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    applicationLogLevel: e.target.value as LoggingConfigForm["applicationLogLevel"],
+                  }))
+                }
+              >
+                {APPLICATION_LOG_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="logging-system-level">
+                System log level
+              </label>
+              <Select
+                id="logging-system-level"
+                value={form.systemLogLevel}
+                disabled={!isJSON}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    systemLogLevel: e.target.value as LoggingConfigForm["systemLogLevel"],
+                  }))
+                }
+              >
+                {SYSTEM_LOG_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+          <p className="text-xs text-fg-muted">
+            {isJSON
+              ? "Platform records are emitted as JSON events and both streams are filtered at the selected level."
+              : "Log levels apply to the JSON format only — Lambda rejects them for Text."}
+          </p>
+        </div>
+      ) : (
+        <DefinitionList>
+          <Definition label="Log format" value={saved.logFormat} />
+          <Definition
+            label="Log group"
+            value={fn.LoggingConfig?.LogGroup ? <ArnLink arn={fn.LoggingConfig.LogGroup} /> : null}
+          />
+          {saved.logFormat === "JSON" && (
+            <Definition label="Application log level" value={saved.applicationLogLevel} />
+          )}
+          {saved.logFormat === "JSON" && (
+            <Definition label="System log level" value={saved.systemLogLevel} />
           )}
         </DefinitionList>
       )}
@@ -763,6 +946,18 @@ function LayersSection({
 // ─── Tags section ─────────────────────────────────────────────────────────
 
 /**
+ * Stands in for the tag set until ListTags answers.
+ *
+ * It has to be this one object rather than a `= {}` default in the destructure:
+ * that default is re-evaluated on every render, so while the query is pending
+ * it hands back a new object each time, and the render-phase sync below — which
+ * compares by identity — then schedules an update on every render and never
+ * converges. React gives up at 25 passes and throws "Too many re-renders",
+ * which took out the whole Configuration tab on first paint.
+ */
+const NO_TAGS: Record<string, string> = {}
+
+/**
  * Lambda tags live on the unqualified function ARN — AWS rejects a version or
  * alias ARN — and are read and written through ListTags/TagResource/
  * UntagResource rather than UpdateFunctionConfiguration.
@@ -771,7 +966,7 @@ function TagsSection({ fn }: { fn: LambdaFunction }) {
   const resourceArn = fn.FunctionArn ?? ""
   const [editing, setEditing] = useState(false)
 
-  const { data: tags = {}, isLoading } = useQuery(functionTagsQueryOptions(resourceArn))
+  const { data: tags = NO_TAGS, isLoading } = useQuery(functionTagsQueryOptions(resourceArn))
 
   const toRows = (source: Record<string, string>): EnvPair[] =>
     Object.entries(source).map(([key, value]) => ({ key, value }))

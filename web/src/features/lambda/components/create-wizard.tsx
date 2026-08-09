@@ -34,6 +34,7 @@ import {
 import Editor from "@monaco-editor/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
 import { FormField, FormRow, fieldError } from "@/components/ui/form"
 import { Combobox } from "@/components/ui/combobox"
 import { Spinner } from "@/components/ui/primitives"
@@ -53,6 +54,15 @@ import {
   putSourceMutationOptions,
   lambdaRuntimesQueryOptions,
 } from "@/features/lambda/data"
+import {
+  APPLICATION_LOG_LEVELS,
+  buildLoggingConfig,
+  DEFAULT_APPLICATION_LOG_LEVEL,
+  DEFAULT_SYSTEM_LOG_LEVEL,
+  LOG_FORMATS,
+  SYSTEM_LOG_LEVELS,
+  type LoggingConfigForm,
+} from "@/features/lambda/logging-config"
 import { logsGroupsQueryOptions } from "@/features/cloudwatch/logs/data"
 import { lambda } from "@/services/api"
 import type { Runtime } from "@aws-sdk/client-lambda"
@@ -210,6 +220,14 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
   // Shared optional
   const [sourceKMSKeyArn, setSourceKMSKeyArn] = useState("")
   const [showKMS, setShowKMS] = useState(false)
+  // Logging — the log group itself is a validated form field; the format and
+  // its two levels are picked from fixed lists, so they need no validation.
+  const [logFormat, setLogFormat] = useState<LoggingConfigForm["logFormat"]>("Text")
+  const [applicationLogLevel, setApplicationLogLevel] = useState<
+    LoggingConfigForm["applicationLogLevel"]
+  >(DEFAULT_APPLICATION_LOG_LEVEL)
+  const [systemLogLevel, setSystemLogLevel] =
+    useState<LoggingConfigForm["systemLogLevel"]>(DEFAULT_SYSTEM_LOG_LEVEL)
   // Environment variables
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>([])
   const [showEnvVars, setShowEnvVars] = useState(false)
@@ -230,6 +248,9 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
     setS3ObjectVersion("")
     setSourceKMSKeyArn("")
     setShowKMS(false)
+    setLogFormat("Text")
+    setApplicationLogLevel(DEFAULT_APPLICATION_LOG_LEVEL)
+    setSystemLogLevel(DEFAULT_SYSTEM_LOG_LEVEL)
     setEnvVars([])
     setShowEnvVars(false)
     setShowAdvanced(false)
@@ -317,7 +338,12 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
         MemorySize: v.memorySize !== 128 ? v.memorySize : undefined,
         Timeout: v.timeout !== 3 ? v.timeout : undefined,
         Environment: Object.keys(envMap).length > 0 ? { Variables: envMap } : undefined,
-        LoggingConfig: v.logGroup.trim() ? { LogGroup: v.logGroup.trim() } : undefined,
+        LoggingConfig: buildLoggingConfig({
+          logGroup: v.logGroup,
+          logFormat,
+          applicationLogLevel,
+          systemLogLevel,
+        }),
       })
 
       // Push code
@@ -375,6 +401,9 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
     s3Key,
     s3ObjectVersion,
     sourceKMSKeyArn,
+    logFormat,
+    applicationLogLevel,
+    systemLogLevel,
     envVars,
     createMutateAsync,
     putSourceMutateAsync,
@@ -631,6 +660,69 @@ export function CreateFunctionWizard({ open, onOpenChange }: CreateFunctionWizar
                   </FormRow>
                 )}
               </form.Field>
+
+              {/* Log format — JSON is what makes the two levels settable, and
+                  Lambda rejects either of them alongside Text. The hint sits
+                  under the whole row rather than in the format field's own
+                  column: it describes all three, and a 200px column wraps it
+                  to three cramped lines. */}
+              <div className="flex flex-col gap-1.5">
+                <FormRow>
+                  <FormField label="Log format">
+                    <Select
+                      value={logFormat}
+                      onChange={(e) =>
+                        setLogFormat(e.target.value as LoggingConfigForm["logFormat"])
+                      }
+                    >
+                      {LOG_FORMATS.map((format) => (
+                        <option key={format} value={format}>
+                          {format}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormField>
+                  {logFormat === "JSON" && (
+                    <>
+                      <FormField label="Application log level">
+                        <Select
+                          value={applicationLogLevel}
+                          onChange={(e) =>
+                            setApplicationLogLevel(
+                              e.target.value as LoggingConfigForm["applicationLogLevel"],
+                            )
+                          }
+                        >
+                          {APPLICATION_LOG_LEVELS.map((level) => (
+                            <option key={level} value={level}>
+                              {level}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormField>
+                      <FormField label="System log level">
+                        <Select
+                          value={systemLogLevel}
+                          onChange={(e) =>
+                            setSystemLogLevel(e.target.value as LoggingConfigForm["systemLogLevel"])
+                          }
+                        >
+                          {SYSTEM_LOG_LEVELS.map((level) => (
+                            <option key={level} value={level}>
+                              {level}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormField>
+                    </>
+                  )}
+                </FormRow>
+                <p className="text-[11px] text-fg-subtle">
+                  {logFormat === "JSON"
+                    ? "Platform records are emitted as JSON events and both streams are filtered at the selected level."
+                    : "Plain text START / END / REPORT lines, unfiltered."}
+                </p>
+              </div>
 
               {/* ── General configuration (collapsible) ─────────────────────── */}
               <CollapsibleSection
