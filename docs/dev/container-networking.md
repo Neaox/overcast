@@ -35,6 +35,31 @@ caller by `dns.Locator` because Overcast sits on several Docker networks.
 **Do not add per-name overrides here.** This resolver answers "where is
 Overcast". A name that belongs to some other container is question 2.
 
+### 1a. …and the server it is calling has to be listening there
+
+`Resolve` is the whole answer only for a server bound to every interface, which
+Overcast's own API is by default. A server that chooses its own bind addresses
+needs the pair, and `containerendpoint.ResolveListen` returns it: the host
+containers dial, and the local addresses that has to be listening on.
+
+The Lambda Runtime API is the case that needs it. Nothing off this machine is a
+legitimate caller — it is an unauthenticated control channel for every Lambda
+container — but loopback alone strands every invocation, because the RIC dials
+back over `LAMBDA_NETWORK`. So it binds loopback plus exactly one more address:
+
+| Overcast is | Containers dial | Also bound |
+| --- | --- | --- |
+| in a container | our address on `LAMBDA_NETWORK` | loopback |
+| on a native Linux host | that network's **gateway** — host-local, and on-link from every container attached, so it survives a function joining a VPC network that takes over the default route | loopback |
+| on a Docker Desktop host | the host's routable address (Desktop's networks have a gateway too, but it belongs to the daemon's VM) | loopback |
+
+Which of the last two applies is decided by **binding the gateway**, not by
+`runtime.GOOS`: "native daemon or Desktop VM" is the same question asked less
+directly, and `uname -s` says `Linux` under WSL2 either way. When nothing
+resolves, it binds the wildcard and logs that it did — a Runtime API nobody can
+reach fails worse than one bound too widely, and every invocation would hang at
+INIT.
+
 ## 2. A container calling another container
 
 This is Docker's embedded resolver (`127.0.0.11`), not Overcast's. Every

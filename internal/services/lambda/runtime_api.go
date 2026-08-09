@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -134,13 +135,15 @@ type RuntimeAPIServer struct {
 	seenNext         map[string]bool          // container IP → true after first GET /next
 	firstNextAt      map[string]time.Time     // container IP → time of first GET /next
 	ready            map[string]chan struct{} // container IP → closed after first GET /next
-	server           *http.Server
-	listener         net.Listener
-	logger           *zap.Logger
-	addr             string        // host:port as seen by containers
-	done             chan struct{} // closed on Stop to unblock long-polling handlers
-	clk              clock.Clock
-	logsDeliveries   chan extensionLogDelivery
+	// server fronts every listener the caller bound; http.Server tracks them
+	// itself, so Stop's Shutdown closes them all and nothing here needs to
+	// hold them.
+	server         *http.Server
+	logger         *zap.Logger
+	addr           string        // host:port as seen by containers
+	done           chan struct{} // closed on Stop to unblock long-polling handlers
+	clk            clock.Clock
+	logsDeliveries chan extensionLogDelivery
 
 	// OnFirstNext is called (in a goroutine) the first time a container's RIC
 	// issues GET /next.  The argument is the function ARN.  Setting this lets
@@ -165,6 +168,21 @@ func NewRuntimeAPIServer(listenAddr string, containerAddr string, logger *zap.Lo
 // pre-created listener. This allows the caller to bind first (e.g. to resolve
 // port 0) and then derive containerAddr from the actual port.
 func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logger *zap.Logger, clk clock.Clock) (*RuntimeAPIServer, error) {
+	return NewRuntimeAPIServerFromListeners([]net.Listener{ln}, containerAddr, logger, clk)
+}
+
+// NewRuntimeAPIServerFromListeners fronts every listener with the one server,
+// so a RIC is answered identically whichever address its request arrived on.
+//
+// Several listeners rather than one wildcard is how the Runtime API stays off
+// networks this machine merely happens to be attached to while remaining
+// reachable from the containers that have to connect back to it: the address
+// they dial, plus loopback. See containerendpoint.ResolveListen, which decides
+// the set.
+func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, logger *zap.Logger, clk clock.Clock) (*RuntimeAPIServer, error) {
+	if len(lns) == 0 {
+		return nil, fmt.Errorf("runtime api: no listeners")
+	}
 	s := &RuntimeAPIServer{
 		pending:          make(map[string]*pendingInvocation),
 		funcQueues:       make(map[string][]*pendingInvocation),
@@ -199,19 +217,66 @@ func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logg
 	mux.HandleFunc("/2020-08-15/logs", s.handleExtensionLogsSubscribe)
 
 	s.server = &http.Server{Handler: mux}
-	s.listener = ln
 
-	go func() {
-		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
-			logger.Error("runtime api: serve error", zap.Error(err))
-		}
-	}()
+	listenAddrs := make([]string, 0, len(lns))
+	for _, ln := range lns {
+		listenAddrs = append(listenAddrs, ln.Addr().String())
+		go func() {
+			if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
+				logger.Error("runtime api: serve error",
+					zap.String("listen", ln.Addr().String()), zap.Error(err))
+			}
+		}()
+	}
 
 	logger.Info("lambda runtime API started",
-		zap.String("listen", ln.Addr().String()),
+		zap.Strings("listen", listenAddrs),
 		zap.String("container_addr", containerAddr))
 
 	return s, nil
+}
+
+// listenAllOn binds hosts on port and returns the listeners in the same order.
+//
+// The first host is the one containers dial, so its bind is the one that has to
+// succeed and the one that settles the port: a port of 0 (which the test server
+// uses to avoid collisions between parallel packages) is resolved by the first
+// listener and the rest join it there, rather than each taking a different
+// OS-assigned port and leaving containers pointed at one of them.
+//
+// A later host that cannot be bound is dropped with a warning instead of
+// failing the lot. Those addresses are conveniences — loopback for a developer
+// or a test on this machine — and something else holding the port on one of
+// them is no reason to leave Lambda without a runtime.
+func listenAllOn(hosts []string, port int, logger *zap.Logger) ([]net.Listener, error) {
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("runtime api: no address to bind")
+	}
+
+	primary := net.JoinHostPort(hosts[0], strconv.Itoa(port))
+	first, err := net.Listen("tcp", primary)
+	if err != nil {
+		return nil, fmt.Errorf("runtime api: listen %s: %w", primary, err)
+	}
+	lns := []net.Listener{first}
+
+	bound, ok := first.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = first.Close()
+		return nil, fmt.Errorf("runtime api: listen %s: not a TCP address", primary)
+	}
+
+	for _, host := range hosts[1:] {
+		addr := net.JoinHostPort(host, strconv.Itoa(bound.Port))
+		ln, lnErr := net.Listen("tcp", addr)
+		if lnErr != nil {
+			logger.Warn("runtime api: secondary listen failed — address unavailable",
+				zap.String("addr", addr), zap.Error(lnErr))
+			continue
+		}
+		lns = append(lns, ln)
+	}
+	return lns, nil
 }
 
 // Addr returns the host:port that containers should use to reach this server.
