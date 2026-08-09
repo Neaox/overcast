@@ -200,7 +200,14 @@ func (s *Service) deleteScheduleGroupTyped(ctx context.Context, req *deleteSched
 		return nil, aerr
 	}
 	for _, sc := range schedules {
-		if err := s.deleteScheduleRecord(ctx, region, req.Name, sc.Name); err != nil {
+		// Each cascaded delete takes the schedule's own record lock, for the
+		// reason deleteScheduleTyped does: an UpdateSchedule already holding a
+		// read of that record would otherwise write it back afterwards, leaving
+		// a schedule in a group that no longer exists.
+		unlock := s.scheduleLocks.Lock(s.scheduleKey(region, req.Name, sc.Name))
+		err := s.deleteScheduleRecord(ctx, region, req.Name, sc.Name)
+		unlock()
+		if err != nil {
 			return nil, protocol.Wrap(protocol.ErrInternalError, err)
 		}
 	}
@@ -376,6 +383,13 @@ func (s *Service) updateScheduleTyped(ctx context.Context, req *updateScheduleRe
 	}
 	region := s.regionOf(ctx)
 	group := groupOrDefault(req.GroupName)
+
+	// Read and write are one step. The replacement is built from a record this
+	// call has already read, so anything that changes that record in between —
+	// another update, or a DeleteSchedule whose caller has already been told it
+	// succeeded — would be written straight over.
+	defer s.scheduleLocks.Lock(s.scheduleKey(region, group, req.Name))()
+
 	existing, found, aerr := s.loadSchedule(ctx, region, group, req.Name)
 	if aerr != nil {
 		return nil, aerr
@@ -415,9 +429,17 @@ type deleteScheduleRequest struct {
 	Name      string `json:"Name" cbor:"Name"`
 }
 
+// deleteScheduleTyped removes a schedule.
+//
+// It takes the same record lock UpdateSchedule does: the existence check and
+// the delete are a read-modify-write like any other, and without the lock an
+// update already in its own window writes the record back after this call has
+// removed it.
 func (s *Service) deleteScheduleTyped(ctx context.Context, req *deleteScheduleRequest) (any, *protocol.AWSError) {
 	region := s.regionOf(ctx)
 	group := groupOrDefault(req.GroupName)
+	defer s.scheduleLocks.Lock(s.scheduleKey(region, group, req.Name))()
+
 	_, found, aerr := s.loadSchedule(ctx, region, group, req.Name)
 	if aerr != nil {
 		return nil, aerr

@@ -177,6 +177,12 @@ type Service struct {
 	// from the root router in InitRouter; nil until then.
 	targets *eventtarget.Dispatcher
 
+	// scheduleLocks serialises the read-modify-write of one schedule record.
+	// Held by every operation that removes or replaces a stored schedule —
+	// UpdateSchedule, DeleteSchedule and DeleteScheduleGroup's cascade — across
+	// both the read and the write, which is the part that makes them one step.
+	scheduleLocks serviceutil.RecordLocks
+
 	// deliveries carries due firings from the tick goroutine to the delivery
 	// worker pool, and inflight names the schedules a worker currently owns.
 	deliveries   chan firing
