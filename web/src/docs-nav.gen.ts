@@ -4851,11 +4851,12 @@ export const DOCS_NAV = [
     "path": "docs/storage.md",
     "href": "storage.md",
     "title": "Storage backends",
-    "description": "Compares Overcast's four storage backends — memory, wal, persistent, hybrid — by durability and what survives a crash or restart, and how to choose one.",
+    "description": "Compares Overcast's four storage backends — memory, wal, persistent, hybrid — by durability and what survives a crash or restart, how to choose one, and which backends each published artifact actually ships with.",
     "section": "Getting Started",
     "tags": [
       "docs",
       "durability",
+      "slim",
       "state",
       "storage"
     ],
@@ -4874,6 +4875,11 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "The `auto` default",
         "id": "the-auto-default"
+      },
+      {
+        "depth": 2,
+        "text": "Builds without SQLite",
+        "id": "builds-without-sqlite"
       },
       {
         "depth": 2,

@@ -34,15 +34,16 @@ startup and memory cost by design; treat that mode as a separate operating profi
 
 ### Per-backend startup (cold start, empty data dir)
 
-All four storage backends defer the modernc/sqlite cold-migrate cost
-(~200–340 ms) off the critical path. The migration runs in a background
-goroutine; the first DB-touching request blocks on it.
+The two SQLite-backed backends (`hybrid` and `persistent`) defer the
+modernc/sqlite cold-migrate cost (~200–340 ms) off the critical path. The
+migration runs in a background goroutine; the first DB-touching request blocks
+on it. `memory` and `wal` use no SQLite and never pay it at all.
 
 | Backend                     | Internal startup_ms | Wall spawn-to-ready |
 | ---------------------------- | ------------------- | ------------------- |
 | `memory`                     | 1–2 ms              | ~40 ms              |
 | `hybrid` (auto, when persisting) | 4–5 ms          | ~40 ms              |
-| `wal` (SQLite, async)        | 5–8 ms              | ~40 ms              |
+| `wal` (append log, async fsync) | 5–8 ms           | ~40 ms              |
 | `persistent` (SQLite)        | 2–6 ms              | ~40 ms              |
 
 Each row was measured with `OVERCAST_STATE` set explicitly to that backend. The default
@@ -50,6 +51,11 @@ Each row was measured with `OVERCAST_STATE` set explicitly to that backend. The 
 a volume/bind mount or existing database is found, `memory` otherwise — so its measured
 cost is whichever row it resolves to, plus the (negligible) resolution check itself. See
 [docs/storage.md § The auto default](./storage.md#the-auto-default).
+
+The `overcast-slim` image and the `overcastd` binaries are built without SQLite, so
+`hybrid` and `persistent` do not exist in them and `auto` there always resolves to
+`memory` — a mounted volume does not change that. Their durable option is `wal`. See
+[docs/storage.md § Builds without SQLite](./storage.md#builds-without-sqlite).
 
 Measured 2026-04-17 in the dev container (Debian 12, x86_64, Go 1.23,
 modernc/sqlite pure-Go driver, all 27 services registered, no SDK
@@ -67,7 +73,9 @@ runs are 1–2 ms faster across the board and not reported.
 
 Overcast's default (`OVERCAST_STATE` unset, i.e. `auto`) picks `hybrid` or `memory` at
 startup based on whether there's evidence you want persistence — see
-[docs/storage.md § The auto default](./storage.md#the-auto-default) for the exact rule.
+[docs/storage.md § The auto default](./storage.md#the-auto-default) for the exact rule,
+and [§ Builds without SQLite](./storage.md#builds-without-sqlite) for the two artifacts
+where `hybrid` is not an option at all.
 If you're tuning for a specific case — crash-recovery testing, or a slow bind-mounted data
 directory — these are the levers. See [docs/storage.md](./storage.md) for a full comparison
 of the four concrete backends by durability and what survives a restart.

@@ -1,12 +1,13 @@
 ---
 title: "Storage backends"
-description: "Compares Overcast's four storage backends — memory, wal, persistent, hybrid — by durability and what survives a crash or restart, and how to choose one."
+description: "Compares Overcast's four storage backends — memory, wal, persistent, hybrid — by durability and what survives a crash or restart, how to choose one, and which backends each published artifact actually ships with."
 section: "Getting Started"
 tags:
   - docs
   - storage
   - state
   - durability
+  - slim
 ---
 
 # Storage backends
@@ -35,6 +36,13 @@ mounts, the `hybrid` flush knobs, storage-related startup warnings), see
 below for exactly how it resolves. Among the four concrete backends, `hybrid` is the
 right choice for most local development that needs to survive a restart — it's both
 fast and durable without paying a synchronous disk round trip on every operation.
+
+> [!IMPORTANT]
+> `hybrid` and `persistent` need SQLite, and two of the published artifacts — the
+> **`overcast-slim` image** and the **`overcastd` binaries** — are built without it. In
+> those, `auto` can only ever resolve to `memory`, mounting a volume changes nothing, and
+> `wal` is the only durable backend available. See
+> [Builds without SQLite](#builds-without-sqlite).
 
 ---
 
@@ -65,6 +73,9 @@ better default. In practice this means:
   mode CI wants automatically.
 - A native install that already has data at `~/.overcast/data` → **`hybrid`** (signal 3),
   so upgrading to this default never silently drops existing data.
+- `docker run -v mydata:/data ghcr.io/neaox/overcast-slim` → **`memory`**, because the slim
+  image has no SQLite and `hybrid` does not exist in it. The signals above are not even
+  consulted. See [Builds without SQLite](#builds-without-sqlite).
 
 `OVERCAST_STATE` set to anything else (including explicitly `memory`) always wins outright
 — `auto` only ever applies when the variable is unset or literally `auto`.
@@ -75,6 +86,56 @@ To see what `auto` actually chose for a running instance, check either:
 - the Metrics & Health page in the web console (or `GET /_debug/metrics`'s
   `advisories` array), which surfaces an info-level advisory whenever the resolved mode
   is `memory`, with the concrete steps to change it.
+
+---
+
+## Builds without SQLite
+
+`hybrid` and `persistent` store their data in SQLite, and **two of the published artifacts
+are compiled without a SQLite driver** (`-tags nosqlite`). Which artifact you are running
+therefore decides which backends exist at all:
+
+| Artifact                             | SQLite | `hybrid` / `persistent` | `memory` / `wal` | `auto` can resolve to |
+| ------------------------------------ | ------ | ----------------------- | ---------------- | --------------------- |
+| `ghcr.io/neaox/overcast` image       | yes    | available               | available        | `hybrid` or `memory`  |
+| `overcast-<os>-<arch>` binaries      | yes    | available               | available        | `hybrid` or `memory`  |
+| `ghcr.io/neaox/overcast-slim` image  | **no** | **unavailable**         | available        | **`memory` only**     |
+| `overcastd-<os>-<arch>` binaries     | **no** | **unavailable**         | available        | **`memory` only**     |
+
+In an artifact without SQLite:
+
+- **`auto` always resolves to `memory`.** It short-circuits before the three signals above
+  are weighed, so **mounting a volume at `/data` buys you nothing** — the container starts
+  normally, serves normally, and every bucket, queue and table is gone on restart. This is
+  the one case where the `auto` rule described above does not apply.
+- **`OVERCAST_STATE=hybrid` and `OVERCAST_STATE=persistent` refuse to start**, exiting
+  non-zero with `init state backend: hybrid store: not compiled with SQLite support`.
+  Failing loudly is deliberate: the alternative is pretending to persist.
+- **`OVERCAST_STATE=wal` works, and is how you get durability from these artifacts.** The
+  `wal` backend is an append-only log with no SQLite dependency, so it is compiled into
+  every build. Its constraint is the one in the table at the top of this page — the whole
+  dataset lives in memory — which local development and CI comfortably satisfy.
+
+So a persistent slim container needs the volume **and** the backend:
+
+```bash
+docker run --rm -p 4566:4566 \
+  -v overcast-data:/data \
+  -e OVERCAST_STATE=wal \
+  ghcr.io/neaox/overcast-slim:alpha
+```
+
+If you specifically want `hybrid` or `persistent`, use the full `ghcr.io/neaox/overcast`
+image or an `overcast-<os>-<arch>` binary — both include SQLite and behave exactly as the
+rest of this page describes.
+
+To tell which kind of build you are running, read the startup log: a build without SQLite
+says so in the auto-detection reason.
+
+```text
+storage mode auto-detected: memory (hybrid requires SQLite support, which this build
+excludes (-tags nosqlite); falling back to memory) — set OVERCAST_STATE to override
+```
 
 ---
 
@@ -114,7 +175,9 @@ condition. This is a rare, unusual-environment case, not something to expect in 
   *before the call returns* — for example, reproducing a crash-recovery scenario, or
   verifying behavior that must not depend on `hybrid`'s async flush timing.
 - **Reach for `wal`** when you want durability with a simpler on-disk format than SQLite
-  and your dataset is small enough to live entirely in memory comfortably.
+  and your dataset is small enough to live entirely in memory comfortably. It is also the
+  *only* durable backend in the `overcast-slim` image and the `overcastd` binaries — see
+  [Builds without SQLite](#builds-without-sqlite).
 - **Use `memory`** for tests, CI, and any workflow that doesn't need state to survive a
   restart — it's the fastest backend by a wide margin.
 - **Mix backends per service** with `OVERCAST_STATE_<SERVICE>` — e.g. `hybrid` globally

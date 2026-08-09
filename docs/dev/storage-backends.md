@@ -13,6 +13,19 @@ worth knowing before you touch this code or pick a backend for a workload you're
 See also [CONTRIBUTING.md § Persisted state](../../CONTRIBUTING.md#persisted-state-json-compatibility-table-graduation-and-migrations)
 for the policy on evolving persisted JSON structs and when a namespace earns its own table.
 
+**Two of the four are not always compiled in.** Under `-tags nosqlite` —
+the build used for the `overcast-slim` image and the released `overcastd`
+binaries — `sqlite.go` and `hybrid.go` are replaced by
+[`sqlite_hybrid_nosqlite.go`](../../internal/state/sqlite_hybrid_nosqlite.go),
+whose constructors all return an error, and `config.sqliteBuildSupported` is
+false so `resolveAutoState` short-circuits to `memory`. `memory.go` and `wal.go`
+carry no build tag and are present in every build. Anything you add that assumes
+a SQLite-backed store must therefore either be tag-guarded or degrade — and a
+plain `go vet ./...` will not compile the stub file, so check
+`go vet -tags slim,nosqlite ./...` before you rely on it. The user-facing
+consequences are in
+[docs/storage.md § Builds without SQLite](../storage.md#builds-without-sqlite).
+
 ---
 
 ## Startup: what happens to requests during a schema migration

@@ -164,6 +164,14 @@ ENV OVERCAST_PORT=4566 \
 # memory (fast, ephemeral — what a volume-less run and most CI usage want),
 # while `docker run -v vol:/data ...` resolves to hybrid (persistent) with
 # zero configuration. Set OVERCAST_STATE explicitly to override either way.
+#
+# This stage is shared, and the paragraph above describes the CONSOLE image
+# only. The slim stage below is built with NOSQLITE=1, and hybrid/persistent
+# need SQLite: there, auto short-circuits to memory whatever is mounted, and
+# hybrid/persistent refuse to start. wal is the durable backend that still
+# works. Do not add an OVERCAST_STATE default here to "fix" that — a default
+# would have to differ per stage, and the auto resolver already reports the
+# reason at startup. See docs/storage.md § Builds without SQLite.
 
 EXPOSE 4566
 

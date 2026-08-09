@@ -69,7 +69,12 @@ Two images are published to GHCR:
 | Image                         | Description                                                | Size   |
 | ----------------------------- | ---------------------------------------------------------- | ------ |
 | `ghcr.io/neaox/overcast`      | Full image with web management console (ports 4566 + 4567) | ~50 MB |
-| `ghcr.io/neaox/overcast-slim` | Headless — Go binary only, no UI (port 4566)               | ~20 MB |
+| `ghcr.io/neaox/overcast-slim` | Headless — Go binary only, no UI, no SQLite (port 4566)    | ~20 MB |
+
+The slim image leaves out SQLite as well as the UI, which means the `hybrid` and
+`persistent` storage backends do not exist in it: it is **memory-only unless you set
+`OVERCAST_STATE=wal`**, and mounting a volume on its own does nothing. See
+[storage.md § Builds without SQLite](./docs/storage.md#builds-without-sqlite).
 
 Overcast is pre-1.0, so every build publishes to the `:alpha` channel tag and to
 an exact version tag such as `:0.0.1-alpha.25`. There is no `:latest` tag yet —
@@ -139,6 +144,11 @@ docker run --rm \
 
 # Slim image (no web UI) — no Docker socket needed when only using
 # non-container services (S3, SQS, DynamoDB, SNS, etc.)
+#
+# The slim image has no SQLite, so "auto" always resolves to memory here and a
+# volume mounted at /data would be ignored. Ephemeral is what most slim usage
+# (CI) wants; if you do need it to persist, add -e OVERCAST_STATE=wal — see
+# docs/storage.md#builds-without-sqlite.
 docker run --rm \
   -p 4566:4566 \
   ghcr.io/neaox/overcast-slim:alpha
@@ -251,8 +261,10 @@ git clone https://github.com/Neaox/overcast.git && cd overcast
 cd web && pnpm install --frozen-lockfile && pnpm run build && cd ..
 go build -trimpath -o overcast ./cmd/overcast
 
-# Slim binary (no Node.js needed)
-go build -trimpath -tags slim -o overcastd ./cmd/overcast
+# Slim binary (no Node.js needed) — this is exactly how the released overcastd
+# binaries are built. Drop `,nosqlite` to keep SQLite (and with it the hybrid
+# and persistent backends) in your own build.
+go build -trimpath -tags slim,nosqlite -o overcastd ./cmd/overcast
 ```
 
 ### Commands
@@ -265,6 +277,12 @@ All subcommands are available in both `overcast` and `overcastd` (the web UI is 
 | `overcast bridge` | Publish `.local` domains via mDNS and start a port-80 reverse proxy     |
 | `overcast status` | Inspect a running daemon (version, uptime, state backend, service list) |
 | `overcast trust`  | Manage the local trust store for self-signed TLS certificates           |
+
+Storage is the other place the two binaries differ. The released `overcastd` is
+built without SQLite, so `OVERCAST_STATE=hybrid` and `OVERCAST_STATE=persistent` refuse to
+start and `auto` always resolves to `memory`. Use `OVERCAST_STATE=wal` if you need
+`overcastd` to persist, or use the full `overcast` binary. See
+[storage.md § Builds without SQLite](./docs/storage.md#builds-without-sqlite).
 
 ### overcast serve
 
@@ -289,7 +307,7 @@ OVERCAST_LOG_LEVEL=debug \
 | `--bridge-bind-ip`               | `127.0.0.1` | IP advertised in mDNS when `--bridge` is set.                                                |
 | `OVERCAST_PORT`                  | `4566`      | AWS API port.                                                                                |
 | `OVERCAST_HOST`                  | `0.0.0.0`   | Interface to bind. Comma-separate to bind several, e.g. `127.0.0.1,172.17.0.1`.               |
-| `OVERCAST_STATE`                 | `auto`      | State backend: `auto` (default — resolves to `hybrid` or `memory`, see [storage.md](./docs/storage.md#the-auto-default)), `memory`, `hybrid`, `persistent`, `wal`. |
+| `OVERCAST_STATE`                 | `auto`      | State backend: `auto` (default — resolves to `hybrid` or `memory`, see [storage.md](./docs/storage.md#the-auto-default)), `memory`, `hybrid`, `persistent`, `wal`. `hybrid`/`persistent` need SQLite, which `overcastd` and the slim image do not have — see [Builds without SQLite](./docs/storage.md#builds-without-sqlite). |
 
 See the [configuration reference](./docs/README.md#configuration-reference) for the full list.
 

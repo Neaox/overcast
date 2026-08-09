@@ -165,7 +165,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_HOSTNAME`              | `localhost`            | Hostname embedded in client-facing URLs (SQS queue URLs, Lambda function URLs, API Gateway `apiEndpoint`, AppSync DNS names, CloudFront domain names). **Set it to `localhost.overcast.sh`** unless you are offline: every `*.localhost.overcast.sh` name resolves to `127.0.0.1` on every OS, which plain `localhost` does not on Windows. See [networking.md](./networking.md) |
 | `OVERCAST_SPLIT_HORIZON_HOSTS`   | _(none)_               | Extra comma-separated hostnames remapped to Overcast inside containers it starts (ECS tasks), so one URL is dialable from both host and container. Added to the built-in `localhost.overcast.sh`, `localhost.localstack.cloud`, `localhost.floci.io` |
 | `OVERCAST_PORT`                  | `4566`                 | TCP port                                                                             |
-| `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto` (default when unset), `memory`, `hybrid`, `persistent`, or `wal`. `auto` resolves to `hybrid` when a volume/bind mount or existing database is found at `OVERCAST_DATA_DIR` (or the dir was explicitly set), otherwise `memory` — see [storage.md § The auto default](./storage.md#the-auto-default) |
+| `OVERCAST_STATE`                 | `auto`                 | Storage backend: `auto` (default when unset), `memory`, `hybrid`, `persistent`, or `wal`. `auto` resolves to `hybrid` when a volume/bind mount or existing database is found at `OVERCAST_DATA_DIR` (or the dir was explicitly set), otherwise `memory` — see [storage.md § The auto default](./storage.md#the-auto-default). In the `overcast-slim` image and the `overcastd` binaries, `hybrid`/`persistent` are not compiled in and `auto` is always `memory`; use `wal` — see [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite) |
 | `OVERCAST_STATE_<SERVICE>`       | _(global)_             | Per-service backend override, e.g. `OVERCAST_STATE_S3=memory`                        |
 | `OVERCAST_HYBRID_FLUSH_INTERVAL` | `5s`                   | How often the hybrid backend flushes in-memory state to disk                         |
 | `OVERCAST_HYBRID_SYNC`           | `interval`             | Hybrid pending-log fsync policy: `always`, `interval`, or `never`                    |
@@ -341,6 +341,14 @@ docker run --rm \
 This resolves to `hybrid` automatically because a volume is mounted at `/data`. Set
 `OVERCAST_STATE` explicitly (e.g. `-e OVERCAST_STATE=persistent`) if you need a different
 backend than what `auto` would pick.
+
+> [!IMPORTANT]
+> **The `overcast-slim` image and the `overcastd` binaries are built without SQLite**, so
+> `hybrid` and `persistent` do not exist in them: `auto` always resolves to `memory` there
+> and the mounted volume above would be ignored — state is lost on every restart, with no
+> error. Add `-e OVERCAST_STATE=wal` (the one durable backend those artifacts do have), or
+> use the full `ghcr.io/neaox/overcast` image. See
+> [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite).
 
 Persistent/hybrid SQLite data lives at `$OVERCAST_DATA_DIR/overcast.db`. WAL mode uses `$OVERCAST_DATA_DIR/overcast.wal`. You can also override the backend per-service:
 
