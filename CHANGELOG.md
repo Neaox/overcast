@@ -66,6 +66,75 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.33] - 2026-08-09
+
+### Added
+
+- [cloudwatch] `Tags` on `PutMetricAlarm`, applied at creation as on AWS
+
+- [cloudwatch] `Unit` selects which datapoints an alarm evaluates, so a metric published under several units evaluates separately per unit
+
+- [cloudwatch] PromQL alarms (`EvaluationCriteria`) join metric math and anomaly detection in returning 501 rather than being created un-evaluated
+
+- [iam] `PutUserPermissionsBoundary`, `DeleteUserPermissionsBoundary`, `PutRolePermissionsBoundary` and `DeleteRolePermissionsBoundary`, plus the `PermissionsBoundary` parameter on `CreateUser`/`CreateRole` and the `PermissionsBoundary` member on the user and role responses
+
+### Changed
+
+- **BREAKING** [cloudwatch] `PutMetricAlarm` requires `Statistic`, `ComparisonOperator`, `Period`, `EvaluationPeriods` and `Threshold` for an alarm on a metric
+  migration: pass the parameter explicitly. These are `Required: No` only because a PromQL alarm supplies them inside `EvaluationCriteria`; an alarm on a metric that omitted one used to be created with `Average` / `GreaterThanThreshold` / 60s / 1 period / `0.0` substituted, which arms an alarm nobody configured.
+
+- [web/debug] the Request Traces status and method filters are multi-select, so "all errors" is 4xx and 5xx ticked together rather than two separate looks; 3xx joins the status list
+
+- [web/debug] Request Traces filters live in the URL, so they survive Back from a trace's detail page and can be shared as a link
+
+### Fixed
+
+- [cloudformation/cloudwatch] an `AWS::CloudWatch::Alarm` the template does not name deploys CloudFormation mints `{Stack}-{Logical}-{RANDOM}` for an omitted `AlarmName`, which is what CDK's `Alarm` construct and every `metric.createAlarm()` helper rely on. The empty name reached `PutMetricAlarm` and came back as AWS's own `Value null at 'alarmName'`.
+
+- [cloudformation] `AWS::Events::Rule`, `AWS::StepFunctions::StateMachine`, `AWS::ApiGateway::RestApi`, `AWS::Scheduler::ScheduleGroup`, `AWS::ECR::Repository` and `AWS::IAM::User` are named by CloudFormation when the template omits their name Each carries the logical ID, so two unnamed resources of one type in a stack are two resources. The rule and the schedule group used to share one empty name and quietly become a single resource; the rest failed the stack.
+
+- [cloudformation/cloudwatch] every `AWS::CloudWatch::Alarm` property reaches the alarm `DatapointsToAlarm` and `TreatMissingData` were dropped, so an "M out of N" alarm was evaluated as "N out of N" and `notBreaching` reverted to `missing`. A property the template omits is now left out of the request rather than sent empty.
+
+- [cloudformation] a stack that rolls an update back is handed its previous template and parameters again, so `GetTemplate` describes what is deployed rather than the attempt that failed, and the next update resolves parameters from it
+
+- [cloudformation] a nested stack whose own update fails restores its child template and parameters as part of rolling its resources back, instead of keeping the failed attempt's metadata because the parent never recorded the update as a success
+
+- [cloudformation] an update rollback that cannot persist the metadata it restored reports `UPDATE_ROLLBACK_FAILED` rather than claiming the rollback completed
+
+- [cloudformation] `UpdateStack` honours the `DisableRollback` member of the request it was given, rather than the value the stack was created with
+
+- [cloudformation] an update that fails with rollback disabled keeps the resource records the attempt reached, so `DescribeStackResources` no longer reports pre-update properties for a resource the update already changed, and no longer drops the resources it updated before the failure
+
+- [cloudformation/debug] `DeleteStack` and `RollbackStack` record the internal calls they make, as `CreateStack` and `UpdateStack` already did — teardown hops were previously never recorded at all
+
+- [debug/s3] trace hops for S3 calls name the service instead of showing a blank one — S3's REST paths are bare bucket paths, which no prefix rule can attribute
+
+- [debug/cloudformation] a stack created from a `TemplateURL` records the template fetch as a hop, and the S3 request it makes links back to the CloudFormation request that triggered it
+
+- [debug] Query-protocol requests are named by their operation however the client ordered the form parameters; one with a large parameter ahead of `Action` — a `CreateStack` carrying a real template, typically — used to show a blank operation
+
+- [debug/cloudformation] request traces record every internal hop, including the work that continues after the response is sent — a CloudFormation or CDK deploy runs for minutes past its HTTP reply, and every hop after the first second used to be dropped
+
+- [debug] a hop links reliably to the request it triggered, whichever protocol answered it; S3 hops in particular used to link to nothing
+
+- [iam] IAM permissions boundaries attached to a user or role are now applied by `SimulatePrincipalPolicy` and by opt-in request-time enforcement, so a bounded principal no longer gets permissions AWS would deny through the boundary intersection
+
+- [lambda] a failed `CreateFunction` or `UpdateFunctionCode` no longer leaves the stored deployment package ahead of the function's `CodeSha256`, `RevisionId` and source metadata, so a later read or cold start cannot run code the configuration does not describe
+
+- [scheduler] schedules now fire SNS, Step Functions, Kinesis, Firehose, ECS and EventBridge event bus targets, not just Lambda and SQS — delivery goes through the same dispatcher EventBridge rules and Pipes use, so one target ARN behaves identically on a schedule and on a rule
+
+- [scheduler] `SqsParameters.MessageGroupId`, `KinesisParameters.PartitionKey`, `EventBridgeParameters` and `EcsParameters` are honoured when a schedule fires
+
+- [scheduler] `RetryPolicy` and `DeadLetterConfig` are honoured: a failed firing is retried up to `MaximumRetryAttempts` (capped at 6 attempts) while `MaximumEventAgeInSeconds` allows, then sent to the configured SQS dead-letter queue
+
+- [scheduler] `CreateSchedule` and `UpdateSchedule` reject a target type Overcast cannot fire with a `ValidationException`, instead of accepting a schedule that would silently never fire
+
+- [state] Lambda deployment packages now carry an explicit storage-tier classification, pinning them to the SQLite-backed tier so a future change cannot silently make every stored zip memory-resident at startup
+
+- [web/debug] long request paths no longer stretch the traces table off-screen — the Path column is bounded against the page's own width and carries the full path as a tooltip
+
+- [web/debug] the traces table's horizontal scrollbar is reachable without scrolling to the bottom of an infinitely growing list
+
 ## [0.0.1-alpha.32] - 2026-08-09
 
 ### Added
@@ -1191,7 +1260,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.32...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.33...HEAD
+[0.0.1-alpha.33]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.32...v0.0.1-alpha.33
 [0.0.1-alpha.32]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.31...v0.0.1-alpha.32
 [0.0.1-alpha.31]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.30...v0.0.1-alpha.31
 [0.0.1-alpha.30]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.29...v0.0.1-alpha.30

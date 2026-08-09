@@ -1,3 +1,0 @@
-* [cloudformation] a stack that rolls an update back is handed its previous template and parameters again, so `GetTemplate` describes what is deployed rather than the attempt that failed, and the next update resolves parameters from it
-* [cloudformation] a nested stack whose own update fails restores its child template and parameters as part of rolling its resources back, instead of keeping the failed attempt's metadata because the parent never recorded the update as a success
-* [cloudformation] an update rollback that cannot persist the metadata it restored reports `UPDATE_ROLLBACK_FAILED` rather than claiming the rollback completed

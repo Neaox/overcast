@@ -1,4 +1,0 @@
-* [scheduler] schedules now fire SNS, Step Functions, Kinesis, Firehose, ECS and EventBridge event bus targets, not just Lambda and SQS — delivery goes through the same dispatcher EventBridge rules and Pipes use, so one target ARN behaves identically on a schedule and on a rule
-* [scheduler] `SqsParameters.MessageGroupId`, `KinesisParameters.PartitionKey`, `EventBridgeParameters` and `EcsParameters` are honoured when a schedule fires
-* [scheduler] `RetryPolicy` and `DeadLetterConfig` are honoured: a failed firing is retried up to `MaximumRetryAttempts` (capped at 6 attempts) while `MaximumEventAgeInSeconds` allows, then sent to the configured SQS dead-letter queue
-* [scheduler] `CreateSchedule` and `UpdateSchedule` reject a target type Overcast cannot fire with a `ValidationException`, instead of accepting a schedule that would silently never fire
