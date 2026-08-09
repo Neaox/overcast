@@ -123,9 +123,11 @@ every target type EventBridge rules reach.
     `EventBridgeParameters`, are refused for the same reason.
 - Retries and dead-lettering:
   - `RetryPolicy.MaximumRetryAttempts` is honoured, capped at **6 total
-    attempts**. Retries run inline on the engine tick with no backoff, so AWS's
-    default of 185 attempts is not replayed: a target with no `RetryPolicy` is
-    attempted **once**. EventBridge rule targets behave the same way.
+    attempts**. Retries run back to back on the delivery worker that owns the
+    firing, with no backoff, so AWS's default of 185 attempts is not replayed:
+    a target with no `RetryPolicy` is attempted **once**. Other schedules are
+    unaffected while a firing retries. EventBridge rule targets behave the
+    same way.
   - `RetryPolicy.MaximumEventAgeInSeconds` is honoured — once the payload is
     older than the budget, no further attempt is made.
   - `DeadLetterConfig.Arn` is honoured for SQS queues, which is the only

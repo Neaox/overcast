@@ -26,10 +26,11 @@ import (
 
 // maxDeliveryAttempts caps how many times one firing is attempted, however
 // large a RetryPolicy asks for. Real EventBridge Scheduler retries up to 185
-// times with backoff spread over MaximumEventAgeInSeconds; the emulator fires
-// inline on the engine tick and has nowhere to put that wait, so the configured
-// attempt count is honoured up to this ceiling and the payload is
-// dead-lettered or dropped after it. EventBridge rules use the same ceiling.
+// times with backoff spread over MaximumEventAgeInSeconds; the emulator retries
+// back to back on the delivery worker that owns the firing, with nowhere to put
+// that wait, so the configured attempt count is honoured up to this ceiling and
+// the payload is dead-lettered or dropped after it. EventBridge rules use the
+// same ceiling.
 const maxDeliveryAttempts = 6
 
 // supportedTargetList is quoted verbatim in the rejection message, so a user is
@@ -182,9 +183,9 @@ func (s *Service) deadLetter(ctx context.Context, dlqARN string, payload []byte)
 //
 // AWS defaults MaximumRetryAttempts to 185 when the field is absent. The
 // emulator treats an absent RetryPolicy as a single attempt instead: retries
-// here run inline on the engine tick with no backoff, so replaying AWS's
-// default would stall the engine on every undeliverable schedule to no fidelity
-// gain. EventBridge rule targets read the field the same way.
+// here run back to back with no backoff, so replaying AWS's default would hold
+// a delivery worker on every undeliverable schedule to no fidelity gain.
+// EventBridge rule targets read the field the same way.
 func deliveryAttempts(target scheduleTarget) int {
 	retries := 0
 	if target.RetryPolicy != nil && target.RetryPolicy.MaximumRetryAttempts > 0 {

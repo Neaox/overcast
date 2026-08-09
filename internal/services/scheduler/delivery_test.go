@@ -235,7 +235,7 @@ func TestFire_retriesUpToMaximumRetryAttempts(t *testing.T) {
 
 func TestFire_retryAttemptsAreCapped(t *testing.T) {
 	// Given: a failing target asking for far more retries than the emulator
-	// will run inline
+	// will run for one firing
 	router := &recordingRouter{status: func(recordedCall) int { return http.StatusNotFound }}
 	s, _ := newFiringService(t, router)
 
