@@ -1,0 +1,1 @@
+* [cloudwatch] `ListTagsForResource`, `TagResource` and `UntagResource` answer the JSON protocol the AWS CLI and the SDKs speak, not only the Query form — alarm tags were previously unreadable with `aws cloudwatch list-tags-for-resource`

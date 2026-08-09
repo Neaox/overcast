@@ -1,6 +1,6 @@
 ---
 title: "CloudWatch — Amazon CloudWatch"
-description: "Amazon CloudWatch (monitoring and alarms) uses the Query protocol — form-encoded POST requests with Action and Version=2010-08-01 parameters."
+description: "Amazon CloudWatch (monitoring and alarms) answers both the Query protocol — form-encoded POST requests with Action and Version=2010-08-01 — and the JSON protocol the AWS CLI and SDKs send."
 section: "Service Reference"
 tags:
   - amazon
@@ -13,15 +13,22 @@ tags:
 
 > AWS docs: https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/
 
-Amazon CloudWatch (monitoring and alarms) uses the Query protocol — form-encoded
-POST requests with `Action` and `Version=2010-08-01` parameters.
+Amazon CloudWatch (monitoring and alarms) answers both the Query protocol — form-encoded
+POST requests with `Action` and `Version=2010-08-01` parameters — and the JSON protocol
+the AWS CLI and the AWS SDKs send.
 
 ---
 
 ## Notes
 
 - Query protocol: `POST / HTTP/1.1` with `Action=<Operation>&Version=2010-08-01` in the form body.
-- Unrecognized operations return an XML `501 Not Implemented` error response.
+- JSON protocol: `POST / HTTP/1.1` with `Content-Type: application/x-amz-json-1.0` and
+  `X-Amz-Target: GraniteServiceVersion20100801.<Operation>`. This is what the AWS CLI and the
+  SDKs send, so every supported operation answers on both protocols — with one exception below.
+- **`GetMetricData` is Query-only.** It has no JSON handler yet, so an SDK or CLI call to it
+  gets `400 UnknownOperationException` rather than datapoints.
+- Unrecognized Query operations return an XML `501 Not Implemented` error response;
+  unrecognized JSON targets return `400 UnknownOperationException`, as on AWS.
 - PutMetricData appears in both Alarms and Metrics categories as it supports both use cases.
 - **Metric datapoint retention diverges from real AWS:** datapoints are retained for ~1 hour
   (all storage backends), enforced by read-time filtering plus a periodic background sweep —

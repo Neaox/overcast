@@ -623,6 +623,12 @@ func (s *Service) dispatchJSON(w http.ResponseWriter, r *http.Request, action st
 		s.describeAlarmsForMetricJSON(w, r)
 	case "DescribeAlarmHistory":
 		s.describeAlarmHistoryJSON(w, r)
+	case "ListTagsForResource":
+		s.listTagsForResourceJSON(w, r)
+	case "TagResource":
+		s.tagResourceJSON(w, r)
+	case "UntagResource":
+		s.untagResourceJSON(w, r)
 	case "SetAlarmState":
 		s.setAlarmStateJSON(w, r)
 	case "EnableAlarmActions":
@@ -1875,65 +1881,135 @@ func (s *Service) describeAlarmHistoryJSON(w http.ResponseWriter, r *http.Reques
 	}{AlarmHistoryItems: out})
 }
 
+// ─── Tagging ──────────────────────────────────────────────────
+//
+// CloudWatch is reachable over both the Query protocol and the JSON
+// protocol the AWS CLI and SDKs use, so each tagging operation has a pair
+// of handlers that differ only in how they read the request and write the
+// response. The behaviour between them lives in the helpers below, never
+// in one protocol's handler (issue #794 shipped because the JSON side was
+// simply absent).
+
+// sortedTags renders a stored tag map as an AWS tag list ordered by key.
+// Go map iteration is randomised, so without this the same resource
+// returns its tags in a different order on every call.
+func sortedTags(tags map[string]string) []Tag {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]Tag, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, Tag{Key: k, Value: tags[k]})
+	}
+	return out
+}
+
+// addResourceTags merges add into the tag set stored against arn,
+// overwriting the value of any key already present.
+func (s *Service) addResourceTags(ctx context.Context, arn string, add []Tag) error {
+	tags, err := s.store.getTags(ctx, arn)
+	if err != nil {
+		return err
+	}
+	for _, t := range add {
+		tags[t.Key] = t.Value
+	}
+	return s.store.setTags(ctx, arn, tags)
+}
+
+// removeResourceTags deletes keys from the tag set stored against arn.
+// A key that is not present is ignored, as on AWS.
+func (s *Service) removeResourceTags(ctx context.Context, arn string, keys []string) error {
+	tags, err := s.store.getTags(ctx, arn)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		delete(tags, k)
+	}
+	return s.store.setTags(ctx, arn, tags)
+}
+
 func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
-	arn := r.FormValue("ResourceARN")
-	tags, err := s.store.getTags(r.Context(), arn)
+	tags, err := s.store.getTags(r.Context(), r.FormValue("ResourceARN"))
 	if err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	var members strings.Builder
-	for k, v := range tags {
+	for _, t := range sortedTags(tags) {
 		members.WriteString("<member>")
-		members.WriteString("<Key>" + xmlEscape(k) + "</Key>")
-		members.WriteString("<Value>" + xmlEscape(v) + "</Value>")
+		members.WriteString("<Key>" + xmlEscape(t.Key) + "</Key>")
+		members.WriteString("<Value>" + xmlEscape(t.Value) + "</Value>")
 		members.WriteString("</member>")
 	}
-	body := fmt.Sprintf("<Tags>%s</Tags>", members.String())
-	writeXMLResult(w, r, "ListTagsForResource", body)
+	writeXMLResult(w, r, "ListTagsForResource", "<Tags>"+members.String()+"</Tags>")
+}
+
+func (s *Service) listTagsForResourceJSON(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+
+	tags, err := s.store.getTags(r.Context(), in.ResourceARN)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	writeJSONResult(w, r, struct {
+		Tags []Tag `json:"Tags"`
+	}{Tags: sortedTags(tags)})
 }
 
 func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
-	arn := r.FormValue("ResourceARN")
-	tags, err := s.store.getTags(r.Context(), arn)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
-		return
-	}
-	for i := 1; ; i++ {
-		k := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
-		if k == "" {
-			break
-		}
-		v := r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
-		tags[k] = v
-	}
-	if err := s.store.setTags(r.Context(), arn, tags); err != nil {
+	if err := s.addResourceTags(r.Context(), r.FormValue("ResourceARN"), memberTags(r, "Tags")); err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	writeXMLResult(w, r, "TagResource", "")
 }
 
-func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
-	arn := r.FormValue("ResourceARN")
-	tags, err := s.store.getTags(r.Context(), arn)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+func (s *Service) tagResourceJSON(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ResourceARN string `json:"ResourceARN"`
+		Tags        []Tag  `json:"Tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
 		return
 	}
-	for i := 1; ; i++ {
-		k := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
-		if k == "" {
-			break
-		}
-		delete(tags, k)
+	if err := s.addResourceTags(r.Context(), in.ResourceARN, in.Tags); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
 	}
-	if err := s.store.setTags(r.Context(), arn, tags); err != nil {
+	writeJSONResult(w, r, struct{}{})
+}
+
+func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
+	if err := s.removeResourceTags(r.Context(), r.FormValue("ResourceARN"), memberList(r, "TagKeys")); err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
 	writeXMLResult(w, r, "UntagResource", "")
+}
+
+func (s *Service) untagResourceJSON(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ResourceARN string   `json:"ResourceARN"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		return
+	}
+	if err := s.removeResourceTags(r.Context(), in.ResourceARN, in.TagKeys); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	writeJSONResult(w, r, struct{}{})
 }
 
 // startMetricDataSweeper starts the background metric-data retention sweep.
