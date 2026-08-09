@@ -61,7 +61,38 @@ def link_references(changelog: str) -> dict[str, str]:
     return refs
 
 
+def compare_base(url: str, current: str) -> str | None:
+    """The older version a `compare/vA...vB` link is measured from, or None.
+
+    None for any other shape, including a compare link whose right-hand side
+    is not the section it belongs to.
+    """
+    prefix = f"{REPO_URL}/compare/v"
+    suffix = f"...v{current}"
+    if url.startswith(prefix) and url.endswith(suffix):
+        return url[len(prefix) : -len(suffix)] or None
+    return None
+
+
 def validate_compare_links(changelog: str, version: str) -> list[str]:
+    """Check the reference links at the foot of the changelog.
+
+    The section being released is pinned exactly: it must compare against the
+    section directly below it, which is the release it follows.
+
+    Older sections are checked more loosely — the base has to be *some* older
+    section, not a specific one — and the reason is maintenance releases.
+    Sections are ordered by semver descending, not by date (RELEASE.md
+    § Maintenance Releases), so 1.2.4 backported after 1.3.0 shipped is
+    inserted *between* 1.3.0 and 1.2.3. Document order then stops meaning
+    "released after": 1.3.0 was cut from v1.2.3 and its link says so
+    correctly, while the section directly below it is now v1.2.4. Which
+    release preceded which in time is not recoverable from this file, so
+    demanding an exact chain would fail the next release for good over a link
+    that is right. What the loose rule still catches is the mistake anyone
+    actually makes: a link pointing at a version with no section, at a *newer*
+    release, or at itself.
+    """
     errors: list[str] = []
     changelog = strip_comments(changelog)
     versions = release_versions(changelog)
@@ -80,17 +111,32 @@ def validate_compare_links(changelog: str, version: str) -> list[str]:
         errors.append(f"CHANGELOG.md link [Unreleased] must be {expected_unreleased}.")
 
     for i, current in enumerate(versions):
-        if i+1 < len(versions):
-            previous = versions[i+1]
-            expected = f"{REPO_URL}/compare/v{previous}...v{current}"
-        else:
-            expected = f"{REPO_URL}/releases/tag/v{current}"
-
         actual = refs.get(current)
         if actual is None:
             errors.append(f"CHANGELOG.md is missing link reference [{current}].")
-        elif actual != expected:
-            errors.append(f"CHANGELOG.md link [{current}] must be {expected}.")
+            continue
+
+        # Only sections *below* this one are older, whatever their number.
+        older = set(versions[i + 1 :])
+        oldest_link = f"{REPO_URL}/releases/tag/v{current}"
+
+        if not older:
+            if actual != oldest_link:
+                errors.append(f"CHANGELOG.md link [{current}] must be {oldest_link}.")
+            continue
+
+        if i == 0:
+            expected = f"{REPO_URL}/compare/v{versions[1]}...v{current}"
+            if actual != expected:
+                errors.append(f"CHANGELOG.md link [{current}] must be {expected}.")
+            continue
+
+        if compare_base(actual, current) not in older:
+            errors.append(
+                f"CHANGELOG.md link [{current}] must compare an older release "
+                f"section to v{current}, as "
+                f"{REPO_URL}/compare/v{versions[i + 1]}...v{current}."
+            )
 
     release_set = set(versions)
     for name in sorted(refs):

@@ -30,6 +30,12 @@ name: Release branch
 # it. Fixing the PR properly rewrites its head commit anyway, and this check
 # disappears with the SHA that failed it.
 
+# `release/**` only, and that scope is load-bearing rather than incidental. The
+# post-1.0 maintenance branches live in `support/**` (RELEASE.md § Maintenance
+# Releases) and a backport reaches one *as a pull request*, reviewed like any
+# other change — so widening this pattern to cover them would refuse the one
+# thing they exist for. The two namespaces are separate for that reason; do not
+# merge them.
 on:
   pull_request:
     types: [opened, reopened, synchronize, edited]

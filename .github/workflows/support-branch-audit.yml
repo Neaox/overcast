@@ -1,0 +1,113 @@
+name: Support branch audit
+
+# Which maintenance lines are carrying work that has never been released?
+#
+# A `support/<major>.<minor>` branch exists to be released from (RELEASE.md
+# § Maintenance Releases). The state worth catching is the quiet one: a
+# backport is cherry-picked, reviewed and merged, and then the release is never
+# cut. Nothing is broken and nothing is red — the fix simply sits on a branch
+# nobody looks at, unreleased and, until a tag reaches it, protected by branch
+# rules alone rather than by reachability from anything permanent. Months
+# later the line is dropped from support and the work goes with it.
+#
+# So the question is asked on a timer instead of being remembered: is every
+# support branch's tip contained in some tag? A branch whose tip *is* released
+# says nothing; a branch ahead of its last tag is reported with how far ahead.
+#
+# **This reports and never fails.** It gates nothing, blocks nothing, and is
+# not a required check anywhere. "There is an unreleased backport" is a
+# maintainer's decision to make, not a build error — sometimes the answer is
+# that the release is deliberately waiting for a second fix. A red X here would
+# train someone to ignore it.
+#
+# The schedule runs on the default branch only, so this cannot fire from a
+# support branch and cannot be triggered by pushing one.
+
+on:
+  schedule:
+    # Mondays, early. Weekly is the right cadence for a state that takes days
+    # to become interesting; anything more often is a mail filter waiting to
+    # happen.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unreleased-tips:
+    name: Unreleased support branch tips
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 for the tags and the full history both checks need:
+      # `git tag --contains` walks from every tag, and the ahead-count is a
+      # revision range.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Report support branches ahead of their last release
+        run: |
+          set -euo pipefail
+
+          # checkout fetches every branch into refs/remotes/origin/*, but be
+          # explicit rather than depending on that: a partial fetch here would
+          # report "nothing to see" for a branch it simply never looked at,
+          # which is the one wrong answer this workflow must not give.
+          git fetch --quiet --prune --tags origin \
+            "+refs/heads/support/*:refs/remotes/origin/support/*"
+
+          mapfile -t branches < <(
+            git for-each-ref --format='%(refname:strip=3)' 'refs/remotes/origin/support/*'
+          )
+
+          if [ "${#branches[@]}" -eq 0 ]; then
+            echo "No support/** branches exist. Nothing to audit." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          unreleased=()
+          for branch in "${branches[@]}"; do
+            tip=$(git rev-parse "refs/remotes/origin/$branch")
+            if [ -n "$(git tag --contains "$tip")" ]; then
+              echo "$branch: tip $tip is released."
+              continue
+            fi
+            # The last tag that *is* reachable, so the report says what the
+            # unreleased commits are on top of rather than just that there are
+            # some. A branch with no reachable tag at all is described as such.
+            last=$(git describe --tags --abbrev=0 "$tip" 2>/dev/null || echo "")
+            if [ -n "$last" ]; then
+              ahead=$(git rev-list --count "$last..$tip")
+              unreleased+=("| \`$branch\` | \`$last\` | $ahead | \`${tip:0:12}\` |")
+            else
+              unreleased+=("| \`$branch\` | none reachable | ? | \`${tip:0:12}\` |")
+            fi
+          done
+
+          if [ "${#unreleased[@]}" -eq 0 ]; then
+            {
+              echo "## Support branches"
+              echo
+              echo "Every support branch tip is contained in a tag. Nothing is waiting."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## Support branches with unreleased commits"
+            echo
+            echo "| Branch | Last release on it | Commits since | Tip |"
+            echo "| --- | --- | --- | --- |"
+            printf '%s\n' "${unreleased[@]}"
+            echo
+            echo "These commits are on a support branch and in no release."
+            echo "Either cut the maintenance release (RELEASE.md § Maintenance"
+            echo "Releases) or say on the branch why it is waiting. This job"
+            echo "reports; it does not fail."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Also as a warning annotation, so the run is visible from the
+          # Actions list without opening the summary.
+          echo "::warning title=Unreleased backports::${#unreleased[@]} support branch(es) have commits in no release — see the job summary."

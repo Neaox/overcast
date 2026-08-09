@@ -74,9 +74,12 @@ The release workflow:
 - publishes Docker images to GHCR:
   - `ghcr.io/neaox/overcast:<version>`
   - `ghcr.io/neaox/overcast-slim:<version>`
-- publishes a channel tag:
+- moves whichever floating tags this release is entitled to move:
   - prereleases: `:<channel>` such as `:alpha`
-  - stable releases: `:latest`
+  - stable releases: `:latest`, plus the line tags `:<major>` and
+    `:<major>.<minor>` so a user can pin a line
+  - never backwards — see [Floating tags only move
+    forward](#floating-tags-only-move-forward)
 - creates or updates the GitHub release
 - replaces the GitHub release notes with generated notes from the versioned
   `CHANGELOG.md` section
@@ -104,7 +107,11 @@ GitHub release tag = v0.0.1-alpha.0
 
 For prereleases, the Docker channel tag is derived from the prerelease suffix.
 `0.0.1-alpha.0` publishes `ghcr.io/neaox/overcast:alpha` and
-`ghcr.io/neaox/overcast-slim:alpha`.
+`ghcr.io/neaox/overcast-slim:alpha`. The version string is the only thing that
+decides this — not the prerelease checkbox on the GitHub release, which the tag
+check above has already reconciled with `VERSION`. Whether the channel tag then
+*moves* is a separate question, answered in [Floating tags only move
+forward](#floating-tags-only-move-forward).
 
 **Choosing the number is not a judgement call while in alpha.** The prerelease
 counter increments and the base version stays put, whatever the release
@@ -547,6 +554,367 @@ If creating a GitHub release manually:
 3. Mark prerelease versions as prereleases.
 4. Keep notes brief; the workflow replaces them with generated notes from
    `CHANGELOG.md` after assets and Docker images publish.
+
+## Maintenance Releases
+
+Everything above describes one line moving forwards. This section is about the
+other shape: a fix that has to reach users who are **not** on the newest
+version, because upgrading to it would cost them more than the bug does.
+
+### While in alpha, the next alpha is the hotfix
+
+**Pre-1.0 Overcast supports exactly one version: the latest alpha.** There is
+no older line to patch, because there is no promise attached to an older line
+that would make staying on it reasonable. Every release is
+`0.0.1-alpha.<n+1>`, the counter moves whatever the release contains, and the
+answer to "there is a bad bug in alpha.31" is alpha.32 — cut from `main`, by
+the process above, today.
+
+That is not a shortcut around the process, it is the process working. `main`
+carries required status checks and a compat gate that fails on *any* failing
+compat test, not merely on a regression against the baseline — see
+[Preflight Checklist](#preflight-checklist) and the `--max-failures 0` step in
+`.github/workflows/compat.yml`. So `main` is expected to be shippable at any
+commit, and "cut a release from `main`" is a normal operation rather than a
+risk. A hotfix branch would buy isolation from changes that have already passed
+the same gates the hotfix would have to pass.
+
+The rest of this section is therefore **the exception, not the default**, and
+reaching for it below 1.0 means something has gone wrong that is worth naming
+out loud: `main` is not shippable. Perhaps a large in-flight change is
+half-landed, or a regression is known but not yet understood. In that state a
+support branch off the last tag is the right tool — but the incident is that
+`main` is red, and it should be handled as one rather than routed around
+permanently.
+
+### After 1.0: one branch per minor line
+
+From 1.0, versions carry a promise and staying on an older minor becomes a
+reasonable thing for a user to do. A fix then has somewhere else to go, and it
+goes to a branch named:
+
+```text
+support/<major>.<minor>
+```
+
+`support/1.2`, never `support/1.2.4` — the branch outlives every patch on it,
+so numbering it after one of them would leave a branch per patch and no branch
+per line. Its `VERSION` walks 1.2.4, 1.2.5, 1.2.6 in place.
+
+**Created lazily, from the tag, the first time a backport is actually
+needed.** Nothing is pre-created:
+
+```sh
+git switch -c support/1.2 v1.2.3
+git push -u origin support/1.2
+```
+
+A branch created in advance is a branch nobody has looked at since it was cut.
+It accumulates no CI history, drifts silently out of date with the tooling
+around it, and the first thing anyone does with it is discover what broke while
+it sat there. Cutting it from the tag at the moment of need means its first
+push is also its first full CI run, on the change that needs it.
+
+**The namespace is deliberate.** `support/**` is not `release/**`, which
+already belongs to the ephemeral prep branches from [Nothing merges into the
+release branch](#nothing-merges-into-the-release-branch) — and
+`.github/workflows/release-branch-base.yml` refuses every pull request whose
+base matches it. A backport is reviewed like any other change and therefore
+arrives as a pull request into its line, so putting maintenance branches in
+that namespace would refuse the one thing they exist for. The refusal stays
+scoped to `release/**` and does not catch `support/**`; that distinction is
+load-bearing, not incidental.
+
+**The supported window is the current minor and the one before it.** When 1.4.0
+ships, 1.2 stops being supported and its branch stops being cut from. Two lines
+is the most that can be tested honestly with one compat suite and one
+maintainer.
+
+### The fix lands on `main` first. Always.
+
+A backport is a **cherry-pick out of `main`**, never a change written on the
+support branch and merged the other way.
+
+The reason is the release nobody would think to check: fix 1.2.4 on the support
+branch, ship it, and then ship 1.3.0 from a `main` that never received the
+fix — and the upgrade path regresses the bug. Users who did the responsible
+thing and moved to the current minor get the fault back. Fixing on `main` first
+makes that impossible by construction: every line that will ever be released
+after the fix already contains it.
+
+So the order is always:
+
+1. Fix on `main` through a normal pull request, with its own review, its own
+   CI and its own changelog fragment.
+2. Merge it.
+3. Cherry-pick the resulting commit onto `support/1.2` through a pull request
+   into that branch.
+
+If the fix cannot land on `main` — the code it touches no longer exists there,
+say — that is not a backport, it is a change that exists only on the older
+line. Write it as such, say so in its release note, and expect it never to be
+represented on `main` at all.
+
+### Nothing ever merges a support branch back into `main`
+
+Its unique content is exactly two things, and both are wrong on `main`:
+
+- **`VERSION`**, reading `1.2.4` while `main` is on `1.3.x`. A merge clobbers
+  it, and the next push to `main` reads a version lower than the one already
+  released.
+- **A `## [1.2.4]` changelog section**, which a merge inserts wherever the
+  merge driver puts it.
+
+Everything else on the branch is by rule already on `main`. So there is nothing
+to merge and something to break, and the branch is simply never merged. It is
+cut from a tag, it receives cherry-picks, it is tagged, and eventually it is
+left alone.
+
+The one thing that *should* reach `main` is the release note, because
+`CHANGELOG.md` on `main` is the record of everything ever released and a
+version missing from it looks like a version that never existed. It goes as a
+**docs-only pull request** — `CHANGELOG.md` and nothing else — adding the
+`## [1.2.4]` section and its compare link.
+
+**`CHANGELOG.md` sections are ordered by semver, descending — not by date.**
+1.2.4 released *after* 1.3.0 still sits *below* it, because a reader scanning
+for "what is in 1.3" reads down a version-ordered file and gets a wrong answer
+from a date-ordered one. The dates in the headings remain the release dates and
+will therefore not be monotonic; that is the honest rendering of what happened.
+
+Two things about that pull request, both of which will otherwise surprise you:
+
+- **Merge it only while no release PR is open on `main`.** It edits
+  `CHANGELOG.md`, and while a release is in flight `release-prep.yml` merges
+  `main` into the release branch on every push — a second hand in that file
+  does not merely conflict, it aborts the merge and stops the release PR
+  keeping itself current (`conflict.md`). This is the same rule as [No PR
+  merging into `main` may answer with a `CHANGELOG.md`
+  edit](#breaking-changes-during-a-release-window); the maintenance section is
+  not an exception to it, it is just late enough that waiting costs nothing.
+- **It needs a `/no-changelog` waiver.** The `Changelog entry` check asks every
+  PR for a fragment and will not take a `CHANGELOG.md` edit instead, which is
+  precisely what this PR is. The reason writes itself:
+  `/no-changelog release-notes record for 1.2.4, which shipped from support/1.2
+  and has its own section`.
+
+One consequence of the ordering is worth knowing too:
+`scripts/check-release-changelog.py` pins the compare link of the section being
+released to the section directly below it, but checks older sections only
+loosely — the base has to be *some* older section, not a specific one. With
+1.2.4 inserted between 1.3.0 and 1.2.3, document order stops meaning "released
+after": `[1.3.0]` correctly compares from `v1.2.3`, which is no longer the
+section beneath it. Which release preceded which in time is not recoverable
+from the file, so the check does not pretend to know.
+
+### Changelog fragments do not work on a support branch
+
+The fix's fragment was consumed by the release that shipped it on `main`, and
+was deleted in that commit. A cherry-pick of the fix commit onto the support
+branch therefore either brings a fragment back from the dead or brings nothing,
+depending on which commit you picked — and a fragment left in `.changelog/`
+fails the very release it would be describing (`Changelog fragments remain in
+.changelog`). There is also nothing to fold it in: folding is `release-prep.yml`
+merging `main` into a release branch, which never happens here.
+
+So **the release note is written straight into `CHANGELOG.md` on the support
+branch**, and any fragment a cherry-pick dragged along is deleted in the same
+pull request:
+
+```sh
+git cherry-pick <sha>
+git rm .changelog/20260808-whatever-it-was.md
+```
+
+This is not a new rule. It is the same one that already applies to a late fix
+pushed onto a release branch — see [Breaking Changes During A Release
+Window](#breaking-changes-during-a-release-window) and
+[.changelog/README.md § During a release
+window](./.changelog/README.md#during-a-release-window) — and for the same
+reason: a fragment is a message to a future release-prep run, and on a branch
+where no release-prep run will ever happen it is a message to nobody.
+
+The `Changelog entry` check (`changelog-required.yml`) does not run on pull
+requests into `support/**` for exactly this reason: it asks for a fragment and
+refuses a `CHANGELOG.md` edit in its place, which is the wrong question and the
+wrong answer on this branch. Nothing enforces the note here — write it.
+
+### CI on a support branch
+
+`test.yml` and `compat.yml` both run on `push` and `pull_request` for
+`support/**`, on the same terms as `main`.
+
+Compat in particular is not optional here, and the instinct that a small
+backport hardly warrants nine suites has it backwards: **a cherry-pick is the
+change least like the code it lands on.** It was written against a `main` that
+has since moved by a whole minor, reviewed in that context, and is then applied
+to a branch that has not moved at all. The compat baseline it is measured
+against is the one the branch carries from its own tag, so the comparison is
+against what that line promised, not what `main` promises now.
+
+Baseline **promotion** stays on `main` alone — its step in `compat.yml` is
+guarded on `github.ref == 'refs/heads/main'`. A support branch's baseline
+describes an older line and must not drift.
+
+Not everything follows. `release-prep.yml`, `release-hold.yml` and
+`changelog-required.yml` remain `main`-only, each for its own reason, and the
+next section says what that costs.
+
+### Cutting the release
+
+A maintenance release uses the **manual/tag path**, not `release-prep.yml`.
+That workflow enforces one release in flight and refreshes an open release PR
+from `main` on every push, both of which describe a `main` release; and its
+single-flight lock exists so two prep runs cannot claim the same fragments,
+which is not a hazard here because there are no fragments to claim. A support
+branch cannot merge to `main` either, so the "`VERSION` changed on `main`"
+trigger will never fire for it. Publishing comes from the `release: published`
+event, which `release.yml` already supports.
+
+1. Land every backport on `support/1.2` through pull requests, `main` first.
+2. On a branch off `support/1.2`, set `VERSION` to `1.2.4` and write the
+   `## [1.2.4]` section and its compare link directly into `CHANGELOG.md`.
+   Confirm with the same validator CI runs:
+   ```sh
+   python3 scripts/check-release-changelog.py 1.2.4
+   ```
+   Open it as a pull request **into `support/1.2`**. CI treats it as a release
+   candidate exactly as it would on `main` — its `VERSION` carries no tag —
+   so it publishes `…:1.2.4-rc.<n>` images to smoke test.
+3. Merge it. Nothing publishes: `release.yml`'s push trigger is `main` only.
+4. Create the GitHub release for tag `v1.2.4`, **targeting the tip of
+   `support/1.2`**, marked as a prerelease only if the version says so. That
+   fires `release: published` and the workflow runs as it does for any other
+   release, pausing at the `release` environment for approval.
+5. Verify the images. `…:1.2.4` will exist; `:latest` will **not** have moved,
+   and neither will `:1` — only `:1.2` follows a maintenance release. That is
+   the point, and the release notes list exactly the moving tags that were
+   written.
+6. Open the docs-only pull request adding the `## [1.2.4]` section to `main`.
+
+**Tag every maintenance release, without exception.** A tag is what makes the
+commit reachable independently of the branch, and reachability is the whole of
+what protects this history — see below.
+
+### Floating tags only move forward
+
+`:<version>` is written once and never moves. Every other tag the release
+publishes is a pointer: `:latest`, `:alpha`, and the line tags `:1` and `:1.2`.
+A pointer can move the wrong way.
+
+Publishing `:latest` for any stable release — which is what the workflow did
+before there was a maintenance path — sends `:latest` **backwards** the first
+time 1.2.4 ships after 1.3.0, silently downgrading everyone who pinned it. The
+same hazard already existed for `:alpha`: republishing an earlier alpha would
+take the channel back with it.
+
+The rule is one sentence:
+
+> a floating tag moves only when the version being released is at least the
+> highest version already released under that tag.
+
+"At least" rather than "greater than", because equality means the tag already
+points here — a republish of the same release, which
+[If The Release Workflow Fails](#if-the-release-workflow-fails) allows — and
+refusing to write a tag its own value is how a re-run silently loses `:latest`.
+
+What each tag is compared against:
+
+| Tag | Compared against | So that |
+| --- | --- | --- |
+| `:latest` | every stable release | a maintenance release of an older line cannot claim it |
+| `:alpha`, `:beta` | prereleases in that channel only | shipping 1.3.1 does not hold back `:alpha`, and vice versa |
+| `:1.2` | stable releases on the 1.2 line | pinning a line gets that line's newest patch |
+| `:1` | stable releases with major 1 | pinning a major does not go back a minor |
+
+Line tags are **stable-only**. `:1.2` means the 1.2 line as it ships, not
+whatever prerelease is being tried out on it — and below 1.0 the alternative
+would be `:0` quietly meaning "the current alpha", which `:alpha` already says
+out loud. So nothing publishes a line tag today.
+
+The decision is [`scripts/release-channel-tags.py`](scripts/release-channel-tags.py),
+with unit tests beside it, following the `release-hold.py` precedent: release
+policy expressed as an `enable=` expression inside a workflow is neither
+testable nor reviewable, and this one has to be right on a path that runs
+perhaps twice a year. `release.yml` asks it once, in `check-version`, and
+carries the answer to both publish jobs and to the release notes — which
+therefore list the tags that actually moved rather than the ones a
+stable/prerelease flag implies.
+
+### Reachability is what protects the history
+
+The risk on a maintenance line is not a wrong version number, which someone
+would notice. It is an **unreachable commit**: a tag cut against a commit that
+no branch contains, or a support branch deleted after its last release. Git
+garbage-collects what nothing points to, and the failure appears months later
+as a release whose source cannot be checked out.
+
+Discipline does not survive a year of not thinking about it, so three things
+enforce it, in descending order of how much they help.
+
+**1. Branch rules on the support namespace, which a maintainer must
+configure.** These are not implied by anything in this repository and no
+workflow can apply them. In **Settings → Rules → Rulesets → New branch
+ruleset**:
+
+- Name: `support branches`
+- Enforcement status: **Active**
+- Target branches: **Include by pattern** → `support/**`
+- Rules, all enabled:
+  - **Restrict deletions** — the branch cannot be deleted, so the commits its
+    tags point at stay reachable even after the line leaves support.
+  - **Block force pushes** — history cannot be rewritten under a published tag,
+    which is the same failure as deletion but harder to spot.
+  - **Require linear history** — a maintenance line is a sequence of
+    cherry-picks; a merge commit here means something was merged in that should
+    not have been, most likely `main`.
+
+Leave **Require a pull request before merging** to preference — backports
+should go through review, and the `main`-first rule already means every one of
+them has been reviewed once. Do **not** add required status checks to this
+ruleset without first checking which ones actually run on `support/**`:
+`Changelog entry` and `Breaking-change hold` do not, and a required check that
+never reports blocks every pull request forever — the same failure mode
+documented under [Branch protection](#branch-protection).
+
+**2. The release workflow asserts reachability before publishing.** The
+existing check compares the tag to `VERSION`, and `VERSION` is a file: it would
+pass a tag cut against any commit that happens to carry the right contents — an
+abandoned backport branch, a detached `HEAD`, a stale local checkout.
+`release.yml` now additionally requires the commit being released to be
+reachable from `main` **or** from the `support/<major>.<minor>` branch that
+owns its line, and fails the release with instructions when it is neither. The
+two cases cannot overlap: a support branch exists only for a line `main` has
+already left.
+
+**3. A scheduled audit reports unreleased backports.**
+[`support-branch-audit.yml`](.github/workflows/support-branch-audit.yml) runs
+weekly and lists every `support/**` branch whose tip is not contained in any
+tag — the "backport merged, release never cut" state, where the work sits on a
+branch nobody is looking at and in no release. It **reports and never fails**:
+whether an unreleased backport should be released now is a maintainer's
+judgement, sometimes deliberately waiting on a second fix, and a red X here
+would train someone to ignore it.
+
+### What is still manual
+
+Named rather than smoothed over, because the gap between what is automated on
+`main` and what is automated here is where a maintenance release will go wrong:
+
+- **No `release-prep.yml` equivalent.** The version bump, the changelog
+  section and its compare link are written by hand on the support branch.
+  `check-release-changelog.py` checks them; nothing generates them.
+- **No `Changelog entry` gate on backport PRs.** Fragments cannot work here,
+  so the check does not run, so nothing asks whether a release note was
+  written. Write it at release-prep time from the commits on the branch.
+- **No breaking-change hold.** `release-hold.yml` is `main`-only and reads the
+  release in flight from `main`'s `VERSION`. A maintenance release is a patch
+  release and must not break anything; nothing enforces that here beyond the
+  fact that its content is cherry-picks of changes already reviewed for
+  `main`.
+- **Dropping a line is a decision, not an event.** Nothing announces that 1.2
+  has left the support window when 1.4.0 ships. Say so in the 1.4.0 release
+  notes.
 
 ## If The Release Workflow Fails
 
