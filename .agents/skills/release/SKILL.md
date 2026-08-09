@@ -132,7 +132,12 @@ Concretely, the agent — not the user — does all of this:
    `scripts/run-test-instance.sh --mount-docker-socket` on a remapped port. The **console** image is
    the one to test the UI against: the SPA is embedded in it and absent from slim. Confirm the
    digest you pulled matches the bot comment, so the evidence names bits that actually exist.
-2. **Exercise the API claims** against that instance (steps 1–3 below).
+2. **Verify every claim in the release section of `CHANGELOG.md`** against that instance (steps
+   1–3 below). This is the point of the exercise: the section you just curated is a set of
+   promises a user will read and act on, and until each one has been run against the candidate it
+   is an assertion, not a fact. Work bullet by bullet and record the request and the response for
+   each — including the ones that turn out to be true, because "verified" with no evidence behind
+   it is worth no more than the note it is checking.
 3. **Drive the web UI yourself with the `chrome-devtools` MCP and take the screenshots** (step 4).
    Headless, against the running RC, with real state seeded through the SDK first. Do not describe
    a page in prose, do not ask the user to open it, and do not skip it because the release "is
