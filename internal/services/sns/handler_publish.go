@@ -20,7 +20,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/smtp"
 )
 
@@ -199,10 +201,11 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	origin := publishOrigin(r.Context())
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		h.fanOut(context.WithoutCancel(r.Context()), topic.Name, msgID, subject, message, envelope, subs, msgAttrs)
+		h.fanOut(context.WithoutCancel(r.Context()), origin, topic.Name, msgID, subject, message, envelope, subs, msgAttrs)
 	}()
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlPublishResponse{
@@ -254,6 +257,7 @@ func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 
 	// Collect subscriber list once for all entries.
 	subs, _ := h.snsStore.listSubscriptionsByTopic(r.Context(), topic.Name)
+	origin := publishOrigin(r.Context())
 
 	// Parse member.N entries from the form-encoded body.
 	// Form keys: PublishBatchRequestEntries.member.N.{Id,Message,Subject}
@@ -297,7 +301,7 @@ func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 		envCopy := envelope
 		go func() {
 			defer h.wg.Done()
-			h.fanOut(context.WithoutCancel(r.Context()), topic.Name, msgID, subject, message, envCopy, subs, nil)
+			h.fanOut(context.WithoutCancel(r.Context()), origin, topic.Name, msgID, subject, message, envCopy, subs, nil)
 		}()
 
 		successful = append(successful, xmlPublishBatchSuccess{Id: entryID, MessageId: msgID})
@@ -313,22 +317,46 @@ func (h *Handler) PublishBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// unsubscribeURL returns the URL a subscriber can GET to remove their subscription.
-func (h *Handler) unsubscribeURL(subARN string) string {
+// unsubscribeURL returns the URL a subscriber can GET to remove their
+// subscription, on the origin the publisher reached Overcast at.
+//
+// origin is the publishing caller's origin, captured by the Publish handler and
+// carried into fan-out. It cannot be read here: delivery runs on a goroutine
+// that outlives the request, and by design there may be no request at all
+// behind it. Empty origin is that case — an internally generated notification —
+// and the minting helper then falls back to the configured base, the only
+// answer available with nobody to ask. See
+// docs/plans/client-facing-url-minting.md.
+func (h *Handler) unsubscribeURL(origin, subARN string) string {
 	q := url.Values{
 		"Action":          {"Unsubscribe"},
 		"SubscriptionArn": {subARN},
 	}
-	return fmt.Sprintf("%s/?%s", h.cfg.ExternalBaseURL(), q.Encode())
+	return fmt.Sprintf("%s/?%s", serviceutil.ClientBaseURLFromOrigin(h.cfg, origin), q.Encode())
+}
+
+// publishOrigin returns the origin to mint this publish's notification links
+// on: the one the middleware stamped for the calling request, or "" when the
+// publish has no dialable HTTP caller behind it (a scheduler firing, internal
+// dispatch, a request that arrived on a real AWS hostname).
+//
+// Read it in the handler, while the request is still in scope, and pass the
+// result into fan-out. Reading it during delivery would work only for as long
+// as every publish path happens to hand fan-out a context descended from its
+// request, which is not a property the compiler checks.
+func publishOrigin(ctx context.Context) string {
+	return middleware.ClientEndpointFromContext(ctx)
 }
 
 // fanOut delivers a single SNS notification to all active subscribers of a topic.
 // env is the base notification envelope; UnsubscribeURL is filled per-subscription.
+// origin is the publishing caller's origin (see publishOrigin), carried in
+// because fan-out outlives the request that started it.
 // msgAttrs is the map of message attributes from the Publish call (may be nil).
 // It handles sqs, lambda, email, email-json, sms, http/https, and application
 // protocols and respects FilterPolicy. A protocol with no delivery
 // implementation is reported through failDelivery rather than dropped.
-func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMessage string, env snsNotificationEnvelope, subs []*Subscription, msgAttrs map[string]messageAttribute) {
+func (h *Handler) fanOut(ctx context.Context, origin, topicName, msgID, subject, plainMessage string, env snsNotificationEnvelope, subs []*Subscription, msgAttrs map[string]messageAttribute) {
 	log := h.log.WithRecorder(ctx)
 	// Filter-policy matching works on plain string values. Derive them at most
 	// once per publish rather than once per subscription, and only when some
@@ -354,7 +382,7 @@ func (h *Handler) fanOut(ctx context.Context, topicName, msgID, subject, plainMe
 		}
 		// Build the per-subscription envelope with the correct UnsubscribeURL.
 		subEnv := env
-		subEnv.UnsubscribeURL = h.unsubscribeURL(sub.SubscriptionARN)
+		subEnv.UnsubscribeURL = h.unsubscribeURL(origin, sub.SubscriptionARN)
 		jsonBytes, err := json.Marshal(subEnv)
 		if err != nil {
 			log.Error("SNS fan-out: failed to marshal envelope",
