@@ -56,7 +56,7 @@ services:
 
 | LocalStack        | overcast                                 | Notes                                                             |
 | ----------------- | ---------------------------------------- | ----------------------------------------------------------------- |
-| `LOCALSTACK_HOST` | `OVERCAST_HOST`                          | Hostname to bind. Default: `0.0.0.0`                              |
+| `LOCALSTACK_HOST` | `OVERCAST_HOST`                          | Hostname to bind, or a comma-separated list. Default: `0.0.0.0`   |
 | `EDGE_PORT`       | `OVERCAST_PORT`                          | Default: `4566`                                                   |
 | `SERVICES`        | — *(no equivalent)*                      | Overcast runs every service, always. Drop the variable; a leftover value is ignored rather than rejected |
 | `DATA_DIR`        | `OVERCAST_DATA_DIR`                      | SQLite persistence directory                                      |
