@@ -307,7 +307,7 @@ export function TestTab({ name }: { name: string }) {
               </pre>
             </div>
 
-            {logOutput != null && (
+            {result.logResult && (
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between">
                   <span className="font-mono text-xs font-medium text-fg-muted">Log output</span>
