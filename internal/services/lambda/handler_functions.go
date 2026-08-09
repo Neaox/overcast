@@ -1642,7 +1642,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.retireExecutionEnvironment(fn, previousIdentity)
+	h.retireExecutionEnvironment(ctx, fn, previousIdentity)
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
@@ -1914,7 +1914,7 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	h.retireExecutionEnvironment(fn, previousIdentity)
+	h.retireExecutionEnvironment(ctx, fn, previousIdentity)
 
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
@@ -1946,11 +1946,11 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 // previousIdentity is fn's identity before the update was applied; when the
 // update changes nothing the container can observe (e.g. only the description),
 // the warm instance is left in place.
-func (h *Handler) retireExecutionEnvironment(fn *Function, previousIdentity string) {
+func (h *Handler) retireExecutionEnvironment(ctx context.Context, fn *Function, previousIdentity string) {
 	if functionInstanceIdentity(fn) == previousIdentity {
 		return
 	}
-	if pool := h.pool(); pool != nil {
+	if pool := h.pool(ctx); pool != nil {
 		if retired := pool.InvalidateFunction(fn); retired > 0 {
 			h.log.Debug("retired idle lambda instances after update",
 				zap.String("function", fn.Name), zap.Int("count", retired))
@@ -2008,7 +2008,7 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 	h.forgetS3SyncFunction(fn)
 
 	// Evict the warm instances so the containers stop immediately.
-	if pool := h.pool(); pool != nil {
+	if pool := h.pool(ctx); pool != nil {
 		pool.EvictFunction(name)
 	}
 	h.tracker.Evict(name)

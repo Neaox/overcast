@@ -407,6 +407,32 @@ func (rr *runtimeRegistry) runtimeFor(ctx context.Context, runtimeID string) Run
 	return nil
 }
 
+// poolFor returns the registered InstancePool, waiting for the initial Docker
+// verdict the way runtimeFor does. Returns nil when there is no container
+// runtime — which, once the verdict is in, means Docker is genuinely absent
+// rather than not yet asked about.
+//
+// The wait is what makes that distinction hold. Callers read a nil pool as
+// "nothing can be pre-warmed" and report it to the client as a settled fact:
+// provisioned concurrency answers FAILED, which no client is obliged to poll
+// again. Answering it from a registry that is still only holding the stub turns
+// the emulator's own startup ordering into a verdict about the user's Docker
+// installation.
+func (rr *runtimeRegistry) poolFor(ctx context.Context) *InstancePool {
+	select {
+	case <-rr.settled:
+	case <-ctx.Done():
+		// The caller has gone; answer from whatever is registered now rather
+		// than holding a request nobody is left to read.
+	}
+	for _, rt := range rr.get() {
+		if pool, ok := rt.(*InstancePool); ok {
+			return pool
+		}
+	}
+	return nil
+}
+
 // Service implements router.Service for Lambda.
 type Service struct {
 	cfg         *config.Config

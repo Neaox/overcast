@@ -3,6 +3,7 @@ package lambda
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -190,6 +191,147 @@ func TestRuntimeFor_settledRegistryDoesNotWait(t *testing.T) {
 	}
 	if rt := rr.runtimeFor(context.Background(), "python3.12"); rt != nil {
 		t.Fatalf("runtimeFor returned %T for a runtime nothing registered handles", rt)
+	}
+}
+
+// TestPutProvisionedConcurrency_dockerVerdictStillPending is the same defect on
+// the provisioned concurrency path.
+//
+// The pool is discovered by scanning the runtime registry, and before the probe
+// has reported the only runtime registered is the stub — which is not an
+// InstancePool. The handler read that as "there is no container runtime", and
+// answered FAILED with "Docker is not available, so no execution environments
+// can be allocated." on a machine where Docker is running fine. Worse than a
+// slow answer: it is a wrong one that sticks, because the reservation is never
+// allocated and a client that does not poll the config again keeps the verdict.
+func TestPutProvisionedConcurrency_dockerVerdictStillPending(t *testing.T) {
+	// Given: a handler whose runtime registry still holds only the stub,
+	// because the Docker probe has not reported yet.
+	clk := clock.NewMock()
+	ls := newLambdaStore(state.NewMemoryStore(), "us-east-1", clk)
+	tracker := newInstanceTracker(clk, zap.NewNop())
+	t.Cleanup(tracker.Stop)
+
+	rr := newPendingRuntimeRegistry([]Runtime{newNodeRuntime(clk, zap.NewNop())})
+	h := &Handler{
+		cfg:      &config.Config{Region: "us-east-1"},
+		log:      serviceutil.NewServiceLogger(zap.NewNop(), "lambda"),
+		clk:      clk,
+		ls:       ls,
+		tracker:  tracker,
+		runtimes: rr,
+	}
+	fn := &Function{
+		Name:       "verdict-pc-fn",
+		ARN:        "arn:aws:lambda:us-east-1:000000000000:function:verdict-pc-fn",
+		Runtime:    "nodejs22.x",
+		Handler:    "index.handler",
+		Timeout:    3,
+		MemorySize: 128,
+		State:      "Active",
+	}
+	if aerr := ls.putFunction(context.Background(), fn); aerr != nil {
+		t.Fatalf("seed function: %s", aerr.Message)
+	}
+
+	// When: provisioned concurrency is configured, and the container runtime is
+	// installed while that request is in flight.
+	body, _ := json.Marshal(map[string]any{"ProvisionedConcurrentExecutions": 2})
+	req := httptest.NewRequest(http.MethodPut,
+		"/2019-09-30/functions/verdict-pc-fn/provisioned-concurrency?Qualifier=1",
+		bytes.NewReader(body))
+	req = withFunctionNameParam(req, "verdict-pc-fn")
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.PutProvisionedConcurrencyConfig(rec, req)
+	}()
+
+	select {
+	case <-done:
+		t.Fatalf("the reservation was answered before the Docker verdict was in: %s", rec.Body.String())
+	case <-time.After(verdictWindow):
+	}
+
+	pool := NewInstancePool(&countingColdStartRuntime{}, zap.NewNop(), clk, PoolLimits{})
+	t.Cleanup(pool.Stop)
+	pool.observer = tracker
+	rr.set([]Runtime{pool})
+	rr.settle()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("PutProvisionedConcurrencyConfig did not return after the verdict")
+	}
+
+	// Then: the reservation is on its way rather than declared impossible, and
+	// the environments are actually allocated.
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	got := decodeProvisioned(t, rec)
+	if got.Status == provisionedStatusFailed {
+		t.Fatalf("reservation reported %s (%q) before the Docker probe reported",
+			got.Status, got.StatusReason)
+	}
+	if n := waitForWarm(t, pool, "verdict-pc-fn", 2, 10*time.Second); n != 2 {
+		t.Fatalf("allocated environments = %d, want 2 — the reservation was dropped", n)
+	}
+}
+
+// TestPoolFor_waitsForTheVerdict is the same defect one layer down, where the
+// pool is actually chosen.
+func TestPoolFor_waitsForTheVerdict(t *testing.T) {
+	// Given: a registry that still holds only the stub, because the probe has
+	// not reported.
+	clk := clock.NewMock()
+	rr := newPendingRuntimeRegistry([]Runtime{newNodeRuntime(clk, zap.NewNop())})
+
+	// When: the pool is looked up.
+	got := make(chan *InstancePool, 1)
+	go func() { got <- rr.poolFor(context.Background()) }()
+
+	select {
+	case p := <-got:
+		t.Fatalf("poolFor returned %v before the verdict was in", p)
+	case <-time.After(verdictWindow):
+	}
+
+	pool := NewInstancePool(&countingColdStartRuntime{}, zap.NewNop(), clk, PoolLimits{})
+	t.Cleanup(pool.Stop)
+	rr.set([]Runtime{pool})
+	rr.settle()
+
+	// Then: the pool it returns is the one the verdict installed.
+	select {
+	case p := <-got:
+		if p != pool {
+			t.Fatalf("poolFor = %v, want the pool installed by the verdict", p)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("poolFor never returned after the verdict")
+	}
+}
+
+// TestPoolFor_settledRegistryDoesNotWait pins the other half: once the verdict
+// is in, "there is no pool" is an answer rather than a guess, and reporting it
+// must not wait for a probe that will not run.
+func TestPoolFor_settledRegistryDoesNotWait(t *testing.T) {
+	// Given: a registry whose runtime set is final and holds no pool, because
+	// the probe reported that Docker is not there.
+	clk := clock.NewMock()
+	rr := newRuntimeRegistry([]Runtime{newNodeRuntime(clk, zap.NewNop())})
+
+	// When: the pool is looked up with a context that is already cancelled.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Then: it answers straight away, and the answer is the honest nil.
+	if p := rr.poolFor(ctx); p != nil {
+		t.Fatalf("poolFor = %v, want nil when the verdict is that Docker is absent", p)
 	}
 }
 
