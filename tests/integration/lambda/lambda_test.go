@@ -3645,17 +3645,39 @@ exports.handler = async () => {
 		t.Fatalf("invoke returned %d, expected 200", resp.StatusCode)
 	}
 
-	// Poll CloudWatch Logs for up to 20 s — events are written by the async
-	// log batcher (5 ms flush) and the persistence layer is debounced (50 ms).
-	// The cache returns events as soon as appendEvents completes so this should
-	// be near-instantaneous, but Docker-backed Lambda is slow under CI + -race.
+	// Poll CloudWatch Logs for the async log pipeline to deliver: events are
+	// written by the log batcher (5 ms flush) through a debounced persist
+	// (50 ms), and the cache returns them as soon as appendEvents completes.
+	// Measured over 10 `-race -count=10` runs in a `--cpus=8` golang:1.24
+	// container on an otherwise idle host, this loop takes 1–103 ms — the
+	// invocation it is waiting on has already returned 200, so the Docker
+	// cold-start cost is behind us by the time it starts.
+	//
+	// So the budget is on *progress*, not a wall-clock deadline for the loop.
+	// A fixed one has to serve two contradictory jobs — long enough that a
+	// slow-but-working pipeline is never failed on a loaded CI runner, short
+	// enough that a genuinely broken one is reported quickly — and the 20 s
+	// this used to allow bought the first at the price of the second. Every
+	// newly visible event now refreshes logIdleBudget, so a pipeline that has
+	// stopped delivering fails in half the old time and says which of the two
+	// budgets ran out, while one that is merely slow is never cut off as long
+	// as it keeps making progress. logOverallBudget is the backstop for a
+	// pipeline that dribbles forever without completing; it matches the 2 m
+	// waitForFunctionActive allows for Docker-paced work in this file.
+	const (
+		logIdleBudget    = 10 * time.Second
+		logOverallBudget = 2 * time.Minute
+	)
 	groupName := "/aws/lambda/cwl-fn"
-	deadline := time.Now().Add(20 * time.Second)
+	started := time.Now()
+	overallDeadline := started.Add(logOverallBudget)
+	idleDeadline := started.Add(logIdleBudget)
 	var matched bool
 	var lastEvents []map[string]any
 	var lastStatus int
 	var lastBody string
-	for time.Now().Before(deadline) {
+	var seenEvents int
+	for time.Now().Before(overallDeadline) && time.Now().Before(idleDeadline) {
 		// FilterLogEvents searches across all streams in the group; we don't
 		// know the auto-generated stream name up front.
 		body, _ := json.Marshal(map[string]any{
@@ -3682,6 +3704,13 @@ exports.handler = async () => {
 		_ = json.Unmarshal(bodyBytes, &result)
 		lastEvents = result.Events
 
+		// Events are only ever appended to the group, so a growing count is
+		// the progress signal that refreshes the idle budget.
+		if len(result.Events) > seenEvents {
+			seenEvents = len(result.Events)
+			idleDeadline = time.Now().Add(logIdleBudget)
+		}
+
 		// Check for the marker we logged + the synthetic START/REPORT lines.
 		var sawMarker, sawStart, sawReport bool
 		for _, e := range result.Events {
@@ -3704,8 +3733,12 @@ exports.handler = async () => {
 	}
 
 	if !matched {
-		t.Fatalf("expected START / handler stdout (marker-xyz) / REPORT in CloudWatch Logs for group %q within 20 s; last status=%d body=%s got %d events: %+v",
-			groupName, lastStatus, lastBody, len(lastEvents), lastEvents)
+		gaveUp := "the log pipeline delivered nothing new for " + logIdleBudget.String()
+		if !time.Now().Before(overallDeadline) {
+			gaveUp = "the " + logOverallBudget.String() + " overall budget ran out while events were still arriving"
+		}
+		t.Fatalf("expected START / handler stdout (marker-xyz) / REPORT in CloudWatch Logs for group %q; %s after %v; last status=%d body=%s got %d events: %+v",
+			groupName, gaveUp, time.Since(started).Round(100*time.Millisecond), lastStatus, lastBody, len(lastEvents), lastEvents)
 	}
 }
 
