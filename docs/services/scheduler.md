@@ -67,12 +67,16 @@ every target type EventBridge rules reach.
     correctly in `GetSchedule` and never fires.
   - `FlexibleTimeWindow.Mode` is required and must be `OFF` or `FLEXIBLE`;
     `State` must be `ENABLED` or `DISABLED`.
-- `UpdateSchedule` **merges**. AWS's `UpdateSchedule` is a full replacement — a
-  member the caller omits is unset — whereas here an omitted member keeps its
-  stored value. This is a deliberate divergence: it is the behaviour the
-  operation has had since it shipped, and CloudFormation's schedule handler
-  relies on it. `StartDate` and `EndDate` are the exception — they are always
-  taken from the request, so omitting them clears them.
+- `UpdateSchedule` **replaces**, as AWS's does. The request carries the whole
+  schedule, so any optional member the caller omits — `Description`,
+  `ScheduleExpressionTimezone`, `State`, `StartDate`, `EndDate`, or anything
+  inside `Target` — ends up unset, and `State` returns to its `ENABLED`
+  default. Read the schedule, change what you mean to change, and send the
+  result back. What survives is the schedule's identity, again as on AWS: its
+  name, group, ARN and `CreationDate`.
+
+  Releases up to and including `0.0.1-alpha.33` merged instead, keeping an
+  omitted member at its stored value.
 - Pagination and filtering:
   - `ListSchedules` and `ListScheduleGroups` honour `MaxResults` (1–100, a full
     page when omitted) and `NextToken`.
@@ -161,13 +165,13 @@ every target type EventBridge rules reach.
 
 ### Schedules
 
-| Operation        | Status       | Notes                                                                                                                  | AWS Docs                                                                                  |
-| ---------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `CreateSchedule` | ✅ Supported | `POST /schedules/{Name}`; `GroupName` in the body, defaulting to `default`; rejects a target type Overcast cannot fire | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_CreateSchedule.html) |
-| `GetSchedule`    | ✅ Supported | `GET /schedules/{Name}`; `?groupName` selects the group                                                                | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_GetSchedule.html)    |
-| `UpdateSchedule` | ✅ Supported | `PUT /schedules/{Name}`; `GroupName` in the body; rejects a target type Overcast cannot fire                           | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UpdateSchedule.html) |
-| `DeleteSchedule` | ✅ Supported | `DELETE /schedules/{Name}`; `?groupName` selects the group                                                             | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_DeleteSchedule.html) |
-| `ListSchedules`  | ✅ Supported | `GET /schedules`; optional `?ScheduleGroup` filter                                                                     | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListSchedules.html)  |
+| Operation        | Status       | Notes                                                                                                                                                    | AWS Docs                                                                                  |
+| ---------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `CreateSchedule` | ✅ Supported | `POST /schedules/{Name}`; `GroupName` in the body, defaulting to `default`; rejects a target type Overcast cannot fire                                   | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_CreateSchedule.html) |
+| `GetSchedule`    | ✅ Supported | `GET /schedules/{Name}`; `?groupName` selects the group                                                                                                  | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_GetSchedule.html)    |
+| `UpdateSchedule` | ✅ Supported | `PUT /schedules/{Name}`; `GroupName` in the body; replaces the whole schedule, so an omitted member is unset; rejects a target type Overcast cannot fire | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UpdateSchedule.html) |
+| `DeleteSchedule` | ✅ Supported | `DELETE /schedules/{Name}`; `?groupName` selects the group                                                                                               | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_DeleteSchedule.html) |
+| `ListSchedules`  | ✅ Supported | `GET /schedules`; optional `?ScheduleGroup` filter                                                                                                       | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListSchedules.html)  |
 
 ### Tags
 

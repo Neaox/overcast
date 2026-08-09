@@ -329,6 +329,132 @@ func TestUpdateSchedule_success(t *testing.T) {
 	}
 }
 
+func TestUpdateSchedule_replacesRatherThanMerges(t *testing.T) {
+	// Given: a schedule carrying every optional member AWS lets a caller set
+	srv := helpers.NewTestServer(t)
+	createGroup(t, srv, "g3r")
+	resp := schDo(t, srv, http.MethodPost, "/schedules/replaceable", map[string]any{
+		"GroupName":                  "g3r",
+		"ScheduleExpression":         "rate(5 minutes)",
+		"ScheduleExpressionTimezone": "Europe/London",
+		"Description":                "the original description",
+		"State":                      "DISABLED",
+		"FlexibleTimeWindow":         map[string]any{"Mode": "FLEXIBLE", "MaximumWindowInMinutes": 15},
+		"Target": map[string]any{
+			"Arn":     "arn:aws:lambda:us-east-1:000000000000:function:my-fn",
+			"RoleArn": "arn:aws:iam::000000000000:role/scheduler-role",
+			"Input":   `{"original":true}`,
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// When: UpdateSchedule sends only the members AWS marks required
+	resp = schDo(t, srv, http.MethodPut, "/schedules/replaceable", map[string]any{
+		"GroupName":          "g3r",
+		"ScheduleExpression": "rate(15 minutes)",
+		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
+		"Target": map[string]any{
+			"Arn":     "arn:aws:sqs:us-east-1:000000000000:q",
+			"RoleArn": "arn:aws:iam::000000000000:role/scheduler-role",
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: every omitted member is unset, as AWS's full replacement leaves it
+	get := schDo(t, srv, http.MethodGet, "/schedules/replaceable?groupName=g3r", nil)
+	defer get.Body.Close()
+	var result struct {
+		ScheduleExpression         string `json:"ScheduleExpression"`
+		ScheduleExpressionTimezone string `json:"ScheduleExpressionTimezone"`
+		Description                string `json:"Description"`
+		State                      string `json:"State"`
+		FlexibleTimeWindow         struct {
+			Mode                   string `json:"Mode"`
+			MaximumWindowInMinutes int    `json:"MaximumWindowInMinutes"`
+		} `json:"FlexibleTimeWindow"`
+		Target struct {
+			Arn   string `json:"Arn"`
+			Input string `json:"Input"`
+		} `json:"Target"`
+	}
+	helpers.DecodeJSON(t, get, &result)
+
+	if result.ScheduleExpression != "rate(15 minutes)" {
+		t.Errorf("ScheduleExpression = %q, want rate(15 minutes)", result.ScheduleExpression)
+	}
+	if result.ScheduleExpressionTimezone != "" {
+		t.Errorf("ScheduleExpressionTimezone = %q, want it cleared by the replacement", result.ScheduleExpressionTimezone)
+	}
+	if result.Description != "" {
+		t.Errorf("Description = %q, want it cleared by the replacement", result.Description)
+	}
+	if result.State != "ENABLED" {
+		t.Errorf("State = %q, want ENABLED — an omitted State takes the default rather than the stored value", result.State)
+	}
+	if result.FlexibleTimeWindow.Mode != "OFF" || result.FlexibleTimeWindow.MaximumWindowInMinutes != 0 {
+		t.Errorf("FlexibleTimeWindow = %+v, want {OFF 0}", result.FlexibleTimeWindow)
+	}
+	if result.Target.Input != "" {
+		t.Errorf("Target.Input = %q, want it cleared by the replacement", result.Target.Input)
+	}
+	if result.Target.Arn != "arn:aws:sqs:us-east-1:000000000000:q" {
+		t.Errorf("Target.Arn = %q, want the replacement's target", result.Target.Arn)
+	}
+}
+
+func TestUpdateSchedule_keepsTheIdentityItWasCreatedWith(t *testing.T) {
+	// Given: a schedule whose ARN and creation date a caller has already seen
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+	createGroup(t, srv, "g3i")
+	arn := createSchedule(t, srv, "g3i", "stable-identity", "rate(5 minutes)")
+
+	get := schDo(t, srv, http.MethodGet, "/schedules/stable-identity?groupName=g3i", nil)
+	var before struct {
+		CreationDate         time.Time `json:"CreationDate"`
+		LastModificationDate time.Time `json:"LastModificationDate"`
+	}
+	helpers.DecodeJSON(t, get, &before)
+	get.Body.Close()
+
+	srv.Clock.Add(2 * time.Second)
+
+	// When: the schedule is replaced
+	resp := schDo(t, srv, http.MethodPut, "/schedules/stable-identity", map[string]any{
+		"GroupName":          "g3i",
+		"ScheduleExpression": "rate(15 minutes)",
+		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
+		"Target": map[string]any{
+			"Arn":     "arn:aws:lambda:us-east-1:000000000000:function:my-fn",
+			"RoleArn": "arn:aws:iam::000000000000:role/scheduler-role",
+		},
+	})
+	resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: what is replaced is the schedule's content, not the schedule — its
+	// ARN and creation date survive, and only the modification date moves
+	get = schDo(t, srv, http.MethodGet, "/schedules/stable-identity?groupName=g3i", nil)
+	defer get.Body.Close()
+	var after struct {
+		Arn                  string    `json:"Arn"`
+		CreationDate         time.Time `json:"CreationDate"`
+		LastModificationDate time.Time `json:"LastModificationDate"`
+	}
+	helpers.DecodeJSON(t, get, &after)
+
+	if after.Arn != arn {
+		t.Errorf("Arn = %q, want the ARN it was created with, %q", after.Arn, arn)
+	}
+	if !after.CreationDate.Equal(before.CreationDate) {
+		t.Errorf("CreationDate = %s, want the original %s", after.CreationDate, before.CreationDate)
+	}
+	if !after.LastModificationDate.After(before.LastModificationDate) {
+		t.Errorf("LastModificationDate = %s, want it moved past %s", after.LastModificationDate, before.LastModificationDate)
+	}
+}
+
 func TestDeleteSchedule_success(t *testing.T) {
 	// Given: a schedule exists
 	srv := helpers.NewTestServer(t)

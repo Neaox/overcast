@@ -26,7 +26,7 @@ func init() {
 		capabilities.Capability{Operation: "GetSchedule", Category: catSchedules,
 			Status: capabilities.StatusSupported, Notes: "`GET /schedules/{Name}`; `?groupName` selects the group"},
 		capabilities.Capability{Operation: "UpdateSchedule", Category: catSchedules,
-			Status: capabilities.StatusSupported, Notes: "`PUT /schedules/{Name}`; `GroupName` in the body; rejects a target type Overcast cannot fire"},
+			Status: capabilities.StatusSupported, Notes: "`PUT /schedules/{Name}`; `GroupName` in the body; replaces the whole schedule, so an omitted member is unset; rejects a target type Overcast cannot fire"},
 		capabilities.Capability{Operation: "DeleteSchedule", Category: catSchedules,
 			Status: capabilities.StatusSupported, Notes: "`DELETE /schedules/{Name}`; `?groupName` selects the group"},
 		capabilities.Capability{Operation: "ListSchedules", Category: catSchedules,

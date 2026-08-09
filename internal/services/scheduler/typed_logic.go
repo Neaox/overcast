@@ -356,14 +356,19 @@ type updateScheduleResponse struct {
 	ScheduleArn string `json:"ScheduleArn" cbor:"ScheduleArn"`
 }
 
-// updateScheduleTyped applies a change to a stored schedule.
+// updateScheduleTyped replaces a stored schedule with the one in the request.
 //
-// AWS's UpdateSchedule is a full replacement — every member the caller omits is
-// unset, not preserved. This is deliberately not that: the emulator merges,
-// leaving an omitted member as it was, which is the behaviour the operation has
-// had since it shipped and what the CloudFormation handler relies on. StartDate
-// and EndDate are the exception and are always taken from the request, so
-// omitting them clears them. See the service doc.
+// AWS's UpdateSchedule is a full replacement: the request carries the whole
+// schedule, and every optional member the caller omits ends up unset. The
+// emulator used to merge instead, leaving an omitted member as it was, so a
+// caller who read a schedule, changed one field and wrote it back got the AWS
+// answer while a caller who sent only the required members silently kept
+// settings they had dropped — the divergence only shows up in the second case,
+// which is exactly the one a user writes by hand.
+//
+// What is replaced is the schedule's content, not the schedule: the name, group,
+// ARN and creation date are its identity and survive, as they do on AWS. A
+// caller who means to change one of those is creating a different schedule.
 func (s *Service) updateScheduleTyped(ctx context.Context, req *updateScheduleRequest) (*updateScheduleResponse, *protocol.AWSError) {
 	create := (*createScheduleRequest)(req)
 	if aerr := s.validateSchedule(req.Name, create.write(), req.Target); aerr != nil {
@@ -371,7 +376,7 @@ func (s *Service) updateScheduleTyped(ctx context.Context, req *updateScheduleRe
 	}
 	region := s.regionOf(ctx)
 	group := groupOrDefault(req.GroupName)
-	sc, found, aerr := s.loadSchedule(ctx, region, group, req.Name)
+	existing, found, aerr := s.loadSchedule(ctx, region, group, req.Name)
 	if aerr != nil {
 		return nil, aerr
 	}
@@ -379,32 +384,26 @@ func (s *Service) updateScheduleTyped(ctx context.Context, req *updateScheduleRe
 		return nil, scheduleNotFound(req.Name, group)
 	}
 
-	if req.ScheduleExpression != "" {
-		sc.ScheduleExpression = req.ScheduleExpression
-		// Reset last-fire so the engine picks up the new cadence immediately.
-		if err := s.store.Delete(ctx, nsLastFire, s.scheduleKey(region, group, req.Name)); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
-		}
+	state := req.State
+	if state == "" {
+		state = "ENABLED"
 	}
-	if req.ScheduleExpressionTimezone != "" {
-		sc.ScheduleExpressionTimezone = req.ScheduleExpressionTimezone
+	sc := &Schedule{
+		Name: existing.Name, GroupName: existing.GroupName, Arn: existing.Arn,
+		State: state, ScheduleExpression: req.ScheduleExpression,
+		ScheduleExpressionTimezone: req.ScheduleExpressionTimezone,
+		Description:                req.Description, FlexibleTimeWindow: req.FlexibleTimeWindow,
+		Target: req.Target, StartDate: req.StartDate, EndDate: req.EndDate,
+		CreationDate: existing.CreationDate, LastModificationDate: s.clk.Now(),
 	}
-	if req.Description != "" {
-		sc.Description = req.Description
-	}
-	if req.FlexibleTimeWindow.Mode != "" {
-		sc.FlexibleTimeWindow = req.FlexibleTimeWindow
-	}
-	if req.Target.Arn != "" {
-		sc.Target = req.Target
-	}
-	if req.State != "" {
-		sc.State = req.State
-	}
-	sc.StartDate = req.StartDate
-	sc.EndDate = req.EndDate
-	sc.LastModificationDate = s.clk.Now()
 
+	// The replacement carries a ScheduleExpression — AWS marks it required, and
+	// validateWrite enforces that — so the cadence is always the new one's.
+	// Forgetting the last-fire time is what lets the engine pick it up on the
+	// next tick rather than from a firing that belonged to the old expression.
+	if err := s.store.Delete(ctx, nsLastFire, s.scheduleKey(region, group, req.Name)); err != nil {
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	}
 	if err := s.saveSchedule(ctx, region, sc); err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
