@@ -56,7 +56,7 @@ const functionVersionLatest = "$LATEST"
 // not asked for debug detail, and inventing timings to fill the gap would not
 // be.
 //
-// TODO(priority:P3): emit platform.initStart and platform.initReport records for Lambda cold starts under JSON log format
+// TODO(priority:P3): emit platform.initStart and platform.initReport records for Lambda cold starts under JSON log format.
 
 // logLevel is a Lambda log level. The zero value is deliberately the most
 // detailed level so that an unparsed level can never silently filter more than
@@ -161,7 +161,7 @@ type runtimeDoneMetrics struct {
 // invocation failed but not which of those AWS would have chosen, and an
 // invented name is worse than an absent optional field.
 //
-// TODO(priority:P3): populate errorType on Lambda platform.runtimeDone and platform.report records for failed invocations
+// TODO(priority:P3): populate errorType on Lambda platform.runtimeDone and platform.report records for failed invocations.
 type platformRuntimeDoneRecord struct {
 	RequestID string              `json:"requestId"`
 	Status    string              `json:"status"`
