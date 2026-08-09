@@ -22,6 +22,41 @@ import (
 // prefixes (Lambda REST API), the Authorization Credential scope (Query-protocol
 // services such as IAM, STS, SNS, EC2), and finally S3 as a fallback.
 // An optional body parameter enables Query-protocol Action-param detection.
+//
+// What it answers is not only a log label. IAM enforcement builds the action it
+// authorises as "<service>:<operation>" (see requestIAMAction), the resource
+// resolvers below it branch on the same value, and region handling and the
+// trace badges read it too. A changed answer here changes which IAM action a
+// policy is evaluated against — treat it as behaviour, not presentation.
+//
+// The step 2 prefix switch is hand-written and stays that way deliberately. The
+// pinned Smithy models describe the same paths — every REST binding's URI, and
+// for a shared binding the set of services declaring it — but step 2 cannot be
+// derived from them:
+//
+//   - Scale, against S3. The corpus has roughly 1,950 root path segments owned
+//     by exactly one modeled service, against the dozen claimed here, and
+//     almost all of them are legal S3 bucket names. Step 2 runs ahead of the
+//     credential scope, so a derived table would take "GET /clusters" away from
+//     a bucket named clusters. The router's restFallback consults the same
+//     model trie safely only because addressesNonS3 gates it on positive
+//     non-S3 evidence from the credential scope — evidence that is by
+//     definition absent for the unsigned traffic step 2 exists to serve.
+//   - The credential scope cannot lead instead. serviceFromAuthCredential
+//     returns the SigV4 signing name, which is not this function's key for
+//     several implemented services: elasticfilesystem/efs, kafka/msk,
+//     servicecatalog/appregistry, states/stepfunctions. The "/2015-02-01/"
+//     entry below is the only reason EFS traffic is labelled efs at all.
+//   - Three entries here are ambiguous in the models and would have to be given
+//     up. "/applications" is declared by eight modeled services, "/v1/tags" by
+//     twelve, "/2017-03-31/" by Lambda and Lambda MicroVMs. Answering "" for
+//     them — the rule the rest of the model-derived work follows when several
+//     services are candidates — is not neutral here, because "" falls through
+//     to the S3 fallback. It would relabel three families that are correct now.
+//
+// TestDetectServiceClassifiesEveryRegisteredRouteFamily covers what that
+// leaves open: it walks the real router and fails when a service registers a
+// path family the switch has never been told about.
 func detectService(r *http.Request, body ...[]byte) string {
 	// 1. X-Amz-Target — use the generated AWS operation registry for
 	// accurate service mapping across all JSON-protocol services.
