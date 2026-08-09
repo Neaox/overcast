@@ -165,9 +165,11 @@ into two tiers ([internal/state/tier.go](../../internal/state/tier.go)):
 - **`TierHot`** — resource definitions (queues, tables, functions, stacks, …). Seeded into
   memory in a background goroutine at startup and always read from memory afterward. Small,
   finite, and needed for instant dashboard/topology renders.
-- **`TierCached`** — high-volume data-plane namespaces (`sqs:messages`, `logs:events`,
-  `cloudwatch:metricdata`, `kinesis:records`, …). These are **read straight from SQLite on
-  every access** via `shouldReadHybridNamespaceFromSQLite`
+- **`TierCached`** — data-plane namespaces, either high-volume (`sqs:messages`, `logs:events`,
+  `cloudwatch:metricdata`, `kinesis:records`, …) or large-valued (`s3:objects`,
+  `lambda:function-code` — a deployment package can be tens of megabytes and only a cold start
+  ever reads one). These are **read straight from SQLite on every access** via
+  `shouldReadHybridNamespaceFromSQLite`
   ([hybrid.go:1752](../../internal/state/hybrid.go)), overlaid with a small pending-write cache
   for changes not yet flushed. `tier.go`'s doc comment is explicit about this: *"There is
   currently no in-memory LRU cache in front of SQLite for these namespaces — every read not

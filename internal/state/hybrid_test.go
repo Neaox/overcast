@@ -457,6 +457,62 @@ func TestHybridStore_RestoreSeedsHotNamespacesOnly(t *testing.T) {
 	}
 }
 
+// TestHybridStore_RestoreSkipsLambdaDeploymentPackages pins the acceptance
+// criterion of issue #736: Lambda deployment packages are never restored into
+// the in-memory tier at startup, however many megabytes of them a data
+// directory holds. The function records beside them are control-plane metadata
+// and must still be seeded, so the two namespaces together make the assertion
+// discriminating rather than vacuous — a seed that skipped everything would
+// pass a packages-only check.
+//
+// The measurement is the store's own seed accounting ("hybrid seed complete"):
+// `loaded` counts rows placed in memory and `bytes` sums namespace+key+value
+// for each of them, so a seeded package would show up in both.
+func TestHybridStore_RestoreSkipsLambdaDeploymentPackages(t *testing.T) {
+	// Given: a data directory holding one deployment package per function,
+	// each far larger than the record that references it.
+	dir := t.TempDir()
+	ctx := context.Background()
+	const functions = 8
+	const packageBytes = 256 << 10 // 256 KiB per package, 2 MiB in total
+	seedHybridSQLiteNamespace(t, dir, "lambda:functions", functions, `{"Name":"fn","State":"Active"}`)
+	seedHybridSQLiteNamespace(t, dir, "lambda:function-code", functions, strings.Repeat("z", packageBytes))
+
+	// When: hybrid restore completes.
+	core, logs := observer.New(zap.DebugLevel)
+	s, err := state.NewHybridStoreWithLogger(dir, time.Hour, zap.New(core))
+	if err != nil {
+		t.Fatalf("NewHybridStore: %v", err)
+	}
+	defer s.Close()
+	waitForObservedLog(t, logs, "hybrid seed complete")
+
+	// Then: only the function records were seeded, and the bytes held in
+	// memory are metadata-scale — smaller than a single deployment package,
+	// let alone all of them.
+	if seededBytes := observedIntField(t, logs, "hybrid seed complete", "bytes"); seededBytes >= packageBytes {
+		t.Fatalf("seeded bytes = %d, want less than one deployment package (%d)", seededBytes, packageBytes)
+	}
+	if loaded := observedIntField(t, logs, "hybrid seed complete", "loaded"); loaded != functions {
+		t.Fatalf("seeded rows = %d, want %d (the function records alone)", loaded, functions)
+	}
+
+	// And: the packages are still readable, through the SQLite-backed lazy
+	// path — not seeded is not the same as not available.
+	kvs, err := s.Scan(ctx, "lambda:function-code", "queue/")
+	if err != nil {
+		t.Fatalf("Scan packages after seed: %v", err)
+	}
+	if len(kvs) != functions {
+		t.Fatalf("packages readable after seed = %d, want %d", len(kvs), functions)
+	}
+	for _, kv := range kvs {
+		if len(kv.Value) != packageBytes {
+			t.Fatalf("package %q read back as %d bytes, want %d", kv.Key, len(kv.Value), packageBytes)
+		}
+	}
+}
+
 func seedHybridSQLiteNamespace(t *testing.T, dir string, namespace string, rows int, value string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(dir, "overcast.db")+"?_journal_mode=WAL&_synchronous=NORMAL")
