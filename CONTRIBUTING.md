@@ -320,7 +320,36 @@ make vet               # go vet
 make check             # aggregate pre-PR checks
 make run               # build and run on :4566
 docker compose up      # run in Docker (rebuilds image)
+make docker-console    # build the image, tagged after the current branch
+make docker-clean      # remove this branch's images when you are done
 ```
+
+### Docker image tags are per-branch
+
+`make docker-console` and `make docker-slim` tag their output `overcast:<sanitised
+branch name>` and `overcast-slim:<sanitised branch name>` rather than the
+`overcast:dev` they used to hardcode. With one shared tag, two checkouts — two
+worktrees, or a contributor and an agent — build into the same name, and
+whichever built last is what runs. The failure is silent: the container starts
+and serves the other branch's code.
+
+`scripts/image-tag.sh` (or `image-tag.ps1`) derives the tag: a slash becomes
+`-`, uppercase is lowered, and a detached HEAD becomes `detached-<short sha>`
+rather than the literal `HEAD` that every detached checkout would share. Override
+it three ways, in the Makefile's usual style:
+
+```sh
+make docker-console IMAGE_TAG=scratch
+make docker-console CONSOLE_IMAGE=overcast:whatever
+OVERCAST_IMAGE_TAG=scratch task docker-console
+```
+
+`docker compose up` is the exception: Compose cannot run a script to derive a
+tag, so it stays on `overcast:dev` unless you export `OVERCAST_IMAGE_TAG`.
+
+**Clean up after yourself.** A tag per branch means an image per branch, and
+they are not small. `make docker-clean` (or `task docker-clean`) removes the
+current branch's pair.
 
 ### Reproducing CI locally
 

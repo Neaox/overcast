@@ -292,28 +292,35 @@ Screenshots come from a real browser, driven against a real emulator, headlessly
 
 The repo declares the **`chrome-devtools` MCP server** for both agent clients: [`.mcp.json`](../../../.mcp.json) for Claude Code, [`opencode.json`](../../../opencode.json) for opencode. Claude Code's runs `--headless --isolated` — no window, throwaway profile — because a background agent has no display; opencode's is headful because a human is watching. If the tools are not there, the client has not picked the file up yet — restart the session (and approve the server if prompted) rather than reaching for another mechanism. Nothing is added to `web/package.json` and no browser is installed by the repo.
 
-- **Build the image from the branch and run it on a free loopback port, with the Docker socket mounted** — never 4566/4567, which belong to the user's own instance. Start and stop the container in the same step, so a failed capture cannot leave one running:
+- **Build the image from the branch and run it on a free loopback port, with the Docker socket mounted** — never 4566/4567, which belong to the user's own instance. Go through the make target and the launcher script rather than calling `docker` yourself: those two are what an agent can be granted (see [§ Permissions](#permissions-for-the-capture) below), and they are the reason the grant is narrower than "run any container with any flags". Start and stop the container in the same step, so a failed capture cannot leave one running:
 
   ```sh
-  docker build -t overcast-shot:dev .
-  docker run -d --rm --name overcast-shot \
-      -p 127.0.0.1:4590:4566 -p 127.0.0.1:4591:4567 \
-      -v /var/run/docker.sock:/var/run/docker.sock overcast-shot:dev
+  make docker-console                          # tags overcast:<sanitised branch>
+  scripts/run-test-instance.sh --name overcast-shot --no-logs \
+      --image "overcast:$(sh scripts/image-tag.sh)" --mount-docker-socket
   # ... seed, capture ...
-  docker stop overcast-shot && docker rmi overcast-shot:dev
+  docker stop overcast-shot
+  make docker-clean                            # do not leave one image per branch behind
   ```
+
+  **The ports are chosen, not fixed — read them from the script's output.** It prints `API endpoint:` and `Web UI:` lines with the pair it found free at or above 4570, publishes both to `127.0.0.1` only, and refuses 4566 and 4567 in either role. Hardcoding 4590 the way this section used to is how two concurrent captures collide.
+
+  The image tag comes from the branch for the same reason: `overcast:dev` was one tag shared by every worktree on the machine, so a parallel agent's build could land between yours and your `docker run` and you would screenshot their code without any sign that it happened. `scripts/image-tag.sh` derives it and `make docker-clean` removes the pair when you are done.
 
   Chrome runs on the host, so a loopback-published port is reachable directly — no second container and no Docker networking to arrange. A dev server works too; the image is preferred because it is what a reviewer runs, and it puts the branch's SPA and the emulator in one place.
 
-  **The socket mount is not optional dressing, and skipping it costs you twice.** A container cannot see its own port mapping from the inside, so on remapped ports Overcast cannot tell the SPA where the API is: `deriveAPIBaseURL` returns `endpointKnown: false` and the console shows the *Connect to Overcast* screen instead of your page. With the socket, `resolvePublishedPort` asks Docker for the container's own bindings, recovers `4590`, and the console connects to it unprompted. The socket is also what lets the instance run **Lambda and ECS** at all — and a screenshot of a real invocation, with genuine output and real platform log records, is the least fakeable visual evidence there is.
+  **The socket mount is not optional dressing, and skipping it costs you twice.** A container cannot see its own port mapping from the inside, so on remapped ports Overcast cannot tell the SPA where the API is: `deriveAPIBaseURL` returns `endpointKnown: false` and the console shows the *Connect to Overcast* screen instead of your page. With the socket, `resolvePublishedPort` asks Docker for the container's own bindings, recovers the published port, and the console connects to it unprompted. The socket is also what lets the instance run **Lambda and ECS** at all — and a screenshot of a real invocation, with genuine output and real platform log records, is the least fakeable visual evidence there is.
+
+  `--mount-docker-socket` appends exactly `-v /var/run/docker.sock:/var/run/docker.sock` and nothing else. Ask for it when you need it and leave it off when you do not: anything that can reach the Docker socket can start a privileged container, and is therefore root on the host.
 
 - **Seed a real resource** through `scripts/awslocal.sh` against the published API port before capturing. An empty table is a different screenshot from a populated one, and usually not the one under review.
 
 - **If you cannot mount the socket** — a sandbox or a locked-down CI runner may refuse it — the console will show the connect screen, and a screenshot of *that* is the classic wasted capture. Seed the endpoint yourself in `navigate_page`'s `initScript`, which runs before the SPA does:
 
   ```js
+  // <API port> is the one scripts/run-test-instance.sh printed, not a fixed 4590.
   localStorage.setItem('overcast:endpoint', JSON.stringify({
-    baseUrl: 'http://127.0.0.1:4590', label: 'shot', explicit: true }))
+    baseUrl: 'http://127.0.0.1:<API port>', label: 'shot', explicit: true }))
   ```
 
   This is a fallback, not the normal path: it fixes the console's endpoint but does nothing for Lambda or ECS, which stay unavailable without the socket.
@@ -344,6 +351,22 @@ The repo declares the **`chrome-devtools` MCP server** for both agent clients: [
   If you nevertheless stash, stash **only your own tracked changes** (`git stash push -- <paths>`), screenshot, then restore.
 
   Beware: `git stash` is shared across all worktrees of a repo. A concurrent session can push its own stash on top of yours between your push and your pop, so `git stash pop` may restore the wrong one. Prefer capturing "before" from a separate checkout of the base branch, and if you must stash, apply by commit hash (`git stash apply <sha>`) rather than by position.
+
+#### Permissions for the capture
+
+Capturing needs things an agent is not granted by default, and they are granted as **scripts**, not as `docker`:
+
+```
+Bash(make docker-console:*)
+Bash(make docker-clean:*)
+Bash(scripts/run-test-instance.sh:*)
+```
+
+`Bash(docker run:*)` is the entry to avoid asking for. It permits any image with any flags — `--privileged`, `--pid=host`, `-v /:/host` — which is a grant of host root, and none of it is needed to take a screenshot. `scripts/run-test-instance.sh` is narrower on purpose: it takes named options only, has no `docker run` passthrough of any kind, publishes to `127.0.0.1`, refuses the user's ports in either role, and adds the socket mount only when asked and only in exactly one form. That is what makes granting the script a smaller thing than granting `docker run` — and it is worth reading the script's header before granting it rather than taking that on trust.
+
+`docker stop <name>` is still a bare `docker` call. Ask for `Bash(docker stop:*)` if you want the teardown unattended; it is a much smaller thing to grant than `run`.
+
+If the socket mount is refused anyway, say so in the PR body and use the `initScript` fallback above — do not go looking for another way to reach the daemon.
 
 ### Hosting
 
