@@ -233,6 +233,14 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 
 	// Bind the listener explicitly so we know the port is ready before running
 	// READY hooks and before entering the select loop.
+	//
+	// Nothing logs which address this actually bound. OVERCAST_HOST defaults to
+	// 0.0.0.0, so a native run listens on every interface while the docs say not
+	// to expose Overcast on an untrusted network — and the operator gets no
+	// signal either way. The storage layer already logs its resolved mode and
+	// the reason for it; an equivalent line here would close the gap. See
+	// https://github.com/Neaox/overcast/issues/761, which also covers whether
+	// the native default should narrow to loopback.
 	ln, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", cfg.Addr(), err)
