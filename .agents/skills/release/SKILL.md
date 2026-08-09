@@ -126,9 +126,20 @@ the changelog's claims are true. And testing is not merging — `VERSION` stays 
 merge stays a deliberate human step, and every publish job still waits on the `release`
 environment's reviewer.
 
-When the passes are done, **post one comment on the release PR** with the summary and screenshots
-(see [Evidence to keep](#evidence-to-keep)). The approval is made against that comment, so it has to
-exist before you say the RC is ready.
+Concretely, the agent — not the user — does all of this:
+
+1. **Pull the RC console image by digest** from the bot comment and run it with
+   `scripts/run-test-instance.sh --mount-docker-socket` on a remapped port. The **console** image is
+   the one to test the UI against: the SPA is embedded in it and absent from slim. Confirm the
+   digest you pulled matches the bot comment, so the evidence names bits that actually exist.
+2. **Exercise the API claims** against that instance (steps 1–3 below).
+3. **Drive the web UI yourself with the `chrome-devtools` MCP and take the screenshots** (step 4).
+   Headless, against the running RC, with real state seeded through the SDK first. Do not describe
+   a page in prose, do not ask the user to open it, and do not skip it because the release "is
+   mostly backend" — if a `[web/...]` bullet is in the changelog, there is a page to photograph.
+4. **Post one comment on the release PR** with the summary and the screenshots embedded (see
+   [Evidence to keep](#evidence-to-keep)). The approval is made against that comment, so it has to
+   exist before you say the RC is ready.
 
 ---
 
