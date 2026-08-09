@@ -832,9 +832,6 @@ stack tags. Their tags are stored separately and never appear in
 `EventSourceMappingConfiguration`, which has no `Tags` member, so `ListTags` is
 the only way to read them back.
 
-
-
-
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary
