@@ -3414,7 +3414,7 @@ export const DOCS_NAV = [
     "path": "docs/services/lambda.md",
     "href": "services/lambda.md",
     "title": "Lambda",
-    "description": "Lambda",
+    "description": "Lambda emulation has two distinct concerns:",
     "section": "Service Reference",
     "tags": [
       "docs",

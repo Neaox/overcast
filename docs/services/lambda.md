@@ -1,4 +1,4 @@
-﻿---
+---
 title: "Lambda"
 description: "Lambda emulation has two distinct concerns:"
 section: "Service Reference"
