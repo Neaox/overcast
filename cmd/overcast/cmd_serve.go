@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -231,20 +232,24 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		IdleTimeout: 60 * time.Second,
 	}
 
-	// Bind the listener explicitly so we know the port is ready before running
-	// READY hooks and before entering the select loop.
+	// Bind the listeners explicitly so we know the ports are ready before
+	// running READY hooks and before entering the select loop. OVERCAST_HOST
+	// usually names one address; when it names several they all front the same
+	// http.Server, so a request is answered identically whichever it arrives on.
 	//
-	// Nothing logs which address this actually bound. OVERCAST_HOST defaults to
-	// 0.0.0.0, so a native run listens on every interface while the docs say not
-	// to expose Overcast on an untrusted network — and the operator gets no
-	// signal either way. The storage layer already logs its resolved mode and
-	// the reason for it; an equivalent line here would close the gap. See
+	// Nothing logs which addresses these actually bound. Outside the
+	// compat-managed case OVERCAST_HOST still defaults to 0.0.0.0, so an
+	// ordinary native run listens on every interface while the docs say not to
+	// expose Overcast on an untrusted network — and the operator gets no signal
+	// either way. The storage layer already logs its resolved mode and the
+	// reason for it; an equivalent line here would close the gap. See
 	// https://github.com/Neaox/overcast/issues/761, which also covers whether
 	// the native default should narrow to loopback.
-	ln, err := net.Listen("tcp", cfg.Addr())
+	lns, err := listenAll(cfg.Addrs())
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", cfg.Addr(), err)
+		return err
 	}
+	ln := lns[0]
 
 	// ---- Web UI server -----------------------------------------------------
 	// Resolve the UI port: env var overrides flag; 0 disables the UI server.
@@ -260,7 +265,14 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		if err != nil {
 			logger.Warn("web UI unavailable", zap.Error(err))
 		} else {
-			uiAddr := fmt.Sprintf(":%d", uiPort)
+			// Bound on cfg.Host, not on the wildcard: OVERCAST_HOST=127.0.0.1
+			// is how an unauthenticated emulator is kept off the network the
+			// machine is attached to, and a UI that ignored it left the state
+			// browser — and its write actions — reachable from that network
+			// anyway. Only the first address: the extra ones exist so
+			// container-side clients can reach the API, and the UI is a
+			// browser surface on this machine.
+			uiAddr := net.JoinHostPort(cfg.Host, strconv.Itoa(uiPort))
 			uiLn, err = net.Listen("tcp", uiAddr)
 			if err != nil {
 				if uiPort == defaultUIPort {
@@ -269,7 +281,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 						zap.Error(err),
 					)
 					// Default port busy — pick any free port.
-					uiLn, err = net.Listen("tcp", ":0")
+					uiLn, err = net.Listen("tcp", net.JoinHostPort(cfg.Host, "0"))
 					if err != nil {
 						logger.Warn("web UI listener failed", zap.Error(err))
 					} else {
@@ -341,30 +353,40 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	serverErr := make(chan error, 1)
-	go func() {
-		proto := "h2c"
-		if cfg.TLSEnabled() {
-			proto = "https" // HTTP/2 over TLS via ALPN
-		}
-		logger.Info("overcast listening",
-			zap.String("addr", ln.Addr().String()),
-			zap.String("protocol", proto),
-			zap.String("state", string(cfg.State)),
-			zap.Bool("debug", cfg.Debug),
-		)
+	proto := "h2c"
+	if cfg.TLSEnabled() {
+		proto = "https" // HTTP/2 over TLS via ALPN
+	}
+	// One send per listener: the select below takes the first error, and a
+	// buffer this size means the others never block on a channel nobody is
+	// reading once shutdown has started.
+	serverErr := make(chan error, len(lns))
+	for _, listener := range lns {
+		go func() {
+			logger.Info("overcast listening",
+				zap.String("addr", listener.Addr().String()),
+				zap.String("protocol", proto),
+				zap.String("state", string(cfg.State)),
+				zap.Bool("debug", cfg.Debug),
+			)
 
-		if tlsServerConf != nil {
-			// Certificates already live in srv.TLSConfig — for both the
-			// explicit cert/key pair and the auto-minted leaf.
-			err = srv.ServeTLS(ln, "", "")
-		} else {
-			err = srv.Serve(ln)
-		}
-		if err != nil && err != http.ErrServerClosed {
-			serverErr <- err
-		}
-	}()
+			// Kept local rather than assigned to the enclosing err, which the
+			// pre-list single-listener version did: with the main goroutine
+			// still reading err below that was a race even with one listener,
+			// and it would be one per listener now.
+			var serveErr error
+			if tlsServerConf != nil {
+				// Certificates already live in srv.TLSConfig — for both the
+				// explicit cert/key pair and the auto-minted leaf.
+				serveErr = srv.ServeTLS(listener, "", "")
+			} else {
+				serveErr = srv.Serve(listener)
+			}
+			if serveErr != nil && serveErr != http.ErrServerClosed {
+				serverErr <- serveErr
+			}
+		}()
+	}
 
 	// READY hooks run asynchronously after the port is bound so the server
 	// can accept requests while init scripts execute (matches LocalStack).
@@ -432,6 +454,30 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 	}
 	logger.Info("server stopped cleanly")
 	return nil
+}
+
+// listenAll binds every address in order and returns the listeners, first
+// first. A failure closes whatever it already opened before returning, so a
+// partial bind never leaves the daemon half-listening on an address it is
+// about to abandon — the caller returns the error and exits, and a port left
+// held would fail the next start for a reason that no longer exists.
+//
+// The error names the address that failed. With one address that reads the
+// same as it always did; with several it is the only way to tell which of them
+// is the problem.
+func listenAll(addrs []string) ([]net.Listener, error) {
+	lns := make([]net.Listener, 0, len(addrs))
+	for _, addr := range addrs {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			for _, open := range lns {
+				_ = open.Close()
+			}
+			return nil, fmt.Errorf("listen %s: %w", addr, err)
+		}
+		lns = append(lns, ln)
+	}
+	return lns, nil
 }
 
 // closeStoreBounded closes store with a time budget so shutdown can never

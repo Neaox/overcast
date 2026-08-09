@@ -303,7 +303,7 @@ func TestOvercastEnvDisablesWebUIByDefault(t *testing.T) {
 	// When: its environment is built
 	// Then: the API port is set and the emulator's own web UI is disabled,
 	// so it cannot bind the user's reserved 4567.
-	env := overcastEnv(4570, 0)
+	env := overcastEnv(4570, 0, bindHosts(""))
 	want := map[string]string{
 		"OVERCAST_PORT":    "4570",
 		"OVERCAST_UI_PORT": "0",
@@ -319,9 +319,40 @@ func TestOvercastEnvUsesRequestedUIPort(t *testing.T) {
 	// Given: a caller that asked for the emulator's web UI
 	// When: the environment is built
 	// Then: the requested UI port is passed through
-	env := overcastEnv(4570, 4571)
+	env := overcastEnv(4570, 4571, bindHosts(""))
 	if !containsEnv(env, "OVERCAST_UI_PORT=4571") {
 		t.Errorf("overcastEnv did not carry the requested UI port: %v", env)
+	}
+}
+
+func TestOvercastEnvBindsLoopbackOnly(t *testing.T) {
+	// Given: a managed native instance with no bridge gateway to add
+	// When: its environment is built
+	// Then: it is told to listen on 127.0.0.1 and nothing else. This is the
+	// binary path's half of what TestDockerRunArgsPublishesToLoopbackOnly
+	// pins for the container path, and it is the half that matters most:
+	// findOvercastBinary means the binary is what compat picks when one is
+	// built, so an unset OVERCAST_HOST — the emulator's own default is
+	// 0.0.0.0 — would put an unauthenticated instance on whatever network
+	// the machine is attached to, in the *common* case rather than the
+	// fallback one.
+	env := overcastEnv(4570, 0, bindHosts(""))
+	if !containsEnv(env, "OVERCAST_HOST=127.0.0.1") {
+		t.Errorf("overcastEnv did not pin the bind address to loopback: %v", env)
+	}
+}
+
+func TestOvercastEnvAddsBridgeGatewayBind(t *testing.T) {
+	// Given: a Docker bridge gateway address
+	// When: the environment is built
+	// Then: the instance listens on loopback *and* on that gateway, loopback
+	// first. Same address set, same order, and for the same reason as the
+	// container path's -p mappings: it is what
+	// "host.docker.internal:host-gateway" resolves to on native Linux, and
+	// compat/suites/rust-sdk/run.sh reaches the emulator that way.
+	env := overcastEnv(4570, 0, bindHosts("172.17.0.1"))
+	if !containsEnv(env, "OVERCAST_HOST=127.0.0.1,172.17.0.1") {
+		t.Errorf("overcastEnv did not add the bridge gateway: %v", env)
 	}
 }
 

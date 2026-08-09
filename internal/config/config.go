@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -97,7 +98,26 @@ type Config struct {
 	// Equivalent to LocalStack's LOCALSTACK_HOST.
 	// Use "127.0.0.1" to restrict to localhost only.
 	// Defaults to "0.0.0.0" (all interfaces).
+	// When several addresses are configured this is the first of them — see
+	// Hosts.
 	Host string
+
+	// Hosts are every address the API listener binds, in order, with Hosts[0]
+	// mirrored into Host. Load populates it; a Config built in code may leave
+	// it nil, which Addrs() reads as "just Host".
+	//
+	// More than one address is for reaching the same emulator from two places
+	// that no single address covers. The case that drove it: a throwaway
+	// instance wants to be on loopback and nowhere routable, but a test suite
+	// running in a sibling container reaches the host over the Docker bridge,
+	// where loopback is invisible. Binding "127.0.0.1,172.17.0.1" serves both
+	// without ever putting the emulator on a network the machine is attached
+	// to. A wildcard cannot be combined with a specific address.
+	//
+	// The web UI listener binds Host only: the extra addresses exist so
+	// container-side clients can reach the API, and the UI is a browser
+	// surface on the machine itself.
+	Hosts []string
 
 	// Port is the TCP port the HTTP server listens on.
 	Port int
@@ -658,9 +678,63 @@ type Config struct {
 	MCPAuthToken string
 }
 
-// Addr returns the "host:port" string for the server to listen on.
+// Addr returns the "host:port" string for the server to listen on. When
+// several addresses are configured this is the first — see Addrs.
+//
+// JoinHostPort rather than "%s:%d" so an IPv6 literal comes back bracketed and
+// dialable ("[::1]:4566"); every other host formats identically to before.
 func (c *Config) Addr() string {
-	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+}
+
+// Addrs returns every "host:port" the API listener binds, in configured
+// order, with Addr() first. A Config assembled in code rather than by Load
+// leaves Hosts nil; that reads as the single Addr(), so a struct literal that
+// only sets Host behaves exactly as it did before OVERCAST_HOST took a list.
+func (c *Config) Addrs() []string {
+	if len(c.Hosts) == 0 {
+		return []string{c.Addr()}
+	}
+	addrs := make([]string, 0, len(c.Hosts))
+	for _, host := range c.Hosts {
+		addrs = append(addrs, net.JoinHostPort(host, strconv.Itoa(c.Port)))
+	}
+	return addrs
+}
+
+// parseHosts splits OVERCAST_HOST into the addresses to bind. Blank entries
+// are dropped and repeats collapsed — binding the same address twice on one
+// port fails the second listen with EADDRINUSE, and a trailing comma is not
+// worth failing a startup over.
+//
+// A wildcard alongside a specific address is refused rather than collapsed.
+// It reads as a widening ("loopback, and also everything") when it is the
+// opposite of what the specific address was asking for, and on Linux the
+// second bind fails anyway — as an opaque listen error at startup rather than
+// as the configuration mistake it is.
+func parseHosts(raw string) ([]string, error) {
+	var hosts []string
+	for _, host := range strings.Split(raw, ",") {
+		host = strings.TrimSpace(host)
+		if host == "" || slices.Contains(hosts, host) {
+			continue
+		}
+		hosts = append(hosts, host)
+	}
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("config: OVERCAST_HOST %q names no address to bind", raw)
+	}
+	if len(hosts) > 1 {
+		for _, host := range hosts {
+			if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+				return nil, fmt.Errorf(
+					"config: OVERCAST_HOST %q combines the wildcard %q with a specific address; "+
+						"the wildcard already covers every address, so drop either it or the rest",
+					raw, host)
+			}
+		}
+	}
+	return hosts, nil
 }
 
 // WildcardDNSDomains are the public domains whose every subdomain resolves to
@@ -878,7 +952,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //
 // Environment variables (all optional, defaults shown):
 //
-//	OVERCAST_HOST                      0.0.0.0
+//	OVERCAST_HOST                      0.0.0.0 (comma-separated for several)
 //	OVERCAST_HOSTNAME                  (empty — defaults to localhost in URLs)
 //	OVERCAST_SPLIT_HORIZON_HOSTS       (empty — extra names remapped to Overcast
 //	                                           inside containers, comma-separated)
@@ -973,7 +1047,12 @@ func Load() (*Config, error) {
 	cfg := &Config{}
 
 	// Host
-	cfg.Host = envOr("OVERCAST_HOST", "0.0.0.0")
+	hosts, err := parseHosts(envOr("OVERCAST_HOST", "0.0.0.0"))
+	if err != nil {
+		return nil, err
+	}
+	cfg.Hosts = hosts
+	cfg.Host = hosts[0]
 
 	// Hostname (external — for client-facing URLs)
 	cfg.Hostname = os.Getenv("OVERCAST_HOSTNAME")
