@@ -174,6 +174,191 @@ func TestRegistryClaimQuery_collidingService(t *testing.T) {
 	}
 }
 
+func TestRegistryRESTOperation_resolvesSharedBindingPerService(t *testing.T) {
+	// Given: REST bindings that several modeled services declare, each under
+	// its own operation name, so no single retained name can serve them all.
+	registry := NewRegistry()
+	tests := []struct {
+		name    string
+		service string
+		method  string
+		path    string
+		want    string
+	}{
+		{"apigateway v2 owns GET /v2/apis", "apigateway", "GET", "/v2/apis", "GetApis"},
+		{"appsync names the same binding differently", "appsync", "GET", "/v2/apis", "ListApis"},
+		{"a service outside the set gets nothing", "dynamodb", "GET", "/v2/apis", ""},
+		{"appregistry owns GET /configuration", "appregistry", "GET", "/configuration", "GetConfiguration"},
+		{"appconfigdata names it differently", "appconfigdata", "GET", "/configuration", "GetLatestConfiguration"},
+		{"apigateway calls tag listing GetTags", "apigateway", "GET", "/tags/arn%3Aaws%3Aapigateway", "GetTags"},
+		{"backup calls it ListTags", "backup", "GET", "/tags/arn%3Aaws%3Abackup", "ListTags"},
+		{"eks uses the common name", "eks", "GET", "/tags/arn%3Aaws%3Aeks", "ListTagsForResource"},
+		{"sqs declares no tag binding here", "sqs", "GET", "/tags/arn%3Aaws%3Asqs", ""},
+		// Two bindings where checking only "does this service model an
+		// operation of the retained name" answered confidently and wrongly,
+		// because the service does model that name — at a different binding.
+		{"grafana updates rather than creates a workspace", "grafana", "PUT", "/workspaces/w1", "UpdateWorkspace"},
+		{"mpa untags rather than tags on POST", "mpa", "POST", "/tags/arn", "UntagResource"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// When: the binding is resolved against an already-classified service.
+			got := registry.RESTOperation(tt.service, tt.method, tt.path, "")
+
+			// Then: it names that service's own operation, or nothing.
+			if got != tt.want {
+				t.Errorf("RESTOperation(%q, %s %s) = %q, want %q", tt.service, tt.method, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRegistryRESTOperation_scopesUnsharedBinding(t *testing.T) {
+	// Given: a binding only one modeled service declares.
+	registry := NewRegistry()
+
+	// When: it is resolved for its owner and for another service.
+	owner := registry.RESTOperation("accessanalyzer", "GET", "/analyzer", "")
+	other := registry.RESTOperation("s3", "GET", "/analyzer", "")
+
+	// Then: an unambiguous binding stays scoped to its owner, so a bucket named
+	// like another service's path cannot borrow that service's operation.
+	if owner != "ListAnalyzers" || other != "" {
+		t.Errorf("RESTOperation() = %q for accessanalyzer and %q for s3; want ListAnalyzers and \"\"", owner, other)
+	}
+}
+
+func TestRegistryRESTOperation_neverNamesAnotherServicesOperation(t *testing.T) {
+	// Given: every modeled REST binding in the pinned corpus.
+	registry := NewRegistry()
+	checked := 0
+
+	// When: each is resolved for the service that declares it, and for a
+	// service that does not.
+	for _, op := range manifest {
+		if (op.Protocol != ProtocolRESTJSON && op.Protocol != ProtocolRESTXML) || op.HTTPMethod == "" || op.URI == "" || op.Service == "s3" {
+			continue
+		}
+		path, query := corpusRESTRequest(op.URI)
+		service := overcastService(op.Service)
+		got := registry.RESTOperation(service, op.HTTPMethod, path, query)
+		checked++
+
+		// Then: the answer is either that service's own operation at this
+		// binding, or nothing — never another service's name. A greedy or
+		// literal binding elsewhere in the trie may legitimately win the match,
+		// so a different operation of the *same* service is allowed.
+		if got != "" && !serviceDeclaresRESTOperation(service, op.HTTPMethod, got) {
+			t.Errorf("RESTOperation(%q, %s %s) = %q, which %s does not declare", service, op.HTTPMethod, op.URI, got, service)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("walked no modeled REST bindings")
+	}
+}
+
+func serviceDeclaresRESTOperation(service, method, operation string) bool {
+	for _, op := range manifest {
+		if op.Name == operation && op.HTTPMethod == method && overcastService(op.Service) == service {
+			return true
+		}
+	}
+	return false
+}
+
+func TestGeneratedRESTCandidates_matchEveryAmbiguousBinding(t *testing.T) {
+	// Given: the generated REST index and the candidate table it points into.
+	covered := 0
+
+	// When: every binding entry is inspected.
+	for i, op := range restOperations {
+		if !op.Ambiguous {
+			// Then: an unshared binding needs no candidate set, and carrying
+			// one would mean the generator emitted a window it never reads.
+			if op.CandidateStart != 0 || op.CandidateEnd != 0 {
+				t.Errorf("restOperations[%d] is unambiguous but has candidates [%d,%d)", i, op.CandidateStart, op.CandidateEnd)
+			}
+			continue
+		}
+		if op.CandidateStart < 0 || op.CandidateEnd > len(restCandidates) || op.CandidateStart >= op.CandidateEnd {
+			t.Fatalf("restOperations[%d] has an out-of-range candidate window [%d,%d) over %d candidates", i, op.CandidateStart, op.CandidateEnd, len(restCandidates))
+		}
+		window := restCandidates[op.CandidateStart:op.CandidateEnd]
+		covered += len(window)
+
+		// Then: an ambiguous binding retains every service that declares it —
+		// at least two, or it would not be ambiguous — and the name the index
+		// still carries is the first candidate's, not an invented one.
+		services := map[string]bool{}
+		for _, candidate := range window {
+			if candidate.ModelService == "" || candidate.Operation == "" {
+				t.Errorf("restOperations[%d] has an incomplete candidate %+v", i, candidate)
+			}
+			services[candidate.ModelService] = true
+		}
+		if len(services) < 2 {
+			t.Errorf("restOperations[%d] is ambiguous but names %d service(s)", i, len(services))
+		}
+		if window[0].Operation != op.Operation {
+			t.Errorf("restOperations[%d] retains %q but its first candidate is %q", i, op.Operation, window[0].Operation)
+		}
+	}
+
+	// Then: the windows tile the candidate table exactly, so a regeneration
+	// cannot leave an orphaned or double-counted row behind.
+	if covered != len(restCandidates) {
+		t.Errorf("candidate windows cover %d of %d generated candidates", covered, len(restCandidates))
+	}
+	if len(restCandidates) == 0 {
+		t.Fatal("generated REST candidate table is empty")
+	}
+}
+
+func TestGeneratedRESTCandidates_haveOneOperationPerServiceKey(t *testing.T) {
+	// Given: several modeled identities alias onto one Overcast service key
+	// (apigatewayv2 and api-gateway both become "apigateway", for example).
+
+	// When: each ambiguous binding's candidates are grouped by that key.
+	for i, op := range restOperations {
+		if !op.Ambiguous {
+			continue
+		}
+		byKey := map[string]string{}
+		for _, candidate := range restCandidates[op.CandidateStart:op.CandidateEnd] {
+			key := overcastService(candidate.ModelService)
+			previous, seen := byKey[key]
+
+			// Then: no key maps to two different operation names. RESTOperation
+			// returns the first match, so a disagreement here would make its
+			// answer depend on generated ordering rather than on the models.
+			if seen && previous != candidate.Operation {
+				t.Errorf("restOperations[%d] (%s) gives service key %q both %q and %q", i, op.Method, key, previous, candidate.Operation)
+			}
+			byKey[key] = candidate.Operation
+		}
+	}
+}
+
+func TestRegistryRESTOperation_hasNoAllocations(t *testing.T) {
+	// Given: the immutable generated registry.
+	registry := NewRegistry()
+
+	// When: an unshared and a heavily shared binding are repeatedly resolved.
+	unsharedAllocs := testing.AllocsPerRun(1_000, func() {
+		_ = registry.RESTOperation("accessanalyzer", "GET", "/analyzer", "")
+	})
+	sharedAllocs := testing.AllocsPerRun(1_000, func() {
+		_ = registry.RESTOperation("backup", "GET", "/tags/arn", "")
+	})
+
+	// Then: intersecting a candidate set stays on the request path's budget —
+	// it walks a static table window rather than building one.
+	if unsharedAllocs != 0 || sharedAllocs != 0 {
+		t.Errorf("RESTOperation allocations = unshared %.1f, shared %.1f; want zero", unsharedAllocs, sharedAllocs)
+	}
+}
+
 func TestGeneratedRESTCollisions_areReported(t *testing.T) {
 	// Given: the generated REST collision index.
 
@@ -455,6 +640,25 @@ func BenchmarkRegistryClaimREST(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		_, _ = registry.ClaimREST("GET", "/analyzer")
+	}
+}
+
+// BenchmarkRegistryRESTOperationSharedBinding uses GET /tags/{resourceArn},
+// the most heavily shared binding in the corpus, so the reported cost is the
+// worst case for intersecting a candidate set rather than a typical one.
+func BenchmarkRegistryRESTOperationSharedBinding(b *testing.B) {
+	registry := NewRegistry()
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = registry.RESTOperation("backup", "GET", "/tags/arn", "")
+	}
+}
+
+func BenchmarkRegistryRESTOperationUnsharedBinding(b *testing.B) {
+	registry := NewRegistry()
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = registry.RESTOperation("accessanalyzer", "GET", "/analyzer", "")
 	}
 }
 

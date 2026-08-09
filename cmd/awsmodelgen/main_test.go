@@ -82,7 +82,9 @@ func TestGenerateManifest_extractsServiceOperationsAndProtocols(t *testing.T) {
 		`{Service: "resource-service", ServiceShape: "ResourceService", SDKID: "Resource Service", APIVersion: "2026-03-03", Name: "GetWidget", Protocol: ProtocolRESTJSON, Protocols: ProtocolsRESTJSON, TargetPrefix: "", HTTPMethod: "GET", URI: "/widgets/{id}"}`,
 		`{Target: "Queue_20260101.CreateQueue", ModelService: "queue", Operation: "CreateQueue", Protocol: ProtocolAWSJSON10}`,
 		`{Version: "2026-04-04", Operation: "DescribeWidgets", ModelService: "query", Protocol: ProtocolEC2Query}`,
-		`{Method: "GET", Query: "", ModelService: "", SigningName: "", Operation: "GetWidget", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`{Method: "GET", Query: "", ModelService: "", SigningName: "", Operation: "GetWidget", Protocol: ProtocolRESTJSON, Ambiguous: true, CandidateStart: 0, CandidateEnd: 2}`,
+		`{ModelService: "resource-service", Operation: "GetWidget"}`,
+		`{ModelService: "widget", Operation: "GetWidget"}`,
 		`{Protocol: ProtocolRPCV2CBOR, ServiceShape: "Queue_20260101", Operation: "CreateQueue", ModelService: "queue"}`,
 	} {
 		if !strings.Contains(string(got), want) {
@@ -115,7 +117,11 @@ func TestWriteRegistryIndexes_marksCollidingServicesAmbiguous(t *testing.T) {
 		`{Key: "Example.CreateThing", Services: []string{"alpha", "beta"}}`,
 		`{Version: "2026-02-02", Operation: "DescribeThing", ModelService: "", Protocol: ProtocolAWSQuery, Ambiguous: true}`,
 		`{Key: "2026-02-02\x00DescribeThing", Services: []string{"alpha", "beta"}}`,
-		`{Method: "GET", Query: "", ModelService: "", SigningName: "", Operation: "GetThing", Protocol: ProtocolRESTJSON, Ambiguous: true}`,
+		`{Method: "GET", Query: "", ModelService: "", SigningName: "", Operation: "GetThing", Protocol: ProtocolRESTJSON, Ambiguous: true, CandidateStart: 0, CandidateEnd: 2}`,
+		// The blanked binding stays unattributed, but every service that
+		// declares it is retained with the name that service gives it, so a
+		// caller that already knows its service resolves an exact operation.
+		"var restCandidates = []restCandidate{\n\t{ModelService: \"alpha\", Operation: \"GetThing\"},\n\t{ModelService: \"beta\", Operation: \"GetThing\"},\n}",
 		`var restCollisions = []operationCollision{`,
 		`{Key: "GET /things/{}", Services: []string{"alpha", "beta"}}`,
 		`{Protocol: ProtocolRPCV2CBOR, ServiceShape: "Example", Operation: "CreateThing", ModelService: "", Ambiguous: true}`,

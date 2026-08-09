@@ -45,6 +45,29 @@ type restOperation struct {
 	Operation    string
 	Protocol     Protocol
 	Ambiguous    bool
+	// CandidateStart and CandidateEnd bound this binding's window in
+	// restCandidates. They are set only when Ambiguous, because only then is
+	// there more than one answer to retain.
+	CandidateStart int
+	CandidateEnd   int
+}
+
+// restCandidate is one modeled service's operation at a REST binding that
+// several services declare. It is what lets an ambiguous binding stay
+// unattributed without also being unanswerable: the shared entry in
+// restOperations still names no owner, while a caller that has already
+// classified the request's service intersects this set and gets that service's
+// own operation — or nothing, when the service declares no binding here.
+//
+// Only REST bindings need it. A target, Query or RPC key contains the
+// operation name, so every service colliding on one of those necessarily
+// declares the same name and the retained name is already exact; a REST key is
+// a method and URI shape, which distinct services routinely bind to
+// differently named operations (GET /v2/apis is API Gateway v2's GetApis and
+// AppSync's ListApis).
+type restCandidate struct {
+	ModelService string
+	Operation    string
 }
 
 type rpcOperation struct {
@@ -63,6 +86,11 @@ type serviceAlias struct {
 // operationCollision is generated when distinct modeled services have the
 // same wire identifier. Registry preserves the shared protocol/error profile
 // but deliberately does not attribute the operation to either service.
+//
+// It is a diagnostic index keyed by a readable wire identifier, reported by
+// the model inventory and asserted by tests. The runtime equivalent for REST
+// bindings is restCandidates, which is reachable from a matched binding and
+// carries each service's operation name.
 type operationCollision struct {
 	Key      string
 	Services []string

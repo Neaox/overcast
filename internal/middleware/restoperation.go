@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/Neaox/overcast/internal/awsapi"
 )
@@ -34,9 +33,9 @@ import (
 //   - Bindings the model cannot attribute to one service. When distinct
 //     services declare the same method and URI shape, awsmodelgen marks the
 //     entry Ambiguous and blanks its service, because attributing it would be
-//     a guess. Overcast has already classified the request's service by then,
-//     so the name is accepted only if that service really models an operation
-//     of that name.
+//     a guess. It does keep the set of services that declare the binding and
+//     what each calls the operation, so a caller that has already classified
+//     the request answers exactly — see awsapi.Registry.RESTOperation.
 
 // restOperation returns the AWS operation name a REST-routed request invokes,
 // or "" when the pinned models describe no such operation for svc.
@@ -47,6 +46,12 @@ import (
 // so an unscoped lookup happily answers "GET /my-bucket/key" with MediaStore's
 // GetObject. A claim that does not belong to svc is discarded rather than
 // reported, so an unrecognised path yields no operation at all.
+//
+// Where several services declare the same binding this stays exact rather than
+// approximate: "GET /v2/apis" is API Gateway v2's GetApis for an
+// apigateway-signed caller and AppSync's ListApis for an appsync-signed one,
+// because the generated candidate set records both, not just whichever service
+// sorted first.
 func restOperation(svc, method, path, rawQuery string) string {
 	if svc == "" || path == "" || path[0] != '/' {
 		return ""
@@ -54,26 +59,20 @@ func restOperation(svc, method, path, rawQuery string) string {
 	if operation, ok := overcastRESTOperation(svc, method, path); ok {
 		return operation
 	}
-	claim, ok := awsapi.NewRegistry().ClaimRESTQuery(method, path, rawQuery)
-	if !ok || claim.Operation == "" {
-		return ""
+	return awsapi.NewRegistry().RESTOperation(awsapiServiceKey(svc), method, path, rawQuery)
+}
+
+// awsapiServiceKey is middlewareServiceKey's inverse, applied where a service
+// key travels the other way — from middleware into the generated registry.
+// Keeping both directions explicit means a modeled identity that middleware
+// renames cannot silently stop matching its own bindings; today only CloudWatch
+// Logs is renamed, and it is a JSON-protocol service with no REST bindings to
+// miss, but that is a property of the current models rather than of the code.
+func awsapiServiceKey(s string) string {
+	if s == "logs" {
+		return "cloudwatch-logs"
 	}
-	if claim.Ambiguous {
-		// Several services bind this method and URI shape. The operation name
-		// kept by the generator belongs to whichever of them sorts first, so
-		// it is only usable once svc is known to model an operation by that
-		// name — which is how "GET /v2/apis" reports API Gateway's GetApis for
-		// an apigateway-signed caller and nothing at all for an appsync-signed
-		// one, whose operation there is named ListApis.
-		if serviceModelsOperation(svc, claim.Operation) {
-			return claim.Operation
-		}
-		return ""
-	}
-	if middlewareServiceKey(claim.Service) != svc {
-		return ""
-	}
-	return claim.Operation
+	return s
 }
 
 // lambdaFunctionResourcePrefix is the Lambda functions collection that
@@ -141,24 +140,6 @@ func overcastRESTOperation(svc, method, path string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// modeledOperations memoizes serviceModelsOperation. awsapi.HasOperation walks
-// the whole model corpus (~237µs on a Ryzen 5900X), which no request may pay,
-// but it is only ever consulted for the small set of REST bindings the model
-// marks ambiguous, and the answer for a given pair never changes within a
-// process. The key space is bounded by the generated table, not by anything a
-// client sends, so the cache cannot be made to grow.
-var modeledOperations sync.Map // "service\x00operation" -> bool
-
-func serviceModelsOperation(service, operation string) bool {
-	key := service + "\x00" + operation
-	if cached, ok := modeledOperations.Load(key); ok {
-		return cached.(bool)
-	}
-	modeled := awsapi.HasOperation(service, operation)
-	modeledOperations.Store(key, modeled)
-	return modeled
 }
 
 // rawQueryHas reports whether a raw query string carries the named parameter,
