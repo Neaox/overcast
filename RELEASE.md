@@ -475,6 +475,33 @@ cases, not two — the release PR is one of them:
   an unconsumed fragment fails the release, so the ask changes wording: wait for
   the tag, or waive and add the fragment once it is out. It does not go quiet —
   this is the window where a shipping bug fix is most likely.
+- **Row 2b, merged and untagged, and the PR is what unblocks the release.**
+  The release-prep PR merged, the `Release` workflow failed, and the fix for
+  that failure is itself release-note-worthy. Neither Row 2 answer works:
+  waiting for the tag is circular, because this change *is* what the tag is
+  waiting on; and a fragment would sit unconsumed in `.changelog/`, which the
+  workflow fails on — so it would block the very release it exists to unblock.
+  Waiving and adding the fragment afterwards is not equivalent either: the code
+  ships **in this release**, so filing its note under the next one describes
+  behaviour users already have.
+
+  **Write the note straight into the `## [x.y.z]` section** of the release
+  being unblocked, add no fragment, and waive the `Changelog entry` check with
+  a reason saying so. Then confirm with
+  `python scripts/check-release-changelog.py x.y.z` before pushing.
+
+  This is the one case outside the release PR itself where editing
+  `CHANGELOG.md` is right, and it is safe for a specific reason: the release PR
+  has **merged**, so `release-prep.yml`'s refresh job — the second hand the
+  no-`CHANGELOG.md`-edits rule exists to protect — is no longer running. There
+  is no branch left for it to fold into and nothing for the edit to conflict
+  with. Do not generalise it to Row 1, where the bot is live and a second
+  writer aborts its merge.
+
+  Keep it rare and keep it minimal: one bullet describing the fix, in the
+  section being released, in the same PR as the fix. Everything else about the
+  window still holds — only changes needed to get the release out should be
+  merging at all.
 
 **No PR merging into `main` may answer with a `CHANGELOG.md` edit**, and the
 check will not take one in place of a fragment. Only the release PR touches that
