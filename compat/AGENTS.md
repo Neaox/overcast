@@ -410,7 +410,30 @@ Two more shapes that look reasonable and are not:
 
 ### Testing a published image rather than a source build
 
-The `overcast` service declares `build:` with no `image:`, so there is no
+Through `cmd/compat`, name it and it is what runs:
+
+```bash
+go run ./cmd/compat --overcast-image ghcr.io/neaox/overcast:<version>-rc.<n>
+```
+
+Naming an image **selects the container**, so a `bin/overcast` sitting in the
+tree is passed over rather than silently preferred, and the run says which
+artifact it chose:
+
+```
+compat: using the container image ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1 — --overcast-image names it, …
+compat: NOT using the local binary /repo/bin/overcast: --overcast-image was given, …
+compat: Overcast ready at http://localhost:4570 (container image ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1, managed by compat)
+```
+
+It did not always: binary discovery used to run first unconditionally and the
+image was a fallback, so an RC was once "compat-tested" against a day-old local
+build (issue #801). If a run does not print the image you named, you are not
+testing it — check that line before believing any result. The same applies when
+compat is not managing the instance at all (`--endpoint`, or
+`--start-overcast=never`): the flag cannot apply, and the run says so.
+
+**Under compose it is different.** The `overcast` service declares `build:` with no `image:`, so there is no
 override that points it at a registry tag — useful when the thing under test is
 a release candidate and you want the bits CI published, not a local rebuild.
 Build the harness, then retag:
