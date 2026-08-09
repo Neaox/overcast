@@ -32,7 +32,7 @@ Supports Transfer Family server and user control-plane CRUD.
 
 | Category   | 🧊 Inert |
 | ---------- | -------- |
-| Operations | 10       |
+| Operations | 13       |
 
 ---
 
@@ -40,17 +40,20 @@ Supports Transfer Family server and user control-plane CRUD.
 
 ### Operations
 
-| Operation        | Status   | Notes | AWS Docs                                                                              |
-| ---------------- | -------- | ----- | ------------------------------------------------------------------------------------- |
-| `CreateServer`   | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_CreateServer.html)   |
-| `DescribeServer` | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_DescribeServer.html) |
-| `ListServers`    | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_ListServers.html)    |
-| `UpdateServer`   | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_UpdateServer.html)   |
-| `DeleteServer`   | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_DeleteServer.html)   |
-| `CreateUser`     | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_CreateUser.html)     |
-| `DescribeUser`   | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_DescribeUser.html)   |
-| `ListUsers`      | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_ListUsers.html)      |
-| `UpdateUser`     | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_UpdateUser.html)     |
-| `DeleteUser`     | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_DeleteUser.html)     |
+| Operation             | Status   | Notes                                                                      | AWS Docs                                                                                   |
+| --------------------- | -------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `CreateServer`        | 🧊 Inert | Inline `Tags` applied at creation                                          | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_CreateServer.html)        |
+| `DescribeServer`      | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_DescribeServer.html)      |
+| `ListServers`         | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_ListServers.html)         |
+| `UpdateServer`        | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_UpdateServer.html)        |
+| `DeleteServer`        | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_DeleteServer.html)        |
+| `CreateUser`          | 🧊 Inert | Inline `Tags` applied at creation                                          | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_CreateUser.html)          |
+| `DescribeUser`        | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_DescribeUser.html)        |
+| `ListUsers`           | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_ListUsers.html)           |
+| `UpdateUser`          | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_UpdateUser.html)          |
+| `DeleteUser`          | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_DeleteUser.html)          |
+| `TagResource`         | 🧊 Inert | Server and user ARNs; Transfer's other taggable resources are not emulated | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_TagResource.html)         |
+| `UntagResource`       | 🧊 Inert |                                                                            | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_UntagResource.html)       |
+| `ListTagsForResource` | 🧊 Inert | No pagination; every tag is returned in one page                           | [docs](https://docs.aws.amazon.com/transfer/latest/userguide/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

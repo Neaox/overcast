@@ -103,35 +103,56 @@ func (s *Service) dispatchLegacy(w http.ResponseWriter, r *http.Request, op stri
 		s.updateUser(w, r)
 	case "DeleteUser":
 		s.deleteUser(w, r)
+	// The tag operations exist only as typed implementations; the JSON 1.0/1.1
+	// path decodes into the same request struct and calls them, rather than
+	// carrying a second copy of the logic like the operations above.
+	case "TagResource":
+		serveTyped(w, r, s.tagResourceTyped)
+	case "UntagResource":
+		serveTyped(w, r, s.untagResourceTyped)
+	case "ListTagsForResource":
+		serveTyped(w, r, s.listTagsForResourceTyped)
 	default:
 		protocol.NotImplementedJSON(w, r)
 	}
 }
 
+// Tags are stored on the resource record itself and serialize in AWS' wire
+// shape, which is also what DescribedServer and DescribedUser carry — so a
+// delete takes the tags with it and neither response grows a member AWS
+// does not have.
 type transferServer struct {
-	ServerID             string `json:"ServerId"`
-	Arn                  string `json:"Arn"`
-	EndpointType         string `json:"EndpointType"`
-	IdentityProviderType string `json:"IdentityProviderType"`
-	State                string `json:"State"`
-	CreatedAt            string `json:"CreatedAt"`
+	ServerID             string        `json:"ServerId"`
+	Arn                  string        `json:"Arn"`
+	EndpointType         string        `json:"EndpointType"`
+	IdentityProviderType string        `json:"IdentityProviderType"`
+	State                string        `json:"State"`
+	CreatedAt            string        `json:"CreatedAt"`
+	Tags                 []transferTag `json:"Tags,omitempty"`
 }
 
 type transferUser struct {
-	ServerID      string `json:"ServerId"`
-	UserName      string `json:"UserName"`
-	Arn           string `json:"Arn"`
-	Role          string `json:"Role"`
-	HomeDirectory string `json:"HomeDirectory,omitempty"`
-	Policy        string `json:"Policy,omitempty"`
+	ServerID      string        `json:"ServerId"`
+	UserName      string        `json:"UserName"`
+	Arn           string        `json:"Arn"`
+	Role          string        `json:"Role"`
+	HomeDirectory string        `json:"HomeDirectory,omitempty"`
+	Policy        string        `json:"Policy,omitempty"`
+	Tags          []transferTag `json:"Tags,omitempty"`
 }
 
 func (s *Service) createServer(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		EndpointType         string `json:"EndpointType"`
-		IdentityProviderType string `json:"IdentityProviderType"`
+		EndpointType         string        `json:"EndpointType"`
+		IdentityProviderType string        `json:"IdentityProviderType"`
+		Tags                 []transferTag `json:"Tags"`
 	}
 	if !decodeJSONBody(w, r, &in) {
+		return
+	}
+	tags, aerr := validatedTagList(in.Tags)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	kvs, err := s.store.Scan(r.Context(), nsServers, "")
@@ -147,6 +168,7 @@ func (s *Service) createServer(w http.ResponseWriter, r *http.Request) {
 		IdentityProviderType: defaultString(in.IdentityProviderType, "SERVICE_MANAGED"),
 		State:                "ONLINE",
 		CreatedAt:            s.clk.Now().Format(time.RFC3339),
+		Tags:                 tags,
 	}
 	if aerr := s.putServer(r.Context(), &server); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -256,11 +278,12 @@ func (s *Service) deleteServer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) createUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		ServerID      string `json:"ServerId"`
-		UserName      string `json:"UserName"`
-		Role          string `json:"Role"`
-		HomeDirectory string `json:"HomeDirectory"`
-		Policy        string `json:"Policy"`
+		ServerID      string        `json:"ServerId"`
+		UserName      string        `json:"UserName"`
+		Role          string        `json:"Role"`
+		HomeDirectory string        `json:"HomeDirectory"`
+		Policy        string        `json:"Policy"`
+		Tags          []transferTag `json:"Tags"`
 	}
 	if !decodeJSONBody(w, r, &in) {
 		return
@@ -284,6 +307,11 @@ func (s *Service) createUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "ConflictException", Message: "User already exists", HTTPStatus: http.StatusConflict})
 		return
 	}
+	tags, aerr := validatedTagList(in.Tags)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	user := transferUser{
 		ServerID:      in.ServerID,
 		UserName:      in.UserName,
@@ -291,6 +319,7 @@ func (s *Service) createUser(w http.ResponseWriter, r *http.Request) {
 		Role:          in.Role,
 		HomeDirectory: in.HomeDirectory,
 		Policy:        in.Policy,
+		Tags:          tags,
 	}
 	if aerr := s.putUser(r.Context(), key, &user); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
@@ -495,6 +524,26 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, out any) bool {
 		return false
 	}
 	return true
+}
+
+// serveTyped runs a typed operation over a plain JSON 1.0/1.1 request. It
+// exists so that an operation implemented once, as a typed function, is
+// reachable from the legacy dispatch path too.
+func serveTyped[In any, Out any](w http.ResponseWriter, r *http.Request, fn func(context.Context, *In) (*Out, *protocol.AWSError)) {
+	var in In
+	if !decodeJSONBody(w, r, &in) {
+		return
+	}
+	out, aerr := fn(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if out == nil {
+		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, out)
 }
 
 func validationError(w http.ResponseWriter, r *http.Request, msg string) {

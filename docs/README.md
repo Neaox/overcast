@@ -145,7 +145,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | ELBv2            | [elb.md](./services/elb.md)                         | 18  | IaC/discovery-oriented stub   |
 | MSK              | [msk.md](./services/msk.md)                         | 29  | IaC/discovery-oriented stub   |
 | Organizations    | [organizations.md](./services/organizations.md)     | 1   | IaC/discovery-oriented stub   |
-| Transfer Family  | [transfer.md](./services/transfer.md)               | 10  | IaC/discovery-oriented stub   |
+| Transfer Family  | [transfer.md](./services/transfer.md)               | 13  | IaC/discovery-oriented stub   |
 
 <!-- END overcast:service-index -->
 

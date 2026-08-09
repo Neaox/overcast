@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1415,
+  "total_ops": 1418,
   "services": [
     {
       "service": "s3",
@@ -8496,12 +8496,13 @@
     {
       "service": "transfer",
       "display_name": "Transfer Family",
-      "total_ops": 10,
-      "implemented_ops": 10,
+      "total_ops": 13,
+      "implemented_ops": 13,
       "operations": [
         {
           "operation": "CreateServer",
-          "status": "🧊 Inert"
+          "status": "🧊 Inert",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "DescribeServer",
@@ -8521,7 +8522,8 @@
         },
         {
           "operation": "CreateUser",
-          "status": "🧊 Inert"
+          "status": "🧊 Inert",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "DescribeUser",
@@ -8538,6 +8540,20 @@
         {
           "operation": "DeleteUser",
           "status": "🧊 Inert"
+        },
+        {
+          "operation": "TagResource",
+          "status": "🧊 Inert",
+          "notes": "Server and user ARNs; Transfer's other taggable resources are not emulated"
+        },
+        {
+          "operation": "UntagResource",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "status": "🧊 Inert",
+          "notes": "No pagination; every tag is returned in one page"
         }
       ]
     }

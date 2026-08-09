@@ -20,6 +20,9 @@ func TestTypedOps_matchDispatchSurface(t *testing.T) {
 		"ListUsers",
 		"UpdateUser",
 		"DeleteUser",
+		"TagResource",
+		"UntagResource",
+		"ListTagsForResource",
 	}
 
 	if len(ops) != len(expected) {
