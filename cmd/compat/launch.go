@@ -10,7 +10,8 @@
 // Overcast instance — see AGENTS.md § Reserved ports. Nothing started from
 // here may bind either, even when the scan base or an explicit flag would land
 // on them. Every port is chosen by probing, so two compat sessions (or two
-// agents) can run side by side.
+// agents) can run side by side. Ports are published on loopback, never on
+// every interface — see loopbackHost and dockerBridgeGateway.
 package main
 
 import (
@@ -43,6 +44,13 @@ const (
 	// defaultOvercastImage is the container used when no native binary is
 	// available. Matches scripts/run-test-instance.sh.
 	defaultOvercastImage = "ghcr.io/neaox/overcast:alpha"
+
+	// loopbackHost is where a managed container's ports are published, and the
+	// address every port probe binds. A bare "<host>:<container>" mapping binds
+	// every interface, which puts an unauthenticated emulator on whatever
+	// network the machine is attached to, and trips a Windows Firewall prompt.
+	// Nothing that talks to a compat instance is off-box.
+	loopbackHost = "127.0.0.1"
 )
 
 // --start-overcast modes.
@@ -92,7 +100,14 @@ func isReservedPort(port int) bool {
 // listener — acceptable for a dev harness, and far better than assuming a
 // fixed port is available.
 func portFree(port int) bool {
-	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	return portFreeOn(loopbackHost, port)
+}
+
+// portFreeOn reports whether a TCP port can be bound on one specific address.
+// Only the bridge-gateway publish needs an address other than loopback; see
+// dockerBridgeGateway.
+func portFreeOn(host string, port int) bool {
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return false
 	}
@@ -329,6 +344,70 @@ func startOvercastBinary(
 	return oc, nil
 }
 
+// dockerRunArgs builds the argv for a managed emulator container. Ports are
+// published on loopback (see loopbackHost) and, when gateway is non-empty, on
+// that address as well.
+func dockerRunArgs(apiPort, uiPort int, image, logLevel, gateway string) []string {
+	argv := []string{"run", "-d", "--rm"}
+	argv = append(argv, publishArgs(apiPort, reservedAPIPort, gateway)...)
+	if uiPort != 0 {
+		argv = append(argv, publishArgs(uiPort, reservedUIPort, gateway)...)
+	}
+	argv = append(argv,
+		"-e", "OVERCAST_STATE=memory",
+		"-e", "OVERCAST_LOG_LEVEL="+logLevel,
+	)
+	// The image goes last so nothing that follows can be read as a docker flag.
+	return append(argv, image)
+}
+
+// publishArgs returns the -p arguments mapping one container port onto a host
+// port, on loopback and optionally on a second address.
+func publishArgs(hostPort, containerPort int, extraHost string) []string {
+	argv := []string{"-p", fmt.Sprintf("%s:%d:%d", loopbackHost, hostPort, containerPort)}
+	if extraHost != "" {
+		argv = append(argv, "-p", fmt.Sprintf("%s:%d:%d", extraHost, hostPort, containerPort))
+	}
+	return argv
+}
+
+// dockerBridgeGateway returns the default bridge network's gateway address —
+// the host address a sibling container reaches by Docker's "host-gateway"
+// alias on native Linux. compat/suites/rust-sdk/run.sh rewrites a loopback
+// endpoint to host.docker.internal and maps that name to host-gateway, so a
+// managed instance published on loopback alone is invisible to it: the packet
+// arrives on the bridge, where nothing is listening. Publishing on the gateway
+// too keeps that suite working without putting the instance on any network the
+// machine is attached to — the bridge address is host-local, reachable from
+// this machine's containers and from nowhere else.
+//
+// Empty off Linux, where Docker Desktop routes host.docker.internal to the
+// host itself rather than over the bridge, so loopback is enough. Empty too
+// whenever the address cannot be determined or is already in use on one of the
+// ports, since a publish that cannot bind fails the whole run — the suite that
+// needed it then reports honestly instead.
+func dockerBridgeGateway(ctx context.Context, ports ...int) string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, "docker", "network", "inspect", "bridge",
+		"--format", "{{(index .IPAM.Config 0).Gateway}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	gateway := strings.TrimSpace(string(out))
+	if ip := net.ParseIP(gateway); ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+		return ""
+	}
+	for _, port := range ports {
+		if port != 0 && !portFreeOn(gateway, port) {
+			return ""
+		}
+	}
+	return gateway
+}
+
 func startOvercastContainer(
 	ctx context.Context,
 	apiPort, uiPort int,
@@ -338,16 +417,8 @@ func startOvercastContainer(
 	endpoint := fmt.Sprintf("http://%s:%d", opts.Host, apiPort)
 	logf("starting Overcast (%s) on %s", opts.Image, endpoint)
 
-	argv := []string{
-		"run", "-d", "--rm",
-		"-p", fmt.Sprintf("%d:%d", apiPort, reservedAPIPort),
-		"-e", "OVERCAST_STATE=memory",
-		"-e", "OVERCAST_LOG_LEVEL=" + opts.LogLevel,
-	}
-	if uiPort != 0 {
-		argv = append(argv, "-p", fmt.Sprintf("%d:%d", uiPort, reservedUIPort))
-	}
-	argv = append(argv, opts.Image)
+	gateway := dockerBridgeGateway(ctx, apiPort, uiPort)
+	argv := dockerRunArgs(apiPort, uiPort, opts.Image, opts.LogLevel, gateway)
 
 	// MSYS_NO_PATHCONV stops Git Bash mangling the -p arguments into paths.
 	cmd := exec.CommandContext(ctx, "docker", argv...)

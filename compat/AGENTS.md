@@ -70,6 +70,13 @@ Consequences for agents:
   compose services are all thin shells over the same code path. Fix behaviour
   in [cmd/compat/launch.go](../cmd/compat/launch.go), never in a wrapper —
   otherwise the platforms drift apart.
+- **A managed container publishes to `127.0.0.1`, never to every interface.**
+  A bare `-p <host>:<container>` would put an unauthenticated emulator on
+  whatever network the machine is attached to. On Linux the ports are also
+  published on the Docker bridge gateway, because that is what
+  `host.docker.internal:host-gateway` resolves to there and it is the only way
+  [suites/rust-sdk/run.sh](./suites/rust-sdk/run.sh) reaches the emulator from
+  its own container. Keep both in step if you touch either.
 
 ---
 

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -103,6 +104,103 @@ func TestFreePortPairIsDistinctAndFree(t *testing.T) {
 	if isReservedPort(api) || isReservedPort(ui) {
 		t.Fatalf("freePortPair returned a reserved port: api=%d ui=%d", api, ui)
 	}
+}
+
+func TestFreePortPairRefusesReservedPortsInEitherRole(t *testing.T) {
+	// Given: scan bases that put a reserved port in the API slot, the UI slot,
+	// or both
+	// When: an API/UI port pair is chosen
+	// Then: neither role gets 4566 or 4567. The guard is easy to write per
+	// role — comparing the API port against 4566 and the UI port against 4567
+	// only — and that shape hands the UI the user's API port for a base of
+	// 4565. isReservedPort is role-blind, which is what keeps that bug out of
+	// here; this test is what would catch it coming back.
+	for _, base := range []int{4565, reservedAPIPort, reservedUIPort} {
+		api, ui, err := freePortPair(base)
+		if err != nil {
+			t.Fatalf("freePortPair(%d): %v", base, err)
+		}
+		if isReservedPort(api) {
+			t.Errorf("freePortPair(%d) gave the API role reserved port %d", base, api)
+		}
+		if isReservedPort(ui) {
+			t.Errorf("freePortPair(%d) gave the UI role reserved port %d", base, ui)
+		}
+	}
+}
+
+func TestDockerRunArgsPublishesToLoopbackOnly(t *testing.T) {
+	// Given: a managed container instance with its own web UI
+	// When: the docker argv is built with no bridge gateway to add
+	// Then: every mapping is bound to 127.0.0.1. A bare "<host>:<container>"
+	// mapping binds every interface, which puts an unauthenticated emulator on
+	// whatever network the machine is attached to.
+	argv := dockerRunArgs(4570, 4571, "ghcr.io/neaox/overcast:alpha", "warn", "")
+	want := []string{
+		"127.0.0.1:4570:" + strconv.Itoa(reservedAPIPort),
+		"127.0.0.1:4571:" + strconv.Itoa(reservedUIPort),
+	}
+	if got := publishMappings(argv); !slices.Equal(got, want) {
+		t.Errorf("dockerRunArgs published %v, want %v", got, want)
+	}
+}
+
+func TestDockerRunArgsOmitsUIPublishWhenDisabled(t *testing.T) {
+	// Given: a managed instance whose own web UI is disabled (the default)
+	// When: the docker argv is built
+	// Then: only the API port is published, so nothing can bind the user's 4567
+	argv := dockerRunArgs(4570, 0, "img", "warn", "")
+	want := []string{"127.0.0.1:4570:" + strconv.Itoa(reservedAPIPort)}
+	if got := publishMappings(argv); !slices.Equal(got, want) {
+		t.Errorf("dockerRunArgs published %v, want %v", got, want)
+	}
+}
+
+func TestDockerRunArgsAddsBridgeGatewayPublish(t *testing.T) {
+	// Given: a Docker bridge gateway address
+	// When: the docker argv is built
+	// Then: each port is published on loopback *and* on that gateway, which is
+	// what "host.docker.internal:host-gateway" resolves to on native Linux —
+	// compat/suites/rust-sdk/run.sh reaches the emulator that way, and a
+	// loopback-only publish is invisible to it.
+	argv := dockerRunArgs(4570, 4571, "img", "warn", "172.17.0.1")
+	want := []string{
+		"127.0.0.1:4570:" + strconv.Itoa(reservedAPIPort),
+		"172.17.0.1:4570:" + strconv.Itoa(reservedAPIPort),
+		"127.0.0.1:4571:" + strconv.Itoa(reservedUIPort),
+		"172.17.0.1:4571:" + strconv.Itoa(reservedUIPort),
+	}
+	if got := publishMappings(argv); !slices.Equal(got, want) {
+		t.Errorf("dockerRunArgs published %v, want %v", got, want)
+	}
+}
+
+func TestDockerRunArgsCarriesImageAndEnvironment(t *testing.T) {
+	// Given: an image and a log level
+	// When: the docker argv is built
+	// Then: the image is the last argument (so nothing is mistaken for a flag)
+	// and the instance is told to keep its state in memory
+	argv := dockerRunArgs(4570, 0, "ghcr.io/neaox/overcast:alpha", "debug", "")
+	if last := argv[len(argv)-1]; last != "ghcr.io/neaox/overcast:alpha" {
+		t.Errorf("dockerRunArgs ended with %q, want the image", last)
+	}
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{"OVERCAST_STATE=memory", "OVERCAST_LOG_LEVEL=debug"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("dockerRunArgs argv %v is missing %q", argv, want)
+		}
+	}
+}
+
+// publishMappings returns the value of every -p argument, in order.
+func publishMappings(argv []string) []string {
+	var out []string
+	for i, arg := range argv {
+		if arg == "-p" && i+1 < len(argv) {
+			out = append(out, argv[i+1])
+		}
+	}
+	return out
 }
 
 func TestResolveListenAddrKeepsRequestedPortWhenFree(t *testing.T) {
