@@ -4912,7 +4912,7 @@
           "operation": "UpdateSchedule",
           "category": "Schedules",
           "status": "✅ Supported",
-          "notes": "`PUT /schedules/{Name}`; `GroupName` in the body; rejects a target type Overcast cannot fire"
+          "notes": "`PUT /schedules/{Name}`; `GroupName` in the body; replaces the whole schedule, so an omitted member is unset; rejects a target type Overcast cannot fire"
         },
         {
           "operation": "DeleteSchedule",

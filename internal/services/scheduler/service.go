@@ -13,19 +13,17 @@
 //
 // A lightweight cron engine fires rate/cron/at expressions against their
 // declared targets using the injected clock — tests can fast-forward time
-// without real sleeps. Delivery goes through internal/eventtarget, so every
-// target kind an EventBridge rule can reach a schedule can reach too (see
-// delivery.go).
+// without real sleeps. Expressions are evaluated in cron.go. Delivery goes
+// through internal/eventtarget, so every target kind an EventBridge rule can
+// reach a schedule can reach too (see delivery.go).
 package scheduler
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +53,19 @@ const (
 	// engineTick is how often the cron engine polls for due schedules.
 	// With a mock clock, time.Sleep is instantaneous so 1 s is fine.
 	engineTick = 1 * time.Second
+
+	// deliveryWorkers is how many firings the engine delivers at the same
+	// time. The tick goroutine hands a due schedule to this pool and moves on,
+	// so one target that is slow, wedged or working through its RetryPolicy
+	// occupies a single worker instead of the whole engine.
+	deliveryWorkers = 8
+
+	// deliveryQueueDepth bounds the firings waiting for a worker. A schedule is
+	// never in flight twice (see claimFiring), so the queue can only fill when
+	// this many *distinct* schedules are due at once and every worker is busy.
+	// A firing that finds it full is not dropped: the tick leaves the
+	// schedule's last-fire time alone, so it is still due on the next tick.
+	deliveryQueueDepth = 256
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -166,20 +177,45 @@ type Service struct {
 	// from the root router in InitRouter; nil until then.
 	targets *eventtarget.Dispatcher
 
+	// scheduleLocks serialises the read-modify-write of one schedule record.
+	// Held by every operation that removes or replaces a stored schedule —
+	// UpdateSchedule, DeleteSchedule and DeleteScheduleGroup's cascade — across
+	// both the read and the write, which is the part that makes them one step.
+	scheduleLocks serviceutil.RecordLocks
+
+	// deliveries carries due firings from the tick goroutine to the delivery
+	// worker pool, and inflight names the schedules a worker currently owns.
+	deliveries   chan firing
+	deliveryOnce sync.Once
+	inflightMu   sync.Mutex
+	inflight     map[string]struct{}
+
 	startOnce sync.Once
 	stopOnce  sync.Once
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
 }
 
+// firing is one due schedule on its way from the tick goroutine to a delivery
+// worker. The Schedule is the tick's own decoded copy, so no two firings — and
+// no firing and the store — share one.
+type firing struct {
+	key      string // store key, "region:group/name"
+	region   string
+	schedule *Schedule
+	at       time.Time
+}
+
 // New returns a configured Scheduler Service.
 func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	s := &Service{
-		cfg:    cfg,
-		store:  st,
-		clk:    clk,
-		log:    serviceutil.NewServiceLogger(logger, serviceName),
-		stopCh: make(chan struct{}),
+		cfg:        cfg,
+		store:      st,
+		clk:        clk,
+		log:        serviceutil.NewServiceLogger(logger, serviceName),
+		deliveries: make(chan firing, deliveryQueueDepth),
+		inflight:   make(map[string]struct{}),
+		stopCh:     make(chan struct{}),
 	}
 	s.typedOp = s.typedOps()
 	return s
@@ -208,8 +244,21 @@ func (s *Service) dispatcher() *eventtarget.Dispatcher { return s.targets }
 
 func (s *Service) startEngine() {
 	s.startOnce.Do(func() {
+		s.startDelivery()
 		s.wg.Add(1)
 		go s.runEngine()
+	})
+}
+
+// startDelivery brings up the delivery worker pool. It is idempotent, and tick
+// calls it too, so a caller that drives tick() directly rather than through the
+// ticker loop still has workers to deliver on.
+func (s *Service) startDelivery() {
+	s.deliveryOnce.Do(func() {
+		for i := 0; i < deliveryWorkers; i++ {
+			s.wg.Add(1)
+			go s.deliveryWorker()
+		}
 	})
 }
 
@@ -604,10 +653,19 @@ func (s *Service) runEngine() {
 	}
 }
 
-// tick fires all due schedules in all regions.
+// tick hands every due schedule, in every region, to the delivery pool.
+//
+// It does not deliver anything itself. Delivery replays the firing against the
+// emulator's own API and retries it as the target's RetryPolicy asks, so it
+// takes as long as the target does. The engine used to do that inline and in
+// scan order, which meant one unreachable Lambda held up every other schedule
+// in the emulator for as long as it took to exhaust its retries.
 func (s *Service) tick() {
+	s.startDelivery()
+
 	ctx := context.Background()
 	now := s.clk.Now()
+	deferred := 0
 
 	// List all schedules across all regions (prefix = "").
 	pairs, err := s.store.Scan(ctx, nsSchedules, "")
@@ -653,18 +711,86 @@ func (s *Service) tick() {
 			continue
 		}
 
-		// Fire and update last-fire timestamp. The store keys schedules per
-		// region ("region:group/name" — see scheduleKey) and fire's targets
-		// (SQS queues) resolve from region-keyed stores, so pin the schedule's
-		// own region on the delivery context — otherwise schedules outside the
-		// default region deliver into the default region's queues.
+		// Queue the firing. The store keys schedules per region
+		// ("region:group/name" — see scheduleKey) and the targets (SQS queues)
+		// resolve from region-keyed stores, so the schedule's own region
+		// travels with the firing and is pinned on the delivery context —
+		// otherwise schedules outside the default region deliver into the
+		// default region's queues.
 		region, _, hasRegion := strings.Cut(kv.Key, ":")
 		if !hasRegion || region == "" {
 			region = s.cfg.Region
 		}
-		s.fire(middleware.ContextWithRegion(ctx, region), &sc, now)
-		s.setLastFire(ctx, kv.Key, now)
+		if !s.claimFiring(kv.Key) {
+			// This schedule's previous firing is still being delivered.
+			// Skipping leaves its last-fire time untouched, so it stays due
+			// and a later tick picks it up.
+			continue
+		}
+		select {
+		case s.deliveries <- firing{key: kv.Key, region: region, schedule: &sc, at: now}:
+		default:
+			s.releaseFiring(kv.Key)
+			deferred++
+		}
 	}
+
+	if deferred > 0 {
+		s.log.Warn("scheduler: tick: delivery queue full, deferring firings to a later tick",
+			zap.Int("deferred", deferred), zap.Int("queue_depth", deliveryQueueDepth))
+	}
+}
+
+// claimFiring reserves a schedule for one in-flight firing, reporting false
+// when it already has one.
+//
+// This is what keeps a schedule's own firings ordered while different schedules
+// run concurrently: a schedule is never in flight twice, so a target that takes
+// longer to answer than the schedule's period delays that schedule's next
+// firing and nothing else. Overlapping a schedule with itself would reorder its
+// deliveries, which neither AWS nor the previous serial engine ever did.
+func (s *Service) claimFiring(key string) bool {
+	s.inflightMu.Lock()
+	defer s.inflightMu.Unlock()
+	if _, busy := s.inflight[key]; busy {
+		return false
+	}
+	s.inflight[key] = struct{}{}
+	return true
+}
+
+// releaseFiring hands a schedule back, so the next tick may fire it again.
+func (s *Service) releaseFiring(key string) {
+	s.inflightMu.Lock()
+	delete(s.inflight, key)
+	s.inflightMu.Unlock()
+}
+
+// deliveryWorker delivers queued firings until the service stops.
+func (s *Service) deliveryWorker() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case f := <-s.deliveries:
+			s.deliverFiring(f)
+		}
+	}
+}
+
+// deliverFiring records the fire time and delivers one firing.
+//
+// The last-fire time is written here, before the delivery, rather than on the
+// tick goroutine after it. The schedule is held in flight for the whole
+// delivery, so nothing can re-fire it in the meantime, and recording the tick's
+// own time keeps a schedule's cadence anchored to when it became due rather
+// than to how long its target took to answer.
+func (s *Service) deliverFiring(f firing) {
+	defer s.releaseFiring(f.key)
+	ctx := context.Background()
+	s.setLastFire(ctx, f.key, f.at)
+	s.fire(middleware.ContextWithRegion(ctx, f.region), f.schedule, f.at)
 }
 
 // getLastFire returns the last time a schedule was fired (zero if never).
@@ -687,199 +813,4 @@ func (s *Service) setLastFire(ctx context.Context, key string, t time.Time) {
 		return
 	}
 	_ = s.store.Set(ctx, nsLastFire, key, string(raw))
-}
-
-// ─── Schedule Expression Parser ───────────────────────────────────────────────
-
-// nextFireTime computes the next time that expr should fire, given the last fire
-// time and the current time. Returns zero time when no future firing applies
-// (e.g. a one-shot "at" expression that has already fired).
-func nextFireTime(expr string, lastFire, now time.Time) (time.Time, error) {
-	expr = strings.TrimSpace(expr)
-	switch {
-	case strings.HasPrefix(expr, "rate("):
-		return nextRateFire(expr, lastFire, now)
-	case strings.HasPrefix(expr, "at("):
-		return nextAtFire(expr)
-	case strings.HasPrefix(expr, "cron("):
-		return nextCronFire(expr, lastFire, now)
-	default:
-		return time.Time{}, fmt.Errorf("unknown expression type: %q", expr)
-	}
-}
-
-// nextRateFire parses a rate expression and returns the next fire time.
-func nextRateFire(expr string, lastFire, now time.Time) (time.Time, error) {
-	// rate(N unit)
-	inner := strings.TrimSuffix(strings.TrimPrefix(expr, "rate("), ")")
-	inner = strings.TrimSpace(inner)
-	parts := strings.Fields(inner)
-	if len(parts) != 2 {
-		return time.Time{}, fmt.Errorf("invalid rate expression: %q", expr)
-	}
-	n, err := strconv.Atoi(parts[0])
-	if err != nil || n <= 0 {
-		return time.Time{}, fmt.Errorf("invalid rate value: %q", parts[0])
-	}
-	// AWS writes the unit singular for a value of 1 and plural otherwise, and
-	// accepts either, so the trailing "s" is dropped before matching.
-	unit := strings.TrimSuffix(strings.ToLower(parts[1]), "s")
-	var period time.Duration
-	switch unit {
-	case "minute":
-		period = time.Duration(n) * time.Minute
-	case "hour":
-		period = time.Duration(n) * time.Hour
-	case "day":
-		period = time.Duration(n) * 24 * time.Hour
-	default:
-		return time.Time{}, fmt.Errorf("unknown rate unit: %q", parts[1])
-	}
-
-	if lastFire.IsZero() {
-		// Never fired: fire immediately on first tick after creation.
-		return now, nil
-	}
-	return lastFire.Add(period), nil
-}
-
-// nextAtFire parses an at expression and returns the fire time (or zero if past).
-func nextAtFire(expr string) (time.Time, error) {
-	// at(yyyy-mm-ddThh:mm:ss)
-	inner := strings.TrimSuffix(strings.TrimPrefix(expr, "at("), ")")
-	inner = strings.TrimSpace(inner)
-	t, err := time.Parse("2006-01-02T15:04:05", inner)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid at expression: %q: %w", expr, err)
-	}
-	return t, nil
-}
-
-// nextCronFire parses a 6-field AWS cron expression and computes the next fire
-// time after lastFire (or now if never fired). Supports numeric values, *, ?,
-// comma-separated lists, ranges, and step values. Does NOT support L, W, #.
-func nextCronFire(expr string, lastFire, now time.Time) (time.Time, error) {
-	// cron(min hour dom month dow year)
-	inner := strings.TrimSuffix(strings.TrimPrefix(expr, "cron("), ")")
-	inner = strings.TrimSpace(inner)
-	fields := strings.Fields(inner)
-	if len(fields) != 6 {
-		return time.Time{}, fmt.Errorf("aws cron must have 6 fields, got %d: %q", len(fields), expr)
-	}
-	// field indices: 0=min 1=hour 2=dom 3=month 4=dow 5=year
-	from := now
-	if !lastFire.IsZero() {
-		from = lastFire.Add(time.Minute) // search from 1 minute after last fire
-	}
-	from = from.Truncate(time.Minute)
-
-	// Search up to 5 years ahead.
-	limit := now.Add(5 * 365 * 24 * time.Hour)
-	for t := from; t.Before(limit); t = t.Add(time.Minute) {
-		if matchCronField(fields[5], t.Year(), 1970, 2099) &&
-			matchCronField(fields[3], int(t.Month()), 1, 12) &&
-			matchCronDayField(fields[2], fields[4], t) {
-			if matchCronField(fields[1], t.Hour(), 0, 23) &&
-				matchCronField(fields[0], t.Minute(), 0, 59) {
-				return t, nil
-			}
-			// Skip ahead to next matching hour:minute to avoid iterating every minute.
-			nextH, err := nextMatchingValue(fields[1], t.Hour(), 0, 23)
-			if err == nil && nextH > t.Hour() {
-				t = time.Date(t.Year(), t.Month(), t.Day(), nextH, 0, 0, 0, t.Location()).Add(-time.Minute)
-			}
-		}
-	}
-	return time.Time{}, fmt.Errorf("cron expression %q has no next fire within 5 years", expr)
-}
-
-// matchCronField returns true if value matches the cron field spec.
-func matchCronField(spec string, value, min, max int) bool {
-	if spec == "*" || spec == "?" {
-		return true
-	}
-	for _, part := range strings.Split(spec, ",") {
-		if matchCronPart(part, value, min, max) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchCronPart handles a single comma-separated cron part.
-func matchCronPart(part string, value, min, max int) bool {
-	if strings.Contains(part, "/") {
-		// Step: */5 or start/step
-		segs := strings.SplitN(part, "/", 2)
-		step, err := strconv.Atoi(segs[1])
-		if err != nil || step <= 0 {
-			return false
-		}
-		start := min
-		if segs[0] != "*" && segs[0] != "?" {
-			if s, err := strconv.Atoi(segs[0]); err == nil {
-				start = s
-			}
-		}
-		for v := start; v <= max; v += step {
-			if v == value {
-				return true
-			}
-		}
-		return false
-	}
-	if strings.Contains(part, "-") {
-		// Range: 1-5
-		segs := strings.SplitN(part, "-", 2)
-		lo, err1 := strconv.Atoi(segs[0])
-		hi, err2 := strconv.Atoi(segs[1])
-		if err1 != nil || err2 != nil {
-			return false
-		}
-		return value >= lo && value <= hi
-	}
-	v, err := strconv.Atoi(part)
-	return err == nil && v == value
-}
-
-// matchCronDayField handles the AWS-specific dom/dow interaction (?).
-// When dom is ? → match only dow. When dow is ? → match only dom.
-// When both are * → match all.
-func matchCronDayField(dom, dow string, t time.Time) bool {
-	domAny := dom == "*" || dom == "?"
-	dowAny := dow == "*" || dow == "?"
-	if domAny && dowAny {
-		return true
-	}
-	if dom == "?" {
-		// Match on dow only (0=Sun in AWS)
-		awsDow := int(t.Weekday()) // Go: 0=Sun, same as AWS
-		return matchCronField(dow, awsDow, 0, 6)
-	}
-	if dow == "?" {
-		// Match on dom only
-		return matchCronField(dom, t.Day(), 1, 31)
-	}
-	// Both set — match either (OR semantics in some cron dialects)
-	return matchCronField(dom, t.Day(), 1, 31) || matchCronField(dow, int(t.Weekday()), 0, 6)
-}
-
-// nextMatchingValue returns the smallest value >= current that matches spec.
-func nextMatchingValue(spec string, current, min, max int) (int, error) {
-	if spec == "*" || spec == "?" {
-		return current, nil
-	}
-	best := math.MaxInt32
-	for v := current; v <= max; v++ {
-		if matchCronField(spec, v, min, max) {
-			if v < best {
-				best = v
-			}
-			break
-		}
-	}
-	if best == math.MaxInt32 {
-		return 0, fmt.Errorf("no match")
-	}
-	return best, nil
 }

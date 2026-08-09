@@ -51,7 +51,13 @@ every target type EventBridge rules reach.
 - Supported schedule expressions:
   - `rate(...)`
   - `at(...)`
-  - `cron(...)` (AWS-style 6-field form)
+  - `cron(...)` (AWS-style 6-field form). Each field takes `*`, `?`, a value,
+    a comma-separated list, a range (`9-17`) or a step (`*/5`, `0/15`,
+    `9-17/4`); a step over a range walks that range. The `L`, `W` and `#` day
+    specifiers and the three-letter month and day names are **not** supported,
+    and an expression using one is refused by `CreateSchedule`.
+  - A cron expression is evaluated by advancing field by field, so a sparse
+    schedule — yearly, say — costs the same per tick as a frequent one.
 - Validation on `CreateSchedule` and `UpdateSchedule`:
   - The schedule and group names must match the model's constraint — 1–64
     characters of `[0-9a-zA-Z-_.]`.
@@ -61,12 +67,16 @@ every target type EventBridge rules reach.
     correctly in `GetSchedule` and never fires.
   - `FlexibleTimeWindow.Mode` is required and must be `OFF` or `FLEXIBLE`;
     `State` must be `ENABLED` or `DISABLED`.
-- `UpdateSchedule` **merges**. AWS's `UpdateSchedule` is a full replacement — a
-  member the caller omits is unset — whereas here an omitted member keeps its
-  stored value. This is a deliberate divergence: it is the behaviour the
-  operation has had since it shipped, and CloudFormation's schedule handler
-  relies on it. `StartDate` and `EndDate` are the exception — they are always
-  taken from the request, so omitting them clears them.
+- `UpdateSchedule` **replaces**, as AWS's does. The request carries the whole
+  schedule, so any optional member the caller omits — `Description`,
+  `ScheduleExpressionTimezone`, `State`, `StartDate`, `EndDate`, or anything
+  inside `Target` — ends up unset, and `State` returns to its `ENABLED`
+  default. Read the schedule, change what you mean to change, and send the
+  result back. What survives is the schedule's identity, again as on AWS: its
+  name, group, ARN and `CreationDate`.
+
+  Releases up to and including `0.0.1-alpha.33` merged instead, keeping an
+  omitted member at its stored value.
 - Pagination and filtering:
   - `ListSchedules` and `ListScheduleGroups` honour `MaxResults` (1–100, a full
     page when omitted) and `NextToken`.
@@ -81,6 +91,11 @@ every target type EventBridge rules reach.
 - Background scheduler engine:
   - Polls on a 1-second clock ticker.
   - Uses the injected clock, so integration tests can advance time quickly.
+  - A tick hands each due schedule to a pool of delivery workers rather than
+    delivering it on the tick itself, so a target that is slow, unreachable or
+    working through its `RetryPolicy` delays only its own schedule. A schedule
+    is never in flight twice, so its firings stay in order; a tick that finds a
+    schedule still mid-delivery leaves it due and skips it.
 - Target dispatch:
   - Delivery goes through the same internal dispatcher EventBridge rules and
     Pipes use, so a target ARN behaves identically on a schedule and on a rule.
@@ -108,9 +123,11 @@ every target type EventBridge rules reach.
     `EventBridgeParameters`, are refused for the same reason.
 - Retries and dead-lettering:
   - `RetryPolicy.MaximumRetryAttempts` is honoured, capped at **6 total
-    attempts**. Retries run inline on the engine tick with no backoff, so AWS's
-    default of 185 attempts is not replayed: a target with no `RetryPolicy` is
-    attempted **once**. EventBridge rule targets behave the same way.
+    attempts**. Retries run back to back on the delivery worker that owns the
+    firing, with no backoff, so AWS's default of 185 attempts is not replayed:
+    a target with no `RetryPolicy` is attempted **once**. Other schedules are
+    unaffected while a firing retries. EventBridge rule targets behave the
+    same way.
   - `RetryPolicy.MaximumEventAgeInSeconds` is honoured — once the payload is
     older than the budget, no further attempt is made.
   - `DeadLetterConfig.Arn` is honoured for SQS queues, which is the only
@@ -150,13 +167,13 @@ every target type EventBridge rules reach.
 
 ### Schedules
 
-| Operation        | Status       | Notes                                                                                                                  | AWS Docs                                                                                  |
-| ---------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `CreateSchedule` | ✅ Supported | `POST /schedules/{Name}`; `GroupName` in the body, defaulting to `default`; rejects a target type Overcast cannot fire | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_CreateSchedule.html) |
-| `GetSchedule`    | ✅ Supported | `GET /schedules/{Name}`; `?groupName` selects the group                                                                | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_GetSchedule.html)    |
-| `UpdateSchedule` | ✅ Supported | `PUT /schedules/{Name}`; `GroupName` in the body; rejects a target type Overcast cannot fire                           | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UpdateSchedule.html) |
-| `DeleteSchedule` | ✅ Supported | `DELETE /schedules/{Name}`; `?groupName` selects the group                                                             | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_DeleteSchedule.html) |
-| `ListSchedules`  | ✅ Supported | `GET /schedules`; optional `?ScheduleGroup` filter                                                                     | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListSchedules.html)  |
+| Operation        | Status       | Notes                                                                                                                                                    | AWS Docs                                                                                  |
+| ---------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `CreateSchedule` | ✅ Supported | `POST /schedules/{Name}`; `GroupName` in the body, defaulting to `default`; rejects a target type Overcast cannot fire                                   | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_CreateSchedule.html) |
+| `GetSchedule`    | ✅ Supported | `GET /schedules/{Name}`; `?groupName` selects the group                                                                                                  | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_GetSchedule.html)    |
+| `UpdateSchedule` | ✅ Supported | `PUT /schedules/{Name}`; `GroupName` in the body; replaces the whole schedule, so an omitted member is unset; rejects a target type Overcast cannot fire | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UpdateSchedule.html) |
+| `DeleteSchedule` | ✅ Supported | `DELETE /schedules/{Name}`; `?groupName` selects the group                                                                                               | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_DeleteSchedule.html) |
+| `ListSchedules`  | ✅ Supported | `GET /schedules`; optional `?ScheduleGroup` filter                                                                                                       | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListSchedules.html)  |
 
 ### Tags
 
