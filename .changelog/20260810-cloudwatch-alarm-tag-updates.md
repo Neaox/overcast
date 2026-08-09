@@ -1,0 +1,1 @@
+* [cloudformation/cloudwatch] a stack update that changes an `AWS::CloudWatch::Alarm`'s tags now applies them, through `TagResource`/`UntagResource` as real CloudFormation does. `PutMetricAlarm` applies `Tags` only when it creates an alarm, so the update reached `UPDATE_COMPLETE` having changed nothing

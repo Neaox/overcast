@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 
+	"github.com/Neaox/overcast/internal/awsapi"
 	"github.com/Neaox/overcast/internal/config"
 )
 
@@ -898,7 +901,111 @@ func (h *cloudwatchAlarmHandler) Update(ctx context.Context, router http.Handler
 	if n, ok := props["AlarmName"].(string); ok && n != "" && n != physicalID {
 		return "", nil, errReplacementRequired
 	}
-	return h.putMetricAlarm(ctx, router, rCtx, physicalID, props)
+	id, attrs, err := h.putMetricAlarm(ctx, router, rCtx, physicalID, props)
+	if err != nil {
+		return "", nil, err
+	}
+	// After PutMetricAlarm, not before: tagging is addressed to the alarm's ARN,
+	// and the alarm has to be there to carry the tags.
+	//
+	// A tag call that fails here leaves the alarm holding its new configuration
+	// and some part of its old tags, which is why the failure is dirty rather
+	// than terminal: rollback must report the resource as failed instead of
+	// claiming the previous state was restored, and it must not answer a
+	// half-applied update by building a second alarm.
+	if err := h.syncTags(ctx, router, rCtx.Region, attrs["Arn"], props["Tags"], oldProps["Tags"]); err != nil {
+		return "", nil, failDirtyUpdate(err)
+	}
+	return id, attrs, nil
+}
+
+// syncTags reconciles an alarm's tags with the template's.
+//
+// PutMetricAlarm applies Tags only when it creates an alarm and ignores them
+// when it updates one, exactly as real CloudWatch does (see the Tagging section
+// of docs/services/cloudwatch.md). Left to the upsert alone, a stack update that
+// changed only an alarm's tags would reach UPDATE_COMPLETE having changed
+// nothing. Real CloudFormation calls TagResource/UntagResource against the
+// resource's ARN when its tags change, and so does this.
+//
+// The calls go over the Query protocol rather than through internalJSON,
+// because CloudWatch's JSON dispatch covers only the alarm and metric
+// operations — TagResource over a GraniteServiceVersion20100801 target is an
+// UnknownOperationException. This is the same route applySNSTopicTags takes for
+// the same reason.
+func (h *cloudwatchAlarmHandler) syncTags(ctx context.Context, router http.Handler, region, alarmARN string, newTags, oldTags any) error {
+	want, have := cloudwatchAlarmTagMap(newTags), cloudwatchAlarmTagMap(oldTags)
+
+	// Sorted so the request a given diff produces is always the same one —
+	// the member indices have to be contiguous from 1 either way, because the
+	// service stops reading the list at the first gap.
+	var added []string
+	for _, k := range slices.Sorted(maps.Keys(want)) {
+		if old, ok := have[k]; !ok || old != want[k] {
+			added = append(added, k)
+		}
+	}
+	var removed []string
+	for _, k := range slices.Sorted(maps.Keys(have)) {
+		if _, ok := want[k]; !ok {
+			removed = append(removed, k)
+		}
+	}
+
+	if len(added) > 0 {
+		params := map[string]string{
+			"Action":      "TagResource",
+			"ResourceARN": alarmARN,
+			"Version":     awsapi.VersionCloudWatch,
+		}
+		for i, k := range added {
+			params[fmt.Sprintf("Tags.member.%d.Key", i+1)] = k
+			params[fmt.Sprintf("Tags.member.%d.Value", i+1)] = want[k]
+		}
+		if _, err := internalQuery(ctx, router, region, params); err != nil {
+			return fmt.Errorf("TagResource: %w", err)
+		}
+	}
+	if len(removed) > 0 {
+		params := map[string]string{
+			"Action":      "UntagResource",
+			"ResourceARN": alarmARN,
+			"Version":     awsapi.VersionCloudWatch,
+		}
+		for i, k := range removed {
+			params[fmt.Sprintf("TagKeys.member.%d", i+1)] = k
+		}
+		if _, err := internalQuery(ctx, router, region, params); err != nil {
+			return fmt.Errorf("UntagResource: %w", err)
+		}
+	}
+	return nil
+}
+
+// cloudwatchAlarmTagMap flattens a template Tags list into key/value pairs.
+//
+// A tag with an empty key is dropped rather than sent: the Query-protocol tag
+// lists are read until the first missing member, so one empty key would
+// silently truncate every tag after it.
+func cloudwatchAlarmTagMap(raw any) map[string]string {
+	out := map[string]string{}
+	list, _ := raw.([]any)
+	for _, item := range list {
+		tag, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		key, _ := tag["Key"].(string)
+		if key == "" {
+			continue
+		}
+		value := ""
+		if v := tag["Value"]; v != nil {
+			value = cfnScalarString(v)
+		}
+		out[key] = value
+	}
+	return out
 }
 
 // ── AWS::Scheduler::Schedule ────────────────────────────────────────────────
