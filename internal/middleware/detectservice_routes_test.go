@@ -97,21 +97,25 @@ var registeredRouteClassification = map[string]string{
 	"/_opensearch":    "internal",
 	"/_overcast":      "cognito|internal|secretsmanager|ses",
 	"/_rds":           "internal",
-	"/_scheduler":     "internal",
 	"/_topology":      "internal",
 
 	// Undated literals the prefix switch claims.
-	"/apikeys":        "apigateway",
-	"/applications":   "appregistry",
-	"/restapis":       "apigateway",
-	"/usageplans":     "apigateway",
-	"/v1/apis":        "appsync",
-	"/v1/domainnames": "appsync",
-	"/v1/mergedApis":  "appsync",
-	"/v1/pipes":       "pipes",
-	"/v1/sourceApis":  "appsync",
-	"/v1/tags":        "appsync",
-	"/v2/email":       "ses",
+	"/apikeys":      "apigateway",
+	"/applications": "appregistry",
+	"/restapis":     "apigateway",
+	// EventBridge Scheduler serves both of these to unsigned callers as well as
+	// signed ones, and its own tag operations are reached through the shared
+	// /tags dispatcher rather than a prefix of its own.
+	"/schedule-groups": "scheduler",
+	"/schedules":       "scheduler",
+	"/usageplans":      "apigateway",
+	"/v1/apis":         "appsync",
+	"/v1/domainnames":  "appsync",
+	"/v1/mergedApis":   "appsync",
+	"/v1/pipes":        "pipes",
+	"/v1/sourceApis":   "appsync",
+	"/v1/tags":         "appsync",
+	"/v2/email":        "ses",
 
 	// /v2/apis is shared by API Gateway v2 and AppSync, and is the one place the
 	// switch already consults the credential scope before answering. Unsigned it

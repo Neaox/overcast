@@ -4848,43 +4848,43 @@
           "operation": "CreateSchedule",
           "category": "Schedules",
           "status": "✅ Supported",
-          "notes": "Group-specific or default group path; rejects a target type Overcast cannot fire"
+          "notes": "`POST /schedules/{Name}`; `GroupName` in the body, defaulting to `default`; rejects a target type Overcast cannot fire"
         },
         {
           "operation": "GetSchedule",
           "category": "Schedules",
           "status": "✅ Supported",
-          "notes": "Returns full schedule definition"
+          "notes": "`GET /schedules/{Name}`; `?groupName` selects the group"
         },
         {
           "operation": "UpdateSchedule",
           "category": "Schedules",
           "status": "✅ Supported",
-          "notes": "Updates expression/target/state fields; rejects a target type Overcast cannot fire"
+          "notes": "`PUT /schedules/{Name}`; `GroupName` in the body; rejects a target type Overcast cannot fire"
         },
         {
           "operation": "DeleteSchedule",
           "category": "Schedules",
           "status": "✅ Supported",
-          "notes": "Deletes schedule"
+          "notes": "`DELETE /schedules/{Name}`; `?groupName` selects the group"
         },
         {
           "operation": "ListSchedules",
           "category": "Schedules",
           "status": "✅ Supported",
-          "notes": "Optional `ScheduleGroup` filter"
+          "notes": "`GET /schedules`; optional `?ScheduleGroup` filter"
         },
         {
           "operation": "TagResource",
           "category": "Tags",
           "status": "✅ Supported",
-          "notes": "Merges tags on ARN"
+          "notes": "Merges tags on ARN, at the shared `/tags/{ResourceArn}` path"
         },
         {
           "operation": "UntagResource",
           "category": "Tags",
           "status": "✅ Supported",
-          "notes": "Removes keys from ARN"
+          "notes": "Removes `?TagKeys` from ARN"
         },
         {
           "operation": "ListTagsForResource",

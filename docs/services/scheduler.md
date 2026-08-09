@@ -1,6 +1,6 @@
 ---
 title: "Scheduler — Amazon EventBridge Scheduler"
-description: "EventBridge Scheduler is served as a REST-JSON API under /_scheduler/*. This implementation focuses on schedule groups, schedules, tagging, and clock-driven target dispatch to..."
+description: "EventBridge Scheduler is served as a REST-JSON API at AWS's own paths, so an unmodified SDK or aws scheduler CLI call reaches it. This implementation focuses on schedule groups,..."
 section: "Service Reference"
 tags:
   - amazon
@@ -14,14 +14,37 @@ tags:
 
 > AWS docs: https://docs.aws.amazon.com/scheduler/latest/APIReference/Welcome.html
 
-EventBridge Scheduler is served as a REST-JSON API under `/_scheduler/*`.
-This implementation focuses on schedule groups, schedules, tagging, and
-clock-driven target dispatch to every target type EventBridge rules reach.
+EventBridge Scheduler is served as a REST-JSON API at AWS's own paths, so an
+unmodified SDK or `aws scheduler …` call reaches it. This implementation focuses
+on schedule groups, schedules, tagging, and clock-driven target dispatch to
+every target type EventBridge rules reach.
 
 ---
 
 ## Behavior Notes
 
+- Request paths — AWS's own bindings, taken from the pinned Smithy model:
+
+  | Operation | Binding |
+  | --- | --- |
+  | `CreateSchedule` | `POST /schedules/{Name}` — `GroupName` in the body |
+  | `GetSchedule` | `GET /schedules/{Name}?groupName=` |
+  | `UpdateSchedule` | `PUT /schedules/{Name}` — `GroupName` in the body |
+  | `DeleteSchedule` | `DELETE /schedules/{Name}?groupName=` |
+  | `ListSchedules` | `GET /schedules?ScheduleGroup=` |
+  | `CreateScheduleGroup` | `POST /schedule-groups/{Name}` |
+  | `GetScheduleGroup` | `GET /schedule-groups/{Name}` |
+  | `DeleteScheduleGroup` | `DELETE /schedule-groups/{Name}` |
+  | `ListScheduleGroups` | `GET /schedule-groups` |
+  | `TagResource` / `UntagResource` / `ListTagsForResource` | `POST` / `DELETE` / `GET /tags/{ResourceArn}` |
+
+  A schedule is addressed by name alone; its group is never a path segment.
+  `/tags/{ResourceArn}` is shared with API Gateway, EKS and Pipes, and is
+  dispatched on the `scheduler` segment of the resource ARN.
+
+  Releases up to and including `0.0.1-alpha.33` served these operations under an
+  emulator-invented `/_scheduler/` prefix instead, so every SDK and CLI call
+  answered `501`. That prefix has been removed rather than kept as an alias.
 - Default schedule group:
   - `default` is auto-seeded and cannot be deleted.
 - Supported schedule expressions:
@@ -100,20 +123,20 @@ clock-driven target dispatch to every target type EventBridge rules reach.
 
 ### Schedules
 
-| Operation        | Status       | Notes                                                                              | AWS Docs                                                                                  |
-| ---------------- | ------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `CreateSchedule` | ✅ Supported | Group-specific or default group path; rejects a target type Overcast cannot fire   | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_CreateSchedule.html) |
-| `GetSchedule`    | ✅ Supported | Returns full schedule definition                                                   | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_GetSchedule.html)    |
-| `UpdateSchedule` | ✅ Supported | Updates expression/target/state fields; rejects a target type Overcast cannot fire | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UpdateSchedule.html) |
-| `DeleteSchedule` | ✅ Supported | Deletes schedule                                                                   | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_DeleteSchedule.html) |
-| `ListSchedules`  | ✅ Supported | Optional `ScheduleGroup` filter                                                    | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListSchedules.html)  |
+| Operation        | Status       | Notes                                                                                                                  | AWS Docs                                                                                  |
+| ---------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `CreateSchedule` | ✅ Supported | `POST /schedules/{Name}`; `GroupName` in the body, defaulting to `default`; rejects a target type Overcast cannot fire | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_CreateSchedule.html) |
+| `GetSchedule`    | ✅ Supported | `GET /schedules/{Name}`; `?groupName` selects the group                                                                | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_GetSchedule.html)    |
+| `UpdateSchedule` | ✅ Supported | `PUT /schedules/{Name}`; `GroupName` in the body; rejects a target type Overcast cannot fire                           | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UpdateSchedule.html) |
+| `DeleteSchedule` | ✅ Supported | `DELETE /schedules/{Name}`; `?groupName` selects the group                                                             | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_DeleteSchedule.html) |
+| `ListSchedules`  | ✅ Supported | `GET /schedules`; optional `?ScheduleGroup` filter                                                                     | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListSchedules.html)  |
 
 ### Tags
 
-| Operation             | Status       | Notes                 | AWS Docs                                                                                       |
-| --------------------- | ------------ | --------------------- | ---------------------------------------------------------------------------------------------- |
-| `TagResource`         | ✅ Supported | Merges tags on ARN    | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_TagResource.html)         |
-| `UntagResource`       | ✅ Supported | Removes keys from ARN | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UntagResource.html)       |
-| `ListTagsForResource` | ✅ Supported | Returns tag map       | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListTagsForResource.html) |
+| Operation             | Status       | Notes                                                        | AWS Docs                                                                                       |
+| --------------------- | ------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported | Merges tags on ARN, at the shared `/tags/{ResourceArn}` path | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | Removes `?TagKeys` from ARN                                  | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | Returns tag map                                              | [docs](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_ListTagsForResource.html) |
 
 <!-- END overcast:capabilities -->

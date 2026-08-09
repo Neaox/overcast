@@ -7,7 +7,9 @@
 //	Schedules: CreateSchedule, GetSchedule, UpdateSchedule, DeleteSchedule,
 //	  ListSchedules
 //
-// Routes are served under the /_scheduler/ path prefix (REST-JSON).
+// Routes are AWS's own REST-JSON bindings from the pinned Smithy model
+// (scheduler-2021-06-30): /schedules/{Name}, /schedules, /schedule-groups/{Name},
+// /schedule-groups, and /tags/{ResourceArn} — see RegisterRoutes and TagsRouter.
 //
 // A lightweight cron engine fires rate/cron/at expressions against their
 // declared targets using the injected clock — tests can fast-forward time
@@ -22,6 +24,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -230,30 +233,41 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // RegisterRoutes satisfies router.Service.
+//
+// The paths are EventBridge Scheduler's own @http bindings, not an emulator
+// invention: a schedule is addressed by name alone, and its group travels in
+// the body on create/update and as ?groupName on read/delete. Every SDK and
+// `aws scheduler …` call lands here.
 func (s *Service) RegisterRoutes(r chi.Router) {
-	r.Route("/_scheduler", func(r chi.Router) {
-		// Schedule groups
-		r.Post("/schedule-groups/{name}", s.createScheduleGroup)
-		r.Get("/schedule-groups/{name}", s.getScheduleGroup)
-		r.Delete("/schedule-groups/{name}", s.deleteScheduleGroup)
-		r.Get("/schedule-groups", s.listScheduleGroups)
-		// Tag operations (by group ARN — routed on tag resource)
-		r.Get("/tags/{arn}", s.listTagsForResource)
-		r.Post("/tags/{arn}", s.tagResource)
-		r.Delete("/tags/{arn}", s.untagResource)
-		// Schedules — group-qualified paths
-		r.Post("/schedules/{group}/{name}", s.createSchedule)
-		r.Get("/schedules/{group}/{name}", s.getSchedule)
-		r.Put("/schedules/{group}/{name}", s.updateSchedule)
-		r.Delete("/schedules/{group}/{name}", s.deleteSchedule)
-		// Schedules — default-group paths (no group prefix)
-		r.Post("/schedules/{name}", s.createScheduleDefaultGroup)
-		r.Get("/schedules/{name}", s.getScheduleDefaultGroup)
-		r.Put("/schedules/{name}", s.updateScheduleDefaultGroup)
-		r.Delete("/schedules/{name}", s.deleteScheduleDefaultGroup)
-		// List all schedules (optional ?ScheduleGroup= filter)
-		r.Get("/schedules", s.listSchedules)
-	})
+	// Schedule groups.
+	r.Post("/schedule-groups/{name}", s.createScheduleGroup)
+	r.Get("/schedule-groups/{name}", s.getScheduleGroup)
+	r.Delete("/schedule-groups/{name}", s.deleteScheduleGroup)
+	r.Get("/schedule-groups", s.listScheduleGroups)
+
+	// Schedules.
+	r.Post("/schedules/{name}", s.createSchedule)
+	r.Get("/schedules/{name}", s.getSchedule)
+	r.Put("/schedules/{name}", s.updateSchedule)
+	r.Delete("/schedules/{name}", s.deleteSchedule)
+	r.Get("/schedules", s.listSchedules)
+
+	// NOTE: /tags routes are NOT registered here — see TagsRouter. The /tags
+	// path space is shared with Pipes, EKS and API Gateway, so the main router
+	// owns it and dispatches by the resource ARN's service prefix.
+}
+
+// TagsRouter returns a chi.Router for Scheduler's tagging routes, which live
+// under the shared /tags/{ResourceArn} path space. The main router mounts it
+// behind the ARN-dispatching owner it shares with Pipes, EKS and API Gateway.
+// SDK clients URL-escape the ARN into a single path segment, which is what the
+// {resourceArn} pattern matches.
+func (s *Service) TagsRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/{resourceArn}", s.listTagsForResource)
+	r.Post("/{resourceArn}", s.tagResource)
+	r.Delete("/{resourceArn}", s.untagResource)
+	return r
 }
 
 // Stop shuts down the cron engine, waiting for the goroutine to exit.
@@ -437,17 +451,17 @@ func (s *Service) createScheduleGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store tags separately if provided.
+	// Store tags separately if provided. The body is optional on this
+	// operation, so a decode failure is not an error — it means no tags.
 	var req struct {
 		Tags map[string]string `json:"Tags"`
 	}
-	if json.NewDecoder(r.Body).Decode(&req) == nil && len(req.Tags) > 0 {
-		if raw, err := json.Marshal(req.Tags); err == nil {
-			_ = s.store.Set(ctx, nsTags, g.Arn, string(raw))
-		}
+	if json.NewDecoder(r.Body).Decode(&req) == nil {
+		s.saveTagsJSON(ctx, g.Arn, req.Tags)
 	}
 
-	protocol.WriteJSON(w, r, http.StatusCreated, map[string]any{
+	// AWS's model binds CreateScheduleGroup to HTTP 200, not 201.
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"ScheduleGroupArn": g.Arn,
 	})
 }
@@ -509,102 +523,80 @@ func (s *Service) listScheduleGroups(w http.ResponseWriter, r *http.Request) {
 
 // ─── Tag Handlers ─────────────────────────────────────────────────────────────
 
-func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
-	arn := chi.URLParam(r, "arn")
-	ctx := r.Context()
-	raw, found, _ := s.store.Get(ctx, nsTags, arn)
-	tags := map[string]string{}
-	if found {
-		_ = json.Unmarshal([]byte(raw), &tags)
+// resourceARN reads the {resourceArn} path label. AWS SDKs percent-encode the
+// ARN into a single path segment, so it has to be unescaped before it matches
+// the key the tag store was written under.
+func resourceARN(r *http.Request) string {
+	raw := chi.URLParam(r, "resourceArn")
+	if decoded, err := url.PathUnescape(raw); err == nil {
+		return decoded
 	}
+	return raw
+}
+
+func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
+	tags := s.loadTags(r.Context(), resourceARN(r))
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tags})
 }
 
 func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
-	arn := chi.URLParam(r, "arn")
-	ctx := r.Context()
 	var req struct {
 		Tags map[string]string `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	existing := map[string]string{}
-	if raw, found, _ := s.store.Get(ctx, nsTags, arn); found {
-		_ = json.Unmarshal([]byte(raw), &existing)
-	}
-	for k, v := range req.Tags {
-		existing[k] = v
-	}
-	if raw, err := json.Marshal(existing); err == nil {
-		_ = s.store.Set(ctx, nsTags, arn, string(raw))
-	}
+	s.mergeTags(r.Context(), resourceARN(r), req.Tags)
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 
 func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
-	arn := chi.URLParam(r, "arn")
-	ctx := r.Context()
-	tagKeys := r.URL.Query()["TagKeys"]
-	existing := map[string]string{}
-	if raw, found, _ := s.store.Get(ctx, nsTags, arn); found {
-		_ = json.Unmarshal([]byte(raw), &existing)
-	}
-	for _, k := range tagKeys {
-		delete(existing, k)
-	}
-	if raw, err := json.Marshal(existing); err == nil {
-		_ = s.store.Set(ctx, nsTags, arn, string(raw))
-	}
+	s.removeTags(r.Context(), resourceARN(r), r.URL.Query()["TagKeys"])
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
 }
 
 // ─── Schedule Handlers ────────────────────────────────────────────────────────
 
-// createScheduleDefaultGroup handles POST /schedules/{name} (default group).
-func (s *Service) createScheduleDefaultGroup(w http.ResponseWriter, r *http.Request) {
-	// chi will match /{name} before /{group}/{name}, so we treat the single
-	// segment as the name and use the default group.
-	r = routeScheduleWithGroup(r, defaultGroup, chi.URLParam(r, "name"))
-	s.createSchedule(w, r)
+// scheduleBody is the request body CreateSchedule and UpdateSchedule share.
+// GroupName is a body member on both, which is why neither reads a group from
+// the path — see RegisterRoutes.
+type scheduleBody struct {
+	GroupName                  string             `json:"GroupName"`
+	ScheduleExpression         string             `json:"ScheduleExpression"`
+	ScheduleExpressionTimezone string             `json:"ScheduleExpressionTimezone"`
+	Description                string             `json:"Description"`
+	FlexibleTimeWindow         flexibleTimeWindow `json:"FlexibleTimeWindow"`
+	Target                     scheduleTarget     `json:"Target"`
+	State                      string             `json:"State"`
+	StartDate                  *time.Time         `json:"StartDate"`
+	EndDate                    *time.Time         `json:"EndDate"`
 }
 
-func (s *Service) getScheduleDefaultGroup(w http.ResponseWriter, r *http.Request) {
-	r = routeScheduleWithGroup(r, defaultGroup, chi.URLParam(r, "name"))
-	s.getSchedule(w, r)
+// groupOrDefault resolves a schedule's group name, applying AWS's rule that an
+// omitted GroupName means the "default" group.
+func groupOrDefault(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return defaultGroup
+	}
+	return name
 }
 
-func (s *Service) updateScheduleDefaultGroup(w http.ResponseWriter, r *http.Request) {
-	r = routeScheduleWithGroup(r, defaultGroup, chi.URLParam(r, "name"))
-	s.updateSchedule(w, r)
-}
-
-func (s *Service) deleteScheduleDefaultGroup(w http.ResponseWriter, r *http.Request) {
-	r = routeScheduleWithGroup(r, defaultGroup, chi.URLParam(r, "name"))
-	s.deleteSchedule(w, r)
-}
-
-// routeScheduleWithGroup adds group and name to the request's own chi route
-// params so the shared handler can read them with chi.URLParam. r is returned
-// unchanged — the params go onto the route context chi already allocated for
-// this request, which is why a later lookup wins over the matched route's own.
-//
-// Mutating that context in place is safe here, unlike an in-process dispatch
-// back through the root router (see internal/eventtarget): this runs on the
-// request's own goroutine and calls a sibling handler directly, so nothing else
-// holds the context, and chi resets and pools it when the request ends.
-func routeScheduleWithGroup(r *http.Request, group, name string) *http.Request {
-	rctx := chi.RouteContext(r.Context())
-	rctx.URLParams.Keys = append(rctx.URLParams.Keys, "group", "name")
-	rctx.URLParams.Values = append(rctx.URLParams.Values, group, name)
-	return r
+// queryGroup reads the ?groupName parameter GetSchedule and DeleteSchedule bind
+// their GroupName to.
+func queryGroup(r *http.Request) string {
+	return groupOrDefault(r.URL.Query().Get("groupName"))
 }
 
 func (s *Service) createSchedule(w http.ResponseWriter, r *http.Request) {
-	group := chi.URLParam(r, "group")
 	name := chi.URLParam(r, "name")
 	region := s.region(r)
 	ctx := r.Context()
+
+	var req scheduleBody
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	group := groupOrDefault(req.GroupName)
 
 	// Ensure the group exists (auto-create "default").
 	if _, found := s.loadGroup(ctx, region, group); !found {
@@ -623,20 +615,6 @@ func (s *Service) createSchedule(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-	}
-
-	var req struct {
-		ScheduleExpression         string             `json:"ScheduleExpression"`
-		ScheduleExpressionTimezone string             `json:"ScheduleExpressionTimezone"`
-		Description                string             `json:"Description"`
-		FlexibleTimeWindow         flexibleTimeWindow `json:"FlexibleTimeWindow"`
-		Target                     scheduleTarget     `json:"Target"`
-		State                      string             `json:"State"`
-		StartDate                  *time.Time         `json:"StartDate"`
-		EndDate                    *time.Time         `json:"EndDate"`
-	}
-	if !serviceutil.DecodeJSON(w, r, &req) {
-		return
 	}
 
 	if req.ScheduleExpression == "" {
@@ -678,13 +656,14 @@ func (s *Service) createSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol.WriteJSON(w, r, http.StatusCreated, map[string]any{
+	// AWS's model binds CreateSchedule to HTTP 200, not 201.
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"ScheduleArn": sc.Arn,
 	})
 }
 
 func (s *Service) getSchedule(w http.ResponseWriter, r *http.Request) {
-	group := chi.URLParam(r, "group")
+	group := queryGroup(r)
 	name := chi.URLParam(r, "name")
 	region := s.region(r)
 
@@ -701,10 +680,15 @@ func (s *Service) getSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) updateSchedule(w http.ResponseWriter, r *http.Request) {
-	group := chi.URLParam(r, "group")
 	name := chi.URLParam(r, "name")
 	region := s.region(r)
 	ctx := r.Context()
+
+	var req scheduleBody
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	group := groupOrDefault(req.GroupName)
 
 	sc, found := s.loadSchedule(ctx, region, group, name)
 	if !found {
@@ -713,20 +697,6 @@ func (s *Service) updateSchedule(w http.ResponseWriter, r *http.Request) {
 			Message:    fmt.Sprintf("Schedule %s in group %s does not exist.", name, group),
 			HTTPStatus: http.StatusNotFound,
 		})
-		return
-	}
-
-	var req struct {
-		ScheduleExpression         string             `json:"ScheduleExpression"`
-		ScheduleExpressionTimezone string             `json:"ScheduleExpressionTimezone"`
-		Description                string             `json:"Description"`
-		FlexibleTimeWindow         flexibleTimeWindow `json:"FlexibleTimeWindow"`
-		Target                     scheduleTarget     `json:"Target"`
-		State                      string             `json:"State"`
-		StartDate                  *time.Time         `json:"StartDate"`
-		EndDate                    *time.Time         `json:"EndDate"`
-	}
-	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -772,7 +742,7 @@ func (s *Service) updateSchedule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) deleteSchedule(w http.ResponseWriter, r *http.Request) {
-	group := chi.URLParam(r, "group")
+	group := queryGroup(r)
 	name := chi.URLParam(r, "name")
 	region := s.region(r)
 	ctx := r.Context()

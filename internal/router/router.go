@@ -853,8 +853,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	}
 
 	// ---- /tags service dispatch ---------------------------------------------
-	// Pipes, EKS and API Gateway (whose endpoint AppRegistry's SDK shares)
-	// all answer tag operations at /tags/{resourceArn}. Left to their own
+	// Pipes, EKS, Scheduler and API Gateway (whose endpoint AppRegistry's SDK
+	// shares) all answer tag operations at /tags/{resourceArn}. Left to their own
 	// RegisterRoutes they race for the same chi patterns and the last
 	// registration silently wins, so the main router owns the path and
 	// dispatches on the ARN's service prefix, exactly like /v1/tags above.
@@ -868,6 +868,9 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 		if registeredForTest(cfg, "eks") {
 			tagRouters["eks"] = eksSvc.TagsRouter()
+		}
+		if registeredForTest(cfg, "scheduler") {
+			tagRouters["scheduler"] = schedulerSvc.TagsRouter()
 		}
 		var apigwTags http.Handler
 		if registeredForTest(cfg, "apigateway") {
