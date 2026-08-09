@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -622,20 +623,27 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	s.log.Info("Docker available — initialising container runtime",
 		zap.String("socket", cfg.LambdaDockerSocket))
 
-	listenAddr := fmt.Sprintf("0.0.0.0:%d", cfg.LambdaRuntimeAPIPort)
+	// Where containers reach the Runtime API, and the local addresses that
+	// implies. Resolved before binding rather than after, because the answer is
+	// what decides the bind set — a wildcard would put an unauthenticated
+	// control channel for every Lambda container on whatever network this
+	// machine is attached to, and nothing off this machine is a legitimate
+	// caller.
+	listen := runtimeAPIListen(cfg, dc, log)
 
-	// Listen first so we know the actual port (important when port is 0).
-	ln, lnErr := net.Listen("tcp", listenAddr)
+	// Bind first so we know the actual port (important when port is 0).
+	lns, lnErr := listenAllOn(listen.BindHosts, cfg.LambdaRuntimeAPIPort, log)
 	if lnErr != nil {
 		s.log.Warn("failed to listen for Runtime API server — container runtime disabled",
-			zap.String("addr", listenAddr), zap.Error(lnErr))
+			zap.Error(lnErr))
 		return
 	}
-	actualPort := ln.Addr().(*net.TCPAddr).Port
+	actualPort := lns[0].Addr().(*net.TCPAddr).Port
 
-	containerAddr := runtimeAPIContainerAddr(cfg, dc, log, actualPort)
+	containerAddr := net.JoinHostPort(listen.ContainerHost, strconv.Itoa(actualPort))
+	log.Info("lambda: Runtime API address", zap.String("addr", containerAddr))
 
-	runtimeAPI, apiErr := NewRuntimeAPIServerFromListener(ln, containerAddr, log, clk)
+	runtimeAPI, apiErr := NewRuntimeAPIServerFromListeners(lns, containerAddr, log, clk)
 	if apiErr != nil {
 		s.log.Warn("failed to start Runtime API server — container runtime disabled",
 			zap.Error(apiErr))
@@ -1121,25 +1129,23 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 
 }
 
-// runtimeAPIContainerAddr determines the host:port that Lambda containers use
-// to reach the Runtime API server.
+// runtimeAPIListen determines the host Lambda containers use to reach the
+// Runtime API server, and the local addresses it must bind for that to work.
 //
-// Resolution — attach to the Lambda network and use our IP there when Overcast
-// is itself containerised, otherwise a routable host address — is shared with
-// ECS task containers in internal/containerendpoint, so the two cannot drift.
-// This function had its own copy, which took whatever non-loopback IPv4 address
-// net.InterfaceAddrs listed first; on a multi-homed host that is as likely to
-// be a 169.254/16 address left by an adapter that failed DHCP, or a hypervisor
-// switch no container can route to, as it is the right one.
+// The decision lives in internal/containerendpoint, next to the answer ECS task
+// containers get, so the two cannot drift. Lambda used to make it here, from
+// whatever non-loopback IPv4 address net.InterfaceAddrs listed first; on a
+// multi-homed host that is as likely to be a 169.254/16 address left by an
+// adapter that failed DHCP, or a hypervisor switch no container can route to,
+// as it is the right one. Only the host is resolved: the Runtime API and the
+// emulator API are two ports at the same address.
 //
-// The host serves both the Runtime API and the emulator API on different ports,
-// which is why only the host is resolved here.
-func runtimeAPIContainerAddr(cfg *config.Config, dc *docker.Client, logger *zap.Logger, port int) string {
+// The timeout bounds a Docker daemon that accepts the connection and then does
+// not answer — this runs on the container-runtime init goroutine, and a hang
+// here leaves Lambda on the stub runtime with no error to show for it.
+func runtimeAPIListen(cfg *config.Config, dc *docker.Client, logger *zap.Logger) containerendpoint.Listen {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	host := containerendpoint.ResolveHost(ctx, dc, cfg.LambdaNetwork, logger)
-	addr := fmt.Sprintf("%s:%d", host, port)
-	logger.Info("lambda: Runtime API address", zap.String("addr", addr))
-	return addr
+	return containerendpoint.ResolveListen(ctx, dc, cfg.LambdaNetwork, logger)
 }
