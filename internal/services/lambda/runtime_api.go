@@ -40,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -389,6 +390,32 @@ type containerListener struct {
 	port int
 	addr string
 	once sync.Once
+
+	// accepted counts the connections this endpoint has taken, over every
+	// address it is bound on. See countingListener.
+	accepted atomic.Int64
+}
+
+// countingListener tallies the connections accepted on one execution
+// environment's Runtime API endpoint.
+//
+// The count is the one thing that tells "the RIC never reached us" apart from
+// "it reached us and we turned it away", and those have nothing in common: the
+// first is the container's route back to this host, the second is identity. In
+// Overcast's logs both used to look the same — silence — and an INIT timeout
+// blaming the function was the only symptom either produced. See
+// containerInstance.logInitTimeout, which reports this on the failure path.
+type countingListener struct {
+	net.Listener
+	accepted *atomic.Int64
+}
+
+func (l countingListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		l.accepted.Add(1)
+	}
+	return conn, err
 }
 
 // AddContainerListener binds a fresh port across the same local addresses the
@@ -409,15 +436,24 @@ func (s *RuntimeAPIServer) AddContainerListener() (*containerListener, error) {
 		}
 		return nil, fmt.Errorf("runtime api: per-container listen: not a TCP address")
 	}
-	for _, ln := range lns {
-		go s.serve(ln)
-	}
-	return &containerListener{
+	cl := &containerListener{
 		srv:  s,
 		lns:  lns,
 		port: bound.Port,
 		addr: net.JoinHostPort(s.containerHost, strconv.Itoa(bound.Port)),
-	}, nil
+	}
+	for _, ln := range lns {
+		go s.serve(countingListener{Listener: ln, accepted: &cl.accepted})
+	}
+	return cl, nil
+}
+
+// Accepted reports how many connections this environment's endpoint has taken.
+func (l *containerListener) Accepted() int64 {
+	if l == nil {
+		return 0
+	}
+	return l.accepted.Load()
 }
 
 // Addr is what this environment's AWS_LAMBDA_RUNTIME_API must be set to.
@@ -1131,13 +1167,20 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 
 	// Detect the first GET /next from this container — signals that the RIC
 	// (and the language runtime + handler code) has finished initialising.
-	s.mu.Lock()
-	if !s.seenNext[containerIP] {
-		s.seenNext[containerIP] = true
-		s.firstNextAt[containerIP] = s.clk.Now()
-		s.maybeMarkReadyLocked(containerIP)
+	//
+	// Say so in the log. It is one line per execution environment, and it is
+	// the only positive record that a container ever reached the Runtime API:
+	// without it, a successful cold start and one that never made contact leave
+	// Overcast's log looking exactly the same, and #800 spent its diagnosis
+	// reading that silence as proof of the second.
+	if s.noteFirstNext(containerIP) {
+		s.logger.Debug("runtime api: execution environment finished INIT",
+			zap.String("function", functionNameFromARN(functionARN)),
+			zap.String("container_ip", containerIP),
+			zap.Int("arrived_on_port", localPortOf(r)))
 	}
 
+	s.mu.Lock()
 	// Check the function's invocation queue first.
 	if inv := s.popQueuedLocked(functionARN); inv != nil {
 		// Do NOT delete from s.pending here — handleInvocationAction needs it
@@ -1180,6 +1223,27 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	case <-s.done:
 		s.releaseWaiter(functionARN, waiter)
 	}
+}
+
+// noteFirstNext records an execution environment's first GET /next — the point
+// at which its RIC, language runtime and handler code have all initialised —
+// and reports whether this call was it.
+//
+// It takes the lock itself rather than sharing handleNext's, so the log line
+// that follows is written outside it. Nothing is lost by not holding the two
+// together: readiness is per environment and this is the only writer of it,
+// while the queue handleNext goes on to check is per function and already
+// contended by every other environment serving that function.
+func (s *RuntimeAPIServer) noteFirstNext(containerIP string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seenNext[containerIP] {
+		return false
+	}
+	s.seenNext[containerIP] = true
+	s.firstNextAt[containerIP] = s.clk.Now()
+	s.maybeMarkReadyLocked(containerIP)
+	return true
 }
 
 // awaitWaiter re-enters the long poll after a claimed invocation turned out to

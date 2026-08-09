@@ -124,3 +124,33 @@ func writeTestReport(t *testing.T, path string, report *compat.RunReport) {
 		t.Fatalf("write test report %s: %v", path, err)
 	}
 }
+
+func TestArtifactNamedDistinguishesARequestFromADefault(t *testing.T) {
+	// Given: every way --overcast-image can arrive at a value
+	// When: it is classified as a request or a default
+	// Then: only a value the caller actually supplied — on the command line or
+	// through the env var — counts. This is the distinction the whole fix for
+	// issue #801 turns on: the flag is non-empty even when nobody asked for
+	// anything, because it defaults to defaultOvercastImage, so the value
+	// cannot answer the question on its own.
+	cases := []struct {
+		name      string
+		value     string
+		env       string
+		flagGiven bool
+		want      bool
+	}{
+		{"compiled-in default", defaultOvercastImage, "", false, false},
+		{"named on the command line", "ghcr.io/neaox/overcast:rc", "", true, true},
+		{"named through the environment", "ghcr.io/neaox/overcast:rc", "ghcr.io/neaox/overcast:rc", false, true},
+		{"command line overriding the environment", "ghcr.io/neaox/overcast:rc", "ghcr.io/neaox/overcast:other", true, true},
+		{"explicitly emptied", "", "", true, false},
+		{"unset with an empty default", "", "", false, false},
+	}
+	for _, tc := range cases {
+		if got := artifactNamed(tc.value, tc.env, tc.flagGiven); got != tc.want {
+			t.Errorf("%s: artifactNamed(%q, %q, %v) = %v, want %v",
+				tc.name, tc.value, tc.env, tc.flagGiven, got, tc.want)
+		}
+	}
+}

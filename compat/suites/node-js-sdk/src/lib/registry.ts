@@ -18,7 +18,7 @@
  */
 
 import { createRequire } from "node:module";
-import type { TestCase, TestFn, TestGroup } from "./harness.js";
+import type { TestCase, TestFn, TestGroup } from "./harness.ts";
 
 // ─── Registry types ───────────────────────────────────────────────────────
 
@@ -82,12 +82,12 @@ export interface BuildOptions {
   /** Optional setup functions keyed by group name. */
   setup?: Record<
     string,
-    (ctx: import("./harness.js").TestContext) => Promise<void>
+    (ctx: import("./harness.ts").TestContext) => Promise<void>
   >;
   /** Optional teardown functions keyed by group name. */
   teardown?: Record<
     string,
-    (ctx: import("./harness.js").TestContext) => Promise<void>
+    (ctx: import("./harness.ts").TestContext) => Promise<void>
   >;
 }
 

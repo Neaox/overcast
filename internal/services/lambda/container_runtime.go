@@ -1235,8 +1235,93 @@ func (ci *containerInstance) AwaitReady(ctx context.Context) error {
 		ci.healthy = false
 		return fmt.Errorf("lambda container exited during init (exit code %s)", exitCode)
 	case <-ctx.Done():
+		// Only the budget running out is a fault worth explaining. The caller
+		// giving up — an abandoned invoke, a shutdown — cancels this same
+		// context and has nothing to diagnose.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			ci.logInitTimeout()
+		}
 		return ctx.Err()
 	}
+}
+
+const (
+	// initTimeoutLogTail is how many lines of the container's output the
+	// INIT-timeout diagnostic quotes.
+	initTimeoutLogTail = "50"
+	// initTimeoutLogTimeout bounds the wait for the daemon to hand them over.
+	// The invocation has already failed by this point, so the diagnostic must
+	// not be what keeps the caller waiting.
+	initTimeoutLogTimeout = 3 * time.Second
+)
+
+// logInitTimeout explains an execution environment that never finished INIT.
+//
+// What the caller gets is "lambda runtime did not initialize within 10s", which
+// names neither the container nor anything that separates the causes. #800 is
+// what that costs: an entire investigation went into proving the Runtime API
+// was reachable on the address in the startup log — the shared one — when the
+// container had been handed a per-environment port that appears nowhere else,
+// and nothing in the log said whether anything had ever connected to it.
+//
+// So this answers, for this environment specifically: the address it was told
+// to dial, whether anything ever arrived there, and what it printed.
+//
+// Connections narrow it honestly rather than conclusively. The RIC does not
+// dial until it has imported the handler, so none means either the import is
+// still running or the container cannot route back to this host — two very
+// different jobs, but both are now a named pair to choose between instead of
+// nothing at all. Some, with no invocation served, rules the route out: what is
+// left is identity, and the 403 sits next to this line.
+func (ci *containerInstance) logInitTimeout() {
+	if ci.logger == nil {
+		return
+	}
+	connections := ci.rapiListener.Accepted()
+	msg := "lambda INIT timed out — the container reached its Runtime API endpoint but never polled for work"
+	if connections == 0 {
+		msg = "lambda INIT timed out — the container never reached its Runtime API endpoint; it is either still initialising or cannot route back to this host"
+	}
+
+	fields := []zap.Field{
+		zap.String("function", ci.functionName),
+		zap.String("container_ip", ci.containerIP),
+		zap.String("runtime_api", ci.rapiListener.Addr()),
+		zap.Int64("runtime_api_connections", connections),
+	}
+	if ci.id != "" {
+		fields = append(fields, zap.String("container", shortContainerID(ci.id)))
+	}
+	output, err := ci.initOutput()
+	switch {
+	case err != nil:
+		fields = append(fields, zap.NamedError("container_output_error", err))
+	case output == "":
+		// Worth stating rather than omitting: an empty log is the normal state
+		// for a healthy AWS base image, whose RIC prints nothing until it runs
+		// the handler. Reading it as suppressed output is a dead end, and one
+		// #800 went down.
+		fields = append(fields, zap.String("container_output", "(the container printed nothing)"))
+	default:
+		fields = append(fields, zap.String("container_output", output))
+	}
+	ci.logger.Warn(msg, fields...)
+}
+
+// initOutput is a bounded tail of what the container printed. Fetched only on
+// the failure path, and on a context of its own — the one that expired is
+// already cancelled.
+func (ci *containerInstance) initOutput() (string, error) {
+	if ci.docker == nil || ci.id == "" {
+		return "", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), initTimeoutLogTimeout)
+	defer cancel()
+	raw, err := ci.docker.ContainerLogs(ctx, ci.id, initTimeoutLogTail)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(docker.DemuxStream(raw))), nil
 }
 
 // LogStreamName returns the AWS-style log stream assigned to this container.

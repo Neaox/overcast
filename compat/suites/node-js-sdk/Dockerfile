@@ -12,7 +12,10 @@
 #     -e OVERCAST_ENDPOINT=http://localhost:4566 \
 #     overcast-compat-node-js-sdk
 
-FROM node:20-alpine
+# Node 24: the suite has no build step and no TypeScript loader — it runs its
+# .ts sources through Node's built-in type stripping, which needs 22.18+ on the
+# 22.x line or 23.6+. node:20-alpine cannot run this suite at all.
+FROM node:24-alpine
 
 WORKDIR /suite
 
@@ -21,7 +24,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci --ignore-scripts
 
 # Copy source.
-COPY tsconfig.json ./
+COPY tsconfig.json run.js ./
 COPY src/ ./src/
 
 # Smoke-check the TypeScript compilation (fails fast on type errors).
@@ -30,4 +33,4 @@ RUN npx tsc --noEmit
 # Default command: run the full suite and emit NDJSON to stdout.
 # OVERCAST_ENDPOINT and OVERCAST_DEFAULT_REGION are injected at runtime by the caller
 # (docker-compose or CI environment).
-CMD ["node", "--import", "tsx/esm", "src/runner.ts"]
+CMD ["node", "run.js"]

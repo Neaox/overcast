@@ -34,12 +34,12 @@ iterating from the current code rather than rebuilding the suite from scratch.
 
 | Item        | Value                                        |
 | ----------- | -------------------------------------------- |
-| Language    | TypeScript (CDK app and runner) + Node.js 20 |
+| Language    | TypeScript (CDK app and runner) + Node.js 22.18+/23.6+ (type stripping; no build step) |
 | AWS client  | `aws-cdk` CLI + CDK v2 libraries (pinned in `package.json`) |
 | CDK version | CDK v2 (pinned in `package.json`)                           |
+| CI image    | `node:24-alpine` with `aws-cdk` installed    |
 
 > SDK upgrade policy: [compat/AGENTS.md § SDK version pinning](../../AGENTS.md#sdk-version-pinning--upgrade-strategy).
-| CI image    | `node:20-alpine` with `aws-cdk` installed    |
 
 ---
 
@@ -49,8 +49,9 @@ iterating from the current code rather than rebuilding the suite from scratch.
 compat/suites/cdk/
   AGENTS.md          ← you are here
   README.md          ← quick-start, prerequisites, env vars
-  Dockerfile         ← node:20-alpine + aws-cdk + cdk bootstrap deps
-  package.json       ← aws-cdk, aws-cdk-lib, constructs, tsx, @aws-sdk/client-*
+  Dockerfile         ← node:24-alpine + aws-cdk + cdk bootstrap deps
+  package.json       ← aws-cdk, aws-cdk-lib, constructs, @aws-sdk/client-*
+  run.js             ← entry point: Node version check, then imports src/runner.ts
   tsconfig.json      ← NodeNext, strict (mirror node-js-sdk)
   cdk.json           ← CDK app entrypoint: src/app.ts
 
@@ -269,7 +270,8 @@ throw new Error(
 When building this suite from scratch:
 
 1. Create `package.json` with `aws-cdk`, `aws-cdk-lib`, `constructs`,
-   `@aws-sdk/client-*` packages, and `tsx` as a dev dependency.
+   and the `@aws-sdk/client-*` packages. No TypeScript loader — Node runs the
+   sources directly.
 2. Create `tsconfig.json` (mirror `node-js-sdk/tsconfig.json`).
 3. Create `cdk.json` pointing at `src/app.ts`.
 4. Create `src/stack.ts` with `CdkCompatStack` defining the planned resources
@@ -279,7 +281,7 @@ When building this suite from scratch:
    — adjust imports but keep the same `TestContext`/`TestGroup` interface.
 7. Create `src/groups/lifecycle.ts` with the lifecycle phase groups.
 8. Create `src/runner.ts` that calls `runSuite()` with all groups.
-9. Create `Dockerfile` based on `node:20-alpine`; install `aws-cdk`
+9. Create `Dockerfile` based on `node:24-alpine`; install `aws-cdk`
    and pin the version.
 10. Register the suite in `compat/runner.go` and `compat/suites/registry.json`.
 11. Run `tsc --noEmit` to confirm type correctness.

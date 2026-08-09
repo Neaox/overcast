@@ -1,5 +1,6 @@
+# There is no build output to ignore: Node runs the TypeScript sources
+# directly and tsconfig.json sets noEmit. This used to ignore *.js and *.d.ts,
+# inherited from `cdk init`'s compile-in-place layout — which would now hide
+# run.js, the suite's entry point.
 node_modules/
 cdk.out/
-*.js
-!jest.config.js
-*.d.ts

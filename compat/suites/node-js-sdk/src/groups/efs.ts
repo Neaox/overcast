@@ -14,8 +14,8 @@ import {
   DescribeMountTargetsCommand,
   ModifyMountTargetSecurityGroupsCommand,
 } from "@aws-sdk/client-efs";
-import { makeClients } from "../lib/clients.js";
-import type { TestContext, TestGroup } from "../lib/harness.js";
+import { makeClients } from "../lib/clients.ts";
+import type { TestContext, TestGroup } from "../lib/harness.ts";
 import * as assert from "node:assert/strict";
 
 /** Bag keys shared between the tests in this group. */

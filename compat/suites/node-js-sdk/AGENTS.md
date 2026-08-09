@@ -32,9 +32,9 @@ No Overcast-specific headers, no special client wrappers, no test modes.
 
 | Item       | Value                                                 |
 | ---------- | ----------------------------------------------------- |
-| Runtime    | Node.js 20                                            |
+| Runtime    | Node.js 22.18+/23.6+ (type stripping; no build step)  |
 | SDK        | `@aws-sdk/client-*` v3, pinned to `^3.1020.0`         |
-| CI image   | `node:20-alpine`                                      |
+| CI image   | `node:24-alpine`                                      |
 
 > SDK version pinning policy: see [compat/AGENTS.md § SDK version pinning](../../AGENTS.md#sdk-version-pinning--upgrade-strategy).
 

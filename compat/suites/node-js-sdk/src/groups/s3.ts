@@ -42,8 +42,8 @@ import {
   GetBucketLifecycleConfigurationCommand,
   DeleteBucketLifecycleCommand,
 } from "@aws-sdk/client-s3";
-import { makeClients } from "../lib/clients.js";
-import type { TestGroup } from "../lib/harness.js";
+import { makeClients } from "../lib/clients.ts";
+import type { TestGroup } from "../lib/harness.ts";
 import * as assert from "node:assert/strict";
 
 export function makeS3Groups(suite: string): TestGroup[] {

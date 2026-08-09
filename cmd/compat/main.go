@@ -83,8 +83,8 @@ var (
 	dev               = flag.Bool("dev", false, "One-command dev loop: manage Overcast, serve the dashboard with a hot-reloading UI, open a browser")
 	startOvercastMode = flag.String("start-overcast", envOr("OVERCAST_COMPAT_START", startOvercastAuto), "Manage a throwaway Overcast instance: auto|always|never")
 	overcastHost      = flag.String("overcast-host", envOr("OVERCAST_COMPAT_HOST", "localhost"), "Hostname the suites address the managed instance by (e.g. localhost.overcast.sh for virtual-host-style S3)")
-	overcastBin       = flag.String("overcast-bin", envOr("OVERCAST_COMPAT_BIN", ""), "Path to an overcast binary (default: bin/overcast, then PATH, then a container)")
-	overcastImage     = flag.String("overcast-image", envOr("OVERCAST_COMPAT_IMAGE", defaultOvercastImage), "Container image used when no overcast binary is found")
+	overcastBin       = flag.String("overcast-bin", envOr("OVERCAST_COMPAT_BIN", ""), "Run this overcast binary; naming one is honoured or the run fails (unset: bin/overcast, then PATH, then a container)")
+	overcastImage     = flag.String("overcast-image", envOr("OVERCAST_COMPAT_IMAGE", defaultOvercastImage), "Run this container image; naming one selects the container even when a local binary exists. Unset, it is only the fallback for when no binary is found")
 	overcastUI        = flag.Bool("overcast-ui", false, "Also expose the managed instance's own web UI on a free port")
 	overcastTimeout   = flag.Int("overcast-timeout", 60, "Seconds to wait for the managed instance to become healthy")
 	portBase          = flag.Int("port-base", defaultPortBase, "First port considered when scanning for free ports (never 4566/4567)")
@@ -94,19 +94,80 @@ var (
 	openBrowserFlag   = flag.Bool("open", false, "Open the dashboard in a browser once it is ready")
 )
 
+// flagGiven reports whether a flag was set on the command line. flag.Visit
+// walks only the flags that were actually passed, which is the one way to tell
+// a caller's choice apart from a default — and several of these flags have
+// defaults that look exactly like a choice.
+func flagGiven(name string) bool {
+	given := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			given = true
+		}
+	})
+	return given
+}
+
 // endpointPinned reports whether the caller chose the Overcast endpoint, in
 // which case compat targets it rather than starting one of its own.
 func endpointPinned() bool {
-	if os.Getenv("OVERCAST_ENDPOINT") != "" {
-		return true
+	return os.Getenv("OVERCAST_ENDPOINT") != "" || flagGiven("endpoint")
+}
+
+// artifactNamed reports whether a caller named an artifact to test: a
+// non-empty value that came from somewhere other than the compiled-in default.
+//
+// The env var counts, for the same reason endpointPinned counts
+// OVERCAST_ENDPOINT: OVERCAST_COMPAT_IMAGE has no meaning other than "test this
+// image", nothing in this repo sets it ambiently, and a run that ignored it
+// would be the very trap this closes. The compiled-in default is the only
+// value that is nobody's request — and it is why the value alone cannot answer
+// the question, since --overcast-image is non-empty either way.
+//
+// The empty-value guard covers an explicit `--overcast-image ""`, which asks
+// for nothing and must not outrank a local build.
+func artifactNamed(value, env string, onCommandLine bool) bool {
+	return value != "" && (env != "" || onCommandLine)
+}
+
+// imageRequested reports whether the caller named the container image to test.
+// That decides whether it outranks a locally built binary — see
+// chooseOvercastArtifact.
+func imageRequested() bool {
+	return artifactNamed(*overcastImage, os.Getenv("OVERCAST_COMPAT_IMAGE"), flagGiven("overcast-image"))
+}
+
+// binRequested reports whether the caller named a binary to test. Unlike the
+// image, this flag's default is empty, so a value is nearly always a request —
+// it is read the same way anyway, so the two flags cannot drift apart.
+func binRequested() bool {
+	return artifactNamed(*overcastBin, os.Getenv("OVERCAST_COMPAT_BIN"), flagGiven("overcast-bin"))
+}
+
+// warnUnusedArtifactFlags says so when the caller named an artifact to test but
+// compat is not the one starting Overcast. --overcast-image and --overcast-bin
+// only ever apply to a managed instance, so pinning --endpoint or passing
+// --start-overcast=never discards them — which is the same "you tested
+// something other than what you named" trap that chooseOvercastArtifact exists
+// to close, arriving by a different road.
+func warnUnusedArtifactFlags(endpointURL string) {
+	var named string
+	switch {
+	case imageRequested():
+		named = "--overcast-image " + *overcastImage
+	case binRequested():
+		named = "--overcast-bin " + *overcastBin
+	default:
+		return
 	}
-	pinned := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "endpoint" {
-			pinned = true
-		}
-	})
-	return pinned
+	why := "--start-overcast=" + *startOvercastMode
+	if endpointPinned() {
+		why = "the endpoint is pinned"
+	}
+	fmt.Fprintf(os.Stderr,
+		"compat: WARNING: %s is ignored (%s, so compat is not starting Overcast); "+
+			"the suites run against whatever is already serving %s\n",
+		named, why, endpointURL)
 }
 
 func main() {
@@ -280,16 +341,19 @@ func run() int {
 	// owns a throwaway instance on a free port — AGENTS.md reserves 4566/4567
 	// for the developer's own instance.
 	endpointURL := *endpoint
-	if shouldStartOvercast(*startOvercastMode, endpointPinned()) {
+	managed := shouldStartOvercast(*startOvercastMode, endpointPinned())
+	if managed {
 		oc, err := startOvercast(ctx, overcastOptions{
-			Host:     *overcastHost,
-			Bin:      *overcastBin,
-			Image:    *overcastImage,
-			PortBase: *portBase,
-			WithUI:   *overcastUI,
-			Timeout:  time.Duration(*overcastTimeout) * time.Second,
-			LogLevel: envOr("OVERCAST_LOG_LEVEL", "warn"),
-			Logf:     func(f string, a ...any) { fmt.Fprintf(os.Stderr, "compat: "+f+"\n", a...) },
+			Host:           *overcastHost,
+			Bin:            *overcastBin,
+			BinRequested:   binRequested(),
+			Image:          *overcastImage,
+			ImageRequested: imageRequested(),
+			PortBase:       *portBase,
+			WithUI:         *overcastUI,
+			Timeout:        time.Duration(*overcastTimeout) * time.Second,
+			LogLevel:       envOr("OVERCAST_LOG_LEVEL", "warn"),
+			Logf:           func(f string, a ...any) { fmt.Fprintf(os.Stderr, "compat: "+f+"\n", a...) },
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "compat: %v\n", err)
@@ -297,7 +361,11 @@ func run() int {
 		}
 		defer oc.Stop()
 		endpointURL = oc.Endpoint
-		fmt.Fprintf(os.Stderr, "compat: Overcast ready at %s (%s, managed by compat)\n", oc.Endpoint, oc.Mode)
+		// Name the artifact, not just the mode: "docker" is the same word
+		// whether the image was the release candidate the caller asked for or
+		// the compiled-in default (issue #801).
+		fmt.Fprintf(os.Stderr, "compat: Overcast ready at %s (%s, managed by compat)\n",
+			oc.Endpoint, oc.Artifact.Describe())
 		if oc.UIURL != "" {
 			fmt.Fprintf(os.Stderr, "compat: Overcast web UI at %s\n", oc.UIURL)
 		}
@@ -306,6 +374,9 @@ func run() int {
 		// --start-overcast=never with no endpoint: target the developer's own
 		// instance on the default port, which is what 4566 is reserved for.
 		endpointURL = fmt.Sprintf("http://localhost:%d", reservedAPIPort)
+	}
+	if !managed {
+		warnUnusedArtifactFlags(endpointURL)
 	}
 
 	// --ui-dev: Vite serves the dashboard UI with hot reloading and proxies
