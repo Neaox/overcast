@@ -113,6 +113,23 @@ comment on the PR always describes the current one, with pull commands and image
 the build path, the embedded web assets, the pinned base image digests — none of which a local
 `docker build` reproduces faithfully.
 
+### Testing the candidate is the agent's job, not a handover
+
+**Once CI has published the RC images, run the passes below and post the evidence.** Do not stop at
+"the RC is ready to smoke test" and hand the list to the user — an agent that opens the release PR
+and then asks someone else to exercise it has done the half of the work that was already automated
+and skipped the half that was not. The mechanics are a workflow; this is the part a person would
+otherwise have to do by hand, which is exactly why it is worth doing for them.
+
+Two things bound it. Green CI checks do **not** substitute: they prove the build is sound, not that
+the changelog's claims are true. And testing is not merging — `VERSION` stays CODEOWNER-owned, the
+merge stays a deliberate human step, and every publish job still waits on the `release`
+environment's reviewer.
+
+When the passes are done, **post one comment on the release PR** with the summary and screenshots
+(see [Evidence to keep](#evidence-to-keep)). The approval is made against that comment, so it has to
+exist before you say the RC is ready.
+
 ---
 
 ## What to test
@@ -152,18 +169,33 @@ scripts/run-test-instance.sh --mount-docker-socket \
 
 ### 2. Regression — the compatibility suite
 
-Point the runner at the candidate image rather than letting it build:
+Point the runner at the candidate image rather than letting it build. **This is two commands, and
+combining them runs nothing** — `--max-failures`, like `--compare-baseline`, `--report` and
+`--check-parity`, is a *gate mode*: it reads an existing `--results-file` and exits without
+executing a single test (`cmd/compat/main.go`, and `compat/AGENTS.md` § "Flags that read a results
+file instead of producing one").
 
 ```sh
+# 1. run the suites
 scripts/docker-go.sh run ./cmd/compat \
   --overcast-image ghcr.io/neaox/overcast:<version>-rc.<n> \
-  --format json --results-file compat-results.json --max-failures 0
+  --format json --results-file compat-results.json
+
+# 2. then gate the results it produced
+scripts/docker-go.sh run ./cmd/compat \
+  --results-file compat-results.json --max-failures 0
 ```
 
-`--max-failures 0` is the gate: since the baseline was burned to zero, **any** `fail` reds the run
-regardless of what the baseline says. Read the results with `--report`, which separates unimplemented
-services (expected) from genuine failures and cascade failures — fix the root cause of a cascade
-before chasing its dependents.
+**Passing both at once fails silently in the worst possible direction.** The run never happens, the
+gate reads whatever `compat-results.json` is already on disk — the default path, and a file a
+previous run very likely left there — and prints `failure gate passed`, exit 0. A release can be
+signed off against yesterday's results having executed nothing. If the suites did run, the log ends
+with per-suite output and the results file's mtime is fresh; check both before believing a pass.
+
+`--max-failures 0` is the gate proper: since the baseline was burned to zero, **any** `fail` reds the
+run regardless of what the baseline says. Read the results with `--report`, which separates
+unimplemented services (expected) from genuine failures and cascade failures — fix the root cause of
+a cascade before chasing its dependents.
 
 A previously passing result becoming `fail` or `unimplemented` blocks the release unless a maintainer
 explicitly accepts it (RELEASE.md § Compatibility Evidence).
@@ -186,6 +218,15 @@ section and exercise the claims against the running RC, prioritising:
   imply.
 - **Newly emulated behaviour that used to be a no-op.** These are the entries most likely to be
   wrong, because nothing previously depended on them being right.
+- **Then every remaining bullet.** The four above are the order to work in, not the scope. The
+  section is the test plan in full: each bullet is a sentence a user will act on, so each one gets
+  exercised or gets named as untested. "Prioritise" means start there, not stop there.
+
+**Get the shape right before calling a claim false.** A claim that looks broken is often a probe
+built from the note's prose rather than from the API. Before reporting a failure, check the request
+against the implementation or the pinned model — a PromQL alarm is detected from the dotted
+`EvaluationCriteria.PromQLCriteria.Query` form, and a flat `EvaluationCriteria=…` is silently a
+different request. Re-run the corrected shape, and report what the corrected run showed.
 
 **Mind the coverage gap.** Compat suites do not cover every service. Cross-check the areas this
 release touched against `compat/suites/registry.json`: an area with Go integration tests but no
@@ -196,8 +237,29 @@ users. Say so in the release evidence when it happens.
 
 The web UI is embedded in the console image and absent from slim. Open the pages this release
 changed against a *running* RC with real state created through the SDK, not an empty emulator — a
-page that renders fine with no data is the usual way a broken view passes review. There is no e2e
-framework in the repo; this pass is manual and deliberate.
+page that renders fine with no data is the usual way a broken view passes review.
+
+There is no e2e framework in the repo, but this pass is **not** manual and **not** something to hand
+back to the user. Drive it headlessly with the **`chrome-devtools` MCP server** the repo declares in
+[`.mcp.json`](../../../.mcp.json), exactly as for any other visual change — the full workflow, and
+the reasoning behind each step, is in the [`pull-request` skill § Visual
+Evidence](../pull-request/SKILL.md#visual-evidence). Claude Code runs it `--headless --isolated`, so
+an agent with no display can capture the same images a reviewer would see. If the tools are absent,
+the client has not picked the file up: restart the session rather than reaching for another
+mechanism.
+
+Three things that skill covers and this pass depends on:
+
+- **`--mount-docker-socket` is what makes the console connect at all** on a remapped port. Without
+  it the container cannot see its own port mapping, and every screenshot is of the *Connect to
+  Overcast* screen.
+- **`wait_for` the text that only exists once the state is real** — a seeded resource's name — never
+  a fixed sleep. A screenshot of a spinner is worse than none.
+- **`emulate` sets the axes**, so a light/dark or narrow/wide pair differs only in the axis under
+  test. Pick the axis the change actually moves and say why; a blanket cross-product is its own
+  failure.
+
+Write the images outside the repo tree and attach them to the PR comment below.
 
 ### 5. Cleanup
 
@@ -206,19 +268,31 @@ EFS or RDS runs. A leaked container from a release test is the one that confuses
 
 ---
 
-## Evidence to keep
+## Evidence to keep — post it as a PR comment
 
-RELEASE.md § Compatibility Evidence asks for these; attach them to the release PR so the approval is
-made against something:
+RELEASE.md § Compatibility Evidence asks for these. **Post them as a single comment on the release
+PR** naming the exact RC tag and digest you tested, so the approval is made against something rather
+than against a memory of a session nobody else saw:
 
+- the RC tag and image digests, so it is unambiguous which bits were exercised
 - `compat-results.json` from the run against the RC image
 - the **Aggregate Compatibility Results** workflow summary
 - any baseline comparison output
-- what you tested by hand in step 3, and what you did **not** — the gaps matter more than the passes,
-  because they are what nobody else can infer from a green check
+- a claim-by-claim table for step 3: every bullet in the release section, and whether it was
+  verified, with the observed evidence — the request and the response, not an assertion
+- the step 4 screenshots, embedded
+- what you did **not** test, and why — the gaps matter more than the passes, because they are what
+  nobody else can infer from a green check
 
 Report failures plainly. A release note that says a thing works, when the candidate showed it does
 not, is worse than no note.
+
+**Anything you find that is not a regression and not a blocker becomes a GitHub issue**, with the
+reproduction, the pre-existing-versus-new determination, and the blast radius — not a line in the PR
+comment that scrolls away. Say so in the comment and link it. Determine which it is by running the
+same probe against the previous release's image (`ghcr.io/neaox/overcast:<previous>`) and, where the
+answer matters, by dating the code with `git log -S` and `git tag --contains`: a fault present in
+every tag is not this release's problem and must not hold it up.
 
 ---
 
