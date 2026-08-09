@@ -530,8 +530,13 @@ type eventsRuleHandler struct{}
 
 func (h *eventsRuleHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	body := make(map[string]any)
+	// Name is optional on AWS::Events::Rule and CDK's `events.Rule` never sets
+	// it. PutRule accepted the empty name, so every unnamed rule in a stack
+	// became the *same* nameless rule and the stack still reported success.
 	if v, _ := props["Name"].(string); v != "" {
 		body["Name"] = v
+	} else {
+		body["Name"] = rCtx.generatedNameWithin(maxNameLenEvents)
 	}
 	if v, _ := props["EventBusName"].(string); v != "" {
 		body["EventBusName"] = v
@@ -1334,8 +1339,12 @@ type sfnStateMachineHandler struct{}
 
 func (h *sfnStateMachineHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	body := map[string]any{}
+	// StateMachineName is optional on the resource and CDK's `StateMachine`
+	// leaves it out unless asked; CreateStateMachine requires it.
 	if v, _ := props["StateMachineName"].(string); v != "" {
 		body["name"] = v
+	} else {
+		body["name"] = rCtx.generatedNameWithin(maxNameLenSFN)
 	}
 	if v, _ := props["DefinitionString"].(string); v != "" {
 		body["definition"] = v

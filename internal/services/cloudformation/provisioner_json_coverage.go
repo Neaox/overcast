@@ -112,7 +112,9 @@ func ecrApplyRepositoryPolicies(ctx context.Context, router http.Handler, rCtx *
 func (h *ecrRepositoryHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	name, _ := props["RepositoryName"].(string)
 	if name == "" {
-		name = fmt.Sprintf("%s-ecr", rCtx.StackName)
+		// Lowercase: ECR rejects uppercase repository names, and both halves
+		// of a generated name are mixed case.
+		name = rCtx.generatedNameLowerWithin(maxNameLenECR)
 	}
 
 	body := map[string]any{
@@ -822,28 +824,37 @@ func (h *glueTableHandler) Update(ctx context.Context, router http.Handler, _ *c
 
 type cloudwatchAlarmHandler struct{}
 
+// cloudwatchAlarmProperties are every AWS::CloudWatch::Alarm property other
+// than AlarmName, each of which maps one-for-one onto PutMetricAlarm.
+//
+// The list is exhaustive on purpose. Every one of them is optional on the
+// resource, and a dropped optional property does not fail the stack — it
+// produces an alarm that exists and is evaluated under a configuration the
+// template did not ask for (a dropped TreatMissingData turns notBreaching back
+// into missing; a dropped DatapointsToAlarm turns an "M out of N" alarm into
+// "N out of N"). The ones Overcast refuses — Metrics, ThresholdMetricId,
+// ExtendedStatistic — have to reach the service to be refused at all, or the
+// stack dies claiming a missing MetricName the template never had to supply.
+var cloudwatchAlarmProperties = []string{
+	"ActionsEnabled", "AlarmActions", "AlarmDescription", "ComparisonOperator",
+	"DatapointsToAlarm", "Dimensions", "EvaluateLowSampleCountPercentile",
+	"EvaluationCriteria", "EvaluationInterval", "EvaluationPeriods",
+	"EvaluationWindow", "ExtendedStatistic", "InsufficientDataActions",
+	"MetricName", "Metrics", "Namespace", "OKActions", "Period", "Statistic",
+	"Tags", "Threshold", "ThresholdMetricId", "TreatMissingData", "Unit",
+}
+
 // putMetricAlarm issues PutMetricAlarm for the given alarm name and template
 // properties, and returns the physical ID and attributes. Shared by Create and
 // Update: PutMetricAlarm is itself an upsert, so the two are the same call.
+//
+// A property the template omitted is left out of the request rather than sent
+// empty, so the service applies AWS's own defaults instead of being told the
+// caller asked for "".
 func (h *cloudwatchAlarmHandler) putMetricAlarm(ctx context.Context, router http.Handler, rCtx *resolveContext, alarmName string, props map[string]any) (string, map[string]string, error) {
-	metricName, _ := props["MetricName"].(string)
-	namespace, _ := props["Namespace"].(string)
-	statistic, _ := props["Statistic"].(string)
-	comparisonOperator, _ := props["ComparisonOperator"].(string)
-
-	body := map[string]any{
-		"AlarmName":          alarmName,
-		"MetricName":         metricName,
-		"Namespace":          namespace,
-		"Statistic":          statistic,
-		"ComparisonOperator": comparisonOperator,
-	}
-	for _, name := range []string{
-		"Period", "EvaluationPeriods", "Threshold", "AlarmDescription",
-		"ActionsEnabled", "OKActions", "AlarmActions",
-		"InsufficientDataActions", "Unit", "Dimensions",
-	} {
-		if v, ok := props[name]; ok {
+	body := map[string]any{"AlarmName": alarmName}
+	for _, name := range cloudwatchAlarmProperties {
+		if v, ok := props[name]; ok && v != nil {
 			body[name] = v
 		}
 	}
@@ -861,7 +872,16 @@ func (h *cloudwatchAlarmHandler) putMetricAlarm(ctx context.Context, router http
 }
 
 func (h *cloudwatchAlarmHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	// AlarmName is optional on the resource — CloudFormation names the alarm
+	// when the template leaves it out, and CDK leaves it out unless the caller
+	// passes `alarmName`, which the constructs that build alarms for you
+	// (metric.createAlarm, queue/lambda metric helpers) never do. PutMetricAlarm
+	// itself requires the name, so forwarding the empty string turned every
+	// such stack into AWS's own "Value null at 'alarmName'" ValidationError.
 	alarmName, _ := props["AlarmName"].(string)
+	if alarmName == "" {
+		alarmName = rCtx.generatedName()
+	}
 	return h.putMetricAlarm(ctx, router, rCtx, alarmName, props)
 }
 
@@ -951,7 +971,13 @@ func (h *schedulerScheduleHandler) Update(ctx context.Context, router http.Handl
 type schedulerScheduleGroupHandler struct{}
 
 func (h *schedulerScheduleGroupHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	// Name is optional on AWS::Scheduler::ScheduleGroup. The empty name was
+	// accepted, so a second unnamed group in the same stack collided with the
+	// first — "Schedule group  already exists".
 	name, _ := props["Name"].(string)
+	if name == "" {
+		name = rCtx.generatedNameWithin(maxNameLenScheduler)
+	}
 
 	body := map[string]any{
 		"Name": name,

@@ -17,18 +17,21 @@ import (
 
 // alarmInput is a protocol-independent PutMetricAlarm request.
 type alarmInput struct {
-	AlarmName               string
-	AlarmDescription        string
-	MetricName              string
-	Namespace               string
-	Statistic               string
-	ExtendedStatistic       string
-	Dimensions              []Dimension
-	Period                  int
-	Unit                    string
-	EvaluationPeriods       int
-	DatapointsToAlarm       int
-	Threshold               float64
+	AlarmName         string
+	AlarmDescription  string
+	MetricName        string
+	Namespace         string
+	Statistic         string
+	ExtendedStatistic string
+	Dimensions        []Dimension
+	Period            int
+	Unit              string
+	EvaluationPeriods int
+	DatapointsToAlarm int
+	// Threshold is a pointer because 0 is a legitimate threshold ("greater
+	// than zero errors" is the commonest alarm there is), so a plain float64
+	// cannot tell an explicit 0 from an omitted parameter.
+	Threshold               *float64
 	ComparisonOperator      string
 	TreatMissingData        string
 	ActionsEnabled          *bool
@@ -36,11 +39,27 @@ type alarmInput struct {
 	OKActions               []string
 	InsufficientDataActions []string
 
+	// Tags are applied when the alarm is created. AWS ignores them on a
+	// PutMetricAlarm that updates an existing alarm — TagResource is the
+	// only way to change an existing alarm's tags.
+	Tags []Tag
+
 	// ThresholdMetricID is set for an anomaly-detection alarm, and
 	// hasMetrics for a metric-math or multi-metric alarm. Both are refused —
 	// they are recorded here only so the refusal can name what it saw.
 	ThresholdMetricID string
 	hasMetrics        bool
+
+	// hasEvaluationCriteria marks a PromQL alarm (the EvaluationCriteria
+	// union). Refused, for the same reason as the rest: there is no PromQL
+	// engine behind the emulator.
+	hasEvaluationCriteria bool
+}
+
+// Tag is a CloudWatch resource tag.
+type Tag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
 }
 
 // errUnsupportedAlarm builds the 501 used for an alarm configuration Overcast
@@ -76,6 +95,10 @@ func (in *alarmInput) validate() *protocol.AWSError {
 	if in.hasMetrics {
 		return errUnsupportedAlarm("Metric-math and multi-metric alarms (the Metrics parameter)",
 			"Only single-metric alarms — Namespace + MetricName + Statistic — are evaluated.")
+	}
+	if in.hasEvaluationCriteria {
+		return errUnsupportedAlarm("PromQL alarms (the EvaluationCriteria parameter)",
+			"There is no PromQL engine behind the emulator. Only single-metric alarms — Namespace + MetricName + Statistic — are evaluated.")
 	}
 	if in.ThresholdMetricID != "" {
 		return errUnsupportedAlarm("Anomaly-detection alarms (ThresholdMetricId)",
@@ -118,6 +141,31 @@ func (in *alarmInput) validate() *protocol.AWSError {
 	if in.DatapointsToAlarm > 0 && in.EvaluationPeriods > 0 && in.DatapointsToAlarm > in.EvaluationPeriods {
 		return errValidation("DatapointsToAlarm cannot be greater than EvaluationPeriods")
 	}
+
+	// ---- Optional on the wire, required for *this* alarm shape -----------
+	//
+	// These five are marked "Required: No" on PutMetricAlarm only because an
+	// EvaluationCriteria (PromQL) alarm defines them inside that structure
+	// instead. For an alarm on a metric they are required, and AWS rejects the
+	// request without them. Overcast used to substitute Average /
+	// GreaterThanThreshold / 60s / 1 period / 0.0, which does not fail — it
+	// arms an alarm nobody configured, and "greater than 0.0 on the Average"
+	// is a different alarm from the one the caller half-described.
+	if in.Statistic == "" {
+		return errValidation("The parameter Statistic or the parameter ExtendedStatistic must be specified for a metric alarm")
+	}
+	if in.ComparisonOperator == "" {
+		return errValidation("1 validation error detected: Value null at 'comparisonOperator' failed to satisfy constraint: Member must not be null")
+	}
+	if in.Period == 0 {
+		return errValidation("The parameter Period must be specified for a metric alarm")
+	}
+	if in.EvaluationPeriods == 0 {
+		return errValidation("1 validation error detected: Value null at 'evaluationPeriods' failed to satisfy constraint: Member must not be null")
+	}
+	if in.Threshold == nil {
+		return errValidation("The parameter Threshold must be specified for an alarm based on a static threshold")
+	}
 	return nil
 }
 
@@ -148,7 +196,7 @@ func (in *alarmInput) toAlarm(arn string, now time.Time, previous *MetricAlarm) 
 		Period:                             in.Period,
 		EvaluationPeriods:                  in.EvaluationPeriods,
 		DatapointsToAlarm:                  in.DatapointsToAlarm,
-		Threshold:                          in.Threshold,
+		Threshold:                          *in.Threshold,
 		ComparisonOperator:                 in.ComparisonOperator,
 		TreatMissingData:                   in.TreatMissingData,
 		ActionsEnabled:                     true,
@@ -157,20 +205,13 @@ func (in *alarmInput) toAlarm(arn string, now time.Time, previous *MetricAlarm) 
 		InsufficientDataActions:            in.InsufficientDataActions,
 		AlarmConfigurationUpdatedTimestamp: now.Format(time.RFC3339),
 	}
+	// ActionsEnabled is the one property AWS documents a default for that the
+	// caller can also switch off, so it is the one that needs a pointer.
+	// Statistic, ComparisonOperator, Period, EvaluationPeriods and Threshold
+	// are not defaulted here — validate rejects an alarm that omits them
+	// rather than inventing a configuration (see validate).
 	if in.ActionsEnabled != nil {
 		alarm.ActionsEnabled = *in.ActionsEnabled
-	}
-	if alarm.Statistic == "" {
-		alarm.Statistic = "Average"
-	}
-	if alarm.ComparisonOperator == "" {
-		alarm.ComparisonOperator = "GreaterThanThreshold"
-	}
-	if alarm.Period <= 0 {
-		alarm.Period = 60
-	}
-	if alarm.EvaluationPeriods <= 0 {
-		alarm.EvaluationPeriods = 1
 	}
 
 	if previous != nil {
@@ -202,7 +243,6 @@ func alarmInputFromForm(r *http.Request) alarmInput {
 		Period:                  parseIntDefault(r.FormValue("Period"), 0),
 		EvaluationPeriods:       parseIntDefault(r.FormValue("EvaluationPeriods"), 0),
 		DatapointsToAlarm:       parseIntDefault(r.FormValue("DatapointsToAlarm"), 0),
-		Threshold:               parseFloatDefault(r.FormValue("Threshold"), 0),
 		ComparisonOperator:      r.FormValue("ComparisonOperator"),
 		TreatMissingData:        r.FormValue("TreatMissingData"),
 		ThresholdMetricID:       r.FormValue("ThresholdMetricId"),
@@ -210,13 +250,37 @@ func alarmInputFromForm(r *http.Request) alarmInput {
 		AlarmActions:            memberList(r, "AlarmActions"),
 		OKActions:               memberList(r, "OKActions"),
 		InsufficientDataActions: memberList(r, "InsufficientDataActions"),
+		Tags:                    memberTags(r, "Tags"),
 		hasMetrics:              r.FormValue("Metrics.member.1.Id") != "",
+		hasEvaluationCriteria:   hasFormPrefix(r, "EvaluationCriteria."),
+	}
+	if raw := r.FormValue("Threshold"); raw != "" {
+		threshold := parseFloatDefault(raw, 0)
+		in.Threshold = &threshold
 	}
 	if raw := r.FormValue("ActionsEnabled"); raw != "" {
 		enabled := raw != "false"
 		in.ActionsEnabled = &enabled
 	}
 	return in
+}
+
+// hasFormPrefix reports whether any form key starts with prefix, which is how
+// a nested Query-protocol structure announces itself — the union member that
+// was set is part of the key, so there is no single key to look for.
+//
+// It parses the form itself rather than assuming an earlier FormValue call
+// already did: r.Form is nil until something populates it, and reading it
+// directly would otherwise depend on evaluation order within the caller's
+// struct literal. ParseForm is idempotent.
+func hasFormPrefix(r *http.Request, prefix string) bool {
+	_ = r.ParseForm()
+	for key := range r.Form {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // memberList reads an AWS Query flattened list (`Name.member.N`).
@@ -228,6 +292,19 @@ func memberList(r *http.Request, name string) []string {
 			return out
 		}
 		out = append(out, v)
+	}
+}
+
+// memberTags reads an AWS Query flattened tag list. A tag with an empty value
+// is legal, so the key alone terminates the list.
+func memberTags(r *http.Request, name string) []Tag {
+	var out []Tag
+	for i := 1; ; i++ {
+		key := r.FormValue(fmt.Sprintf("%s.member.%d.Key", name, i))
+		if key == "" {
+			return out
+		}
+		out = append(out, Tag{Key: key, Value: r.FormValue(fmt.Sprintf("%s.member.%d.Value", name, i))})
 	}
 }
 
@@ -258,7 +335,7 @@ type putMetricAlarmJSONBody struct {
 	Period                  int         `json:"Period"`
 	EvaluationPeriods       int         `json:"EvaluationPeriods"`
 	DatapointsToAlarm       int         `json:"DatapointsToAlarm"`
-	Threshold               float64     `json:"Threshold"`
+	Threshold               *float64    `json:"Threshold"`
 	ComparisonOperator      string      `json:"ComparisonOperator"`
 	TreatMissingData        string      `json:"TreatMissingData"`
 	ActionsEnabled          *bool       `json:"ActionsEnabled"`
@@ -267,6 +344,8 @@ type putMetricAlarmJSONBody struct {
 	InsufficientDataActions []string    `json:"InsufficientDataActions"`
 	ThresholdMetricID       string      `json:"ThresholdMetricId"`
 	Metrics                 []any       `json:"Metrics"`
+	Tags                    []Tag       `json:"Tags"`
+	EvaluationCriteria      any         `json:"EvaluationCriteria"`
 }
 
 // toInput converts the JSON body into the shared input type.
@@ -291,7 +370,9 @@ func (b *putMetricAlarmJSONBody) toInput() alarmInput {
 		OKActions:               b.OKActions,
 		InsufficientDataActions: b.InsufficientDataActions,
 		ThresholdMetricID:       b.ThresholdMetricID,
+		Tags:                    b.Tags,
 		hasMetrics:              len(b.Metrics) > 0,
+		hasEvaluationCriteria:   b.EvaluationCriteria != nil,
 	}
 }
 

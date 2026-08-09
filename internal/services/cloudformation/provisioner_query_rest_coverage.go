@@ -1543,7 +1543,7 @@ type iamUserHandler struct{}
 func (h *iamUserHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	userName, _ := props["UserName"].(string)
 	if userName == "" {
-		userName = fmt.Sprintf("%s-user", rCtx.StackName)
+		userName = rCtx.generatedNameWithin(maxNameLenIAM)
 	}
 
 	params := map[string]string{

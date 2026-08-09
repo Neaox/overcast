@@ -42,8 +42,11 @@ type apigwRestApiHandler struct{}
 
 func (h *apigwRestApiHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	body := map[string]any{}
+	// Name is optional on AWS::ApiGateway::RestApi; CreateRestApi requires it.
 	if v, _ := props["Name"].(string); v != "" {
 		body["name"] = v
+	} else {
+		body["name"] = rCtx.generatedName()
 	}
 	if v, _ := props["Description"].(string); v != "" {
 		body["description"] = v

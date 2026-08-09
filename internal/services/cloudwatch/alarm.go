@@ -373,7 +373,7 @@ type periodSample struct {
 // aligned window: bucket the points by period, fill the gaps per
 // TreatMissingData, then apply the "M out of N" rule.
 func evaluateWindow(alarm *MetricAlarm, points []*MetricDataPoint, windowStart, windowEnd time.Time, period, evaluationPeriods int) windowVerdict {
-	samples := bucketByPeriod(alarm.Statistic, points, windowStart, period, evaluationPeriods)
+	samples := bucketByPeriod(alarm.Statistic, alarm.Unit, points, windowStart, period, evaluationPeriods)
 
 	presentCount := 0
 	for _, sample := range samples {
@@ -451,10 +451,18 @@ func evaluateWindow(alarm *MetricAlarm, points []*MetricDataPoint, windowStart, 
 
 // bucketByPeriod aggregates points into the evaluationPeriods aligned periods
 // starting at windowStart, returning one entry per period in time order.
-func bucketByPeriod(statistic string, points []*MetricDataPoint, windowStart time.Time, period, evaluationPeriods int) []periodSample {
+//
+// unit is the alarm's Unit, and selects which datapoints count. AWS aggregates
+// datapoints of different units separately, so an alarm that names a unit sees
+// only that unit's data; an alarm that names none sees everything published
+// for the metric.
+func bucketByPeriod(statistic, unit string, points []*MetricDataPoint, windowStart time.Time, period, evaluationPeriods int) []periodSample {
 	buckets := make([]*metricBucket, evaluationPeriods)
 	startUnix := windowStart.Unix()
 	for _, p := range points {
+		if !unitMatches(unit, p.Unit) {
+			continue
+		}
 		offset := (p.Timestamp.UTC().Unix() - startUnix) / int64(period)
 		if offset < 0 || offset >= int64(evaluationPeriods) {
 			continue
@@ -496,6 +504,24 @@ func bucketByPeriod(statistic string, points []*MetricDataPoint, windowStart tim
 		out[i].present = true
 	}
 	return out
+}
+
+// unitMatches reports whether a datapoint published as pointUnit belongs to an
+// alarm configured for alarmUnit.
+//
+// Divergence, deliberate: AWS records a datapoint published without a unit as
+// "None", so on AWS an alarm that names Count never sees it and sits in
+// INSUFFICIENT_DATA forever — the trap the PutMetricAlarm docs warn about when
+// recommending you omit Unit. Overcast lets an unqualified datapoint satisfy
+// any alarm unit instead, because locally-published metrics routinely omit the
+// unit while the CDK construct that built the alarm supplied one. A datapoint
+// that *does* name a unit is still held to it, which is what makes a
+// mixed-unit metric evaluate separately per unit the way AWS does.
+func unitMatches(alarmUnit, pointUnit string) bool {
+	if alarmUnit == "" || pointUnit == "" {
+		return true
+	}
+	return alarmUnit == pointUnit
 }
 
 // ─── Reason text ──────────────────────────────────────────────────

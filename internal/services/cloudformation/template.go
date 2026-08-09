@@ -283,12 +283,16 @@ type resolveContext struct {
 // generated name to fit the service that will hold it; exceeding these is a
 // validation error from the service, not from CloudFormation.
 const (
-	maxNameLenLambda  = 64 // function names
-	maxNameLenIAM     = 64 // role, policy and instance-profile names
-	maxNameLenS3      = 63 // bucket names
-	maxNameLenSQS     = 80 // queue names
-	maxNameLenRDS     = 63 // DB instance and cluster identifiers
-	maxNameLenDefault = 255
+	maxNameLenLambda    = 64  // function names
+	maxNameLenIAM       = 64  // role, policy and instance-profile names
+	maxNameLenS3        = 63  // bucket names
+	maxNameLenSQS       = 80  // queue names
+	maxNameLenRDS       = 63  // DB instance and cluster identifiers
+	maxNameLenECR       = 256 // repository names (lowercase only)
+	maxNameLenEvents    = 64  // EventBridge rule names
+	maxNameLenScheduler = 64  // EventBridge Scheduler schedule-group names
+	maxNameLenSFN       = 80  // Step Functions state-machine names
+	maxNameLenDefault   = 255
 )
 
 // physicalIDSuffixLen matches the length of the random component real
@@ -347,6 +351,14 @@ func (c *resolveContext) generatedNameWithin(max int) string {
 		base = base[:keep]
 	}
 	return base + "-" + suffix
+}
+
+// generatedNameLowerWithin is generatedNameWithin lowercased, for the services
+// whose names may not contain uppercase — ECR repositories being the one that
+// bites, since both a CDK stack name and a CDK logical ID are mixed case and
+// the random suffix is uppercase by construction.
+func (c *resolveContext) generatedNameLowerWithin(max int) string {
+	return strings.ToLower(c.generatedNameWithin(max))
 }
 
 // randomPhysicalIDSuffix returns CloudFormation's random physical-ID component.
