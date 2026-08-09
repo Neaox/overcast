@@ -32,7 +32,7 @@ Supports trail metadata CRUD and logging state toggles. `LookupEvents` is inert 
 
 | Category   | 🧊 Inert |
 | ---------- | -------- |
-| Operations | 9        |
+| Operations | 12       |
 
 ---
 
@@ -40,16 +40,19 @@ Supports trail metadata CRUD and logging state toggles. `LookupEvents` is inert 
 
 ### Operations
 
-| Operation        | Status   | Notes | AWS Docs                                                                                      |
-| ---------------- | -------- | ----- | --------------------------------------------------------------------------------------------- |
-| `CreateTrail`    | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_CreateTrail.html)    |
-| `DescribeTrails` | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_DescribeTrails.html) |
-| `UpdateTrail`    | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_UpdateTrail.html)    |
-| `DeleteTrail`    | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_DeleteTrail.html)    |
-| `ListTrails`     | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_ListTrails.html)     |
-| `GetTrailStatus` | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_GetTrailStatus.html) |
-| `StartLogging`   | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_StartLogging.html)   |
-| `StopLogging`    | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_StopLogging.html)    |
-| `LookupEvents`   | 🧊 Inert |       | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_LookupEvents.html)   |
+| Operation        | Status   | Notes                                                          | AWS Docs                                                                                      |
+| ---------------- | -------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `CreateTrail`    | 🧊 Inert | Inline `TagsList` applied at creation                          | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_CreateTrail.html)    |
+| `DescribeTrails` | 🧊 Inert |                                                                | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_DescribeTrails.html) |
+| `UpdateTrail`    | 🧊 Inert |                                                                | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_UpdateTrail.html)    |
+| `DeleteTrail`    | 🧊 Inert |                                                                | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_DeleteTrail.html)    |
+| `ListTrails`     | 🧊 Inert |                                                                | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_ListTrails.html)     |
+| `GetTrailStatus` | 🧊 Inert |                                                                | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_GetTrailStatus.html) |
+| `StartLogging`   | 🧊 Inert |                                                                | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_StartLogging.html)   |
+| `StopLogging`    | 🧊 Inert |                                                                | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_StopLogging.html)    |
+| `LookupEvents`   | 🧊 Inert |                                                                | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_LookupEvents.html)   |
+| `AddTags`        | 🧊 Inert | Trail ARNs; event data stores and channels are not emulated    | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_AddTags.html)        |
+| `RemoveTags`     | 🧊 Inert | Matches each `TagsList` entry on its `Key`, ignoring the value | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_RemoveTags.html)     |
+| `ListTags`       | 🧊 Inert | One `ResourceTagList` entry per requested ARN; no pagination   | [docs](https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_ListTags.html)       |
 
 <!-- END overcast:capabilities -->

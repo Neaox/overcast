@@ -3291,6 +3291,16 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Managed policy tagging",
+        "id": "managed-policy-tagging"
+      },
+      {
+        "depth": 3,
+        "text": "Instance profile tagging",
+        "id": "instance-profile-tagging"
+      },
+      {
+        "depth": 3,
         "text": "Instance profiles",
         "id": "instance-profiles"
       },
@@ -4422,6 +4432,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "SES v2 — Identities",
         "id": "ses-v2-identities"
+      },
+      {
+        "depth": 3,
+        "text": "SES v2 — Tags",
+        "id": "ses-v2-tags"
       },
       {
         "depth": 3,

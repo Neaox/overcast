@@ -1334,6 +1334,93 @@ func TestPublish_unsubscribeURLContainsSubscriptionArn(t *testing.T) {
 	}
 }
 
+// ---- CreateTopic tag-on-create ----------------------------------------------
+
+// AWS applies CreateTopic's Tags at creation time, and that is a distinct
+// IAM-authorized behaviour from TagResource (aws:RequestTag vs sns:TagResource),
+// so a topic created with tags must read them back without a second call.
+func TestCreateTopic_appliesTagsAtCreation(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := snsCall(t, srv, "CreateTopic", url.Values{
+		"Name":             {"tag-on-create-topic"},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+		"Tags.Tag.2.Key":   {"team"},
+		"Tags.Tag.2.Value": {"platform"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var created struct {
+		Result struct {
+			TopicArn string `xml:"TopicArn"`
+		} `xml:"CreateTopicResult"`
+	}
+	decodeXML(t, resp, &created)
+
+	if got := snsTagMap(t, srv, created.Result.TopicArn); got["env"] != "prod" || got["team"] != "platform" {
+		t.Errorf("CreateTopic tags not applied at creation: got %v", got)
+	}
+}
+
+// CreateTopic is idempotent: AWS returns the existing topic's ARN without
+// creating a new topic. Tags on the repeat call must therefore not overwrite
+// the tags the topic already carries — TagResource is the way to change them.
+func TestCreateTopic_idempotentCallDoesNotRetagExistingTopic(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	first := snsCall(t, srv, "CreateTopic", url.Values{
+		"Name":             {"idempotent-tag-topic"},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+	})
+	defer first.Body.Close()
+	helpers.AssertStatus(t, first, http.StatusOK)
+	var created struct {
+		Result struct {
+			TopicArn string `xml:"TopicArn"`
+		} `xml:"CreateTopicResult"`
+	}
+	decodeXML(t, first, &created)
+
+	second := snsCall(t, srv, "CreateTopic", url.Values{
+		"Name":             {"idempotent-tag-topic"},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"staging"},
+	})
+	defer second.Body.Close()
+	helpers.AssertStatus(t, second, http.StatusOK)
+
+	if got := snsTagMap(t, srv, created.Result.TopicArn); got["env"] != "prod" {
+		t.Errorf("idempotent CreateTopic overwrote existing tags: got %v, want env=prod", got)
+	}
+}
+
+// snsTagMap reads a resource's tags back through ListTagsForResource.
+func snsTagMap(t *testing.T, srv *helpers.TestServer, arn string) map[string]string {
+	t.Helper()
+	resp := snsCall(t, srv, "ListTagsForResource", url.Values{"ResourceArn": {arn}})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ListTagsForResource %q: unexpected status %d", arn, resp.StatusCode)
+	}
+	var list struct {
+		Result struct {
+			Tags []struct {
+				Key   string `xml:"Key"`
+				Value string `xml:"Value"`
+			} `xml:"Tags>member"`
+		} `xml:"ListTagsForResourceResult"`
+	}
+	decodeXML(t, resp, &list)
+	out := make(map[string]string, len(list.Result.Tags))
+	for _, tag := range list.Result.Tags {
+		out[tag.Key] = tag.Value
+	}
+	return out
+}
+
 // ---- TagResource ------------------------------------------------------------
 
 func TestTagResource_success(t *testing.T) {

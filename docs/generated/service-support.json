@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1409,
+  "total_ops": 1430,
   "services": [
     {
       "service": "s3",
@@ -3378,7 +3378,7 @@
           "operation": "CreateTopic",
           "category": "Topics",
           "status": "✅ Supported",
-          "notes": "Idempotent; attributes stored"
+          "notes": "Idempotent; attributes stored; inline `Tags` applied at creation and left untouched by a repeat call"
         },
         {
           "operation": "DeleteTopic",
@@ -3556,13 +3556,14 @@
     {
       "service": "iam",
       "display_name": "IAM",
-      "total_ops": 66,
-      "implemented_ops": 66,
+      "total_ops": 72,
+      "implemented_ops": 72,
       "operations": [
         {
           "operation": "CreateUser",
           "category": "Users",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "GetUser",
@@ -3676,7 +3677,8 @@
         {
           "operation": "CreateRole",
           "category": "Roles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "GetRole",
@@ -3755,9 +3757,40 @@
           "status": "✅ Supported"
         },
         {
+          "operation": "TagPolicy",
+          "category": "Managed policy tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UntagPolicy",
+          "category": "Managed policy tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListPolicyTags",
+          "category": "Managed policy tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "TagInstanceProfile",
+          "category": "Instance profile tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UntagInstanceProfile",
+          "category": "Instance profile tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListInstanceProfileTags",
+          "category": "Instance profile tagging",
+          "status": "✅ Supported"
+        },
+        {
           "operation": "CreateInstanceProfile",
           "category": "Instance profiles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "GetInstanceProfile",
@@ -3792,7 +3825,8 @@
         {
           "operation": "CreatePolicy",
           "category": "Managed policies",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "GetPolicy",
@@ -4528,8 +4562,8 @@
     {
       "service": "kinesis",
       "display_name": "Kinesis",
-      "total_ops": 17,
-      "implemented_ops": 17,
+      "total_ops": 20,
+      "implemented_ops": 20,
       "operations": [
         {
           "operation": "AddTagsToStream",
@@ -4540,7 +4574,7 @@
           "operation": "CreateStream",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Stream becomes ACTIVE immediately"
+          "notes": "Stream becomes ACTIVE immediately; inline `Tags` applied at creation"
         },
         {
           "operation": "DecreaseStreamRetentionPeriod",
@@ -4595,6 +4629,12 @@
           "notes": "Returns all stream names; no pagination"
         },
         {
+          "operation": "ListTagsForResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stream ARNs; the same tag set `ListTagsForStream` returns"
+        },
+        {
           "operation": "ListTagsForStream",
           "category": "General",
           "status": "✅ Supported"
@@ -4627,6 +4667,18 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Closes parent, creates two children at NewStartingHashKey"
+        },
+        {
+          "operation": "TagResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stream ARNs; consumer ARNs are rejected because consumers are not emulated"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stream ARNs"
         }
       ]
     },
@@ -6298,8 +6350,8 @@
     {
       "service": "ses",
       "display_name": "SES",
-      "total_ops": 42,
-      "implemented_ops": 24,
+      "total_ops": 45,
+      "implemented_ops": 27,
       "operations": [
         {
           "operation": "SendEmail",
@@ -6519,7 +6571,7 @@
           "operation": "V2CreateEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
-          "notes": "`PUT /v2/email/identities`; auto-verified",
+          "notes": "`PUT /v2/email/identities`; auto-verified; inline `Tags` applied at creation",
           "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)",
           "doc_only": true
         },
@@ -6535,7 +6587,7 @@
           "operation": "V2GetEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
-          "notes": "`GET /v2/email/identities/{EmailIdentity}`",
+          "notes": "`GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`",
           "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)",
           "doc_only": true
         },
@@ -6545,6 +6597,30 @@
           "status": "✅ Supported",
           "notes": "`DELETE /v2/email/identities/{EmailIdentity}`",
           "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "V2TagResource",
+          "category": "SES v2 — Tags",
+          "status": "✅ Supported",
+          "notes": "`POST /v2/email/tags`; email identity ARNs — configuration sets are not emulated",
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "V2UntagResource",
+          "category": "SES v2 — Tags",
+          "status": "✅ Supported",
+          "notes": "`DELETE /v2/email/tags?ResourceArn=…\u0026TagKeys=…`",
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "V2ListTagsForResource",
+          "category": "SES v2 — Tags",
+          "status": "✅ Supported",
+          "notes": "`GET /v2/email/tags?ResourceArn=…`",
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html)",
           "doc_only": true
         },
         {
@@ -7139,14 +7215,14 @@
     {
       "service": "acm",
       "display_name": "ACM",
-      "total_ops": 7,
-      "implemented_ops": 7,
+      "total_ops": 10,
+      "implemented_ops": 10,
       "operations": [
         {
           "operation": "RequestCertificate",
           "category": "Certificates",
           "status": "✅ Supported",
-          "notes": "Creates a certificate; immediately ISSUED"
+          "notes": "Creates a certificate; immediately ISSUED; inline `Tags` applied at creation"
         },
         {
           "operation": "DescribeCertificate",
@@ -7183,6 +7259,24 @@
           "category": "Tags",
           "status": "✅ Supported",
           "notes": "Removes tags from a certificate"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Modern alias of `AddTagsToCertificate`, addressing the certificate by `ResourceArn`"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Takes `TagKeys`, where `RemoveTagsFromCertificate` takes a `Tags` list"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Modern alias of `ListTagsForCertificate`"
         }
       ]
     },
@@ -7801,12 +7895,13 @@
     {
       "service": "cloudtrail",
       "display_name": "CloudTrail",
-      "total_ops": 9,
-      "implemented_ops": 9,
+      "total_ops": 12,
+      "implemented_ops": 12,
       "operations": [
         {
           "operation": "CreateTrail",
-          "status": "🧊 Inert"
+          "status": "🧊 Inert",
+          "notes": "Inline `TagsList` applied at creation"
         },
         {
           "operation": "DescribeTrails",
@@ -7839,6 +7934,21 @@
         {
           "operation": "LookupEvents",
           "status": "🧊 Inert"
+        },
+        {
+          "operation": "AddTags",
+          "status": "🧊 Inert",
+          "notes": "Trail ARNs; event data stores and channels are not emulated"
+        },
+        {
+          "operation": "RemoveTags",
+          "status": "🧊 Inert",
+          "notes": "Matches each `TagsList` entry on its `Key`, ignoring the value"
+        },
+        {
+          "operation": "ListTags",
+          "status": "🧊 Inert",
+          "notes": "One `ResourceTagList` entry per requested ARN; no pagination"
         }
       ]
     },
@@ -8454,12 +8564,13 @@
     {
       "service": "transfer",
       "display_name": "Transfer Family",
-      "total_ops": 10,
-      "implemented_ops": 10,
+      "total_ops": 13,
+      "implemented_ops": 13,
       "operations": [
         {
           "operation": "CreateServer",
-          "status": "🧊 Inert"
+          "status": "🧊 Inert",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "DescribeServer",
@@ -8479,7 +8590,8 @@
         },
         {
           "operation": "CreateUser",
-          "status": "🧊 Inert"
+          "status": "🧊 Inert",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "DescribeUser",
@@ -8496,6 +8608,20 @@
         {
           "operation": "DeleteUser",
           "status": "🧊 Inert"
+        },
+        {
+          "operation": "TagResource",
+          "status": "🧊 Inert",
+          "notes": "Server and user ARNs; Transfer's other taggable resources are not emulated"
+        },
+        {
+          "operation": "UntagResource",
+          "status": "🧊 Inert"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "status": "🧊 Inert",
+          "notes": "No pagination; every tag is returned in one page"
         }
       ]
     }

@@ -14,6 +14,7 @@ import (
 type requestCertificateRequest struct {
 	DomainName              string   `json:"DomainName"`
 	SubjectAlternativeNames []string `json:"SubjectAlternativeNames"`
+	Tags                    []Tag    `json:"Tags"`
 }
 
 type requestCertificateResponse struct {
@@ -63,6 +64,34 @@ type removeTagsFromCertificateRequest struct {
 	Tags           []Tag  `json:"Tags"`
 }
 
+// The modern aliases. ACM added TagResource / UntagResource /
+// ListTagsForResource alongside the *Certificate spellings; both address the
+// same tag set on the same certificate.
+//
+// AWS spells the resource `ResourceArn` here rather than reusing
+// `CertificateArn`: the pinned manifest carries operation names and HTTP
+// bindings but not member shapes, so this follows the universal convention for
+// operations named TagResource/UntagResource. See
+// docs/plans/resource-tagging-coverage.md.
+
+type tagResourceRequest struct {
+	ResourceArn string `json:"ResourceArn"`
+	Tags        []Tag  `json:"Tags"`
+}
+
+type untagResourceRequest struct {
+	ResourceArn string   `json:"ResourceArn"`
+	TagKeys     []string `json:"TagKeys"`
+}
+
+type listTagsForResourceRequest struct {
+	ResourceArn string `json:"ResourceArn"`
+}
+
+type listTagsForResourceResponse struct {
+	Tags []Tag `json:"Tags"`
+}
+
 func (h *Handler) requestCertificateTyped(ctx context.Context, req *requestCertificateRequest) (*requestCertificateResponse, *protocol.AWSError) {
 	if req.DomainName == "" {
 		return nil, &protocol.AWSError{
@@ -91,6 +120,13 @@ func (h *Handler) requestCertificateTyped(ctx context.Context, req *requestCerti
 	}
 	if err := h.store.putCert(ctx, cert); err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	// AWS applies RequestCertificate's Tags when the certificate is issued,
+	// and authorizes that separately from AddTagsToCertificate.
+	if len(req.Tags) > 0 {
+		if err := h.store.setTags(ctx, arn, mergeTags(nil, req.Tags)); err != nil {
+			return nil, protocol.ErrInternalError
+		}
 	}
 	return &requestCertificateResponse{CertificateArn: arn}, nil
 }
@@ -139,6 +175,9 @@ func (h *Handler) deleteCertificateTyped(ctx context.Context, req *deleteCertifi
 }
 
 func (h *Handler) listTagsForCertificateTyped(ctx context.Context, req *listTagsForCertificateRequest) (*listTagsForCertificateResponse, *protocol.AWSError) {
+	if aerr := h.requireCert(ctx, req.CertificateArn); aerr != nil {
+		return nil, aerr
+	}
 	tags, err := h.store.getTags(ctx, req.CertificateArn)
 	if err != nil {
 		return nil, protocol.ErrInternalError
@@ -147,6 +186,9 @@ func (h *Handler) listTagsForCertificateTyped(ctx context.Context, req *listTags
 }
 
 func (h *Handler) addTagsToCertificateTyped(ctx context.Context, req *addTagsToCertificateRequest) (*struct{}, *protocol.AWSError) {
+	if aerr := h.requireCert(ctx, req.CertificateArn); aerr != nil {
+		return nil, aerr
+	}
 	existing, err := h.store.getTags(ctx, req.CertificateArn)
 	if err != nil {
 		return nil, protocol.ErrInternalError
@@ -158,6 +200,9 @@ func (h *Handler) addTagsToCertificateTyped(ctx context.Context, req *addTagsToC
 }
 
 func (h *Handler) removeTagsFromCertificateTyped(ctx context.Context, req *removeTagsFromCertificateRequest) (*struct{}, *protocol.AWSError) {
+	if aerr := h.requireCert(ctx, req.CertificateArn); aerr != nil {
+		return nil, aerr
+	}
 	existing, err := h.store.getTags(ctx, req.CertificateArn)
 	if err != nil {
 		return nil, protocol.ErrInternalError
@@ -170,4 +215,53 @@ func (h *Handler) removeTagsFromCertificateTyped(ctx context.Context, req *remov
 		return nil, protocol.ErrInternalError
 	}
 	return &struct{}{}, nil
+}
+
+// requireCert reports a missing certificate rather than letting a tag write
+// land under an ARN nothing owns — DeleteCertificate is the only thing that
+// clears the tag namespace, so an orphaned entry would never be collected.
+func (h *Handler) requireCert(ctx context.Context, arn string) *protocol.AWSError {
+	if arn == "" {
+		return &protocol.AWSError{
+			Code: "InvalidArnException", Message: "CertificateArn is required", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	if _, found := h.store.getCert(ctx, arn); !found {
+		return &protocol.AWSError{
+			Code:       "ResourceNotFoundException",
+			Message:    fmt.Sprintf("Certificate %s not found", arn),
+			HTTPStatus: http.StatusNotFound,
+		}
+	}
+	return nil
+}
+
+func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
+	return h.addTagsToCertificateTyped(ctx, &addTagsToCertificateRequest{
+		CertificateArn: req.ResourceArn, Tags: req.Tags,
+	})
+}
+
+// untagResourceTyped takes TagKeys where RemoveTagsFromCertificate takes a
+// Tags list, so it cannot simply delegate — the keys become the removal set.
+func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	if aerr := h.requireCert(ctx, req.ResourceArn); aerr != nil {
+		return nil, aerr
+	}
+	existing, err := h.store.getTags(ctx, req.ResourceArn)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	if err := h.store.setTags(ctx, req.ResourceArn, removeTagKeys(existing, req.TagKeys)); err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	return &struct{}{}, nil
+}
+
+func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
+	out, aerr := h.listTagsForCertificateTyped(ctx, &listTagsForCertificateRequest{CertificateArn: req.ResourceArn})
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &listTagsForResourceResponse{Tags: out.Tags}, nil
 }

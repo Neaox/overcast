@@ -7,7 +7,7 @@ import "github.com/Neaox/overcast/internal/capabilities"
 func init() {
 	capabilities.Default.Register(
 		// Users
-		capabilities.Capability{Service: "iam", Operation: "CreateUser", Category: "Users", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "CreateUser", Category: "Users", Status: capabilities.StatusSupported, Notes: "Inline `Tags` applied at creation"},
 		capabilities.Capability{Service: "iam", Operation: "GetUser", Category: "Users", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListUsers", Category: "Users", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "UpdateUser", Category: "Users", Status: capabilities.StatusSupported},
@@ -35,7 +35,7 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "UntagUser", Category: "User tagging", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListUserTags", Category: "User tagging", Status: capabilities.StatusSupported},
 		// Roles
-		capabilities.Capability{Service: "iam", Operation: "CreateRole", Category: "Roles", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "CreateRole", Category: "Roles", Status: capabilities.StatusSupported, Notes: "Inline `Tags` applied at creation"},
 		capabilities.Capability{Service: "iam", Operation: "GetRole", Category: "Roles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListRoles", Category: "Roles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "DeleteRole", Category: "Roles", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while an instance profile association or inline/attached policies remain"},
@@ -54,8 +54,16 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "TagRole", Category: "Role tagging", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "UntagRole", Category: "Role tagging", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListRoleTags", Category: "Role tagging", Status: capabilities.StatusSupported},
+		// Managed policy tagging
+		capabilities.Capability{Service: "iam", Operation: "TagPolicy", Category: "Managed policy tagging", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "UntagPolicy", Category: "Managed policy tagging", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "ListPolicyTags", Category: "Managed policy tagging", Status: capabilities.StatusSupported},
+		// Instance profile tagging
+		capabilities.Capability{Service: "iam", Operation: "TagInstanceProfile", Category: "Instance profile tagging", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "UntagInstanceProfile", Category: "Instance profile tagging", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "ListInstanceProfileTags", Category: "Instance profile tagging", Status: capabilities.StatusSupported},
 		// Instance profiles
-		capabilities.Capability{Service: "iam", Operation: "CreateInstanceProfile", Category: "Instance profiles", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "CreateInstanceProfile", Category: "Instance profiles", Status: capabilities.StatusSupported, Notes: "Inline `Tags` applied at creation"},
 		capabilities.Capability{Service: "iam", Operation: "GetInstanceProfile", Category: "Instance profiles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "DeleteInstanceProfile", Category: "Instance profiles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "AddRoleToInstanceProfile", Category: "Instance profiles", Status: capabilities.StatusSupported},
@@ -63,7 +71,7 @@ func init() {
 		capabilities.Capability{Service: "iam", Operation: "ListInstanceProfiles", Category: "Instance profiles", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListInstanceProfilesForRole", Category: "Instance profiles", Status: capabilities.StatusSupported},
 		// Managed policies
-		capabilities.Capability{Service: "iam", Operation: "CreatePolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
+		capabilities.Capability{Service: "iam", Operation: "CreatePolicy", Category: "Managed policies", Status: capabilities.StatusSupported, Notes: "Inline `Tags` applied at creation"},
 		capabilities.Capability{Service: "iam", Operation: "GetPolicy", Category: "Managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "ListPolicies", Category: "Managed policies", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "iam", Operation: "DeletePolicy", Category: "Managed policies", Status: capabilities.StatusSupported, Notes: "DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries"},

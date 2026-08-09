@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 type createServerRequest struct {
-	EndpointType         string `json:"EndpointType" cbor:"EndpointType"`
-	IdentityProviderType string `json:"IdentityProviderType" cbor:"IdentityProviderType"`
+	EndpointType         string        `json:"EndpointType" cbor:"EndpointType"`
+	IdentityProviderType string        `json:"IdentityProviderType" cbor:"IdentityProviderType"`
+	Tags                 []transferTag `json:"Tags" cbor:"Tags"`
 }
 
 type createServerResponse struct {
@@ -52,11 +55,12 @@ type deleteServerRequest struct {
 }
 
 type createUserRequest struct {
-	ServerID      string `json:"ServerId" cbor:"ServerId"`
-	UserName      string `json:"UserName" cbor:"UserName"`
-	Role          string `json:"Role" cbor:"Role"`
-	HomeDirectory string `json:"HomeDirectory" cbor:"HomeDirectory"`
-	Policy        string `json:"Policy" cbor:"Policy"`
+	ServerID      string        `json:"ServerId" cbor:"ServerId"`
+	UserName      string        `json:"UserName" cbor:"UserName"`
+	Role          string        `json:"Role" cbor:"Role"`
+	HomeDirectory string        `json:"HomeDirectory" cbor:"HomeDirectory"`
+	Policy        string        `json:"Policy" cbor:"Policy"`
+	Tags          []transferTag `json:"Tags" cbor:"Tags"`
 }
 
 type createUserResponse struct {
@@ -106,10 +110,193 @@ type deleteUserRequest struct {
 	UserName string `json:"UserName" cbor:"UserName"`
 }
 
+// ---- Resource tagging --------------------------------------------------------
+//
+// Transfer's tag operations address the resource by an `Arn` member, not the
+// `ResourceArn` most services use.
+
+// transferTag is one tag in AWS' wire shape.
+type transferTag struct {
+	Key   string `json:"Key" cbor:"Key"`
+	Value string `json:"Value" cbor:"Value"`
+}
+
+type tagResourceRequest struct {
+	Arn  string        `json:"Arn" cbor:"Arn"`
+	Tags []transferTag `json:"Tags" cbor:"Tags"`
+}
+
+type untagResourceRequest struct {
+	Arn     string   `json:"Arn" cbor:"Arn"`
+	TagKeys []string `json:"TagKeys" cbor:"TagKeys"`
+}
+
+type listTagsForResourceRequest struct {
+	Arn string `json:"Arn" cbor:"Arn"`
+}
+
+type listTagsForResourceResponse struct {
+	Arn  string        `json:"Arn" cbor:"Arn"`
+	Tags []transferTag `json:"Tags" cbor:"Tags"`
+}
+
+// transferTagCfg tunes shared tag validation to Transfer's error shape.
+var transferTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "InvalidRequestException",
+	InvalidCode:     "InvalidRequestException",
+	ExceededMessage: "A resource can have a maximum of 50 tags.",
+}
+
+// tagMap and tagList convert between the stored wire shape and the map the
+// shared validation helper works in. tagList sorts, because Go randomizes map
+// iteration per process and the array would otherwise reorder between
+// otherwise identical responses.
+func tagMap(list []transferTag) map[string]string {
+	out := make(map[string]string, len(list))
+	for _, t := range list {
+		out[t.Key] = t.Value
+	}
+	return out
+}
+
+func tagList(m map[string]string) []transferTag {
+	out := make([]transferTag, 0, len(m))
+	for k, v := range m {
+		out = append(out, transferTag{Key: k, Value: v})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
+// validatedTagList validates an inline Tags list from a create call.
+func validatedTagList(list []transferTag) ([]transferTag, *protocol.AWSError) {
+	if len(list) == 0 {
+		return nil, nil
+	}
+	m := tagMap(list)
+	if aerr := serviceutil.ValidateTags(transferTagCfg, m); aerr != nil {
+		return nil, aerr
+	}
+	return tagList(m), nil
+}
+
+// taggedResource is either of the two resources Transfer can tag, reduced to
+// what the tag operations need: read the current tags, write them back.
+type taggedResource struct {
+	tags []transferTag
+	save func(ctx context.Context, tags []transferTag) *protocol.AWSError
+}
+
+// resolveTaggedResource maps a Transfer ARN onto the resource it names.
+// Agreements, certificates, connectors, profiles and workflows are Transfer's
+// other taggable resources; none is emulated, so their ARNs are refused rather
+// than silently accepted.
+func (s *Service) resolveTaggedResource(ctx context.Context, arn string) (*taggedResource, *protocol.AWSError) {
+	if arn == "" {
+		return nil, validationErr("Arn is required")
+	}
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return nil, validationErr(fmt.Sprintf("Invalid resource ARN: %s", arn))
+	}
+	resource := parts[5]
+	switch {
+	case strings.HasPrefix(resource, "server/"):
+		id := strings.TrimPrefix(resource, "server/")
+		server, exists, aerr := s.getServer(ctx, id)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if !exists {
+			return nil, notFoundErr("Server not found")
+		}
+		return &taggedResource{
+			tags: server.Tags,
+			save: func(ctx context.Context, tags []transferTag) *protocol.AWSError {
+				server.Tags = tags
+				return s.putServer(ctx, server)
+			},
+		}, nil
+	case strings.HasPrefix(resource, "user/"):
+		// user/<serverId>/<userName>
+		rest := strings.TrimPrefix(resource, "user/")
+		serverID, userName, ok := strings.Cut(rest, "/")
+		if !ok || serverID == "" || userName == "" {
+			return nil, validationErr(fmt.Sprintf("Invalid resource ARN: %s", arn))
+		}
+		key := userKey(serverID, userName)
+		user, exists, aerr := s.getUser(ctx, key)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if !exists {
+			return nil, notFoundErr("User not found")
+		}
+		return &taggedResource{
+			tags: user.Tags,
+			save: func(ctx context.Context, tags []transferTag) *protocol.AWSError {
+				user.Tags = tags
+				return s.putUser(ctx, key, user)
+			},
+		}, nil
+	default:
+		return nil, validationErr(fmt.Sprintf("Invalid resource ARN: %s", arn))
+	}
+}
+
+func (s *Service) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
+	res, aerr := s.resolveTaggedResource(ctx, req.Arn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	merged := tagMap(res.tags)
+	for _, t := range req.Tags {
+		merged[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ValidateTags(transferTagCfg, merged); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := res.save(ctx, tagList(merged)); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	res, aerr := s.resolveTaggedResource(ctx, req.Arn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	remaining := tagMap(res.tags)
+	for _, k := range req.TagKeys {
+		delete(remaining, k)
+	}
+	if aerr := res.save(ctx, tagList(remaining)); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+func (s *Service) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
+	res, aerr := s.resolveTaggedResource(ctx, req.Arn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	tags := res.tags
+	if tags == nil {
+		tags = []transferTag{}
+	}
+	return &listTagsForResourceResponse{Arn: req.Arn, Tags: tags}, nil
+}
+
 func (s *Service) createServerTyped(ctx context.Context, req *createServerRequest) (*createServerResponse, *protocol.AWSError) {
 	kvs, err := s.store.Scan(ctx, nsServers, "")
 	if err != nil {
 		return nil, protocol.ErrInternalError
+	}
+	tags, aerr := validatedTagList(req.Tags)
+	if aerr != nil {
+		return nil, aerr
 	}
 	id := fmt.Sprintf("s-%08d", len(kvs)+1)
 	server := transferServer{
@@ -119,6 +306,7 @@ func (s *Service) createServerTyped(ctx context.Context, req *createServerReques
 		IdentityProviderType: defaultString(req.IdentityProviderType, "SERVICE_MANAGED"),
 		State:                "ONLINE",
 		CreatedAt:            s.clk.Now().Format(time.RFC3339),
+		Tags:                 tags,
 	}
 	if aerr := s.putServer(ctx, &server); aerr != nil {
 		return nil, aerr
@@ -211,6 +399,10 @@ func (s *Service) createUserTyped(ctx context.Context, req *createUserRequest) (
 	} else if exists {
 		return nil, &protocol.AWSError{Code: "ConflictException", Message: "User already exists", HTTPStatus: http.StatusConflict}
 	}
+	tags, aerr := validatedTagList(req.Tags)
+	if aerr != nil {
+		return nil, aerr
+	}
 	user := transferUser{
 		ServerID:      req.ServerID,
 		UserName:      req.UserName,
@@ -218,6 +410,7 @@ func (s *Service) createUserTyped(ctx context.Context, req *createUserRequest) (
 		Role:          req.Role,
 		HomeDirectory: req.HomeDirectory,
 		Policy:        req.Policy,
+		Tags:          tags,
 	}
 	if aerr := s.putUser(ctx, key, &user); aerr != nil {
 		return nil, aerr

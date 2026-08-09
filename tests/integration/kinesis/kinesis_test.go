@@ -676,3 +676,158 @@ func TestListTagsForStream_multipleTagsCBOR(t *testing.T) {
 		}
 	}
 }
+
+// ---- ARN-based tagging -------------------------------------------------------
+//
+// Kinesis grew the generic TagResource / UntagResource / ListTagsForResource
+// trio alongside the older stream-name operations. They address the resource by
+// ARN, and the AWS CLI's `aws kinesis tag-resource` uses them exclusively, so
+// the stream-name spellings alone do not make a stream taggable.
+
+func kinesisStreamARN(t *testing.T, srv *helpers.TestServer, name string) string {
+	t.Helper()
+	resp := kinesisCall(t, srv, "DescribeStreamSummary", map[string]any{"StreamName": name})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		StreamDescriptionSummary struct {
+			StreamARN string `json:"StreamARN"`
+		} `json:"StreamDescriptionSummary"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode DescribeStreamSummary: %v", err)
+	}
+	return out.StreamDescriptionSummary.StreamARN
+}
+
+func kinesisListTagsForResource(t *testing.T, srv *helpers.TestServer, arn string) map[string]string {
+	t.Helper()
+	resp := kinesisCall(t, srv, "ListTagsForResource", map[string]any{"ResourceARN": arn})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode ListTagsForResource: %v", err)
+	}
+	got := make(map[string]string, len(out.Tags))
+	for _, tag := range out.Tags {
+		got[tag.Key] = tag.Value
+	}
+	return got
+}
+
+func TestTagResource_roundTripsByARN(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := kinesisCall(t, srv, "CreateStream", map[string]any{"StreamName": "arn-tagged", "ShardCount": 1})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+	arn := kinesisStreamARN(t, srv, "arn-tagged")
+
+	resp = kinesisCall(t, srv, "TagResource", map[string]any{
+		"ResourceARN": arn,
+		"Tags":        map[string]string{"env": "test", "team": "data"},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	if got := kinesisListTagsForResource(t, srv, arn); got["env"] != "test" || got["team"] != "data" {
+		t.Fatalf("TagResource did not round-trip: got %v", got)
+	}
+
+	// The two spellings address the same tag set, not two of them.
+	tagsResp := kinesisCall(t, srv, "ListTagsForStream", map[string]any{"StreamName": "arn-tagged"})
+	defer tagsResp.Body.Close()
+	helpers.AssertStatus(t, tagsResp, http.StatusOK)
+	var viaStream struct {
+		Tags []struct {
+			Key string `json:"Key"`
+		} `json:"Tags"`
+	}
+	if err := json.NewDecoder(tagsResp.Body).Decode(&viaStream); err != nil {
+		t.Fatalf("decode ListTagsForStream: %v", err)
+	}
+	if len(viaStream.Tags) != 2 {
+		t.Fatalf("ListTagsForStream sees %d tags after TagResource, want 2", len(viaStream.Tags))
+	}
+}
+
+func TestUntagResource_removesByARN(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := kinesisCall(t, srv, "CreateStream", map[string]any{"StreamName": "arn-untagged", "ShardCount": 1})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+	arn := kinesisStreamARN(t, srv, "arn-untagged")
+
+	resp = kinesisCall(t, srv, "TagResource", map[string]any{
+		"ResourceARN": arn,
+		"Tags":        map[string]string{"env": "test", "keep": "yes"},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	resp = kinesisCall(t, srv, "UntagResource", map[string]any{
+		"ResourceARN": arn,
+		"TagKeys":     []string{"env"},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	got := kinesisListTagsForResource(t, srv, arn)
+	if _, still := got["env"]; still {
+		t.Errorf("UntagResource left env in place: %v", got)
+	}
+	if got["keep"] != "yes" {
+		t.Errorf("UntagResource removed an unrelated tag: %v", got)
+	}
+}
+
+// A well-formed ARN naming a stream that does not exist is a not-found, the
+// same answer the stream-name spellings give.
+func TestTagResource_unknownStreamARN(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := kinesisCall(t, srv, "TagResource", map[string]any{
+		"ResourceARN": "arn:aws:kinesis:us-east-1:000000000000:stream/does-not-exist",
+		"Tags":        map[string]string{"env": "test"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+// An ARN that names no stream at all is a bad argument rather than a
+// not-found: there is no resource name in it to look up. Consumers are the
+// other taggable Kinesis resource and Overcast does not implement them.
+func TestTagResource_malformedResourceARN(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	for _, arn := range []string{
+		"not-an-arn",
+		"arn:aws:kinesis:us-east-1:000000000000:consumer/some-consumer",
+	} {
+		resp := kinesisCall(t, srv, "TagResource", map[string]any{
+			"ResourceARN": arn,
+			"Tags":        map[string]string{"env": "test"},
+		})
+		helpers.AssertStatus(t, resp, http.StatusBadRequest)
+		resp.Body.Close()
+	}
+}
+
+func TestCreateStream_appliesTagsAtCreation(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := kinesisCall(t, srv, "CreateStream", map[string]any{
+		"StreamName": "tag-on-create",
+		"ShardCount": 1,
+		"Tags":       map[string]string{"env": "prod"},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	arn := kinesisStreamARN(t, srv, "tag-on-create")
+	if got := kinesisListTagsForResource(t, srv, arn); got["env"] != "prod" {
+		t.Errorf("CreateStream tags not applied at creation: got %v", got)
+	}
+}

@@ -15,8 +15,9 @@ import (
 )
 
 type createStreamRequest struct {
-	StreamName string `json:"StreamName"`
-	ShardCount int    `json:"ShardCount"`
+	StreamName string            `json:"StreamName"`
+	ShardCount int               `json:"ShardCount"`
+	Tags       map[string]string `json:"Tags"`
 }
 
 type deleteStreamRequest struct {
@@ -143,6 +144,18 @@ type tagEntry struct {
 	Value string `json:"Value"`
 }
 
+// createStreamTags copies CreateStream's inline Tags into the map the stream
+// stores. The result is never nil, matching what CreateStream stored before it
+// accepted tags; the tag handlers still nil-check, for streams persisted by an
+// older build.
+func createStreamTags(incoming map[string]string) map[string]string {
+	tags := make(map[string]string, len(incoming))
+	for k, v := range incoming {
+		tags[k] = v
+	}
+	return tags
+}
+
 // sortedTagEntries flattens a stream's tag map into a Key-sorted slice.
 // Go map iteration order is randomized per process, so both wire paths
 // (the JSON1.1 handler and the CBOR typed dispatch) must serialize through
@@ -164,6 +177,60 @@ type listTagsForStreamResponse struct {
 type removeTagsFromStreamRequest struct {
 	StreamName string   `json:"StreamName"`
 	TagKeys    []string `json:"TagKeys"`
+}
+
+// The ARN-addressed trio. Kinesis added TagResource/UntagResource/
+// ListTagsForResource alongside the older stream-name operations; both
+// spellings address the same tag set on the same stream.
+
+type tagResourceRequest struct {
+	ResourceARN string            `json:"ResourceARN"`
+	Tags        map[string]string `json:"Tags"`
+}
+
+type untagResourceRequest struct {
+	ResourceARN string   `json:"ResourceARN"`
+	TagKeys     []string `json:"TagKeys"`
+}
+
+type listTagsForResourceRequest struct {
+	ResourceARN string `json:"ResourceARN"`
+}
+
+type listTagsForResourceResponse struct {
+	Tags []tagEntry `json:"Tags"`
+}
+
+// streamNameFromARN extracts the stream name from a Kinesis stream ARN.
+// Kinesis' ARN-addressed tag operations accept only stream ARNs here: consumers
+// are the other taggable Kinesis resource and Overcast does not implement them.
+func streamNameFromARN(arn string) (string, *protocol.AWSError) {
+	invalid := &protocol.AWSError{
+		Code:       "InvalidArgumentException",
+		Message:    fmt.Sprintf("Invalid stream ARN: %s", arn),
+		HTTPStatus: http.StatusBadRequest,
+	}
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 || !strings.HasPrefix(parts[5], "stream/") {
+		return "", invalid
+	}
+	name := strings.TrimPrefix(parts[5], "stream/")
+	if name == "" {
+		return "", invalid
+	}
+	return name, nil
+}
+
+// streamForResourceARN resolves an ARN-addressed tag request to its stream.
+func (h *Handler) streamForResourceARN(ctx context.Context, arn string) (*Stream, *protocol.AWSError) {
+	if arn == "" {
+		return nil, protocol.ErrMissingParameter("ResourceARN")
+	}
+	name, aerr := streamNameFromARN(arn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return h.store.getStream(ctx, name)
 }
 
 type retentionPeriodRequest struct {
@@ -188,7 +255,7 @@ func (h *Handler) createStreamTyped(ctx context.Context, req *createStreamReques
 		StreamStatus:         "ACTIVE",
 		ShardCount:           shardCount,
 		Shards:               buildInitialShards(shardCount),
-		Tags:                 map[string]string{},
+		Tags:                 createStreamTags(req.Tags),
 		CreatedAt:            h.clk.Now().UTC(),
 		RetentionPeriodHours: 24,
 	}
@@ -616,6 +683,48 @@ func (h *Handler) removeTagsFromStreamTyped(ctx context.Context, req *removeTags
 		return nil, aerr
 	}
 	return &struct{}{}, nil
+}
+
+func (h *Handler) tagResourceTyped(ctx context.Context, req *tagResourceRequest) (*struct{}, *protocol.AWSError) {
+	st, aerr := h.streamForResourceARN(ctx, req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if st.Tags == nil {
+		st.Tags = map[string]string{}
+	}
+	for k, v := range req.Tags {
+		st.Tags[k] = v
+	}
+	if aerr := h.store.putStream(ctx, st); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+func (h *Handler) untagResourceTyped(ctx context.Context, req *untagResourceRequest) (*struct{}, *protocol.AWSError) {
+	st, aerr := h.streamForResourceARN(ctx, req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	for _, k := range req.TagKeys {
+		delete(st.Tags, k)
+	}
+	if aerr := h.store.putStream(ctx, st); aerr != nil {
+		return nil, aerr
+	}
+	return &struct{}{}, nil
+}
+
+// listTagsForResourceTyped has no HasMoreTags member: that field belongs to
+// ListTagsForStream's older output shape, and adding it here would put a
+// member on the wire that the modeled response does not have.
+func (h *Handler) listTagsForResourceTyped(ctx context.Context, req *listTagsForResourceRequest) (*listTagsForResourceResponse, *protocol.AWSError) {
+	st, aerr := h.streamForResourceARN(ctx, req.ResourceARN)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &listTagsForResourceResponse{Tags: sortedTagEntries(st.Tags)}, nil
 }
 
 func (h *Handler) increaseStreamRetentionPeriodTyped(ctx context.Context, req *retentionPeriodRequest) (*struct{}, *protocol.AWSError) {

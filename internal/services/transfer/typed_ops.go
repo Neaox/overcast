@@ -37,6 +37,15 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"DeleteUser": op.NewTyped[deleteUserRequest, struct{}](
 			"DeleteUser", s.deleteUserTyped,
 		),
+		"TagResource": op.NewTyped[tagResourceRequest, struct{}](
+			"TagResource", s.tagResourceTyped,
+		),
+		"UntagResource": op.NewTyped[untagResourceRequest, struct{}](
+			"UntagResource", s.untagResourceTyped,
+		),
+		"ListTagsForResource": op.NewTyped[listTagsForResourceRequest, listTagsForResourceResponse](
+			"ListTagsForResource", s.listTagsForResourceTyped,
+		),
 	}
 }
 

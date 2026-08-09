@@ -643,3 +643,162 @@ func TestSendTemplatedEmail_success(t *testing.T) {
 		t.Errorf("expected MessageId in response, got: %s", body)
 	}
 }
+
+// ─── SES v2 — /v2/email/tags ─────────────────────────────────────────────────
+//
+// Email identities are taggable in real SESv2 through TagResource /
+// UntagResource / ListTagsForResource, and CreateEmailIdentity applies inline
+// Tags at creation.
+
+// sesIdentityARN builds the ARN SESv2's tag operations address an identity by.
+func sesIdentityARN(identity string) string {
+	return "arn:aws:ses:us-east-1:000000000000:identity/" + identity
+}
+
+// sesListTags reads a resource's tags back through ListTagsForResource.
+func sesListTags(t *testing.T, srv *helpers.TestServer, arn string) map[string]string {
+	t.Helper()
+	resp := v2Call(t, srv, http.MethodGet, "/v2/email/tags?ResourceArn="+url.QueryEscape(arn), nil)
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	decodeJSON(t, resp, &out)
+	got := make(map[string]string, len(out.Tags))
+	for _, tag := range out.Tags {
+		got[tag.Key] = tag.Value
+	}
+	return got
+}
+
+func TestSESV2_TagResource_roundTripsOnAnIdentity(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{
+		"EmailIdentity": "tagged@example.com",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	arn := sesIdentityARN("tagged@example.com")
+	resp = v2Call(t, srv, http.MethodPost, "/v2/email/tags", map[string]any{
+		"ResourceArn": arn,
+		"Tags":        []map[string]string{{"Key": "env", "Value": "prod"}, {"Key": "team", "Value": "comms"}},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	if got := sesListTags(t, srv, arn); got["env"] != "prod" || got["team"] != "comms" {
+		t.Fatalf("TagResource did not round-trip: got %v", got)
+	}
+}
+
+func TestSESV2_UntagResource_removesNamedKeysOnly(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{
+		"EmailIdentity": "untagged@example.com",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	arn := sesIdentityARN("untagged@example.com")
+	resp = v2Call(t, srv, http.MethodPost, "/v2/email/tags", map[string]any{
+		"ResourceArn": arn,
+		"Tags":        []map[string]string{{"Key": "env", "Value": "prod"}, {"Key": "keep", "Value": "yes"}},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	// TagKeys is an httpQuery list member, so it repeats rather than joining.
+	resp = v2Call(t, srv, http.MethodDelete,
+		"/v2/email/tags?ResourceArn="+url.QueryEscape(arn)+"&TagKeys=env", nil)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	got := sesListTags(t, srv, arn)
+	if _, still := got["env"]; still {
+		t.Errorf("UntagResource left env in place: %v", got)
+	}
+	if got["keep"] != "yes" {
+		t.Errorf("UntagResource removed an unrelated tag: %v", got)
+	}
+}
+
+func TestSESV2_CreateEmailIdentity_appliesTagsAtCreation(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]any{
+		"EmailIdentity": "tagatcreate@example.com",
+		"Tags":          []map[string]string{{"Key": "env", "Value": "staging"}},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	if got := sesListTags(t, srv, sesIdentityARN("tagatcreate@example.com")); got["env"] != "staging" {
+		t.Errorf("CreateEmailIdentity tags not applied at creation: got %v", got)
+	}
+}
+
+// GetEmailIdentity's modeled output has a Tags member, so the console and the
+// SDK read an identity's tags without a second call.
+func TestSESV2_GetEmailIdentity_reportsTags(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]any{
+		"EmailIdentity": "gettags@example.com",
+		"Tags":          []map[string]string{{"Key": "env", "Value": "dev"}},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	resp = v2Call(t, srv, http.MethodGet, "/v2/email/identities/"+url.PathEscape("gettags@example.com"), nil)
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Tags []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
+	}
+	decodeJSON(t, resp, &out)
+	if len(out.Tags) != 1 || out.Tags[0].Key != "env" || out.Tags[0].Value != "dev" {
+		t.Errorf("GetEmailIdentity Tags = %+v, want one env=dev entry", out.Tags)
+	}
+}
+
+// Deleting the identity must take its tags with it, so a later identity of the
+// same name does not inherit them.
+func TestSESV2_DeleteEmailIdentity_dropsItsTags(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]any{
+		"EmailIdentity": "recycled@example.com",
+		"Tags":          []map[string]string{{"Key": "env", "Value": "prod"}},
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	resp = v2Call(t, srv, http.MethodDelete, "/v2/email/identities/"+url.PathEscape("recycled@example.com"), nil)
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	resp = v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{
+		"EmailIdentity": "recycled@example.com",
+	})
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	if got := sesListTags(t, srv, sesIdentityARN("recycled@example.com")); len(got) != 0 {
+		t.Errorf("recreated identity inherited tags from the deleted one: %v", got)
+	}
+}
+
+func TestSESV2_TagResource_unknownIdentity(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	resp := v2Call(t, srv, http.MethodPost, "/v2/email/tags", map[string]any{
+		"ResourceArn": sesIdentityARN("nobody@example.com"),
+		"Tags":        []map[string]string{{"Key": "env", "Value": "prod"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}

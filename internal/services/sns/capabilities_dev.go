@@ -7,7 +7,7 @@ import "github.com/Neaox/overcast/internal/capabilities"
 func init() {
 	capabilities.Default.Register(
 		// Topics
-		capabilities.Capability{Service: "sns", Operation: "CreateTopic", Category: "Topics", Status: capabilities.StatusSupported, Notes: "Idempotent; attributes stored"},
+		capabilities.Capability{Service: "sns", Operation: "CreateTopic", Category: "Topics", Status: capabilities.StatusSupported, Notes: "Idempotent; attributes stored; inline `Tags` applied at creation and left untouched by a repeat call"},
 		capabilities.Capability{Service: "sns", Operation: "DeleteTopic", Category: "Topics", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "sns", Operation: "GetTopicAttributes", Category: "Topics", Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "sns", Operation: "SetTopicAttributes", Category: "Topics", Status: capabilities.StatusSupported},

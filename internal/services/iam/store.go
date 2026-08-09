@@ -72,14 +72,18 @@ type AttachedPolicy struct {
 
 // Policy represents an IAM managed policy.
 type Policy struct {
-	PolicyName      string `json:"PolicyName"`
-	PolicyId        string `json:"PolicyId"`
-	Arn             string `json:"Arn"`
-	Path            string `json:"Path"`
-	Document        string `json:"Document"`
-	CreateDate      string `json:"CreateDate"`
-	AttachmentCount int    `json:"AttachmentCount"`
+	PolicyName      string            `json:"PolicyName"`
+	PolicyId        string            `json:"PolicyId"`
+	Arn             string            `json:"Arn"`
+	Path            string            `json:"Path"`
+	Document        string            `json:"Document"`
+	CreateDate      string            `json:"CreateDate"`
+	AttachmentCount int               `json:"AttachmentCount"`
+	Tags            map[string]string `json:"Tags,omitempty"`
 }
+
+func (p *Policy) GetTags() map[string]string     { return p.Tags }
+func (p *Policy) SetTags(tags map[string]string) { p.Tags = tags }
 
 // Group represents an IAM group.
 type Group struct {
@@ -95,13 +99,17 @@ type Group struct {
 
 // InstanceProfile represents an IAM instance profile.
 type InstanceProfile struct {
-	InstanceProfileName string   `json:"InstanceProfileName"`
-	InstanceProfileId   string   `json:"InstanceProfileId"`
-	Arn                 string   `json:"Arn"`
-	Path                string   `json:"Path"`
-	CreateDate          string   `json:"CreateDate"`
-	Roles               []string `json:"Roles,omitempty"`
+	InstanceProfileName string            `json:"InstanceProfileName"`
+	InstanceProfileId   string            `json:"InstanceProfileId"`
+	Arn                 string            `json:"Arn"`
+	Path                string            `json:"Path"`
+	CreateDate          string            `json:"CreateDate"`
+	Roles               []string          `json:"Roles,omitempty"`
+	Tags                map[string]string `json:"Tags,omitempty"`
 }
+
+func (p *InstanceProfile) GetTags() map[string]string     { return p.Tags }
+func (p *InstanceProfile) SetTags(tags map[string]string) { p.Tags = tags }
 
 // iamStore wraps state.Store with IAM-specific access helpers.
 type iamStore struct {

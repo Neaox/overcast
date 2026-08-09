@@ -41,6 +41,9 @@ func (h *Handler) initOps() {
 		"StartLogging":   h.startLogging,
 		"StopLogging":    h.stopLogging,
 		"LookupEvents":   h.lookupEvents,
+		"AddTags":        h.addTags,
+		"RemoveTags":     h.removeTags,
+		"ListTags":       h.listTags,
 	}
 	h.typedOp = h.typedOps()
 }
@@ -59,6 +62,11 @@ type trail struct {
 	KmsKeyId                   string `json:"KmsKeyId,omitempty"`
 	IsOrganizationTrail        bool   `json:"IsOrganizationTrail"`
 	IsLogging                  bool   `json:"IsLogging"`
+	// Tags live on the trail record so a DeleteTrail takes them with it.
+	// They are deliberately absent from trailToCreateOutput and
+	// trailToDescribeEntry: AWS' Trail shape has no Tags member, and ListTags
+	// is the only way to read them.
+	Tags []cloudTrailTag `json:"Tags,omitempty"`
 }
 
 func (h *Handler) createTrail(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +80,12 @@ func (h *Handler) createTrail(w http.ResponseWriter, r *http.Request) {
 			Message:    "Name and S3BucketName are required",
 			HTTPStatus: http.StatusBadRequest,
 		})
+		return
+	}
+
+	tags, aerr := validatedTagsList(in.TagsList)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 
@@ -102,6 +116,7 @@ func (h *Handler) createTrail(w http.ResponseWriter, r *http.Request) {
 		KmsKeyId:                   in.KmsKeyId,
 		IsOrganizationTrail:        in.IsOrganizationTrail,
 		IsLogging:                  false,
+		Tags:                       tags,
 	}
 
 	if aerr := h.putTrail(ctx, &t); aerr != nil {
@@ -460,6 +475,38 @@ func trailToDescribeEntry(t *trail) map[string]any {
 		"HasInsightSelectors":        false,
 		"IsOrganizationTrail":        t.IsOrganizationTrail,
 	}
+}
+
+// addTags, removeTags and listTags run the typed implementations over a plain
+// JSON 1.0/1.1 request, rather than carrying a second copy of the logic the
+// way the older operations in this file do.
+func (h *Handler) addTags(w http.ResponseWriter, r *http.Request) {
+	serveTyped(w, r, h.addTagsTyped)
+}
+
+func (h *Handler) removeTags(w http.ResponseWriter, r *http.Request) {
+	serveTyped(w, r, h.removeTagsTyped)
+}
+
+func (h *Handler) listTags(w http.ResponseWriter, r *http.Request) {
+	serveTyped(w, r, h.listTagsTyped)
+}
+
+func serveTyped[In any, Out any](w http.ResponseWriter, r *http.Request, fn func(context.Context, *In) (*Out, *protocol.AWSError)) {
+	var in In
+	if !decodeJSONBody(w, r, &in) {
+		return
+	}
+	out, aerr := fn(r.Context(), &in)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if out == nil {
+		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, out)
 }
 
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, out any) bool {

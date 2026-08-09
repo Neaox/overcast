@@ -18,7 +18,8 @@ import (
 // ---- Request types (json tags used by codec.Decode for form mapping) ----
 
 type createTopicReq struct {
-	Name string `json:"Name"`
+	Name string     `json:"Name"`
+	Tags []tagEntry `json:"Tags"`
 }
 
 type deleteTopicReq struct {
@@ -300,12 +301,19 @@ func (h *Handler) createTopicTyped(ctx context.Context, req *createTopicReq) (*c
 		return nil, protocol.ErrMissingParameter("Name")
 	}
 
+	// Idempotent: AWS returns the existing topic's ARN without creating a new
+	// topic, and leaves its tags alone — a repeat CreateTopic is not a retag.
 	if existing, _ := h.snsStore.getTopic(ctx, req.Name); existing != nil {
 		return &createTopicResp{
 			Xmlns:  snsXMLNS,
 			Result: createTopicResult{TopicArn: existing.ARN},
 			Meta:   snsMetaFromCtx(ctx),
 		}, nil
+	}
+
+	tags, aerr := createTopicTags(req.Tags)
+	if aerr != nil {
+		return nil, aerr
 	}
 
 	arn := protocol.TopicARN(middleware.RegionFromContext(ctx, h.cfg.Region), h.cfg.AccountID, req.Name)
@@ -325,6 +333,7 @@ func (h *Handler) createTopicTyped(ctx context.Context, req *createTopicReq) (*c
 		Name:             req.Name,
 		ARN:              arn,
 		Attributes:       attrs,
+		Tags:             tags,
 		CreatedTimestamp: h.clk.Now().Unix(),
 	}
 	if aerr := h.snsStore.putTopic(ctx, topic); aerr != nil {
