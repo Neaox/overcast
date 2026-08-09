@@ -331,7 +331,7 @@ var AllCapabilities = []Capability{
 	{Service: "cloudformation", Operation: "ListStackSetOperationResults", Category: "StackSets", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "ListStackSetOperations", Category: "StackSets", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "ListStackSets", Category: "StackSets", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
-	{Service: "cloudformation", Operation: "ListStacks", Category: "Stacks", Status: StatusSupported, Notes: "Filter by status; summaries carry StackStatusReason", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
+	{Service: "cloudformation", Operation: "ListStacks", Category: "Stacks", Status: StatusSupported, Notes: "StackStatusFilter; unfiltered lists include DELETE_COMPLETE; summaries carry StackStatusReason", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "ListTypeRegistrations", Category: "Type registry", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "ListTypes", Category: "Type registry", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},
 	{Service: "cloudformation", Operation: "RegisterType", Category: "Type registry", Status: StatusUnsupported, Notes: "stub; returns 501", DocsURL: "", DisplayName: "", DocOnly: false, Since: ""},

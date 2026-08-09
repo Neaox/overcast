@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/Neaox/overcast-compat-cli/internal/awscli"
 	"github.com/Neaox/overcast-compat-cli/internal/harness"
@@ -88,11 +89,72 @@ func (g *cfnCliGroup) DescribeStacks(_ context.Context, t *harness.TestContext) 
 	return nil
 }
 
+// listStackNames returns the stack names in a list-stacks response, optionally
+// filtered by status. It also checks the invariant a status filter has to
+// hold: every summary returned is in one of the requested statuses.
+func (g *cfnCliGroup) listStackNames(t *harness.TestContext, statuses ...string) ([]string, error) {
+	args := []string{"cloudformation", "list-stacks"}
+	if len(statuses) > 0 {
+		args = append(args, "--stack-status-filter")
+		args = append(args, statuses...)
+	}
+	out, err := awscli.RunOutput(t.Endpoint, t.Region, args...)
+	if err != nil {
+		return nil, err
+	}
+	summaries, _ := out["StackSummaries"].([]interface{})
+	names := make([]string, 0, len(summaries))
+	for _, raw := range summaries {
+		s, _ := raw.(map[string]interface{})
+		name, _ := s["StackName"].(string)
+		status, _ := s["StackStatus"].(string)
+		if len(statuses) > 0 && !slices.Contains(statuses, status) {
+			return nil, fmt.Errorf("list-stacks: %s returned with status %s, not in filter %v",
+				name, status, statuses)
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// ListStacks covers --stack-status-filter in both directions: a filter naming
+// the stack's status must include it, and one naming a status it cannot hold
+// must exclude it. Only the second catches an implementation that accepts the
+// parameter and ignores it.
+//
+// The statuses are the ones a stack created in this group can legitimately be
+// in — the suite does not wait for CREATE_COMPLETE — and DELETE_FAILED is one
+// it cannot reach, since nothing has tried to delete it yet.
 func (g *cfnCliGroup) ListStacks(_ context.Context, t *harness.TestContext) error {
-	_, err := awscli.RunOutput(t.Endpoint, t.Region,
-		"cloudformation", "list-stacks",
-	)
-	return err
+	stackName := t.GetString("cfn_stack_name")
+	if stackName == "" {
+		return fmt.Errorf("ListStacks: no stack from CreateStack")
+	}
+
+	all, err := g.listStackNames(t)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(all, stackName) {
+		return fmt.Errorf("list-stacks: %s not in unfiltered listing %v", stackName, all)
+	}
+
+	active, err := g.listStackNames(t, "CREATE_COMPLETE", "CREATE_IN_PROGRESS")
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(active, stackName) {
+		return fmt.Errorf("list-stacks: %s not in CREATE_COMPLETE/CREATE_IN_PROGRESS listing %v", stackName, active)
+	}
+
+	deleteFailed, err := g.listStackNames(t, "DELETE_FAILED")
+	if err != nil {
+		return err
+	}
+	if slices.Contains(deleteFailed, stackName) {
+		return fmt.Errorf("list-stacks: %s returned by a DELETE_FAILED filter", stackName)
+	}
+	return nil
 }
 
 func (g *cfnCliGroup) UpdateStack(_ context.Context, t *harness.TestContext) error {

@@ -410,6 +410,7 @@ func (h *Handler) ListStacks(w http.ResponseWriter, r *http.Request) {
 		writeCFNError(w, r, "InternalFailure", "failed to list stacks", http.StatusInternalServerError)
 		return
 	}
+	stacks = filterStacksByStatus(stacks, collectStackStatusFilter(r))
 	slices.SortFunc(stacks, func(a, b *Stack) int {
 		return b.CreatedAt.Compare(a.CreatedAt)
 	})
@@ -1062,6 +1063,47 @@ func applyStackTags(stack *Stack, tags []Tag, present bool) {
 		return
 	}
 	stack.Tags = append([]Tag(nil), tags...)
+}
+
+// collectStackStatusFilter reads ListStacks' StackStatusFilter.member.N form
+// values. An empty result means the caller sent no filter, which AWS treats as
+// "every stack" rather than "no stacks" — see filterStacksByStatus.
+func collectStackStatusFilter(r *http.Request) []string {
+	var statuses []string
+	for i := 1; ; i++ {
+		status := r.FormValue(fmt.Sprintf("StackStatusFilter.member.%d", i))
+		if status == "" {
+			break
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses
+}
+
+// filterStacksByStatus applies ListStacks' StackStatusFilter: with one or more
+// statuses named, only stacks in one of them are returned; with none named,
+// every stack is, "including existing stacks and stacks that have been
+// deleted". That last part is why this is not DescribeStacks' filter — the
+// caller-visible default there drops DELETE_COMPLETE, and here it must not.
+//
+// A status outside the AWS enum simply matches nothing. Real CloudFormation
+// rejects one with a ValidationError naming the whole enum; Overcast does not
+// model the enum, and guessing at a subset would reject statuses AWS accepts
+// (the IMPORT_* family, which the emulator never produces but a client may
+// legitimately filter on).
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListStacks.html
+func filterStacksByStatus(stacks []*Stack, statuses []string) []*Stack {
+	if len(statuses) == 0 {
+		return stacks
+	}
+	filtered := make([]*Stack, 0, len(stacks))
+	for _, s := range stacks {
+		if slices.Contains(statuses, s.Status) {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
 }
 
 func collectCapabilities(r *http.Request) []string {

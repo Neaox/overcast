@@ -66,13 +66,64 @@ export function makeCloudFormationGroups(suite: string): TestGroup[] {
           },
         },
         {
+          // StackStatusFilter is covered in both directions: a filter naming
+          // the stack's status must include it, and one naming a status it
+          // cannot hold must exclude it. Only the second catches an
+          // implementation that accepts the parameter and ignores it.
+          //
+          // The statuses are the ones a stack created in this group can
+          // legitimately be in — the suite does not wait for CREATE_COMPLETE —
+          // and DELETE_FAILED is one it cannot reach, since nothing has tried
+          // to delete it yet.
           name: "ListStacks",
           fn: async (ctx) => {
             const { cloudformation } = makeClients(ctx);
-            await cloudformation.send(
-              new ListStacksCommand({
-                StackStatusFilter: [StackStatus.CREATE_COMPLETE],
-              }),
+            const stackName = (ctx as Record<string, unknown>)[
+              "_stackName"
+            ] as string;
+            assert.ok(stackName, "ListStacks: no stack from CreateStack");
+
+            // Lists stack names, checking the invariant a status filter has to
+            // hold: every summary returned is in one of the requested statuses.
+            const listNames = async (
+              StackStatusFilter?: StackStatus[],
+            ): Promise<string[]> => {
+              const resp = await cloudformation.send(
+                new ListStacksCommand({ StackStatusFilter }),
+              );
+              const summaries = resp.StackSummaries ?? [];
+              for (const s of summaries) {
+                if (
+                  StackStatusFilter &&
+                  !StackStatusFilter.includes(s.StackStatus as StackStatus)
+                ) {
+                  assert.fail(
+                    `ListStacks: ${s.StackName} returned with status ${s.StackStatus}, not in filter ${StackStatusFilter.join(", ")}`,
+                  );
+                }
+              }
+              return summaries.map((s) => s.StackName ?? "");
+            };
+
+            const all = await listNames();
+            assert.ok(
+              all.includes(stackName),
+              `ListStacks: ${stackName} not in unfiltered listing ${all.join(", ")}`,
+            );
+
+            const active = await listNames([
+              StackStatus.CREATE_COMPLETE,
+              StackStatus.CREATE_IN_PROGRESS,
+            ]);
+            assert.ok(
+              active.includes(stackName),
+              `ListStacks: ${stackName} not in CREATE_COMPLETE/CREATE_IN_PROGRESS listing ${active.join(", ")}`,
+            );
+
+            const deleteFailed = await listNames([StackStatus.DELETE_FAILED]);
+            assert.ok(
+              !deleteFailed.includes(stackName),
+              `ListStacks: ${stackName} returned by a DELETE_FAILED filter`,
             );
           },
         },

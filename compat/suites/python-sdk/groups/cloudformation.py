@@ -39,9 +39,59 @@ def DescribeStacks(ctx: TestContext) -> None:
         raise AssertionError("DescribeStacks: no stacks returned")
 
 
+def _list_stack_names(ctx: TestContext, *statuses: str) -> list[str]:
+    """Stack names from list_stacks, optionally filtered by status.
+
+    Also checks the invariant a status filter has to hold: every summary
+    returned is in one of the requested statuses.
+    """
+    kwargs = {"StackStatusFilter": list(statuses)} if statuses else {}
+    resp = _cfn(ctx).list_stacks(**kwargs)
+    names = []
+    for summary in resp.get("StackSummaries", []):
+        status = summary.get("StackStatus")
+        if statuses and status not in statuses:
+            raise AssertionError(
+                f"ListStacks: {summary.get('StackName')} returned with status "
+                f"{status}, not in filter {list(statuses)}"
+            )
+        names.append(summary.get("StackName"))
+    return names
+
+
 def ListStacks(ctx: TestContext) -> None:
-    cfn = _cfn(ctx)
-    cfn.list_stacks(StackStatusFilter=["CREATE_COMPLETE"])
+    """Cover StackStatusFilter in both directions.
+
+    A filter naming the stack's status must include it, and one naming a status
+    it cannot hold must exclude it. Only the second catches an implementation
+    that accepts the parameter and ignores it.
+
+    The statuses are the ones a stack created in this group can legitimately be
+    in — the suite does not wait for CREATE_COMPLETE — and DELETE_FAILED is one
+    it cannot reach, since nothing has tried to delete it yet.
+    """
+    stack_name = ctx.get("cfn_stack_name")
+    if not stack_name:
+        raise AssertionError("ListStacks: no stack from CreateStack")
+
+    all_names = _list_stack_names(ctx)
+    if stack_name not in all_names:
+        raise AssertionError(
+            f"ListStacks: {stack_name} not in unfiltered listing {all_names}"
+        )
+
+    active = _list_stack_names(ctx, "CREATE_COMPLETE", "CREATE_IN_PROGRESS")
+    if stack_name not in active:
+        raise AssertionError(
+            f"ListStacks: {stack_name} not in CREATE_COMPLETE/CREATE_IN_PROGRESS "
+            f"listing {active}"
+        )
+
+    delete_failed = _list_stack_names(ctx, "DELETE_FAILED")
+    if stack_name in delete_failed:
+        raise AssertionError(
+            f"ListStacks: {stack_name} returned by a DELETE_FAILED filter"
+        )
 
 
 def DeleteStack(ctx: TestContext) -> None:
