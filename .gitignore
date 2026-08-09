@@ -26,6 +26,13 @@ tmp/
 
 # persistent state (dev container data dir — survives rebuilds, not for VCS)
 .overcast/
+# Per-machine tool state that some environments spill into the repo root
+# instead of $HOME: Go telemetry counters under .config/go/telemetry (scoped
+# per Go version, arch and week) and buildx node refs plus a token seed under
+# .docker. Both are machine-local and regenerated on demand — never useful to
+# another checkout, so ignore them wherever they come from.
+/.config/
+/.docker/
 # git worktrees (must live outside the repo; ignore any stray ones inside)
 .worktrees/
 .devcontainer/.env
