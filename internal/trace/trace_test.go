@@ -117,6 +117,79 @@ func TestAddHop_oversizedBodiesAreCappedAndCopied(t *testing.T) {
 	}
 }
 
+// The ring buffer retains live traces, so a trace's hop bodies stay resident
+// for as long as the trace does. A deploy must not be able to pin unbounded
+// memory — but it must also never lose a hop, so the budget costs bodies only.
+func TestAddHop_bodyBudgetDropsBodiesNotHops(t *testing.T) {
+	// Given: a trace whose hops each carry a full MaxHopBody request body
+	body := bytes.Repeat([]byte("b"), MaxHopBody)
+	rec := newTestRecorder()
+
+	// When: enough hops arrive to spend the whole MaxHopBodyBytes budget,
+	// plus two more
+	const overBudget = MaxHopBodyBytes/MaxHopBody + 2
+	for i := 0; i < overBudget; i++ {
+		rec.AddHop(Hop{
+			CallerService:  "cloudformation",
+			Service:        "sqs",
+			Operation:      "CreateQueue",
+			RequestBody:    body,
+			ResponseStatus: 200,
+		})
+	}
+
+	// Then: every hop is recorded, in order, with its metadata intact
+	hops := rec.Entry().Hops
+	if len(hops) != overBudget {
+		t.Fatalf("hops = %d, want %d — a hop was dropped for the body budget", len(hops), overBudget)
+	}
+	for i, h := range hops {
+		if h.Order != i+1 || h.Operation != "CreateQueue" || h.ResponseStatus != 200 {
+			t.Fatalf("hop %d lost metadata: %+v", i, h)
+		}
+	}
+
+	// And: bodies stop being retained once the budget is spent, flagged with
+	// the same truncation marker the per-hop cap uses
+	kept, dropped := 0, 0
+	for _, h := range hops {
+		if len(h.RequestBody) > 0 {
+			kept++
+			if h.RequestBodyTruncated {
+				t.Error("a retained body was flagged truncated")
+			}
+			continue
+		}
+		dropped++
+		if !h.RequestBodyTruncated {
+			t.Error("a dropped body was not flagged truncated")
+		}
+	}
+	if kept != MaxHopBodyBytes/MaxHopBody {
+		t.Errorf("retained bodies = %d, want %d", kept, MaxHopBodyBytes/MaxHopBody)
+	}
+	if dropped != 2 {
+		t.Errorf("dropped bodies = %d, want 2", dropped)
+	}
+}
+
+// A hop that carries no body at all costs nothing against the budget, so a
+// deploy of body-less hops keeps recording them indefinitely.
+func TestAddHop_bodylessHopsSpendNoBudget(t *testing.T) {
+	// Given/When: many hops with no bodies
+	rec := newTestRecorder()
+	for i := 0; i < 1000; i++ {
+		rec.AddHop(Hop{Service: "sqs", Operation: "GetQueueUrl", ResponseStatus: 200})
+	}
+
+	// Then: none of them is flagged truncated
+	for i, h := range rec.Entry().Hops {
+		if h.RequestBodyTruncated || h.ResponseBodyTruncated {
+			t.Fatalf("hop %d flagged truncated despite carrying no body", i)
+		}
+	}
+}
+
 // A small hop body is stored as-is and not flagged truncated.
 func TestAddHop_smallBodiesAreStoredVerbatim(t *testing.T) {
 	rec := newTestRecorder()

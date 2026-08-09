@@ -79,6 +79,21 @@ const MaxHopStacks = 20
 // must not be starved by the 300 successful hops ahead of it.
 const MaxFailedHopStacks = 20
 
+// MaxHopBodyBytes bounds the total hop request+response body bytes one trace
+// retains. The ring buffer holds live Recorders, so a trace's hop bodies stay
+// resident for as long as the trace does; a CDK deploy dispatches thousands of
+// hops through a single trace and each one may carry up to MaxHopBody, so
+// without a per-trace budget one deploy could pin gigabytes.
+//
+// 8 MiB is chosen to be far more than any hop sequence a reader actually
+// inspects (the UI shows bodies one hop at a time) while staying small enough
+// that a full ring buffer of budget-exhausting traces is bounded by the ring's
+// own capacity, not by deploy size. Exceeding it never drops a hop: every hop's
+// metadata — service, operation, status, timing, error, ordering, request ID —
+// is still recorded, and only the bodies are omitted, flagged with the same
+// RequestBodyTruncated/ResponseBodyTruncated markers the per-hop cap uses.
+const MaxHopBodyBytes = 8 << 20 // 8 MiB
+
 // Hop records one internal service-to-service call made during request
 // processing.
 type Hop struct {
@@ -116,10 +131,38 @@ type LogEntry struct {
 // Recorder is the per-request trace builder, injected into the request context
 // by the DebugTrace middleware. It is nil when OVERCAST_DEBUG is off.
 // All methods are safe for concurrent use.
+//
+// The ring buffer holds the Recorder itself rather than a snapshot of it, so a
+// Recorder stays live for as long as its trace is retained. That is what makes
+// asynchronous work observable: CloudFormation provisions a stack on a
+// goroutine that outlives the request, and every AddHop it makes after the
+// response was written is visible to readers immediately. Readers materialise
+// an Entry (or the cheaper Summary) on demand — writers never copy.
 type Recorder struct {
-	mu       sync.Mutex
+	// Immutable after construction, so readers may take them without the
+	// lock. The buffer sorts by timestamp, classifies by path and filters by
+	// method on every list call; none of that should contend with a deploy
+	// hammering AddHop.
+	requestID string
+	timestamp time.Time
+	method    string
+	path      string
+	host      string
+	query     string
+	internal  bool
+
+	mu       sync.RWMutex
 	entry    Entry
 	hopOrder int
+	// hopRequestIDs indexes the request IDs of this trace's hops so the
+	// HopsFor list filter — "which request originated this one?" — is an O(1)
+	// lookup instead of a scan of every hop of every trace.
+	hopRequestIDs map[string]struct{}
+	// hopBodyBytes is the hop body bytes retained so far, against
+	// MaxHopBodyBytes. A plain int under mu rather than an atomic: AddHop
+	// already holds the write lock when it charges the budget, so this costs a
+	// compare and an add on the write path rather than a locked RMW.
+	hopBodyBytes int
 
 	// Stack-capture budgets. These are atomics rather than fields under mu so
 	// that the decision to capture — and the capture itself, which is the
@@ -140,13 +183,14 @@ type Recorder struct {
 // r.Header itself.
 func NewRecorder(requestID string, timestamp time.Time, method, path, host, query string, requestHeaders http.Header) *Recorder {
 	return &Recorder{
+		requestID: requestID,
+		timestamp: timestamp,
+		method:    method,
+		path:      path,
+		host:      host,
+		query:     query,
+		internal:  isInternalPath(path),
 		entry: Entry{
-			RequestID:      requestID,
-			Timestamp:      timestamp,
-			Method:         method,
-			Path:           path,
-			Host:           host,
-			Query:          query,
 			RequestHeaders: requestHeaders,
 		},
 	}
@@ -299,7 +343,8 @@ func (r *Recorder) SetDuration(d time.Duration) {
 //
 // A stack is captured for the hop only while this trace still has budget —
 // see MaxHopStacks and MaxFailedHopStacks. A hop that arrives with a Stack
-// already set keeps it and spends no budget.
+// already set keeps it and spends no budget. Bodies are bounded per hop and
+// per trace; see MaxHopBody and MaxHopBodyBytes. No hop is ever dropped.
 func (r *Recorder) AddHop(h Hop) string {
 	if r == nil {
 		return ""
@@ -307,6 +352,7 @@ func (r *Recorder) AddHop(h Hop) string {
 	if h.Stack == "" && r.hopStackBudget(hopFailed(h)) {
 		h.Stack = CaptureStack()
 	}
+	// Bound each body before taking the lock: the copy is the expensive part.
 	if len(h.RequestBody) > MaxHopBody {
 		h.RequestBody = append([]byte(nil), h.RequestBody[:MaxHopBody]...)
 		h.RequestBodyTruncated = true
@@ -317,13 +363,46 @@ func (r *Recorder) AddHop(h Hop) string {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.chargeHopBodiesLocked(&h)
 	r.hopOrder++
 	h.Order = r.hopOrder
 	if h.ID == "" {
 		h.ID = hopID(r.hopOrder)
 	}
+	if h.RequestID != "" {
+		if r.hopRequestIDs == nil {
+			r.hopRequestIDs = make(map[string]struct{})
+		}
+		r.hopRequestIDs[h.RequestID] = struct{}{}
+	}
 	r.entry.Hops = append(r.entry.Hops, h)
 	return h.ID
+}
+
+// chargeHopBodiesLocked charges h's bodies against this trace's
+// MaxHopBodyBytes budget. Once the budget is spent the hop is still recorded
+// in full apart from its bodies, which are dropped and flagged truncated —
+// dropping the hop instead would lose the ordering, timing and outcome a
+// deploy is read for. A hop carrying no bodies costs nothing, so a deploy of
+// body-less hops keeps recording them indefinitely.
+// Callers must hold r.mu.
+func (r *Recorder) chargeHopBodiesLocked(h *Hop) {
+	n := len(h.RequestBody) + len(h.ResponseBody)
+	if n == 0 {
+		return
+	}
+	if r.hopBodyBytes >= MaxHopBodyBytes {
+		if len(h.RequestBody) > 0 {
+			h.RequestBody = nil
+			h.RequestBodyTruncated = true
+		}
+		if len(h.ResponseBody) > 0 {
+			h.ResponseBody = nil
+			h.ResponseBodyTruncated = true
+		}
+		return
+	}
+	r.hopBodyBytes += n
 }
 
 func hopID(order int) string {
@@ -371,25 +450,70 @@ func (r *Recorder) AddMeta(key string, value any) {
 	r.entry.Metadata[key] = value
 }
 
-// RequestID returns the entry's request ID without deep-copying the whole
-// trace (unlike Entry, which copies every hop body and log line).
+// RequestID returns the request ID this trace was opened with. It is fixed at
+// construction, so this takes no lock and stays correct for the whole life of
+// the trace — including asynchronous work that outlives the request and needs
+// to name its originating request.
 func (r *Recorder) RequestID() string {
 	if r == nil {
 		return ""
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.entry.RequestID
+	return r.requestID
 }
 
-// Entry returns a copy of the captured trace data.
+// HasHop reports whether this trace dispatched a hop carrying the given
+// request ID. O(1): the index is maintained by AddHop.
+func (r *Recorder) HasHop(requestID string) bool {
+	if r == nil || requestID == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.hopRequestIDs[requestID]
+	return ok
+}
+
+// Summary returns a lightweight view of the trace for list endpoints. It
+// copies no bodies, headers, hops or log entries, so a list of a full ring
+// buffer costs one read-lock and a handful of string headers per trace rather
+// than a deep copy of every trace.
+func (r *Recorder) Summary() Summary {
+	if r == nil {
+		return Summary{}
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return Summary{
+		RequestID:  r.requestID,
+		Timestamp:  r.timestamp,
+		Method:     r.method,
+		Path:       r.path,
+		Service:    r.entry.Service,
+		Operation:  r.entry.Operation,
+		StatusCode: r.entry.StatusCode,
+		Duration:   r.entry.Duration,
+		Region:     r.entry.Region,
+		HopCount:   len(r.entry.Hops),
+		LogCount:   len(r.entry.LogEntries),
+		Internal:   r.internal,
+	}
+}
+
+// Entry returns a deep copy of the captured trace data, current as of the
+// moment it is called.
 func (r *Recorder) Entry() Entry {
 	if r == nil {
 		return Entry{}
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	e := r.entry
+	e.RequestID = r.requestID
+	e.Timestamp = r.timestamp
+	e.Method = r.method
+	e.Path = r.path
+	e.Host = r.host
+	e.Query = r.query
 	e.Hops = make([]Hop, len(r.entry.Hops))
 	for i := range r.entry.Hops {
 		e.Hops[i] = r.entry.Hops[i]
@@ -443,24 +567,6 @@ type Summary struct {
 	HopCount   int           `json:"hopCount,omitempty"`
 	LogCount   int           `json:"logCount,omitempty"`
 	Internal   bool          `json:"internal,omitempty"`
-}
-
-// ToSummary returns a lightweight summary of this entry.
-func (e Entry) ToSummary() Summary {
-	return Summary{
-		RequestID:  e.RequestID,
-		Timestamp:  e.Timestamp,
-		Method:     e.Method,
-		Path:       e.Path,
-		Service:    e.Service,
-		Operation:  e.Operation,
-		StatusCode: e.StatusCode,
-		Duration:   e.Duration,
-		Region:     e.Region,
-		HopCount:   len(e.Hops),
-		LogCount:   len(e.LogEntries),
-		Internal:   isInternalPath(e.Path),
-	}
 }
 
 var internalPaths = map[string]bool{

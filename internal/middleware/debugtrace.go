@@ -39,6 +39,13 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 			requestBody := capture.buf
 
 			rec := trace.NewRecorder(reqID, start, r.Method, r.URL.Path, r.Host, r.URL.RawQuery, capture.headers)
+			// Register the live recorder once, up front. The buffer holds the
+			// recorder itself, so everything below — and everything an
+			// asynchronous handler records after this middleware returns, such
+			// as CloudFormation's stack provisioning — is visible to readers
+			// with no further stores. The trace appears immediately, with
+			// StatusCode 0 and no duration until the handler finishes.
+			buf.Add(rec)
 			if pid := r.Header.Get("X-Overcast-Parent-Request-Id"); pid != "" {
 				rec.SetParentRequestID(pid)
 			}
@@ -57,14 +64,6 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 
 			ctx := withRequestCapture(trace.ContextWithRecorder(r.Context(), rec), capture)
 			r = r.WithContext(ctx)
-
-			// Early push: store a partial entry before the handler runs so the
-			// trace is visible (with StatusCode=0, no duration) while the
-			// request is still being processed.
-			if buf != nil {
-				e := rec.Entry()
-				buf.Store(&e)
-			}
 
 			trw := &traceResponseWriter{
 				ResponseWriter: w,
@@ -90,11 +89,6 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 				rec.SetResponseBodyTruncated()
 			}
 			rec.SetDuration(clk.Since(start))
-
-			if buf != nil {
-				e := rec.Entry()
-				buf.Store(&e)
-			}
 		})
 	}
 }

@@ -142,11 +142,15 @@ func TestResponseWriter_capturesStackOncePerRequest(t *testing.T) {
 
 	// Then: the stored stack is the innermost writer's — one
 	// responseWriter.WriteHeader frame, not the two an outer capture shows
-	entries, _ := buf.List(trace.ListFilter{})
-	if len(entries) != 1 {
-		t.Fatalf("trace entries = %d, want 1", len(entries))
+	summaries, _ := buf.ListSummaries(trace.ListFilter{})
+	if len(summaries) != 1 {
+		t.Fatalf("trace entries = %d, want 1", len(summaries))
 	}
-	stack := entries[0].Stack
+	entry, ok := buf.Get(summaries[0].RequestID)
+	if !ok {
+		t.Fatalf("trace %q listed but not retrievable", summaries[0].RequestID)
+	}
+	stack := entry.Stack
 	if stack == "" {
 		t.Fatal("no stack captured")
 	}
