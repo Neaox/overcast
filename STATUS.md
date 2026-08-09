@@ -109,7 +109,7 @@
 | OpenSearch      | 8   |
 | AppRegistry     | 22  |
 | Backup          | 9   |
-| CloudTrail      | 9   |
+| CloudTrail      | 12  |
 | EKS             | 52  |
 | ELBv2           | 18  |
 | MSK             | 29  |

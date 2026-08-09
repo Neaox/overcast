@@ -34,6 +34,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"LookupEvents": op.NewTyped[struct{}, lookupEventsResponse](
 			"LookupEvents", h.lookupEventsTyped,
 		),
+		"AddTags": op.NewTyped[addTagsRequest, struct{}](
+			"AddTags", h.addTagsTyped,
+		),
+		"RemoveTags": op.NewTyped[removeTagsRequest, struct{}](
+			"RemoveTags", h.removeTagsTyped,
+		),
+		"ListTags": op.NewTyped[listTagsRequest, listTagsResponse](
+			"ListTags", h.listTagsTyped,
+		),
 	}
 }
 

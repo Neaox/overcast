@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1418,
+  "total_ops": 1421,
   "services": [
     {
       "service": "s3",
@@ -7843,12 +7843,13 @@
     {
       "service": "cloudtrail",
       "display_name": "CloudTrail",
-      "total_ops": 9,
-      "implemented_ops": 9,
+      "total_ops": 12,
+      "implemented_ops": 12,
       "operations": [
         {
           "operation": "CreateTrail",
-          "status": "🧊 Inert"
+          "status": "🧊 Inert",
+          "notes": "Inline `TagsList` applied at creation"
         },
         {
           "operation": "DescribeTrails",
@@ -7881,6 +7882,21 @@
         {
           "operation": "LookupEvents",
           "status": "🧊 Inert"
+        },
+        {
+          "operation": "AddTags",
+          "status": "🧊 Inert",
+          "notes": "Trail ARNs; event data stores and channels are not emulated"
+        },
+        {
+          "operation": "RemoveTags",
+          "status": "🧊 Inert",
+          "notes": "Matches each `TagsList` entry on its `Key`, ignoring the value"
+        },
+        {
+          "operation": "ListTags",
+          "status": "🧊 Inert",
+          "notes": "One `ResourceTagList` entry per requested ARN; no pagination"
         }
       ]
     },

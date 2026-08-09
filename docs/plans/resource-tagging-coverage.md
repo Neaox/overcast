@@ -144,6 +144,15 @@ branch are written **once**, as typed functions, with the legacy switch invoking
 the typed operation through the request's codec. Retrofitting the existing
 duplicated operations is a separate, larger change and is not attempted here.
 
+Closing those gaps needed a small adapter — run a typed operation over a plain
+JSON 1.0/1.1 request — in each service whose legacy switch had to reach the new
+typed handlers. It now exists once in `transfer` and once in `cloudtrail`, each
+using its own package's decode and error conventions. **Two copies of a
+fifteen-line generic is the point at which it should move to `serviceutil`**;
+that is proposed rather than done here, because it is a shared-surface change
+that belongs in its own review rather than riding along inside a per-service
+tagging commit.
+
 `serviceutil/tags.go` already carries the shared merge/remove/validate helpers
 (`ApplyTags`, `RemoveTags`, `ValidateTags`, `TagValidationConfig`,
 `ApplyTagsToStore`, `NSStore`). New work uses them; no new tagging abstraction
