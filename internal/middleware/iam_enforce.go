@@ -134,7 +134,39 @@ func IAMEnforce(enabled bool, st state.Store, logger *zap.Logger) func(http.Hand
 
 			action := requestIAMAction(r)
 			if action == "" {
-				// If action cannot be inferred (rare custom route), do not block.
+				// No action could be inferred, so there is nothing to evaluate
+				// a policy against and the request is not gated.
+				//
+				// This is deliberately fail-open, and it is the one place in
+				// this middleware that is: iamDenialReason fails closed on
+				// everything it can reason about, down to policy constructs the
+				// evaluator does not implement. Failing closed here instead
+				// would deny far more than it protected: S3 reaches this branch
+				// routinely, because its sub-resource operations (?tagging,
+				// ?restore, ?legal-hold, …) are named by query parameters the
+				// shape rules do not enumerate. A closed default would break
+				// ordinary S3 traffic the moment IAM enforcement was switched
+				// on, to guard paths that mostly do not resolve to a handler in
+				// the first place.
+				//
+				// What must never happen is the third option: inferring the
+				// *wrong* action. That is not a safe default in either
+				// direction — it authorised Lambda AddPermission as
+				// lambda:InvokeFunction, letting an invoke-only principal grant
+				// invoke rights to others, and it denied RemovePermission
+				// against a policy that allowed it. requestIAMAction is now
+				// scoped to the classified service throughout so a path one
+				// service does not model can no longer borrow another's name;
+				// see restOperation.
+				//
+				// Logged so the gap is observable rather than silent.
+				if logger != nil {
+					logger.Debug("iam enforcement could not infer an action; request not gated",
+						zap.String("method", r.Method),
+						zap.String("path", r.URL.Path),
+						zap.String("service", detectService(r)),
+					)
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -288,7 +320,7 @@ func requestIAMAction(r *http.Request) string {
 		}
 	}
 
-	if op := strings.TrimSpace(detectOperation(r)); op != "" {
+	if op := strings.TrimSpace(detectOperationForService(r, svc)); op != "" {
 		return svc + ":" + op
 	}
 
@@ -352,146 +384,35 @@ func requestIAMResource(r *http.Request) string {
 	}
 }
 
+// requestLambdaIAMOperation returns the IAM action suffix for a Lambda REST
+// request — "InvokeFunction" in "lambda:InvokeFunction".
+//
+// It shares one path mapping with the request logger (restOperation, which
+// reads the pinned Smithy `@http` bindings) and adds only what authorization
+// needs on top: the translation from an API operation name to the IAM action
+// name where AWS makes them differ. Keeping a second hand-written copy of the
+// paths here is what let the two drift — the logger's copy mislabelled most of
+// Lambda as S3 while this one did not, and every path this one missed fell
+// through to the logger's copy and produced actions like "lambda:PutObject".
 func requestLambdaIAMOperation(r *http.Request) string {
-	trimmedPath := strings.Trim(strings.TrimSpace(r.URL.Path), "/")
-	if trimmedPath == "" {
+	operation := restOperation("lambda", r.Method, r.URL.Path, r.URL.RawQuery)
+	if operation == "" {
 		return ""
 	}
-	parts := strings.Split(trimmedPath, "/")
-	if len(parts) < 2 {
-		return ""
-	}
-	if parts[1] == "layers" {
-		if len(parts) == 4 && parts[3] == "versions" {
-			switch r.Method {
-			case http.MethodPost:
-				return "PublishLayerVersion"
-			case http.MethodGet:
-				return "ListLayerVersions"
-			}
-		}
-		if len(parts) == 5 && parts[3] == "versions" {
-			switch r.Method {
-			case http.MethodGet:
-				return "GetLayerVersion"
-			case http.MethodDelete:
-				return "DeleteLayerVersion"
-			}
-		}
-		return ""
-	}
-	if parts[1] != "functions" {
-		return ""
-	}
+	return lambdaIAMAction(operation)
+}
 
-	if len(parts) == 2 {
-		switch r.Method {
-		case http.MethodGet:
-			return "ListFunctions"
-		case http.MethodPost:
-			return "CreateFunction"
-		}
-		return ""
+// lambdaIAMAction maps a Lambda API operation name onto the IAM action name
+// that authorizes it. AWS authorizes all three invoke operations with the
+// single action lambda:InvokeFunction — there is no lambda:Invoke — and every
+// other Lambda operation's action is named after the operation itself.
+func lambdaIAMAction(operation string) string {
+	switch operation {
+	case "Invoke", "InvokeAsync", "InvokeWithResponseStream":
+		return "InvokeFunction"
+	default:
+		return operation
 	}
-
-	if len(parts) == 3 {
-		switch r.Method {
-		case http.MethodGet:
-			return "GetFunction"
-		case http.MethodDelete:
-			return "DeleteFunction"
-		}
-		return ""
-	}
-
-	switch parts[3] {
-	case "invocations":
-		if r.Method == http.MethodPost {
-			return "InvokeFunction"
-		}
-	case "response-streaming-invocations", "invoke-with-progress":
-		if r.Method == http.MethodPost {
-			return "InvokeFunction"
-		}
-	case "versions":
-		switch r.Method {
-		case http.MethodPost:
-			return "PublishVersion"
-		case http.MethodGet:
-			return "ListVersionsByFunction"
-		}
-	case "aliases":
-		if len(parts) == 4 {
-			switch r.Method {
-			case http.MethodPost:
-				return "CreateAlias"
-			case http.MethodGet:
-				return "ListAliases"
-			}
-		}
-		if len(parts) >= 5 {
-			switch r.Method {
-			case http.MethodGet:
-				return "GetAlias"
-			case http.MethodPut:
-				return "UpdateAlias"
-			case http.MethodDelete:
-				return "DeleteAlias"
-			}
-		}
-	case "code":
-		if r.Method == http.MethodPut {
-			return "UpdateFunctionCode"
-		}
-	case "code-signing-config":
-		if r.Method == http.MethodGet {
-			return "GetFunctionCodeSigningConfig"
-		}
-	case "source":
-		switch r.Method {
-		case http.MethodGet:
-			return "GetFunctionSource"
-		case http.MethodPut:
-			return "PutFunctionSource"
-		}
-	case "provisioned-concurrency":
-		switch r.Method {
-		case http.MethodGet:
-			return "GetProvisionedConcurrencyConfig"
-		case http.MethodPut:
-			return "PutProvisionedConcurrencyConfig"
-		}
-	case "test-events":
-		if len(parts) == 4 && r.Method == http.MethodGet {
-			return "ListTestEvents"
-		}
-		if len(parts) >= 5 {
-			switch r.Method {
-			case http.MethodPut:
-				return "PutTestEvent"
-			case http.MethodDelete:
-				return "DeleteTestEvent"
-			}
-		}
-	case "configuration":
-		switch r.Method {
-		case http.MethodGet:
-			return "GetFunctionConfiguration"
-		case http.MethodPut:
-			return "UpdateFunctionConfiguration"
-		}
-	case "concurrency":
-		switch r.Method {
-		case http.MethodGet:
-			return "GetFunctionConcurrency"
-		case http.MethodPut:
-			return "PutFunctionConcurrency"
-		case http.MethodDelete:
-			return "DeleteFunctionConcurrency"
-		}
-	}
-
-	return ""
 }
 
 func requestS3IAMResource(r *http.Request) string {

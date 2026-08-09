@@ -40,7 +40,7 @@ func RequestEvents(busPtr **events.Bus, clk clock.Clock) func(http.Handler) http
 			reqID := protocol.RequestIDFromContext(r.Context())
 			duration := clk.Since(start)
 			svc := detectService(r)
-			op := detectOperation(r)
+			op := detectOperationForService(r, svc)
 
 			ev := events.Event{
 				Type:   events.RequestReceived,

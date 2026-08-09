@@ -18,7 +18,13 @@
 #   overcast       — full image with embedded web management console (default)
 #   overcast-slim  — Go binary only, no UI, SQLite excluded (for CI pipelines)
 #
-# Build for the current platform:
+# Build for the current platform — prefer the targets, which tag the image after
+# the current branch so parallel worktrees cannot build into one name:
+#   make docker-console        # console (default), overcast:<sanitised branch>
+#   make docker-slim           # slim, overcast-slim:<sanitised branch>
+#   make docker-clean          # remove this branch's pair when you are done
+#
+# By hand, if you must:
 #   docker build -t overcast:dev .                                  # console (default)
 #   docker build --target slim --build-arg NOSQLITE=1 -t overcast-slim:dev .  # slim
 #

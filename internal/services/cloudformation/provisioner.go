@@ -3511,6 +3511,45 @@ func (h *dynamodbTableHandler) Delete(ctx context.Context, router http.Handler, 
 
 type lambdaFunctionHandler struct{}
 
+// lambdaCreateFunctionBody builds the CreateFunction request an
+// AWS::Lambda::Function template resource dispatches, with code already
+// packaged. It is a pure function of its inputs so the set of request members
+// this resource can forward is derivable by running it — see
+// TestLambdaProvisionerForwardsOnlyReviewedGatedMembers.
+func lambdaCreateFunctionBody(funcName string, code map[string]any, props map[string]any, stackTags []Tag) map[string]any {
+	body := map[string]any{
+		"FunctionName": funcName,
+		"Runtime":      props["Runtime"],
+		"Handler":      props["Handler"],
+		"Role":         props["Role"],
+		"Code":         code,
+	}
+	for _, property := range lambdaCreateFunctionForwardedProperties {
+		copyAnyProp(body, props, property, property)
+	}
+	copyAnyProp(body, props, "KmsKeyArn", "KMSKeyArn")
+	if tagMap := mergeResourceTags(stackTags, props["Tags"]); len(tagMap) > 0 {
+		body["Tags"] = tagMap
+	}
+	if publish, _ := props["PublishToLatestPublished"].(bool); publish {
+		body["PublishTo"] = "LATEST_PUBLISHED"
+	}
+	return body
+}
+
+// lambdaCreateFunctionForwardedProperties are the template properties copied
+// straight through to CreateFunction under the same name. CodeSigningConfigArn
+// is set by CDK's Function `codeSigningConfig` prop and is passed through so
+// the association survives a deploy — Lambda stores it without enforcing
+// signature validation.
+var lambdaCreateFunctionForwardedProperties = []string{
+	"Architectures", "VpcConfig", "FileSystemConfigs", "ImageConfig", "PackageType",
+	"DeadLetterConfig", "TracingConfig", "EphemeralStorage", "SnapStart",
+	"CapacityProviderConfig", "DurableConfig", "TenancyConfig",
+	"Description", "Environment", "Timeout", "MemorySize", "LoggingConfig", "Layers",
+	"CodeSigningConfigArn",
+}
+
 func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler, _ *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	funcName, _ := props["FunctionName"].(string)
 	if funcName == "" {
@@ -3534,53 +3573,7 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 		code["ZipFile"] = base64.StdEncoding.EncodeToString(packaged)
 	}
 
-	body := map[string]any{
-		"FunctionName": funcName,
-		"Runtime":      props["Runtime"],
-		"Handler":      props["Handler"],
-		"Role":         props["Role"],
-		"Code":         code,
-	}
-	for _, property := range []string{
-		"Architectures", "VpcConfig", "FileSystemConfigs", "ImageConfig", "PackageType",
-		"DeadLetterConfig", "TracingConfig", "EphemeralStorage", "SnapStart",
-		"CapacityProviderConfig", "DurableConfig", "TenancyConfig",
-	} {
-		copyAnyProp(body, props, property, property)
-	}
-	copyAnyProp(body, props, "KmsKeyArn", "KMSKeyArn")
-	if desc, ok := props["Description"]; ok {
-		body["Description"] = desc
-	}
-	if env, ok := props["Environment"]; ok {
-		body["Environment"] = env
-	}
-	if timeout, ok := props["Timeout"]; ok {
-		body["Timeout"] = timeout
-	}
-	if mem, ok := props["MemorySize"]; ok {
-		body["MemorySize"] = mem
-	}
-	if lc, ok := props["LoggingConfig"]; ok {
-		body["LoggingConfig"] = lc
-	}
-	if layers, ok := props["Layers"]; ok {
-		body["Layers"] = layers
-	}
-	// Optional; set by CDK's Function `codeSigningConfig` prop. Passed through
-	// so the association survives a deploy — Lambda stores it without enforcing
-	// signature validation.
-	if csc, ok := props["CodeSigningConfigArn"]; ok {
-		body["CodeSigningConfigArn"] = csc
-	}
-	if tagMap := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tagMap) > 0 {
-		body["Tags"] = tagMap
-	}
-	if publish, _ := props["PublishToLatestPublished"].(bool); publish {
-		body["PublishTo"] = "LATEST_PUBLISHED"
-	}
-
-	data, _ := json.Marshal(body)
+	data, _ := json.Marshal(lambdaCreateFunctionBody(funcName, code, props, rCtx.StackTags))
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/2015-03-31/functions", "application/json", data)
 	if err != nil {
 		return "", nil, fmt.Errorf("lambda CreateFunction: %w", err)
@@ -3739,13 +3732,12 @@ func (h *lambdaFunctionHandler) compensateUpdate(ctx context.Context, router htt
 	return compensationErr
 }
 
-func (h *lambdaFunctionHandler) updateConfiguration(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, bool, error) {
+// lambdaUpdateFunctionConfigurationBody builds the UpdateFunctionConfiguration
+// request for a changed AWS::Lambda::Function. Pure, for the same reason as
+// lambdaCreateFunctionBody.
+func lambdaUpdateFunctionConfigurationBody(props, prior map[string]any) map[string]any {
 	cfgBody := map[string]any{}
-	for _, k := range []string{
-		"Runtime", "Handler", "Role", "Description", "Environment", "Timeout", "MemorySize", "Layers", "LoggingConfig",
-		"VpcConfig", "FileSystemConfigs", "ImageConfig", "DeadLetterConfig", "TracingConfig", "EphemeralStorage",
-		"SnapStart", "CapacityProviderConfig",
-	} {
+	for _, k := range lambdaUpdateFunctionConfigurationForwardedProperties {
 		if v, ok := props[k]; ok && !reflect.DeepEqual(v, prior[k]) {
 			cfgBody[k] = v
 		}
@@ -3765,6 +3757,20 @@ func (h *lambdaFunctionHandler) updateConfiguration(ctx context.Context, router 
 			}
 		}
 	}
+	return cfgBody
+}
+
+// lambdaUpdateFunctionConfigurationForwardedProperties are the template
+// properties copied straight through to UpdateFunctionConfiguration under the
+// same name when they change.
+var lambdaUpdateFunctionConfigurationForwardedProperties = []string{
+	"Runtime", "Handler", "Role", "Description", "Environment", "Timeout", "MemorySize", "Layers", "LoggingConfig",
+	"VpcConfig", "FileSystemConfigs", "ImageConfig", "DeadLetterConfig", "TracingConfig", "EphemeralStorage",
+	"SnapStart", "CapacityProviderConfig",
+}
+
+func (h *lambdaFunctionHandler) updateConfiguration(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (string, bool, error) {
+	cfgBody := lambdaUpdateFunctionConfigurationBody(props, prior)
 	var arn string
 	if len(cfgBody) == 0 {
 		return "", false, nil
@@ -3792,49 +3798,54 @@ func (h *lambdaFunctionHandler) updateCode(ctx context.Context, router http.Hand
 	// CFN templates supply ZipFile as inline source; UpdateFunctionCode expects
 	// a base64 zip archive.
 	if code, ok := props["Code"].(map[string]any); ok {
-		body := map[string]any{}
-		if zf, ok := code["ZipFile"].(string); ok {
-			runtime, _ := props["Runtime"].(string)
-			handler, _ := props["Handler"].(string)
-			packaged, err := inlineCodeZip(zf, runtime, handler)
-			if err != nil {
-				return false, fmt.Errorf("package inline function code: %w", err)
-			}
-			body["ZipFile"] = base64.StdEncoding.EncodeToString(packaged)
-		}
-		if v, ok := code["S3Bucket"]; ok {
-			body["S3Bucket"] = v
-		}
-		if v, ok := code["S3Key"]; ok {
-			body["S3Key"] = v
-		}
-		if v, ok := code["S3ObjectVersion"]; ok {
-			body["S3ObjectVersion"] = v
-		}
-		if v, ok := code["ImageUri"]; ok {
-			body["ImageUri"] = v
-		}
-		for _, property := range []string{"S3ObjectStorageMode", "SourceKMSKeyArn"} {
-			if v, ok := code[property]; ok {
-				body[property] = v
-			}
-		}
-		if v, ok := props["Architectures"]; ok {
-			body["Architectures"] = v
-		} else if _, existed := prior["Architectures"]; existed {
-			body["Architectures"] = []string{"x86_64"}
-		}
-		if publish, _ := props["PublishToLatestPublished"].(bool); publish {
-			body["PublishTo"] = "LATEST_PUBLISHED"
+		body, err := lambdaUpdateFunctionCodeBody(code, props, prior)
+		if err != nil {
+			return false, err
 		}
 		data, _ := json.Marshal(body)
-		_, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/code", "application/json", data)
-		if err != nil {
+		if _, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/2015-03-31/functions/"+url.PathEscape(name)+"/code", "application/json", data); err != nil {
 			return false, fmt.Errorf("lambda UpdateFunctionCode: %w", err)
 		}
 		return true, nil
 	}
 	return false, nil
+}
+
+// lambdaUpdateFunctionCodeBody builds the UpdateFunctionCode request for a
+// changed AWS::Lambda::Function. It errors only when the template's inline
+// ZipFile cannot be packaged. Pure otherwise, for the same reason as
+// lambdaCreateFunctionBody.
+func lambdaUpdateFunctionCodeBody(code, props, prior map[string]any) (map[string]any, error) {
+	body := map[string]any{}
+	if zf, ok := code["ZipFile"].(string); ok {
+		runtime, _ := props["Runtime"].(string)
+		handler, _ := props["Handler"].(string)
+		packaged, err := inlineCodeZip(zf, runtime, handler)
+		if err != nil {
+			return nil, fmt.Errorf("package inline function code: %w", err)
+		}
+		body["ZipFile"] = base64.StdEncoding.EncodeToString(packaged)
+	}
+	for _, property := range lambdaUpdateFunctionCodeForwardedCodeProperties {
+		if v, ok := code[property]; ok {
+			body[property] = v
+		}
+	}
+	if v, ok := props["Architectures"]; ok {
+		body["Architectures"] = v
+	} else if _, existed := prior["Architectures"]; existed {
+		body["Architectures"] = []string{"x86_64"}
+	}
+	if publish, _ := props["PublishToLatestPublished"].(bool); publish {
+		body["PublishTo"] = "LATEST_PUBLISHED"
+	}
+	return body, nil
+}
+
+// lambdaUpdateFunctionCodeForwardedCodeProperties are the Code sub-properties
+// copied straight through to UpdateFunctionCode under the same name.
+var lambdaUpdateFunctionCodeForwardedCodeProperties = []string{
+	"S3Bucket", "S3Key", "S3ObjectVersion", "ImageUri", "S3ObjectStorageMode", "SourceKMSKeyArn",
 }
 
 func (h *lambdaFunctionHandler) updateCodeSigningConfig(ctx context.Context, router http.Handler, name string, props, prior map[string]any, rCtx *resolveContext) (bool, error) {

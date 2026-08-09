@@ -18,6 +18,22 @@ ACTIONLINT_VERSION := v1.7.7
 # and CONTRIBUTING.md.
 GOLANGCI_LINT_VERSION := v2.8.0
 
+# Docker image names. The tag defaults to the sanitised current branch name so
+# that parallel worktrees do not build into one tag and silently run each
+# other's image; scripts/image-tag.sh derives it and documents what a slash,
+# uppercase and a detached HEAD each become. `?=` throughout, so any of the
+# three can be overridden:
+#
+#   make docker-console IMAGE_TAG=scratch
+#   make docker-console CONSOLE_IMAGE=overcast:whatever
+#
+# `?=` defines a recursively-expanded variable, so the `$(shell ...)` is deferred
+# until an image name is actually used and every other target costs nothing.
+# Built images are not free: `make docker-clean` removes this branch's pair.
+IMAGE_TAG     ?= $(shell sh scripts/image-tag.sh)
+CONSOLE_IMAGE ?= overcast:$(IMAGE_TAG)
+SLIM_IMAGE    ?= overcast-slim:$(IMAGE_TAG)
+
 .PHONY: help setup build build-web build-slim build-cross \
         build-linux-amd64 build-linux-arm64 \
         build-darwin-amd64 build-darwin-arm64 \
@@ -27,7 +43,7 @@ GOLANGCI_LINT_VERSION := v2.8.0
         build-slim-windows-amd64 \
         run test test-unit test-integration test-coverage \
         ci-local ci-local-web ci-local-go \
-        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run clean \
+        bench bench-startup lint lint-go lint-web lint-actions fmt vet tidy check verify aws-models-check docker docker-slim docker-console docker-run docker-clean clean \
         compat compat-build compat-serve compat-dev compat-docker compat-report compat-registry-check \
         generate-caps check-caps generate-aws-operations aws-models-check docs docs-index docs-check supportmeta-check check-binary-symbols
 
@@ -254,17 +270,21 @@ docker: docker-console docker-slim
 
 ## docker-console: build the Docker image with web console (default target)
 docker-console:
-	docker build -t overcast:dev .
+	docker build -t $(CONSOLE_IMAGE) .
 
 ## docker-slim: build the slim Docker image (no web UI, no SQLite, for CI)
 docker-slim:
-	docker build --target slim --build-arg NOSQLITE=1 -t overcast-slim:dev .
+	docker build --target slim --build-arg NOSQLITE=1 -t $(SLIM_IMAGE) .
 
 ## docker-run: run the Docker image with debug logging (mounts Docker socket for Lambda)
 docker-run:
 	docker run --rm -p 4566:4566 \
 		-v /var/run/docker.sock:/var/run/docker.sock \
-		-e OVERCAST_LOG_LEVEL=debug overcast:dev
+		-e OVERCAST_LOG_LEVEL=debug $(CONSOLE_IMAGE)
+
+## docker-clean: remove this branch's images (run this when you are done with them)
+docker-clean:
+	-docker image rm $(CONSOLE_IMAGE) $(SLIM_IMAGE)
 
 ## clean: remove build artefacts
 clean:
@@ -311,19 +331,21 @@ compat-registry-check:
 # These targets work identically on Mac, Linux, and Windows.
 # They require Docker but not a local Go installation.
 
+# These go through scripts/container-test.sh rather than calling docker compose
+# directly: it derives the container's CPU cap from the host and hands it to the
+# Compose file, which cannot compute one itself. See that script's header.
+
 ## container-test: run all tests inside a Linux container (cross-platform)
 container-test:
-	docker compose -f docker-compose.dev.yml run --rm test
+	bash scripts/container-test.sh
 
 ## container-test-unit: run unit tests inside a container
 container-test-unit:
-	docker compose -f docker-compose.dev.yml run --rm test \
-		go test -race -count=1 -timeout=900s ./internal/...
+	bash scripts/container-test.sh -race -count=1 -timeout=900s ./internal/...
 
 ## container-test-integration: run integration tests inside a container
 container-test-integration:
-	docker compose -f docker-compose.dev.yml run --rm test \
-		go test -race -count=1 -timeout=600s ./tests/...
+	bash scripts/container-test.sh -race -count=1 -timeout=600s ./tests/...
 
 ## dev: start the development server with source mounted (rebuilds on --build)
 dev:

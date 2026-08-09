@@ -320,7 +320,36 @@ make vet               # go vet
 make check             # aggregate pre-PR checks
 make run               # build and run on :4566
 docker compose up      # run in Docker (rebuilds image)
+make docker-console    # build the image, tagged after the current branch
+make docker-clean      # remove this branch's images when you are done
 ```
+
+### Docker image tags are per-branch
+
+`make docker-console` and `make docker-slim` tag their output `overcast:<sanitised
+branch name>` and `overcast-slim:<sanitised branch name>` rather than the
+`overcast:dev` they used to hardcode. With one shared tag, two checkouts — two
+worktrees, or a contributor and an agent — build into the same name, and
+whichever built last is what runs. The failure is silent: the container starts
+and serves the other branch's code.
+
+`scripts/image-tag.sh` (or `image-tag.ps1`) derives the tag: a slash becomes
+`-`, uppercase is lowered, and a detached HEAD becomes `detached-<short sha>`
+rather than the literal `HEAD` that every detached checkout would share. Override
+it three ways, in the Makefile's usual style:
+
+```sh
+make docker-console IMAGE_TAG=scratch
+make docker-console CONSOLE_IMAGE=overcast:whatever
+OVERCAST_IMAGE_TAG=scratch task docker-console
+```
+
+`docker compose up` is the exception: Compose cannot run a script to derive a
+tag, so it stays on `overcast:dev` unless you export `OVERCAST_IMAGE_TAG`.
+
+**Clean up after yourself.** A tag per branch means an image per branch, and
+they are not small. `make docker-clean` (or `task docker-clean`) removes the
+current branch's pair.
 
 ### Reproducing CI locally
 
@@ -383,6 +412,52 @@ scripts/docker-go.sh shell   # interactive shell in the container
 They also work from git worktrees, which the devcontainer cannot see (it
 mounts only the main checkout). See the header comment in
 [scripts/docker-go.sh](./scripts/docker-go.sh) for cache/performance details.
+
+**They are CPU-capped.** Uncapped, the container takes the whole machine: on a
+24-core host `go test ./internal/services/...` through the wrapper peaked at
+**2269% CPU** — 22.7 of 24 cores — and held it there for the compile phase. The
+wrappers now bound three separate things, because one is not enough:
+`docker run --cpus` (what the container may consume), `GOMAXPROCS` (parallelism
+*inside* one process — the image is `golang:1.24-bookworm`, and container-aware
+`GOMAXPROCS` only arrived in Go 1.25, so the 1.24 runtime would otherwise still
+see all 24 cores), and `go test -p` (concurrent test *binaries*, which defaults
+to `GOMAXPROCS` and so squares the parallelism if left alone). Same run with the
+cap: **1049% peak**, under the 1200% ceiling, for roughly 15% more wall clock.
+
+> Measured 2026-08-08 (UTC) on Windows 11, 24 logical cores, Docker Desktop reporting
+> 24 CPUs, `golang:1.24-bookworm`. Both runs were
+> `docker-go.sh test -run '^$' -count=1 ./internal/services/...` against a
+> **cold** `OVERCAST_GO_BUILD_CACHE` volume, so the compile phase — the part
+> that saturates — is what is being compared. CPU is the peak of ~1 Hz
+> `docker stats --no-stream` samples of that run's container only; wall clock is
+> the sample count (22 uncapped vs 25 capped), not a stopwatch.
+
+Defaults are derived from the detected core count, never hardcoded — `--cpus=N`
+is rejected outright when N exceeds the CPUs the daemon reports, so a fixed
+number would break smaller machines. Half the cores for `--cpus`/`GOMAXPROCS`,
+a quarter for `-p`, both clamped to at least 1.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `OVERCAST_GO_CPUS` | half the detected cores | `docker run --cpus` and `GOMAXPROCS`. `0` removes the cap entirely — the pre-cap behaviour. |
+| `OVERCAST_GO_TEST_P` | a quarter of the detected cores | `-p`, injected after the `test` subcommand. `0` never injects. An explicit `-p` from the caller always wins. |
+
+`scripts/go.sh`'s Docker fallback is capped the same way. Its native path is
+not: `--cpus` has nothing to bound on the host, and a host toolchain is yours to
+schedule.
+
+`docker-compose.dev.yml`'s `test` service is capped too, but it needs a helper to
+do it: a Compose file can only carry a literal or a `${VAR}`, and `docker compose
+run` has no `--cpus` flag, so the number cannot be derived where it is used.
+`make container-test`, `make container-test-unit`,
+`make container-test-integration` and their `task` equivalents go through
+[scripts/container-test.sh](./scripts/container-test.sh) (`.ps1` on Windows),
+which computes the same numbers and exports `OVERCAST_GO_CPUS` and
+`OVERCAST_GO_TEST_P` for Compose to substitute into `cpus:`, `GOMAXPROCS` and
+`GOFLAGS`. `-p` travels via `GOFLAGS` rather than the service's `command:` so it
+survives a command override; it is spelled as an empty value rather than `0`
+because `go test -p 0` is an error. Invoking `docker compose` by hand still
+works and stays unbounded.
 
 ### Step debugging
 
@@ -1212,7 +1287,17 @@ manifest.
 >   `go test -count=1 ./tests/integration/s3/` etc.
 > - Run the full race-enabled suite (`make test`) only before pushing/merging — ideally
 >   inside the container where the filesystem is local:
->   `docker compose -f docker-compose.dev.yml run --rm test`
+>   `make container-test` (or `task container-test`).
+
+Prefer `make container-test` over `docker compose -f docker-compose.dev.yml run --rm test`.
+The `test` service is CPU-capped the same way the Go-in-Docker wrappers are, but a Compose
+file cannot derive the cap itself: `--cpus=N` is rejected outright when N exceeds the CPUs
+the daemon reports, so the number cannot be hardcoded, and `docker compose run` has no
+`--cpus` flag to pass one through. So [scripts/container-test.sh](./scripts/container-test.sh)
+(and its `.ps1` twin) computes it and exports `OVERCAST_GO_CPUS` / `OVERCAST_GO_TEST_P`,
+which the Compose file substitutes into the service's `cpus:`, `GOMAXPROCS` and `GOFLAGS`.
+The same `OVERCAST_GO_CPUS=0` opt-out applies. Calling `docker compose` directly still
+works and is exactly as unbounded as it always was — it just does not get the cap.
 
 ---
 

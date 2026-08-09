@@ -399,13 +399,26 @@ type restTrieBuildNode struct {
 }
 
 type restIndexOperation struct {
-	Method       string
-	Query        string
+	Method         string
+	Query          string
+	ModelService   string
+	SigningName    string
+	Operation      string
+	Protocol       string
+	Ambiguous      bool
+	CandidateStart int
+	CandidateEnd   int
+}
+
+// restIndexCandidate is one service's operation at an ambiguous REST binding.
+// The generated table it feeds is what keeps a shared binding answerable
+// without attributing it: the binding entry still names no service, and a
+// caller that already knows the service resolves that service's own operation
+// from here. Only REST bindings need it — a target, Query or RPC key contains
+// the operation name, so colliding services there already share it.
+type restIndexCandidate struct {
 	ModelService string
-	SigningName  string
 	Operation    string
-	Protocol     string
-	Ambiguous    bool
 }
 
 func writeRESTTrie(out *bytes.Buffer, operations []operation) {
@@ -475,6 +488,7 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 		node    int
 	}
 	var indexedOperations []restIndexOperation
+	var candidates []restIndexCandidate
 	var collisions []registryCollision
 	out.WriteString("\nvar restTrieNodes = []restTrieNode{\n")
 	for _, entry := range flattened {
@@ -519,12 +533,26 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 			}
 			op, services := node.operations[start], collisionServices(node.operations[start:end])
 			ambiguous := len(services) > 1
+			candidateStart, candidateEnd := 0, 0
 			if ambiguous {
 				op.Service = ""
 				op.SigningName = ""
 				collisions = append(collisions, registryCollision{Key: normalizedRESTBinding(op), Services: services})
+				// Retain what blanking the service throws away: which services
+				// declare this binding, and what each of them calls the
+				// operation. node.operations is already sorted by service then
+				// name within the group, so this window is deterministic and
+				// exact duplicates are adjacent.
+				candidateStart = len(candidates)
+				for _, member := range node.operations[start:end] {
+					if n := len(candidates); n > candidateStart && candidates[n-1].ModelService == member.Service && candidates[n-1].Operation == member.Name {
+						continue
+					}
+					candidates = append(candidates, restIndexCandidate{ModelService: member.Service, Operation: member.Name})
+				}
+				candidateEnd = len(candidates)
 			}
-			indexedOperations = append(indexedOperations, restIndexOperation{Method: op.HTTPMethod, Query: query, ModelService: op.Service, SigningName: op.SigningName, Operation: op.Name, Protocol: protocolConstant(op.Protocol), Ambiguous: ambiguous})
+			indexedOperations = append(indexedOperations, restIndexOperation{Method: op.HTTPMethod, Query: query, ModelService: op.Service, SigningName: op.SigningName, Operation: op.Name, Protocol: protocolConstant(op.Protocol), Ambiguous: ambiguous, CandidateStart: candidateStart, CandidateEnd: candidateEnd})
 			start = end
 		}
 		fmt.Fprintf(out, "\t{LiteralStart: %d, LiteralEnd: %d, Parameter: %d, Greedy: %d, OperationStart: %d, OperationEnd: %d},\n", literalStart, literalEnd, parameter, greedy, operationStart, len(indexedOperations))
@@ -536,10 +564,14 @@ func writeRESTTrie(out *bytes.Buffer, operations []operation) {
 	out.WriteString("}\n\nvar restOperations = []restOperation{\n")
 	for _, op := range indexedOperations {
 		if op.Ambiguous {
-			fmt.Fprintf(out, "\t{Method: %q, Query: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s, Ambiguous: true},\n", op.Method, op.Query, op.ModelService, op.SigningName, op.Operation, op.Protocol)
+			fmt.Fprintf(out, "\t{Method: %q, Query: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s, Ambiguous: true, CandidateStart: %d, CandidateEnd: %d},\n", op.Method, op.Query, op.ModelService, op.SigningName, op.Operation, op.Protocol, op.CandidateStart, op.CandidateEnd)
 		} else {
 			fmt.Fprintf(out, "\t{Method: %q, Query: %q, ModelService: %q, SigningName: %q, Operation: %q, Protocol: %s},\n", op.Method, op.Query, op.ModelService, op.SigningName, op.Operation, op.Protocol)
 		}
+	}
+	out.WriteString("}\n\nvar restCandidates = []restCandidate{\n")
+	for _, candidate := range candidates {
+		fmt.Fprintf(out, "\t{ModelService: %q, Operation: %q},\n", candidate.ModelService, candidate.Operation)
 	}
 	out.WriteString("}\n")
 	writeCollisionIndex(out, "restCollisions", collisions)

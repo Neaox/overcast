@@ -16,6 +16,7 @@ import { eventTemplates, templateCategories } from "@/features/lambda/event-temp
 import { lambda } from "@/services/api"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import type { InvokeResult } from "@/types"
+import { decodeBase64Text } from "@/lib/base64"
 import { summarisePlatformRecords } from "@/lib/log-format"
 import { fieldLabel, sectionLabel } from "@/lib/typography"
 import { cn } from "@/lib/utils"
@@ -130,9 +131,12 @@ export function TestTab({ name }: { name: string }) {
     }
   }
 
-  // Under the JSON log format the tail's START / END / REPORT lines arrive as
+  // A log tail we cannot decode costs the log output and nothing else — the
+  // status, the badge and the response payload are all still worth showing.
+  // Under the JSON log format the START / END / REPORT lines arrive as
   // Telemetry-API-shaped records instead; each reads as the line it replaced.
-  const logOutput = result?.logResult ? summarisePlatformRecords(atob(result.logResult)) : null
+  const decodedLog = result?.logResult ? decodeBase64Text(result.logResult) : null
+  const logOutput = decodedLog === null ? null : summarisePlatformRecords(decodedLog)
 
   return (
     <div className="flex gap-6">
@@ -320,8 +324,13 @@ export function TestTab({ name }: { name: string }) {
                     </Link>
                   )}
                 </div>
-                <pre className="max-h-48 overflow-auto rounded-md border border-border bg-bg-elevated p-3 font-mono text-xs text-fg">
-                  {logOutput}
+                <pre
+                  className={cn(
+                    "max-h-48 overflow-auto rounded-md border border-border bg-bg-elevated p-3 font-mono text-xs",
+                    logOutput === null ? "text-fg-muted italic" : "text-fg",
+                  )}
+                >
+                  {logOutput ?? "Log output unavailable — the log tail was not valid base64."}
                 </pre>
               </div>
             )}

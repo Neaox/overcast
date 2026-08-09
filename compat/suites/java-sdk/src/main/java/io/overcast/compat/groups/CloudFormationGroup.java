@@ -7,6 +7,8 @@ import io.overcast.compat.harness.TestFn;
 import software.amazon.awssdk.services.cloudformation.CloudFormationClient;
 import software.amazon.awssdk.services.cloudformation.model.*;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -79,12 +81,29 @@ public final class CloudFormationGroup implements ServiceGroup {
         Assertions.assertEquals(name, stack.stackName(), "DescribeStacks: stackName mismatch");
     }
 
+    /**
+     * Covers StackStatusFilter in both directions: a filter naming the stack's
+     * status must include it, and one naming a status it cannot hold must
+     * exclude it. Only the second catches an implementation that accepts the
+     * parameter and ignores it.
+     *
+     * <p>DELETE_FAILED is a status the stack cannot reach here, since nothing
+     * has tried to delete it yet.
+     */
     private void listStacks(TestContext ctx) throws Exception {
-        var resp = cfn().listStacks(r -> r.stackStatusFilters(
-                StackStatus.CREATE_COMPLETE, StackStatus.UPDATE_COMPLETE));
         String name = ctx.getString("cfnStackName");
-        boolean found = resp.stackSummaries().stream().anyMatch(s -> s.stackName().equals(name));
-        Assertions.assertTrue(found, "ListStacks: created stack not found");
+
+        var all = listStackNames();
+        Assertions.assertTrue(all.contains(name),
+                "ListStacks: " + name + " not in unfiltered listing " + all);
+
+        var active = listStackNames(StackStatus.CREATE_COMPLETE, StackStatus.UPDATE_COMPLETE);
+        Assertions.assertTrue(active.contains(name),
+                "ListStacks: " + name + " not in CREATE_COMPLETE/UPDATE_COMPLETE listing " + active);
+
+        var deleteFailed = listStackNames(StackStatus.DELETE_FAILED);
+        Assertions.assertTrue(!deleteFailed.contains(name),
+                "ListStacks: " + name + " returned by a DELETE_FAILED filter");
     }
 
     private void updateStack(TestContext ctx) throws Exception {
@@ -113,6 +132,25 @@ public final class CloudFormationGroup implements ServiceGroup {
 
     private Stack describeStack(String name) {
         return cfn().describeStacks(r -> r.stackName(name)).stacks().get(0);
+    }
+
+    /**
+     * Stack names from ListStacks, optionally filtered by status. Also checks
+     * the invariant a status filter has to hold: every summary returned is in
+     * one of the requested statuses.
+     */
+    private List<String> listStackNames(StackStatus... statuses) {
+        var resp = cfn().listStacks(r -> r.stackStatusFilters(statuses));
+        var wanted = List.of(statuses);
+        var names = new ArrayList<String>();
+        for (StackSummary s : resp.stackSummaries()) {
+            if (!wanted.isEmpty() && !wanted.contains(s.stackStatus())) {
+                throw new AssertionError("ListStacks: " + s.stackName() + " returned with status "
+                        + s.stackStatusAsString() + ", not in filter " + wanted);
+            }
+            names.add(s.stackName());
+        }
+        return names;
     }
 
     private void waitStackStatus(String name, String... terminal) throws InterruptedException {

@@ -169,11 +169,10 @@ Your source files are mounted — edits on the host are instantly visible.
 
 ```bash
 # Run all tests (Linux container, race detector enabled):
-docker compose -f docker-compose.dev.yml run --rm test
+make container-test          # or: task container-test
 
 # Run unit tests only:
-docker compose -f docker-compose.dev.yml run --rm test \
-  go test -race -count=1 -timeout=60s ./internal/...
+make container-test-unit     # or: task container-test-unit
 
 # Start the development server:
 docker compose -f docker-compose.dev.yml up overcast
@@ -182,6 +181,13 @@ docker compose -f docker-compose.dev.yml up overcast
 # Rebuild after code changes:
 docker compose -f docker-compose.dev.yml up --build overcast
 ```
+
+Use the `make`/`task` targets rather than `docker compose run --rm test` directly:
+they go through [scripts/container-test.sh](../../scripts/container-test.sh)
+(`.ps1` on Windows), which bounds the container's CPU use so a full run leaves
+your machine usable. Compose cannot derive that bound itself — see
+[CONTRIBUTING.md § No local Go toolchain?](../../CONTRIBUTING.md). Calling
+`docker compose` by hand still works; it is just uncapped.
 
 This is also available as VS Code tasks: `Ctrl+Shift+P → "Tasks: Run Task" → "container: test all"`.
 
@@ -291,7 +297,15 @@ All three tools produce identical results:
 | Lint           | `make lint`             | `task lint`             | `golangci-lint run ./...` (v2.x)                         |
 | Format         | `make fmt`              | `task fmt`              | `go fmt ./...`                                           |
 | Pre-PR check   | `make check`            | `task check`            | run fmt + vet + lint + test manually                     |
-| Container test | `make container-test`   | `task container-test`   | `docker compose -f docker-compose.dev.yml run --rm test` |
+| Container test | `make container-test`   | `task container-test`   | `docker compose -f docker-compose.dev.yml run --rm test` (uncapped — prefer the targets) |
+| Docker image   | `make docker-console`   | `task docker-console`   | `docker build -t "overcast:$(sh scripts/image-tag.sh)" .`  |
+| Drop the image | `make docker-clean`     | `task docker-clean`     | `docker image rm "overcast:$(sh scripts/image-tag.sh)"`     |
+
+The image is tagged after the current branch rather than a fixed `overcast:dev`,
+so two checkouts cannot build into one name and silently run each other's code.
+`scripts/image-tag.sh` derives the tag and `OVERCAST_IMAGE_TAG` overrides it; see
+[CONTRIBUTING.md § Docker image tags are per-branch](../../CONTRIBUTING.md#docker-image-tags-are-per-branch).
+An image per branch adds up — `make docker-clean` removes the current one.
 
 ## Step debugging
 

@@ -37,6 +37,24 @@ opencode and Claude Code both discover them without prompting.
 - `release`: Use for cutting a release — curating changelog fragments, bumping `VERSION`, and smoke/regression testing the release candidate before it ships.
 - `stacked-prs`: Use when a PR depends on another PR that has not merged yet — building, linking, syncing and landing a chain of dependent PRs.
 
+### Repo-local MCP servers
+
+The repo declares one MCP server, `chrome-devtools`, in two places — [.mcp.json](./.mcp.json) for
+Claude Code and the `mcp` block of [opencode.json](./opencode.json) for opencode. The two clients
+read different files with different schemas, so the definition is duplicated on purpose.
+
+**The two are deliberately not identical, and the difference is the point.** Claude Code's runs
+with `--headless --isolated`: Chrome starts with no window and a throwaway profile, which is what
+lets a background agent — which has no display to composite a window onto — drive a browser and
+capture screenshots at all. opencode's is left headful because a human is sitting in front of it
+and watching the browser is often the reason they reached for it. Match the flags to whether
+there is a display, not to each other.
+
+Adding or changing either file does not affect a session already running: the client reads it at
+startup, so restart (and approve the server if prompted) before concluding the tools are
+unavailable. Screenshot workflow and the judgement about which themes and widths to capture are
+in the [`pull-request` skill § Visual Evidence](./.agents/skills/pull-request/SKILL.md#visual-evidence).
+
 ### Worktree policy
 
 All repository mutations must happen in a dedicated, task-owned git worktree. Derive the default
@@ -190,6 +208,7 @@ All coding standards are in [CONTRIBUTING.md](./CONTRIBUTING.md). This section i
 - **S3 is the final routing fallback, after generated AWS operation ownership.** S3's broad bucket/object routes live on a private router rather than the main chi router. Explicit service routes run first; then the generated AWS operation registry may claim a modeled non-S3 request and return a protocol-correct `501`; only traffic without sufficient non-S3 ownership evidence delegates to S3. The explicit Smithy RPC v2 route similarly delegates to S3 only when `Smithy-Protocol` is absent. This ordering is deliberate because S3 has no distinguishing header or path prefix. Consequences:
   - When you add a service that uses **versioned REST paths** (e.g. `/2018-10-31/...`, `/v3/foo`) or any non-S3 root path, you must (a) register the routes in `RegisterRoutes`, and (b) add the path prefix to `detectService` in [internal/middleware/logger.go](./internal/middleware/logger.go). Otherwise every request to that service will appear in logs as `service=s3` and bypass IAM/region/SigV4 middleware that branches on service name.
   - If you see `service=s3` in logs for a request that clearly isn't S3 (e.g. `POST /2018-10-31/layers/.../versions`), verify both `detectService` and the actual route. The label alone no longer proves the request reached S3.
+  - **The operation label needs no code at all.** Once `detectService` names your service, `detectOperation` resolves the operation from the pinned Smithy `@http` bindings via `awsapi.Registry.ClaimRESTQuery`, scoped to that service — see [internal/middleware/restoperation.go](./internal/middleware/restoperation.go). Do not add a method+path switch for it; the generated table already knows your routes, and a hand-written second copy is what let Lambda's label drift into S3's object shapes. The same resolution feeds the IAM action, so a wrong label is a wrong authorization decision, not just a wrong log line. Only an endpoint that exists in **no** AWS model (an emulator-only route) needs an entry, in `overcastRESTOperation`.
   - **Bugs cause fallback too.** A typo in a route path, a missing `RegisterRoutes` entry, a misnamed `chi.URLParam`, or middleware that mutates the URL can make a supported request miss its service handler. Depending on its method, path, and SigV4 scope, the symptom may now be either an S3 response or a generated non-S3 `501`. Confirm the explicit route matched before changing `detectService` or the generated registry. Logging classification, chi route matching, and generated fallback ownership are separate decisions.
   - 501s under `service=s3` for paths like `/<bucket>/?encryption=` or `/<bucket>/?policy=` are real S3 sub-resource calls and belong to S3.
 
@@ -236,6 +255,14 @@ scripts\docker-go.ps1 <go-subcommand> ...`. For a `make` target that is only a
 Go invocation (for example `docs-index`), read the target in `Makefile` and run
 its underlying `go` command through the wrapper. Do not hand-edit generated
 files because the host lacks `go` or `make`.
+
+Both wrappers cap the container at **half the available CPUs** and set
+`GOMAXPROCS` and `go test -p` to match, so a long run leaves the user's machine
+usable instead of pinning every core. You do not have to add your own `-p`: one
+is injected for `go test` unless you passed one, and an explicit `-p` always
+wins. Raise or lower it with `OVERCAST_GO_CPUS` / `OVERCAST_GO_TEST_P`, or set
+`OVERCAST_GO_CPUS=0` for the old uncapped behaviour — but do not do that on
+someone else's machine without asking.
 
 `make check` runs `fmt vet lint test` in one go and is the safest final gate — prefer it over assembling your own subset. Every command CI runs is in [.github/workflows/test.yml](./.github/workflows/test.yml); if your final check is narrower than that file, you have not verified the change.
 
@@ -547,9 +574,19 @@ Full workflow, including the generated-file conflict recipe, is in the
 
 Agents must **not** start their own test instances of Overcast on port **4566** (API) or **4567** (web UI) — those are reserved for the user's own running instance, unless the user explicitly directs otherwise. Starting a test instance on those ports silently breaks whatever the user is doing with their instance, or fails confusingly when theirs is already bound.
 
-- Use `scripts/run-test-instance.sh` (or `.ps1`) — it picks a free port pair at or above 4570, refuses the reserved pair even when the scan base is moved, passes extra `docker run` args through after `--`, and prints the API endpoint and web UI URLs.
+- Use `scripts/run-test-instance.sh` (or `.ps1`) — it picks a free port pair at or above 4570, refuses 4566 and 4567 in either role even when the scan base is moved, publishes both ports to `127.0.0.1` only, and prints the API endpoint and web UI URLs.
+- **It takes named options, and has no `docker run` passthrough.** `--image`, `--base-port`, `--name`, `--env KEY=VALUE` (limited to `OVERCAST_*` and `AWS_*`), `--data-volume`, `--mount-docker-socket`, `--no-logs`. Anything else stops the script with a message naming the argument; nothing is dropped silently. That is deliberate: the script is meant to be permitted to agents in place of a blanket `docker run`, and a passthrough would make the two grants identical. If you genuinely need something outside that list, run `docker` yourself with the user's agreement and say why — do not add a passthrough back.
+- `--mount-docker-socket` is what lets the instance run **Lambda and ECS**, and what lets the web console discover its own published port and connect without the *Connect to Overcast* screen. It is also host root for anything inside the container, so ask for it when you need it and leave it off when you do not.
 - When you want the user to look at something in a test instance, give them the **full clickable URL including the port** (e.g. `http://localhost:4570` / `http://localhost:4571`) — never say "open the web UI" and assume a port.
 - The same courtesy applies in reverse: something already listening on 4566/4567 is the user's instance — never kill it, restart it, or point tests at it without being asked.
+
+## Docker images — one tag per branch, and remove it afterwards
+
+`make docker-console` and `make docker-slim` (and their `task` equivalents) tag the image after the **sanitised current branch name**, not `overcast:dev`. The shared tag was the same class of problem as a shared port: several worktrees build into one name, a parallel agent's build lands between yours and your `docker run`, and you test or screenshot their code with nothing to indicate it happened.
+
+- `scripts/image-tag.sh` (or `.ps1`) prints the tag. A slash becomes `-`, uppercase is lowered, and a detached HEAD becomes `detached-<short sha>` rather than the literal `HEAD` every detached worktree would otherwise share. Set `OVERCAST_IMAGE_TAG` to override; an override that is not a legal Docker tag is refused rather than quietly rewritten.
+- Pass the built image to the launcher with `--image "overcast:$(sh scripts/image-tag.sh)"`.
+- **Clean up.** One image per branch accumulates a gigabyte at a time on a machine several agents share. `make docker-clean` (or `task docker-clean`) removes this branch's console and slim images; run it when you are done with them, in the same task that built them.
 
 ## Calling the AWS CLI — use `scripts/awslocal.sh`
 

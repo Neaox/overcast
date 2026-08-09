@@ -9,7 +9,10 @@ bin/
 # stray root-level binaries from `go build ./cmd/...` without -o
 /overcast
 /overcastd
-# any stray root-level .exe (ad-hoc Windows cross-compile tests, etc.)
+/capgen
+/stub-report
+# any stray root-level .exe (ad-hoc Windows cross-compile tests, etc.) — this
+# also covers the .exe forms of the binaries listed above.
 /*.exe
 
 # go test binaries (from `go test -c`) and profiler outputs
@@ -23,6 +26,13 @@ tmp/
 
 # persistent state (dev container data dir — survives rebuilds, not for VCS)
 .overcast/
+# Per-machine tool state that some environments spill into the repo root
+# instead of $HOME: Go telemetry counters under .config/go/telemetry (scoped
+# per Go version, arch and week) and buildx node refs plus a token seed under
+# .docker. Both are machine-local and regenerated on demand — never useful to
+# another checkout, so ignore them wherever they come from.
+/.config/
+/.docker/
 # git worktrees (must live outside the repo; ignore any stray ones inside)
 .worktrees/
 .devcontainer/.env
@@ -41,6 +51,11 @@ compat-report.txt
 # way internal/capabilities/all.gen.go is handled. Both artifacts are
 # document-major — one line or one object per doc — so a docs edit rewrites
 # only that doc's entry and branches that touch different docs merge cleanly.
+
+# Web console screenshots captured for PR review. They belong on a throwaway
+# assets/<branch> branch referenced from the PR body, never in the repo tree —
+# see .agents/skills/pull-request/SKILL.md § Hosting.
+screenshots/
 
 # log files
 *.log

@@ -142,7 +142,13 @@ scripts/run-test-instance.sh --image ghcr.io/neaox/overcast-slim:<version>-rc.<n
 ```
 
 Services backed by real containers — Lambda, ECS, RDS, ElastiCache, MSK — need the Docker socket
-mounted, or they degrade to metadata-only stubs and you will be testing the stub.
+mounted, or they degrade to metadata-only stubs and you will be testing the stub. Add
+`--mount-docker-socket`, which appends exactly that one bind mount:
+
+```sh
+scripts/run-test-instance.sh --mount-docker-socket \
+  --image ghcr.io/neaox/overcast:<version>-rc.<n>
+```
 
 ### 2. Regression — the compatibility suite
 

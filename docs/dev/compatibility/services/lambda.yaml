@@ -2,7 +2,7 @@ service: lambda
 status: fixed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-05
+last_updated: 2026-08-09
 protocols: [rest_json, event_stream]
 implementation: [internal/services/lambda]
 integration_tests: [tests/integration/lambda]
@@ -42,10 +42,16 @@ operations:
         gap: Publish=true should publish initial version 1; not reviewed in this pass.
       advanced_configuration:
         status: intentionally_partial
-        gap: SnapStart, DeadLetterConfig, KMS, EphemeralStorage, TracingConfig, RuntimeManagementConfig, RecursiveLoop, and empty-object LoggingConfig updates are rejected before mutation rather than silently discarded. LoggingConfig with explicit members is stored, returned and honoured for both Text and JSON LogFormat — Text keeps the plain-text START/END/REPORT lines, JSON emits Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records and filters CloudWatch Logs and the invoke tail by SystemLogLevel and ApplicationLogLevel — alongside default or custom log groups, Architectures, VpcConfig (including Ipv6AllowedForDualStack), ImageConfig, FileSystemConfigs, and code-signing association. The init-phase platform.initStart/platform.initReport records and exact empty-object/cross-field captures are tracked in #660.
+        gap: SnapStart, DeadLetterConfig, CapacityProviderConfig, DurableConfig, TenancyConfig, Publish/PublishTo, RuntimeManagementConfig, RecursiveLoop, and empty-object LoggingConfig updates are rejected before mutation rather than silently discarded. TracingConfig, EphemeralStorage and KMSKeyArn are validated against AWS's modeled constraints, stored and returned, but honoured by nothing — X-Ray is not emulated, the ephemeral storage size is not enforced on the container, and environment variables are not encrypted at rest. LoggingConfig with explicit members is stored, returned and honoured for both Text and JSON LogFormat — Text keeps the plain-text START/END/REPORT lines, JSON emits Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records and filters CloudWatch Logs and the invoke tail by SystemLogLevel and ApplicationLogLevel — alongside default or custom log groups, Architectures, VpcConfig (including Ipv6AllowedForDualStack), ImageConfig, FileSystemConfigs, and code-signing association. The init-phase platform.initStart/platform.initReport records and exact empty-object/cross-field captures are tracked in #660.
       lifecycle_state:
         status: intentionally_partial
         gap: Overcast can return Pending during Docker image prewarm and Active immediately otherwise; real Lambda provisioning state timing is not fully emulated.
+      s3_object_version:
+        status: fixed
+        evidence: Code.S3ObjectVersion resolves against S3 object version history and fetches that version's bytes; an absent version or a delete marker fails the create with the same GetObject translation as an unreadable bucket or key, and persists nothing. Tests in tests/integration/lambda/create_function_code_version_test.go and tests/integration/cloudformation/lambda_s3_object_version_test.go.
+      explicit_no_op_values:
+        status: fixed
+        evidence: A modeled-but-unimplemented member is refused only when the caller asked for it. An explicit null, false, "", [] or {} — AWS's own default for each gated member, and what SDKs and CloudFormation clear-values send — is a no-op and is accepted; any other value still returns 501.
     findings:
       fixed:
         - Zip CreateFunction requests without Code, Runtime, or Handler were accepted; now rejected as AWS InvalidParameterValueException.
@@ -106,7 +112,13 @@ operations:
       - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_sqsBatchSizeRequiresBatchWindow
       - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_dynamoDBBatchSizeRequiresBatchWindow
       - tests/integration/lambda/esm_validation_test.go::TestEventSourceMapping_sqsFIFOBatchSizeMaximum
+      - tests/integration/lambda/tags_test.go::TestCreateEventSourceMapping_StoresTags
+      - tests/integration/lambda/tags_test.go::TestCreateEventSourceMapping_TagsSurviveRestart
+      - tests/integration/cloudformation/lambda_esm_tags_test.go::TestCreateStack_LambdaEventSourceMappingCarriesStackTags
     scenarios:
+      create_time_tags:
+        status: fixed
+        evidence: The Tags map is stored in the mapping's own tag namespace and read back through ListTags; EventSourceMappingConfiguration keeps AWS's shape and does not echo them. This is the ordinary CloudFormation path — a stack deployed with `--tags` merges them into every mapping — and refusing it previously failed every such deploy with a 501.
       source_specific_batch_defaults:
         status: fixed
         evidence: Omitted BatchSize defaults to 10 for SQS and 100 for DynamoDB Streams; explicit zero and negative values are rejected rather than treated as omission.

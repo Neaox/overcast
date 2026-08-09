@@ -410,19 +410,13 @@ func (h *Handler) ListStacks(w http.ResponseWriter, r *http.Request) {
 		writeCFNError(w, r, "InternalFailure", "failed to list stacks", http.StatusInternalServerError)
 		return
 	}
+	stacks = filterStacksByStatus(stacks, collectStackStatusFilter(r))
 	slices.SortFunc(stacks, func(a, b *Stack) int {
 		return b.CreatedAt.Compare(a.CreatedAt)
 	})
 	var summaries []stackSummaryXML
 	for _, s := range stacks {
-		summaries = append(summaries, stackSummaryXML{
-			StackName:   s.StackName,
-			StackID:     s.StackID,
-			ParentID:    s.ParentStackID,
-			RootID:      s.RootID,
-			StackStatus: s.Status,
-			CreatedAt:   s.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		})
+		summaries = append(summaries, toStackSummaryXML(s))
 	}
 	writeCFNResponse(w, r, "ListStacksResponse", "ListStacksResult",
 		listStacksResult{StackSummaries: summaries})
@@ -1071,6 +1065,47 @@ func applyStackTags(stack *Stack, tags []Tag, present bool) {
 	stack.Tags = append([]Tag(nil), tags...)
 }
 
+// collectStackStatusFilter reads ListStacks' StackStatusFilter.member.N form
+// values. An empty result means the caller sent no filter, which AWS treats as
+// "every stack" rather than "no stacks" — see filterStacksByStatus.
+func collectStackStatusFilter(r *http.Request) []string {
+	var statuses []string
+	for i := 1; ; i++ {
+		status := r.FormValue(fmt.Sprintf("StackStatusFilter.member.%d", i))
+		if status == "" {
+			break
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses
+}
+
+// filterStacksByStatus applies ListStacks' StackStatusFilter: with one or more
+// statuses named, only stacks in one of them are returned; with none named,
+// every stack is, "including existing stacks and stacks that have been
+// deleted". That last part is why this is not DescribeStacks' filter — the
+// caller-visible default there drops DELETE_COMPLETE, and here it must not.
+//
+// A status outside the AWS enum simply matches nothing. Real CloudFormation
+// rejects one with a ValidationError naming the whole enum; Overcast does not
+// model the enum, and guessing at a subset would reject statuses AWS accepts
+// (the IMPORT_* family, which the emulator never produces but a client may
+// legitimately filter on).
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ListStacks.html
+func filterStacksByStatus(stacks []*Stack, statuses []string) []*Stack {
+	if len(statuses) == 0 {
+		return stacks
+	}
+	filtered := make([]*Stack, 0, len(stacks))
+	for _, s := range stacks {
+		if slices.Contains(statuses, s.Status) {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}
+
 func collectCapabilities(r *http.Request) []string {
 	var caps []string
 	for i := 1; ; i++ {
@@ -1117,6 +1152,10 @@ type listImportsResult struct {
 	Imports []string `xml:"Imports>member,omitempty"`
 }
 
+// stackXML is AWS's Stack shape. Its last-updated element is LastUpdatedTime —
+// LastUpdatedTimestamp is StackResourceSummary's spelling, and the SDKs' generated
+// deserialisers match these names literally, so the wrong one parses as an absent
+// field rather than as an error.
 type stackXML struct {
 	StackName    string      `xml:"StackName"`
 	StackID      string      `xml:"StackId"`
@@ -1125,7 +1164,7 @@ type stackXML struct {
 	StackStatus  string      `xml:"StackStatus"`
 	StatusReason string      `xml:"StackStatusReason,omitempty"`
 	CreatedAt    string      `xml:"CreationTime"`
-	UpdatedAt    string      `xml:"LastUpdatedTimestamp,omitempty"`
+	UpdatedAt    string      `xml:"LastUpdatedTime,omitempty"`
 	Parameters   []paramXML  `xml:"Parameters>member,omitempty"`
 	Outputs      []outputXML `xml:"Outputs>member,omitempty"`
 	Tags         []tagXML    `xml:"Tags>member,omitempty"`
@@ -1159,7 +1198,36 @@ type stackSummaryXML struct {
 	ParentID    string `xml:"ParentId,omitempty"`
 	RootID      string `xml:"RootId,omitempty"`
 	StackStatus string `xml:"StackStatus"`
-	CreatedAt   string `xml:"CreationTime"`
+	// StackSummary carries the reason as well as the status, which is what
+	// lets a list view say why a stack failed without a second call.
+	StatusReason string `xml:"StackStatusReason,omitempty"`
+	CreatedAt    string `xml:"CreationTime"`
+	UpdatedAt    string `xml:"LastUpdatedTime,omitempty"`
+	DeletedAt    string `xml:"DeletionTime,omitempty"`
+}
+
+// toStackSummaryXML builds the ListStacks view of a stack. ListStacks has two
+// entry points — the Query handler and the typed operation — and both answer
+// from this one place so a field cannot reach callers on only one of them.
+func toStackSummaryXML(s *Stack) stackSummaryXML {
+	summary := stackSummaryXML{
+		StackName:    s.StackName,
+		StackID:      s.StackID,
+		ParentID:     s.ParentStackID,
+		RootID:       s.RootID,
+		StackStatus:  s.Status,
+		StatusReason: s.StatusReason,
+		CreatedAt:    s.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+	}
+	// Both are absent until the stack has actually been updated or deleted: an
+	// empty element would deserialise to a zero timestamp rather than to nothing.
+	if s.UpdatedAt != nil {
+		summary.UpdatedAt = s.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+	if s.DeletedAt != nil {
+		summary.DeletedAt = s.DeletedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+	return summary
 }
 
 type listStacksResult struct {

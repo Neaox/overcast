@@ -115,18 +115,15 @@ func (s *Service) InitNotifications(enqueuer events.MessageEnqueuer, invoker eve
 }
 
 // GetObjectBytes returns the full body of an S3 object for internal callers
-// such as the Lambda S3-reactive sync watcher.
-// Returns an error if the bucket or key does not exist.
-func (s *Service) GetObjectBytes(ctx context.Context, bucket, key string) ([]byte, *protocol.AWSError) {
-	obj, aerr := s.handler.store.getObjectMeta(ctx, bucket, key)
+// such as the Lambda S3-reactive sync watcher and Lambda's deployment-package
+// fetch. An empty versionID reads the key's current version; otherwise it reads
+// exactly that version, which is what Lambda's Code.S3ObjectVersion names.
+// Returns an error if the bucket, key or version does not exist — the same
+// errors GetObject answers with over HTTP, so callers can translate one set.
+func (s *Service) GetObjectBytes(ctx context.Context, bucket, key, versionID string) ([]byte, *protocol.AWSError) {
+	obj, aerr := s.resolveObjectForRead(ctx, bucket, key, versionID)
 	if aerr != nil {
 		return nil, aerr
-	}
-	if obj.DeleteMarker {
-		// The key's current version is a delete marker, so from a reader's
-		// point of view the object is not there — the same answer GetObject
-		// gives over HTTP.
-		return nil, errNoSuchKey(key)
 	}
 	f, aerr := s.handler.store.openBody(obj)
 	if aerr != nil {
@@ -138,6 +135,31 @@ func (s *Service) GetObjectBytes(ctx context.Context, bucket, key string) ([]byt
 		return nil, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("s3: read object %s/%s: %w", bucket, key, err))
 	}
 	return body, nil
+}
+
+// resolveObjectForRead picks the version an internal read addresses and refuses
+// the two "nothing to read" cases the way GetObject does over HTTP: a current
+// version that is a delete marker reads as absent, and a version id that names
+// a delete marker exists but cannot be read.
+func (s *Service) resolveObjectForRead(ctx context.Context, bucket, key, versionID string) (*Object, *protocol.AWSError) {
+	if versionID == "" {
+		obj, aerr := s.handler.store.getObjectMeta(ctx, bucket, key)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if obj.DeleteMarker {
+			return nil, errNoSuchKey(key)
+		}
+		return obj, nil
+	}
+	obj, aerr := s.handler.resolveVersion(ctx, bucket, key, versionID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if obj.DeleteMarker {
+		return nil, errMethodNotAllowedOnDeleteMarker()
+	}
+	return obj, nil
 }
 
 // RegisterRoutes mounts all S3 endpoints onto the given router.

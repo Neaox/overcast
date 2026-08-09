@@ -1,7 +1,12 @@
 services:
   overcast:
     build: .
-    image: overcast:dev
+    # Compose cannot run scripts/image-tag.sh to derive a per-branch tag the way
+    # the Makefile and Taskfile do, so this keeps `dev` as the default and reads
+    # OVERCAST_IMAGE_TAG when you want to point it at a branch build:
+    #   OVERCAST_IMAGE_TAG=$(sh scripts/image-tag.sh) docker compose up
+    # Left unset it builds and tags overcast:dev exactly as it always has.
+    image: overcast:${OVERCAST_IMAGE_TAG:-dev}
     container_name: overcast
     ports:
       - "4566:4566"

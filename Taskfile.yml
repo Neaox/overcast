@@ -272,20 +272,50 @@ tasks:
     desc: Build both Docker images (console + slim)
     deps: [docker-console, docker-slim]
 
+  # The tag is not hardcoded: it defaults to the sanitised current branch name
+  # so that parallel worktrees do not build into one tag and silently run each
+  # other's image. scripts/image-tag.{sh,ps1} derives it and documents what a
+  # slash, uppercase and a detached HEAD each become; set OVERCAST_IMAGE_TAG to
+  # override. These go through the script per platform, the same way
+  # container-test does, because a Taskfile `sh:` var would need a POSIX shell
+  # on PATH and a Windows box installing Task via scoop has none.
+  # Built images are not free: `task docker-clean` removes this branch's pair.
+
   docker-console:
-    desc: Build the Docker image with web console
+    desc: Build the Docker image with web console (tagged after the current branch)
     cmds:
-      - docker build -t overcast:dev .
+      - cmd: 'docker build -t "overcast:$(sh scripts/image-tag.sh)" .'
+        platforms: [darwin, linux]
+      - cmd: "powershell -NoProfile -ExecutionPolicy Bypass -Command '$t = & ./scripts/image-tag.ps1; docker build -t overcast:$t .'"
+        platforms: [windows]
 
   docker-slim:
     desc: Build the slim Docker image (no web UI, for CI)
     cmds:
-      - docker build --target slim -t overcast-slim:dev .
+      - cmd: 'docker build --target slim -t "overcast-slim:$(sh scripts/image-tag.sh)" .'
+        platforms: [darwin, linux]
+      - cmd: "powershell -NoProfile -ExecutionPolicy Bypass -Command '$t = & ./scripts/image-tag.ps1; docker build --target slim -t overcast-slim:$t .'"
+        platforms: [windows]
 
   docker-run:
     desc: Run the Docker image with debug logging
     cmds:
-      - docker run --rm -p 4566:4566 -e OVERCAST_LOG_LEVEL=debug overcast:dev
+      - cmd: 'docker run --rm -p 4566:4566 -e OVERCAST_LOG_LEVEL=debug "overcast:$(sh scripts/image-tag.sh)"'
+        platforms: [darwin, linux]
+      - cmd: "powershell -NoProfile -ExecutionPolicy Bypass -Command '$t = & ./scripts/image-tag.ps1; docker run --rm -p 4566:4566 -e OVERCAST_LOG_LEVEL=debug overcast:$t'"
+        platforms: [windows]
+
+  docker-clean:
+    desc: Remove this branch's Docker images
+    cmds:
+      # ignore_error: neither image is guaranteed to exist — `task docker-console`
+      # alone leaves no slim image — and "nothing to remove" is success here.
+      - cmd: 'docker image rm "overcast:$(sh scripts/image-tag.sh)" "overcast-slim:$(sh scripts/image-tag.sh)"'
+        platforms: [darwin, linux]
+        ignore_error: true
+      - cmd: "powershell -NoProfile -ExecutionPolicy Bypass -Command '$t = & ./scripts/image-tag.ps1; docker image rm overcast:$t overcast-slim:$t'"
+        platforms: [windows]
+        ignore_error: true
 
   docker-compose:
     desc: Start with docker compose (rebuilds image)
@@ -311,20 +341,34 @@ tasks:
   # These targets work identically on Mac, Linux, and Windows.
   # Require Docker but not a local Go installation.
 
+  # These go through scripts/container-test.{sh,ps1} rather than calling docker
+  # compose directly: the wrapper derives the container's CPU cap from the host
+  # and hands it to the Compose file, which cannot compute one itself. See that
+  # script's header.
+
   container-test:
     desc: Run all tests inside a Linux container (works on any OS with Docker)
     cmds:
-      - docker compose -f docker-compose.dev.yml run --rm test
+      - cmd: bash scripts/container-test.sh
+        platforms: [darwin, linux]
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\container-test.ps1
+        platforms: [windows]
 
   container-test-unit:
     desc: Run unit tests inside a container
     cmds:
-      - docker compose -f docker-compose.dev.yml run --rm test go test -race -count=1 -timeout=60s ./internal/...
+      - cmd: bash scripts/container-test.sh -race -count=1 -timeout=60s ./internal/...
+        platforms: [darwin, linux]
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\container-test.ps1 -race -count=1 -timeout=60s ./internal/...
+        platforms: [windows]
 
   container-test-integration:
     desc: Run integration tests inside a container
     cmds:
-      - docker compose -f docker-compose.dev.yml run --rm test go test -race -count=1 -timeout=120s ./tests/...
+      - cmd: bash scripts/container-test.sh -race -count=1 -timeout=120s ./tests/...
+        platforms: [darwin, linux]
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\container-test.ps1 -race -count=1 -timeout=120s ./tests/...
+        platforms: [windows]
 
   dev:
     desc: Start the dev server with source mounted (no local Go needed)

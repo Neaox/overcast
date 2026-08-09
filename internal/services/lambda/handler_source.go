@@ -556,6 +556,7 @@ func (h *Handler) PutFunctionSource(w http.ResponseWriter, r *http.Request) {
 		current.setCode(zipBytes)
 		current.CodeS3Bucket = ""
 		current.CodeS3Key = ""
+		current.CodeS3ObjectVersion = ""
 		current.ImageUri = ""
 		current.RevisionId = uuid.NewString()
 		current.LastModified = h.clk.Now().UTC().Format(time.RFC3339)

@@ -615,6 +615,35 @@ func TestListStacks_success(t *testing.T) {
 	}
 }
 
+// StackStatusFilter has to survive routing and middleware to reach the
+// handler, which a handler-level test cannot show. Filtering on a status no
+// freshly created stack can hold keeps the assertion independent of how far
+// provisioning has got by the time the list is read.
+func TestListStacks_stackStatusFilterExcludesStacks(t *testing.T) {
+	// Given: two stacks, neither of which has been deleted
+	srv := helpers.NewTestServer(t)
+	for _, name := range []string{"stack-a", "stack-b"} {
+		r := cfnQuery(t, srv, "CreateStack", url.Values{
+			"StackName":    []string{name},
+			"TemplateBody": []string{minimalTemplate},
+		})
+		r.Body.Close()
+	}
+
+	// When: ListStacks filters on DELETE_FAILED
+	resp := cfnQuery(t, srv, "ListStacks", url.Values{
+		"StackStatusFilter.member.1": []string{"DELETE_FAILED"},
+	})
+	defer resp.Body.Close()
+
+	// Then: 200 with no summaries at all
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	b := readBody(t, resp)
+	if strings.Contains(string(b), "<StackName>") {
+		t.Errorf("expected no stack summaries, got: %s", b)
+	}
+}
+
 // ─── DeleteStack ──────────────────────────────────────────────────────────────
 
 func TestDeleteStack_success(t *testing.T) {

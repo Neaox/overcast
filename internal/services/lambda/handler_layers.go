@@ -140,7 +140,7 @@ func (h *Handler) PublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 	// for the same rationale.
 	content := req.Content.ZipFile
 	if len(content) == 0 && req.Content.S3Bucket != "" && req.Content.S3Key != "" && h.s3Fetch != nil {
-		if zip, err := h.s3Fetch(ctx, req.Content.S3Bucket, req.Content.S3Key); err == nil {
+		if zip, err := h.s3Fetch(ctx, req.Content.S3Bucket, req.Content.S3Key, ""); err == nil {
 			content = zip
 		} else {
 			log.Warn("lambda: publish layer version: s3 fetch failed",

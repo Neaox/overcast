@@ -171,8 +171,14 @@ exports.handler = async () => ({
 ## Ports
 
 Never bind **4566** or **4567** — those belong to the user's own instance. Use
-`scripts/run-test-instance.sh` (or `.ps1`), which picks a free pair at or above 4570 and refuses the
-reserved pair. When pointing someone at a test instance, give the full URL including the port.
+`scripts/run-test-instance.sh` (or `.ps1`), which picks a free pair at or above 4570, refuses 4566
+and 4567 in either role, and publishes both to `127.0.0.1` so the emulator is not reachable from the
+network. When pointing someone at a test instance, give the full URL including the port.
+
+The script takes named options and has no `docker run` passthrough — `--image`, `--base-port`,
+`--name`, `--env`, `--data-volume`, `--mount-docker-socket`, `--no-logs`. Add
+`--mount-docker-socket` when you are testing Lambda, ECS, RDS, ElastiCache or MSK, or the web
+console's endpoint discovery; leave it off otherwise.
 
 Remember that a remapped port is not just polite, it is *better coverage*: it is the configuration
 that catches origin bugs.

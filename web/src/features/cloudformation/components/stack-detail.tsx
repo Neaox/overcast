@@ -17,8 +17,11 @@ import {
   resourceStatusVariant,
   canUpdateStack,
   canDeleteStack,
+  failedResource,
   isStackInProgress,
   isStackFailed,
+  isStackRollingBack,
+  stackStatusExplanation,
 } from "@/features/cloudformation/utils"
 import { UpdateStackDialog } from "./update-stack-dialog"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
@@ -152,6 +155,10 @@ export function StackDetail({ stackName }: Props) {
     )
   }
 
+  const stackStatus = stack.StackStatus ?? ""
+  const statusExplanation = stackStatusExplanation(stackStatus)
+  const rootCause = failedResource(resources)
+
   return (
     <div className="flex w-full flex-col gap-4">
       {/* Header */}
@@ -159,9 +166,7 @@ export function StackDetail({ stackName }: Props) {
         title={stackName}
         actions={
           <div className="flex items-center gap-2">
-            <Badge variant={stackStatusVariant(stack.StackStatus ?? "")}>
-              {formatStatus(stack.StackStatus ?? "")}
-            </Badge>
+            <Badge variant={stackStatusVariant(stackStatus)}>{formatStatus(stackStatus)}</Badge>
             <Button
               variant="ghost"
               size="sm"
@@ -171,13 +176,13 @@ export function StackDetail({ stackName }: Props) {
             >
               <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             </Button>
-            {canUpdateStack(stack.StackStatus ?? "") && (
+            {canUpdateStack(stackStatus) && (
               <Button size="sm" variant="secondary" onClick={() => setShowUpdate(true)}>
                 <Edit2 className="mr-1.5 h-3.5 w-3.5" />
                 Update
               </Button>
             )}
-            {canDeleteStack(stack.StackStatus ?? "") && (
+            {canDeleteStack(stackStatus) && (
               <Button size="sm" variant="danger" onClick={() => setShowDelete(true)}>
                 <Trash2 className="mr-1.5 h-3.5 w-3.5" />
                 Delete
@@ -190,12 +195,23 @@ export function StackDetail({ stackName }: Props) {
       <ApplicationOwnershipBanner candidates={[stack.StackId, stack.StackName, stackName]} />
 
       {/* Failure / rollback banner */}
-      {isStackFailed(stack.StackStatus ?? "") && stack.StackStatusReason && (
+      {(isStackFailed(stackStatus) || isStackRollingBack(stackStatus)) && (
         <div className="flex items-start gap-3 rounded-md border border-danger/30 bg-danger-muted p-3 text-sm">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="font-medium text-danger">{formatStatus(stack.StackStatus ?? "")}</span>
-            <span className="text-fg-muted">{stack.StackStatusReason}</span>
+            <span className="font-medium text-danger">{formatStatus(stackStatus)}</span>
+            {statusExplanation && <span className="text-fg-muted">{statusExplanation}</span>}
+            {stack.StackStatusReason && (
+              <span className="text-fg-muted">{stack.StackStatusReason}</span>
+            )}
+            {/* A rollback that reached its terminal state clears
+                StackStatusReason, so the only surviving answer to "why" is on
+                the resource that failed. */}
+            {!stack.StackStatusReason && rootCause && (
+              <span className="text-fg-muted">
+                <span className="font-medium">{rootCause.logicalId}</span>: {rootCause.reason}
+              </span>
+            )}
           </div>
           <Button
             size="sm"
@@ -472,7 +488,10 @@ export function StackDetail({ stackName }: Props) {
                   </TableHeader>
                   <TableBody>
                     {events.map((e) => {
-                      const isFailed = (e.ResourceStatus ?? "").endsWith("_FAILED")
+                      // Not just *_FAILED: the rollback events are where a
+                      // failed deploy explains itself, and the tone of the
+                      // reason should match the tone of the badge beside it.
+                      const isFailed = resourceStatusVariant(e.ResourceStatus ?? "") === "danger"
                       return (
                         <TableRow key={e.EventId}>
                           <TableCell className="w-40 whitespace-nowrap text-fg-muted">
