@@ -46,6 +46,20 @@ const performanceDocsPath = "performance.md"
 // docs/performance.md; the UI splits DocsPath on "#" into path + hash.
 const dataDirDocsPath = performanceDocsPath + "#data-dir-placement-avoid-host-bind-mounts-on-docker-desktop"
 
+// storageDocsPath is the docs-browser-relative path (see performanceDocsPath
+// for how these resolve) for the storage backends guide — the page that
+// compares the four backends by durability and explains what OVERCAST_STATE
+// accepts.
+const storageDocsPath = "storage.md"
+
+// noSQLiteDocsPath deep-links the no-SQLite memory-mode advisory to the
+// section spelling out the whole story: which published artifacts are built
+// -tags nosqlite, why auto can only ever land on memory there, and the
+// volume-plus-OVERCAST_STATE=wal recipe for durability. The fragment is the
+// docs browser's heading slug for "Builds without SQLite" — see
+// dataDirDocsPath for how that slug is derived.
+const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
+
 // Advisory is one actionable diagnostic surfaced alongside the storage
 // diagnostics in GET /_debug/metrics (see debugMetricsResponse.Advisories).
 // The web UI's Metrics & Health page renders these generically — icon/color
@@ -89,6 +103,16 @@ type advisoryInput struct {
 	// wording variant checkMemoryMode uses when StateBackend is memory. See
 	// config.StateSource's doc comment.
 	StateSource config.StateSource
+
+	// SQLiteAvailable is config.SQLiteSupported() — false in a -tags nosqlite
+	// build (the overcast-slim image and the overcastd binaries). It selects
+	// checkMemoryMode's third wording variant, because in such a build every
+	// remediation the ordinary auto wording suggests is wrong: mounting a
+	// volume changes nothing (config.resolveAutoState short-circuits to memory
+	// before weighing any signal) and OVERCAST_STATE=hybrid stops the daemon
+	// from starting at all (state.NewHybridStore is stubbed out to return an
+	// error — see internal/state/sqlite_hybrid_nosqlite.go).
+	SQLiteAvailable bool
 
 	// Stores is one entry per distinct underlying store, exactly as
 	// state.DebugMetricsSnapshot returns it — drives every per-store rule
@@ -137,7 +161,7 @@ func computeAdvisories(in advisoryInput) []Advisory {
 	if a := checkStoreUnhealthy(in.Health, in.HasHealth); a != nil {
 		advisories = append(advisories, *a)
 	}
-	if a := checkMemoryMode(in.StateBackend, in.StateSource); a != nil {
+	if a := checkMemoryMode(in.StateBackend, in.StateSource, in.SQLiteAvailable); a != nil {
 		advisories = append(advisories, *a)
 	}
 	return advisories
@@ -300,16 +324,27 @@ func checkReadPressure(m state.DebugMetrics) *Advisory {
 	}
 }
 
-// checkMemoryMode is informational only in both variants below — memory
+// checkMemoryMode is informational only in all three variants below — memory
 // mode is never itself an error condition, just something worth surfacing so
 // nobody is surprised data didn't survive a restart.
 //
-// Two wordings:
+// Three wordings:
 //
 //   - Explicit (StateSource == "explicit"): OVERCAST_STATE=memory is a
 //     deliberate, common choice for tests and CI — this exists purely so a
 //     developer who forgot they set it (or inherited an env file that sets
 //     it) isn't surprised the next time they restart.
+//   - Auto without SQLite (StateSource == "auto", sqliteAvailable false): a
+//     -tags nosqlite build (the overcast-slim image, the overcastd binaries).
+//     This variant exists because every remediation the plain auto wording
+//     offers is actively wrong here: config.resolveAutoState short-circuits
+//     to memory before it weighs the mountpoint/data-dir/existing-database
+//     signals, so mounting a volume or setting OVERCAST_DATA_DIR changes
+//     nothing, and OVERCAST_STATE=hybrid doesn't degrade — it stops the
+//     daemon from starting ("init state backend: hybrid store: not compiled
+//     with SQLite support"). The one durable backend compiled into every
+//     build is wal (internal/state/wal.go carries no build tag), so that is
+//     what this variant names.
 //   - Auto (StateSource == "auto"): the OVERCAST_STATE=auto resolver (see
 //     config.resolveAutoState) found no evidence of persistence intent — no
 //     mounted volume, no explicit data directory, no existing database — and
@@ -318,9 +353,24 @@ func checkReadPressure(m state.DebugMetrics) *Advisory {
 //     visibly for CI), but the wording is the actionable variant: it tells
 //     the reader what would change the outcome, since "auto" means nobody
 //     deliberately typed OVERCAST_STATE=memory to get here.
-func checkMemoryMode(backend config.StateBackend, source config.StateSource) *Advisory {
+func checkMemoryMode(backend config.StateBackend, source config.StateSource, sqliteAvailable bool) *Advisory {
 	if backend != config.StateBackendMemory {
 		return nil
+	}
+	if source == config.StateSourceAuto && !sqliteAvailable {
+		return &Advisory{
+			Severity: advisorySeverityInfo,
+			Code:     advisoryCodeMemoryMode,
+			Title:    "Running in memory-only mode (this build has no SQLite)",
+			Detail: "This build was compiled without SQLite, so the hybrid and persistent backends " +
+				"don't exist in it — OVERCAST_STATE=auto resolves to memory no matter what is " +
+				"mounted at the data directory, and state won't survive restarts. Mounting a volume " +
+				"or setting OVERCAST_DATA_DIR alone will not change this, and OVERCAST_STATE=hybrid " +
+				"will stop the emulator from starting. Set OVERCAST_STATE=wal — the durable backend " +
+				"compiled into every build — with a volume mounted at the data directory, or use the " +
+				"full overcast image or overcast binary if you need hybrid.",
+			DocsPath: noSQLiteDocsPath,
+		}
 	}
 	if source == config.StateSourceAuto {
 		return &Advisory{

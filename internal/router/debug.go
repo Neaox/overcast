@@ -554,11 +554,12 @@ func debugMetrics(cfg *config.Config, store state.Store) http.HandlerFunc {
 		}
 		health, hasHealth := state.PersistentHealthSnapshot(store)
 		advisories := computeAdvisories(advisoryInput{
-			StateBackend: cfg.State,
-			StateSource:  cfg.StateSource,
-			Stores:       snapshots,
-			Health:       health,
-			HasHealth:    hasHealth,
+			StateBackend:    cfg.State,
+			StateSource:     cfg.StateSource,
+			SQLiteAvailable: config.SQLiteSupported(),
+			Stores:          snapshots,
+			Health:          health,
+			HasHealth:       hasHealth,
 		})
 		if advisories == nil {
 			advisories = []Advisory{}

@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -303,7 +304,7 @@ func TestCheckReadPressure_absentOnRetriesAlone(t *testing.T) {
 
 func TestCheckMemoryMode_firesWhenBackendIsMemory(t *testing.T) {
 	// When: the rule evaluates an explicitly-set OVERCAST_STATE=memory.
-	a := checkMemoryMode(config.StateBackendMemory, config.StateSourceExplicit)
+	a := checkMemoryMode(config.StateBackendMemory, config.StateSourceExplicit, true)
 
 	// Then: an info advisory fires with the explicit-mode wording.
 	if a == nil {
@@ -330,8 +331,9 @@ func TestCheckMemoryMode_firesWhenBackendIsMemory(t *testing.T) {
 // typed OVERCAST_STATE=memory to get here, so the message should say what to
 // do about it instead of just describing the current mode.
 func TestCheckMemoryMode_actionableWhenAutoResolvedToMemory(t *testing.T) {
-	// When: the rule evaluates an auto-resolved memory backend.
-	a := checkMemoryMode(config.StateBackendMemory, config.StateSourceAuto)
+	// When: the rule evaluates an auto-resolved memory backend in a build that
+	// does have SQLite (so hybrid really is a reachable remediation).
+	a := checkMemoryMode(config.StateBackendMemory, config.StateSourceAuto, true)
 
 	// Then: severity stays info, but Title/Detail switch to the actionable
 	// variant naming the remediation options.
@@ -354,6 +356,71 @@ func TestCheckMemoryMode_actionableWhenAutoResolvedToMemory(t *testing.T) {
 	}
 }
 
+// TestCheckMemoryMode_autoWithoutSQLiteNamesWALNotHybrid covers the third
+// variant, added because the plain auto wording is wrong in every particular
+// for a -tags nosqlite build (the overcast-slim image, the overcastd
+// binaries): mounting a volume there changes nothing (config.resolveAutoState
+// short-circuits to memory before weighing any signal), and following its
+// "set OVERCAST_STATE=hybrid to persist" advice doesn't degrade — it stops
+// the daemon from starting outright. The durable backend that does exist in
+// every build is wal, so that is what this variant must name.
+func TestCheckMemoryMode_autoWithoutSQLiteNamesWALNotHybrid(t *testing.T) {
+	// When: the rule evaluates an auto-resolved memory backend in a build
+	// compiled without SQLite.
+	a := checkMemoryMode(config.StateBackendMemory, config.StateSourceAuto, false)
+
+	// Then: still an info advisory under the same code (memory mode is not an
+	// error in any variant), but with its own wording and a docs deep-link.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if a.Severity != advisorySeverityInfo {
+		t.Errorf("severity = %q, want %q (a build without SQLite is not an error condition)", a.Severity, advisorySeverityInfo)
+	}
+	if a.Code != advisoryCodeMemoryMode {
+		t.Errorf("code = %q, want %q", a.Code, advisoryCodeMemoryMode)
+	}
+	if a.DocsPath != noSQLiteDocsPath {
+		t.Errorf("docsPath = %q, want %q", a.DocsPath, noSQLiteDocsPath)
+	}
+
+	// And: it names wal as the remediation, and does not repeat the
+	// SQLite-available variant's advice, which would not work in this build.
+	if !strings.Contains(a.Detail, "OVERCAST_STATE=wal") {
+		t.Errorf("detail = %q, expected it to name OVERCAST_STATE=wal — the one durable backend in this build", a.Detail)
+	}
+	if strings.Contains(a.Detail, "OVERCAST_STATE=hybrid to persist") {
+		t.Errorf("detail = %q, must not tell a no-SQLite build to set OVERCAST_STATE=hybrid — that exits non-zero at startup", a.Detail)
+	}
+	withSQLite := checkMemoryMode(config.StateBackendMemory, config.StateSourceAuto, true)
+	if withSQLite == nil {
+		t.Fatal("expected an advisory for the SQLite-available auto case, got nil")
+	}
+	if a.Title == withSQLite.Title || a.Detail == withSQLite.Detail {
+		t.Error("expected distinct wording from the SQLite-available auto variant")
+	}
+}
+
+// TestCheckMemoryMode_explicitWordingIgnoresSQLiteAvailability pins the
+// deliberate scope of the SQLite gate: it only reworks the auto variant.
+// OVERCAST_STATE=memory typed explicitly is the same informed choice in every
+// build, so its wording must not drift when SQLite is absent.
+func TestCheckMemoryMode_explicitWordingIgnoresSQLiteAvailability(t *testing.T) {
+	// When: the rule evaluates an explicit memory backend without SQLite.
+	a := checkMemoryMode(config.StateBackendMemory, config.StateSourceExplicit, false)
+
+	// Then: the unchanged explicit-mode wording comes back.
+	if a == nil {
+		t.Fatal("expected an advisory, got nil")
+	}
+	if a.Title != "Running in memory-only mode" {
+		t.Errorf("title = %q, want the explicit-mode wording", a.Title)
+	}
+	if a.Detail != "OVERCAST_STATE=memory — state won't survive restarts; expected in this mode." {
+		t.Errorf("detail = %q, want the explicit-mode wording", a.Detail)
+	}
+}
+
 func TestCheckMemoryMode_absentForPersistentBackends(t *testing.T) {
 	for _, backend := range []config.StateBackend{
 		config.StateBackendHybrid,
@@ -361,11 +428,13 @@ func TestCheckMemoryMode_absentForPersistentBackends(t *testing.T) {
 		config.StateBackendWAL,
 	} {
 		for _, source := range []config.StateSource{config.StateSourceExplicit, config.StateSourceAuto} {
-			t.Run(string(backend)+"/"+string(source), func(t *testing.T) {
-				if a := checkMemoryMode(backend, source); a != nil {
-					t.Fatalf("expected no advisory for backend %q source %q, got %+v", backend, source, a)
-				}
-			})
+			for _, sqlite := range []bool{true, false} {
+				t.Run(fmt.Sprintf("%s/%s/sqlite=%v", backend, source, sqlite), func(t *testing.T) {
+					if a := checkMemoryMode(backend, source, sqlite); a != nil {
+						t.Fatalf("expected no advisory for backend %q source %q sqlite %v, got %+v", backend, source, sqlite, a)
+					}
+				})
+			}
 		}
 	}
 }
@@ -430,6 +499,61 @@ func TestComputeAdvisories_combinesRulesAcrossStoresAndGlobalState(t *testing.T)
 	}
 	if len(advisories) != 4 {
 		t.Fatalf("expected exactly 4 advisories, got %d: %+v", len(advisories), advisories)
+	}
+}
+
+// TestComputeAdvisories_threadsSQLiteAvailabilityIntoMemoryMode guards the
+// wiring, not the rule: advisoryInput.SQLiteAvailable has to actually reach
+// checkMemoryMode. Left unthreaded, the field would sit at its zero value and
+// every auto-resolved memory instance — including the overwhelmingly common
+// SQLite-capable one — would get the no-SQLite wording, which is the same
+// class of wrong-advice bug in the opposite direction.
+func TestComputeAdvisories_threadsSQLiteAvailabilityIntoMemoryMode(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		sqliteAvail    bool
+		wantDocsPath   string
+		wantDetailPart string
+	}{
+		{
+			name:           "sqlite build keeps the hybrid remediation",
+			sqliteAvail:    true,
+			wantDocsPath:   "",
+			wantDetailPart: "OVERCAST_STATE=hybrid",
+		},
+		{
+			name:           "nosqlite build gets the wal remediation and a docs link",
+			sqliteAvail:    false,
+			wantDocsPath:   noSQLiteDocsPath,
+			wantDetailPart: "OVERCAST_STATE=wal",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: an auto-resolved memory backend and nothing else wrong.
+			in := advisoryInput{
+				StateBackend:    config.StateBackendMemory,
+				StateSource:     config.StateSourceAuto,
+				SQLiteAvailable: tc.sqliteAvail,
+			}
+
+			// When: advisories are computed.
+			advisories := computeAdvisories(in)
+
+			// Then: exactly the memory-mode advisory, worded for this build.
+			if len(advisories) != 1 {
+				t.Fatalf("expected exactly 1 advisory, got %d: %+v", len(advisories), advisories)
+			}
+			a := advisories[0]
+			if a.Code != advisoryCodeMemoryMode {
+				t.Fatalf("code = %q, want %q", a.Code, advisoryCodeMemoryMode)
+			}
+			if a.DocsPath != tc.wantDocsPath {
+				t.Errorf("docsPath = %q, want %q", a.DocsPath, tc.wantDocsPath)
+			}
+			if !strings.Contains(a.Detail, tc.wantDetailPart) {
+				t.Errorf("detail = %q, expected it to mention %q", a.Detail, tc.wantDetailPart)
+			}
+		})
 	}
 }
 
