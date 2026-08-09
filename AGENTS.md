@@ -32,6 +32,7 @@ opencode and Claude Code both discover them without prompting.
 - `commit`: Use for clean commit creation, staging review, and commit-message hygiene.
 - `git-worktrees`: Use for every mutating task so each agent works in an isolated, task-owned worktree.
 - `github-issue-lifecycle`: Use for creating, triaging, updating, linking, and closing GitHub issues.
+- `issue-coordination`: Use before putting more than one writer on the repo — selecting a batch of issues and deciding whether the pieces run in parallel, need a scope fence, or must be stacked.
 - `new-feature`: Use for adding AWS endpoints, services, CloudFormation resources, or other product features.
 - `pull-request`: Use for preparing PRs, PR descriptions, commit hygiene, screenshots for visual changes, and CHANGELOG decisions.
 - `release`: Use for cutting a release — curating changelog fragments, bumping `VERSION`, and smoke/regression testing the release candidate before it ships.
