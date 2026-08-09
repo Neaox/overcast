@@ -28,12 +28,13 @@ type createStackReq struct {
 }
 
 type updateStackReq struct {
-	StackName    string           `json:"StackName"`
-	TemplateBody string           `json:"TemplateBody"`
-	TemplateURL  string           `json:"TemplateURL"`
-	Parameters   []cfnParamMember `json:"Parameters"`
-	Tags         *[]cfnTagMember  `json:"Tags"`
-	Capabilities []string         `json:"Capabilities"`
+	StackName       string           `json:"StackName"`
+	TemplateBody    string           `json:"TemplateBody"`
+	TemplateURL     string           `json:"TemplateURL"`
+	DisableRollback string           `json:"DisableRollback"`
+	Parameters      []cfnParamMember `json:"Parameters"`
+	Tags            *[]cfnTagMember  `json:"Tags"`
+	Capabilities    []string         `json:"Capabilities"`
 }
 
 type deleteStackReq struct {
@@ -259,6 +260,11 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 	stackID := fmt.Sprintf("arn:aws:cloudformation:%s:%s:stack/%s/%s",
 		region, h.cfg.AccountID, req.StackName, uuid.NewString())
 
+	disableRollback, aerr := parseDisableRollback(req.DisableRollback)
+	if aerr != nil {
+		return nil, aerr
+	}
+
 	params := typedCollectParams(req.Parameters)
 	tags := typedCollectTags(req.Tags)
 	caps := req.Capabilities
@@ -272,7 +278,7 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 		Tags:            tags,
 		Capabilities:    caps,
 		RoleARN:         req.RoleARN,
-		DisableRollback: req.DisableRollback == "true",
+		DisableRollback: disableRollback,
 		Status:          StatusCreateInProgress,
 		StatusReason:    "User Initiated",
 		CreatedAt:       h.clk.Now(),
@@ -320,6 +326,11 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("ValidationError", err.Error(), http.StatusBadRequest)
 	}
 
+	disableRollback, aerr := parseDisableRollback(req.DisableRollback)
+	if aerr != nil {
+		return nil, aerr
+	}
+
 	params := typedCollectParams(req.Parameters)
 	if len(params) > 0 {
 		stack.Parameters = params
@@ -328,6 +339,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		applyStackTags(stack, typedCollectTags(*req.Tags), true)
 	}
 
+	stack.DisableRollback = disableRollback
 	stack.TemplateBody = templateBody
 	stack.Status = StatusUpdateInProgress
 	stack.StatusReason = "User Initiated"

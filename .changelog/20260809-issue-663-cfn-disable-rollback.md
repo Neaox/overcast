@@ -1,0 +1,2 @@
+* [cloudformation] `UpdateStack` honours the `DisableRollback` member of the request it was given, rather than the value the stack was created with
+* [cloudformation] an update that fails with rollback disabled keeps the resource records the attempt reached, so `DescribeStackResources` no longer reports pre-update properties for a resource the update already changed, and no longer drops the resources it updated before the failure

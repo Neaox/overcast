@@ -461,6 +461,10 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 				newResources = append(newResources, failedResource)
 				p.recordEvent(ctx, stack, logicalID, failedResource.PhysicalID, res.Type, ResourceUpdateFailed, updErr.Error())
 				if stack.DisableRollback {
+					if !resourceStateChanged {
+						newResources[len(newResources)-1] = retainPreviousResourceState(failedResource, old)
+					}
+					stack.Resources = retainedUpdateResources(newResources, stack.Resources)
 					p.failStack(ctx, stack, StatusUpdateFailed,
 						fmt.Sprintf("resource %s failed: %v", logicalID, updErr))
 					return
@@ -510,6 +514,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			})
 			p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateFailed, provErr.Error())
 			if stack.DisableRollback {
+				stack.Resources = retainedUpdateResources(newResources, stack.Resources)
 				p.failStack(ctx, stack, StatusUpdateFailed,
 					fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
 				return
@@ -608,6 +613,59 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 		return
 	}
 	p.publishStackEvent(ctx, events.CFNStackUpdated, stack)
+}
+
+// retainPreviousResourceState completes the record of a resource whose update
+// was rejected before it reached the service, for a stack that will not roll
+// back.
+//
+// Nothing was applied, so the resource still holds precisely what it held
+// before — recording that is what makes the retained UPDATE_FAILED record
+// truthful. It also matters to whatever runs next: a record carrying no
+// properties reads to the following update as "no known prior state", which
+// resourcePropertiesMatch treats as unchanged, so the resource that just failed
+// would be skipped rather than re-attempted.
+//
+// Only the no-rollback path needs this. On the rollback path the pre-update
+// record is restored wholesale instead.
+func retainPreviousResourceState(failed, previous StackResource) StackResource {
+	failed.Attributes = previous.Attributes
+	failed.PropertiesHash = previous.PropertiesHash
+	failed.Properties = previous.Properties
+	failed.DeletionPolicy = previous.DeletionPolicy
+	failed.UpdateReplacePolicy = previous.UpdateReplacePolicy
+	return failed
+}
+
+// retainedUpdateResources is the stack's resource list after an update that
+// failed and will not roll back.
+//
+// With rollback disabled the stack record is the only account of where the
+// attempt stopped, so it keeps everything the attempt reached — updated
+// resources at their attempted state, the failing one UPDATE_FAILED — followed
+// by the prior record of every resource the walk never got to. Both halves
+// matter: without the first, DescribeStackResources reports pre-update
+// properties for resources that have already changed; without the second, the
+// stack disowns resources that are still standing, and the next operation
+// treats them as new.
+//
+// prior is in dependency order and attempted follows the template's, so
+// appending the untouched remainder keeps a later reverse walk (DeleteStack,
+// and the update cleanup phase) tearing dependents down before what they
+// depend on.
+func retainedUpdateResources(attempted, prior []StackResource) []StackResource {
+	reached := make(map[string]bool, len(attempted))
+	for _, r := range attempted {
+		reached[r.LogicalID] = true
+	}
+	retained := make([]StackResource, 0, len(attempted)+len(prior))
+	retained = append(retained, attempted...)
+	for _, r := range prior {
+		if !reached[r.LogicalID] {
+			retained = append(retained, r)
+		}
+	}
+	return retained
 }
 
 // ── Delete stack (async) ───────────────────────────────────────────────────
