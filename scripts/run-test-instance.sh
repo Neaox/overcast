@@ -29,6 +29,10 @@
 #                           instance; the container keeps running either way.
 #   -h, --help              print this and exit.
 #
+# Needs docker, and ss(8) or netstat(8) to see which ports are in use. A slim
+# Linux image may have neither — `apt-get install iproute2` — and the script
+# stops and says so rather than assuming every port is free.
+#
 # ---------------------------------------------------------------------------
 # Why there is no `docker run` passthrough
 # ---------------------------------------------------------------------------
@@ -130,13 +134,26 @@ why, and it is worth reading before granting anyone permission to run it.
 EOF
 }
 
-fail() {
+complain() {
     printf 'run-test-instance.sh: %s\n' "$1" >&2
     shift
     for _line in "$@"; do
         printf '  %s\n' "$_line" >&2
     done
+}
+
+# fail: the caller asked for something this script will not do (exit 2).
+fail() {
+    complain "$@"
     exit 2
+}
+
+# die: the caller asked for something reasonable and the environment cannot
+# deliver it (exit 1). Kept apart from fail so a wrapper can tell "you typed
+# something wrong" from "this machine is missing a tool".
+die() {
+    complain "$@"
+    exit 1
 }
 
 # reject names the offending flag and says which kind of "no" this is.
@@ -279,17 +296,77 @@ if [ "$MOUNT_SOCKET" -eq 1 ]; then
     set -- "$@" -v /var/run/docker.sock:/var/run/docker.sock
 fi
 
-# port_free returns success when nothing is listening on the port. Works in
-# Git Bash / Linux / macOS without extra tools: try to bind with a tiny
-# busybox-less trick via docker (portable) is overkill — netstat is universal
-# enough on the platforms this repo supports.
-port_free() {
-    if command -v netstat >/dev/null 2>&1; then
-        ! netstat -an 2>/dev/null | grep -Eq "[.:]$1[[:space:]].*LISTEN"
-    else
-        # Fall back to attempting a TCP connect: connect success = taken.
-        ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+# ---------------------------------------------------------------------------
+# Is anything listening?
+# ---------------------------------------------------------------------------
+# The whole point of the scan is to not take a port somebody else is on, so the
+# probe has to be trusted in both directions. Answering "free" wrongly is the
+# expensive mistake: it hands out a port already in use, and on the reserved
+# pair that means stepping on the user's own instance. So an environment where
+# the question cannot be answered stops the script instead of guessing.
+#
+# ss(8) is asked first. It is iproute2, present on every modern Linux, whereas
+# netstat is net-tools — not installed by default on Debian or Ubuntu, which is
+# exactly where this runs in CI. netstat then covers macOS and Git Bash on
+# Windows, where there is no ss.
+#
+# What used to be here instead of the stop was `exec 3<>/dev/tcp/127.0.0.1/$1`.
+# That is a bash builtin, not a device and not POSIX (shellcheck SC3025), and
+# this script is #!/bin/sh: under dash the redirect fails because no such file
+# exists, the leading `!` turned that failure into "the port is free", and every
+# port reported free — so the scan always returned the base port whether or not
+# anything was on it. A silent wrong answer on the branch that only runs where
+# netstat is missing, which is to say on most Linux CI images.
+PORT_PROBE=
+for _tool in ss netstat; do
+    if command -v "$_tool" >/dev/null 2>&1; then
+        PORT_PROBE=$_tool
+        break
     fi
+done
+[ -n "$PORT_PROBE" ] || die \
+    "cannot tell which ports are in use: neither ss(8) nor netstat(8) is on PATH." \
+    "Refusing to guess — assuming a port is free is how this script would publish" \
+    "onto one that is already taken, the user's own 4566/4567 included." \
+    "" \
+    "Install one of them (Debian/Ubuntu: apt-get install iproute2, or net-tools)," \
+    "or pass --base-port with a port pair you know is free."
+
+# listening_ports: one snapshot of every listening TCP socket, taken once
+# rather than per candidate port. Both tools are filtered to their listening
+# rows by the same grep — `ss -ltn` prints LISTEN in its state column and
+# Windows netstat prints LISTENING, and ss's header row has neither — after
+# which the only port on a row that can match a candidate is the local one
+# (a listener's peer column is `0.0.0.0:*`, `*.*` or `0.0.0.0:0`).
+listening_ports() {
+    case "$PORT_PROBE" in
+    ss) ss -ltn ;;
+    netstat) netstat -an ;;
+    esac
+}
+
+# A probe that exists but cannot answer — no /proc, a permission error — must
+# not read as an empty listener table, which is "everything is free" again.
+if ! LISTENERS=$(listening_ports); then
+    die "$PORT_PROBE failed, so which ports are in use is unknown." \
+        "Its own error is above. Refusing to guess that they are all free."
+fi
+_grep_rc=0
+LISTENERS=$(printf '%s\n' "$LISTENERS" | grep LISTEN) || _grep_rc=$?
+# grep exits 1 for "no matches", which on an idle machine is an honest empty
+# table, and 2 or more for a failure — which is not the same answer and must
+# not be spelled the same way.
+if [ "$_grep_rc" -gt 1 ]; then
+    die "could not read the listener table $PORT_PROBE printed (grep exited $_grep_rc)." \
+        "Refusing to guess that nothing is listening."
+fi
+
+# port_free returns success when nothing in the snapshot is listening on the
+# port. Addresses end `:PORT` (`0.0.0.0:4566`, `[::]:4566`) everywhere except
+# macOS netstat, which writes `127.0.0.1.4566` — hence the leading [.:] — and
+# the port must end the field so 4566 does not match 45660.
+port_free() {
+    ! printf '%s\n' "$LISTENERS" | grep -Eq "[.:]$1([[:space:]]|\$)"
 }
 
 # reserved_port: 4566 and 4567 are the user's, in either role. Checking each
@@ -313,7 +390,7 @@ while [ "$p" -lt 65000 ]; do
     fi
     p=$((p + 2))
 done
-[ -n "$api_port" ] || { echo "no free port pair found from $BASE_PORT" >&2; exit 1; }
+[ -n "$api_port" ] || die "no free port pair found from $BASE_PORT."
 
 cid=$(MSYS_NO_PATHCONV=1 docker run -d --rm \
     -p "127.0.0.1:$api_port:4566" -p "127.0.0.1:$ui_port:4567" \

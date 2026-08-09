@@ -50,6 +50,39 @@ def _load(path: Path, name: str):
 BASH = _load(SCRIPTS / "pr-wait_test.py", "pr_wait_test").BASH
 
 
+def find_dash() -> str | None:
+	"""A genuine POSIX sh, or None.
+
+	run-test-instance.sh is `#!/bin/sh`, so on Debian, Ubuntu and most Linux CI
+	images it is dash that runs it — but every test here drives it through
+	BASH, which accepts bashisms silently. That gap hid a real one: the free
+	port check fell back to `exec 3<>/dev/tcp/...`, a bash builtin that under
+	dash fails to open, and the `!` in front of it read the failure as "nothing
+	is listening". Every port then looked free.
+
+	The same gap on the other side of the pair is what _powershell_hosts()
+	closes: one host tested where two exist, and a Windows-only cmdlet under
+	the untested one.
+
+	Git for Windows ships dash next to its bash, so this runs on a dev box too
+	rather than only on Linux CI, where it would be the one place the branch is
+	exercised.
+	"""
+	found = shutil.which("dash")
+	if found:
+		return found
+	git = shutil.which("git")
+	if git:
+		root = Path(git).resolve().parent.parent
+		for candidate in (root / "usr" / "bin" / "dash.exe", root / "bin" / "dash.exe"):
+			if candidate.is_file():
+				return str(candidate)
+	return None
+
+
+DASH = find_dash()
+
+
 def _powershell_hosts():
 	"""Every PowerShell host on this machine, as (name, path).
 
@@ -114,7 +147,34 @@ class Run:
 		return self_run[0].split()
 
 
-def _invoke(argv: list[str], stub: str, stub_name: str) -> Run:
+def _posix_toolchain(shell: str) -> list[str]:
+	"""Directories that must be on PATH for `shell` to have a POSIX toolset.
+
+	Only on Windows, and only because of how the shells are packaged there:
+	Git's bash.exe is a launcher that puts Git's usr/bin (grep, cut, sed) on
+	PATH for whatever it runs, and dash.exe — sitting in that same usr/bin — is
+	not, so a dash started straight from Windows inherits a Windows PATH and
+	cannot find grep. Handing it its own directory is what makes the two shells
+	comparable. Git bundles neither ss.exe nor netstat.exe there, so this does
+	not smuggle a port probe into the bare-PATH case.
+
+	On Linux and macOS this returns nothing: the shell's directory is /bin or
+	/usr/bin, which is where ss and netstat live, and adding it would defeat
+	that same case.
+	"""
+	if os.name != "nt":
+		return []
+	return [str(Path(shell).resolve().parent)]
+
+
+def _invoke(
+	argv: list[str],
+	stub: str,
+	stub_name: str,
+	*,
+	bare_path: bool = False,
+	toolchain: list[str] | None = None,
+) -> Run:
 	with tempfile.TemporaryDirectory() as tmp:
 		stubdir = Path(tmp)
 		stubfile = stubdir / stub_name
@@ -124,7 +184,14 @@ def _invoke(argv: list[str], stub: str, stub_name: str) -> Run:
 		stubfile.chmod(0o755)
 
 		env = dict(os.environ)
-		env["PATH"] = str(stubdir) + os.pathsep + env.get("PATH", "")
+		# bare_path: the stub directory and the shell's own toolset, and
+		# nothing else — how a machine with no ss and no netstat is reproduced
+		# anywhere. The shell is launched by absolute path, so what is left is
+		# a working shell that cannot find a port probe.
+		parts = [str(stubdir), *(toolchain or [])]
+		if not bare_path:
+			parts.append(env.get("PATH", ""))
+		env["PATH"] = os.pathsep.join(p for p in parts if p)
 		proc = subprocess.run(argv, capture_output=True, text=True, env=env, cwd=str(SCRIPTS.parent))
 
 		log = stubdir / "invocations.log"
@@ -132,10 +199,17 @@ def _invoke(argv: list[str], stub: str, stub_name: str) -> Run:
 		return Run(proc.stdout, proc.stderr, proc.returncode, [ln.strip() for ln in lines if ln.strip()])
 
 
-def run_sh(*args: str) -> Run:
+def run_sh(*args: str, shell: str | None = None, bare_path: bool = False) -> Run:
 	# as_posix(): Git Bash reads the backslashes in a native Windows path as
 	# escapes. Forward slashes work on every platform.
-	return _invoke([BASH, SH.as_posix(), *args], SH_STUB, "docker")
+	shell = shell or BASH
+	return _invoke(
+		[shell, SH.as_posix(), *args],
+		SH_STUB,
+		"docker",
+		bare_path=bare_path,
+		toolchain=_posix_toolchain(shell),
+	)
 
 
 # The stub has to be the kind of executable the *host OS* can find on PATH: a
@@ -157,6 +231,7 @@ def run_ps1(host: str, *args: str) -> Run:
 needs_powershell = unittest.skipUnless(
 	POWERSHELL_HOSTS, "neither powershell nor pwsh is on PATH"
 )
+needs_dash = unittest.skipUnless(DASH, "no dash found (Linux CI and Git for Windows both have one)")
 
 # The same intent spelled in each script's own dialect. Keyed by a short name so
 # a failure says which case, not which index.
@@ -290,7 +365,7 @@ class ShellArguments(unittest.TestCase):
 class PortSelection(unittest.TestCase):
 	"""The free-port search, and the two ports that are never the answer."""
 
-	def test_skips_a_port_that_is_already_listening(self):
+	def assert_skips_a_listening_port(self, **kwargs):
 		# The scan steps in twos from the base, so the occupied port has to be
 		# the base itself for the skip to be the thing under test. An ephemeral
 		# port would be odd half the time and test nothing on those runs.
@@ -305,9 +380,40 @@ class PortSelection(unittest.TestCase):
 				self.skipTest("no free even port in 20000-20100")
 			taken.listen(1)
 			port = taken.getsockname()[1]
-			argv = run_sh("--no-logs", "--base-port", str(port)).argv
+			argv = run_sh("--no-logs", "--base-port", str(port), **kwargs).argv
 			published = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
 			self.assertNotIn(f"127.0.0.1:{port}:4566", published)
+
+	def test_skips_a_port_that_is_already_listening(self):
+		self.assert_skips_a_listening_port()
+
+	@needs_dash
+	def test_skips_a_port_that_is_already_listening_under_posix_sh(self):
+		# Same assertion, under the shell that actually runs this script on
+		# Debian and Ubuntu. Bash is forgiving of things `#!/bin/sh` promises
+		# not to use, so a scan that works under BASH says nothing about the
+		# one CI runs — and the probe this replaced was wrong in precisely that
+		# gap. See find_dash().
+		self.assert_skips_a_listening_port(shell=DASH)
+
+	def test_stops_when_it_cannot_tell_which_ports_are_in_use(self):
+		# Neither ss nor netstat on PATH. The old fallback was a bash `/dev/tcp`
+		# redirect that dash cannot perform, and the failed redirect was read as
+		# "the port is free" — so this exact case used to publish the base port
+		# with no idea whether anything was on it, and would happily have done
+		# that to the user's own 4566/4567. Guessing free is the one answer this
+		# check may never give.
+		for name, shell in (("bash", BASH), ("dash", DASH)):
+			if shell is None:
+				continue
+			with self.subTest(shell=name):
+				result = run_sh("--no-logs", shell=shell, bare_path=True)
+				self.assertEqual(result.code, 1, result.err or result.out)
+				# Named, so the reader knows what to install rather than only
+				# that something is missing.
+				self.assertIn("ss(8)", result.err)
+				self.assertIn("netstat(8)", result.err)
+				self.assertEqual(result.invocations, [])
 
 	def test_never_lands_on_the_users_reserved_pair(self):
 		# 4565 and 4567 are the bases that used to slip through: the guard only
