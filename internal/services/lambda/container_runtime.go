@@ -465,6 +465,13 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			if err != nil {
 				return nil, fmt.Errorf("build code tar: %w", explainUnreadablePackage(fn, err))
 			}
+			// Re-derive the key: materializing a generation that has since been
+			// superseded moves the snapshot onto the current one (see
+			// lambdaStore.loadFunctionCode), and the entry must name the bytes
+			// that were actually converted.
+			if fn.CodeHash != "" {
+				cacheKey = "code:" + fn.CodeHash
+			}
 			if cacheKey != "" {
 				cr.tarCache.put(&tarCacheEntry{key: cacheKey, data: codeTar})
 			}

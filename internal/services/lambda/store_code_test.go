@@ -106,13 +106,13 @@ func TestDeleteFunction_removesStoredPackage(t *testing.T) {
 		t.Fatalf("deleteFunction: %v", aerr)
 	}
 
-	// Then: the package key is gone with it.
-	_, found, err := inner.Get(context.Background(), nsFunctionCode, "us-east-1/split-fn")
+	// Then: every generation of the package goes with it.
+	kvs, err := inner.Scan(context.Background(), nsFunctionCode, "")
 	if err != nil {
-		t.Fatalf("package Get: %v", err)
+		t.Fatalf("package Scan: %v", err)
 	}
-	if found {
-		t.Fatal("stored package survived DeleteFunction")
+	if len(kvs) != 0 {
+		t.Fatalf("stored packages %v survived DeleteFunction", kvs)
 	}
 }
 

@@ -30,9 +30,13 @@ const (
 	// nsFunctionCode holds each function's deployment package (base64 of the
 	// zip), split from the function record: the record is read on every invoke,
 	// and embedding the package made each of those reads decode the whole zip.
-	// Keys are function names. Written by putFunction, read by
-	// loadFunctionCode — only the paths that need the actual bytes (cold
-	// start, source viewing/patching) ever touch it.
+	// Keys are "{functionName}/{codeHash}" — generation-addressed, so a write
+	// never overwrites the package the currently stored record points at.
+	// Written by putFunction, read by loadFunctionCode — only the paths that
+	// need the actual bytes (cold start, source viewing/patching) ever touch
+	// it. Packages persisted before generation addressing sit under the bare
+	// function name; loadFunctionCode still reads those, and the next code
+	// write supersedes and removes them.
 	nsFunctionCode = "lambda:function-code"
 
 	// nsFunctionPolicies stores resource policies separately from function
@@ -68,7 +72,15 @@ func (s *lambdaStore) region(ctx context.Context) string {
 
 // getFunction retrieves a function by name. Returns nil, nil when not found.
 func (s *lambdaStore) getFunction(ctx context.Context, name string) (*Function, *protocol.AWSError) {
-	raw, found, err := s.store.Get(ctx, nsFunctions, serviceutil.RegionKey(s.region(ctx), name))
+	return s.getFunctionIn(ctx, s.region(ctx), name)
+}
+
+// getFunctionIn reads a function from an explicit region rather than the
+// request's. Package materialization and cleanup need it: a cold start can run
+// on a bare context and must resolve the record in the partition the function
+// was written to.
+func (s *lambdaStore) getFunctionIn(ctx context.Context, region, name string) (*Function, *protocol.AWSError) {
+	raw, found, err := s.store.Get(ctx, nsFunctions, serviceutil.RegionKey(region, name))
 	if err != nil {
 		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -82,12 +94,39 @@ func (s *lambdaStore) getFunction(ctx context.Context, name string) (*Function, 
 	return &fn, nil
 }
 
+// functionCodeKey addresses a deployment package by the generation that owns
+// it. Function names cannot contain "/", so the separator makes a function's
+// packages a clean Scan prefix.
+func functionCodeKey(name, generation string) string { return name + "/" + generation }
+
+// functionCodeGeneration names the package a record references: the hex
+// SHA-256 setCode stored alongside it. "" means the record addresses no
+// generation — a container-image function with no package at all, or a record
+// persisted before the hash field existed, whose package lives under the
+// pre-generation key.
+func functionCodeGeneration(fn *Function) string {
+	if fn.CodeSize == 0 && len(fn.CodeZip) == 0 {
+		return ""
+	}
+	if fn.CodeHash != "" {
+		return fn.CodeHash
+	}
+	return codeHashOf(fn.CodeZip)
+}
+
 // putFunction stores a function definition. The deployment package is stored
 // under its own key (nsFunctionCode) and stripped from the record, so reads
 // that only need configuration — every invoke — never decode the package.
 // The package key is written only when fn actually carries bytes; a put of a
 // record whose code was never loaded (the usual state-transition update)
 // leaves the stored package untouched.
+//
+// The package is generation-addressed and the record write is the single
+// visibility point. Bytes land under a key nothing references yet, so a
+// failure between the two writes leaves the previous generation whole: the
+// stored record still names the package it was written with, and readers
+// cannot observe half of the new deployment. What the failed attempt wrote is
+// taken back out, since no record will ever point at it.
 func (s *lambdaStore) putFunction(ctx context.Context, fn *Function) *protocol.AWSError {
 	record := *fn
 	record.CodeZip = nil
@@ -95,18 +134,70 @@ func (s *lambdaStore) putFunction(ctx context.Context, fn *Function) *protocol.A
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
-	key := serviceutil.RegionKey(s.region(ctx), fn.Name)
-	// Package before record: if the second write fails, a stored record never
-	// points at code that was not stored.
+	region := s.region(ctx)
+	key := serviceutil.RegionKey(region, fn.Name)
+	generation := ""
 	if len(fn.CodeZip) > 0 {
-		if err := s.store.Set(ctx, nsFunctionCode, key, base64.StdEncoding.EncodeToString(fn.CodeZip)); err != nil {
+		generation = functionCodeGeneration(fn)
+		codeKey := serviceutil.RegionKey(region, functionCodeKey(fn.Name, generation))
+		if err := s.store.Set(ctx, nsFunctionCode, codeKey, base64.StdEncoding.EncodeToString(fn.CodeZip)); err != nil {
 			return protocol.Wrap(protocol.ErrInternalError, err)
 		}
 	}
 	if err := s.store.Set(ctx, nsFunctions, key, string(raw)); err != nil {
+		s.discardUnreferencedPackage(ctx, region, fn.Name, generation)
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
+	if generation != "" {
+		// The new generation is visible; every older one is unreachable.
+		_ = s.pruneFunctionPackages(ctx, region, fn.Name, generation)
+	}
 	return nil
+}
+
+// discardUnreferencedPackage removes the package a failed record write left
+// behind. The committed record decides: a put that rewrote the bytes the
+// stored record already names must keep them, or the surviving generation
+// would lose its package. Best effort — a package left resident here is
+// unreferenced, and the next successful code write collects it.
+func (s *lambdaStore) discardUnreferencedPackage(ctx context.Context, region, name, generation string) {
+	if generation == "" {
+		return
+	}
+	current, aerr := s.getFunctionIn(ctx, region, name)
+	if aerr != nil || (current != nil && functionCodeGeneration(current) == generation) {
+		return
+	}
+	_ = s.store.Delete(ctx, nsFunctionCode, serviceutil.RegionKey(region, functionCodeKey(name, generation)))
+}
+
+// pruneFunctionPackages deletes every stored package for a function except the
+// generation named by keep, along with the pre-generation key that any
+// generation supersedes. keep == "" removes all of them, which is what
+// DeleteFunction wants.
+//
+// It only ever removes generations the stored record does not name, so a
+// concurrent reader that already resolved the current generation still finds
+// its bytes; one holding an older snapshot falls back to the current record
+// (see loadFunctionCode) instead of cold starting with no package.
+func (s *lambdaStore) pruneFunctionPackages(ctx context.Context, region, name, keep string) error {
+	keepKey := ""
+	if keep != "" {
+		keepKey = serviceutil.RegionKey(region, functionCodeKey(name, keep))
+	}
+	kvs, err := s.store.Scan(ctx, nsFunctionCode, serviceutil.RegionKey(region, name+"/"))
+	if err != nil {
+		return err
+	}
+	for _, kv := range kvs {
+		if kv.Key == keepKey {
+			continue
+		}
+		if err := s.store.Delete(ctx, nsFunctionCode, kv.Key); err != nil {
+			return err
+		}
+	}
+	return s.store.Delete(ctx, nsFunctionCode, serviceutil.RegionKey(region, name))
 }
 
 // createFunction commits a new function only while its name is still absent.
@@ -167,27 +258,71 @@ func (s *lambdaStore) loadFunctionCode(ctx context.Context, fn *Function) *proto
 	if region == "" {
 		region = s.region(ctx)
 	}
-	raw, found, err := s.store.Get(ctx, nsFunctionCode, serviceutil.RegionKey(region, fn.Name))
-	if err != nil {
-		return protocol.Wrap(protocol.ErrInternalError, err)
+	generation := functionCodeGeneration(fn)
+	zip, found, aerr := s.readFunctionPackage(ctx, region, fn.Name, generation)
+	if aerr != nil {
+		return aerr
 	}
-	if !found || raw == "" {
-		return nil // image function, hot reload, or no code deployed
+	if found {
+		fn.CodeZip = zip
+		return nil
 	}
-	zip, decErr := base64.StdEncoding.DecodeString(raw)
-	if decErr != nil {
-		return protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("lambda: decode stored package for %q: %w", fn.Name, decErr))
+	// Nothing is stored for the generation this snapshot names — either it was
+	// collected by a code update that committed after the record was read, or
+	// the caller built the snapshot from an ARN alone and named no generation
+	// at all. Materialize what the function is now, bytes and identity
+	// together, rather than cold starting with no package or with bytes the
+	// record's CodeSha256 and RevisionId do not describe.
+	current, aerr := s.getFunctionIn(ctx, region, fn.Name)
+	if aerr != nil || current == nil {
+		return aerr // deleted meanwhile; nothing coherent left to load
 	}
-	fn.CodeZip = zip
+	currentGeneration := functionCodeGeneration(current)
+	if currentGeneration == "" || currentGeneration == generation {
+		return nil // no package deployed under the generation now current
+	}
+	zip, found, aerr = s.readFunctionPackage(ctx, region, fn.Name, currentGeneration)
+	if aerr != nil || !found {
+		return aerr
+	}
+	fn.setCodeBytes(zip)
+	fn.CodeGeneration = current.CodeGeneration
 	return nil
 }
 
-// deleteFunction removes a function and its stored package.
+// readFunctionPackage materializes one generation of a function's package.
+// A miss on the generation key falls back to the pre-generation key, where
+// packages written before generation addressing still live.
+func (s *lambdaStore) readFunctionPackage(ctx context.Context, region, name, generation string) ([]byte, bool, *protocol.AWSError) {
+	keys := make([]string, 0, 2)
+	if generation != "" {
+		keys = append(keys, serviceutil.RegionKey(region, functionCodeKey(name, generation)))
+	}
+	keys = append(keys, serviceutil.RegionKey(region, name))
+	for _, key := range keys {
+		raw, found, err := s.store.Get(ctx, nsFunctionCode, key)
+		if err != nil {
+			return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
+		}
+		if !found || raw == "" {
+			continue
+		}
+		zip, decErr := base64.StdEncoding.DecodeString(raw)
+		if decErr != nil {
+			return nil, false, protocol.Wrap(protocol.ErrInternalError, fmt.Errorf("lambda: decode stored package for %q: %w", name, decErr))
+		}
+		return zip, true, nil
+	}
+	return nil, false, nil
+}
+
+// deleteFunction removes a function and every generation of its stored package.
 func (s *lambdaStore) deleteFunction(ctx context.Context, name string) *protocol.AWSError {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := serviceutil.RegionKey(s.region(ctx), name)
-	policies, err := s.store.Scan(ctx, nsFunctionPolicies, serviceutil.RegionKey(s.region(ctx), name+"|"))
+	region := s.region(ctx)
+	key := serviceutil.RegionKey(region, name)
+	policies, err := s.store.Scan(ctx, nsFunctionPolicies, serviceutil.RegionKey(region, name+"|"))
 	if err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
@@ -196,7 +331,7 @@ func (s *lambdaStore) deleteFunction(ctx context.Context, name string) *protocol
 			return protocol.Wrap(protocol.ErrInternalError, err)
 		}
 	}
-	if err := s.store.Delete(ctx, nsFunctionCode, key); err != nil {
+	if err := s.pruneFunctionPackages(ctx, region, name, ""); err != nil {
 		return protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	// Delete the function record last. If cleanup fails before this point the
