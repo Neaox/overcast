@@ -88,6 +88,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/v2/email/identities", s.handler.V2ListEmailIdentities)
 	r.Get("/v2/email/identities/{EmailIdentity}", s.handler.V2GetEmailIdentity)
 	r.Delete("/v2/email/identities/{EmailIdentity}", s.handler.V2DeleteEmailIdentity)
+	// Resource tagging. ResourceArn (and UntagResource's TagKeys) are httpQuery
+	// members, so all three bind to the same bare /v2/email/tags path and are
+	// told apart only by method.
+	r.Post("/v2/email/tags", s.handler.V2TagResource)
+	r.Delete("/v2/email/tags", s.handler.V2UntagResource)
+	r.Get("/v2/email/tags", s.handler.V2ListTagsForResource)
 
 	// Admin endpoints for the web console.
 	r.Get("/_overcast/ses/identities", s.adminListIdentities)

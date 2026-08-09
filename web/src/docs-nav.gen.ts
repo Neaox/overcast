@@ -4420,6 +4420,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "SES v2 — Tags",
+        "id": "ses-v2-tags"
+      },
+      {
+        "depth": 3,
         "text": "SES v2 — Other",
         "id": "ses-v2-other"
       }

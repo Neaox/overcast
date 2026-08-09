@@ -22,11 +22,18 @@ const (
 
 // VerifiedIdentity represents a stored SES verified identity (email or domain).
 type VerifiedIdentity struct {
-	Identity  string    `json:"identity"`
-	Type      string    `json:"type"` // "email" or "domain"
-	Token     string    `json:"token,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Identity  string            `json:"identity"`
+	Type      string            `json:"type"` // "email" or "domain"
+	Token     string            `json:"token,omitempty"`
+	Tags      map[string]string `json:"tags,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
 }
+
+// GetTags and SetTags make VerifiedIdentity a serviceutil.Taggable, so the
+// SESv2 tag operations reuse the shared merge/remove/validate helpers. Tags
+// live on the identity record itself, so deleting the identity drops them.
+func (v *VerifiedIdentity) GetTags() map[string]string     { return v.Tags }
+func (v *VerifiedIdentity) SetTags(tags map[string]string) { v.Tags = tags }
 
 // Template represents an SES email template.
 type Template struct {

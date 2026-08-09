@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1412,
+  "total_ops": 1415,
   "services": [
     {
       "service": "s3",
@@ -6316,8 +6316,8 @@
     {
       "service": "ses",
       "display_name": "SES",
-      "total_ops": 42,
-      "implemented_ops": 24,
+      "total_ops": 45,
+      "implemented_ops": 27,
       "operations": [
         {
           "operation": "SendEmail",
@@ -6537,7 +6537,7 @@
           "operation": "V2CreateEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
-          "notes": "`PUT /v2/email/identities`; auto-verified",
+          "notes": "`PUT /v2/email/identities`; auto-verified; inline `Tags` applied at creation",
           "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)",
           "doc_only": true
         },
@@ -6553,7 +6553,7 @@
           "operation": "V2GetEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
-          "notes": "`GET /v2/email/identities/{EmailIdentity}`",
+          "notes": "`GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`",
           "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)",
           "doc_only": true
         },
@@ -6563,6 +6563,30 @@
           "status": "✅ Supported",
           "notes": "`DELETE /v2/email/identities/{EmailIdentity}`",
           "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "V2TagResource",
+          "category": "SES v2 — Tags",
+          "status": "✅ Supported",
+          "notes": "`POST /v2/email/tags`; email identity ARNs — configuration sets are not emulated",
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "V2UntagResource",
+          "category": "SES v2 — Tags",
+          "status": "✅ Supported",
+          "notes": "`DELETE /v2/email/tags?ResourceArn=…\u0026TagKeys=…`",
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)",
+          "doc_only": true
+        },
+        {
+          "operation": "V2ListTagsForResource",
+          "category": "SES v2 — Tags",
+          "status": "✅ Supported",
+          "notes": "`GET /v2/email/tags?ResourceArn=…`",
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html)",
           "doc_only": true
         },
         {

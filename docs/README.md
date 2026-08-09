@@ -122,7 +122,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 22  | Core CRUD + common workflows  |
 | SSM              | [ssm.md](./services/ssm.md)                         | 18  | Core CRUD + common workflows  |
 | CloudWatch Logs  | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | 19  | Core CRUD + common workflows  |
-| SES              | [ses.md](./services/ses.md)                         | 42  | Core CRUD + common workflows  |
+| SES              | [ses.md](./services/ses.md)                         | 45  | Core CRUD + common workflows  |
 | STS              | [sts.md](./services/sts.md)                         | 11  | Core CRUD + common workflows  |
 | Route 53         | [route53.md](./services/route53.md)                 | 25  | Core CRUD + common workflows  |
 | Auto Scaling     | [autoscaling.md](./services/autoscaling.md)         | 25  | Core CRUD + common workflows  |

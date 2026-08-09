@@ -56,6 +56,7 @@ appear in the Mail page.
 | SES v1 — Other      | 2            | 10             |
 | SES v2 — Sending    | 1            |                |
 | SES v2 — Identities | 4            |                |
+| SES v2 — Tags       | 3            |                |
 | SES v2 — Other      |              | 1              |
 
 ---
@@ -126,12 +127,20 @@ appear in the Mail page.
 
 ### SES v2 — Identities
 
-| Operation             | Status       | Notes                                         | AWS Docs                                                                                    |
-| --------------------- | ------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `CreateEmailIdentity` | ✅ Supported | `PUT /v2/email/identities`; auto-verified     | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html) |
-| `ListEmailIdentities` | ✅ Supported | `GET /v2/email/identities`                    | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html) |
-| `GetEmailIdentity`    | ✅ Supported | `GET /v2/email/identities/{EmailIdentity}`    | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)    |
-| `DeleteEmailIdentity` | ✅ Supported | `DELETE /v2/email/identities/{EmailIdentity}` | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html) |
+| Operation             | Status       | Notes                                                                        | AWS Docs                                                                                    |
+| --------------------- | ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `CreateEmailIdentity` | ✅ Supported | `PUT /v2/email/identities`; auto-verified; inline `Tags` applied at creation | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html) |
+| `ListEmailIdentities` | ✅ Supported | `GET /v2/email/identities`                                                   | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html) |
+| `GetEmailIdentity`    | ✅ Supported | `GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`    | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)    |
+| `DeleteEmailIdentity` | ✅ Supported | `DELETE /v2/email/identities/{EmailIdentity}`                                | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html) |
+
+### SES v2 — Tags
+
+| Operation             | Status       | Notes                                                                            | AWS Docs                                                                                    |
+| --------------------- | ------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `TagResource`         | ✅ Supported | `POST /v2/email/tags`; email identity ARNs — configuration sets are not emulated | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)         |
+| `UntagResource`       | ✅ Supported | `DELETE /v2/email/tags?ResourceArn=…&TagKeys=…`                                  | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)       |
+| `ListTagsForResource` | ✅ Supported | `GET /v2/email/tags?ResourceArn=…`                                               | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html) |
 
 ### SES v2 — Other
 
