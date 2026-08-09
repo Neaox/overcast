@@ -1,0 +1,1 @@
+* [scheduler] a schedule whose target is slow, unreachable or working through its `RetryPolicy` no longer holds up every other schedule in the emulator: the engine hands each due firing to a pool of delivery workers instead of delivering them one after another on the tick itself. A schedule is still never fired twice at once, so its own firings stay in order

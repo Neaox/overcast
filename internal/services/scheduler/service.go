@@ -55,6 +55,19 @@ const (
 	// engineTick is how often the cron engine polls for due schedules.
 	// With a mock clock, time.Sleep is instantaneous so 1 s is fine.
 	engineTick = 1 * time.Second
+
+	// deliveryWorkers is how many firings the engine delivers at the same
+	// time. The tick goroutine hands a due schedule to this pool and moves on,
+	// so one target that is slow, wedged or working through its RetryPolicy
+	// occupies a single worker instead of the whole engine.
+	deliveryWorkers = 8
+
+	// deliveryQueueDepth bounds the firings waiting for a worker. A schedule is
+	// never in flight twice (see claimFiring), so the queue can only fill when
+	// this many *distinct* schedules are due at once and every worker is busy.
+	// A firing that finds it full is not dropped: the tick leaves the
+	// schedule's last-fire time alone, so it is still due on the next tick.
+	deliveryQueueDepth = 256
 )
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -166,20 +179,39 @@ type Service struct {
 	// from the root router in InitRouter; nil until then.
 	targets *eventtarget.Dispatcher
 
+	// deliveries carries due firings from the tick goroutine to the delivery
+	// worker pool, and inflight names the schedules a worker currently owns.
+	deliveries   chan firing
+	deliveryOnce sync.Once
+	inflightMu   sync.Mutex
+	inflight     map[string]struct{}
+
 	startOnce sync.Once
 	stopOnce  sync.Once
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
 }
 
+// firing is one due schedule on its way from the tick goroutine to a delivery
+// worker. The Schedule is the tick's own decoded copy, so no two firings — and
+// no firing and the store — share one.
+type firing struct {
+	key      string // store key, "region:group/name"
+	region   string
+	schedule *Schedule
+	at       time.Time
+}
+
 // New returns a configured Scheduler Service.
 func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	s := &Service{
-		cfg:    cfg,
-		store:  st,
-		clk:    clk,
-		log:    serviceutil.NewServiceLogger(logger, serviceName),
-		stopCh: make(chan struct{}),
+		cfg:        cfg,
+		store:      st,
+		clk:        clk,
+		log:        serviceutil.NewServiceLogger(logger, serviceName),
+		deliveries: make(chan firing, deliveryQueueDepth),
+		inflight:   make(map[string]struct{}),
+		stopCh:     make(chan struct{}),
 	}
 	s.typedOp = s.typedOps()
 	return s
@@ -208,8 +240,21 @@ func (s *Service) dispatcher() *eventtarget.Dispatcher { return s.targets }
 
 func (s *Service) startEngine() {
 	s.startOnce.Do(func() {
+		s.startDelivery()
 		s.wg.Add(1)
 		go s.runEngine()
+	})
+}
+
+// startDelivery brings up the delivery worker pool. It is idempotent, and tick
+// calls it too, so a caller that drives tick() directly rather than through the
+// ticker loop still has workers to deliver on.
+func (s *Service) startDelivery() {
+	s.deliveryOnce.Do(func() {
+		for i := 0; i < deliveryWorkers; i++ {
+			s.wg.Add(1)
+			go s.deliveryWorker()
+		}
 	})
 }
 
@@ -604,10 +649,19 @@ func (s *Service) runEngine() {
 	}
 }
 
-// tick fires all due schedules in all regions.
+// tick hands every due schedule, in every region, to the delivery pool.
+//
+// It does not deliver anything itself. Delivery replays the firing against the
+// emulator's own API and retries it as the target's RetryPolicy asks, so it
+// takes as long as the target does. The engine used to do that inline and in
+// scan order, which meant one unreachable Lambda held up every other schedule
+// in the emulator for as long as it took to exhaust its retries.
 func (s *Service) tick() {
+	s.startDelivery()
+
 	ctx := context.Background()
 	now := s.clk.Now()
+	deferred := 0
 
 	// List all schedules across all regions (prefix = "").
 	pairs, err := s.store.Scan(ctx, nsSchedules, "")
@@ -653,18 +707,86 @@ func (s *Service) tick() {
 			continue
 		}
 
-		// Fire and update last-fire timestamp. The store keys schedules per
-		// region ("region:group/name" — see scheduleKey) and fire's targets
-		// (SQS queues) resolve from region-keyed stores, so pin the schedule's
-		// own region on the delivery context — otherwise schedules outside the
-		// default region deliver into the default region's queues.
+		// Queue the firing. The store keys schedules per region
+		// ("region:group/name" — see scheduleKey) and the targets (SQS queues)
+		// resolve from region-keyed stores, so the schedule's own region
+		// travels with the firing and is pinned on the delivery context —
+		// otherwise schedules outside the default region deliver into the
+		// default region's queues.
 		region, _, hasRegion := strings.Cut(kv.Key, ":")
 		if !hasRegion || region == "" {
 			region = s.cfg.Region
 		}
-		s.fire(middleware.ContextWithRegion(ctx, region), &sc, now)
-		s.setLastFire(ctx, kv.Key, now)
+		if !s.claimFiring(kv.Key) {
+			// This schedule's previous firing is still being delivered.
+			// Skipping leaves its last-fire time untouched, so it stays due
+			// and a later tick picks it up.
+			continue
+		}
+		select {
+		case s.deliveries <- firing{key: kv.Key, region: region, schedule: &sc, at: now}:
+		default:
+			s.releaseFiring(kv.Key)
+			deferred++
+		}
 	}
+
+	if deferred > 0 {
+		s.log.Warn("scheduler: tick: delivery queue full, deferring firings to a later tick",
+			zap.Int("deferred", deferred), zap.Int("queue_depth", deliveryQueueDepth))
+	}
+}
+
+// claimFiring reserves a schedule for one in-flight firing, reporting false
+// when it already has one.
+//
+// This is what keeps a schedule's own firings ordered while different schedules
+// run concurrently: a schedule is never in flight twice, so a target that takes
+// longer to answer than the schedule's period delays that schedule's next
+// firing and nothing else. Overlapping a schedule with itself would reorder its
+// deliveries, which neither AWS nor the previous serial engine ever did.
+func (s *Service) claimFiring(key string) bool {
+	s.inflightMu.Lock()
+	defer s.inflightMu.Unlock()
+	if _, busy := s.inflight[key]; busy {
+		return false
+	}
+	s.inflight[key] = struct{}{}
+	return true
+}
+
+// releaseFiring hands a schedule back, so the next tick may fire it again.
+func (s *Service) releaseFiring(key string) {
+	s.inflightMu.Lock()
+	delete(s.inflight, key)
+	s.inflightMu.Unlock()
+}
+
+// deliveryWorker delivers queued firings until the service stops.
+func (s *Service) deliveryWorker() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case f := <-s.deliveries:
+			s.deliverFiring(f)
+		}
+	}
+}
+
+// deliverFiring records the fire time and delivers one firing.
+//
+// The last-fire time is written here, before the delivery, rather than on the
+// tick goroutine after it. The schedule is held in flight for the whole
+// delivery, so nothing can re-fire it in the meantime, and recording the tick's
+// own time keeps a schedule's cadence anchored to when it became due rather
+// than to how long its target took to answer.
+func (s *Service) deliverFiring(f firing) {
+	defer s.releaseFiring(f.key)
+	ctx := context.Background()
+	s.setLastFire(ctx, f.key, f.at)
+	s.fire(middleware.ContextWithRegion(ctx, f.region), f.schedule, f.at)
 }
 
 // getLastFire returns the last time a schedule was fired (zero if never).

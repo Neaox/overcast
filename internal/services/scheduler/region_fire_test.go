@@ -26,6 +26,13 @@ func TestScheduleFire_nonDefaultRegion(t *testing.T) {
 	s := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, st, zap.NewNop(), clk)
 	router := &recordingRouter{}
 	s.initDispatcher(router)
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.Stop(stopCtx); err != nil {
+			t.Errorf("stop scheduler: %v", err)
+		}
+	})
 
 	ctx := context.Background()
 	sc := Schedule{
@@ -44,10 +51,11 @@ func TestScheduleFire_nonDefaultRegion(t *testing.T) {
 
 	s.tick()
 
-	calls := router.recorded()
-	if len(calls) != 1 {
-		t.Fatalf("fired %d deliveries, want 1", len(calls))
+	// The tick queues the firing; a delivery worker performs it.
+	if !waitFor(5*time.Second, func() bool { return len(router.recorded()) == 1 }) {
+		t.Fatalf("fired %d deliveries, want 1", len(router.recorded()))
 	}
+	calls := router.recorded()
 	if calls[0].Region != "eu-west-1" {
 		t.Fatalf("delivery carried region %q, want eu-west-1 (fired into the default region)", calls[0].Region)
 	}

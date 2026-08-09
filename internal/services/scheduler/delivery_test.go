@@ -62,14 +62,23 @@ func (r *recordingRouter) recorded() []recordedCall {
 	return append([]recordedCall(nil), r.calls...)
 }
 
-// newFiringService returns a Service wired to router, with the engine left
-// stopped so tests drive fire() directly.
-func newFiringService(t *testing.T, router http.Handler) (*Service, *clock.Mock) {
-	t.Helper()
+// newFiringService returns a Service wired to router, with the tick loop left
+// stopped so tests drive fire() or tick() on their own schedule. Whatever the
+// test started — the delivery workers a tick() spins up, if nothing else — is
+// shut down when it ends.
+func newFiringService(tb testing.TB, router http.Handler) (*Service, *clock.Mock) {
+	tb.Helper()
 	clk := clock.NewMock()
 	clk.Set(time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC))
 	s := New(&config.Config{Region: "us-east-1", AccountID: "000000000000"}, state.NewMemoryStore(), zap.NewNop(), clk)
 	s.initDispatcher(router)
+	tb.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.Stop(ctx); err != nil {
+			tb.Errorf("stop scheduler: %v", err)
+		}
+	})
 	return s, clk
 }
 

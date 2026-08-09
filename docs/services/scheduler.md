@@ -81,6 +81,11 @@ every target type EventBridge rules reach.
 - Background scheduler engine:
   - Polls on a 1-second clock ticker.
   - Uses the injected clock, so integration tests can advance time quickly.
+  - A tick hands each due schedule to a pool of delivery workers rather than
+    delivering it on the tick itself, so a target that is slow, unreachable or
+    working through its `RetryPolicy` delays only its own schedule. A schedule
+    is never in flight twice, so its firings stay in order; a tick that finds a
+    schedule still mid-delivery leaves it due and skips it.
 - Target dispatch:
   - Delivery goes through the same internal dispatcher EventBridge rules and
     Pipes use, so a target ARN behaves identically on a schedule and on a rule.
