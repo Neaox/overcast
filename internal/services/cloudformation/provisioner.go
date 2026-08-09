@@ -2358,6 +2358,11 @@ type internalCall struct {
 
 	target string // X-Amz-Target, for the JSON protocols
 	action string // Action parameter, for the Query protocol
+
+	// service names the service this call reaches, for dispatches whose path
+	// cannot be classified. Leave it empty to let serviceFromPath infer it,
+	// which is right for every REST path carrying a distinctive prefix.
+	service string
 }
 
 // hopLabels renders the call for the trace UI: which service and operation it
@@ -2371,8 +2376,26 @@ func (c internalCall) hopLabels() (service, operation, targetURI string) {
 	case c.action != "":
 		return serviceFromAction(c.action), c.action, "POST " + c.path + "?Action=" + c.action
 	default:
-		return serviceFromPath(c.path), c.method, c.method + " " + c.path
+		return c.restService(), c.method, c.method + " " + c.path
 	}
+}
+
+// restService names the service a REST dispatch reaches: what the caller
+// stated, or what the path betrays.
+//
+// Inference is a prefix match and nothing else. S3 is the service it cannot
+// help with — its REST paths are bare "/{bucket}[/{key}]", indistinguishable
+// from any other service's, which is why S3 hops used to render with a blank
+// Service. Making S3 the fallback would have fixed those and mislabelled every
+// path the switch does not yet know, including the next service added to the
+// provisioner. A blank label is a visible gap; a confidently wrong one is a
+// lie the reader has no reason to doubt. So S3's dispatches state their
+// service — see internalS3Request — and inference stays conservative.
+func (c internalCall) restService() string {
+	if c.service != "" {
+		return c.service
+	}
+	return serviceFromPath(c.path)
 }
 
 // do dispatches the call into the emulator router and records exactly one
@@ -2486,6 +2509,30 @@ func linkChildRequest(req *http.Request, rec *trace.Recorder) string {
 // and CloudFront's If-Match, for example. It is variadic so the common
 // headerless call stays unchanged.
 func internalRequest(ctx context.Context, router http.Handler, region, method, path, contentType string, body []byte, extra ...http.Header) (*httptest.ResponseRecorder, error) {
+	return restCall("", region, method, path, contentType, body, extra...).do(ctx, router)
+}
+
+// internalS3Request is internalRequest for a dispatch to S3, which states the
+// service because S3's paths cannot betray it — see internalCall.restService.
+func internalS3Request(ctx context.Context, router http.Handler, region, method, path, contentType string, body []byte, extra ...http.Header) (*httptest.ResponseRecorder, error) {
+	return restCall("s3", region, method, path, contentType, body, extra...).do(ctx, router)
+}
+
+// templateFetchContext returns the context for the internal S3 GET that
+// fetches a TemplateURL.
+//
+// It deliberately does not descend from the caller's context: chi's route
+// context would leak out of the CloudFormation request into the dispatch and
+// be matched against the S3 route. It has to carry the trace recorder even so
+// — starting from a bare Background() dropped it, which made every
+// TemplateURL fetch invisible in the trace and left the S3 request it issued
+// with no parent to link back to.
+func templateFetchContext(ctx context.Context) context.Context {
+	return trace.ContextWithRecorder(context.Background(), trace.RecorderFromContext(ctx))
+}
+
+// restCall builds the REST-shaped dispatch both helpers above send.
+func restCall(service, region, method, path, contentType string, body []byte, extra ...http.Header) internalCall {
 	return internalCall{
 		method:      method,
 		path:        path,
@@ -2493,7 +2540,8 @@ func internalRequest(ctx context.Context, router http.Handler, region, method, p
 		body:        body,
 		region:      region,
 		headers:     extra,
-	}.do(ctx, router)
+		service:     service,
+	}
 }
 
 // internalJSON dispatches a JSON POST with X-Amz-Target header.
@@ -3232,7 +3280,7 @@ func (h *s3BucketHandler) Create(ctx context.Context, router http.Handler, cfg *
 		bucketName = strings.ToLower(rCtx.generatedName())
 	}
 
-	_, err = internalRequest(ctx, router, rCtx.Region, http.MethodPut, "/"+bucketName, "", nil)
+	_, err = internalS3Request(ctx, router, rCtx.Region, http.MethodPut, "/"+bucketName, "", nil)
 	if err != nil {
 		return "", nil, fmt.Errorf("s3 CreateBucket: %w", err)
 	}
@@ -3272,7 +3320,7 @@ func s3BucketAttrs(cfg *config.Config, bucket, region string) map[string]string 
 }
 
 func (h *s3BucketHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
-	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/"+physicalID, "", nil)
+	rec, err := internalS3Request(ctx, router, rCtx.Region, http.MethodDelete, "/"+physicalID, "", nil)
 	if err == nil || (rec != nil && rec.Code == http.StatusNotFound) {
 		return nil
 	}

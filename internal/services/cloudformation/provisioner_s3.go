@@ -393,7 +393,7 @@ func applyS3BucketOperations(ctx context.Context, router http.Handler, region, b
 		if operation.headers != nil {
 			extra = append(extra, operation.headers)
 		}
-		if _, err := internalRequest(ctx, router, region, operation.method, "/"+bucket+"?"+operation.query, operation.contentType, operation.body, extra...); err != nil {
+		if _, err := internalS3Request(ctx, router, region, operation.method, "/"+bucket+"?"+operation.query, operation.contentType, operation.body, extra...); err != nil {
 			return i, fmt.Errorf("s3 %s: %w", operation.api, err)
 		}
 	}
