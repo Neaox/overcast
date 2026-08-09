@@ -10,6 +10,7 @@ package lambda
 //   - GetProvisionedConcurrencyConfig GET    /2015-03-31/functions/{name}/provisioned-concurrency
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -78,26 +79,23 @@ type listProvisionedConcurrencyConfigsResponse struct {
 }
 
 // pool returns the InstancePool backing this handler, or nil when Docker is
-// not available (the stub runtime cannot pre-warm anything).
-func (h *Handler) pool() *InstancePool {
-	for _, rt := range h.runtimes.get() {
-		if pool, ok := rt.(*InstancePool); ok {
-			return pool
-		}
-	}
-	return nil
+// not available (the stub runtime cannot pre-warm anything). It waits for the
+// initial Docker probe to report, so nil means "there is no container runtime"
+// rather than "the probe has not finished yet" — see runtimeRegistry.poolFor.
+func (h *Handler) pool(ctx context.Context) *InstancePool {
+	return h.runtimes.poolFor(ctx)
 }
 
 // provisionedResponseFor builds the AWS response for one reservation, reading
 // the live allocation from the pool so Allocated/Available reflect the
 // environments that actually exist rather than echoing the request back.
-func (h *Handler) provisionedResponseFor(fn *Function, cfg *ProvisionedConcurrencyConfig) provisionedConcurrencyConfigResponse {
+func (h *Handler) provisionedResponseFor(ctx context.Context, fn *Function, cfg *ProvisionedConcurrencyConfig) provisionedConcurrencyConfigResponse {
 	resp := provisionedConcurrencyConfigResponse{
 		RequestedProvisionedConcurrentExecutions: cfg.RequestedProvisionedConcurrentExecutions,
 		LastModified:                             cfg.LastModified,
 		Status:                                   provisionedStatusInProgress,
 	}
-	pool := h.pool()
+	pool := h.pool(ctx)
 	if pool == nil {
 		// No container runtime, so the allocation can never succeed. FAILED
 		// with a reason is an AWS-valid status and the truth; READY would claim
@@ -327,7 +325,7 @@ func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 	// Actually reserve the environments. They are created in the background,
 	// so the response reports IN_PROGRESS until they are up — exactly as AWS
 	// does while it allocates.
-	if pool := h.pool(); pool != nil {
+	if pool := h.pool(ctx); pool != nil {
 		pool.SetProvisionedConcurrency(fn, req.ProvisionedConcurrentExecutions)
 	} else {
 		log.Warn("provisioned concurrency configured but Docker is unavailable — no environments will be allocated",
@@ -336,7 +334,7 @@ func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(h.provisionedResponseFor(fn, cfg))
+	_ = json.NewEncoder(w).Encode(h.provisionedResponseFor(ctx, fn, cfg))
 }
 
 // DeleteProvisionedConcurrencyConfig handles DELETE /2015-03-31/functions/{name}/provisioned-concurrency.
@@ -371,7 +369,7 @@ func (h *Handler) DeleteProvisionedConcurrencyConfig(w http.ResponseWriter, r *h
 	}
 	// The environments are not torn down on the spot; they lose their
 	// exemption from the idle sweep and age out like any warm instance.
-	if pool := h.pool(); pool != nil {
+	if pool := h.pool(ctx); pool != nil {
 		pool.ClearProvisionedConcurrency(name)
 	}
 
@@ -420,7 +418,7 @@ func (h *Handler) ListProvisionedConcurrencyConfigs(w http.ResponseWriter, r *ht
 	out := make([]provisionedConcurrencyListItem, 0, len(cfgs))
 	for _, cfg := range cfgs {
 		out = append(out, newProvisionedListItem(
-			h.provisionedResponseFor(fn, cfg),
+			h.provisionedResponseFor(ctx, fn, cfg),
 			qualifiedFunctionARN(fn, cfg.Qualifier),
 		))
 	}
@@ -475,5 +473,5 @@ func (h *Handler) GetProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(h.provisionedResponseFor(fn, cfg))
+	_ = json.NewEncoder(w).Encode(h.provisionedResponseFor(ctx, fn, cfg))
 }

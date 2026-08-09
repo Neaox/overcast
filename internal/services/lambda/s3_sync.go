@@ -38,7 +38,7 @@ type s3SyncWatcher struct {
 	// retire destroys the warm execution environment for a function whose code
 	// just changed. Wired by Service.InitS3Sync; nil in tests that only assert
 	// on stored state.
-	retire func(fn *Function, previousIdentity string)
+	retire func(ctx context.Context, fn *Function, previousIdentity string)
 	// beforeRetire is a deterministic test seam for the scheduling gap between
 	// persistence and retirement arbitration. Production leaves it nil.
 	beforeRetire func(fn *Function)
@@ -110,7 +110,7 @@ func (w *s3SyncWatcher) retirementLock(arn string) *sync.Mutex {
 	return state.retirement
 }
 
-func (w *s3SyncWatcher) retireFunctionIfCurrent(fn *Function, previousIdentity string, eventRevision uint64) {
+func (w *s3SyncWatcher) retireFunctionIfCurrent(ctx context.Context, fn *Function, previousIdentity string, eventRevision uint64) {
 	if w.retire == nil {
 		return
 	}
@@ -128,7 +128,7 @@ func (w *s3SyncWatcher) retireFunctionIfCurrent(fn *Function, previousIdentity s
 	current := ok && state.creationID == fn.CreationID && state.appliedRevision == eventRevision
 	w.mu.Unlock()
 	if current {
-		w.retire(fn, previousIdentity)
+		w.retire(ctx, fn, previousIdentity)
 	}
 }
 
@@ -251,7 +251,7 @@ func (w *s3SyncWatcher) syncFunctionCodeForEvent(ctx context.Context, fn *Functi
 	if w.beforeRetire != nil {
 		w.beforeRetire(fresh)
 	}
-	w.retireFunctionIfCurrent(fresh, previousIdentity, eventRevision)
+	w.retireFunctionIfCurrent(ctx, fresh, previousIdentity, eventRevision)
 
 	w.log.Info("s3 sync: refreshed function code from S3",
 		zap.String("function", fn.Name),

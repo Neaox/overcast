@@ -624,8 +624,8 @@ func TestS3SyncWatcher_staleRetirementCannotReverseNewestPoolExpectation(t *test
 			<-releaseOlderRetire
 		}
 	}
-	w.retire = func(fn *Function, previousIdentity string) {
-		h.retireExecutionEnvironment(fn, previousIdentity)
+	w.retire = func(ctx context.Context, fn *Function, previousIdentity string) {
+		h.retireExecutionEnvironment(ctx, fn, previousIdentity)
 		switch fn.CodeHash {
 		case olderHash:
 			olderRetireApplied <- struct{}{}
