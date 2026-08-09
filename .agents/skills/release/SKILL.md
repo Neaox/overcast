@@ -193,14 +193,19 @@ file instead of producing one").
 
 ```sh
 # 1. run the suites
-scripts/docker-go.sh run ./cmd/compat \
+go run ./cmd/compat \
   --overcast-image ghcr.io/neaox/overcast:<version>-rc.<n> \
   --format json --results-file compat-results.json
 
 # 2. then gate the results it produced
-scripts/docker-go.sh run ./cmd/compat \
-  --results-file compat-results.json --max-failures 0
+go run ./cmd/compat --results-file compat-results.json --max-failures 0
 ```
+
+**Not through `scripts/docker-go.sh`.** That wrapper is the right answer for
+almost every other `go` command here, and the wrong one for this: the container
+it runs in has no Docker socket, so the runner cannot start anything and reports
+`no way to start Overcast` (`compat/AGENTS.md` § Running the suites). compat
+drives Docker itself, so it runs on the host.
 
 **Passing both at once fails silently in the worst possible direction.** The run never happens, the
 gate reads whatever `compat-results.json` is already on disk — the default path, and a file a
