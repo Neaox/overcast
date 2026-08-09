@@ -4848,7 +4848,7 @@
           "operation": "CreateSchedule",
           "category": "Schedules",
           "status": "✅ Supported",
-          "notes": "Group-specific or default group path"
+          "notes": "Group-specific or default group path; rejects a target type Overcast cannot fire"
         },
         {
           "operation": "GetSchedule",
@@ -4860,7 +4860,7 @@
           "operation": "UpdateSchedule",
           "category": "Schedules",
           "status": "✅ Supported",
-          "notes": "Updates expression/target/state fields"
+          "notes": "Updates expression/target/state fields; rejects a target type Overcast cannot fire"
         },
         {
           "operation": "DeleteSchedule",

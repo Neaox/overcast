@@ -168,6 +168,9 @@ func (s *Service) createScheduleTyped(ctx context.Context, req *createScheduleRe
 			HTTPStatus: 400,
 		}
 	}
+	if aerr := validateTarget(req.Target); aerr != nil {
+		return nil, aerr
+	}
 	state := req.State
 	if state == "" {
 		state = "ENABLED"
@@ -237,6 +240,11 @@ func (s *Service) updateScheduleTyped(ctx context.Context, req *updateScheduleRe
 			Code:       "ResourceNotFoundException",
 			Message:    fmt.Sprintf("Schedule %s in group %s does not exist.", req.Name, group),
 			HTTPStatus: 404,
+		}
+	}
+	if req.Target.Arn != "" {
+		if aerr := validateTarget(req.Target); aerr != nil {
+			return nil, aerr
 		}
 	}
 	if req.ScheduleExpression != "" {

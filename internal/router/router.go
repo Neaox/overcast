@@ -686,10 +686,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		Enricher: lambdaSvc.SyncInvoker(),
 	})
 	pipesSvc.InitRouter(r)
-	ti := scheduler.TargetInvoker{}
-	ti.Lambda = lambdaSvc.Invoker()
-	ti.SQS = sqsSvc.Enqueuer()
-	schedulerSvc.InitTargets(ti)
+	// EventBridge Scheduler: hand the service the root router and start its cron
+	// engine. Firing goes through the same internal/eventtarget dispatcher an
+	// EventBridge rule delivers through, so one target ARN behaves identically
+	// on a schedule and on a rule (#734).
+	schedulerSvc.InitRouter(r)
 	// ---- Docker Supervisor ------------------------------------------------
 	// A single Supervisor probes Docker once per unique socket, creates per-
 	// service networks, runs one event watcher, and reconciles container state.

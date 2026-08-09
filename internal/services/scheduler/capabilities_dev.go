@@ -22,11 +22,11 @@ func init() {
 
 		// Schedules
 		capabilities.Capability{Operation: "CreateSchedule", Category: catSchedules,
-			Status: capabilities.StatusSupported, Notes: "Group-specific or default group path"},
+			Status: capabilities.StatusSupported, Notes: "Group-specific or default group path; rejects a target type Overcast cannot fire"},
 		capabilities.Capability{Operation: "GetSchedule", Category: catSchedules,
 			Status: capabilities.StatusSupported, Notes: "Returns full schedule definition"},
 		capabilities.Capability{Operation: "UpdateSchedule", Category: catSchedules,
-			Status: capabilities.StatusSupported, Notes: "Updates expression/target/state fields"},
+			Status: capabilities.StatusSupported, Notes: "Updates expression/target/state fields; rejects a target type Overcast cannot fire"},
 		capabilities.Capability{Operation: "DeleteSchedule", Category: catSchedules,
 			Status: capabilities.StatusSupported, Notes: "Deletes schedule"},
 		capabilities.Capability{Operation: "ListSchedules", Category: catSchedules,
