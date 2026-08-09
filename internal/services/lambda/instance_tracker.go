@@ -116,10 +116,11 @@ type instanceTracker struct {
 	// snapshot endpoint do not multiply Docker stats calls.
 	lastStatsRefresh time.Time
 
-	bus    *events.Bus
-	clk    clock.Clock
-	log    *zap.Logger
-	stopCh chan struct{}
+	bus      *events.Bus
+	clk      clock.Clock
+	log      *zap.Logger
+	stopOnce sync.Once
+	stopCh   chan struct{}
 }
 
 // SetStatsFunc wires container resource sampling. Called once during Docker
@@ -625,9 +626,14 @@ func (t *instanceTracker) refreshStats() {
 	}
 }
 
-// Stop shuts down the background sweeper.
+// Stop shuts down the background sweeper. Idempotent: Service.Stop is
+// reachable more than once (process shutdown, a test's t.Cleanup, a service
+// stopped and restarted in-process), and a second close would panic.
 func (t *instanceTracker) Stop() {
-	close(t.stopCh)
+	if t == nil {
+		return
+	}
+	t.stopOnce.Do(func() { close(t.stopCh) })
 }
 
 // sweepLoop evicts instances that have been idle for more than trackerIdleTTL.

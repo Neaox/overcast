@@ -154,10 +154,11 @@ type InstancePool struct {
 	// invocation queued behind an instance limit. See signalSlotFreed.
 	slotFreed chan struct{}
 
-	rt     Runtime // used for cold starts
-	log    *zap.Logger
-	clk    clock.Clock
-	stopCh chan struct{}
+	rt       Runtime // used for cold starts
+	log      *zap.Logger
+	clk      clock.Clock
+	stopOnce sync.Once
+	stopCh   chan struct{}
 	// observer, when set, is told about environments the pool creates or
 	// destroys outside an invocation, so the instance tracker never reports an
 	// environment that no longer exists. Set once during wiring, before the
@@ -1038,7 +1039,13 @@ func (p *InstancePool) ProactiveInit(fn *Function) proactiveOutcome {
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 // Stop shuts down the background sweeper and closes every warm instance.
+// Idempotent for the same reason instanceTracker.Stop is: Service.Stop drives
+// both, and is itself reachable more than once.
 func (p *InstancePool) Stop() {
+	p.stopOnce.Do(p.stop)
+}
+
+func (p *InstancePool) stop() {
 	close(p.stopCh)
 	p.warmWG.Wait()
 
