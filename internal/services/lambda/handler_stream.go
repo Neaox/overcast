@@ -78,13 +78,7 @@ func (h *Handler) InvokeWithResponseStream(w http.ResponseWriter, r *http.Reques
 		log.Warn("invoke-stream: record invocation", zap.String("function", name), zap.Error(err))
 	}
 
-	var rt Runtime
-	for _, candidate := range h.runtimes.get() {
-		if candidate.CanHandle(fn.Runtime) {
-			rt = candidate
-			break
-		}
-	}
+	rt := h.runtimes.runtimeFor(ctx, fn.Runtime)
 	if rt == nil {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
 			Code:       "InvalidRuntimeException",

@@ -2186,13 +2186,7 @@ func (h *Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find a runtime that can handle this function.
-	var rt Runtime
-	for _, r := range h.runtimes.get() {
-		if r.CanHandle(fn.Runtime) {
-			rt = r
-			break
-		}
-	}
+	rt := h.runtimes.runtimeFor(ctx, fn.Runtime)
 	if rt == nil {
 		log.Warn("invoke: no runtime available", zap.String("function", name), zap.String("runtime", fn.Runtime))
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidRuntimeException",
@@ -2791,13 +2785,7 @@ func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
 
 	// Find runtime.
 	sendEvent("progress", "Selecting runtime for "+fn.Runtime)
-	var rt Runtime
-	for _, candidate := range h.runtimes.get() {
-		if candidate.CanHandle(fn.Runtime) {
-			rt = candidate
-			break
-		}
-	}
+	rt := h.runtimes.runtimeFor(ctx, fn.Runtime)
 	if rt == nil {
 		sendEvent("error", "No runtime available for "+fn.Runtime)
 		return
