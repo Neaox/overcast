@@ -65,6 +65,13 @@ const (
 	startOvercastNever  = "never"
 )
 
+// How a managed instance was started, reported in log lines and the ready
+// banner.
+const (
+	overcastModeBinary = "binary"
+	overcastModeDocker = "docker"
+)
+
 // repoRoot walks up from the working directory looking for go.mod, so compat
 // can be launched from anywhere in the tree — the wrappers, a Makefile in
 // compat/, or an editor's run button — and still find bin/ and compat/ui.
@@ -226,8 +233,15 @@ type overcastOptions struct {
 	// Bin is an explicit path to the overcast binary. Empty searches
 	// bin/overcast then PATH.
 	Bin string
-	// Image is the container image used when no binary is found.
+	// BinRequested says the caller named Bin, rather than it being empty.
+	BinRequested bool
+	// Image is the container image to run.
 	Image string
+	// ImageRequested says the caller named Image, rather than it coming from
+	// defaultOvercastImage. It is the difference between "run this" and "run
+	// something if there is nothing better", and chooseOvercastArtifact turns
+	// on it.
+	ImageRequested bool
 	// PortBase is where the port scan starts.
 	PortBase int
 	// WithUI serves the emulator's own web UI on a second free port.
@@ -247,15 +261,19 @@ type managedOvercast struct {
 	Endpoint string
 	// UIURL is the emulator's own web UI, empty when disabled.
 	UIURL string
-	// How it was started, for log lines: "binary" or "docker".
-	Mode string
+	// Artifact is what it was started from, and why. It replaces a bare
+	// "binary"/"docker" mode string so the ready banner can name the exact
+	// binary or image — the mode alone is the same word whether the image was
+	// the release candidate the caller asked for or the compiled-in default.
+	Artifact overcastArtifact
 	// Stop terminates the instance. Safe to call more than once.
 	Stop func()
 }
 
 // startOvercast brings up a throwaway instance on free ports and waits for it
-// to answer /_health. It prefers a locally built binary (fast, and picks up
-// uncommitted changes) and falls back to a container.
+// to answer /_health. What it runs is decided by chooseOvercastArtifact: an
+// artifact the caller named, otherwise a locally built binary (fast, and picks
+// up uncommitted changes), otherwise the default container image.
 func startOvercast(ctx context.Context, opts overcastOptions) (*managedOvercast, error) {
 	logf := opts.Logf
 	if logf == nil {
@@ -274,8 +292,33 @@ func startOvercast(ctx context.Context, opts overcastOptions) (*managedOvercast,
 		opts.Host = "localhost"
 	}
 
+	// Decide what to run before touching any ports, so a caller who named an
+	// artifact that cannot be used hears about it immediately.
+	dockerAvailable := false
+	if _, err := exec.LookPath("docker"); err == nil {
+		dockerAvailable = true
+	}
+	artifact, err := chooseOvercastArtifact(artifactRequest{
+		Bin:             opts.Bin,
+		BinRequested:    opts.BinRequested,
+		Image:           opts.Image,
+		ImageRequested:  opts.ImageRequested,
+		FoundBin:        findOvercastBinary(opts.Bin),
+		DockerAvailable: dockerAvailable,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Say which artifact won and why, before anything is started. A run that
+	// was asked for an image and used a binary instead must be impossible to
+	// mistake for one that used the image (issue #801), and the mode alone —
+	// "docker", "binary" — never said that.
+	logf("using the %s — %s", artifact.Describe(), artifact.Reason)
+	if artifact.Ignored != "" {
+		logf("%s", artifact.Ignored)
+	}
+
 	apiPort, uiPort := 0, 0
-	var err error
 	if opts.WithUI {
 		apiPort, uiPort, err = freePortPair(opts.PortBase)
 	} else {
@@ -285,13 +328,122 @@ func startOvercast(ctx context.Context, opts overcastOptions) (*managedOvercast,
 		return nil, err
 	}
 
-	if bin := findOvercastBinary(opts.Bin); bin != "" {
-		return startOvercastBinary(ctx, bin, apiPort, uiPort, opts, logf)
+	if artifact.Mode == overcastModeBinary {
+		return startOvercastBinary(ctx, artifact, apiPort, uiPort, opts, logf)
 	}
-	if _, err := exec.LookPath("docker"); err == nil {
-		return startOvercastContainer(ctx, apiPort, uiPort, opts, logf)
+	return startOvercastContainer(ctx, artifact, apiPort, uiPort, opts, logf)
+}
+
+// artifactRequest separates what the caller asked for from what this machine
+// happens to have lying around. The Requested flags are the whole point: a
+// value that came from the compiled-in default is nobody's request, so it must
+// not outrank anything. See imageRequested/binRequested in main.go for how
+// they are decided.
+type artifactRequest struct {
+	// Bin is --overcast-bin, and BinRequested says the caller named it.
+	Bin          string
+	BinRequested bool
+	// Image is --overcast-image, and ImageRequested says the caller named it
+	// rather than inheriting defaultOvercastImage.
+	Image          string
+	ImageRequested bool
+	// FoundBin is what findOvercastBinary turned up, empty when nothing did.
+	FoundBin string
+	// DockerAvailable reports whether a container can be started at all.
+	DockerAvailable bool
+}
+
+// overcastArtifact is the thing a managed instance will be started from,
+// together with why it was chosen and what that passed over.
+type overcastArtifact struct {
+	// Mode is overcastModeBinary or overcastModeDocker.
+	Mode string
+	// Ref is the binary path or the container image reference.
+	Ref string
+	// Reason says, in caller-facing words, why this artifact won.
+	Reason string
+	// Ignored is a full sentence naming something the choice passes over,
+	// empty when nothing was. Nothing the caller *asked* for ever lands here —
+	// a request that cannot be honoured is an error, not a note.
+	Ignored string
+}
+
+// Describe names the artifact in one phrase for a log line.
+func (a overcastArtifact) Describe() string {
+	if a.Mode == overcastModeDocker {
+		return "container image " + a.Ref
 	}
-	return nil, fmt.Errorf(
+	return "binary " + a.Ref
+}
+
+// chooseOvercastArtifact decides what a managed instance is started from.
+//
+// The rule is that a named artifact wins over a discovered one. Discovery is a
+// convenience — it exists so that `go run ./cmd/compat` picks up the binary you
+// just built — and a convenience must never quietly outrank an instruction.
+// It used to: binary discovery ran first unconditionally, so an explicitly
+// requested --overcast-image was ignored whenever any bin/overcast existed,
+// which is how a release candidate got "compat-tested" against a day-old local
+// build (issue #801). The whole failure was silent-by-construction, hence both
+// the precedence here and the Reason/Ignored strings the caller prints.
+//
+// Naming two different artifacts is refused rather than resolved: there is no
+// principled winner between --overcast-bin and --overcast-image, and picking
+// one would rebuild the same trap facing the other way.
+func chooseOvercastArtifact(req artifactRequest) (overcastArtifact, error) {
+	if req.BinRequested && req.ImageRequested {
+		return overcastArtifact{}, fmt.Errorf(
+			"--overcast-bin %s and --overcast-image %s both name what to test; pass one, not both",
+			req.Bin, req.Image)
+	}
+
+	if req.BinRequested {
+		if req.FoundBin == "" {
+			return overcastArtifact{}, fmt.Errorf(
+				"--overcast-bin %s: no such file — build it or fix the path; "+
+					"compat will not run something else in its place", req.Bin)
+		}
+		return overcastArtifact{
+			Mode:   overcastModeBinary,
+			Ref:    req.FoundBin,
+			Reason: "--overcast-bin names it",
+		}, nil
+	}
+
+	if req.ImageRequested {
+		if !req.DockerAvailable {
+			return overcastArtifact{}, fmt.Errorf(
+				"--overcast-image %s needs Docker, which is not on PATH — install it, "+
+					"or drop the flag to run a local binary instead", req.Image)
+		}
+		artifact := overcastArtifact{
+			Mode:   overcastModeDocker,
+			Ref:    req.Image,
+			Reason: "--overcast-image names it, and a named image outranks any local binary",
+		}
+		if req.FoundBin != "" {
+			artifact.Ignored = fmt.Sprintf(
+				"NOT using the local binary %s: --overcast-image was given, so the image is what gets tested",
+				req.FoundBin)
+		}
+		return artifact, nil
+	}
+
+	if req.FoundBin != "" {
+		return overcastArtifact{
+			Mode:   overcastModeBinary,
+			Ref:    req.FoundBin,
+			Reason: "no image was named and this is what the search found",
+		}, nil
+	}
+	if req.DockerAvailable {
+		return overcastArtifact{
+			Mode:   overcastModeDocker,
+			Ref:    req.Image,
+			Reason: "no local binary was found and no image was named, so this is the default",
+		}, nil
+	}
+	return overcastArtifact{}, fmt.Errorf(
 		"no way to start Overcast: build it first (task build / go build -o bin/overcast ./cmd/overcast), " +
 			"install Docker, or point --endpoint at an instance you are already running")
 }
@@ -327,11 +479,12 @@ func findOvercastBinary(explicit string) string {
 
 func startOvercastBinary(
 	ctx context.Context,
-	bin string,
+	artifact overcastArtifact,
 	apiPort, uiPort int,
 	opts overcastOptions,
 	logf func(string, ...any),
 ) (*managedOvercast, error) {
+	bin := artifact.Ref
 	endpoint := fmt.Sprintf("http://%s:%d", opts.Host, apiPort)
 	logf("starting Overcast (%s) on %s", filepath.Base(bin), endpoint)
 
@@ -364,7 +517,7 @@ func startOvercastBinary(
 		stop()
 		return nil, err
 	}
-	oc := &managedOvercast{Endpoint: endpoint, Mode: "binary", Stop: stop}
+	oc := &managedOvercast{Endpoint: endpoint, Artifact: artifact, Stop: stop}
 	if uiPort != 0 {
 		oc.UIURL = fmt.Sprintf("http://%s:%d", opts.Host, uiPort)
 	}
@@ -454,15 +607,17 @@ func dockerBridgeGateway(ctx context.Context, ports ...int) string {
 
 func startOvercastContainer(
 	ctx context.Context,
+	artifact overcastArtifact,
 	apiPort, uiPort int,
 	opts overcastOptions,
 	logf func(string, ...any),
 ) (*managedOvercast, error) {
+	image := artifact.Ref
 	endpoint := fmt.Sprintf("http://%s:%d", opts.Host, apiPort)
-	logf("starting Overcast (%s) on %s", opts.Image, endpoint)
+	logf("starting Overcast (%s) on %s", image, endpoint)
 
 	gateway := dockerBridgeGateway(ctx, apiPort, uiPort)
-	argv := dockerRunArgs(apiPort, uiPort, opts.Image, opts.LogLevel, gateway)
+	argv := dockerRunArgs(apiPort, uiPort, image, opts.LogLevel, gateway)
 
 	// MSYS_NO_PATHCONV stops Git Bash mangling the -p arguments into paths.
 	cmd := exec.CommandContext(ctx, "docker", argv...)
@@ -470,11 +625,11 @@ func startOvercastContainer(
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("docker run %s: %w", opts.Image, err)
+		return nil, fmt.Errorf("docker run %s: %w", image, err)
 	}
 	containerID := strings.TrimSpace(string(out))
 	if containerID == "" {
-		return nil, fmt.Errorf("docker run %s: no container id returned", opts.Image)
+		return nil, fmt.Errorf("docker run %s: no container id returned", image)
 	}
 
 	stop := func() {
@@ -488,7 +643,7 @@ func startOvercastContainer(
 		stop()
 		return nil, err
 	}
-	oc := &managedOvercast{Endpoint: endpoint, Mode: "docker", Stop: stop}
+	oc := &managedOvercast{Endpoint: endpoint, Artifact: artifact, Stop: stop}
 	if uiPort != 0 {
 		oc.UIURL = fmt.Sprintf("http://%s:%d", opts.Host, uiPort)
 	}

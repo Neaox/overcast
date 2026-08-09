@@ -107,3 +107,44 @@ func TestDispatch_UnknownTarget_NoCodecContext_NoHeader(t *testing.T) {
 		t.Fatalf("expected UnknownOperationException in body, got: %s", w.Body.String())
 	}
 }
+
+// TestDispatchJSON_CoversEveryQueryOperation is the guard the CloudWatch
+// tag operations needed and did not have: an operation reachable over the
+// Query protocol must also be reachable over the JSON protocol, because
+// the AWS CLI and the SDKs speak JSON to CloudWatch and a Query-only
+// operation is unreachable for them (issue #794).
+//
+// It asserts reachability only — that Dispatch routes the action to a
+// handler rather than answering UnknownOperationException. Each handler's
+// own behaviour is covered by its own tests, so an empty request body
+// producing a validation error here is a pass.
+func TestDispatchJSON_CoversEveryQueryOperation(t *testing.T) {
+	svc := newTestService(t)
+
+	// queryOnly records operations that are deliberately still Query-only,
+	// with the reason. An entry here is a known gap an SDK can hit, not an
+	// exemption to be added lightly — the fix is a JSON handler, not a new
+	// line in this map.
+	queryOnly := map[string]string{
+		"GetMetricData": "no JSON request/response shape yet: MetricDataQueries, epoch timestamps and MetricDataResults all need their own encoding",
+	}
+
+	for action := range svc.ops {
+		if reason, skip := queryOnly[action]; skip {
+			t.Logf("skipping %s — %s", action, reason)
+			continue
+		}
+		t.Run(action, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(`{}`)))
+			r.Header.Set("Content-Type", "application/x-amz-json-1.0")
+			r = r.WithContext(codec.WithDispatch(r.Context(), codec.JSON10, action))
+
+			w := httptest.NewRecorder()
+			svc.Dispatch(w, r)
+
+			if bytes.Contains(w.Body.Bytes(), []byte("UnknownOperationException")) {
+				t.Fatalf("%s is dispatchable over Query but not over JSON: %s", action, w.Body.String())
+			}
+		})
+	}
+}

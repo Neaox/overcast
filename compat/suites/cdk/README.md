@@ -41,7 +41,9 @@ and deploys a single stack to exercise the full CloudFormation lifecycle.
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 22.18+ or 23.6+ — the suite has no build step; Node runs its
+  TypeScript sources directly using built-in type stripping, which earlier
+  releases do not have. `node run.js` says so plainly if yours is too old.
 - `npm install -g aws-cdk`
 - Overcast running on `http://localhost:4566`
 

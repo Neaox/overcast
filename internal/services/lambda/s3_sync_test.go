@@ -304,6 +304,106 @@ func TestS3SyncWatcher_sameBytesManualUpdateDuringFetchWins(t *testing.T) {
 	}
 }
 
+// A PutObject that lands bytes the function already runs is not a deployment.
+// Refreshing anyway rotates RevisionId under callers using it for optimistic
+// concurrency and cold-starts the warm instance for nothing — and because
+// CreateFunction reads the very same key, an event published just before the
+// create is exactly this case, arriving after the function exists.
+func TestS3SyncWatcher_unchangedObjectLeavesFunctionUntouched(t *testing.T) {
+	// Given: a function whose stored package is already the object's bytes.
+	code := []byte("deployed-code")
+	w, ls := testWatcher(t, testFetch(code))
+	seeded := seedFunction(t, ls, "unchanged-sync-fn", "my-bucket", "fn.zip")
+	seeded.setCode(code)
+	seeded.LastModified = "2026-01-01T00:00:00.000+0000"
+	if aerr := ls.putFunction(context.Background(), seeded); aerr != nil {
+		t.Fatalf("seed code: %v", aerr)
+	}
+	retired := 0
+	w.retire = func(context.Context, *Function, string) { retired++ }
+
+	// When: a PutObject to that key republishes the same bytes.
+	w.onS3ObjectCreated(context.Background(), events.Event{
+		Type:    events.S3ObjectCreated,
+		Seq:     7,
+		Payload: events.S3ObjectPayload{Bucket: "my-bucket", Key: "fn.zip"},
+	})
+
+	// Then: nothing observable moved, and the warm instance survives.
+	got, aerr := ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("get function: %v", aerr)
+	}
+	if got.RevisionId != "initial" {
+		t.Fatalf("RevisionId = %q, want the untouched \"initial\"", got.RevisionId)
+	}
+	if got.LastModified != "2026-01-01T00:00:00.000+0000" {
+		t.Fatalf("LastModified = %q, want the untouched seed value", got.LastModified)
+	}
+	if got.CodeHash != codeHashOf(code) {
+		t.Fatalf("CodeHash = %q, want the unchanged package's %q", got.CodeHash, codeHashOf(code))
+	}
+	if retired != 0 {
+		t.Fatalf("retired the warm instance %d times over an unchanged package", retired)
+	}
+}
+
+// Writing nothing must not mean consuming nothing: the appliedRevision fence is
+// what stops a slower callback holding an older view of the key from committing
+// its staler bytes afterwards, and an unchanged object still occupies a
+// position in that order.
+func TestS3SyncWatcher_unchangedObjectStillFencesOlderEvent(t *testing.T) {
+	// Given: an older event blocked in S3 holding bytes that are now stale.
+	olderStarted := make(chan struct{})
+	releaseOlder := make(chan struct{})
+	current := []byte("current-code")
+	var calls int
+	var callsMu sync.Mutex
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
+		callsMu.Lock()
+		calls++
+		call := calls
+		callsMu.Unlock()
+		if call == 1 {
+			close(olderStarted)
+			<-releaseOlder
+			return []byte("older-event-code"), nil
+		}
+		return current, nil
+	}
+	w, ls := testWatcher(t, fetch)
+	seeded := seedFunction(t, ls, "unchanged-fence-fn", "my-bucket", "fn.zip")
+	seeded.setCode(current)
+	if aerr := ls.putFunction(context.Background(), seeded); aerr != nil {
+		t.Fatalf("seed code: %v", aerr)
+	}
+	olderDone := make(chan struct{})
+	go func() { defer close(olderDone); w.syncFunctionCodeForEvent(context.Background(), seeded, 10) }()
+	<-olderStarted
+
+	// When: a newer event finds the object already matches and writes nothing,
+	// then the older event's fetch finally returns.
+	w.syncFunctionCodeForEvent(context.Background(), seeded, 11)
+	close(releaseOlder)
+	<-olderDone
+
+	// Then: the older event is still rejected and the function keeps the bytes
+	// the newest event confirmed, at the revision it was already on.
+	got, aerr := ls.getFunction(context.Background(), seeded.Name)
+	if aerr != nil {
+		t.Fatalf("get function: %v", aerr)
+	}
+	if aerr := ls.loadFunctionCode(context.Background(), got); aerr != nil {
+		t.Fatalf("load code: %v", aerr)
+	}
+	if string(got.CodeZip) != string(current) {
+		t.Fatalf("CodeZip = %q, want the current object's %q", got.CodeZip, current)
+	}
+	if got.RevisionId != "initial" {
+		t.Fatalf("RevisionId = %q, want untouched — no event changed the package", got.RevisionId)
+	}
+}
+
 func TestS3SyncWatcher_configurationUpdateDuringFetchDoesNotFence(t *testing.T) {
 	// Given: an S3 refresh blocked after reading the function.
 	fetchStarted := make(chan struct{})

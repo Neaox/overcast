@@ -23,8 +23,8 @@ import {
   ParameterType,
   ResourceTypeForTagging,
 } from "@aws-sdk/client-ssm";
-import { makeClients } from "../lib/clients.js";
-import type { TestGroup } from "../lib/harness.js";
+import { makeClients } from "../lib/clients.ts";
+import type { TestGroup } from "../lib/harness.ts";
 import * as assert from "node:assert/strict";
 
 export function makeSSMGroups(suite: string): TestGroup[] {

@@ -99,6 +99,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [lambda] a failed `CreateFunction` or `UpdateFunctionCode` no longer leaves the stored deployment package ahead of the function's `CodeSha256`, `RevisionId` and source metadata, so a later read or cold start cannot run code the configuration does not describe
 
+- [lambda] a `PutObject` landing the bytes a function is already running is no longer treated as a new deployment. Re-uploading an unchanged asset — or the very upload the function read at create time — leaves `RevisionId`, `LastModified` and the warm execution environment alone, instead of rotating the revision under callers using it for optimistic concurrency and forcing a needless cold start
+
 - [scheduler] schedules fire SNS, Step Functions, Kinesis, Firehose, ECS and EventBridge event bus targets, not just Lambda and SQS — delivery goes through the same dispatcher EventBridge rules and Pipes use, so one target ARN behaves identically on a schedule and on a rule — and `SqsParameters.MessageGroupId`, `KinesisParameters.PartitionKey`, `EventBridgeParameters` and `EcsParameters` are honoured when a schedule fires. `CreateSchedule` and `UpdateSchedule` reject a target type Overcast cannot fire with a `ValidationException`, instead of accepting a schedule that would silently never fire
 
 - [scheduler] `RetryPolicy` and `DeadLetterConfig` are honoured: a failed firing is retried up to `MaximumRetryAttempts` (capped at 6 attempts) while `MaximumEventAgeInSeconds` allows, then sent to the configured SQS dead-letter queue

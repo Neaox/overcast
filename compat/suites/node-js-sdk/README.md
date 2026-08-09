@@ -1,7 +1,7 @@
 # node-js-sdk suite
 
 Runs the full Overcast AWS compatibility matrix using **AWS SDK v3 for
-JavaScript** (TypeScript, Node.js 20).
+JavaScript** (TypeScript, run directly by Node — no build step).
 
 Tests cover all services — including ones not yet implemented in Overcast.
 Failures on unimplemented services are expected and are the coverage metric,
@@ -11,7 +11,7 @@ not a problem to fix.
 
 ## Quick start
 
-### Locally (Node.js 20+ required)
+### Locally (Node.js 22.18+ or 23.6+ required)
 
 ```bash
 cd compat/suites/node-js-sdk
@@ -65,8 +65,9 @@ go run ./cmd/compat --endpoint http://localhost:4566 --suite node-js-sdk
 
 ```
 node-js-sdk/
-  Dockerfile        ← self-contained CI image (node:20-alpine)
-  package.json      ← dependencies: all @aws-sdk/client-* + tsx
+  Dockerfile        ← self-contained CI image (node:24-alpine)
+  package.json      ← dependencies: all @aws-sdk/client-*
+  run.js            ← entry point: Node version check, then imports src/runner.ts
   tsconfig.json     ← NodeNext ESM, strict
   README.md         ← you are here
 

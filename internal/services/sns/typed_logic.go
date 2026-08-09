@@ -701,10 +701,11 @@ func (h *Handler) publishTyped(ctx context.Context, req *publishReq) (*publishRe
 		})
 	}
 
+	origin := publishOrigin(ctx)
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		h.fanOut(context.WithoutCancel(ctx), topic.Name, msgID, req.Subject, req.Message, envelope, subs, nil)
+		h.fanOut(context.WithoutCancel(ctx), origin, topic.Name, msgID, req.Subject, req.Message, envelope, subs, nil)
 	}()
 
 	return &publishResp{
@@ -725,6 +726,7 @@ func (h *Handler) publishBatchTyped(ctx context.Context, req *publishBatchReq) (
 	}
 
 	subs, _ := h.snsStore.listSubscriptionsByTopic(ctx, topic.Name)
+	origin := publishOrigin(ctx)
 
 	var successful []xmlPublishBatchSuccess
 	var failed []xmlPublishBatchFailed
@@ -747,7 +749,7 @@ func (h *Handler) publishBatchTyped(ctx context.Context, req *publishBatchReq) (
 		envCopy := envelope
 		go func() {
 			defer h.wg.Done()
-			h.fanOut(context.WithoutCancel(ctx), topic.Name, msgID, entry.Subject, entry.Message, envCopy, subs, nil)
+			h.fanOut(context.WithoutCancel(ctx), origin, topic.Name, msgID, entry.Subject, entry.Message, envCopy, subs, nil)
 		}()
 
 		successful = append(successful, xmlPublishBatchSuccess{Id: entry.Id, MessageId: msgID})

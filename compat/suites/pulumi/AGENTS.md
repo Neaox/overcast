@@ -35,9 +35,9 @@ at the end of this file to build the suite from scratch.
 
 | Item          | Value                                                    |
 | ------------- | -------------------------------------------------------- |
-| Language      | TypeScript (Pulumi program + runner) + Node.js 20        |
+| Language      | TypeScript (Pulumi program + runner) + Node.js 22.18+/23.6+ |
 | IaC tool      | Pulumi CLI (`pulumi`) + `@pulumi/aws` provider           |
-| CI image      | `node:20-alpine` with Pulumi CLI installed               |
+| CI image      | `node:24-alpine` with Pulumi CLI installed               |
 | State backend | Local file backend (`PULUMI_BACKEND_URL=file://./state`) |
 
 ---
@@ -48,8 +48,9 @@ at the end of this file to build the suite from scratch.
 compat/suites/pulumi/
   AGENTS.md          ← you are here
   README.md          ← quick-start, prerequisites, env vars
-  Dockerfile         ← node:20-alpine + pulumi CLI; runs runner.ts
-  package.json       ← @pulumi/aws, @pulumi/pulumi, @aws-sdk/client-*, tsx
+  Dockerfile         ← node:24-alpine + pulumi CLI; runs run.js
+  package.json       ← @pulumi/aws, @pulumi/pulumi, @aws-sdk/client-*
+  run.js             ← entry point: Node version check, then imports src/runner.ts
   tsconfig.json      ← NodeNext, strict (mirror node-js-sdk)
   Pulumi.yaml        ← Pulumi project definition
   Pulumi.dev.yaml    ← stack config for the local dev stack
@@ -218,7 +219,8 @@ Additional Pulumi specifics:
 When building this suite from scratch:
 
 1. Create `package.json` with `@pulumi/aws`, `@pulumi/pulumi`,
-   `@aws-sdk/client-*`, and `tsx` as a dev dependency.
+   and `@aws-sdk/client-*`. No TypeScript loader — Node runs the sources
+   directly (see the node-js-sdk suite).
 2. Create `tsconfig.json` (mirror `node-js-sdk/tsconfig.json`).
 3. Create `Pulumi.yaml` declaring the project name and runtime.
 4. Create `src/index.ts` with all planned resources as `@pulumi/aws`
@@ -229,7 +231,7 @@ When building this suite from scratch:
 7. Create `src/runner.ts` that calls `runSuite()` with all groups, setting
    `PULUMI_BACKEND_URL` before invoking Pulumi CLI.
 8. Add `state/` to `.gitignore`.
-9. Create `Dockerfile` based on `node:20-alpine`; install the Pulumi CLI
+9. Create `Dockerfile` based on `node:24-alpine`; install the Pulumi CLI
    binary and `npm install`; set `CMD` to run the runner.
 10. Register the suite in `compat/runner.go` and `compat/suites/registry.json`.
 11. Run `tsc --noEmit` to confirm type correctness.

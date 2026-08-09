@@ -164,8 +164,10 @@ func (w *s3SyncWatcher) onS3ObjectCreated(ctx context.Context, e events.Event) {
 	}
 }
 
-// syncFunctionCode fetches the zip from S3, stores it in the function record,
-// bumps the revision, and retires the warm instance still running the old code.
+// syncFunctionCode fetches the zip from S3 and, when it differs from the
+// package the function already runs, stores it in the function record, bumps
+// the revision, and retires the warm instance still running the old code. An
+// object whose bytes the function already holds changes nothing observable.
 func (w *s3SyncWatcher) syncFunctionCode(ctx context.Context, fn *Function) {
 	w.syncFunctionCodeForEvent(ctx, fn, 0)
 }
@@ -209,6 +211,7 @@ func (w *s3SyncWatcher) syncFunctionCodeForEvent(ctx context.Context, fn *Functi
 		return
 	}
 	var previousIdentity string
+	alreadyCurrent := false
 	fresh, changed, aerr := w.ls.mutateFunction(ctx, fn.Name, func(current *Function) (bool, *protocol.AWSError) {
 		if current.CreationID != fn.CreationID {
 			return false, nil
@@ -217,6 +220,22 @@ func (w *s3SyncWatcher) syncFunctionCodeForEvent(ctx context.Context, fn *Functi
 			return false, nil
 		}
 		if current.CodeGeneration != expectedCodeGeneration {
+			return false, nil
+		}
+		// The refresh exists to move a function onto bytes it is not already
+		// running. When the key's current version is byte-identical to the
+		// package the record already names there is nothing to move it to, and
+		// writing anyway would be observable churn on a function whose
+		// deployment did not change: RevisionId rotates under callers using it
+		// for optimistic concurrency, LastModified advances, and the warm
+		// instance is retired into a needless cold start. Every PutObject to a
+		// function's code key publishes an event — including a re-upload of an
+		// unchanged asset, and one that lands only after the function already
+		// read those same bytes at create time — so this is the ordinary case
+		// rather than a corner of it. Flagged rather than silently skipped so
+		// the event is still fenced as applied below.
+		if current.CodeHash == codeHashOf(zip) {
+			alreadyCurrent = true
 			return false, nil
 		}
 		previousIdentity = functionInstanceIdentity(current)
@@ -234,6 +253,15 @@ func (w *s3SyncWatcher) syncFunctionCodeForEvent(ctx context.Context, fn *Functi
 		return
 	}
 	if !changed {
+		// A no-op refresh still consumed this event. Record it as applied so a
+		// slower callback holding an older view of the same key cannot commit
+		// its staler bytes behind it — the ordering the appliedRevision fence
+		// exists to enforce, which skipping the bookkeeping would forfeit.
+		if alreadyCurrent {
+			state.creationID = fn.CreationID
+			state.appliedRevision = eventRevision
+			w.state[stateKey] = state
+		}
 		w.mu.Unlock()
 		return
 	}

@@ -7440,13 +7440,13 @@
           "operation": "ListTagsForResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Lists tags for an alarm"
+          "notes": "Lists tags for an alarm, over both the Query and JSON protocols. Alarms are the only taggable CloudWatch resource Overcast emulates, so any other ResourceARN is ResourceNotFoundException — or InvalidParameterValue when it is not a CloudWatch ARN at all"
         },
         {
           "operation": "PutMetricAlarm",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Creates or updates a single-metric alarm, which is then evaluated automatically (Threshold, ComparisonOperator, Period, EvaluationPeriods, DatapointsToAlarm, Dimensions, TreatMissingData). Metric-math/multi-metric alarms, anomaly detection (ThresholdMetricId) and extended statistics are refused with 501 rather than created un-evaluated"
+          "notes": "Creates or updates a single-metric alarm, which is then evaluated automatically (Threshold, ComparisonOperator, Period, EvaluationPeriods, DatapointsToAlarm, Dimensions, TreatMissingData). Metric-math/multi-metric alarms, anomaly detection (ThresholdMetricId) and extended statistics are refused with 501 rather than created un-evaluated. Tags are applied at creation only and validated against the same rules as TagResource, so a create carrying an invalid tag set fails rather than leaving an untagged alarm"
         },
         {
           "operation": "PutMetricData",
@@ -7476,13 +7476,13 @@
           "operation": "TagResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Adds or updates tags on an alarm"
+          "notes": "Adds or updates tags on an alarm, over both the Query and JSON protocols. Tagging an alarm that does not exist is ResourceNotFoundException, as on AWS. Tag sets are validated — 50 tags per resource, keys 1-128 characters and not aws:-prefixed, values up to 256 — and a rejected set is not written"
         },
         {
           "operation": "UntagResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Removes tags from an alarm"
+          "notes": "Removes tags from an alarm, over both the Query and JSON protocols. A key that is not present is ignored; an alarm that does not exist is ResourceNotFoundException"
         }
       ]
     },
