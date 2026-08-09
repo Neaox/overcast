@@ -84,6 +84,10 @@ containers, communicate with the Lambda Runtime API, and return real response pa
   unpinned function when a new object lands at its `S3Bucket`/`S3Key`. That
   matches AWS, where a pinned version never changes; use `UpdateFunctionCode`
   to move it.
+- That sync only moves a function onto bytes it is not already running. A
+  `PutObject` that re-uploads an unchanged asset, or one that lands just before
+  a `CreateFunction` reads the same key, is not a new deployment: `RevisionId`
+  and `LastModified` stay put and the warm execution environment survives.
 
 ---
 
