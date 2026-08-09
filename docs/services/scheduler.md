@@ -51,7 +51,13 @@ every target type EventBridge rules reach.
 - Supported schedule expressions:
   - `rate(...)`
   - `at(...)`
-  - `cron(...)` (AWS-style 6-field form)
+  - `cron(...)` (AWS-style 6-field form). Each field takes `*`, `?`, a value,
+    a comma-separated list, a range (`9-17`) or a step (`*/5`, `0/15`,
+    `9-17/4`); a step over a range walks that range. The `L`, `W` and `#` day
+    specifiers and the three-letter month and day names are **not** supported,
+    and an expression using one is refused by `CreateSchedule`.
+  - A cron expression is evaluated by advancing field by field, so a sparse
+    schedule — yearly, say — costs the same per tick as a frequent one.
 - Validation on `CreateSchedule` and `UpdateSchedule`:
   - The schedule and group names must match the model's constraint — 1–64
     characters of `[0-9a-zA-Z-_.]`.

@@ -13,19 +13,17 @@
 //
 // A lightweight cron engine fires rate/cron/at expressions against their
 // declared targets using the injected clock — tests can fast-forward time
-// without real sleeps. Delivery goes through internal/eventtarget, so every
-// target kind an EventBridge rule can reach a schedule can reach too (see
-// delivery.go).
+// without real sleeps. Expressions are evaluated in cron.go. Delivery goes
+// through internal/eventtarget, so every target kind an EventBridge rule can
+// reach a schedule can reach too (see delivery.go).
 package scheduler
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -809,199 +807,4 @@ func (s *Service) setLastFire(ctx context.Context, key string, t time.Time) {
 		return
 	}
 	_ = s.store.Set(ctx, nsLastFire, key, string(raw))
-}
-
-// ─── Schedule Expression Parser ───────────────────────────────────────────────
-
-// nextFireTime computes the next time that expr should fire, given the last fire
-// time and the current time. Returns zero time when no future firing applies
-// (e.g. a one-shot "at" expression that has already fired).
-func nextFireTime(expr string, lastFire, now time.Time) (time.Time, error) {
-	expr = strings.TrimSpace(expr)
-	switch {
-	case strings.HasPrefix(expr, "rate("):
-		return nextRateFire(expr, lastFire, now)
-	case strings.HasPrefix(expr, "at("):
-		return nextAtFire(expr)
-	case strings.HasPrefix(expr, "cron("):
-		return nextCronFire(expr, lastFire, now)
-	default:
-		return time.Time{}, fmt.Errorf("unknown expression type: %q", expr)
-	}
-}
-
-// nextRateFire parses a rate expression and returns the next fire time.
-func nextRateFire(expr string, lastFire, now time.Time) (time.Time, error) {
-	// rate(N unit)
-	inner := strings.TrimSuffix(strings.TrimPrefix(expr, "rate("), ")")
-	inner = strings.TrimSpace(inner)
-	parts := strings.Fields(inner)
-	if len(parts) != 2 {
-		return time.Time{}, fmt.Errorf("invalid rate expression: %q", expr)
-	}
-	n, err := strconv.Atoi(parts[0])
-	if err != nil || n <= 0 {
-		return time.Time{}, fmt.Errorf("invalid rate value: %q", parts[0])
-	}
-	// AWS writes the unit singular for a value of 1 and plural otherwise, and
-	// accepts either, so the trailing "s" is dropped before matching.
-	unit := strings.TrimSuffix(strings.ToLower(parts[1]), "s")
-	var period time.Duration
-	switch unit {
-	case "minute":
-		period = time.Duration(n) * time.Minute
-	case "hour":
-		period = time.Duration(n) * time.Hour
-	case "day":
-		period = time.Duration(n) * 24 * time.Hour
-	default:
-		return time.Time{}, fmt.Errorf("unknown rate unit: %q", parts[1])
-	}
-
-	if lastFire.IsZero() {
-		// Never fired: fire immediately on first tick after creation.
-		return now, nil
-	}
-	return lastFire.Add(period), nil
-}
-
-// nextAtFire parses an at expression and returns the fire time (or zero if past).
-func nextAtFire(expr string) (time.Time, error) {
-	// at(yyyy-mm-ddThh:mm:ss)
-	inner := strings.TrimSuffix(strings.TrimPrefix(expr, "at("), ")")
-	inner = strings.TrimSpace(inner)
-	t, err := time.Parse("2006-01-02T15:04:05", inner)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid at expression: %q: %w", expr, err)
-	}
-	return t, nil
-}
-
-// nextCronFire parses a 6-field AWS cron expression and computes the next fire
-// time after lastFire (or now if never fired). Supports numeric values, *, ?,
-// comma-separated lists, ranges, and step values. Does NOT support L, W, #.
-func nextCronFire(expr string, lastFire, now time.Time) (time.Time, error) {
-	// cron(min hour dom month dow year)
-	inner := strings.TrimSuffix(strings.TrimPrefix(expr, "cron("), ")")
-	inner = strings.TrimSpace(inner)
-	fields := strings.Fields(inner)
-	if len(fields) != 6 {
-		return time.Time{}, fmt.Errorf("aws cron must have 6 fields, got %d: %q", len(fields), expr)
-	}
-	// field indices: 0=min 1=hour 2=dom 3=month 4=dow 5=year
-	from := now
-	if !lastFire.IsZero() {
-		from = lastFire.Add(time.Minute) // search from 1 minute after last fire
-	}
-	from = from.Truncate(time.Minute)
-
-	// Search up to 5 years ahead.
-	limit := now.Add(5 * 365 * 24 * time.Hour)
-	for t := from; t.Before(limit); t = t.Add(time.Minute) {
-		if matchCronField(fields[5], t.Year(), 1970, 2099) &&
-			matchCronField(fields[3], int(t.Month()), 1, 12) &&
-			matchCronDayField(fields[2], fields[4], t) {
-			if matchCronField(fields[1], t.Hour(), 0, 23) &&
-				matchCronField(fields[0], t.Minute(), 0, 59) {
-				return t, nil
-			}
-			// Skip ahead to next matching hour:minute to avoid iterating every minute.
-			nextH, err := nextMatchingValue(fields[1], t.Hour(), 0, 23)
-			if err == nil && nextH > t.Hour() {
-				t = time.Date(t.Year(), t.Month(), t.Day(), nextH, 0, 0, 0, t.Location()).Add(-time.Minute)
-			}
-		}
-	}
-	return time.Time{}, fmt.Errorf("cron expression %q has no next fire within 5 years", expr)
-}
-
-// matchCronField returns true if value matches the cron field spec.
-func matchCronField(spec string, value, min, max int) bool {
-	if spec == "*" || spec == "?" {
-		return true
-	}
-	for _, part := range strings.Split(spec, ",") {
-		if matchCronPart(part, value, min, max) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchCronPart handles a single comma-separated cron part.
-func matchCronPart(part string, value, min, max int) bool {
-	if strings.Contains(part, "/") {
-		// Step: */5 or start/step
-		segs := strings.SplitN(part, "/", 2)
-		step, err := strconv.Atoi(segs[1])
-		if err != nil || step <= 0 {
-			return false
-		}
-		start := min
-		if segs[0] != "*" && segs[0] != "?" {
-			if s, err := strconv.Atoi(segs[0]); err == nil {
-				start = s
-			}
-		}
-		for v := start; v <= max; v += step {
-			if v == value {
-				return true
-			}
-		}
-		return false
-	}
-	if strings.Contains(part, "-") {
-		// Range: 1-5
-		segs := strings.SplitN(part, "-", 2)
-		lo, err1 := strconv.Atoi(segs[0])
-		hi, err2 := strconv.Atoi(segs[1])
-		if err1 != nil || err2 != nil {
-			return false
-		}
-		return value >= lo && value <= hi
-	}
-	v, err := strconv.Atoi(part)
-	return err == nil && v == value
-}
-
-// matchCronDayField handles the AWS-specific dom/dow interaction (?).
-// When dom is ? → match only dow. When dow is ? → match only dom.
-// When both are * → match all.
-func matchCronDayField(dom, dow string, t time.Time) bool {
-	domAny := dom == "*" || dom == "?"
-	dowAny := dow == "*" || dow == "?"
-	if domAny && dowAny {
-		return true
-	}
-	if dom == "?" {
-		// Match on dow only (0=Sun in AWS)
-		awsDow := int(t.Weekday()) // Go: 0=Sun, same as AWS
-		return matchCronField(dow, awsDow, 0, 6)
-	}
-	if dow == "?" {
-		// Match on dom only
-		return matchCronField(dom, t.Day(), 1, 31)
-	}
-	// Both set — match either (OR semantics in some cron dialects)
-	return matchCronField(dom, t.Day(), 1, 31) || matchCronField(dow, int(t.Weekday()), 0, 6)
-}
-
-// nextMatchingValue returns the smallest value >= current that matches spec.
-func nextMatchingValue(spec string, current, min, max int) (int, error) {
-	if spec == "*" || spec == "?" {
-		return current, nil
-	}
-	best := math.MaxInt32
-	for v := current; v <= max; v++ {
-		if matchCronField(spec, v, min, max) {
-			if v < best {
-				best = v
-			}
-			break
-		}
-	}
-	if best == math.MaxInt32 {
-		return 0, fmt.Errorf("no match")
-	}
-	return best, nil
 }
