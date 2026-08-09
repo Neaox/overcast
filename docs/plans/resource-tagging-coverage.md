@@ -1,6 +1,9 @@
 # Resource Tagging Coverage Audit
 
-> Status: audit complete; gap-fill in progress on `feat/tagging-coverage-audit`.
+> Status: audit complete. Every **Axis A** gap outside the fenced `logs`
+> service is closed, together with the Axis B gaps in the same services. The
+> remaining Axis B and Axis C sets are listed under
+> [What remains](#what-remains).
 >
 > Goal: **every resource at service tier `inert` or above that is taggable in real
 > AWS must be taggable in Overcast.**
@@ -62,14 +65,14 @@ Tier is the Overcast service tier. "Status" is Overcast's, verified in code.
 | Service | Tier | Resource | AWS mechanism | Overcast status |
 | --- | --- | --- | --- | --- |
 | `logs` | partial | Log group, log stream, destination | `TagResource` / `UntagResource` / `ListTagsForResource`, plus the deprecated `TagLogGroup` / `UntagLogGroup` / `ListTagsLogGroup` | **missing** — no tag operation of any spelling; log groups cannot be tagged at all |
-| `kinesis` | partial | Stream | `TagResource` / `UntagResource` / `ListTagsForResource` (ARN-based, alongside the older stream-name ops) | **partial** — `AddTagsToStream` / `ListTagsForStream` / `RemoveTagsFromStream` present; the three ARN-based operations missing |
-| `ses` | partial | Email identity, configuration set | SESv2 `TagResource` / `UntagResource` / `ListTagsForResource` (`POST`/`DELETE`/`GET /v2/email/tags`) | **missing** — identities cannot be tagged at all |
-| `acm` | inert | Certificate | `TagResource` / `UntagResource` / `ListTagsForResource` (modern aliases of `AddTagsToCertificate` / `RemoveTagsFromCertificate` / `ListTagsForCertificate`) | **partial** — only the `*Certificate` spellings exist |
-| `backup` | inert | Backup vault, backup plan | `TagResource` / `UntagResource` / `ListTags` | **missing** |
-| `cloudtrail` | inert | Trail | `AddTags` / `RemoveTags` / `ListTags` | **missing** |
-| `iam` | inert | Managed policy | `TagPolicy` / `UntagPolicy` / `ListPolicyTags` | **missing** |
-| `iam` | inert | Instance profile | `TagInstanceProfile` / `UntagInstanceProfile` / `ListInstanceProfileTags` | **missing** |
-| `transfer` | inert | Server, user | `TagResource` / `UntagResource` / `ListTagsForResource` | **missing** |
+| `kinesis` | partial | Stream | `TagResource` / `UntagResource` / `ListTagsForResource` (ARN-based, alongside the older stream-name ops) | ~~partial~~ **closed** |
+| `ses` | partial | Email identity, configuration set | SESv2 `TagResource` / `UntagResource` / `ListTagsForResource` (`POST`/`DELETE`/`GET /v2/email/tags`) | ~~missing~~ **closed for identities**; configuration sets are not emulated |
+| `acm` | inert | Certificate | `TagResource` / `UntagResource` / `ListTagsForResource` (modern aliases of `AddTagsToCertificate` / `RemoveTagsFromCertificate` / `ListTagsForCertificate`) | ~~partial~~ **closed** |
+| `backup` | inert | Backup vault, backup plan | `TagResource` / `UntagResource` / `ListTags` | **missing — not filled**, see [`backup` is not reachable by a real SDK at all](#backup-is-not-reachable-by-a-real-sdk-at-all) |
+| `cloudtrail` | inert | Trail | `AddTags` / `RemoveTags` / `ListTags` | ~~missing~~ **closed** |
+| `iam` | inert | Managed policy | `TagPolicy` / `UntagPolicy` / `ListPolicyTags` | ~~missing~~ **closed** |
+| `iam` | inert | Instance profile | `TagInstanceProfile` / `UntagInstanceProfile` / `ListInstanceProfileTags` | ~~missing~~ **closed** |
+| `transfer` | inert | Server, user | `TagResource` / `UntagResource` / `ListTagsForResource` | ~~missing~~ **closed** |
 | `cloudfront` | inert | Streaming distribution | `CreateStreamingDistributionWithTags` | **out of scope** — Overcast implements no streaming (RTMP) distribution at all, so there is no resource to tag |
 | `iam` | inert | SAML provider, OIDC provider, server certificate, MFA device | `TagSAMLProvider`, `TagOpenIDConnectProvider`, `TagServerCertificate`, `TagMFADevice` (+ `Untag*`/`List*Tags`) | **out of scope** — none of these resource types is implemented |
 
@@ -86,8 +89,8 @@ all.
 
 | Service | Tier | Create operation | AWS member | Overcast status |
 | --- | --- | --- | --- | --- |
-| `sns` | **full** | `CreateTopic` | `Tags` | **missing** — accepted by the wire decoder's tolerance, silently dropped |
-| `kinesis` | partial | `CreateStream` | `Tags` | **missing** |
+| `sns` | **full** | `CreateTopic` | `Tags` | ~~missing~~ **closed** |
+| `kinesis` | partial | `CreateStream` | `Tags` | ~~missing~~ **closed** |
 | `kms` | partial | `CreateKey` | `Tags` | **missing** |
 | `rds` | partial | `CreateDBInstance`, `CreateDBCluster`, `CreateDBSubnetGroup` | `Tags` | **missing** |
 | `elasticache` | partial | `CreateCacheCluster`, `CreateReplicationGroup`, `CreateServerlessCache` | `Tags` | **missing** |
@@ -95,19 +98,19 @@ all.
 | `ssm` | partial | `PutParameter`, `CreateDocument` | `Tags` | **missing** |
 | `cognito` | partial | `CreateUserPool` | `UserPoolTags` | **missing** |
 | `ecs` | partial | `CreateCluster`, `CreateService`, `RegisterTaskDefinition` | `tags` | **missing** (capacity providers and task sets do honour `tags`) |
-| `ses` | partial | `CreateEmailIdentity` | `Tags` | **missing** |
+| `ses` | partial | `CreateEmailIdentity` | `Tags` | ~~missing~~ **closed** |
 | `ec2` | partial | most `Create*` and `RunInstances` | `TagSpecifications` | **partial** — only `RunInstances`, `CreateNatGateway` and `CreateVpnGateway` parse `TagSpecification.N`; the other create operations ignore it. Two near-identical parsers exist for it (`parseTagSpecifications` in `handler_instances.go`, `collectTagSpecifications` in `handler_natgw.go`) |
-| `acm` | inert | `RequestCertificate` | `Tags` | **missing** |
+| `acm` | inert | `RequestCertificate` | `Tags` | ~~missing~~ **closed** |
 | `athena` | inert | `CreateWorkGroup` | `Tags` | **missing** |
 | `appconfig` | inert | `CreateApplication`, `CreateEnvironment`, `CreateConfigurationProfile` | `Tags` | **missing** |
-| `backup` | inert | `CreateBackupVault`, `CreateBackupPlan` | `BackupVaultTags` / `BackupPlanTags` | **missing** |
-| `cloudtrail` | inert | `CreateTrail` | `TagsList` | **missing** |
+| `backup` | inert | `CreateBackupVault`, `CreateBackupPlan` | `BackupVaultTags` / `BackupPlanTags` | **missing — not filled**, same reason as Axis A |
+| `cloudtrail` | inert | `CreateTrail` | `TagsList` | ~~missing~~ **closed** |
 | `elbv2` | inert | `CreateLoadBalancer`, `CreateTargetGroup`, `CreateRule` | `Tags` | **missing** |
 | `eventbridge` | inert | `CreateEventBus`, `PutRule` | `Tags` | **missing** |
 | `firehose` | inert | `CreateDeliveryStream` | `Tags` | **missing** |
-| `iam` | inert | `CreateUser`, `CreateRole`, `CreatePolicy`, `CreateInstanceProfile` | `Tags` | **missing** |
+| `iam` | inert | `CreateUser`, `CreateRole`, `CreatePolicy`, `CreateInstanceProfile` | `Tags` | ~~missing~~ **closed** |
 | `opensearch` | inert | `CreateDomain` | `TagList` | **missing** |
-| `transfer` | inert | `CreateServer`, `CreateUser` | `Tags` | **missing** |
+| `transfer` | inert | `CreateServer`, `CreateUser` | `Tags` | ~~missing~~ **closed** |
 
 Services that already apply tags at creation: `sqs` (`CreateQueue`), `lambda`
 (`CreateFunction`, and event source mappings, whose tags are deliberately stored
@@ -187,15 +190,73 @@ that path. The `logs` gap in Axis A is therefore **reported, not fixed**, even
 though it is the highest-tier hard gap in the audit. `internal/services/scheduler/**`
 is likewise fenced (issue #793); it has no tagging gap.
 
-## Work order
+## What this branch filled
 
-Highest tier first, one commit per service, each standing alone.
+One commit per service, each standing alone, highest tier first.
 
-1. `sns` — `CreateTopic` tag-on-create (tier full)
-2. `kinesis` — ARN-based tag operations + `CreateStream` tags (tier partial)
-3. `ses` — SESv2 identity tagging + `CreateEmailIdentity` tags (tier partial)
-4. `acm` — modern tag operation aliases + `RequestCertificate` tags (tier inert)
-5. `iam` — managed policy and instance profile tagging + tag-on-create for
-   users, roles, policies and instance profiles (tier inert)
-6. `transfer` — server and user tagging + tag-on-create (tier inert)
-7. `cloudtrail` — trail tagging + `CreateTrail` tags (tier inert)
+| Commit | Service | Tier | Axis A | Axis B |
+| --- | --- | --- | --- | --- |
+| `feat(sns)` | `sns` | full | — (already complete) | `CreateTopic` |
+| `feat(kinesis)` | `kinesis` | partial | `TagResource`, `UntagResource`, `ListTagsForResource` | `CreateStream` |
+| `feat(ses)` | `ses` | partial | `TagResource`, `UntagResource`, `ListTagsForResource` | `CreateEmailIdentity` |
+| `feat(transfer)` | `transfer` | inert | `TagResource`, `UntagResource`, `ListTagsForResource` | `CreateServer`, `CreateUser` |
+| `feat(cloudtrail)` | `cloudtrail` | inert | `AddTags`, `RemoveTags`, `ListTags` | `CreateTrail` |
+| `feat(iam)` | `iam` | inert | the policy and instance-profile triples | `CreateUser`, `CreateRole`, `CreatePolicy`, `CreateInstanceProfile` |
+| `feat(acm)` | `acm` | inert | `TagResource`, `UntagResource`, `ListTagsForResource` | `RequestCertificate` |
+
+Two pre-existing bugs surfaced and were fixed alongside ACM's gap, because they
+sat in the code the gap sat in: tagging a certificate that does not exist
+succeeded and stranded the tags under an unowned ARN, and
+`ListTagsForCertificate` returned a different tag order on every call.
+
+## What remains
+
+**Axis A — one service, fenced.** `logs` (tier partial) has no tag operation of
+any spelling: log groups cannot be tagged at all. It is the highest-tier hard
+gap in this audit and it is untouched, because `internal/services/cloudwatch/logs/`
+sits inside the `internal/services/cloudwatch/**` path fenced for issue #794.
+It needs `TagResource` / `UntagResource` / `ListTagsForResource` plus the
+deprecated `TagLogGroup` / `UntagLogGroup` / `ListTagsLogGroup`;
+`CreateLogGroup` already stores its inline tags, so the tags exist and are
+merely unreadable.
+
+**Axis A — one service, blocked.** `backup`, for the protocol reason above.
+
+**Axis B — fourteen services.** Every one of these already has working tagging
+operations; what is missing is only the inline tags on the create call.
+
+| Service | Tier | Create operations |
+| --- | --- | --- |
+| `kms` | partial | `CreateKey` |
+| `rds` | partial | `CreateDBInstance`, `CreateDBCluster`, `CreateDBSubnetGroup` |
+| `elasticache` | partial | `CreateCacheCluster`, `CreateReplicationGroup`, `CreateServerlessCache` |
+| `stepfunctions` | partial | `CreateStateMachine`, `CreateActivity` |
+| `ssm` | partial | `PutParameter`, `CreateDocument` |
+| `cognito` | partial | `CreateUserPool` (`UserPoolTags`) |
+| `ecs` | partial | `CreateCluster`, `CreateService`, `RegisterTaskDefinition` |
+| `ec2` | partial | the create operations that ignore `TagSpecifications` |
+| `athena` | inert | `CreateWorkGroup` |
+| `appconfig` | inert | `CreateApplication`, `CreateEnvironment`, `CreateConfigurationProfile` |
+| `elbv2` | inert | `CreateLoadBalancer`, `CreateTargetGroup`, `CreateRule` |
+| `eventbridge` | inert | `CreateEventBus`, `PutRule` |
+| `firehose` | inert | `CreateDeliveryStream` |
+| `opensearch` | inert | `CreateDomain` (`TagList`) |
+
+**Axis C — CloudFormation passthrough, eight resource types.** A third gap that
+only becomes reachable now that the services accept the tags. These handlers in
+[provisioner.go](../../internal/services/cloudformation/provisioner.go) build
+their create call from named properties and never read `Tags`, so a template
+carrying `Tags:` on one of them has them silently dropped:
+`AWS::Kinesis::Stream`, `AWS::CloudTrail::Trail`, `AWS::Transfer::Server`,
+`AWS::Transfer::User`, `AWS::IAM::Role`, `AWS::IAM::User`,
+`AWS::IAM::ManagedPolicy`, `AWS::IAM::InstanceProfile`. Each needs one property
+forwarded to the create call it already dispatches — `AWS::SNS::Topic` is the
+worked example, though it applies tags with a follow-up `TagResource` rather
+than inline. Left out of this branch to keep it reviewable; it is a single
+coherent follow-up rather than eight scattered ones.
+
+**Also proposed, not done:** move the typed-operation JSON adapter into
+`serviceutil` (see above), and consider whether `serviceutil` should grow a
+list-shaped tag helper — three services in this branch (`transfer`,
+`cloudtrail`, `acm`) each convert between AWS' `[{Key,Value}]` wire shape and
+the `map[string]string` the existing `ValidateTags` works in.
