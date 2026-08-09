@@ -343,7 +343,7 @@ func (h *Handler) RollbackStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.prov.rollbackStack(stack, createPath)
+	h.prov.rollbackStack(stack, createPath, trace.RecorderFromContext(r.Context()))
 
 	writeCFNResponse(w, r, "RollbackStackResponse", "RollbackStackResult", stackIdResult{StackId: stack.StackID})
 }
@@ -372,7 +372,7 @@ func (h *Handler) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.prov.deleteStack(stack)
+	h.prov.deleteStack(stack, trace.RecorderFromContext(r.Context()))
 
 	writeCFNResponse(w, r, "DeleteStackResponse", "DeleteStackResult", nil)
 }

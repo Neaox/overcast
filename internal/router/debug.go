@@ -661,16 +661,22 @@ func debugTraceList(buf *trace.Buffer) http.HandlerFunc {
 			writeDebugJSON(w, http.StatusNotFound, map[string]string{"error": "trace buffer not available"})
 			return
 		}
+		// status and method may each be repeated and/or comma-separated —
+		// `?status=4xx&status=5xx` and `?status=4xx,5xx` both mean "any error"
+		// — so the UI can ask for several classes at once without the list
+		// being filtered client-side, which would leave the server-paginated
+		// pages sparse.
+		q := r.URL.Query()
 		filter := trace.ListFilter{
-			Service: r.URL.Query().Get("service"),
-			Method:  r.URL.Query().Get("method"),
-			Path:    r.URL.Query().Get("path"),
-			Status:  r.URL.Query().Get("status"),
-			Search:  r.URL.Query().Get("search"),
-			After:   r.URL.Query().Get("after"),
-			Before:  r.URL.Query().Get("before"),
-			HopsFor: r.URL.Query().Get("hopsFor"),
-			Limit:   parseDebugStateLimit(r.URL.Query().Get("limit")),
+			Service:  q.Get("service"),
+			Methods:  trace.SplitFilterValues(q["method"]),
+			Path:     q.Get("path"),
+			Statuses: trace.SplitFilterValues(q["status"]),
+			Search:   q.Get("search"),
+			After:    q.Get("after"),
+			Before:   q.Get("before"),
+			HopsFor:  q.Get("hopsFor"),
+			Limit:    parseDebugStateLimit(q.Get("limit")),
 		}
 		entries, nextCursor := buf.ListSummaries(filter)
 		if entries == nil {

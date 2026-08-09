@@ -1,7 +1,6 @@
 package cloudformation
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -1090,24 +1089,17 @@ func appsyncEventsRESTJSON(ctx context.Context, router http.Handler, region, met
 	return nil
 }
 
+// internalAppSyncEventsRequest dispatches an AppSync Events request. It differs
+// from a bare internalRequest only by the SigV4 scope header the router needs
+// to see to claim the request for AppSync rather than fall through to S3.
+//
+// It used to build and dispatch its own request, which meant every AppSync
+// Events call CloudFormation made was invisible in a trace and linked to no
+// parent. Going through internalRequest is what fixes that.
 func internalAppSyncEventsRequest(ctx context.Context, router http.Handler, region, method, path, contentType string, body []byte) (*httptest.ResponseRecorder, error) {
-	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	if region != "" {
-		req.Header.Set("X-Overcast-Region", region)
-	}
-	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=overcast/20250101/"+region+"/appsync/aws4_request, SignedHeaders=host, Signature=overcast")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code >= 400 {
-		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
-	}
-	return rec, nil
+	return internalRequest(ctx, router, region, method, path, contentType, body, http.Header{
+		"Authorization": []string{"AWS4-HMAC-SHA256 Credential=overcast/20250101/" + region + "/appsync/aws4_request, SignedHeaders=host, Signature=overcast"},
+	})
 }
 
 func appsyncRESTJSON(ctx context.Context, router http.Handler, region, method, path, opName string, body map[string]any, out any) error {
@@ -2178,28 +2170,19 @@ func (h *cloudfrontDistributionHandler) Update(ctx context.Context, router http.
 	return "", nil, errReplacementRequired
 }
 
-// cfInternalRequest is like internalRequest but supports additional headers
-// (needed for CloudFront's If-Match/ETag flow).
+// cfInternalRequest dispatches a CloudFront request carrying the If-Match /
+// ETag headers its disable-then-delete flow requires.
+//
+// It used to build and dispatch its own request — a second copy of
+// internalRequest that predated hop recording and never gained it, so every
+// CloudFront distribution call was missing from the trace. internalRequest
+// already accepts extra headers; this is now only the map-to-Header adapter.
 func cfInternalRequest(ctx context.Context, router http.Handler, region, method, path, contentType string, body []byte, headers map[string]string) (*httptest.ResponseRecorder, error) {
-	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	if region != "" {
-		req.Header.Set("X-Overcast-Region", region)
-	}
+	extra := make(http.Header, len(headers))
 	for k, v := range headers {
-		req.Header.Set(k, v)
+		extra.Set(k, v)
 	}
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code >= 400 {
-		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
-	}
-	return rec, nil
+	return internalRequest(ctx, router, region, method, path, contentType, body, extra)
 }
 
 // ── AWS::SES::Template ────────────────────────────────────────────────────

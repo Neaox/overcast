@@ -4,25 +4,61 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
 
-func TestBufferStoreAndGet(t *testing.T) {
-	buf := NewBuffer(10)
-	e := &Entry{
-		RequestID: "req-1",
-		Timestamp: time.Now(),
-		Method:    "POST",
-		Path:      "/",
-		Service:   "sqs",
-	}
+// traceSpec is the handful of fields the ring buffer and its filters read.
+// The buffer holds live recorders, so tests build one the way the middleware
+// does rather than assembling an Entry by hand.
+type traceSpec struct {
+	RequestID string
+	Timestamp time.Time
+	Method    string
+	Path      string
+	Service   string
+	Status    int
+}
 
-	buf.Store(e)
+func newSpecRecorder(s traceSpec) *Recorder {
+	rec := NewRecorder(s.RequestID, s.Timestamp, s.Method, s.Path, "localhost", "", http.Header{})
+	if s.Service != "" {
+		rec.SetServiceInfo(s.Service, "", "")
+	}
+	if s.Status != 0 {
+		rec.SetResponse(http.Header{}, nil, s.Status, 1024, false)
+	}
+	return rec
+}
+
+// addTrace registers a trace described by spec and returns its recorder.
+func addTrace(b *Buffer, s traceSpec) *Recorder {
+	rec := newSpecRecorder(s)
+	b.Add(rec)
+	return rec
+}
+
+// requestIDs is the assertion shorthand for "which traces came back".
+func requestIDs(summaries []Summary) []string {
+	ids := make([]string, len(summaries))
+	for i, s := range summaries {
+		ids[i] = s.RequestID
+	}
+	return ids
+}
+
+func TestBuffer_addAndGet(t *testing.T) {
+	// Given: an empty buffer
+	buf := NewBuffer(10)
+
+	// When: a trace is registered
+	addTrace(buf, traceSpec{RequestID: "req-1", Timestamp: time.Now(), Method: "POST", Path: "/", Service: "sqs"})
+
+	// Then: it is retrievable by request ID
 	if buf.Len() != 1 {
 		t.Fatalf("expected 1 entry, got %d", buf.Len())
 	}
-
 	got, ok := buf.Get("req-1")
 	if !ok {
 		t.Fatal("entry not found")
@@ -35,68 +71,102 @@ func TestBufferStoreAndGet(t *testing.T) {
 	}
 }
 
-func TestBufferStoreUpdate(t *testing.T) {
+// The buffer holds the live recorder, so writes made after registration — the
+// case that matters, because CloudFormation provisions stacks on a goroutine
+// that outlives the request — need no second store to become visible.
+func TestBuffer_writesAfterAddAreVisible(t *testing.T) {
+	// Given: a registered trace with nothing recorded on it yet
 	buf := NewBuffer(10)
-	e1 := &Entry{RequestID: "req-1", Service: "sqs"}
-	e2 := &Entry{RequestID: "req-1", Service: "lambda"}
+	rec := addTrace(buf, traceSpec{RequestID: "req-1", Timestamp: time.Now(), Method: "POST", Path: "/"})
 
-	buf.Store(e1)
-	buf.Store(e2)
-	if buf.Len() != 1 {
-		t.Fatalf("expected 1 entry after update, got %d", buf.Len())
+	// When: the response and a late hop are recorded on the recorder
+	rec.SetResponse(http.Header{}, []byte("ok"), http.StatusOK, 1024, false)
+	rec.SetDuration(3 * time.Second)
+	rec.AddHop(Hop{Service: "sqs", Operation: "CreateQueue", RequestID: "hop-req", ResponseStatus: 200})
+
+	// Then: the buffer reflects all of it, with no further Add
+	got, ok := buf.Get("req-1")
+	if !ok {
+		t.Fatal("entry not found")
 	}
-
-	got, _ := buf.Get("req-1")
-	if got.Service != "lambda" {
-		t.Errorf("expected lambda after update, got %s", got.Service)
+	if got.StatusCode != http.StatusOK {
+		t.Errorf("StatusCode = %d, want 200", got.StatusCode)
+	}
+	if got.Duration != 3*time.Second {
+		t.Errorf("Duration = %s, want 3s", got.Duration)
+	}
+	if len(got.Hops) != 1 {
+		t.Fatalf("hops = %d, want 1", len(got.Hops))
+	}
+	summaries, _ := buf.ListSummaries(ListFilter{})
+	if len(summaries) != 1 || summaries[0].HopCount != 1 || summaries[0].StatusCode != http.StatusOK {
+		t.Errorf("summary = %+v, want 1 hop and status 200", summaries)
 	}
 }
 
-func TestBufferEviction(t *testing.T) {
+func TestBuffer_reAddReplaces(t *testing.T) {
+	// Given: a registered trace
+	buf := NewBuffer(10)
+	addTrace(buf, traceSpec{RequestID: "req-1", Service: "sqs"})
+
+	// When: the same request ID is registered again
+	addTrace(buf, traceSpec{RequestID: "req-1", Service: "lambda"})
+
+	// Then: it replaces the first rather than occupying a second slot
+	if buf.Len() != 1 {
+		t.Fatalf("expected 1 entry after re-add, got %d", buf.Len())
+	}
+	got, _ := buf.Get("req-1")
+	if got.Service != "lambda" {
+		t.Errorf("expected lambda after re-add, got %s", got.Service)
+	}
+}
+
+func TestBuffer_eviction(t *testing.T) {
+	// Given/When: more traces than the buffer holds
 	buf := NewBuffer(3)
 	for i := 0; i < 5; i++ {
-		buf.Store(&Entry{
+		addTrace(buf, traceSpec{
 			RequestID: "req-" + strconv.Itoa(i),
 			Timestamp: time.Now().Add(time.Duration(i) * time.Second),
 		})
 	}
+
+	// Then: the oldest are evicted and the newest survive
 	if buf.Len() != 3 {
 		t.Fatalf("expected 3 entries after eviction, got %d", buf.Len())
 	}
-	_, ok := buf.Get("req-0")
-	if ok {
+	if _, ok := buf.Get("req-0"); ok {
 		t.Error("req-0 should have been evicted")
 	}
-	_, ok = buf.Get("req-1")
-	if ok {
+	if _, ok := buf.Get("req-1"); ok {
 		t.Error("req-1 should have been evicted")
 	}
-	_, ok = buf.Get("req-4")
-	if !ok {
+	if _, ok := buf.Get("req-4"); !ok {
 		t.Error("req-4 should still be present")
 	}
 }
 
-// countInternal walks the raw slots and reports how many stored entries are
+// countInternal walks the raw slots and reports how many stored traces are
 // internal, so tests can verify quota accounting independently of the
 // internalCount field.
 func countInternal(b *Buffer) int {
 	n := 0
-	for _, e := range b.entries {
-		if e != nil && isInternalPath(e.Path) {
+	for _, rec := range b.entries {
+		if rec != nil && rec.internal {
 			n++
 		}
 	}
 	return n
 }
 
-func TestBufferInternalCapHoldsAfterWrap(t *testing.T) {
+func TestBuffer_internalCapHoldsAfterWrap(t *testing.T) {
 	// Given a buffer filled past capacity with user entries, When internal
 	// poll traces keep arriving, Then the internal quota (capacity/5) holds
 	// and user traces are not evicted beyond that quota.
 	buf := NewBuffer(10) // maxInternal = 2
 	for i := 0; i < 10; i++ {
-		buf.Store(&Entry{
+		addTrace(buf, traceSpec{
 			RequestID: "user-" + strconv.Itoa(i),
 			Path:      "/",
 			Timestamp: time.Now().Add(time.Duration(i) * time.Second),
@@ -105,7 +175,7 @@ func TestBufferInternalCapHoldsAfterWrap(t *testing.T) {
 
 	// Simulate idle polling: many internal traces against a full buffer.
 	for i := 0; i < 20; i++ {
-		buf.Store(&Entry{
+		addTrace(buf, traceSpec{
 			RequestID: "int-" + strconv.Itoa(i),
 			Path:      "/_health",
 			Timestamp: time.Now().Add(time.Duration(10+i) * time.Second),
@@ -130,14 +200,14 @@ func TestBufferInternalCapHoldsAfterWrap(t *testing.T) {
 	}
 }
 
-func TestBufferInternalQuotaRotatesWhenNotFull(t *testing.T) {
+func TestBuffer_internalQuotaRotatesWhenNotFull(t *testing.T) {
 	// Given a never-filled buffer whose internal quota is full, When a new
 	// internal trace arrives, Then the oldest internal entry is recycled
 	// (ring semantics within the quota) instead of dropping the new trace.
 	buf := NewBuffer(10) // maxInternal = 2
-	buf.Store(&Entry{RequestID: "int-0", Path: "/_health", Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "int-1", Path: "/_health", Timestamp: time.Now().Add(time.Second)})
-	buf.Store(&Entry{RequestID: "int-2", Path: "/_health", Timestamp: time.Now().Add(2 * time.Second)})
+	addTrace(buf, traceSpec{RequestID: "int-0", Path: "/_health", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "int-1", Path: "/_health", Timestamp: time.Now().Add(time.Second)})
+	addTrace(buf, traceSpec{RequestID: "int-2", Path: "/_health", Timestamp: time.Now().Add(2 * time.Second)})
 
 	if _, ok := buf.Get("int-2"); !ok {
 		t.Error("newest internal trace was dropped; expected oldest to be recycled")
@@ -156,15 +226,15 @@ func TestBufferInternalQuotaRotatesWhenNotFull(t *testing.T) {
 	}
 }
 
-func TestBufferFullEvictionFairness(t *testing.T) {
+func TestBuffer_fullEvictionFairness(t *testing.T) {
 	// Given a full buffer where a user entry reclaimed an internal entry's
 	// near-head slot, When further user entries arrive, Then the reclaiming
 	// entry is not evicted almost immediately — eviction stays oldest-first.
 	buf := NewBuffer(5) // maxInternal = 1
-	buf.Store(&Entry{RequestID: "user-0", Path: "/", Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "int-1", Path: "/_health", Timestamp: time.Now().Add(time.Second)})
+	addTrace(buf, traceSpec{RequestID: "user-0", Path: "/", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "int-1", Path: "/_health", Timestamp: time.Now().Add(time.Second)})
 	for i := 2; i < 5; i++ {
-		buf.Store(&Entry{
+		addTrace(buf, traceSpec{
 			RequestID: "user-" + strconv.Itoa(i),
 			Path:      "/",
 			Timestamp: time.Now().Add(time.Duration(i) * time.Second),
@@ -172,11 +242,11 @@ func TestBufferFullEvictionFairness(t *testing.T) {
 	}
 
 	// Full buffer: this user entry reclaims int-1's slot (index 1, near head).
-	buf.Store(&Entry{RequestID: "user-5", Path: "/", Timestamp: time.Now().Add(5 * time.Second)})
+	addTrace(buf, traceSpec{RequestID: "user-5", Path: "/", Timestamp: time.Now().Add(5 * time.Second)})
 	// Two more user entries should evict user-0 and user-2 (the oldest),
 	// not the just-inserted user-5.
-	buf.Store(&Entry{RequestID: "user-6", Path: "/", Timestamp: time.Now().Add(6 * time.Second)})
-	buf.Store(&Entry{RequestID: "user-7", Path: "/", Timestamp: time.Now().Add(7 * time.Second)})
+	addTrace(buf, traceSpec{RequestID: "user-6", Path: "/", Timestamp: time.Now().Add(6 * time.Second)})
+	addTrace(buf, traceSpec{RequestID: "user-7", Path: "/", Timestamp: time.Now().Add(7 * time.Second)})
 
 	if _, ok := buf.Get("user-5"); !ok {
 		t.Error("user-5 was evicted prematurely after inheriting a near-head slot")
@@ -189,21 +259,20 @@ func TestBufferFullEvictionFairness(t *testing.T) {
 	}
 }
 
-func TestBufferGetMissing(t *testing.T) {
+func TestBuffer_getMissing(t *testing.T) {
 	buf := NewBuffer(10)
-	_, ok := buf.Get("nonexistent")
-	if ok {
+	if _, ok := buf.Get("nonexistent"); ok {
 		t.Error("expected false for missing key")
 	}
 }
 
-func TestBufferListFilterService(t *testing.T) {
+func TestBuffer_listFilterService(t *testing.T) {
 	buf := NewBuffer(10)
-	buf.Store(&Entry{RequestID: "r1", Service: "sqs", Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "r2", Service: "lambda", Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "r3", Service: "sqs", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r1", Service: "sqs", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r2", Service: "lambda", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r3", Service: "sqs", Timestamp: time.Now()})
 
-	entries, _ := buf.List(ListFilter{Service: "sqs", Limit: 10})
+	entries, _ := buf.ListSummaries(ListFilter{Service: "sqs", Limit: 10})
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 sqs entries, got %d", len(entries))
 	}
@@ -214,13 +283,13 @@ func TestBufferListFilterService(t *testing.T) {
 	}
 }
 
-func TestBufferListFilterStatus(t *testing.T) {
+func TestBuffer_listFilterStatus(t *testing.T) {
 	buf := NewBuffer(10)
-	buf.Store(&Entry{RequestID: "r1", StatusCode: 200, Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "r2", StatusCode: 404, Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "r3", StatusCode: 500, Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r1", Status: 200, Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r2", Status: 404, Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r3", Status: 500, Timestamp: time.Now()})
 
-	entries, _ := buf.List(ListFilter{Status: "2xx", Limit: 10})
+	entries, _ := buf.ListSummaries(ListFilter{Statuses: []string{"2xx"}, Limit: 10})
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry with 2xx, got %d", len(entries))
 	}
@@ -229,34 +298,37 @@ func TestBufferListFilterStatus(t *testing.T) {
 	}
 }
 
-func TestBufferListFilterMethod(t *testing.T) {
+func TestBuffer_listFilterMethod(t *testing.T) {
 	buf := NewBuffer(10)
-	buf.Store(&Entry{RequestID: "r1", Method: "GET", Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "r2", Method: "POST", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r1", Method: "GET", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r2", Method: "POST", Timestamp: time.Now()})
 
-	entries, _ := buf.List(ListFilter{Method: "POST", Limit: 10})
+	entries, _ := buf.ListSummaries(ListFilter{Methods: []string{"post"}, Limit: 10})
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 POST entry, got %d", len(entries))
 	}
+	if entries[0].RequestID != "r2" {
+		t.Errorf("method match is case-insensitive: got %s", entries[0].RequestID)
+	}
 }
 
-func TestBufferListFilterPath(t *testing.T) {
+func TestBuffer_listFilterPath(t *testing.T) {
 	buf := NewBuffer(10)
-	buf.Store(&Entry{RequestID: "r1", Path: "/2015-03-31/functions", Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "r2", Path: "/", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r1", Path: "/2015-03-31/functions", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r2", Path: "/", Timestamp: time.Now()})
 
-	entries, _ := buf.List(ListFilter{Path: "functions", Limit: 10})
+	entries, _ := buf.ListSummaries(ListFilter{Path: "functions", Limit: 10})
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry matching path, got %d", len(entries))
 	}
 }
 
-func TestBufferListSearch(t *testing.T) {
+func TestBuffer_listSearch(t *testing.T) {
 	buf := NewBuffer(10)
-	buf.Store(&Entry{RequestID: "abc-123", Path: "/some/path", Service: "sqs", Timestamp: time.Now()})
-	buf.Store(&Entry{RequestID: "xyz-789", Path: "/other", Service: "lambda", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "abc-123", Path: "/some/path", Service: "sqs", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "xyz-789", Path: "/other", Service: "lambda", Timestamp: time.Now()})
 
-	entries, _ := buf.List(ListFilter{Search: "abc", Limit: 10})
+	entries, _ := buf.ListSummaries(ListFilter{Search: "abc", Limit: 10})
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry matching search, got %d", len(entries))
 	}
@@ -265,16 +337,175 @@ func TestBufferListSearch(t *testing.T) {
 	}
 }
 
-func TestBufferListPagination(t *testing.T) {
+// The web UI's "show me all errors" is one query, not two: the trace list is
+// server-paginated, so filtering client-side would leave pages sparse.
+func TestBuffer_listFilterMultipleStatusClasses(t *testing.T) {
+	// Given: traces spanning every status class
+	buf := NewBuffer(10)
+	addTrace(buf, traceSpec{RequestID: "ok", Status: 200, Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "redirect", Status: 302, Timestamp: time.Now().Add(time.Second)})
+	addTrace(buf, traceSpec{RequestID: "client-err", Status: 404, Timestamp: time.Now().Add(2 * time.Second)})
+	addTrace(buf, traceSpec{RequestID: "server-err", Status: 500, Timestamp: time.Now().Add(3 * time.Second)})
+
+	// When: both error classes are asked for at once
+	entries, _ := buf.ListSummaries(ListFilter{Statuses: []string{"4xx", "5xx"}, Limit: 10})
+
+	// Then: exactly the error traces come back, newest first
+	got := requestIDs(entries)
+	if len(got) != 2 || got[0] != "server-err" || got[1] != "client-err" {
+		t.Fatalf("statuses [4xx 5xx] = %v, want [server-err client-err]", got)
+	}
+}
+
+func TestBuffer_listFilterMultipleMethods(t *testing.T) {
+	// Given: traces using three different methods
+	buf := NewBuffer(10)
+	addTrace(buf, traceSpec{RequestID: "r1", Method: "GET", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "r2", Method: "POST", Timestamp: time.Now().Add(time.Second)})
+	addTrace(buf, traceSpec{RequestID: "r3", Method: "DELETE", Timestamp: time.Now().Add(2 * time.Second)})
+
+	// When: two of them are asked for at once
+	entries, _ := buf.ListSummaries(ListFilter{Methods: []string{"GET", "delete"}, Limit: 10})
+
+	// Then: only those two match, and the match stayed case-insensitive
+	got := requestIDs(entries)
+	if len(got) != 2 || got[0] != "r3" || got[1] != "r1" {
+		t.Fatalf("methods [GET delete] = %v, want [r3 r1]", got)
+	}
+}
+
+func TestBuffer_listFilterExactStatusCodeAmongClasses(t *testing.T) {
+	// Given: two 4xx traces with different codes
+	buf := NewBuffer(10)
+	addTrace(buf, traceSpec{RequestID: "not-found", Status: 404, Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "conflict", Status: 409, Timestamp: time.Now().Add(time.Second)})
+	addTrace(buf, traceSpec{RequestID: "boom", Status: 503, Timestamp: time.Now().Add(2 * time.Second)})
+
+	// When: an exact code is mixed with a class
+	entries, _ := buf.ListSummaries(ListFilter{Statuses: []string{"409", "5xx"}, Limit: 10})
+
+	// Then: per-value semantics are unchanged — exact codes and classes both
+	// still work, and combine as a match-any set
+	got := requestIDs(entries)
+	if len(got) != 2 || got[0] != "boom" || got[1] != "conflict" {
+		t.Fatalf("statuses [409 5xx] = %v, want [boom conflict]", got)
+	}
+}
+
+func TestBuffer_listFilterEmptyValuesAreIgnored(t *testing.T) {
+	// Given: traces of two statuses and two methods
+	buf := NewBuffer(10)
+	addTrace(buf, traceSpec{RequestID: "ok", Method: "GET", Status: 200, Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "bad", Method: "POST", Status: 404, Timestamp: time.Now().Add(time.Second)})
+
+	// When: a blank value is submitted alongside a real one
+	entries, _ := buf.ListSummaries(ListFilter{Statuses: []string{"", "4xx"}, Methods: []string{"POST", ""}, Limit: 10})
+
+	// Then: the blank is ignored rather than matching everything
+	if got := requestIDs(entries); len(got) != 1 || got[0] != "bad" {
+		t.Fatalf("filter with a blank value = %v, want [bad]", got)
+	}
+
+	// And: a set of nothing but blanks means "no filter", as an absent
+	// parameter does
+	all, _ := buf.ListSummaries(ListFilter{Statuses: []string{"", ""}, Limit: 10})
+	if len(all) != 2 {
+		t.Fatalf("all-blank filter returned %d entries, want 2 (no filter)", len(all))
+	}
+}
+
+func TestSplitFilterValues_repeatedAndCommaSeparated(t *testing.T) {
+	// Given/When/Then: repeated params, comma-separated params and a mix of
+	// the two all flatten into one match-any set, with blanks dropped
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"absent", nil, nil},
+		{"single", []string{"4xx"}, []string{"4xx"}},
+		{"repeated", []string{"4xx", "5xx"}, []string{"4xx", "5xx"}},
+		{"comma separated", []string{"4xx,5xx"}, []string{"4xx", "5xx"}},
+		{"mixed", []string{"2xx", "4xx,5xx"}, []string{"2xx", "4xx", "5xx"}},
+		{"blanks dropped", []string{"", "4xx", ",", " 5xx "}, []string{"4xx", "5xx"}},
+		{"all blank", []string{"", ","}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SplitFilterValues(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("SplitFilterValues(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("SplitFilterValues(%q) = %q, want %q", tc.in, got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// HopsFor answers "which request originated this one?". It is backed by a
+// per-trace index rather than a scan of every hop of every trace.
+func TestBuffer_listFilterHopsFor(t *testing.T) {
+	// Given: two traces, one of which dispatched the hop being looked up
+	buf := NewBuffer(10)
+	deploy := addTrace(buf, traceSpec{RequestID: "deploy", Path: "/", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "unrelated", Path: "/", Timestamp: time.Now().Add(time.Second)})
+	deploy.AddHop(Hop{Service: "sqs", RequestID: "child-1", ResponseStatus: 200})
+	deploy.AddHop(Hop{Service: "sqs", RequestID: "child-2", ResponseStatus: 200})
+
+	// When: the originating trace of a hop is looked up
+	entries, _ := buf.ListSummaries(ListFilter{HopsFor: "child-2", Limit: 10})
+
+	// Then: only the dispatching trace matches
+	if got := requestIDs(entries); len(got) != 1 || got[0] != "deploy" {
+		t.Fatalf("HopsFor child-2 = %v, want [deploy]", got)
+	}
+	if entries, _ := buf.ListSummaries(ListFilter{HopsFor: "no-such-hop", Limit: 10}); len(entries) != 0 {
+		t.Errorf("HopsFor of an unknown ID matched %d entries, want 0", len(entries))
+	}
+}
+
+// Listing must not copy bodies: the buffer now retains live traces, and a
+// list runs once a second from the UI poll.
+func TestBuffer_listSummariesCopiesNoBodies(t *testing.T) {
+	// Given: a trace carrying request, response and hop bodies
+	buf := NewBuffer(10)
+	rec := addTrace(buf, traceSpec{RequestID: "req-1", Method: "POST", Path: "/", Timestamp: time.Now()})
+	rec.SetRequestBody([]byte("request payload"), false, -1)
+	rec.SetResponse(http.Header{"X-Test": []string{"1"}}, []byte("response payload"), 200, 1024, false)
+	rec.AddHop(Hop{Service: "sqs", RequestBody: []byte("hop payload"), ResponseBody: []byte("hop response")})
+	rec.AddLog(LogEntry{Level: "info", Message: "hello"})
+
+	// When: the trace is listed
+	summaries, _ := buf.ListSummaries(ListFilter{Limit: 10})
+
+	// Then: the summary carries counts, not payloads — Summary has no body,
+	// header, hop or log fields at all, so this is enforced structurally as
+	// well as by the counts below
+	if len(summaries) != 1 {
+		t.Fatalf("summaries = %d, want 1", len(summaries))
+	}
+	s := summaries[0]
+	if s.HopCount != 1 || s.LogCount != 1 {
+		t.Errorf("HopCount/LogCount = %d/%d, want 1/1", s.HopCount, s.LogCount)
+	}
+	if s.StatusCode != 200 || s.Method != "POST" {
+		t.Errorf("summary = %+v, want status 200 and method POST", s)
+	}
+}
+
+func TestBuffer_listPagination(t *testing.T) {
 	buf := NewBuffer(10)
 	for i := 0; i < 5; i++ {
-		buf.Store(&Entry{
+		addTrace(buf, traceSpec{
 			RequestID: "req-" + strconv.Itoa(i),
 			Timestamp: time.Now().Add(time.Duration(i) * time.Second),
 		})
 	}
 
-	page1, cursor := buf.List(ListFilter{Limit: 2})
+	page1, cursor := buf.ListSummaries(ListFilter{Limit: 2})
 	if len(page1) != 2 {
 		t.Fatalf("expected 2 entries on page 1, got %d", len(page1))
 	}
@@ -282,7 +513,7 @@ func TestBufferListPagination(t *testing.T) {
 		t.Fatal("expected non-empty cursor")
 	}
 
-	page2, cursor2 := buf.List(ListFilter{Limit: 2, After: cursor})
+	page2, cursor2 := buf.ListSummaries(ListFilter{Limit: 2, After: cursor})
 	if len(page2) != 2 {
 		t.Fatalf("expected 2 entries on page 2, got %d", len(page2))
 	}
@@ -290,7 +521,7 @@ func TestBufferListPagination(t *testing.T) {
 		t.Fatal("expected non-empty cursor for page 2")
 	}
 
-	page3, cursor3 := buf.List(ListFilter{Limit: 2, After: cursor2})
+	page3, cursor3 := buf.ListSummaries(ListFilter{Limit: 2, After: cursor2})
 	if len(page3) != 1 {
 		t.Fatalf("expected 1 entry on page 3, got %d", len(page3))
 	}
@@ -299,18 +530,18 @@ func TestBufferListPagination(t *testing.T) {
 	}
 }
 
-func TestBufferListBeforeHonoursLimit(t *testing.T) {
+func TestBuffer_listBeforeHonoursLimit(t *testing.T) {
 	// Given entries newer than the cursor, When listing with Before and a
 	// Limit, Then at most Limit entries come back (newest first).
 	buf := NewBuffer(10)
 	for i := 0; i < 6; i++ {
-		buf.Store(&Entry{
+		addTrace(buf, traceSpec{
 			RequestID: "req-" + strconv.Itoa(i),
 			Timestamp: time.Now().Add(time.Duration(i) * time.Second),
 		})
 	}
 
-	entries, cursor := buf.List(ListFilter{Before: "req-0", Limit: 2})
+	entries, cursor := buf.ListSummaries(ListFilter{Before: "req-0", Limit: 2})
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 entries with Limit 2, got %d", len(entries))
 	}
@@ -322,23 +553,84 @@ func TestBufferListBeforeHonoursLimit(t *testing.T) {
 	}
 }
 
-func TestBufferListBeforeEvictedCursorHonoursLimit(t *testing.T) {
+func TestBuffer_listBeforeEvictedCursorHonoursLimit(t *testing.T) {
 	// Given a Before cursor whose entry has been evicted, When listing with a
 	// Limit, Then at most Limit entries come back instead of everything.
 	buf := NewBuffer(10)
 	for i := 0; i < 6; i++ {
-		buf.Store(&Entry{
+		addTrace(buf, traceSpec{
 			RequestID: "req-" + strconv.Itoa(i),
 			Timestamp: time.Now().Add(time.Duration(i) * time.Second),
 		})
 	}
 
-	entries, _ := buf.List(ListFilter{Before: "gone", Limit: 2})
+	entries, _ := buf.ListSummaries(ListFilter{Before: "gone", Limit: 2})
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 entries with Limit 2 for evicted cursor, got %d", len(entries))
 	}
 	if entries[0].RequestID != "req-5" || entries[1].RequestID != "req-4" {
 		t.Errorf("expected newest-first [req-5 req-4], got [%s %s]", entries[0].RequestID, entries[1].RequestID)
+	}
+}
+
+// The buffer holds live recorders, so a deploy writing hops runs concurrently
+// with the UI listing and reading them. Under -race this is the test that
+// proves the read and write paths do not share unguarded state.
+func TestBuffer_concurrentHopsWhileListing(t *testing.T) {
+	// Given: several registered traces
+	const traces, hops = 4, 200
+	buf := NewBuffer(64)
+	recs := make([]*Recorder, traces)
+	for i := range recs {
+		recs[i] = addTrace(buf, traceSpec{
+			RequestID: "req-" + strconv.Itoa(i),
+			Method:    "POST",
+			Path:      "/",
+			Timestamp: time.Now().Add(time.Duration(i) * time.Millisecond),
+		})
+	}
+
+	// When: every trace records hops while readers list and materialise them
+	var wg sync.WaitGroup
+	for i, rec := range recs {
+		wg.Add(1)
+		go func(i int, rec *Recorder) {
+			defer wg.Done()
+			for h := 0; h < hops; h++ {
+				rec.AddHop(Hop{
+					Service:        "sqs",
+					Operation:      "CreateQueue",
+					RequestID:      "hop-" + strconv.Itoa(i) + "-" + strconv.Itoa(h),
+					RequestBody:    []byte("body"),
+					ResponseStatus: 200,
+				})
+			}
+		}(i, rec)
+	}
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < 50; n++ {
+				summaries, _ := buf.ListSummaries(ListFilter{Statuses: []string{"2xx", "4xx"}, Methods: []string{"POST"}, Limit: 100})
+				for _, s := range summaries {
+					buf.Get(s.RequestID)
+				}
+				buf.ListSummaries(ListFilter{HopsFor: "hop-0-0"})
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Then: every hop landed
+	for i := range recs {
+		entry, ok := buf.Get("req-" + strconv.Itoa(i))
+		if !ok {
+			t.Fatalf("req-%d missing from buffer", i)
+		}
+		if len(entry.Hops) != hops {
+			t.Errorf("req-%d hops = %d, want %d", i, len(entry.Hops), hops)
+		}
 	}
 }
 
@@ -461,6 +753,28 @@ func TestRecorderNilSafe(t *testing.T) {
 	e := rec.Entry()
 	if e.RequestID != "" {
 		t.Error("nil recorder should return empty entry")
+	}
+	if rec.Summary().RequestID != "" {
+		t.Error("nil recorder should return empty summary")
+	}
+	if rec.HasHop("anything") {
+		t.Error("nil recorder should report no hops")
+	}
+}
+
+// A nil buffer is the debug-off configuration: every method must be inert
+// rather than panicking.
+func TestBuffer_nilSafe(t *testing.T) {
+	var buf *Buffer
+	buf.Add(NewRecorder("req-1", time.Now(), "GET", "/", "host", "", http.Header{}))
+	if _, ok := buf.Get("req-1"); ok {
+		t.Error("nil buffer should hold nothing")
+	}
+	if summaries, cursor := buf.ListSummaries(ListFilter{}); summaries != nil || cursor != "" {
+		t.Error("nil buffer should list nothing")
+	}
+	if buf.Len() != 0 || buf.Capacity() != 0 {
+		t.Error("nil buffer should report no length or capacity")
 	}
 }
 

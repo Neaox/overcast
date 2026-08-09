@@ -115,24 +115,37 @@ export const debugState = {
   },
 }
 
+/**
+ * Query string for `GET /_debug/traces`, including the leading `?` (empty when
+ * there is nothing to send).
+ *
+ * `method` and `status` are **repeated** params rather than one comma-joined
+ * value — `?status=4xx&status=5xx` — because the server treats each occurrence
+ * as an alternative and matches an entry against any of them. Hence `append`,
+ * not `set`: `set` would keep only the last value and silently narrow the
+ * filter to it.
+ */
+export function traceListQuery(params?: TraceListParams): string {
+  const q = new URLSearchParams()
+  if (params?.service) q.set("service", params.service)
+  for (const method of params?.method ?? []) q.append("method", method)
+  if (params?.path) q.set("path", params.path)
+  for (const status of params?.status ?? []) q.append("status", status)
+  if (params?.search) q.set("search", params.search)
+  if (params?.after) q.set("after", params.after)
+  if (params?.before) q.set("before", params.before)
+  if (params?.hopsFor) q.set("hopsFor", params.hopsFor)
+  if (params?.limit) q.set("limit", String(params.limit))
+  const query = q.toString()
+  return query ? `?${query}` : ""
+}
+
 export const debugTrace = {
   get: (requestId: string) =>
     apiFetch<TraceEntry>(`/debug/trace/${encodeURIComponent(requestId)}`),
 
-  list: (params?: TraceListParams): Promise<TraceListResponse> => {
-    const q = new URLSearchParams()
-    if (params?.service) q.set("service", params.service)
-    if (params?.method) q.set("method", params.method)
-    if (params?.path) q.set("path", params.path)
-    if (params?.status) q.set("status", params.status)
-    if (params?.search) q.set("search", params.search)
-    if (params?.after) q.set("after", params.after)
-    if (params?.before) q.set("before", params.before)
-    if (params?.hopsFor) q.set("hopsFor", params.hopsFor)
-    if (params?.limit) q.set("limit", String(params.limit))
-    const query = q.toString()
-    return apiFetch<TraceListResponse>(`/debug/traces${query ? `?${query}` : ""}`)
-  },
+  list: (params?: TraceListParams): Promise<TraceListResponse> =>
+    apiFetch<TraceListResponse>(`/debug/traces${traceListQuery(params)}`),
 
   events: (requestId: string) =>
     apiFetch<TraceEvent[]>(`/debug/trace/${encodeURIComponent(requestId)}/events`),

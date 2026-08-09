@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -151,6 +152,65 @@ func TestDebugTraceMiddlewareImplicitStatusDefaultsTo200(t *testing.T) {
 	}
 	if entry.StatusCode != http.StatusOK {
 		t.Errorf("StatusCode = %d, want 200", entry.StatusCode)
+	}
+}
+
+// CloudFormation provisions a stack on a goroutine that outlives the request:
+// createStack/updateStack only block for CFNSyncWait (1s by default) and then
+// keep calling AddHop on the same Recorder. A CDK deploy runs for minutes, so
+// every hop after the response was written must still reach the buffer.
+func TestDebugTrace_hopsAddedAfterResponseAreVisible(t *testing.T) {
+	// Given: a handler that hands the recorder to a goroutine which outlives
+	// the response, exactly as the CloudFormation provisioner does
+	cfg := &config.Config{Debug: true}
+	buf := trace.NewBuffer(100)
+	mw := DebugTrace(cfg, buf, clock.New())
+
+	provisioned := make(chan struct{})
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := trace.RecorderFromContext(r.Context())
+		go func() {
+			defer close(provisioned)
+			for i := 0; i < 3; i++ {
+				rec.AddHop(trace.Hop{
+					CallerService:  "cloudformation",
+					Service:        "sqs",
+					Operation:      "CreateQueue",
+					RequestID:      "async-hop-" + strconv.Itoa(i),
+					ResponseStatus: http.StatusOK,
+				})
+			}
+		}()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"CreateStackResult":{}}`))
+	})
+	handler := mw(next)
+
+	req := httptest.NewRequest("POST", "/", nil)
+	req = req.WithContext(protocol.ContextWithRequestID(req.Context(), "async-deploy"))
+
+	// When: the response has been written and the async work then finishes
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	<-provisioned
+
+	// Then: every hop is visible in the buffer, not just the ones recorded
+	// before the response
+	entry, found := buf.Get("async-deploy")
+	if !found {
+		t.Fatal("trace entry not found in buffer")
+	}
+	if len(entry.Hops) != 3 {
+		t.Fatalf("hops = %d, want 3 — hops added after the response were dropped", len(entry.Hops))
+	}
+
+	// And: the originating request is discoverable from a hop's request ID,
+	// which is how a CDK-issued call is traced back to its origin.
+	summaries, _ := buf.ListSummaries(trace.ListFilter{HopsFor: "async-hop-2"})
+	if len(summaries) != 1 || summaries[0].RequestID != "async-deploy" {
+		t.Fatalf("HopsFor lookup = %+v, want the async-deploy trace", summaries)
+	}
+	if summaries[0].HopCount != 3 {
+		t.Errorf("summary HopCount = %d, want 3", summaries[0].HopCount)
 	}
 }
 

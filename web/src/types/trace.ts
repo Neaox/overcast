@@ -101,9 +101,17 @@ export interface TraceEvent {
 
 export interface TraceListParams {
   service?: string
-  method?: string
+  /**
+   * HTTP methods to match. Sent as repeated `method=` params; an entry matches
+   * if it matches any of them. Compared case-insensitively by the server.
+   */
+  method?: string[]
   path?: string
-  status?: string
+  /**
+   * Status classes (`2xx`…`5xx`) or exact codes to match. Sent as repeated
+   * `status=` params; an entry matches if it matches any of them.
+   */
+  status?: string[]
   search?: string
   after?: string
   before?: string

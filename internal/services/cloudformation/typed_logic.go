@@ -375,7 +375,7 @@ func (h *Handler) deleteStackTyped(ctx context.Context, req *deleteStackReq) (*s
 		return nil, cfnerr("InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 	}
 
-	h.prov.deleteStack(stack)
+	h.prov.deleteStack(stack, trace.RecorderFromContext(ctx))
 
 	return &struct{}{}, nil
 }
