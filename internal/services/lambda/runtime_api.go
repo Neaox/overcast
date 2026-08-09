@@ -161,6 +161,7 @@ type RuntimeAPIServer struct {
 	// registrationWait bounds how long a Runtime API call waits for its
 	// container's registration to land. See registrationWaitFor.
 	registrationWait time.Duration
+	stopOnce         sync.Once
 	done             chan struct{} // closed on Stop to unblock long-polling handlers
 	clk              clock.Clock
 	logsDeliveries   chan extensionLogDelivery
@@ -1434,11 +1435,13 @@ func (s *RuntimeAPIServer) handleInitError(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// Stop gracefully shuts down the Runtime API server.
+// Stop gracefully shuts down the Runtime API server. Idempotent.
 func (s *RuntimeAPIServer) Stop(ctx context.Context) error {
 	// Close the done channel first so long-polling handleNext requests
 	// unblock and complete. Without this, Shutdown blocks waiting for
-	// in-flight requests that will never finish on their own.
-	close(s.done)
+	// in-flight requests that will never finish on their own. Once-guarded
+	// because Service.Stop, which drives this, is reachable more than once;
+	// http.Server.Shutdown is already idempotent.
+	s.stopOnce.Do(func() { close(s.done) })
 	return s.server.Shutdown(ctx)
 }
