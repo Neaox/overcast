@@ -9,7 +9,10 @@ bin/
 # stray root-level binaries from `go build ./cmd/...` without -o
 /overcast
 /overcastd
-# any stray root-level .exe (ad-hoc Windows cross-compile tests, etc.)
+/capgen
+/stub-report
+# any stray root-level .exe (ad-hoc Windows cross-compile tests, etc.) — this
+# also covers the .exe forms of the binaries listed above.
 /*.exe
 
 # go test binaries (from `go test -c`) and profiler outputs
