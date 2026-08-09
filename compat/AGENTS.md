@@ -364,20 +364,34 @@ docker compose -f compat/docker-compose.yml run --rm compat
 make -C compat ci
 ```
 
-Each suite image is independently buildable:
-
-```bash
-# Build just the node-js-sdk image
-docker build -t overcast-compat-node-js-sdk compat/suites/node-js-sdk
-```
-
 The `docker-compose.yml` in `compat/` wires up:
 
 1. **overcast** — the emulator, health-checked before compat tests start.
 2. **compat** — the Go CLI runner (`cmd/compat`) that spawns suite subprocesses.
 
-Suite images are pre-built and injected via `OVERCAST_COMPAT_NODEJS_IMAGE`
-so the Go runner can `docker run` them, directing stdout to its NDJSON parser.
+That second container is what makes the run toolchain-free. It is built from
+`.devcontainer/Dockerfile`, which already carries Go, Node.js and Python, so
+`node-js-sdk`, `cdk`, `python-sdk`, `go-sdk` and `cli` run as plain subprocesses
+inside it (see `defaultSuites` in `runner.go`). Those suites have no image of
+their own and nothing injects one.
+
+The three whose toolchain that image does *not* carry — `java-sdk`,
+`dotnet-sdk` and `rust-sdk` — each ship a `Dockerfile` beside a `run.sh`. The
+runner spawns `sh run.sh` like any other suite; the script builds the image and
+`docker run`s it, directing stdout to the runner's NDJSON parser. The image is
+tagged with a content hash of the suite's sources so it rebuilds when they
+change, and the name is the script's own constant — the runner neither knows
+nor supplies it.
+
+Those images are independently buildable, but **the build context is
+`compat/suites/`, not the suite directory.** The shared `registry.json` lives at
+the top of that tree, and each image copies it in as `/registry.json`
+(`OVERCAST_REGISTRY_PATH`); a suite-directory context cannot reach it:
+
+```bash
+# Build just the java-sdk image
+docker build -f compat/suites/java-sdk/Dockerfile -t oc-java-sdk-compat compat/suites
+```
 
 ### Flags that read a results file instead of producing one
 

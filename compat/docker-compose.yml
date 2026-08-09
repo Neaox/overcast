@@ -70,16 +70,6 @@ services:
       retries: 20
       start_period: 5s
 
-  # ── node-js-sdk suite image ───────────────────────────────────────────────
-  node-js-sdk:
-    build:
-      context: suites/node-js-sdk
-      dockerfile: Dockerfile
-    # This service is only a build target — the compat runner spawns it
-    # as a subprocess rather than starting it directly via compose.
-    profiles:
-      - build-only
-
   # ── Go compat runner (CLI) ────────────────────────────────────────────────
   # Builds the Overcast repo with Go, then runs:
   #   go run ./cmd/compat --endpoint http://overcast:4566
@@ -117,8 +107,6 @@ services:
       OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-0}
       OVERCAST_COMPAT_FORMAT: ${OVERCAST_COMPAT_FORMAT:-pretty}
       OVERCAST_COMPAT_SUITE: ${OVERCAST_COMPAT_SUITE:-}
-      # Pass the pre-built node-js-sdk image name so the Go runner can exec it.
-      OVERCAST_COMPAT_NODEJS_IMAGE: overcast-compat-node-js-sdk
     # Join the Docker socket's group rather than changing the socket to ours.
     # This used to be `chgrp "$(id -g)" /var/run/docker.sock` in the command
     # below, which works but mutates a bind mount **shared with the overcast
