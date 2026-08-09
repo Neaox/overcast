@@ -60,6 +60,38 @@ resolves, it binds the wildcard and logs that it did — a Runtime API nobody ca
 reach fails worse than one bound too widely, and every invocation would hang at
 INIT.
 
+### 1b. …and a container's source address is not its identity
+
+The Runtime API is an unauthenticated control channel shared by every Lambda
+container, so it has to know *which* container is calling. It used to answer
+that from `r.RemoteAddr`, matched against the bridge IP `InspectContainer`
+reported at registration. **That only holds while the container's packets
+arrive on-link**, which is the Docker Desktop row above and nowhere else:
+
+| Overcast is | Listener sees | Matches the registered IP |
+| --- | --- | --- |
+| in a container, container dials our address on `LAMBDA_NETWORK` | the container's bridge IP | yes |
+| on a native Linux host, container dials the bridge gateway | the container's bridge IP | yes |
+| on a Docker Desktop host, container dials the host's address | the host's own address | **no** |
+
+Desktop's userspace proxy re-originates the connection, so a natively-built
+Overcast on Windows or macOS matched no container and failed every invocation at
+INIT — reported to the user as their function's `Runtime.InitError`.
+
+So identity comes from **the listener the request arrived on**, not from where
+it came from. Each execution environment gets a listener of its own
+(`RuntimeAPIServer.AddContainerListener`, bound at port 0 across the same
+`BindHosts`), is told about only that port through `AWS_LAMBDA_RUNTIME_API`, and
+gives it up in `containerInstance.Close`; the count is bounded by
+`LAMBDA_MAX_INSTANCES`. The source-address lookup remains as the fallback, which
+is what the containerised row above still uses.
+
+Nothing else was available: the RIC builds its own requests, so no header or
+token can be injected, and `AWS_LAMBDA_RUNTIME_API` is parsed as a bare
+`host:port`, so there is no path prefix either. "Attribute the only initialising
+container" is racy the moment two cold starts overlap, which the cold-start
+semaphore explicitly permits.
+
 ## 2. A container calling another container
 
 This is Docker's embedded resolver (`127.0.0.11`), not Overcast's. Every

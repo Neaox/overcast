@@ -530,8 +530,25 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	}
 	mark("code_prep")
 
+	// This execution environment's own Runtime API endpoint, allocated before
+	// the container exists because its address is baked into the environment at
+	// create time. The listener a request arrives on is what identifies the
+	// container to the Runtime API — see containerListener for why its source
+	// address is not enough. Handed to the containerInstance on success and
+	// closed on every other path out of here.
+	rapiListener, rapiErr := cr.runtimeAPI.AddContainerListener()
+	if rapiErr != nil {
+		return nil, fmt.Errorf("allocate runtime api endpoint: %w", rapiErr)
+	}
+	listenerHandedOff := false
+	defer func() {
+		if !listenerHandedOff {
+			_ = rapiListener.Close()
+		}
+	}()
+
 	logStream := lambdaLogStreamName(cr.clk)
-	env := cr.buildEnv(fn, logStream, initType)
+	env := cr.buildEnv(fn, logStream, initType, rapiListener.Addr())
 	containerName := fmt.Sprintf("overcast-lambda-%s-%d", sanitizeName(fn.Name), cr.clk.Now().UnixNano())
 
 	progress("Creating container")
@@ -605,6 +622,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 				Handler:            fn.Handler,
 				ExpectedExtensions: expectedExtensions,
 			})
+			rapiListener.Attach(containerIP)
 			registeredIP = containerIP
 		}
 	} else {
@@ -671,6 +689,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			Handler:            fn.Handler,
 			ExpectedExtensions: expectedExtensions,
 		})
+		rapiListener.Attach(containerIP)
 		registeredIP = containerIP
 	}
 
@@ -684,12 +703,14 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 			zap.String("container", id[:12]),
 			zap.String("image", image),
 			zap.String("container_ip", containerIP),
+			zap.String("runtime_api", rapiListener.Addr()),
 			zap.String("log_stream", logStream),
 			zap.Duration("acquire_total", cr.clk.Now().Sub(acquireStart)),
 		}, phases...)...,
 	)
 
-	ci := cr.newContainerInstance(id, containerIP, fn, logStream)
+	ci := cr.newContainerInstance(id, containerIP, fn, logStream, rapiListener)
+	listenerHandedOff = true
 	ci.initStartedAt = initStartedAt
 	for _, line := range skippedLayerLogLines {
 		ci.writeLogLine(ctx, line)
@@ -767,7 +788,7 @@ func (cr *ContainerRuntime) extractContainerIP(inspect *docker.ContainerInspect)
 }
 
 // newContainerInstance builds a containerInstance from the created container.
-func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Function, logStream string) *containerInstance {
+func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Function, logStream string, rapiListener *containerListener) *containerInstance {
 	logRegion := regionFromFunctionARN(fn.ARN)
 	if logRegion == "" {
 		logRegion = cr.cfg.Region
@@ -798,6 +819,7 @@ func (cr *ContainerRuntime) newContainerInstance(id, containerIP string, fn *Fun
 		keepContainers: cr.cfg.LambdaKeepContainers,
 		readyCh:        cr.runtimeAPI.ReadyChan(containerIP),
 		endpoint:       cr.endpoint,
+		rapiListener:   rapiListener,
 	}
 
 	if cr.logWriter != nil {
@@ -999,7 +1021,9 @@ func (cr *ContainerRuntime) ensureImage(ctx context.Context, image, platform str
 
 // ─── Environment variables ─────────────────────────────────────────────────
 
-func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType string) []string {
+// runtimeAPIAddr is this execution environment's own Runtime API endpoint, not
+// the shared one: the port it dials is what identifies it to the Runtime API.
+func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType, runtimeAPIAddr string) []string {
 	// AWS_REGION must reflect the function's actual region (encoded in its
 	// ARN), not the emulator's global default. SDKs sign requests with this
 	// region; if we used the default (e.g. us-east-1) for a function deployed
@@ -1049,7 +1073,7 @@ func (cr *ContainerRuntime) buildEnv(fn *Function, logStream, initType string) [
 		// Lambda environment" and fall through to other providers, so we
 		// always provide a placeholder.
 		"AWS_SESSION_TOKEN":           "overcast",
-		"AWS_LAMBDA_RUNTIME_API":      cr.runtimeAPI.Addr(),
+		"AWS_LAMBDA_RUNTIME_API":      runtimeAPIAddr,
 		"LAMBDA_TASK_ROOT":            "/var/task",
 		"AWS_LAMBDA_FUNCTION_TIMEOUT": fmt.Sprint(fn.Timeout),
 		"TZ":                          ":/etc/localtime",
@@ -1131,6 +1155,7 @@ type containerInstance struct {
 	logDone        chan struct{} // closed when streamLogs goroutine exits
 	readyCh        <-chan struct{}
 	endpoint       *containerendpoint.Mapper // re-points Overcast URLs inside invoke payloads
+	rapiListener   *containerListener        // this environment's own Runtime API endpoint
 	healthy        bool
 	keepContainers bool // when true, Close only stops the container instead of removing it
 
@@ -1918,6 +1943,10 @@ func (ci *containerInstance) Close() error {
 	if ci.containerIP != "" {
 		ci.runtimeAPI.UnregisterContainer(ci.containerIP)
 	}
+	// The environment's Runtime API endpoint goes with the environment: the
+	// port is per-execution-environment, and leaving it bound would accumulate
+	// one dead listener per container the pool retires.
+	_ = ci.rapiListener.Close()
 	if ci.logWriter != nil {
 		ci.reconcileLogs()
 	}
