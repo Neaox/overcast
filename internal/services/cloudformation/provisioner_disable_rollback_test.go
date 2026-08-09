@@ -68,7 +68,7 @@ func TestUpdateStack_disableRollbackRetainsAttemptedResources(t *testing.T) {
 	stack, tmpl := disableRollbackUpdateFixture(resourceType)
 
 	// When: the update fails.
-	p.updateStackResources(stack, tmpl, nil)
+	p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 
 	// Then: nothing is reversed, and the stack is UPDATE_FAILED.
 	wantCalls := []rollbackUpdateCall{
@@ -133,7 +133,7 @@ func TestUpdateStack_disableRollbackRecoveryUsesRetainedRecords(t *testing.T) {
 	resourceType := registerRollbackUpdateHandler(t, handler)
 	p := newProvisionerTestFixture(t)
 	stack, tmpl := disableRollbackUpdateFixture(resourceType)
-	p.updateStackResources(stack, tmpl, nil)
+	p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 	if stack.Status != StatusUpdateFailed {
 		t.Fatalf("stack status = %q, want %q before recovery", stack.Status, StatusUpdateFailed)
 	}
@@ -141,7 +141,7 @@ func TestUpdateStack_disableRollbackRecoveryUsesRetainedRecords(t *testing.T) {
 	// When: the blocker clears and the same update is retried.
 	handler.forwardFailureID = ""
 	handler.calls = nil
-	p.updateStackResources(stack, tmpl, nil)
+	p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 
 	// Then: the resource that already updated is left alone, and only the two
 	// the failure stopped short of are touched.
@@ -209,7 +209,7 @@ func TestUpdateStack_disableRollbackKeepsDirtyResourceFailed(t *testing.T) {
 	}}
 
 	// When: the uncompensated failure reaches orchestration.
-	p.updateStackResources(stack, tmpl, nil)
+	p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 
 	// Then: the stack fails without attempting a reverse pass, and the mapping
 	// is recorded with the mutated state it was left in.
@@ -262,7 +262,7 @@ func TestUpdateStack_disableRollbackRetainsFailedNewResource(t *testing.T) {
 	}}
 
 	// When: the new resource fails.
-	p.updateStackResources(stack, tmpl, nil)
+	p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 
 	// Then: both the updated resource and the failed new one are retained.
 	if stack.Status != StatusUpdateFailed {

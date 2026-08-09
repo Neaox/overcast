@@ -54,6 +54,30 @@ type Output struct {
 	ExportName  string `json:"ExportName,omitempty"`
 }
 
+// stackGeneration is the stack metadata one update supersedes: the template,
+// parameters and tags DescribeStacks and GetTemplate reported before it began.
+//
+// Every update overwrites all three on the stack record before provisioning
+// starts, so from that moment the record describes the attempt rather than what
+// is actually deployed. If the attempt then fails and rolls back, this is what
+// the stack has to be handed back, alongside its resources.
+type stackGeneration struct {
+	TemplateBody string
+	Parameters   []Parameter
+	Tags         []Tag
+}
+
+// captureStackGeneration snapshots a stack's metadata. Call it before assigning
+// an update's attempted template, parameters or tags — afterwards there is
+// nothing left to capture.
+func captureStackGeneration(stack *Stack) stackGeneration {
+	return stackGeneration{
+		TemplateBody: stack.TemplateBody,
+		Parameters:   append([]Parameter(nil), stack.Parameters...),
+		Tags:         append([]Tag(nil), stack.Tags...),
+	}
+}
+
 // StackResource tracks a single provisioned resource within a stack.
 type StackResource struct {
 	LogicalID    string            `json:"LogicalResourceId"`

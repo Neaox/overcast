@@ -112,7 +112,7 @@ func TestUpdateStack_lambdaCompensationFailureLeavesRollbackFailed(t *testing.T)
 	}}
 
 	// When: stack orchestration receives the failed, uncompensated update.
-	p.updateStackResources(stack, tmpl, nil)
+	p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 
 	// Then: it does not claim rollback completed or hide the dirty resource.
 	if got, want := capturedPaths(router.requests), []string{tagPath, mappingPath, tagPath}; !slices.Equal(got, want) {
@@ -201,7 +201,7 @@ func TestUpdateStack_failedReverseUpdateRetainsAttemptedResource(t *testing.T) {
 	}}
 
 	// When: the later failure starts update rollback.
-	p.updateStackResources(stack, tmpl, nil)
+	p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 
 	// Then: the failed reverse update remains visible rather than being
 	// overwritten by the previous COMPLETE record.
@@ -252,7 +252,7 @@ func TestUpdateStack_stabilizationFailureRollback(t *testing.T) {
 			stack, tmpl := stabilizationRollbackFixture(resourceType)
 
 			// When: CloudFormation rolls the failed update back.
-			p.updateStackResources(stack, tmpl, nil)
+			p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 
 			// Then: the updater receives the previous properties and the terminal
 			// state reflects whether the reverse update succeeded.

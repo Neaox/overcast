@@ -157,7 +157,7 @@ func TestUpdateStack_rollbackDeletesAReplacementThatFailedToStabilize(t *testing
 	}}
 
 	// When: the replacement is created but cannot stabilize
-	p.updateStackResources(stack, tmpl, nil)
+	p.updateStackResources(stack, tmpl, captureStackGeneration(stack))
 
 	// Then: rollback removes the replacement and puts the original back
 	if stack.Status != StatusUpdateRollbackComplete {
