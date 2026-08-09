@@ -63,7 +63,7 @@ services:
 | `DEBUG=1`         | `OVERCAST_LOG_LEVEL=debug`               | Verbose logging                                                   |
 | `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | Default: `us-east-1`                                              |
 | `GATEWAY_LISTEN`  | `OVERCAST_HOST:OVERCAST_PORT`            | Split into two variables                                          |
-| —                 | `OVERCAST_STATE`                         | Explicit backend override; unset defaults to `auto`, which — like LocalStack's `DATA_DIR` presence — resolves to persistent (`hybrid`) when a volume/data dir is present, `memory` otherwise |
+| —                 | `OVERCAST_STATE`                         | Explicit backend override; unset defaults to `auto`, which — like LocalStack's `DATA_DIR` presence — resolves to persistent (`hybrid`) when a volume/data dir is present, `memory` otherwise. **Not in the `overcast-slim` image or the `overcastd` binaries:** they exclude SQLite, so `auto` there is always `memory` and durability needs `OVERCAST_STATE=wal` — see [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite) |
 | —                 | `OVERCAST_DEBUG=true`                    | Enable `/_debug/*` endpoints                                      |
 | —                 | `OVERCAST_TLS_CERT` / `OVERCAST_TLS_KEY` | HTTPS support                                                     |
 
@@ -227,6 +227,15 @@ Set `OVERCAST_STATE` explicitly (`persistent`, `hybrid`, `wal`, or `memory`) if 
 specific backend regardless of what's mounted — for example, to use `OVERCAST_DATA_DIR`
 for something else without triggering persistence, or to force `persistent` durability
 semantics that `auto` wouldn't pick on its own.
+
+> [!WARNING]
+> **This does not hold for the `overcast-slim` image or the `overcastd` binaries.** Both
+> are built without SQLite, which `hybrid` and `persistent` require, so `auto` there always
+> resolves to `memory` — a mounted volume gives you no persistence at all, and nothing
+> announces that beyond the startup log. If you are replacing a LocalStack container
+> that had `DATA_DIR` set, either use the full `ghcr.io/neaox/overcast` image or add
+> `OVERCAST_STATE=wal`, the one durable backend the slim artifacts do have. See
+> [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite).
 
 ### Request IDs: always present
 

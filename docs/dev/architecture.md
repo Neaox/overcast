@@ -722,6 +722,13 @@ present at the data directory, or a database already exists there, it picks
 with no configuration — CI containers with no volume get fast ephemeral
 storage; a `docker run -v ...` gets persistence.
 
+Except in a `-tags nosqlite` build (the `overcast-slim` image and the
+`overcastd` binaries), where `hybrid` and `persistent` are compile-time stubs
+that return an error. `auto` short-circuits to `memory` there before weighing
+any signal, so a mounted volume persists nothing; `wal` is the only durable
+backend those artifacts have. See
+[docs/storage.md § Builds without SQLite](../storage.md#builds-without-sqlite).
+
 ### Hybrid is not a cache
 
 The name misleads. Hybrid classifies every namespace as either **hot**
