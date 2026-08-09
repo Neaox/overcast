@@ -126,10 +126,11 @@ func (h *Handler) resolveTemplateBody(r *http.Request) (string, error) {
 		return "", fmt.Errorf("internal router not initialised")
 	}
 	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
-	// Use a fresh context to avoid leaking chi's route context from the
-	// parent CloudFormation request into the internal S3 GET dispatch.
-	ctx := context.Background()
-	rec, err := internalRequest(ctx, router, region, http.MethodGet, u.Path, "", nil)
+	// A fresh context, so chi's route context does not leak from the parent
+	// CloudFormation request into the internal S3 GET — but one that still
+	// carries the trace recorder, so the fetch is recorded as a hop.
+	ctx := templateFetchContext(r.Context())
+	rec, err := internalS3Request(ctx, router, region, http.MethodGet, u.Path, "", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch template from %s: %w", templateURL, err)
 	}

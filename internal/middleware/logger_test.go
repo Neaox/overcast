@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -190,6 +191,49 @@ func TestDetectOperation(t *testing.T) {
 			got := detectOperation(r)
 			if got != tt.want {
 				t.Errorf("detectOperation(%s %s) = %q, want %q", tt.method, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// Query-protocol form parameters arrive in whatever order the client encoded
+// them. Detection used to scan only the first 256 bytes of the body for
+// Action=, so a request with a large leading parameter went unnamed — a
+// CreateStack carrying a real template being the case that surfaced it, since
+// the trace list rendered it with a blank operation while DeleteStack, whose
+// body is short, resolved fine.
+func TestDetectOperationForService_actionPositionInTheBody(t *testing.T) {
+	bulky := url.QueryEscape(`{"Description":"` + strings.Repeat("x", 400) + `","Resources":{}}`)
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "action first",
+			body: "Action=CreateStack&Version=2010-05-15&StackName=s&TemplateBody=" + bulky,
+			want: "CreateStack",
+		},
+		{
+			name: "action after a large leading parameter",
+			body: "TemplateBody=" + bulky + "&Version=2010-05-15&StackName=s&Action=CreateStack",
+			want: "CreateStack",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Given: a Query-protocol POST with the parameters in this order
+			r := httptest.NewRequest("POST", "/", strings.NewReader(tt.body))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			// When: the operation is detected from the captured body
+			got := detectOperationForService(r, "cloudformation", []byte(tt.body))
+
+			// Then: the operation is named regardless of where Action= sits
+			if got != tt.want {
+				t.Errorf("detectOperationForService = %q, want %q", got, tt.want)
 			}
 		})
 	}

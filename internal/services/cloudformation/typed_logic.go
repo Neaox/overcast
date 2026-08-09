@@ -952,7 +952,7 @@ func (h *Handler) resolveTypedTemplateBody(ctx context.Context, templateBody, te
 		return "", fmt.Errorf("internal router not initialised")
 	}
 	region := middleware.RegionFromContext(ctx, h.cfg.Region)
-	rec, err := internalRequest(context.Background(), router, region, http.MethodGet, u.Path, "", nil)
+	rec, err := internalS3Request(templateFetchContext(ctx), router, region, http.MethodGet, u.Path, "", nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch template from %s: %w", templateURL, err)
 	}
