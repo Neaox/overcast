@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -378,6 +380,67 @@ func TestPublish_deliversToSQSSubscriber(t *testing.T) {
 	}
 	if envelope.TopicArn != topicArn {
 		t.Errorf("expected TopicArn=%q, got %q", topicArn, envelope.TopicArn)
+	}
+}
+
+// TestPublish_unsubscribeURLCarriesCallerPort pins the notification envelope's
+// UnsubscribeURL to the origin the *publisher* dialed, not to OVERCAST_PORT.
+//
+// Overcast cannot see its own port mapping: with `docker run -p 4570:4566` the
+// only proof of a dialable port is the Host the caller sent. Minting the link
+// from config instead handed every subscriber `http://localhost:4566/…`, a port
+// nothing is listening on — and, worse, possibly a *different* instance. The
+// bug is invisible on a 1:1 mapping, so the request here arrives on a port that
+// is deliberately not the one the server bound. Issue #797;
+// docs/plans/client-facing-url-minting.md.
+func TestPublish_unsubscribeURLCarriesCallerPort(t *testing.T) {
+	// Given: a queue subscribed to a topic.
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "remapped-topic")
+	queueURL := sqsCreateQueue(t, srv, "remapped-queue")
+	subscribe(t, srv, topicArn, "sqs", "arn:aws:sqs:us-east-1:000000000000:remapped-queue")
+
+	// When: the publish arrives on a published port that is not the listen port.
+	const publishedHost = "localhost:4570"
+	if got := net.JoinHostPort("localhost", strconv.Itoa(srv.Config.Port)); got == publishedHost {
+		t.Fatalf("test server bound %s, the very port this test uses to stand for a remap", got)
+	}
+	resp := snsCallFromHost(t, srv, publishedHost, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"hello from a remapped port"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the delivered envelope's UnsubscribeURL names that port.
+	var envelope struct {
+		UnsubscribeURL string `json:"UnsubscribeURL"`
+	}
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		msgs := sqsPeekMessages(t, srv, queueURL)
+		if len(msgs) == 0 {
+			return false
+		}
+		body, _ := msgs[0]["Body"].(string)
+		if err := decodeJSONString(body, &envelope); err != nil {
+			t.Fatalf("expected SQS body to be an SNS envelope: %v\nbody: %s", err, body)
+		}
+		return true
+	}, "timed out waiting for the SNS notification to arrive in SQS")
+
+	wantPrefix := "http://" + publishedHost + "/?"
+	if !strings.HasPrefix(envelope.UnsubscribeURL, wantPrefix) {
+		t.Errorf("UnsubscribeURL = %q, want it to start with %q", envelope.UnsubscribeURL, wantPrefix)
+	}
+	u, err := url.Parse(envelope.UnsubscribeURL)
+	if err != nil {
+		t.Fatalf("UnsubscribeURL %q is not a URL: %v", envelope.UnsubscribeURL, err)
+	}
+	if got := u.Query().Get("Action"); got != "Unsubscribe" {
+		t.Errorf("UnsubscribeURL Action = %q, want %q", got, "Unsubscribe")
+	}
+	if got := u.Query().Get("SubscriptionArn"); !strings.HasPrefix(got, topicArn+":") {
+		t.Errorf("UnsubscribeURL SubscriptionArn = %q, want a subscription of %q", got, topicArn)
 	}
 }
 
@@ -1484,11 +1547,24 @@ func TestListTagsForResource_notFound(t *testing.T) {
 // snsCall sends an AWS Query-protocol SNS request (form-encoded POST body).
 func snsCall(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
 	t.Helper()
+	return snsCallFromHost(t, srv, "", action, params)
+}
+
+// snsCallFromHost is snsCall with control over the Host header the request
+// carries, still dialling the server's real address. That pair — dial one
+// address, announce another — is what a port remap looks like from inside the
+// container: `docker run -p 4570:4566` gives Overcast a request on its listen
+// port whose Host names 4570. An empty host leaves the dial address as-is.
+func snsCallFromHost(t *testing.T, srv *helpers.TestServer, host, action string, params url.Values) *http.Response {
+	t.Helper()
 	params.Set("Action", action)
 	params.Set("Version", "2010-03-31")
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(params.Encode()))
 	if err != nil {
 		t.Fatalf("build SNS request: %v", err)
+	}
+	if host != "" {
+		req.Host = host
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := http.DefaultClient.Do(req)
