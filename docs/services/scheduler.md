@@ -47,10 +47,37 @@ every target type EventBridge rules reach.
   answered `501`. That prefix has been removed rather than kept as an alias.
 - Default schedule group:
   - `default` is auto-seeded and cannot be deleted.
+  - `DeleteScheduleGroup` deletes the schedules inside the group, as AWS does.
 - Supported schedule expressions:
   - `rate(...)`
   - `at(...)`
   - `cron(...)` (AWS-style 6-field form)
+- Validation on `CreateSchedule` and `UpdateSchedule`:
+  - The schedule and group names must match the model's constraint — 1–64
+    characters of `[0-9a-zA-Z-_.]`.
+  - The `ScheduleExpression` must be one the engine can evaluate. An expression
+    it cannot parse is refused up front rather than accepted and reported as an
+    engine error on every tick, which would leave a schedule that reads
+    correctly in `GetSchedule` and never fires.
+  - `FlexibleTimeWindow.Mode` is required and must be `OFF` or `FLEXIBLE`;
+    `State` must be `ENABLED` or `DISABLED`.
+- `UpdateSchedule` **merges**. AWS's `UpdateSchedule` is a full replacement — a
+  member the caller omits is unset — whereas here an omitted member keeps its
+  stored value. This is a deliberate divergence: it is the behaviour the
+  operation has had since it shipped, and CloudFormation's schedule handler
+  relies on it. `StartDate` and `EndDate` are the exception — they are always
+  taken from the request, so omitting them clears them.
+- Pagination and filtering:
+  - `ListSchedules` and `ListScheduleGroups` honour `MaxResults` (1–100, a full
+    page when omitted) and `NextToken`.
+  - `ListSchedules` filters on `NamePrefix` and `State`; `ListScheduleGroups`
+    filters on `NamePrefix`.
+  - A `NextToken` that cannot be decoded is answered with a
+    `ValidationException` rather than silently restarting at the first page,
+    which an SDK paginator would read as a legitimate page and loop on.
+  - Both operations return the full stored object rather than AWS's
+    `ScheduleSummary`/`ScheduleGroupSummary` shape. That is a superset, so an
+    SDK deserialises it unchanged.
 - Background scheduler engine:
   - Polls on a 1-second clock ticker.
   - Uses the injected clock, so integration tests can advance time quickly.

@@ -288,10 +288,6 @@ func (s *Service) Stop(ctx context.Context) error {
 
 // ─── Store helpers ────────────────────────────────────────────────────────────
 
-func (s *Service) region(r *http.Request) string {
-	return middleware.RegionFromContext(r.Context(), s.cfg.Region)
-}
-
 func (s *Service) accountID() string {
 	if s.cfg != nil && strings.TrimSpace(s.cfg.AccountID) != "" {
 		return s.cfg.AccountID
@@ -323,44 +319,62 @@ func (s *Service) saveGroup(ctx context.Context, region string, g *ScheduleGroup
 	return s.store.Set(ctx, nsGroups, s.groupKey(region, g.Name), string(raw))
 }
 
-func (s *Service) loadGroup(ctx context.Context, region, name string) (*ScheduleGroup, bool) {
-	raw, found, err := s.store.Get(ctx, nsGroups, s.groupKey(region, name))
-	if err != nil || !found {
-		return nil, false
+// loadGroup reads one schedule group.
+//
+// A store failure and a record that will not decode are deliberately different
+// answers. The first is infrastructure and surfaces as InternalError; the
+// second is one bad persisted payload, which is reported as the AWS not-found
+// the caller can act on rather than a 500 (AGENTS.md § State).
+func (s *Service) loadGroup(ctx context.Context, region, name string) (*ScheduleGroup, bool, *protocol.AWSError) {
+	key := s.groupKey(region, name)
+	raw, found, err := s.store.Get(ctx, nsGroups, key)
+	if err != nil {
+		return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !found {
+		return nil, false, nil
 	}
 	var g ScheduleGroup
-	if json.Unmarshal([]byte(raw), &g) != nil {
-		return nil, false
+	if err := json.Unmarshal([]byte(raw), &g); err != nil {
+		s.logSkippedRecord(nsGroups, key, err)
+		return nil, false, nil
 	}
-	return &g, true
+	return &g, true, nil
 }
 
 func (s *Service) deleteGroup(ctx context.Context, region, name string) error {
 	return s.store.Delete(ctx, nsGroups, s.groupKey(region, name))
 }
 
-func (s *Service) listGroups(ctx context.Context, region string) ([]*ScheduleGroup, error) {
-	prefix := region + ":"
-	pairs, err := s.store.Scan(ctx, nsGroups, prefix)
+// listGroups returns every group in a region, seeding "default" into the answer
+// when it has not been created yet. Undecodable records are skipped and logged
+// rather than failing the whole listing.
+func (s *Service) listGroups(ctx context.Context, region string) ([]*ScheduleGroup, *protocol.AWSError) {
+	pairs, err := s.store.Scan(ctx, nsGroups, region+":")
 	if err != nil {
-		return nil, err
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	out := make([]*ScheduleGroup, 0, len(pairs)+1)
 	hasDefault := false
 	for _, kv := range pairs {
 		var g ScheduleGroup
-		if json.Unmarshal([]byte(kv.Value), &g) == nil {
-			out = append(out, &g)
-			if g.Name == defaultGroup {
-				hasDefault = true
-			}
+		if err := json.Unmarshal([]byte(kv.Value), &g); err != nil {
+			s.logSkippedRecord(nsGroups, kv.Key, err)
+			continue
+		}
+		out = append(out, &g)
+		if g.Name == defaultGroup {
+			hasDefault = true
 		}
 	}
 	if !hasDefault {
+		now := s.clk.Now()
 		out = append(out, &ScheduleGroup{
-			Name:  defaultGroup,
-			Arn:   s.groupARN(region, defaultGroup),
-			State: "ACTIVE",
+			Name:                 defaultGroup,
+			Arn:                  s.groupARN(region, defaultGroup),
+			State:                "ACTIVE",
+			CreationDate:         now,
+			LastModificationDate: now,
 		})
 	}
 	return out, nil
@@ -374,16 +388,23 @@ func (s *Service) saveSchedule(ctx context.Context, region string, sc *Schedule)
 	return s.store.Set(ctx, nsSchedules, s.scheduleKey(region, sc.GroupName, sc.Name), string(raw))
 }
 
-func (s *Service) loadSchedule(ctx context.Context, region, group, name string) (*Schedule, bool) {
-	raw, found, err := s.store.Get(ctx, nsSchedules, s.scheduleKey(region, group, name))
-	if err != nil || !found {
-		return nil, false
+// loadSchedule reads one schedule. It splits store failure from an undecodable
+// record for the same reason loadGroup does.
+func (s *Service) loadSchedule(ctx context.Context, region, group, name string) (*Schedule, bool, *protocol.AWSError) {
+	key := s.scheduleKey(region, group, name)
+	raw, found, err := s.store.Get(ctx, nsSchedules, key)
+	if err != nil {
+		return nil, false, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	if !found {
+		return nil, false, nil
 	}
 	var sc Schedule
-	if json.Unmarshal([]byte(raw), &sc) != nil {
-		return nil, false
+	if err := json.Unmarshal([]byte(raw), &sc); err != nil {
+		s.logSkippedRecord(nsSchedules, key, err)
+		return nil, false, nil
 	}
-	return &sc, true
+	return &sc, true, nil
 }
 
 func (s *Service) deleteScheduleRecord(ctx context.Context, region, group, name string) error {
@@ -391,137 +412,99 @@ func (s *Service) deleteScheduleRecord(ctx context.Context, region, group, name 
 	return s.store.Delete(ctx, nsSchedules, s.scheduleKey(region, group, name))
 }
 
-func (s *Service) listSchedulesByGroup(ctx context.Context, region, group string) ([]*Schedule, error) {
-	prefix := fmt.Sprintf("%s:%s/", region, group)
+func (s *Service) listSchedulesByGroup(ctx context.Context, region, group string) ([]*Schedule, *protocol.AWSError) {
+	return s.scanSchedules(ctx, fmt.Sprintf("%s:%s/", region, group))
+}
+
+func (s *Service) listAllSchedules(ctx context.Context, region string) ([]*Schedule, *protocol.AWSError) {
+	return s.scanSchedules(ctx, region+":")
+}
+
+// scanSchedules decodes every schedule under a store key prefix, skipping and
+// logging records that will not decode so one bad payload cannot fail a listing.
+func (s *Service) scanSchedules(ctx context.Context, prefix string) ([]*Schedule, *protocol.AWSError) {
 	pairs, err := s.store.Scan(ctx, nsSchedules, prefix)
 	if err != nil {
-		return nil, err
+		return nil, protocol.Wrap(protocol.ErrInternalError, err)
 	}
 	out := make([]*Schedule, 0, len(pairs))
 	for _, kv := range pairs {
 		var sc Schedule
-		if json.Unmarshal([]byte(kv.Value), &sc) == nil {
-			out = append(out, &sc)
+		if err := json.Unmarshal([]byte(kv.Value), &sc); err != nil {
+			s.logSkippedRecord(nsSchedules, kv.Key, err)
+			continue
 		}
+		out = append(out, &sc)
 	}
 	return out, nil
 }
 
-func (s *Service) listAllSchedules(ctx context.Context, region string) ([]*Schedule, error) {
-	prefix := region + ":"
-	pairs, err := s.store.Scan(ctx, nsSchedules, prefix)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*Schedule, 0, len(pairs))
-	for _, kv := range pairs {
-		var sc Schedule
-		if json.Unmarshal([]byte(kv.Value), &sc) == nil {
-			out = append(out, &sc)
-		}
-	}
-	return out, nil
+// ─── REST Handlers ────────────────────────────────────────────────────────────
+//
+// Every handler below is an adapter and nothing more: it lifts AWS's @http
+// bindings — the path label, the query string, the body — into the request
+// struct, and hands it to the codec-agnostic implementation in typed_logic.go
+// that the JSON/CBOR dispatch path also uses. No behaviour lives here.
+
+// writeTyped runs a typed operation and renders its result as REST-JSON.
+func writeTyped[In, Out any](w http.ResponseWriter, r *http.Request, req *In,
+	fn func(context.Context, *In) (*Out, *protocol.AWSError),
+) {
+	out, aerr := fn(r.Context(), req)
+	writeResult(w, r, out, aerr)
 }
 
-// ─── Schedule Group Handlers ──────────────────────────────────────────────────
+// writeTypedAny is writeTyped for the operations whose output shape is empty,
+// which op.NewTypedAny models as `any`. Go cannot unify the two signatures.
+func writeTypedAny[In any](w http.ResponseWriter, r *http.Request, req *In,
+	fn func(context.Context, *In) (any, *protocol.AWSError),
+) {
+	out, aerr := fn(r.Context(), req)
+	writeResult(w, r, out, aerr)
+}
+
+// writeResult renders a typed operation's outcome. Every Scheduler operation
+// binds HTTP 200 on success.
+func writeResult(w http.ResponseWriter, r *http.Request, out any, aerr *protocol.AWSError) {
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, out)
+}
+
+// ─── Schedule groups ──────────────────────────────────────────────────────────
 
 func (s *Service) createScheduleGroup(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	region := s.region(r)
-	ctx := r.Context()
-
-	if _, found := s.loadGroup(ctx, region, name); found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ConflictException", Message: fmt.Sprintf("Schedule group %s already exists.", name),
-			HTTPStatus: http.StatusConflict,
-		})
-		return
-	}
-
-	now := s.clk.Now()
-	g := &ScheduleGroup{
-		Name:                 name,
-		Arn:                  s.groupARN(region, name),
-		State:                "ACTIVE",
-		CreationDate:         now,
-		LastModificationDate: now,
-	}
-	if err := s.saveGroup(ctx, region, g); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	// Store tags separately if provided. The body is optional on this
-	// operation, so a decode failure is not an error — it means no tags.
-	var req struct {
-		Tags map[string]string `json:"Tags"`
-	}
-	if json.NewDecoder(r.Body).Decode(&req) == nil {
-		s.saveTagsJSON(ctx, g.Arn, req.Tags)
-	}
-
-	// AWS's model binds CreateScheduleGroup to HTTP 200, not 201.
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"ScheduleGroupArn": g.Arn,
-	})
+	// Tags is the operation's only body member and it is optional, so an
+	// absent or unreadable body means "no tags" rather than a client error.
+	// Everything else the operation needs is on the path.
+	var req createScheduleGroupRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	req.Name = chi.URLParam(r, "name")
+	writeTyped(w, r, &req, s.createScheduleGroupTyped)
 }
 
 func (s *Service) getScheduleGroup(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	region := s.region(r)
-
-	g, found := s.loadGroup(r.Context(), region, name)
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Schedule group %s does not exist.", name),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, g)
+	req := getScheduleGroupRequest{Name: chi.URLParam(r, "name")}
+	writeTyped(w, r, &req, s.getScheduleGroupTyped)
 }
 
 func (s *Service) deleteScheduleGroup(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	region := s.region(r)
-	ctx := r.Context()
-
-	if name == defaultGroup {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ValidationException", Message: "Cannot delete default schedule group.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	if _, found := s.loadGroup(ctx, region, name); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: fmt.Sprintf("Schedule group %s does not exist.", name),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	if err := s.deleteGroup(ctx, region, name); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+	req := deleteScheduleGroupRequest{Name: chi.URLParam(r, "name")}
+	writeTypedAny(w, r, &req, s.deleteScheduleGroupTyped)
 }
 
 func (s *Service) listScheduleGroups(w http.ResponseWriter, r *http.Request) {
-	region := s.region(r)
-	groups, err := s.listGroups(r.Context(), region)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
+	req := listScheduleGroupsRequest{
+		NamePrefix: r.URL.Query().Get("NamePrefix"),
+		MaxResults: serviceutil.QueryInt(r, "MaxResults", 0),
+		NextToken:  r.URL.Query().Get("NextToken"),
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"ScheduleGroups": groups,
-	})
+	writeTyped(w, r, &req, s.listScheduleGroupsTyped)
 }
 
-// ─── Tag Handlers ─────────────────────────────────────────────────────────────
+// ─── Tags ─────────────────────────────────────────────────────────────────────
 
 // resourceARN reads the {resourceArn} path label. AWS SDKs percent-encode the
 // ARN into a single path segment, so it has to be unescaped before it matches
@@ -535,254 +518,72 @@ func resourceARN(r *http.Request) string {
 }
 
 func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
-	tags := s.loadTags(r.Context(), resourceARN(r))
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Tags": tags})
+	req := listTagsForResourceRequest{ResourceArn: resourceARN(r)}
+	writeTyped(w, r, &req, s.listTagsForResourceTyped)
 }
 
 func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Tags map[string]string `json:"Tags"`
-	}
+	var req tagResourceRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	s.mergeTags(r.Context(), resourceARN(r), req.Tags)
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+	req.ResourceArn = resourceARN(r)
+	writeTypedAny(w, r, &req, s.tagResourceTyped)
 }
 
 func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
-	s.removeTags(r.Context(), resourceARN(r), r.URL.Query()["TagKeys"])
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
-}
-
-// ─── Schedule Handlers ────────────────────────────────────────────────────────
-
-// scheduleBody is the request body CreateSchedule and UpdateSchedule share.
-// GroupName is a body member on both, which is why neither reads a group from
-// the path — see RegisterRoutes.
-type scheduleBody struct {
-	GroupName                  string             `json:"GroupName"`
-	ScheduleExpression         string             `json:"ScheduleExpression"`
-	ScheduleExpressionTimezone string             `json:"ScheduleExpressionTimezone"`
-	Description                string             `json:"Description"`
-	FlexibleTimeWindow         flexibleTimeWindow `json:"FlexibleTimeWindow"`
-	Target                     scheduleTarget     `json:"Target"`
-	State                      string             `json:"State"`
-	StartDate                  *time.Time         `json:"StartDate"`
-	EndDate                    *time.Time         `json:"EndDate"`
-}
-
-// groupOrDefault resolves a schedule's group name, applying AWS's rule that an
-// omitted GroupName means the "default" group.
-func groupOrDefault(name string) string {
-	if strings.TrimSpace(name) == "" {
-		return defaultGroup
+	req := untagResourceRequest{
+		ResourceArn: resourceARN(r),
+		TagKeys:     r.URL.Query()["TagKeys"],
 	}
-	return name
+	writeTypedAny(w, r, &req, s.untagResourceTyped)
 }
 
-// queryGroup reads the ?groupName parameter GetSchedule and DeleteSchedule bind
-// their GroupName to.
-func queryGroup(r *http.Request) string {
-	return groupOrDefault(r.URL.Query().Get("groupName"))
-}
+// ─── Schedules ────────────────────────────────────────────────────────────────
 
 func (s *Service) createSchedule(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	region := s.region(r)
-	ctx := r.Context()
-
-	var req scheduleBody
+	var req createScheduleRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	group := groupOrDefault(req.GroupName)
-
-	// Ensure the group exists (auto-create "default").
-	if _, found := s.loadGroup(ctx, region, group); !found {
-		if group == defaultGroup {
-			now := s.clk.Now()
-			defGroup := ScheduleGroup{
-				Name:  defaultGroup,
-				Arn:   s.groupARN(region, defaultGroup),
-				State: "ACTIVE", CreationDate: now, LastModificationDate: now,
-			}
-			_ = s.saveGroup(ctx, region, &defGroup)
-		} else {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{
-				Code: "ResourceNotFoundException", Message: fmt.Sprintf("Schedule group %s does not exist.", group),
-				HTTPStatus: http.StatusNotFound,
-			})
-			return
-		}
-	}
-
-	if req.ScheduleExpression == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ValidationException", Message: "ScheduleExpression is required.",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-	if aerr := validateTarget(req.Target); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-
-	state := req.State
-	if state == "" {
-		state = "ENABLED"
-	}
-
-	now := s.clk.Now()
-	sc := &Schedule{
-		Name:                       name,
-		GroupName:                  group,
-		Arn:                        s.scheduleARN(region, group, name),
-		State:                      state,
-		ScheduleExpression:         req.ScheduleExpression,
-		ScheduleExpressionTimezone: req.ScheduleExpressionTimezone,
-		Description:                req.Description,
-		FlexibleTimeWindow:         req.FlexibleTimeWindow,
-		Target:                     req.Target,
-		StartDate:                  req.StartDate,
-		EndDate:                    req.EndDate,
-		CreationDate:               now,
-		LastModificationDate:       now,
-	}
-
-	if err := s.saveSchedule(ctx, region, sc); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	// AWS's model binds CreateSchedule to HTTP 200, not 201.
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"ScheduleArn": sc.Arn,
-	})
+	req.Name = chi.URLParam(r, "name")
+	writeTyped(w, r, &req, s.createScheduleTyped)
 }
 
 func (s *Service) getSchedule(w http.ResponseWriter, r *http.Request) {
-	group := queryGroup(r)
-	name := chi.URLParam(r, "name")
-	region := s.region(r)
-
-	sc, found := s.loadSchedule(r.Context(), region, group, name)
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Schedule %s in group %s does not exist.", name, group),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
+	req := getScheduleRequest{
+		Name:      chi.URLParam(r, "name"),
+		GroupName: r.URL.Query().Get("groupName"),
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, sc)
+	writeTyped(w, r, &req, s.getScheduleTyped)
 }
 
 func (s *Service) updateSchedule(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	region := s.region(r)
-	ctx := r.Context()
-
-	var req scheduleBody
+	var req updateScheduleRequest
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	group := groupOrDefault(req.GroupName)
-
-	sc, found := s.loadSchedule(ctx, region, group, name)
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Schedule %s in group %s does not exist.", name, group),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	if req.Target.Arn != "" {
-		if aerr := validateTarget(req.Target); aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
-			return
-		}
-	}
-
-	if req.ScheduleExpression != "" {
-		sc.ScheduleExpression = req.ScheduleExpression
-		// Reset last-fire so the engine picks up the new schedule immediately.
-		_ = s.store.Delete(ctx, nsLastFire, s.scheduleKey(region, group, name))
-	}
-	if req.ScheduleExpressionTimezone != "" {
-		sc.ScheduleExpressionTimezone = req.ScheduleExpressionTimezone
-	}
-	if req.Description != "" {
-		sc.Description = req.Description
-	}
-	if req.FlexibleTimeWindow.Mode != "" {
-		sc.FlexibleTimeWindow = req.FlexibleTimeWindow
-	}
-	if req.Target.Arn != "" {
-		sc.Target = req.Target
-	}
-	if req.State != "" {
-		sc.State = req.State
-	}
-	sc.StartDate = req.StartDate
-	sc.EndDate = req.EndDate
-	sc.LastModificationDate = s.clk.Now()
-
-	if err := s.saveSchedule(ctx, region, sc); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"ScheduleArn": sc.Arn,
-	})
+	req.Name = chi.URLParam(r, "name")
+	writeTyped(w, r, &req, s.updateScheduleTyped)
 }
 
 func (s *Service) deleteSchedule(w http.ResponseWriter, r *http.Request) {
-	group := queryGroup(r)
-	name := chi.URLParam(r, "name")
-	region := s.region(r)
-	ctx := r.Context()
-
-	if _, found := s.loadSchedule(ctx, region, group, name); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("Schedule %s in group %s does not exist.", name, group),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
+	req := deleteScheduleRequest{
+		Name:      chi.URLParam(r, "name"),
+		GroupName: r.URL.Query().Get("groupName"),
 	}
-
-	if err := s.deleteScheduleRecord(ctx, region, group, name); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{})
+	writeTypedAny(w, r, &req, s.deleteScheduleTyped)
 }
 
 func (s *Service) listSchedules(w http.ResponseWriter, r *http.Request) {
-	region := s.region(r)
-	groupFilter := r.URL.Query().Get("ScheduleGroup")
-	ctx := r.Context()
-
-	var schedules []*Schedule
-	var err error
-	if groupFilter != "" {
-		schedules, err = s.listSchedulesByGroup(ctx, region, groupFilter)
-	} else {
-		schedules, err = s.listAllSchedules(ctx, region)
+	req := listSchedulesRequest{
+		ScheduleGroup: r.URL.Query().Get("ScheduleGroup"),
+		NamePrefix:    r.URL.Query().Get("NamePrefix"),
+		State:         r.URL.Query().Get("State"),
+		MaxResults:    serviceutil.QueryInt(r, "MaxResults", 0),
+		NextToken:     r.URL.Query().Get("NextToken"),
 	}
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"Schedules": schedules,
-	})
+	writeTyped(w, r, &req, s.listSchedulesTyped)
 }
 
 // ─── Cron Engine ──────────────────────────────────────────────────────────────
@@ -817,7 +618,8 @@ func (s *Service) tick() {
 
 	for _, kv := range pairs {
 		var sc Schedule
-		if json.Unmarshal([]byte(kv.Value), &sc) != nil {
+		if err := json.Unmarshal([]byte(kv.Value), &sc); err != nil {
+			s.logSkippedRecord(nsSchedules, kv.Key, err)
 			continue
 		}
 		if sc.State != "ENABLED" {
@@ -919,14 +721,16 @@ func nextRateFire(expr string, lastFire, now time.Time) (time.Time, error) {
 	if err != nil || n <= 0 {
 		return time.Time{}, fmt.Errorf("invalid rate value: %q", parts[0])
 	}
-	unit := strings.ToLower(strings.TrimSuffix(strings.TrimSuffix(parts[1], "s"), ""))
+	// AWS writes the unit singular for a value of 1 and plural otherwise, and
+	// accepts either, so the trailing "s" is dropped before matching.
+	unit := strings.TrimSuffix(strings.ToLower(parts[1]), "s")
 	var period time.Duration
 	switch unit {
-	case "minute", "minutes":
+	case "minute":
 		period = time.Duration(n) * time.Minute
-	case "hour", "hours":
+	case "hour":
 		period = time.Duration(n) * time.Hour
-	case "day", "days":
+	case "day":
 		period = time.Duration(n) * 24 * time.Hour
 	default:
 		return time.Time{}, fmt.Errorf("unknown rate unit: %q", parts[1])
