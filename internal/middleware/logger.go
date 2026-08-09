@@ -270,7 +270,16 @@ func detectOperationForService(r *http.Request, svc string, body ...[]byte) stri
 	}
 
 	// 3. Query-protocol Action parameter.
-	if len(body) > 0 && len(body[0]) > 0 && bytes.Contains(body[0][:min(len(body[0]), 256)], []byte("Action=")) {
+	//
+	// The scan covers the whole body, not a prefix of it. Form parameters
+	// arrive in whatever order the client encoded them, so a request with a
+	// large leading parameter pushes Action= past any fixed window: a
+	// CreateStack whose TemplateBody was serialised first went unnamed, while
+	// the same call with Action= first was recognised. bytes.Contains over a
+	// body already bounded by the capture cap is cheap, and a false positive
+	// — "Action=" appearing inside a value — costs one ParseQuery that
+	// ClaimQuery then rejects.
+	if len(body) > 0 && bytes.Contains(body[0], []byte("Action=")) {
 		values, err := url.ParseQuery(string(body[0]))
 		if err == nil {
 			if claim, ok := awsapi.NewRegistry().ClaimQuery(values.Get("Version"), values.Get("Action")); ok {
