@@ -324,9 +324,13 @@ assertions.
 
 ### 1.2 Stop decoding the code zip per invoke — DONE (2026-07-31)
 Landed: the deployment package lives under its own store key
-(`nsFunctionCode`, keyed region/name, base64). `putFunction` strips the zip
-from the record (and writes the package key only when the in-memory record
-actually carries bytes, so config-only updates never touch it);
+(`nsFunctionCode`, keyed region/name/codeHash, base64 — generation-addressed
+since #656, so the function record is the single visibility point; superseded
+generations are collected once it commits, and packages written before the
+addressing change still resolve under the bare region/name key).
+`putFunction` strips the zip from the record (and writes the package key only
+when the in-memory record actually carries bytes, so config-only updates never
+touch it);
 `getFunction` — every invoke — decodes a small record. The bytes are
 materialized by `lambdaStore.loadFunctionCode` only where needed: container
 cold start (via `ContainerRuntime.SetCodeFetcher`, wired in service.go) and
@@ -340,7 +344,9 @@ no redeploy. The decoded-Function cache sketched below was **skipped**: with
 the zip out of the record, per-invoke unmarshal cost is negligible.
 Pinned by `store_code_test.go`: record carries no bytes, package
 round-trips, config-only puts leave the package untouched, delete removes
-it, ARN-region resolution.
+it, ARN-region resolution. `store_code_atomicity_test.go` pins the #656
+commit contract on both state backends: a failed record write preserves the
+prior generation, strands nothing, and the retry commits cleanly.
 *Follow-up (2026-07-31):* layer archives got the same split
 (`nsLayerContent`; layer versions are immutable, so pre-split records simply
 keep their embedded content and readers handle both shapes), which also
