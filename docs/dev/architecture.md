@@ -464,7 +464,7 @@ sequenceDiagram
     participant B as Internal event bus
 
     C->>M: POST / · X-Amz-Target: AmazonSQS.SendMessage
-    Note over M: request ID · region from the SigV4 scope<br/>caller's origin · wire protocol identified
+    Note over M: request ID · region from the SigV4 scope <br/>caller's origin · wire protocol identified
     M->>R: request, enriched context
     R->>S: matched on the AmazonSQS. target prefix
     Note over S: codec.Decode into a Go struct
@@ -474,7 +474,7 @@ sequenceDiagram
     Note over S: codec.WriteResponse, same codec
     S-->>R: response struct, encoded
     R-->>M: response
-    Note over M: only now does the logger record<br/>status, service and operation
+    Note over M: only now does the logger record <br/>status, service and operation
     M-->>C: 200 · MessageId, MD5OfMessageBody
 ```
 
@@ -550,13 +550,13 @@ So the full claiming order is:
 
 ```mermaid
 flowchart TD
-    R([Request]) --> M[Middleware chain<br/>request ID · region · protocol identification]
-    M --> E{Matches an explicitly<br/>registered route?}
+    R([Request]) --> M[Middleware chain <br/>request ID · region · protocol identification]
+    M --> E{Matches an explicitly <br/>registered route?}
     E -->|yes| H([Service handler])
-    E -->|no| T{"Carries X-Amz-Target<br/>or Action= ?"}
-    T -->|"yes — a registered<br/>service claims it"| H
-    T -->|"yes — modelled by AWS<br/>but not implemented here"| N([501 + x-emulator-unsupported])
-    T -->|no| G{"Does the generated AWS<br/>operation registry claim it,<br/>and was the caller<br/>not addressing S3?"}
+    E -->|no| T{"Carries X-Amz-Target <br/>or Action= ?"}
+    T -->|"yes — a registered <br/>service claims it"| H
+    T -->|"yes — modelled by AWS <br/>but not implemented here"| N([501 + x-emulator-unsupported])
+    T -->|no| G{"Does the generated AWS <br/>operation registry claim it, <br/>and was the caller <br/>not addressing S3?"}
     G -->|yes| N
     G -->|no| S([S3 private router])
 ```
@@ -636,10 +636,10 @@ flowchart LR
     Q[AWS Query] --> D
     J[AWS JSON 1.0 / 1.1] --> D
     C[Smithy RPC v2 CBOR] --> D
-    D{{"codec.Decode<br/>whichever protocol<br/>the caller used"}} --> F
-    F["handler(ctx, *Request) (*Response, *AWSError)<br/><br/>plain Go — no HTTP, no marshalling,<br/>no knowledge of the protocol"]
-    F --> W{{"codec.WriteResponse<br/>the same codec"}}
-    W --> O([Response in the<br/>caller's own protocol])
+    D{{"codec.Decode <br/>whichever protocol <br/>the caller used"}} --> F
+    F["handler(ctx, *Request) (*Response, *AWSError) <br/> <br/>plain Go — no HTTP, no marshalling, <br/>no knowledge of the protocol"]
+    F --> W{{"codec.WriteResponse <br/>the same codec"}}
+    W --> O([Response in the <br/>caller's own protocol])
 ```
 
 The result: adding a protocol to a service that already has typed operations is
@@ -776,21 +776,21 @@ thing in a container.
 ```mermaid
 flowchart TB
     subgraph host["Your machine"]
-        APP["Your code / CLI<br/>AWS_ENDPOINT_URL=http://localhost:4566"]
+        APP["Your code / CLI <br/>AWS_ENDPOINT_URL=http://localhost:4566"]
     end
 
     subgraph docker["Docker daemon — everything below is a sibling"]
-        OC["Overcast<br/>:4566 AWS API · :4567 console<br/>:9001 Lambda Runtime API · :53 DNS"]
-        LAM["Lambda container<br/>AWS runtime image + your code"]
-        DB[("RDS engine container<br/>real MySQL / Postgres")]
+        OC["Overcast <br/>:4566 AWS API · :4567 console <br/>:9001 Lambda Runtime API · :53 DNS"]
+        LAM["Lambda container <br/>AWS runtime image + your code"]
+        DB[("RDS engine container <br/>real MySQL / Postgres")]
     end
 
     APP -->|AWS API calls| OC
     OC ==>|"creates, via the Docker API"| LAM
     OC ==>|"creates, via the Docker API"| DB
-    LAM -->|"calls AWS APIs back<br/>endpoint injected as a name"| OC
-    LAM -->|"polls for work<br/>Lambda Runtime API"| OC
-    LAM -.->|"resolves the DB hostname via a<br/>Docker network alias, not via Overcast"| DB
+    LAM -->|"calls AWS APIs back <br/>endpoint injected as a name"| OC
+    LAM -->|"polls for work <br/>Lambda Runtime API"| OC
+    LAM -.->|"resolves the DB hostname via a <br/>Docker network alias, not via Overcast"| DB
 ```
 
 **These are siblings, not children.** Overcast asks the Docker daemon to create
@@ -970,7 +970,7 @@ flowchart LR
 
     subgraph two["2 · Router replay — runtime-supplied ARN"]
         direction LR
-        A2[EventBridge rule] --> R2[["Overcast's own router<br/>full middleware chain"]] --> B2["whichever service<br/>the target ARN names"]
+        A2[EventBridge rule] --> R2[["Overcast's own router <br/>full middleware chain"]] --> B2["whichever service <br/>the target ARN names"]
     end
 
     subgraph three["3 · Event bus — producer knows no consumers"]
