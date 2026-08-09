@@ -130,8 +130,8 @@ are cached on the host daemon afterwards and start in seconds.
 | `--start-overcast` | `auto` | `auto` \| `always` \| `never` |
 | `--port-base` | `4570` | First port considered when scanning (never 4566/4567) |
 | `--port` | `:7777` | *Preferred* dashboard port; a free one is picked if taken |
-| `--overcast-bin` | — | Binary to run (default: `bin/overcast`, then `PATH`) |
-| `--overcast-image` | `ghcr.io/neaox/overcast:alpha` | Image used when no binary is found |
+| `--overcast-bin` | — | Binary to run. Naming one is honoured or the run fails; left unset, the search is `bin/overcast`, then `PATH` |
+| `--overcast-image` | `ghcr.io/neaox/overcast:alpha` | Image to run. **Naming one selects the container**, even when a local binary exists; left unset, it is only the fallback for when no binary is found |
 | `--overcast-host` | `localhost` | Hostname the suites use — e.g. `localhost.overcast.sh` for virtual-host-style S3 |
 | `--overcast-ui` | off | Also expose the managed instance's own web UI |
 | `--build-ui` | off | Build the dashboard UI before serving it |

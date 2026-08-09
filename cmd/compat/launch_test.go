@@ -298,6 +298,216 @@ func TestShouldStartOvercast(t *testing.T) {
 	}
 }
 
+func TestChooseOvercastArtifactPrefersARequestedImageOverALocalBinary(t *testing.T) {
+	// Given: the caller named an image, and a binary is also sitting in bin/
+	// When: the artifact is chosen
+	// Then: the image wins. This is issue #801: binary discovery used to run
+	// first unconditionally, so testing a release candidate with
+	// --overcast-image silently ran yesterday's bin/overcast.exe instead and
+	// the run looked exactly like one that had tested the image.
+	got, err := chooseOvercastArtifact(artifactRequest{
+		Image:           "ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1",
+		ImageRequested:  true,
+		FoundBin:        `F:\dev\overcast\bin\overcast.exe`,
+		DockerAvailable: true,
+	})
+	if err != nil {
+		t.Fatalf("chooseOvercastArtifact: %v", err)
+	}
+	if got.Mode != overcastModeDocker {
+		t.Fatalf("chose %s %q, want the requested container image", got.Mode, got.Ref)
+	}
+	if got.Ref != "ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1" {
+		t.Errorf("chose image %q, want the one that was named", got.Ref)
+	}
+	// And: the binary that was passed over is named, so a reader can tell this
+	// run apart from one where no binary existed at all.
+	if !strings.Contains(got.Ignored, `bin\overcast.exe`) {
+		t.Errorf("Ignored = %q, want it to name the local binary that was passed over", got.Ignored)
+	}
+}
+
+func TestChooseOvercastArtifactUsesALocalBinaryWhenNoImageWasNamed(t *testing.T) {
+	// Given: no image flag, and a binary in bin/
+	// When: the artifact is chosen
+	// Then: the binary is used, exactly as before — the default image is a
+	// fallback and must not start outranking a local build.
+	got, err := chooseOvercastArtifact(artifactRequest{
+		Image:           defaultOvercastImage,
+		FoundBin:        "/repo/bin/overcast",
+		DockerAvailable: true,
+	})
+	if err != nil {
+		t.Fatalf("chooseOvercastArtifact: %v", err)
+	}
+	if got.Mode != overcastModeBinary || got.Ref != "/repo/bin/overcast" {
+		t.Fatalf("chose %s %q, want the local binary", got.Mode, got.Ref)
+	}
+	if got.Ignored != "" {
+		t.Errorf("Ignored = %q, want nothing reported as passed over", got.Ignored)
+	}
+}
+
+func TestChooseOvercastArtifactUsesARequestedImageWithNoBinaryPresent(t *testing.T) {
+	// Given: an image was named and nothing is built locally
+	// When: the artifact is chosen
+	// Then: the image is used, and the reason says the caller asked for it
+	// rather than that nothing else was available — the two are different runs
+	// and the log should not conflate them.
+	got, err := chooseOvercastArtifact(artifactRequest{
+		Image:           "ghcr.io/neaox/overcast:0.0.1-alpha.32",
+		ImageRequested:  true,
+		DockerAvailable: true,
+	})
+	if err != nil {
+		t.Fatalf("chooseOvercastArtifact: %v", err)
+	}
+	if got.Mode != overcastModeDocker || got.Ref != "ghcr.io/neaox/overcast:0.0.1-alpha.32" {
+		t.Fatalf("chose %s %q, want the requested image", got.Mode, got.Ref)
+	}
+	if !strings.Contains(got.Reason, "--overcast-image") {
+		t.Errorf("Reason = %q, want it to credit the flag", got.Reason)
+	}
+	if got.Ignored != "" {
+		t.Errorf("Ignored = %q, want nothing reported as passed over", got.Ignored)
+	}
+}
+
+func TestChooseOvercastArtifactFallsBackToTheDefaultImage(t *testing.T) {
+	// Given: nothing built locally and no image named
+	// When: the artifact is chosen
+	// Then: the default image is used — the pre-existing fallback
+	got, err := chooseOvercastArtifact(artifactRequest{
+		Image:           defaultOvercastImage,
+		DockerAvailable: true,
+	})
+	if err != nil {
+		t.Fatalf("chooseOvercastArtifact: %v", err)
+	}
+	if got.Mode != overcastModeDocker || got.Ref != defaultOvercastImage {
+		t.Fatalf("chose %s %q, want the default image", got.Mode, got.Ref)
+	}
+}
+
+func TestChooseOvercastArtifactRefusesARequestedImageWithoutDocker(t *testing.T) {
+	// Given: an image was named on a machine with no Docker, but a binary is
+	// available
+	// When: the artifact is chosen
+	// Then: it fails rather than running the binary. Falling back here would
+	// be the bug in issue #801 wearing a different hat: the caller named the
+	// bits to test, so a run that cannot test them is not a run.
+	_, err := chooseOvercastArtifact(artifactRequest{
+		Image:          "ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1",
+		ImageRequested: true,
+		FoundBin:       "/repo/bin/overcast",
+	})
+	if err == nil {
+		t.Fatal("chooseOvercastArtifact returned no error, want a refusal to substitute the binary")
+	}
+	if !strings.Contains(err.Error(), "--overcast-image") {
+		t.Errorf("error %q does not name the flag it could not honour", err)
+	}
+}
+
+func TestChooseOvercastArtifactHonoursARequestedBinary(t *testing.T) {
+	// Given: --overcast-bin naming a binary that exists
+	// When: the artifact is chosen
+	// Then: it is used, and the reason credits the flag rather than discovery
+	got, err := chooseOvercastArtifact(artifactRequest{
+		Bin:             "/tmp/overcast",
+		BinRequested:    true,
+		Image:           defaultOvercastImage,
+		FoundBin:        "/tmp/overcast",
+		DockerAvailable: true,
+	})
+	if err != nil {
+		t.Fatalf("chooseOvercastArtifact: %v", err)
+	}
+	if got.Mode != overcastModeBinary || got.Ref != "/tmp/overcast" {
+		t.Fatalf("chose %s %q, want the requested binary", got.Mode, got.Ref)
+	}
+	if !strings.Contains(got.Reason, "--overcast-bin") {
+		t.Errorf("Reason = %q, want it to credit the flag", got.Reason)
+	}
+}
+
+func TestChooseOvercastArtifactRefusesAMissingRequestedBinary(t *testing.T) {
+	// Given: --overcast-bin pointing at a path that does not exist
+	// When: the artifact is chosen
+	// Then: it fails naming the path, rather than quietly starting a container
+	// instead — the mirror image of #801, and just as easy to mistake for a
+	// run that did what it was told.
+	_, err := chooseOvercastArtifact(artifactRequest{
+		Bin:             "/nope/overcast",
+		BinRequested:    true,
+		Image:           defaultOvercastImage,
+		DockerAvailable: true,
+	})
+	if err == nil {
+		t.Fatal("chooseOvercastArtifact returned no error for a --overcast-bin path that does not exist")
+	}
+	if !strings.Contains(err.Error(), "/nope/overcast") {
+		t.Errorf("error %q does not name the path it could not use", err)
+	}
+}
+
+func TestChooseOvercastArtifactRefusesTwoNamedArtifacts(t *testing.T) {
+	// Given: the caller named both a binary and an image
+	// When: the artifact is chosen
+	// Then: it fails naming both. There is no principled winner, and silently
+	// picking one would rebuild #801 facing the other way.
+	_, err := chooseOvercastArtifact(artifactRequest{
+		Bin:             "/tmp/overcast",
+		BinRequested:    true,
+		Image:           "ghcr.io/neaox/overcast:0.0.1-alpha.32",
+		ImageRequested:  true,
+		FoundBin:        "/tmp/overcast",
+		DockerAvailable: true,
+	})
+	if err == nil {
+		t.Fatal("chooseOvercastArtifact returned no error for two named artifacts")
+	}
+	for _, want := range []string{"/tmp/overcast", "ghcr.io/neaox/overcast:0.0.1-alpha.32"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+}
+
+func TestChooseOvercastArtifactFailsWithNothingToRun(t *testing.T) {
+	// Given: no binary, no Docker, and nothing named
+	// When: the artifact is chosen
+	// Then: the existing dead-end error is returned, telling the caller the
+	// three ways out
+	_, err := chooseOvercastArtifact(artifactRequest{Image: defaultOvercastImage})
+	if err == nil {
+		t.Fatal("chooseOvercastArtifact returned no error with nothing to run")
+	}
+	if !strings.Contains(err.Error(), "no way to start Overcast") {
+		t.Errorf("error %q is not the dead-end message", err)
+	}
+}
+
+func TestOvercastArtifactDescribeNamesTheArtifact(t *testing.T) {
+	// Given: each kind of chosen artifact
+	// When: it is described for the log
+	// Then: the phrase carries the exact reference, not just the mode. "docker"
+	// alone was all a run printed before #801, and it is the same word whether
+	// the image was the one you asked for or the compiled-in default.
+	cases := []struct {
+		artifact overcastArtifact
+		want     string
+	}{
+		{overcastArtifact{Mode: overcastModeDocker, Ref: "ghcr.io/neaox/overcast:alpha"}, "container image ghcr.io/neaox/overcast:alpha"},
+		{overcastArtifact{Mode: overcastModeBinary, Ref: "/repo/bin/overcast"}, "binary /repo/bin/overcast"},
+	}
+	for _, tc := range cases {
+		if got := tc.artifact.Describe(); got != tc.want {
+			t.Errorf("Describe() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
 func TestOvercastEnvDisablesWebUIByDefault(t *testing.T) {
 	// Given: a managed instance on a chosen API port with no UI requested
 	// When: its environment is built
