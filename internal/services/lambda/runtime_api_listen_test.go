@@ -136,7 +136,7 @@ func TestRuntimeAPIServer_answersOnEveryAddressItBound(t *testing.T) {
 		t.Fatalf("listenAllOn() error = %v", err)
 	}
 
-	srv, err := NewRuntimeAPIServerFromListeners(lns, "container-addr:9001", zap.NewNop(), clock.New())
+	srv, err := NewRuntimeAPIServerFromListeners(lns, "container-addr:9001", defaultLambdaInitTimeout, zap.NewNop(), clock.New())
 	if err != nil {
 		closeAll(lns)
 		t.Fatalf("NewRuntimeAPIServerFromListeners() error = %v", err)

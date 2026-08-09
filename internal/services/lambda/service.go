@@ -643,7 +643,7 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	containerAddr := net.JoinHostPort(listen.ContainerHost, strconv.Itoa(actualPort))
 	log.Info("lambda: Runtime API address", zap.String("addr", containerAddr))
 
-	runtimeAPI, apiErr := NewRuntimeAPIServerFromListeners(lns, containerAddr, log, clk)
+	runtimeAPI, apiErr := NewRuntimeAPIServerFromListeners(lns, containerAddr, lambdaInitTimeout(cfg), log, clk)
 	if apiErr != nil {
 		s.log.Warn("failed to start Runtime API server — container runtime disabled",
 			zap.Error(apiErr))
