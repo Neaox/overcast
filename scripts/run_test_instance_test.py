@@ -49,7 +49,30 @@ def _load(path: Path, name: str):
 # of that reasoning is enough.
 BASH = _load(SCRIPTS / "pr-wait_test.py", "pr_wait_test").BASH
 
-POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
+
+def _powershell_hosts():
+	"""Every PowerShell host on this machine, as (name, path).
+
+	Both are driven where both exist, rather than picking one, because they are
+	genuinely different programs and this suite is the only thing standing
+	between the argument handling and a permission grant.
+
+	`powershell` is Windows PowerShell 5.1 — what the Taskfile invokes and what
+	ships to Windows users. `pwsh` is PowerShell Core, and on Linux it is the
+	only one there, so it is what CI exercises. The two disagree about more than
+	version: a Windows-only cmdlet resolves under one and not the other, which
+	is exactly how this class came to be running on CI without ever reaching a
+	`docker` command line.
+	"""
+	hosts = []
+	for name in ("powershell", "pwsh"):
+		path = shutil.which(name)
+		if path:
+			hosts.append((name, path))
+	return hosts
+
+
+POWERSHELL_HOSTS = _powershell_hosts()
 
 SH_STUB = """#!/bin/sh
 d=$(dirname "$0")
@@ -95,7 +118,8 @@ def _invoke(argv: list[str], stub: str, stub_name: str) -> Run:
 	with tempfile.TemporaryDirectory() as tmp:
 		stubdir = Path(tmp)
 		stubfile = stubdir / stub_name
-		with stubfile.open("w", encoding="ascii", newline="\n" if stub_name == "docker" else "\r\n") as fh:
+		newline = "\r\n" if stub_name.endswith(".bat") else "\n"
+		with stubfile.open("w", encoding="ascii", newline=newline) as fh:
 			fh.write(stub)
 		stubfile.chmod(0o755)
 
@@ -114,15 +138,25 @@ def run_sh(*args: str) -> Run:
 	return _invoke([BASH, SH.as_posix(), *args], SH_STUB, "docker")
 
 
-def run_ps1(*args: str) -> Run:
+# The stub has to be the kind of executable the *host OS* can find on PATH: a
+# .bat on Windows, a shebang script everywhere else. Getting this wrong fails
+# silently in the worst way — PowerShell simply never finds `docker`, the log
+# stays empty, and every assertion about the command line reports "docker run
+# was never invoked" without saying why.
+PS_STUB, PS_STUB_NAME = (BAT_STUB, "docker.bat") if os.name == "nt" else (SH_STUB, "docker")
+
+
+def run_ps1(host: str, *args: str) -> Run:
 	return _invoke(
-		[POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PS1), *args],
-		BAT_STUB,
-		"docker.bat",
+		[host, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PS1), *args],
+		PS_STUB,
+		PS_STUB_NAME,
 	)
 
 
-needs_powershell = unittest.skipUnless(POWERSHELL, "no powershell on PATH")
+needs_powershell = unittest.skipUnless(
+	POWERSHELL_HOSTS, "neither powershell nor pwsh is on PATH"
+)
 
 # The same intent spelled in each script's own dialect. Keyed by a short name so
 # a failure says which case, not which index.
@@ -295,60 +329,101 @@ class PortSelection(unittest.TestCase):
 
 @needs_powershell
 class PowerShellTwin(unittest.TestCase):
-	"""run-test-instance.ps1 must refuse and build exactly what the .sh does."""
+	"""run-test-instance.ps1 must refuse and build exactly what the .sh does.
+
+	Every case runs against every PowerShell host present — see
+	_powershell_hosts. On CI that is pwsh alone; on a Windows box it is usually
+	Windows PowerShell 5.1, and both when both are installed.
+	"""
+
+	def test_the_suite_actually_found_a_host(self):
+		# Paranoia with a reason: this class once ran green-looking on CI while
+		# reaching nothing, and a silently empty host list would do it again.
+		self.assertTrue(POWERSHELL_HOSTS, "no PowerShell host was discovered")
 
 	def test_builds_the_same_command_line_as_the_shell_script(self):
-		for name, (sh_args, ps_args) in BOTH.items():
-			with self.subTest(case=name):
-				# Pin the port so the two runs cannot differ merely because
-				# something grabbed a port between them.
-				sh_argv = run_sh(*sh_args, "--base-port", "4590").argv
-				ps_argv = run_ps1(*ps_args, "-BasePort", "4590").argv
-				self.assertEqual(sh_argv, ps_argv)
+		for host, ps in POWERSHELL_HOSTS:
+			for name, (sh_args, ps_args) in BOTH.items():
+				with self.subTest(host=host, case=name):
+					# Pin the port so the two runs cannot differ merely because
+					# something grabbed a port between them.
+					sh_argv = run_sh(*sh_args, "--base-port", "4590").argv
+					ps_argv = run_ps1(ps, *ps_args, "-BasePort", "4590").argv
+					self.assertEqual(sh_argv, ps_argv)
 
 	def test_socket_flag_adds_exactly_the_socket_mount(self):
-		argv = run_ps1(*BOTH["socket"][1]).argv
-		self.assertEqual(
-			[a for a in argv if a == "-v" or "docker.sock" in a],
-			["-v", "/var/run/docker.sock:/var/run/docker.sock"],
-		)
+		for host, ps in POWERSHELL_HOSTS:
+			with self.subTest(host=host):
+				argv = run_ps1(ps, *BOTH["socket"][1]).argv
+				self.assertEqual(
+					[a for a in argv if a == "-v" or "docker.sock" in a],
+					["-v", "/var/run/docker.sock:/var/run/docker.sock"],
+				)
 
 	def test_ports_publish_to_loopback_only(self):
-		argv = run_ps1("-NoLogs").argv
-		published = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
-		self.assertEqual(len(published), 2, argv)
-		for mapping in published:
-			self.assertTrue(mapping.startswith("127.0.0.1:"), mapping)
+		for host, ps in POWERSHELL_HOSTS:
+			with self.subTest(host=host):
+				argv = run_ps1(ps, "-NoLogs").argv
+				published = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
+				self.assertEqual(len(published), 2, argv)
+				for mapping in published:
+					self.assertTrue(mapping.startswith("127.0.0.1:"), mapping)
 
 	def test_refuses_every_dangerous_flag_by_name(self):
-		for case in REFUSED:
-			with self.subTest(flag=case[0]):
-				result = run_ps1(*case)
-				self.assertEqual(result.code, 2, result.err or result.out)
-				self.assertIn("refusing", result.err)
-				self.assertIn(case[0].split("=")[0].lstrip("-"), result.err)
-				self.assertEqual(result.invocations, [])
+		for host, ps in POWERSHELL_HOSTS:
+			for case in REFUSED:
+				with self.subTest(host=host, flag=case[0]):
+					result = run_ps1(ps, *case)
+					self.assertEqual(result.code, 2, result.err or result.out)
+					self.assertIn("refusing", result.err)
+					self.assertIn(case[0].split("=")[0].lstrip("-"), result.err)
+					self.assertEqual(result.invocations, [])
 
 	def test_the_old_dockerargs_passthrough_is_refused_by_name(self):
 		# The parameter this hardening removed. Somebody's muscle memory, or a
 		# stale doc, will reach for it; it must stop rather than be ignored.
-		result = run_ps1("-DockerArgs", "--privileged")
-		self.assertEqual(result.code, 2, result.err or result.out)
-		self.assertIn("DockerArgs", result.err)
-		self.assertEqual(result.invocations, [])
+		for host, ps in POWERSHELL_HOSTS:
+			with self.subTest(host=host):
+				result = run_ps1(ps, "-DockerArgs", "--privileged")
+				self.assertEqual(result.code, 2, result.err or result.out)
+				self.assertIn("DockerArgs", result.err)
+				self.assertEqual(result.invocations, [])
 
 	def test_env_is_limited_to_the_emulators_own_variables(self):
-		result = run_ps1("-EnvVar", "PATH=/evil")
-		self.assertEqual(result.code, 2, result.err or result.out)
-		self.assertIn("PATH", result.err)
+		for host, ps in POWERSHELL_HOSTS:
+			with self.subTest(host=host):
+				result = run_ps1(ps, "-EnvVar", "PATH=/evil")
+				self.assertEqual(result.code, 2, result.err or result.out)
+				self.assertIn("PATH", result.err)
 
 	def test_never_lands_on_the_users_reserved_pair(self):
-		for base in ("4565", "4566", "4567"):
-			with self.subTest(base=base):
-				argv = run_ps1("-NoLogs", "-BasePort", base).argv
-				published = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
-				host_ports = {m.split(":")[1] for m in published}
-				self.assertFalse(host_ports & {"4566", "4567"}, published)
+		for host, ps in POWERSHELL_HOSTS:
+			for base in ("4565", "4566", "4567"):
+				with self.subTest(host=host, base=base):
+					argv = run_ps1(ps, "-NoLogs", "-BasePort", base).argv
+					published = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
+					host_ports = {m.split(":")[1] for m in published}
+					self.assertFalse(host_ports & {"4566", "4567"}, published)
+
+	def test_skips_a_port_that_is_already_listening(self):
+		# The Windows-only Get-NetTCPConnection has a loopback-connect fallback
+		# for pwsh elsewhere; this is the case that tells the two apart.
+		for host, ps in POWERSHELL_HOSTS:
+			with self.subTest(host=host):
+				with socket.socket() as taken:
+					for candidate in range(20200, 20300, 2):
+						try:
+							taken.bind(("127.0.0.1", candidate))
+						except OSError:
+							continue
+						break
+					else:
+						self.skipTest("no free even port in 20200-20300")
+					taken.listen(1)
+					port = taken.getsockname()[1]
+					argv = run_ps1(ps, "-NoLogs", "-BasePort", str(port)).argv
+					published = [argv[i + 1] for i, a in enumerate(argv) if a == "-p"]
+					self.assertNotIn(f"127.0.0.1:{port}:4566", published)
 
 
 if __name__ == "__main__":

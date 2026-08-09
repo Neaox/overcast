@@ -268,8 +268,43 @@ if ($MountDockerSocket) {
     $dockerArgs += @('-v', '/var/run/docker.sock:/var/run/docker.sock')
 }
 
+# Get-NetTCPConnection comes from the NetTCPIP module, which ships only with
+# Windows. Under pwsh on Linux or macOS the cmdlet does not exist, and with
+# $ErrorActionPreference = 'Stop' the missing name killed this script at the
+# port scan -- before it reached docker at all.
+#
+# That was not merely inconvenient. CI runs the script tests on Ubuntu, where
+# the only PowerShell host is pwsh, so every assertion about the command line
+# this script builds got an empty one and the suite could not verify the
+# argument handling that the permission grant rests on. A refusal that is only
+# tested on one developer's machine is not a tested refusal.
+#
+# The Windows path is unchanged. The fallback asks the same question a
+# different way -- can something be reached on this loopback port -- which is
+# also what run-test-instance.sh falls back to when netstat is absent. It is
+# the more precise question here anyway, now that both ports are published to
+# 127.0.0.1: a listener bound only to some other interface cannot collide with
+# us, and Get-NetTCPConnection would count it as a collision.
+$script:HaveGetNetTCPConnection = [bool](Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)
+
 function Test-PortFree([int]$Port) {
-    -not (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    if ($script:HaveGetNetTCPConnection) {
+        return -not (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    }
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        # Connect succeeded => something is listening => the port is not free.
+        # A refused connection faults the task and Wait throws, which is the
+        # free case.
+        if ($client.ConnectAsync('127.0.0.1', $Port).Wait(250) -and $client.Connected) {
+            return $false
+        }
+        return $true
+    } catch {
+        return $true
+    } finally {
+        $client.Dispose()
+    }
 }
 
 # 4566 and 4567 are the user's, in either role. Checking each port against both
