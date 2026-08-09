@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1409,
+  "total_ops": 1412,
   "services": [
     {
       "service": "s3",
@@ -4528,8 +4528,8 @@
     {
       "service": "kinesis",
       "display_name": "Kinesis",
-      "total_ops": 17,
-      "implemented_ops": 17,
+      "total_ops": 20,
+      "implemented_ops": 20,
       "operations": [
         {
           "operation": "AddTagsToStream",
@@ -4540,7 +4540,7 @@
           "operation": "CreateStream",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Stream becomes ACTIVE immediately"
+          "notes": "Stream becomes ACTIVE immediately; inline `Tags` applied at creation"
         },
         {
           "operation": "DecreaseStreamRetentionPeriod",
@@ -4595,6 +4595,12 @@
           "notes": "Returns all stream names; no pagination"
         },
         {
+          "operation": "ListTagsForResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stream ARNs; the same tag set `ListTagsForStream` returns"
+        },
+        {
           "operation": "ListTagsForStream",
           "category": "General",
           "status": "✅ Supported"
@@ -4627,6 +4633,18 @@
           "category": "General",
           "status": "✅ Supported",
           "notes": "Closes parent, creates two children at NewStartingHashKey"
+        },
+        {
+          "operation": "TagResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stream ARNs; consumer ARNs are rejected because consumers are not emulated"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "General",
+          "status": "✅ Supported",
+          "notes": "Stream ARNs"
         }
       ]
     },

@@ -56,6 +56,9 @@ func (h *Handler) initOps() {
 		"AddTagsToStream":               h.AddTagsToStream,
 		"ListTagsForStream":             h.ListTagsForStream,
 		"RemoveTagsFromStream":          h.RemoveTagsFromStream,
+		"TagResource":                   h.TagResource,
+		"UntagResource":                 h.UntagResource,
+		"ListTagsForResource":           h.ListTagsForResource,
 		"MergeShards":                   h.MergeShards,
 		"IncreaseStreamRetentionPeriod": h.IncreaseStreamRetentionPeriod,
 		"DecreaseStreamRetentionPeriod": h.DecreaseStreamRetentionPeriod,
@@ -89,8 +92,9 @@ func (h *Handler) publish(r *http.Request, t events.Type, payload any) {
 // AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_CreateStream.html
 func (h *Handler) CreateStream(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		StreamName string `json:"StreamName"`
-		ShardCount int    `json:"ShardCount"`
+		StreamName string            `json:"StreamName"`
+		ShardCount int               `json:"ShardCount"`
+		Tags       map[string]string `json:"Tags"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -115,7 +119,7 @@ func (h *Handler) CreateStream(w http.ResponseWriter, r *http.Request) {
 		StreamStatus:         "ACTIVE",
 		ShardCount:           shardCount,
 		Shards:               buildInitialShards(shardCount),
-		Tags:                 map[string]string{},
+		Tags:                 createStreamTags(req.Tags),
 		CreatedAt:            h.clk.Now().UTC(),
 		RetentionPeriodHours: 24,
 	}
@@ -488,6 +492,55 @@ func (h *Handler) RemoveTagsFromStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// TagResource handles Kinesis_20131202.TagResource — the ARN-addressed
+// equivalent of AddTagsToStream.
+// AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_TagResource.html
+//
+// This and the two below delegate to the typed implementation rather than
+// repeating it: the JSON 1.1 path only differs in how the request arrives and
+// how a void success is written (an empty body, which Kinesis' existing
+// operations also produce).
+func (h *Handler) TagResource(w http.ResponseWriter, r *http.Request) {
+	var req tagResourceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if _, aerr := h.tagResourceTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// UntagResource handles Kinesis_20131202.UntagResource.
+// AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_UntagResource.html
+func (h *Handler) UntagResource(w http.ResponseWriter, r *http.Request) {
+	var req untagResourceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if _, aerr := h.untagResourceTyped(r.Context(), &req); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// ListTagsForResource handles Kinesis_20131202.ListTagsForResource.
+// AWS docs: https://docs.aws.amazon.com/kinesis/latest/APIReference/API_ListTagsForResource.html
+func (h *Handler) ListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req listTagsForResourceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	out, aerr := h.listTagsForResourceTyped(r.Context(), &req)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteAWSJSON(w, r, http.StatusOK, out, "application/x-amz-json-1.1")
 }
 
 // ---- Retention ---------------------------------------------------------------
