@@ -6,3 +6,6 @@
 + [cloudtrail] Trails are taggable: `AddTags`, `RemoveTags` and `ListTags`, plus an inline `TagsList` on `CreateTrail`
 + [iam] Managed policies and instance profiles are taggable: `TagPolicy`/`UntagPolicy`/`ListPolicyTags` and `TagInstanceProfile`/`UntagInstanceProfile`/`ListInstanceProfileTags`
 + [iam] `CreateUser`, `CreateRole`, `CreatePolicy` and `CreateInstanceProfile` apply inline `Tags` at creation
++ [acm] `TagResource`, `UntagResource` and `ListTagsForResource` — the modern aliases of the `*Certificate` tag operations, addressing the certificate by `ResourceArn`. `RequestCertificate` applies inline `Tags` at creation
+* [acm] tagging a certificate that does not exist is a `ResourceNotFoundException` instead of succeeding and stranding the tags under an ARN nothing owns
+* [acm] `ListTagsForCertificate` returns tags in a stable key order instead of a different order per call

@@ -158,6 +158,27 @@ tagging commit.
 `ApplyTagsToStore`, `NSStore`). New work uses them; no new tagging abstraction
 was introduced.
 
+## AWS behaviour that had to be decided rather than looked up
+
+Three forks were resolved by judgement. Each is called out here because none of
+them is verifiable from the pinned models, which carry operation names,
+protocols and HTTP bindings but **not member shapes**.
+
+- **ACM's modern aliases use `ResourceArn`.** `TagResource` / `UntagResource` /
+  `ListTagsForResource` were implemented reading `ResourceArn`, not reusing
+  ACM's older `CertificateArn`. Every AWS service with an operation literally
+  named `TagResource` spells the member `ResourceArn`, and ACM's own
+  `*Certificate` operations keep `CertificateArn`. If this is wrong the failure
+  is loud — an SDK call arrives with an empty ARN and gets an error — rather
+  than silent.
+- **SNS `CreateTopic` does not retag an existing topic.** The call is
+  idempotent and AWS returns the existing ARN "without creating a new topic",
+  so a repeat call with different tags leaves the topic's tags alone.
+  `TagResource` is the way to change them.
+- **CloudTrail `RemoveTags` matches on `Key` alone.** Its input is a `TagsList`,
+  not a list of keys; the implementation ignores each entry's `Value` when
+  deciding what to remove.
+
 ## Fenced services
 
 `internal/services/cloudwatch/**` is owned by another task (issue #794) for the

@@ -130,7 +130,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Pipes            | [pipes.md](./services/pipes.md)                     | 8   | Minimal / targeted support    |
 | WAF v2           | [waf.md](./services/waf.md)                         | 7   | Minimal / targeted support    |
 | Shield           | [shield.md](./services/shield.md)                   | 8   | Minimal / targeted support    |
-| ACM              | [acm.md](./services/acm.md)                         | 7   | Minimal / targeted support    |
+| ACM              | [acm.md](./services/acm.md)                         | 10  | Minimal / targeted support    |
 | Athena           | [athena.md](./services/athena.md)                   | 11  | Minimal / targeted support    |
 | Bedrock          | [bedrock.md](./services/bedrock.md)                 | 2   | Minimal / targeted support    |
 | CloudWatch       | [cloudwatch.md](./services/cloudwatch.md)           | 17  | Minimal / targeted support    |

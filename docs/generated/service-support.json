@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1427,
+  "total_ops": 1430,
   "services": [
     {
       "service": "s3",
@@ -7215,14 +7215,14 @@
     {
       "service": "acm",
       "display_name": "ACM",
-      "total_ops": 7,
-      "implemented_ops": 7,
+      "total_ops": 10,
+      "implemented_ops": 10,
       "operations": [
         {
           "operation": "RequestCertificate",
           "category": "Certificates",
           "status": "✅ Supported",
-          "notes": "Creates a certificate; immediately ISSUED"
+          "notes": "Creates a certificate; immediately ISSUED; inline `Tags` applied at creation"
         },
         {
           "operation": "DescribeCertificate",
@@ -7259,6 +7259,24 @@
           "category": "Tags",
           "status": "✅ Supported",
           "notes": "Removes tags from a certificate"
+        },
+        {
+          "operation": "TagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Modern alias of `AddTagsToCertificate`, addressing the certificate by `ResourceArn`"
+        },
+        {
+          "operation": "UntagResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Takes `TagKeys`, where `RemoveTagsFromCertificate` takes a `Tags` list"
+        },
+        {
+          "operation": "ListTagsForResource",
+          "category": "Tags",
+          "status": "✅ Supported",
+          "notes": "Modern alias of `ListTagsForCertificate`"
         }
       ]
     },
