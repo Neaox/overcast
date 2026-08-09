@@ -82,6 +82,14 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"TagUser":      op.NewTyped("TagUser", h.tagUserTyped),
 		"UntagUser":    op.NewTyped("UntagUser", h.untagUserTyped),
 		"ListUserTags": op.NewTyped("ListUserTags", h.listUserTagsTyped),
+
+		"TagPolicy":      op.NewTyped("TagPolicy", h.tagPolicyTyped),
+		"UntagPolicy":    op.NewTyped("UntagPolicy", h.untagPolicyTyped),
+		"ListPolicyTags": op.NewTyped("ListPolicyTags", h.listPolicyTagsTyped),
+
+		"TagInstanceProfile":      op.NewTyped("TagInstanceProfile", h.tagInstanceProfileTyped),
+		"UntagInstanceProfile":    op.NewTyped("UntagInstanceProfile", h.untagInstanceProfileTyped),
+		"ListInstanceProfileTags": op.NewTyped("ListInstanceProfileTags", h.listInstanceProfileTagsTyped),
 		// Service-linked roles
 		"CreateServiceLinkedRole": op.NewTyped("CreateServiceLinkedRole", h.createServiceLinkedRoleTyped),
 		// Instance profile by role

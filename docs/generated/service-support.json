@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1421,
+  "total_ops": 1427,
   "services": [
     {
       "service": "s3",
@@ -3556,13 +3556,14 @@
     {
       "service": "iam",
       "display_name": "IAM",
-      "total_ops": 66,
-      "implemented_ops": 66,
+      "total_ops": 72,
+      "implemented_ops": 72,
       "operations": [
         {
           "operation": "CreateUser",
           "category": "Users",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "GetUser",
@@ -3676,7 +3677,8 @@
         {
           "operation": "CreateRole",
           "category": "Roles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "GetRole",
@@ -3755,9 +3757,40 @@
           "status": "✅ Supported"
         },
         {
+          "operation": "TagPolicy",
+          "category": "Managed policy tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UntagPolicy",
+          "category": "Managed policy tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListPolicyTags",
+          "category": "Managed policy tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "TagInstanceProfile",
+          "category": "Instance profile tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "UntagInstanceProfile",
+          "category": "Instance profile tagging",
+          "status": "✅ Supported"
+        },
+        {
+          "operation": "ListInstanceProfileTags",
+          "category": "Instance profile tagging",
+          "status": "✅ Supported"
+        },
+        {
           "operation": "CreateInstanceProfile",
           "category": "Instance profiles",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "GetInstanceProfile",
@@ -3792,7 +3825,8 @@
         {
           "operation": "CreatePolicy",
           "category": "Managed policies",
-          "status": "✅ Supported"
+          "status": "✅ Supported",
+          "notes": "Inline `Tags` applied at creation"
         },
         {
           "operation": "GetPolicy",

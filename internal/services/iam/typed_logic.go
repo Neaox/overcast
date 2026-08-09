@@ -3,6 +3,7 @@ package iam
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/events"
@@ -22,9 +23,10 @@ func metaFromCtx(ctx context.Context) respMeta {
 // ─── Request types ──────────────────────────────────────────────────────────
 
 type createUserReq struct {
-	UserName            string `json:"UserName"`
-	Path                string `json:"Path"`
-	PermissionsBoundary string `json:"PermissionsBoundary"`
+	UserName            string     `json:"UserName"`
+	Path                string     `json:"Path"`
+	PermissionsBoundary string     `json:"PermissionsBoundary"`
+	Tags                []tagEntry `json:"Tags"`
 }
 
 type getUserReq struct {
@@ -73,10 +75,11 @@ type deleteUserPolicyReq struct {
 }
 
 type createRoleReq struct {
-	RoleName                 string `json:"RoleName"`
-	AssumeRolePolicyDocument string `json:"AssumeRolePolicyDocument"`
-	Path                     string `json:"Path"`
-	PermissionsBoundary      string `json:"PermissionsBoundary"`
+	RoleName                 string     `json:"RoleName"`
+	AssumeRolePolicyDocument string     `json:"AssumeRolePolicyDocument"`
+	Path                     string     `json:"Path"`
+	PermissionsBoundary      string     `json:"PermissionsBoundary"`
+	Tags                     []tagEntry `json:"Tags"`
 }
 
 type getRoleReq struct {
@@ -124,8 +127,9 @@ type listAttachedRolePoliciesReq struct {
 }
 
 type createInstanceProfileReq struct {
-	InstanceProfileName string `json:"InstanceProfileName"`
-	Path                string `json:"Path"`
+	InstanceProfileName string     `json:"InstanceProfileName"`
+	Path                string     `json:"Path"`
+	Tags                []tagEntry `json:"Tags"`
 }
 
 type deleteInstanceProfileReq struct {
@@ -147,9 +151,10 @@ type removeRoleFromInstanceProfileReq struct {
 }
 
 type createPolicyReq struct {
-	PolicyName     string `json:"PolicyName"`
-	PolicyDocument string `json:"PolicyDocument"`
-	Path           string `json:"Path"`
+	PolicyName     string     `json:"PolicyName"`
+	PolicyDocument string     `json:"PolicyDocument"`
+	Path           string     `json:"Path"`
+	Tags           []tagEntry `json:"Tags"`
 }
 
 type getPolicyReq struct {
@@ -278,6 +283,38 @@ type untagUserReq struct {
 
 type listUserTagsReq struct {
 	UserName string `json:"UserName"`
+}
+
+// IAM gives each taggable entity its own operation triple rather than a shared
+// TagResource, and keys each one by that entity's own identifier — a policy by
+// ARN, an instance profile by name.
+
+type tagPolicyReq struct {
+	PolicyArn string     `json:"PolicyArn"`
+	Tags      []tagEntry `json:"Tags"`
+}
+
+type untagPolicyReq struct {
+	PolicyArn string   `json:"PolicyArn"`
+	TagKeys   []string `json:"TagKeys"`
+}
+
+type listPolicyTagsReq struct {
+	PolicyArn string `json:"PolicyArn"`
+}
+
+type tagInstanceProfileReq struct {
+	InstanceProfileName string     `json:"InstanceProfileName"`
+	Tags                []tagEntry `json:"Tags"`
+}
+
+type untagInstanceProfileReq struct {
+	InstanceProfileName string   `json:"InstanceProfileName"`
+	TagKeys             []string `json:"TagKeys"`
+}
+
+type listInstanceProfileTagsReq struct {
+	InstanceProfileName string `json:"InstanceProfileName"`
 }
 
 type createServiceLinkedRoleReq struct {
@@ -809,6 +846,56 @@ type listUserTagsResult struct {
 	IsTruncated bool                   `xml:"IsTruncated"`
 }
 
+// --- Managed Policy Tagging ---
+
+type tagPolicyResp struct {
+	XMLName struct{} `xml:"TagPolicyResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Meta    respMeta `xml:"ResponseMetadata"`
+}
+
+type untagPolicyResp struct {
+	XMLName struct{} `xml:"UntagPolicyResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Meta    respMeta `xml:"ResponseMetadata"`
+}
+
+type listPolicyTagsResp struct {
+	XMLName struct{}             `xml:"ListPolicyTagsResponse"`
+	Xmlns   string               `xml:"xmlns,attr"`
+	Result  listPolicyTagsResult `xml:"ListPolicyTagsResult"`
+	Meta    respMeta             `xml:"ResponseMetadata"`
+}
+type listPolicyTagsResult struct {
+	Tags        listMembersXML[tagXML] `xml:"Tags"`
+	IsTruncated bool                   `xml:"IsTruncated"`
+}
+
+// --- Instance Profile Tagging ---
+
+type tagInstanceProfileResp struct {
+	XMLName struct{} `xml:"TagInstanceProfileResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Meta    respMeta `xml:"ResponseMetadata"`
+}
+
+type untagInstanceProfileResp struct {
+	XMLName struct{} `xml:"UntagInstanceProfileResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Meta    respMeta `xml:"ResponseMetadata"`
+}
+
+type listInstanceProfileTagsResp struct {
+	XMLName struct{}                      `xml:"ListInstanceProfileTagsResponse"`
+	Xmlns   string                        `xml:"xmlns,attr"`
+	Result  listInstanceProfileTagsResult `xml:"ListInstanceProfileTagsResult"`
+	Meta    respMeta                      `xml:"ResponseMetadata"`
+}
+type listInstanceProfileTagsResult struct {
+	Tags        listMembersXML[tagXML] `xml:"Tags"`
+	IsTruncated bool                   `xml:"IsTruncated"`
+}
+
 // --- Service-Linked Roles ---
 
 type createServiceLinkedRoleResp struct {
@@ -902,6 +989,7 @@ func (h *Handler) createUserTyped(ctx context.Context, req *createUserReq) (*cre
 		Path:                path,
 		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary: req.PermissionsBoundary,
+		Tags:                createTags(req.Tags),
 	}
 	if aerr := h.store.putUser(ctx, u); aerr != nil {
 		return nil, aerr
@@ -1094,6 +1182,7 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 		AssumeRolePolicyDocument: req.AssumeRolePolicyDocument,
 		CreateDate:               h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary:      req.PermissionsBoundary,
+		Tags:                     createTags(req.Tags),
 	}
 	if aerr := h.store.putRole(ctx, role); aerr != nil {
 		return nil, aerr
@@ -1253,6 +1342,7 @@ func (h *Handler) createInstanceProfileTyped(ctx context.Context, req *createIns
 		Arn:                 h.store.arnForProfile(path, req.InstanceProfileName),
 		Path:                path,
 		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:                createTags(req.Tags),
 	}
 	if aerr := h.store.putProfile(ctx, profile); aerr != nil {
 		return nil, aerr
@@ -1345,6 +1435,7 @@ func (h *Handler) createPolicyTyped(ctx context.Context, req *createPolicyReq) (
 		Path:       path,
 		Document:   req.PolicyDocument,
 		CreateDate: h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:       createTags(req.Tags),
 	}
 	if aerr := h.store.putPolicy(ctx, p); aerr != nil {
 		return nil, aerr
@@ -1759,6 +1850,121 @@ func (h *Handler) listUserTagsTyped(ctx context.Context, req *listUserTagsReq) (
 	return &listUserTagsResp{Xmlns: iamXMLNS, Result: listUserTagsResult{
 		Tags: listMembersXML[tagXML]{Members: tags, Tag: "member"}, IsTruncated: false,
 	}, Meta: metaFromCtx(ctx)}, nil
+}
+
+// --- Managed Policy Tagging ---
+
+func (h *Handler) tagPolicyTyped(ctx context.Context, req *tagPolicyReq) (*tagPolicyResp, *protocol.AWSError) {
+	p, aerr := h.store.getPolicy(ctx, req.PolicyArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	p.SetTags(mergeTagEntries(p.GetTags(), req.Tags))
+	if aerr := h.store.putPolicy(ctx, p); aerr != nil {
+		return nil, aerr
+	}
+	return &tagPolicyResp{Xmlns: iamXMLNS, Meta: metaFromCtx(ctx)}, nil
+}
+
+func (h *Handler) untagPolicyTyped(ctx context.Context, req *untagPolicyReq) (*untagPolicyResp, *protocol.AWSError) {
+	p, aerr := h.store.getPolicy(ctx, req.PolicyArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	p.SetTags(removeTagKeys(p.GetTags(), req.TagKeys))
+	if aerr := h.store.putPolicy(ctx, p); aerr != nil {
+		return nil, aerr
+	}
+	return &untagPolicyResp{Xmlns: iamXMLNS, Meta: metaFromCtx(ctx)}, nil
+}
+
+func (h *Handler) listPolicyTagsTyped(ctx context.Context, req *listPolicyTagsReq) (*listPolicyTagsResp, *protocol.AWSError) {
+	p, aerr := h.store.getPolicy(ctx, req.PolicyArn)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &listPolicyTagsResp{Xmlns: iamXMLNS, Result: listPolicyTagsResult{
+		Tags: listMembersXML[tagXML]{Members: sortedTagXML(p.GetTags()), Tag: "member"}, IsTruncated: false,
+	}, Meta: metaFromCtx(ctx)}, nil
+}
+
+// --- Instance Profile Tagging ---
+
+func (h *Handler) tagInstanceProfileTyped(ctx context.Context, req *tagInstanceProfileReq) (*tagInstanceProfileResp, *protocol.AWSError) {
+	profile, aerr := h.store.getProfile(ctx, req.InstanceProfileName)
+	if aerr != nil {
+		return nil, aerr
+	}
+	profile.SetTags(mergeTagEntries(profile.GetTags(), req.Tags))
+	if aerr := h.store.putProfile(ctx, profile); aerr != nil {
+		return nil, aerr
+	}
+	return &tagInstanceProfileResp{Xmlns: iamXMLNS, Meta: metaFromCtx(ctx)}, nil
+}
+
+func (h *Handler) untagInstanceProfileTyped(ctx context.Context, req *untagInstanceProfileReq) (*untagInstanceProfileResp, *protocol.AWSError) {
+	profile, aerr := h.store.getProfile(ctx, req.InstanceProfileName)
+	if aerr != nil {
+		return nil, aerr
+	}
+	profile.SetTags(removeTagKeys(profile.GetTags(), req.TagKeys))
+	if aerr := h.store.putProfile(ctx, profile); aerr != nil {
+		return nil, aerr
+	}
+	return &untagInstanceProfileResp{Xmlns: iamXMLNS, Meta: metaFromCtx(ctx)}, nil
+}
+
+func (h *Handler) listInstanceProfileTagsTyped(ctx context.Context, req *listInstanceProfileTagsReq) (*listInstanceProfileTagsResp, *protocol.AWSError) {
+	profile, aerr := h.store.getProfile(ctx, req.InstanceProfileName)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return &listInstanceProfileTagsResp{Xmlns: iamXMLNS, Result: listInstanceProfileTagsResult{
+		Tags: listMembersXML[tagXML]{Members: sortedTagXML(profile.GetTags()), Tag: "member"}, IsTruncated: false,
+	}, Meta: metaFromCtx(ctx)}, nil
+}
+
+// --- Tag helpers ---
+
+// mergeTagEntries folds an inline Tags list into an entity's tag map. It
+// returns a usable map even when the entity had none, which is what makes it
+// safe to call straight from a Create* handler.
+func mergeTagEntries(existing map[string]string, incoming []tagEntry) map[string]string {
+	if existing == nil {
+		existing = make(map[string]string, len(incoming))
+	}
+	for _, t := range incoming {
+		existing[t.Key] = t.Value
+	}
+	return existing
+}
+
+// createTags builds the tag map for a Create* call's inline Tags. It returns
+// nil when there are none, so an untagged entity keeps omitting the field.
+func createTags(incoming []tagEntry) map[string]string {
+	if len(incoming) == 0 {
+		return nil
+	}
+	return mergeTagEntries(nil, incoming)
+}
+
+func removeTagKeys(existing map[string]string, keys []string) map[string]string {
+	for _, k := range keys {
+		delete(existing, k)
+	}
+	return existing
+}
+
+// sortedTagXML renders a tag map as a Key-sorted member list. Go randomizes
+// map iteration per process, so without this the Tags list would reorder
+// between otherwise identical responses.
+func sortedTagXML(tags map[string]string) []tagXML {
+	out := make([]tagXML, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, tagXML{Key: k, Value: v})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 // --- Service-Linked Roles ---

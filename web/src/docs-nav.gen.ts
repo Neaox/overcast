@@ -3286,6 +3286,16 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Managed policy tagging",
+        "id": "managed-policy-tagging"
+      },
+      {
+        "depth": 3,
+        "text": "Instance profile tagging",
+        "id": "instance-profile-tagging"
+      },
+      {
+        "depth": 3,
         "text": "Instance profiles",
         "id": "instance-profiles"
       },
