@@ -13,9 +13,15 @@ package cloudformation_test
 // The other half is the properties the provisioner forwards. An optional
 // property that is silently dropped produces an alarm that exists and is
 // evaluated — against a configuration the template did not ask for.
+//
+// Tags are the one property forwarding cannot carry on an update: PutMetricAlarm
+// applies them when it creates an alarm and ignores them when it updates one, as
+// on AWS, so they have to travel by TagResource/UntagResource instead.
 
 import (
+	"encoding/xml"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -208,6 +214,147 @@ func TestCreateStack_metricMathAlarm_failsSayingItIsNotEmulated(t *testing.T) {
 	if !strings.Contains(reasons, "Metric-math") {
 		t.Errorf("failure reason does not name metric math:\n%s", reasons)
 	}
+}
+
+// taggedAlarmTemplate is an alarm whose tag set the test varies between the
+// create and the update. Everything else is held constant so the update is a
+// tags-only change.
+const taggedAlarmTemplate = `{
+  "Resources": {
+    "Alarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "%s",
+        "MetricName": "Errors",
+        "Namespace": "AWS/Lambda",
+        "Statistic": "Sum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "Tags": [%s]
+      }
+    }
+  }
+}`
+
+func TestUpdateStack_alarmTagsChange_reachTheAlarm(t *testing.T) {
+	// Given: a stack whose alarm carries tags. PutMetricAlarm applies Tags when
+	// it creates an alarm, so the create half needs nothing beyond the template.
+	srv := helpers.NewTestServer(t)
+	stackName := "alarm-tags"
+	alarmName := stackName + "-alarm"
+
+	create := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName": {stackName},
+		"TemplateBody": {fmt.Sprintf(taggedAlarmTemplate, alarmName,
+			`{"Key": "env", "Value": "dev"}, {"Key": "owner", "Value": "platform"}`)},
+	})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	arn := alarmARN(t, srv, alarmName)
+	if got, want := listAlarmTags(t, srv, arn), map[string]string{"env": "dev", "owner": "platform"}; !maps.Equal(got, want) {
+		t.Fatalf("tags after create = %v, want %v", got, want)
+	}
+
+	// When: only the tags change — one value edited, one key added, one removed
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName": {stackName},
+		"TemplateBody": {fmt.Sprintf(taggedAlarmTemplate, alarmName,
+			`{"Key": "env", "Value": "prod"}, {"Key": "team", "Value": "payments"}`)},
+	})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: the alarm carries the template's new tag set. PutMetricAlarm ignores
+	// Tags when it updates an existing alarm, as on AWS, so an update that leans
+	// on the create call alone succeeds and changes nothing.
+	want := map[string]string{"env": "prod", "team": "payments"}
+	if got := listAlarmTags(t, srv, arn); !maps.Equal(got, want) {
+		t.Errorf("tags after update = %v, want %v", got, want)
+	}
+}
+
+func TestUpdateStack_alarmTagsRemoved_clearsThem(t *testing.T) {
+	// Given: a stack whose alarm carries tags
+	srv := helpers.NewTestServer(t)
+	stackName := "alarm-tags-cleared"
+	alarmName := stackName + "-alarm"
+
+	create := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(taggedAlarmTemplate, alarmName, `{"Key": "env", "Value": "dev"}`)},
+	})
+	defer create.Body.Close()
+	helpers.AssertStatus(t, create, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	arn := alarmARN(t, srv, alarmName)
+
+	// When: the template's tag list is emptied
+	update := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    {stackName},
+		"TemplateBody": {fmt.Sprintf(taggedAlarmTemplate, alarmName, "")},
+	})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: the tags are gone, not left behind from the previous template
+	if got := listAlarmTags(t, srv, arn); len(got) != 0 {
+		t.Errorf("tags after update = %v, want none", got)
+	}
+}
+
+// alarmARN reads the ARN CloudWatch assigned to an alarm. Taking it from the
+// service rather than rebuilding it in the test is deliberate: the provisioner
+// has to address the same ARN for its tag calls to land on the same alarm.
+func alarmARN(t *testing.T, srv *helpers.TestServer, alarmName string) string {
+	t.Helper()
+	body := describeAlarmsBody(t, srv, alarmName)
+	start := strings.Index(body, "<AlarmArn>")
+	if start < 0 {
+		t.Fatalf("alarm %q has no ARN; DescribeAlarms body:\n%s", alarmName, body)
+	}
+	rest := body[start+len("<AlarmArn>"):]
+	end := strings.Index(rest, "</AlarmArn>")
+	if end < 0 {
+		t.Fatalf("unterminated AlarmArn; DescribeAlarms body:\n%s", body)
+	}
+	return rest[:end]
+}
+
+// listAlarmTags returns the tags CloudWatch holds for an alarm ARN.
+func listAlarmTags(t *testing.T, srv *helpers.TestServer, arn string) map[string]string {
+	t.Helper()
+	resp, err := http.PostForm(srv.URL+"/", url.Values{
+		"Action":      {"ListTagsForResource"},
+		"Version":     {"2010-08-01"},
+		"ResourceARN": {arn},
+	})
+	if err != nil {
+		t.Fatalf("ListTagsForResource: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	body := readBody(t, resp)
+	var parsed struct {
+		Tags []struct {
+			Key   string `xml:"Key"`
+			Value string `xml:"Value"`
+		} `xml:"ListTagsForResourceResult>Tags>member"`
+	}
+	if err := xml.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("ListTagsForResource XML parse: %v\n%s", err, body)
+	}
+	tags := make(map[string]string, len(parsed.Tags))
+	for _, tag := range parsed.Tags {
+		tags[tag.Key] = tag.Value
+	}
+	return tags
 }
 
 // describeAlarmsBody returns the DescribeAlarms XML for one alarm.

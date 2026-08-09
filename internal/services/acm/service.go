@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -192,7 +193,10 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedJSON(w, r)
 }
 
-// mergeTags returns existing plus overrides, with overrides winning on key collisions.
+// mergeTags returns existing plus overrides, with overrides winning on key
+// collisions. The result is Key-sorted: Go randomizes map iteration per
+// process, so without this a certificate's Tags array would reorder between
+// otherwise identical ListTagsForCertificate responses.
 func mergeTags(existing, overrides []Tag) []Tag {
 	m := make(map[string]string, len(existing)+len(overrides))
 	for _, t := range existing {
@@ -205,6 +209,7 @@ func mergeTags(existing, overrides []Tag) []Tag {
 	for k, v := range m {
 		out = append(out, Tag{Key: k, Value: v})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
 }
 

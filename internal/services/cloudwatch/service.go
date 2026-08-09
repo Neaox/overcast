@@ -427,31 +427,11 @@ func (s *cloudwatchStore) listMetrics(ctx context.Context, namespace string) ([]
 	return out, nil
 }
 
-func (s *cloudwatchStore) setTags(ctx context.Context, arn string, tags map[string]string) error {
-	raw, err := json.Marshal(tags)
-	if err != nil {
-		return err
-	}
-	return s.store.Set(ctx, nsTags, arn, string(raw))
-}
-
+// deleteTags drops a resource's whole tag set, which is what deleting the
+// resource does. Reads and writes of individual tags go through
+// serviceutil's shared helpers instead — see Service.tagStore.
 func (s *cloudwatchStore) deleteTags(ctx context.Context, arn string) {
 	_ = s.store.Delete(ctx, nsTags, arn)
-}
-
-func (s *cloudwatchStore) getTags(ctx context.Context, arn string) (map[string]string, error) {
-	raw, found, err := s.store.Get(ctx, nsTags, arn)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return map[string]string{}, nil
-	}
-	var tags map[string]string
-	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		return nil, err
-	}
-	return tags, nil
 }
 
 // ─── Service ──────────────────────────────────────────────────
@@ -623,6 +603,12 @@ func (s *Service) dispatchJSON(w http.ResponseWriter, r *http.Request, action st
 		s.describeAlarmsForMetricJSON(w, r)
 	case "DescribeAlarmHistory":
 		s.describeAlarmHistoryJSON(w, r)
+	case "ListTagsForResource":
+		s.listTagsForResourceJSON(w, r)
+	case "TagResource":
+		s.tagResourceJSON(w, r)
+	case "UntagResource":
+		s.untagResourceJSON(w, r)
 	case "SetAlarmState":
 		s.setAlarmStateJSON(w, r)
 	case "EnableAlarmActions":
@@ -935,7 +921,7 @@ func (s *Service) putMetricAlarmJSON(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if _, aerr := s.storeAlarmFromInput(r, in); aerr != nil {
+	if _, aerr := s.storeAlarmFromInput(r, in, jsonTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -1005,7 +991,7 @@ func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if _, aerr := s.storeAlarmFromInput(r, in); aerr != nil {
+	if _, aerr := s.storeAlarmFromInput(r, in, queryTagCfg); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -1013,12 +999,27 @@ func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
 }
 
 // storeAlarmFromInput persists a validated PutMetricAlarm request, recording
-// the ConfigurationUpdate history item AWS records for it.
-func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput) (*MetricAlarm, *protocol.AWSError) {
+// the ConfigurationUpdate history item AWS records for it. cfg carries the
+// caller's protocol spelling of a tag-validation error.
+func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput, cfg serviceutil.TagValidationConfig) (*MetricAlarm, *protocol.AWSError) {
 	arn := s.alarmARN(r.Context(), in.AlarmName)
 	now := s.clk.Now().UTC()
 
 	previous, existed := s.store.getAlarm(r.Context(), in.AlarmName)
+
+	// Tags apply on creation only: AWS ignores the Tags parameter when
+	// PutMetricAlarm updates an existing alarm, and points callers at
+	// TagResource/UntagResource instead. They go through the same validated
+	// path TagResource uses, so the 50-tag cap and the key/value rules do not
+	// depend on which door the tags came in through — and they are applied
+	// before the alarm is written, so a tag set AWS would reject fails the
+	// whole call instead of leaving an alarm behind with no tags.
+	if !existed && len(in.Tags) > 0 {
+		if aerr := s.addResourceTags(r.Context(), arn, in.Tags, cfg); aerr != nil {
+			return nil, aerr
+		}
+	}
+
 	alarm := in.toAlarm(arn, now, previous)
 	if err := s.store.putAlarm(r.Context(), alarm); err != nil {
 		return nil, protocol.ErrInternalError
@@ -1029,18 +1030,6 @@ func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput) (*MetricAl
 	summary := "Alarm " + in.AlarmName + " created"
 	if existed {
 		summary = "Alarm " + in.AlarmName + " updated"
-	}
-	// Tags apply on creation only: AWS ignores the Tags parameter when
-	// PutMetricAlarm updates an existing alarm, and points callers at
-	// TagResource/UntagResource instead.
-	if !existed && len(in.Tags) > 0 {
-		tags := make(map[string]string, len(in.Tags))
-		for _, tag := range in.Tags {
-			tags[tag.Key] = tag.Value
-		}
-		if err := s.store.setTags(r.Context(), arn, tags); err != nil {
-			return nil, protocol.ErrInternalError
-		}
 	}
 	_ = s.store.putAlarmHistory(r.Context(), AlarmHistoryItem{
 		AlarmName:       alarm.AlarmName,
@@ -1875,65 +1864,266 @@ func (s *Service) describeAlarmHistoryJSON(w http.ResponseWriter, r *http.Reques
 	}{AlarmHistoryItems: out})
 }
 
+// ─── Tagging ──────────────────────────────────────────────────
+//
+// CloudWatch is reachable over both the Query protocol and the JSON
+// protocol the AWS CLI and SDKs use, so each tagging operation has a pair
+// of handlers that differ only in how they read the request and write the
+// response. The behaviour between them lives in the helpers below, never
+// in one protocol's handler (issue #794 shipped because the JSON side was
+// simply absent).
+
+// alarmARNResourcePrefix is the resource segment a CloudWatch alarm ARN
+// carries: arn:aws:cloudwatch:<region>:<account>:alarm:<name>.
+const alarmARNResourcePrefix = "alarm:"
+
+// tagLimitMessage is the model's own wording for the 50-tag cap, from
+// TagResource's documentation.
+const tagLimitMessage = "You can associate as many as 50 tags with a CloudWatch resource."
+
+// queryTagCfg and jsonTagCfg are the same tag rules under each protocol's
+// spelling of the error. CloudWatch's InvalidParameterValueException carries
+// an awsQueryError trait whose code is the shorter InvalidParameterValue, so
+// one violation genuinely has two names, and these two vars are the only
+// place either is written.
+//
+// serviceutil.MaxTags is 50, which is CloudWatch's own limit, so Limit stays
+// at its default.
+var (
+	queryTagCfg = serviceutil.TagValidationConfig{
+		ExceededCode:    "InvalidParameterValue",
+		InvalidCode:     "InvalidParameterValue",
+		ExceededMessage: tagLimitMessage,
+	}
+	jsonTagCfg = serviceutil.TagValidationConfig{
+		ExceededCode:    "InvalidParameterValueException",
+		InvalidCode:     "InvalidParameterValueException",
+		ExceededMessage: tagLimitMessage,
+	}
+)
+
+// tagResourceStatus is the outcome of validating a tagging ResourceARN.
+type tagResourceStatus int
+
+const (
+	tagResourceOK tagResourceStatus = iota
+	tagResourceInvalidARN
+	tagResourceMissing
+)
+
+// classifyTagResource decides what a tagging ResourceARN names.
+//
+// The model marks ResourceARN required on all three tagging operations and
+// declares exactly two client errors for them: InvalidParameterValueException
+// for an ARN that is not a CloudWatch resource, and ResourceNotFoundException
+// for one that names a resource which does not exist. Answering 200 for both
+// would let a caller tag an alarm that was never created — it works here and
+// fails in their account, the divergence CONTRIBUTING calls the expensive one.
+//
+// AWS tags alarms, dashboards, metric streams and Contributor Insights rules.
+// Overcast emulates alarms only, so an ARN naming one of the other three is
+// well-formed but refers to something that genuinely does not exist here, and
+// gets the same ResourceNotFoundException a missing alarm does.
+func (s *Service) classifyTagResource(ctx context.Context, arn string) tagResourceStatus {
+	if protocol.ServiceFromARN(arn) != serviceName {
+		return tagResourceInvalidARN
+	}
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return tagResourceInvalidARN
+	}
+	name, isAlarm := strings.CutPrefix(parts[5], alarmARNResourcePrefix)
+	if !isAlarm || name == "" {
+		return tagResourceMissing
+	}
+	if _, found := s.store.getAlarm(ctx, name); !found {
+		return tagResourceMissing
+	}
+	return tagResourceOK
+}
+
+// queryError renders the status as the Query protocol's error, or nil when
+// the resource is fine.
+func (st tagResourceStatus) queryError(arn string) *protocol.AWSError {
+	return st.awsError(arn, queryTagCfg.InvalidCode)
+}
+
+// jsonError renders the status as the JSON protocol's error, or nil when the
+// resource is fine.
+func (st tagResourceStatus) jsonError(arn string) *protocol.AWSError {
+	return st.awsError(arn, jsonTagCfg.InvalidCode)
+}
+
+func (st tagResourceStatus) awsError(arn, invalidARNCode string) *protocol.AWSError {
+	switch st {
+	case tagResourceInvalidARN:
+		return &protocol.AWSError{
+			Code:       invalidARNCode,
+			Message:    "The value " + strconv.Quote(arn) + " for parameter ResourceARN is not a valid CloudWatch resource ARN.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	case tagResourceMissing:
+		return &protocol.AWSError{
+			Code:       "ResourceNotFoundException",
+			Message:    "The named resource does not exist.",
+			HTTPStatus: http.StatusNotFound,
+		}
+	case tagResourceOK:
+		// Nothing to report — the resource exists.
+	}
+	return nil
+}
+
+// sortedTags renders a stored tag map as an AWS tag list ordered by key.
+// Go map iteration is randomised, so without this the same resource
+// returns its tags in a different order on every call.
+func sortedTags(tags map[string]string) []Tag {
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]Tag, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, Tag{Key: k, Value: tags[k]})
+	}
+	return out
+}
+
+// tagStore exposes the cloudwatch:tags namespace through serviceutil's shared
+// tag helpers, so the merge, remove and validation rules are the ones every
+// other service uses rather than a third hand-rolled copy of them.
+func (s *Service) tagStore() serviceutil.TagStore {
+	return &serviceutil.NSStore{Store: s.store.store, NS: nsTags}
+}
+
+// addResourceTags merges add into the tag set stored against arn, overwriting
+// the value of any key already present, and validates the result. A rejected
+// set is not written.
+func (s *Service) addResourceTags(ctx context.Context, arn string, add []Tag, cfg serviceutil.TagValidationConfig) *protocol.AWSError {
+	incoming := make(map[string]string, len(add))
+	for _, t := range add {
+		incoming[t.Key] = t.Value
+	}
+	return serviceutil.ApplyStoreTags(ctx, s.tagStore(), arn, incoming, cfg)
+}
+
+// removeResourceTags deletes keys from the tag set stored against arn.
+// A key that is not present is ignored, as on AWS.
+func (s *Service) removeResourceTags(ctx context.Context, arn string, keys []string) *protocol.AWSError {
+	return serviceutil.RemoveStoreTags(ctx, s.tagStore(), arn, keys)
+}
+
+// resourceTags reads the tag set stored against arn.
+func (s *Service) resourceTags(ctx context.Context, arn string) (map[string]string, *protocol.AWSError) {
+	return serviceutil.ListStoreTags(ctx, s.tagStore(), arn)
+}
+
 func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceARN")
-	tags, err := s.store.getTags(r.Context(), arn)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+	if aerr := s.classifyTagResource(r.Context(), arn).queryError(arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	tags, aerr := s.resourceTags(r.Context(), arn)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 	var members strings.Builder
-	for k, v := range tags {
+	for _, t := range sortedTags(tags) {
 		members.WriteString("<member>")
-		members.WriteString("<Key>" + xmlEscape(k) + "</Key>")
-		members.WriteString("<Value>" + xmlEscape(v) + "</Value>")
+		members.WriteString("<Key>" + xmlEscape(t.Key) + "</Key>")
+		members.WriteString("<Value>" + xmlEscape(t.Value) + "</Value>")
 		members.WriteString("</member>")
 	}
-	body := fmt.Sprintf("<Tags>%s</Tags>", members.String())
-	writeXMLResult(w, r, "ListTagsForResource", body)
+	writeXMLResult(w, r, "ListTagsForResource", "<Tags>"+members.String()+"</Tags>")
+}
+
+func (s *Service) listTagsForResourceJSON(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+
+	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	tags, aerr := s.resourceTags(r.Context(), in.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	writeJSONResult(w, r, struct {
+		Tags []Tag `json:"Tags"`
+	}{Tags: sortedTags(tags)})
 }
 
 func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ResourceARN")
-	tags, err := s.store.getTags(r.Context(), arn)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+	if aerr := s.classifyTagResource(r.Context(), arn).queryError(arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	for i := 1; ; i++ {
-		k := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
-		if k == "" {
-			break
-		}
-		v := r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
-		tags[k] = v
-	}
-	if err := s.store.setTags(r.Context(), arn, tags); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+	if aerr := s.addResourceTags(r.Context(), arn, memberTags(r, "Tags"), queryTagCfg); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 	writeXMLResult(w, r, "TagResource", "")
 }
 
-func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
-	arn := r.FormValue("ResourceARN")
-	tags, err := s.store.getTags(r.Context(), arn)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+func (s *Service) tagResourceJSON(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ResourceARN string `json:"ResourceARN"`
+		Tags        []Tag  `json:"Tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
 		return
 	}
-	for i := 1; ; i++ {
-		k := r.FormValue(fmt.Sprintf("TagKeys.member.%d", i))
-		if k == "" {
-			break
-		}
-		delete(tags, k)
+	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	if err := s.store.setTags(r.Context(), arn, tags); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+	if aerr := s.addResourceTags(r.Context(), in.ResourceARN, in.Tags, jsonTagCfg); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	writeJSONResult(w, r, struct{}{})
+}
+
+func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("ResourceARN")
+	if aerr := s.classifyTagResource(r.Context(), arn).queryError(arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if aerr := s.removeResourceTags(r.Context(), arn, memberList(r, "TagKeys")); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 	writeXMLResult(w, r, "UntagResource", "")
+}
+
+func (s *Service) untagResourceJSON(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ResourceARN string   `json:"ResourceARN"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		return
+	}
+	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := s.removeResourceTags(r.Context(), in.ResourceARN, in.TagKeys); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	writeJSONResult(w, r, struct{}{})
 }
 
 // startMetricDataSweeper starts the background metric-data retention sweep.

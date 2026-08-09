@@ -424,7 +424,30 @@ Two more shapes that look reasonable and are not:
 
 ### Testing a published image rather than a source build
 
-The `overcast` service declares `build:` with no `image:`, so there is no
+Through `cmd/compat`, name it and it is what runs:
+
+```bash
+go run ./cmd/compat --overcast-image ghcr.io/neaox/overcast:<version>-rc.<n>
+```
+
+Naming an image **selects the container**, so a `bin/overcast` sitting in the
+tree is passed over rather than silently preferred, and the run says which
+artifact it chose:
+
+```
+compat: using the container image ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1 — --overcast-image names it, …
+compat: NOT using the local binary /repo/bin/overcast: --overcast-image was given, …
+compat: Overcast ready at http://localhost:4570 (container image ghcr.io/neaox/overcast:0.0.1-alpha.33-rc.1, managed by compat)
+```
+
+It did not always: binary discovery used to run first unconditionally and the
+image was a fallback, so an RC was once "compat-tested" against a day-old local
+build (issue #801). If a run does not print the image you named, you are not
+testing it — check that line before believing any result. The same applies when
+compat is not managing the instance at all (`--endpoint`, or
+`--start-overcast=never`): the flag cannot apply, and the run says so.
+
+**Under compose it is different.** The `overcast` service declares `build:` with no `image:`, so there is no
 override that points it at a registry tag — useful when the thing under test is
 a release candidate and you want the bits CI published, not a local rebuild.
 Build the harness, then retag:
@@ -476,10 +499,31 @@ COMPAT_DOCKER_GID=$(stat -c %g /var/run/docker.sock) \
 
 - Do **not** use shell scripts as entry points (`sh -c "..."`) — use a proper
   language runtime command in `CMD` to avoid platform-specific shell differences.
-- Do **not** use `#!/bin/sh` shebangs in TypeScript; rely on `node --import tsx/esm`.
+- Do **not** use `#!/bin/sh` shebangs in TypeScript. TypeScript suites are
+  launched as `node run.js`, a plain-JavaScript entry point that checks the
+  Node version and then imports the `.ts` runner — Node strips the types
+  itself, so there is no build step and no loader (no `tsx`). Relative
+  imports name the `.ts` file, and the suite's `tsconfig.json` sets
+  `allowImportingTsExtensions`, `erasableSyntaxOnly` and
+  `verbatimModuleSyntax` so `tsc --noEmit` means "Node can run this".
 - Do **not** hard-code `/tmp` paths; use `os.tmpdir()` / Node's `tmp` utilities.
-- All suite images derive from official multi-arch base images (`node:20-alpine`,
-  `golang:1.24-alpine`) and build cleanly on `amd64` and `arm64`.
+- Do **not** hard-code an interpreter name in a suite's `Argv`. `python3` is
+  right on Linux and macOS, and on Windows it is usually a Microsoft Store
+  *alias stub* — on PATH, executable, and good only for printing "Python was
+  not found". So `exec.LookPath` proves nothing: probe `--version` and require
+  the answer to look right (`compat/python.go`). If nothing usable is found,
+  set `SuiteConfig.ArgvErr` — the runner and the orchestrator both report it
+  as a suite failure naming what was tried, rather than spawning something
+  that dies further from its cause.
+- Do **not** spawn an npm-installed CLI by its bare name (`npx`, `npm`). On
+  Windows those are `.cmd` shims: `spawn` will not find them without an
+  extension, and since the CVE-2024-27980 fix refuses to run them at all
+  without `shell: true` (`spawn EINVAL`). Resolve the package's own entry
+  point and run it with `process.execPath` — see `runCdk` in the cdk suite.
+- All suite images derive from official multi-arch base images (`node:24-alpine`,
+  `golang:1.24-alpine`) and build cleanly on `amd64` and `arm64`. Node type
+  stripping needs 22.18+ on the 22.x line or 23.6+, so a TypeScript suite on
+  an older Node base image cannot start at all.
 
 ---
 

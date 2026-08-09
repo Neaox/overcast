@@ -185,25 +185,27 @@ for catching missing permissions early, not a security control.
 
 ## Summary
 
-| Category               | ✅ Supported |
-| ---------------------- | ------------ |
-| Users                  | 5            |
-| Access keys            | 3            |
-| User inline policies   | 4            |
-| User managed policies  | 3            |
-| Permissions boundaries | 4            |
-| User tagging           | 3            |
-| Roles                  | 6            |
-| Role inline policies   | 4            |
-| Role managed policies  | 3            |
-| Role tagging           | 3            |
-| Instance profiles      | 7            |
-| Managed policies       | 4            |
-| Groups                 | 7            |
-| Group inline policies  | 4            |
-| Group managed policies | 3            |
-| Policy simulation      | 2            |
-| Account details        | 1            |
+| Category                 | ✅ Supported |
+| ------------------------ | ------------ |
+| Users                    | 5            |
+| Access keys              | 3            |
+| User inline policies     | 4            |
+| User managed policies    | 3            |
+| Permissions boundaries   | 4            |
+| User tagging             | 3            |
+| Roles                    | 6            |
+| Role inline policies     | 4            |
+| Role managed policies    | 3            |
+| Role tagging             | 3            |
+| Managed policy tagging   | 3            |
+| Instance profile tagging | 3            |
+| Instance profiles        | 7            |
+| Managed policies         | 4            |
+| Groups                   | 7            |
+| Group inline policies    | 4            |
+| Group managed policies   | 3            |
+| Policy simulation        | 2            |
+| Account details          | 1            |
 
 ---
 
@@ -213,7 +215,7 @@ for catching missing permissions early, not a security control.
 
 | Operation    | Status       | Notes                                                                                            | AWS Docs                                                                        |
 | ------------ | ------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `CreateUser` | ✅ Supported |                                                                                                  | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateUser.html) |
+| `CreateUser` | ✅ Supported | Inline `Tags` applied at creation                                                                | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateUser.html) |
 | `GetUser`    | ✅ Supported |                                                                                                  | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetUser.html)    |
 | `ListUsers`  | ✅ Supported |                                                                                                  | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListUsers.html)  |
 | `UpdateUser` | ✅ Supported |                                                                                                  | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UpdateUser.html) |
@@ -265,7 +267,7 @@ for catching missing permissions early, not a security control.
 
 | Operation                 | Status       | Notes                                                                                         | AWS Docs                                                                                     |
 | ------------------------- | ------------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `CreateRole`              | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateRole.html)              |
+| `CreateRole`              | ✅ Supported | Inline `Tags` applied at creation                                                             | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateRole.html)              |
 | `GetRole`                 | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetRole.html)                 |
 | `ListRoles`               | ✅ Supported |                                                                                               | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListRoles.html)               |
 | `DeleteRole`              | ✅ Supported | DeleteConflict (409) while an instance profile association or inline/attached policies remain | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteRole.html)              |
@@ -297,23 +299,39 @@ for catching missing permissions early, not a security control.
 | `UntagRole`    | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UntagRole.html)    |
 | `ListRoleTags` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListRoleTags.html) |
 
+### Managed policy tagging
+
+| Operation        | Status       | Notes | AWS Docs                                                                            |
+| ---------------- | ------------ | ----- | ----------------------------------------------------------------------------------- |
+| `TagPolicy`      | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_TagPolicy.html)      |
+| `UntagPolicy`    | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UntagPolicy.html)    |
+| `ListPolicyTags` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicyTags.html) |
+
+### Instance profile tagging
+
+| Operation                 | Status       | Notes | AWS Docs                                                                                     |
+| ------------------------- | ------------ | ----- | -------------------------------------------------------------------------------------------- |
+| `TagInstanceProfile`      | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_TagInstanceProfile.html)      |
+| `UntagInstanceProfile`    | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_UntagInstanceProfile.html)    |
+| `ListInstanceProfileTags` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListInstanceProfileTags.html) |
+
 ### Instance profiles
 
-| Operation                       | Status       | Notes | AWS Docs                                                                                           |
-| ------------------------------- | ------------ | ----- | -------------------------------------------------------------------------------------------------- |
-| `CreateInstanceProfile`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateInstanceProfile.html)         |
-| `GetInstanceProfile`            | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetInstanceProfile.html)            |
-| `DeleteInstanceProfile`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteInstanceProfile.html)         |
-| `AddRoleToInstanceProfile`      | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_AddRoleToInstanceProfile.html)      |
-| `RemoveRoleFromInstanceProfile` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_RemoveRoleFromInstanceProfile.html) |
-| `ListInstanceProfiles`          | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListInstanceProfiles.html)          |
-| `ListInstanceProfilesForRole`   | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListInstanceProfilesForRole.html)   |
+| Operation                       | Status       | Notes                             | AWS Docs                                                                                           |
+| ------------------------------- | ------------ | --------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `CreateInstanceProfile`         | ✅ Supported | Inline `Tags` applied at creation | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreateInstanceProfile.html)         |
+| `GetInstanceProfile`            | ✅ Supported |                                   | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetInstanceProfile.html)            |
+| `DeleteInstanceProfile`         | ✅ Supported |                                   | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteInstanceProfile.html)         |
+| `AddRoleToInstanceProfile`      | ✅ Supported |                                   | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_AddRoleToInstanceProfile.html)      |
+| `RemoveRoleFromInstanceProfile` | ✅ Supported |                                   | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_RemoveRoleFromInstanceProfile.html) |
+| `ListInstanceProfiles`          | ✅ Supported |                                   | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListInstanceProfiles.html)          |
+| `ListInstanceProfilesForRole`   | ✅ Supported |                                   | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListInstanceProfilesForRole.html)   |
 
 ### Managed policies
 
 | Operation      | Status       | Notes                                                                                                                        | AWS Docs                                                                          |
 | -------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `CreatePolicy` | ✅ Supported |                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicy.html) |
+| `CreatePolicy` | ✅ Supported | Inline `Tags` applied at creation                                                                                            | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicy.html) |
 | `GetPolicy`    | ✅ Supported |                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicy.html)    |
 | `ListPolicies` | ✅ Supported |                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicies.html) |
 | `DeletePolicy` | ✅ Supported | DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicy.html) |

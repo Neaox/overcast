@@ -106,11 +106,11 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Cognito          | [cognito.md](./services/cognito.md)                 | 70  | Comprehensive / broad support |
 | EC2 / VPC        | [ec2.md](./services/ec2.md)                         | 72  | Comprehensive / broad support |
 | SNS              | [sns.md](./services/sns.md)                         | 29  | Comprehensive / broad support |
-| IAM              | [iam.md](./services/iam.md)                         | 66  | Core CRUD + common workflows  |
+| IAM              | [iam.md](./services/iam.md)                         | 72  | Core CRUD + common workflows  |
 | ECS              | [ecs.md](./services/ecs.md)                         | 48  | Core CRUD + common workflows  |
 | ECR              | [ecr.md](./services/ecr.md)                         | 20  | Core CRUD + common workflows  |
 | KMS              | [kms.md](./services/kms.md)                         | 33  | Core CRUD + common workflows  |
-| Kinesis          | [kinesis.md](./services/kinesis.md)                 | 17  | Core CRUD + common workflows  |
+| Kinesis          | [kinesis.md](./services/kinesis.md)                 | 20  | Core CRUD + common workflows  |
 | EventBridge      | [eventbridge.md](./services/eventbridge.md)         | 28  | Core CRUD + common workflows  |
 | Scheduler        | [scheduler.md](./services/scheduler.md)             | 12  | Core CRUD + common workflows  |
 | CloudFormation   | [cloudformation.md](./services/cloudformation.md)   | 52  | Core CRUD + common workflows  |
@@ -122,7 +122,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 22  | Core CRUD + common workflows  |
 | SSM              | [ssm.md](./services/ssm.md)                         | 18  | Core CRUD + common workflows  |
 | CloudWatch Logs  | [cloudwatch-logs.md](./services/cloudwatch-logs.md) | 19  | Core CRUD + common workflows  |
-| SES              | [ses.md](./services/ses.md)                         | 42  | Core CRUD + common workflows  |
+| SES              | [ses.md](./services/ses.md)                         | 45  | Core CRUD + common workflows  |
 | STS              | [sts.md](./services/sts.md)                         | 11  | Core CRUD + common workflows  |
 | Route 53         | [route53.md](./services/route53.md)                 | 25  | Core CRUD + common workflows  |
 | Auto Scaling     | [autoscaling.md](./services/autoscaling.md)         | 25  | Core CRUD + common workflows  |
@@ -130,7 +130,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | Pipes            | [pipes.md](./services/pipes.md)                     | 8   | Minimal / targeted support    |
 | WAF v2           | [waf.md](./services/waf.md)                         | 7   | Minimal / targeted support    |
 | Shield           | [shield.md](./services/shield.md)                   | 8   | Minimal / targeted support    |
-| ACM              | [acm.md](./services/acm.md)                         | 7   | Minimal / targeted support    |
+| ACM              | [acm.md](./services/acm.md)                         | 10  | Minimal / targeted support    |
 | Athena           | [athena.md](./services/athena.md)                   | 11  | Minimal / targeted support    |
 | Bedrock          | [bedrock.md](./services/bedrock.md)                 | 2   | Minimal / targeted support    |
 | CloudWatch       | [cloudwatch.md](./services/cloudwatch.md)           | 17  | Minimal / targeted support    |
@@ -140,12 +140,12 @@ For a shorter overview, start with the [service reference index](./services/READ
 | OpenSearch       | [opensearch.md](./services/opensearch.md)           | 8   | Minimal / targeted support    |
 | AppRegistry      | [appregistry.md](./services/appregistry.md)         | 22  | IaC/discovery-oriented stub   |
 | Backup           | [backup.md](./services/backup.md)                   | 9   | IaC/discovery-oriented stub   |
-| CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 9   | IaC/discovery-oriented stub   |
+| CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 12  | IaC/discovery-oriented stub   |
 | EKS              | [eks.md](./services/eks.md)                         | 52  | IaC/discovery-oriented stub   |
 | ELBv2            | [elb.md](./services/elb.md)                         | 18  | IaC/discovery-oriented stub   |
 | MSK              | [msk.md](./services/msk.md)                         | 29  | IaC/discovery-oriented stub   |
 | Organizations    | [organizations.md](./services/organizations.md)     | 1   | IaC/discovery-oriented stub   |
-| Transfer Family  | [transfer.md](./services/transfer.md)               | 10  | IaC/discovery-oriented stub   |
+| Transfer Family  | [transfer.md](./services/transfer.md)               | 13  | IaC/discovery-oriented stub   |
 
 <!-- END overcast:service-index -->
 

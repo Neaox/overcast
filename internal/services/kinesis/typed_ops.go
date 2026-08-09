@@ -52,6 +52,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"RemoveTagsFromStream": op.NewTyped[removeTagsFromStreamRequest, struct{}](
 			"RemoveTagsFromStream", h.removeTagsFromStreamTyped,
 		),
+		"TagResource": op.NewTyped[tagResourceRequest, struct{}](
+			"TagResource", h.tagResourceTyped,
+		),
+		"UntagResource": op.NewTyped[untagResourceRequest, struct{}](
+			"UntagResource", h.untagResourceTyped,
+		),
+		"ListTagsForResource": op.NewTyped[listTagsForResourceRequest, listTagsForResourceResponse](
+			"ListTagsForResource", h.listTagsForResourceTyped,
+		),
 		"IncreaseStreamRetentionPeriod": op.NewTyped[retentionPeriodRequest, struct{}](
 			"IncreaseStreamRetentionPeriod", h.increaseStreamRetentionPeriodTyped,
 		),

@@ -22,21 +22,21 @@ func init() {
 
 		// Schedules
 		capabilities.Capability{Operation: "CreateSchedule", Category: catSchedules,
-			Status: capabilities.StatusSupported, Notes: "Group-specific or default group path; rejects a target type Overcast cannot fire"},
+			Status: capabilities.StatusSupported, Notes: "`POST /schedules/{Name}`; `GroupName` in the body, defaulting to `default`; rejects a target type Overcast cannot fire"},
 		capabilities.Capability{Operation: "GetSchedule", Category: catSchedules,
-			Status: capabilities.StatusSupported, Notes: "Returns full schedule definition"},
+			Status: capabilities.StatusSupported, Notes: "`GET /schedules/{Name}`; `?groupName` selects the group"},
 		capabilities.Capability{Operation: "UpdateSchedule", Category: catSchedules,
-			Status: capabilities.StatusSupported, Notes: "Updates expression/target/state fields; rejects a target type Overcast cannot fire"},
+			Status: capabilities.StatusSupported, Notes: "`PUT /schedules/{Name}`; `GroupName` in the body; rejects a target type Overcast cannot fire"},
 		capabilities.Capability{Operation: "DeleteSchedule", Category: catSchedules,
-			Status: capabilities.StatusSupported, Notes: "Deletes schedule"},
+			Status: capabilities.StatusSupported, Notes: "`DELETE /schedules/{Name}`; `?groupName` selects the group"},
 		capabilities.Capability{Operation: "ListSchedules", Category: catSchedules,
-			Status: capabilities.StatusSupported, Notes: "Optional `ScheduleGroup` filter"},
+			Status: capabilities.StatusSupported, Notes: "`GET /schedules`; optional `?ScheduleGroup` filter"},
 
 		// Tags
 		capabilities.Capability{Operation: "TagResource", Category: catTags,
-			Status: capabilities.StatusSupported, Notes: "Merges tags on ARN"},
+			Status: capabilities.StatusSupported, Notes: "Merges tags on ARN, at the shared `/tags/{ResourceArn}` path"},
 		capabilities.Capability{Operation: "UntagResource", Category: catTags,
-			Status: capabilities.StatusSupported, Notes: "Removes keys from ARN"},
+			Status: capabilities.StatusSupported, Notes: "Removes `?TagKeys` from ARN"},
 		capabilities.Capability{Operation: "ListTagsForResource", Category: catTags,
 			Status: capabilities.StatusSupported, Notes: "Returns tag map"},
 	)

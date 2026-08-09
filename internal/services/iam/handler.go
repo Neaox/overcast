@@ -157,6 +157,15 @@ func (h *Handler) initOps() {
 		"TagUser":      h.TagUser,
 		"UntagUser":    h.UntagUser,
 		"ListUserTags": h.ListUserTags,
+
+		// Policy and instance-profile tagging exist only as typed operations;
+		// they have no separate legacy implementation to reach.
+		"TagPolicy":               h.typedHandler("TagPolicy"),
+		"UntagPolicy":             h.typedHandler("UntagPolicy"),
+		"ListPolicyTags":          h.typedHandler("ListPolicyTags"),
+		"TagInstanceProfile":      h.typedHandler("TagInstanceProfile"),
+		"UntagInstanceProfile":    h.typedHandler("UntagInstanceProfile"),
+		"ListInstanceProfileTags": h.typedHandler("ListInstanceProfileTags"),
 		// Service-linked roles
 		"CreateServiceLinkedRole": h.CreateServiceLinkedRole,
 		// Instance profile by role
@@ -250,6 +259,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Path:                path,
 		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary: boundary,
+		Tags:                createTags(formTagEntries(r)),
 	}
 	if aerr := h.store.putUser(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -526,6 +536,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		AssumeRolePolicyDocument: assumeDoc,
 		CreateDate:               h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		PermissionsBoundary:      boundary,
+		Tags:                     createTags(formTagEntries(r)),
 	}
 	if aerr := h.store.putRole(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -683,6 +694,7 @@ func (h *Handler) CreateInstanceProfile(w http.ResponseWriter, r *http.Request) 
 		Arn:                 h.store.arnForProfile(path, name),
 		Path:                path,
 		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:                createTags(formTagEntries(r)),
 	}
 	if aerr := h.store.putProfile(r.Context(), profile); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -824,6 +836,7 @@ func (h *Handler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		Path:       path,
 		Document:   doc,
 		CreateDate: h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:       createTags(formTagEntries(r)),
 	}
 	if aerr := h.store.putPolicy(r.Context(), p); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
@@ -1531,6 +1544,19 @@ func (h *Handler) ListUserPolicies(w http.ResponseWriter, r *http.Request) {
 
 // ─── Role Tagging ─────────────────────────────────────────────────────────────
 
+// formTagEntries reads a Query-protocol Tags.member.N.Key/Value list out of
+// the request form. IAM's legacy handlers all decode tags this way.
+func formTagEntries(r *http.Request) []tagEntry {
+	var out []tagEntry
+	for i := 1; ; i++ {
+		key := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
+		if key == "" {
+			return out
+		}
+		out = append(out, tagEntry{Key: key, Value: r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))})
+	}
+}
+
 // TagRole adds or overwrites tags on a role.
 func (h *Handler) TagRole(w http.ResponseWriter, r *http.Request) {
 	roleName := r.FormValue("RoleName")
@@ -1543,19 +1569,7 @@ func (h *Handler) TagRole(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tags := role.GetTags()
-	if tags == nil {
-		tags = make(map[string]string)
-	}
-	for i := 1; ; i++ {
-		key := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
-		if key == "" {
-			break
-		}
-		value := r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
-		tags[key] = value
-	}
-	role.SetTags(tags)
+	role.SetTags(mergeTagEntries(role.GetTags(), formTagEntries(r)))
 	if aerr := h.store.putRole(r.Context(), role); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
@@ -1631,19 +1645,7 @@ func (h *Handler) TagUser(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tags := u.GetTags()
-	if tags == nil {
-		tags = make(map[string]string)
-	}
-	for i := 1; ; i++ {
-		key := r.FormValue(fmt.Sprintf("Tags.member.%d.Key", i))
-		if key == "" {
-			break
-		}
-		value := r.FormValue(fmt.Sprintf("Tags.member.%d.Value", i))
-		tags[key] = value
-	}
-	u.SetTags(tags)
+	u.SetTags(mergeTagEntries(u.GetTags(), formTagEntries(r)))
 	if aerr := h.store.putUser(r.Context(), u); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return

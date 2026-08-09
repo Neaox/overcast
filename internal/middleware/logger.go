@@ -97,6 +97,15 @@ func detectService(r *http.Request, body ...[]byte) string {
 		return "apigateway"
 	case strings.HasPrefix(r.URL.Path, "/applications"):
 		return "appregistry"
+	case strings.HasPrefix(r.URL.Path, "/schedules"),
+		strings.HasPrefix(r.URL.Path, "/schedule-groups"):
+		// EventBridge Scheduler's entire non-tag surface. DataBrew is the only
+		// other modeled service binding these paths and Overcast does not
+		// implement it, so there is no ambiguity for the credential scope to
+		// resolve. Scheduler's tag operations stay unclaimed here: /tags is
+		// shared with API Gateway, EKS and Pipes and is dispatched on the
+		// resource ARN (see router.go).
+		return "scheduler"
 	case r.URL.Path == "/_events":
 		return "events"
 	case r.URL.Path == "/_metrics":

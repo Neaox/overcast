@@ -38,7 +38,7 @@ import { ShieldClient } from "@aws-sdk/client-shield"
 import { CloudFrontClient } from "@aws-sdk/client-cloudfront"
 import { ECRClient } from "@aws-sdk/client-ecr"
 import { NodeHttpHandler } from "@smithy/node-http-handler"
-import type { TestContext } from "./harness.js"
+import type { TestContext } from "./harness.ts"
 
 const CREDENTIALS = {
   accessKeyId: "overcast",

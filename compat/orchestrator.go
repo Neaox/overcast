@@ -898,6 +898,9 @@ func (o *Orchestrator) Shutdown() {
 
 // startSuite starts a single suite process.
 func (o *Orchestrator) startSuite(sp *SuiteProcess) error {
+	if sp.Config.ArgvErr != nil {
+		return fmt.Errorf("suite %q: %w", sp.Name, sp.Config.ArgvErr)
+	}
 	if len(sp.Config.Argv) == 0 {
 		return fmt.Errorf("suite %q: empty argv", sp.Name)
 	}

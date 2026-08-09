@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,5 +123,82 @@ func writeTestReport(t *testing.T, path string, report *compat.RunReport) {
 	t.Helper()
 	if err := writeRunReportFile(path, report); err != nil {
 		t.Fatalf("write test report %s: %v", path, err)
+	}
+}
+
+func TestArtifactNamedDistinguishesARequestFromADefault(t *testing.T) {
+	// Given: every way --overcast-image can arrive at a value
+	// When: it is classified as a request or a default
+	// Then: only a value the caller actually supplied — on the command line or
+	// through the env var — counts. This is the distinction the whole fix for
+	// issue #801 turns on: the flag is non-empty even when nobody asked for
+	// anything, because it defaults to defaultOvercastImage, so the value
+	// cannot answer the question on its own.
+	cases := []struct {
+		name      string
+		value     string
+		env       string
+		flagGiven bool
+		want      bool
+	}{
+		{"compiled-in default", defaultOvercastImage, "", false, false},
+		{"named on the command line", "ghcr.io/neaox/overcast:rc", "", true, true},
+		{"named through the environment", "ghcr.io/neaox/overcast:rc", "ghcr.io/neaox/overcast:rc", false, true},
+		{"command line overriding the environment", "ghcr.io/neaox/overcast:rc", "ghcr.io/neaox/overcast:other", true, true},
+		{"explicitly emptied", "", "", true, false},
+		{"unset with an empty default", "", "", false, false},
+	}
+	for _, tc := range cases {
+		if got := artifactNamed(tc.value, tc.env, tc.flagGiven); got != tc.want {
+			t.Errorf("%s: artifactNamed(%q, %q, %v) = %v, want %v",
+				tc.name, tc.value, tc.env, tc.flagGiven, got, tc.want)
+		}
+	}
+}
+
+func TestResolveSuiteSelection_acceptsKnownNamesAndTheEmptyDefault(t *testing.T) {
+	// Given: the built-in suite names, as --suite would carry them.
+	known := compat.KnownSuiteNames()
+	if len(known) < 2 {
+		t.Fatalf("KnownSuiteNames() = %v, want at least two built-in suites", known)
+	}
+
+	// When: the flag is empty, meaning "every suite".
+	got, err := resolveSuiteSelection("")
+
+	// Then: no selection is returned and nothing is rejected.
+	if err != nil || len(got) != 0 {
+		t.Fatalf("resolveSuiteSelection(\"\") = %v, %v; want nil, nil", got, err)
+	}
+
+	// When: real names are given, spacing and all.
+	got, err = resolveSuiteSelection(known[0] + ", " + known[1])
+
+	// Then: they are passed through trimmed.
+	if err != nil {
+		t.Fatalf("resolveSuiteSelection() error = %v, want nil", err)
+	}
+	if len(got) != 2 || got[0] != known[0] || got[1] != known[1] {
+		t.Fatalf("resolveSuiteSelection() = %v, want [%s %s]", got, known[0], known[1])
+	}
+}
+
+func TestResolveSuiteSelection_rejectsTypoEvenAlongsideARealSuite(t *testing.T) {
+	// Given: a suite list where one name is a typo of a real suite.
+	known := compat.KnownSuiteNames()
+
+	// When: the flag is resolved.
+	got, err := resolveSuiteSelection(known[0] + ",definitely-not-a-suite")
+
+	// Then: the whole selection is refused — running the half that matched
+	// would report green for coverage the caller never asked about.
+	if err == nil {
+		t.Fatalf("resolveSuiteSelection() = %v, nil; want an unknown-suite error", got)
+	}
+	if !strings.Contains(err.Error(), `"definitely-not-a-suite"`) {
+		t.Errorf("error = %q, want it to name the unknown suite", err.Error())
+	}
+	if !strings.Contains(err.Error(), known[0]) {
+		t.Errorf("error = %q, want it to list the valid suites", err.Error())
 	}
 }

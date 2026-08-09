@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -473,7 +474,8 @@ func (h *Handler) V2SendEmail(w http.ResponseWriter, r *http.Request) {
 // V2CreateEmailIdentity handles PUT /v2/email/identities.
 func (h *Handler) V2CreateEmailIdentity(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		EmailIdentity string `json:"EmailIdentity"`
+		EmailIdentity string   `json:"EmailIdentity"`
+		Tags          []sesTag `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
@@ -486,9 +488,23 @@ func (h *Handler) V2CreateEmailIdentity(w http.ResponseWriter, r *http.Request) 
 	if !strings.Contains(req.EmailIdentity, "@") {
 		idType = "domain"
 	}
+	// AWS applies CreateEmailIdentity's Tags when the identity is made, and
+	// authorizes that separately from TagResource.
+	var tags map[string]string
+	if len(req.Tags) > 0 {
+		tags = make(map[string]string, len(req.Tags))
+		for _, t := range req.Tags {
+			tags[t.Key] = t.Value
+		}
+		if aerr := serviceutil.ValidateTags(sesTagCfg, tags); aerr != nil {
+			writeV2JSONError(w, r, aerr)
+			return
+		}
+	}
 	aerr := h.sesStore.putIdentity(r.Context(), &VerifiedIdentity{
 		Identity:  req.EmailIdentity,
 		Type:      idType,
+		Tags:      tags,
 		CreatedAt: h.clk.Now(),
 	})
 	if aerr != nil {
@@ -554,8 +570,16 @@ func (h *Handler) V2GetEmailIdentity(w http.ResponseWriter, r *http.Request) {
 		iType = "DOMAIN"
 	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"IdentityType":%q,"VerifiedForSendingStatus":true,"VerificationStatus":"SUCCESS","IdentityName":%q}`,
-		iType, v.Identity)
+	// GetEmailIdentity's modeled output carries the identity's Tags.
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"IdentityType":             iType,
+		"VerifiedForSendingStatus": true,
+		"VerificationStatus":       "SUCCESS",
+		"IdentityName":             v.Identity,
+		"Tags":                     sortedSESTags(v.Tags),
+	}); err != nil {
+		h.log.Error("ses: encode GetEmailIdentity response", zap.Error(err))
+	}
 }
 
 // V2DeleteEmailIdentity handles DELETE /v2/email/identities/{EmailIdentity}.
@@ -572,6 +596,138 @@ func (h *Handler) V2DeleteEmailIdentity(w http.ResponseWriter, r *http.Request) 
 	h.publish(r, events.SESIdentityDeleted, events.ResourcePayload{Name: identity})
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("{}")) //nolint:errcheck
+}
+
+// ─── SES v2 — resource tagging ───────────────────────────────────────────────
+
+// sesTagCfg tunes shared tag validation to SESv2's error shape.
+var sesTagCfg = serviceutil.TagValidationConfig{
+	ExceededCode:    "BadRequestException",
+	InvalidCode:     "BadRequestException",
+	ExceededMessage: "A resource can have a maximum of 50 tags.",
+}
+
+// sesTag is SESv2's wire shape for one tag.
+type sesTag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+// identityFromResourceARN extracts the identity name from an SES resource ARN.
+//
+// Configuration sets are the other taggable SESv2 resource; Overcast does not
+// implement them, so their ARNs are refused rather than silently treated as
+// identities.
+func identityFromResourceARN(arn string) (string, *protocol.AWSError) {
+	badARN := &protocol.AWSError{
+		Code:       "BadRequestException",
+		Message:    fmt.Sprintf("Invalid resource ARN: %s", arn),
+		HTTPStatus: http.StatusBadRequest,
+	}
+	if arn == "" {
+		return "", &protocol.AWSError{
+			Code: "BadRequestException", Message: "ResourceArn is required.", HTTPStatus: http.StatusBadRequest,
+		}
+	}
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 || !strings.HasPrefix(parts[5], "identity/") {
+		return "", badARN
+	}
+	identity := strings.TrimPrefix(parts[5], "identity/")
+	if identity == "" {
+		return "", badARN
+	}
+	return identity, nil
+}
+
+// loadIdentity and saveIdentity are the accessors the shared inline-tag
+// helpers drive. A missing identity surfaces as getIdentity's NotFoundException.
+func (h *Handler) loadIdentity(ctx context.Context, identity string) (*VerifiedIdentity, *protocol.AWSError) {
+	return h.sesStore.getIdentity(ctx, identity)
+}
+
+func (h *Handler) saveIdentity(ctx context.Context, v *VerifiedIdentity) *protocol.AWSError {
+	return h.sesStore.putIdentity(ctx, v)
+}
+
+// V2TagResource handles POST /v2/email/tags.
+func (h *Handler) V2TagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string   `json:"ResourceArn"`
+		Tags        []sesTag `json:"Tags"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	identity, aerr := identityFromResourceARN(req.ResourceArn)
+	if aerr != nil {
+		writeV2JSONError(w, r, aerr)
+		return
+	}
+	incoming := make(map[string]string, len(req.Tags))
+	for _, t := range req.Tags {
+		incoming[t.Key] = t.Value
+	}
+	if aerr := serviceutil.ApplyInlineTags(r.Context(), identity, incoming, sesTagCfg,
+		h.loadIdentity, h.saveIdentity); aerr != nil {
+		writeV2JSONError(w, r, aerr)
+		return
+	}
+	writeV2EmptyJSON(w)
+}
+
+// V2UntagResource handles DELETE /v2/email/tags. ResourceArn and TagKeys are
+// httpQuery members, so both arrive in the query string and TagKeys repeats.
+func (h *Handler) V2UntagResource(w http.ResponseWriter, r *http.Request) {
+	identity, aerr := identityFromResourceARN(r.URL.Query().Get("ResourceArn"))
+	if aerr != nil {
+		writeV2JSONError(w, r, aerr)
+		return
+	}
+	if aerr := serviceutil.RemoveInlineTags(r.Context(), identity, r.URL.Query()["TagKeys"],
+		h.loadIdentity, h.saveIdentity); aerr != nil {
+		writeV2JSONError(w, r, aerr)
+		return
+	}
+	writeV2EmptyJSON(w)
+}
+
+// V2ListTagsForResource handles GET /v2/email/tags, reading the resource from
+// the ResourceArn query parameter.
+func (h *Handler) V2ListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	identity, aerr := identityFromResourceARN(r.URL.Query().Get("ResourceArn"))
+	if aerr != nil {
+		writeV2JSONError(w, r, aerr)
+		return
+	}
+	tags, aerr := serviceutil.ListInlineTags(r.Context(), identity, h.loadIdentity)
+	if aerr != nil {
+		writeV2JSONError(w, r, aerr)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{"Tags": sortedSESTags(tags)}); err != nil {
+		h.log.Error("ses: encode ListTagsForResource response", zap.Error(err))
+	}
+}
+
+// writeV2EmptyJSON writes SESv2's empty success body.
+func writeV2EmptyJSON(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("{}")) //nolint:errcheck
+}
+
+// sortedSESTags flattens a tag map into a Key-sorted slice. Go randomizes map
+// iteration order per process, so without this the Tags array would reorder
+// between otherwise identical responses.
+func sortedSESTags(tags map[string]string) []sesTag {
+	out := make([]sesTag, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, sesTag{Key: k, Value: v})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 // ─── Delivery helpers ────────────────────────────────────────────────────────

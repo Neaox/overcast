@@ -274,7 +274,7 @@ docker-console:
 
 ## docker-slim: build the slim Docker image (no web UI, no SQLite, for CI)
 docker-slim:
-	docker build --target slim --build-arg NOSQLITE=1 -t $(SLIM_IMAGE) .
+	docker build --target slim -t $(SLIM_IMAGE) .
 
 ## docker-run: run the Docker image with debug logging (mounts Docker socket for Lambda)
 docker-run:

@@ -29,11 +29,11 @@
 
 | Service         | Ops | Highlights                                                                                                                                                                                                 |
 | --------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| IAM             | 66  | Users, roles, groups, policies, instance profiles; real policy simulation, **opt-in** request-time enforcement (`OVERCAST_ENFORCE_IAM`, default off)                                                                                                                                    |
+| IAM             | 72  | Users, roles, groups, policies, instance profiles; real policy simulation, **opt-in** request-time enforcement (`OVERCAST_ENFORCE_IAM`, default off)                                                                                                                                    |
 | ECS             | 48  | Clusters, task definitions, tasks (Docker), services with reconciler                                                                                                                                       |
 | ECR             | 20  | Repository CRUD + registry metadata (DescribeRegistry), image metadata (PutImage/DescribeImages/BatchGetImage/BatchDeleteImage/DescribeImageScanFindings), auth token, repository+lifecycle policies, tags |
 | KMS             | 33  | Keys, aliases, symmetric AES-256-GCM + RSA-2048 signing                                                                                                                                                    |
-| Kinesis         | 17  | Streams, records, shards, tags, retention                                                                                                                                                                  |
+| Kinesis         | 20  | Streams, records, shards, tags, retention                                                                                                                                                                  |
 | EventBridge     | 28  | Event buses, rules, targets, PutEvents, tags                                                                                                                                                               |
 | Scheduler       | 12  | Schedule groups, schedules, tags, clock-driven Lambda/SQS target firing                                                                                                                                    |
 | CloudFormation  | 52  | Stacks, change sets, async provisioner (~55 resource types including AppSync), intrinsic functions, GetAtt                                                                                                  |
@@ -44,7 +44,7 @@
 | Secrets Manager | 22  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
 | SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
 | CloudWatch Logs | 19  | Log groups, streams, events, FilterLogEvents, DeleteLogStream                                                                                                                                              |
-| SES             | 42  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
+| SES             | 45  | v1 + v2: SendEmail, SendRawEmail, identities, mail capture                                                                                                                                                 |
 | STS             | 11  | GetCallerIdentity, AssumeRole, GetSessionToken, temp credentials                                                                                                                                           |
 | Route 53        | 25  | Hosted zones (default NS/SOA, delegation sets), validated change batches, DNS-order pagination, tags, health checks — inert (no DNS served)                                                                |
 | Step Functions  | 14  | State machine CRUD plus a real ASL interpreter: all eight state types, Retry/Catch, Lambda/SQS/SNS/DynamoDB/nested-execution Task integrations, real GetExecutionHistory. Executions run synchronously; unsupported ASL fails loudly |
@@ -75,11 +75,11 @@
 | Cognito         | 70  |
 | EC2 / VPC       | 72  |
 | SNS             | 29  |
-| IAM             | 66  |
+| IAM             | 72  |
 | ECS             | 48  |
 | ECR             | 20  |
 | KMS             | 33  |
-| Kinesis         | 17  |
+| Kinesis         | 20  |
 | EventBridge     | 28  |
 | Scheduler       | 12  |
 | CloudFormation  | 52  |
@@ -91,7 +91,7 @@
 | Secrets Manager | 22  |
 | SSM             | 18  |
 | CloudWatch Logs | 19  |
-| SES             | 42  |
+| SES             | 45  |
 | STS             | 11  |
 | Route 53        | 25  |
 | Auto Scaling    | 25  |
@@ -99,7 +99,7 @@
 | Pipes           | 8   |
 | WAF v2          | 7   |
 | Shield          | 8   |
-| ACM             | 7   |
+| ACM             | 10  |
 | Athena          | 11  |
 | Bedrock         | 2   |
 | CloudWatch      | 17  |
@@ -109,12 +109,12 @@
 | OpenSearch      | 8   |
 | AppRegistry     | 22  |
 | Backup          | 9   |
-| CloudTrail      | 9   |
+| CloudTrail      | 12  |
 | EKS             | 52  |
 | ELBv2           | 18  |
 | MSK             | 29  |
 | Organizations   | 1   |
-| Transfer Family | 10  |
+| Transfer Family | 13  |
 
 <!-- END overcast:status -->
 

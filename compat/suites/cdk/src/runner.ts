@@ -1,7 +1,7 @@
-import { makeLifecycleGroups } from "./groups/lifecycle.js";
-import { makeRunId, runSuite, emitEvent, runGroup } from "./lib/harness.js";
-import type { TestGroup, TestContext, RunGroupOptions } from "./lib/harness.js";
-import { startCommandLoop } from "./lib/commands.js";
+import { makeLifecycleGroups } from "./groups/lifecycle.ts";
+import { makeRunId, runSuite, emitEvent, runGroup } from "./lib/harness.ts";
+import type { TestGroup, TestContext, RunGroupOptions } from "./lib/harness.ts";
+import { startCommandLoop } from "./lib/commands.ts";
 
 const SUITE = "cdk";
 

@@ -2157,7 +2157,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudwatch.md",
     "href": "services/cloudwatch.md",
     "title": "CloudWatch — Amazon CloudWatch",
-    "description": "Amazon CloudWatch (monitoring and alarms) uses the Query protocol — form-encoded POST requests with Action and Version=2010-08-01 parameters.",
+    "description": "Amazon CloudWatch (monitoring and alarms) answers both the Query protocol — form-encoded POST requests with Action and Version=2010-08-01 — and the JSON protocol the AWS CLI and SDKs send.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -2200,6 +2200,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Deliberate divergences",
         "id": "deliberate-divergences"
+      },
+      {
+        "depth": 2,
+        "text": "Tagging",
+        "id": "tagging"
       },
       {
         "depth": 2,
@@ -3286,6 +3291,16 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Managed policy tagging",
+        "id": "managed-policy-tagging"
+      },
+      {
+        "depth": 3,
+        "text": "Instance profile tagging",
+        "id": "instance-profile-tagging"
+      },
+      {
+        "depth": 3,
         "text": "Instance profiles",
         "id": "instance-profiles"
       },
@@ -4208,7 +4223,7 @@ export const DOCS_NAV = [
     "path": "docs/services/scheduler.md",
     "href": "services/scheduler.md",
     "title": "Scheduler — Amazon EventBridge Scheduler",
-    "description": "EventBridge Scheduler is served as a REST-JSON API under /_scheduler/*. This implementation focuses on schedule groups, schedules, tagging, and clock-driven target dispatch to...",
+    "description": "EventBridge Scheduler is served as a REST-JSON API at AWS's own paths, so an unmodified SDK or aws scheduler CLI call reaches it. This implementation focuses on schedule groups,...",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -4417,6 +4432,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "SES v2 — Identities",
         "id": "ses-v2-identities"
+      },
+      {
+        "depth": 3,
+        "text": "SES v2 — Tags",
+        "id": "ses-v2-tags"
       },
       {
         "depth": 3,

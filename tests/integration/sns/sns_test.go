@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -378,6 +380,67 @@ func TestPublish_deliversToSQSSubscriber(t *testing.T) {
 	}
 	if envelope.TopicArn != topicArn {
 		t.Errorf("expected TopicArn=%q, got %q", topicArn, envelope.TopicArn)
+	}
+}
+
+// TestPublish_unsubscribeURLCarriesCallerPort pins the notification envelope's
+// UnsubscribeURL to the origin the *publisher* dialed, not to OVERCAST_PORT.
+//
+// Overcast cannot see its own port mapping: with `docker run -p 4570:4566` the
+// only proof of a dialable port is the Host the caller sent. Minting the link
+// from config instead handed every subscriber `http://localhost:4566/…`, a port
+// nothing is listening on — and, worse, possibly a *different* instance. The
+// bug is invisible on a 1:1 mapping, so the request here arrives on a port that
+// is deliberately not the one the server bound. Issue #797;
+// docs/plans/client-facing-url-minting.md.
+func TestPublish_unsubscribeURLCarriesCallerPort(t *testing.T) {
+	// Given: a queue subscribed to a topic.
+	srv := helpers.NewTestServer(t)
+	topicArn := createTopic(t, srv, "remapped-topic")
+	queueURL := sqsCreateQueue(t, srv, "remapped-queue")
+	subscribe(t, srv, topicArn, "sqs", "arn:aws:sqs:us-east-1:000000000000:remapped-queue")
+
+	// When: the publish arrives on a published port that is not the listen port.
+	const publishedHost = "localhost:4570"
+	if got := net.JoinHostPort("localhost", strconv.Itoa(srv.Config.Port)); got == publishedHost {
+		t.Fatalf("test server bound %s, the very port this test uses to stand for a remap", got)
+	}
+	resp := snsCallFromHost(t, srv, publishedHost, "Publish", url.Values{
+		"TopicArn": {topicArn},
+		"Message":  {"hello from a remapped port"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// Then: the delivered envelope's UnsubscribeURL names that port.
+	var envelope struct {
+		UnsubscribeURL string `json:"UnsubscribeURL"`
+	}
+	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
+		msgs := sqsPeekMessages(t, srv, queueURL)
+		if len(msgs) == 0 {
+			return false
+		}
+		body, _ := msgs[0]["Body"].(string)
+		if err := decodeJSONString(body, &envelope); err != nil {
+			t.Fatalf("expected SQS body to be an SNS envelope: %v\nbody: %s", err, body)
+		}
+		return true
+	}, "timed out waiting for the SNS notification to arrive in SQS")
+
+	wantPrefix := "http://" + publishedHost + "/?"
+	if !strings.HasPrefix(envelope.UnsubscribeURL, wantPrefix) {
+		t.Errorf("UnsubscribeURL = %q, want it to start with %q", envelope.UnsubscribeURL, wantPrefix)
+	}
+	u, err := url.Parse(envelope.UnsubscribeURL)
+	if err != nil {
+		t.Fatalf("UnsubscribeURL %q is not a URL: %v", envelope.UnsubscribeURL, err)
+	}
+	if got := u.Query().Get("Action"); got != "Unsubscribe" {
+		t.Errorf("UnsubscribeURL Action = %q, want %q", got, "Unsubscribe")
+	}
+	if got := u.Query().Get("SubscriptionArn"); !strings.HasPrefix(got, topicArn+":") {
+		t.Errorf("UnsubscribeURL SubscriptionArn = %q, want a subscription of %q", got, topicArn)
 	}
 }
 
@@ -1271,6 +1334,93 @@ func TestPublish_unsubscribeURLContainsSubscriptionArn(t *testing.T) {
 	}
 }
 
+// ---- CreateTopic tag-on-create ----------------------------------------------
+
+// AWS applies CreateTopic's Tags at creation time, and that is a distinct
+// IAM-authorized behaviour from TagResource (aws:RequestTag vs sns:TagResource),
+// so a topic created with tags must read them back without a second call.
+func TestCreateTopic_appliesTagsAtCreation(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	resp := snsCall(t, srv, "CreateTopic", url.Values{
+		"Name":             {"tag-on-create-topic"},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+		"Tags.Tag.2.Key":   {"team"},
+		"Tags.Tag.2.Value": {"platform"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var created struct {
+		Result struct {
+			TopicArn string `xml:"TopicArn"`
+		} `xml:"CreateTopicResult"`
+	}
+	decodeXML(t, resp, &created)
+
+	if got := snsTagMap(t, srv, created.Result.TopicArn); got["env"] != "prod" || got["team"] != "platform" {
+		t.Errorf("CreateTopic tags not applied at creation: got %v", got)
+	}
+}
+
+// CreateTopic is idempotent: AWS returns the existing topic's ARN without
+// creating a new topic. Tags on the repeat call must therefore not overwrite
+// the tags the topic already carries — TagResource is the way to change them.
+func TestCreateTopic_idempotentCallDoesNotRetagExistingTopic(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+
+	first := snsCall(t, srv, "CreateTopic", url.Values{
+		"Name":             {"idempotent-tag-topic"},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"prod"},
+	})
+	defer first.Body.Close()
+	helpers.AssertStatus(t, first, http.StatusOK)
+	var created struct {
+		Result struct {
+			TopicArn string `xml:"TopicArn"`
+		} `xml:"CreateTopicResult"`
+	}
+	decodeXML(t, first, &created)
+
+	second := snsCall(t, srv, "CreateTopic", url.Values{
+		"Name":             {"idempotent-tag-topic"},
+		"Tags.Tag.1.Key":   {"env"},
+		"Tags.Tag.1.Value": {"staging"},
+	})
+	defer second.Body.Close()
+	helpers.AssertStatus(t, second, http.StatusOK)
+
+	if got := snsTagMap(t, srv, created.Result.TopicArn); got["env"] != "prod" {
+		t.Errorf("idempotent CreateTopic overwrote existing tags: got %v, want env=prod", got)
+	}
+}
+
+// snsTagMap reads a resource's tags back through ListTagsForResource.
+func snsTagMap(t *testing.T, srv *helpers.TestServer, arn string) map[string]string {
+	t.Helper()
+	resp := snsCall(t, srv, "ListTagsForResource", url.Values{"ResourceArn": {arn}})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ListTagsForResource %q: unexpected status %d", arn, resp.StatusCode)
+	}
+	var list struct {
+		Result struct {
+			Tags []struct {
+				Key   string `xml:"Key"`
+				Value string `xml:"Value"`
+			} `xml:"Tags>member"`
+		} `xml:"ListTagsForResourceResult"`
+	}
+	decodeXML(t, resp, &list)
+	out := make(map[string]string, len(list.Result.Tags))
+	for _, tag := range list.Result.Tags {
+		out[tag.Key] = tag.Value
+	}
+	return out
+}
+
 // ---- TagResource ------------------------------------------------------------
 
 func TestTagResource_success(t *testing.T) {
@@ -1484,11 +1634,24 @@ func TestListTagsForResource_notFound(t *testing.T) {
 // snsCall sends an AWS Query-protocol SNS request (form-encoded POST body).
 func snsCall(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
 	t.Helper()
+	return snsCallFromHost(t, srv, "", action, params)
+}
+
+// snsCallFromHost is snsCall with control over the Host header the request
+// carries, still dialling the server's real address. That pair — dial one
+// address, announce another — is what a port remap looks like from inside the
+// container: `docker run -p 4570:4566` gives Overcast a request on its listen
+// port whose Host names 4570. An empty host leaves the dial address as-is.
+func snsCallFromHost(t *testing.T, srv *helpers.TestServer, host, action string, params url.Values) *http.Response {
+	t.Helper()
 	params.Set("Action", action)
 	params.Set("Version", "2010-03-31")
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(params.Encode()))
 	if err != nil {
 		t.Fatalf("build SNS request: %v", err)
+	}
+	if host != "" {
+		req.Host = host
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := http.DefaultClient.Do(req)

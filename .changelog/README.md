@@ -223,12 +223,18 @@ one costs a comment.
 
 ### During a release window
 
-**Never edit `CHANGELOG.md` to answer this.** That file belongs to the release
-PR. While one is open, `release-prep.yml` merges `main` into its branch on every
-push, so a second hand in the same section does not merely conflict — the bot
-aborts the merge and the release PR stops refreshing itself until somebody
-untangles it. Fragments exist so that concurrent PRs never meet in one file, and
-the check does not accept a `CHANGELOG.md` edit in place of one.
+**Never edit `CHANGELOG.md` to answer this** — with one narrow exception, the
+last row of the table below. That file belongs to the release PR. While one is
+open, `release-prep.yml` merges `main` into its branch on every push, so a
+second hand in the same section does not merely conflict — the bot aborts the
+merge and the release PR stops refreshing itself until somebody untangles it.
+Fragments exist so that concurrent PRs never meet in one file, and the check
+does not accept a `CHANGELOG.md` edit in place of one.
+
+The exception exists only once the release PR has **merged**, which is exactly
+when that bot stops running and there is no longer a second hand to collide
+with. See [RELEASE.md § Breaking Changes During A Release
+Window](../RELEASE.md#breaking-changes-during-a-release-window), Row 2b.
 
 Which answer *is* right depends on where the release has got to:
 
@@ -236,6 +242,7 @@ Which answer *is* right depends on where the release has got to:
 | --- | --- | --- |
 | the release PR is **open** | add a fragment exactly as usual | on every push to `main` the bot merges `main` into the release branch, folds your entries into the `## [x.y.z]` section and deletes the consumed fragments. Nothing is needed from you |
 | it has **merged**, tag not out | wait for the tag, or waive and add the fragment afterwards | there is no release PR left to fold into, and `check-release-changelog.py` fails the release while any unconsumed fragment remains |
+| it has **merged**, the release **failed**, and your PR is the fix | write the bullet straight into the `## [x.y.z]` section, add no fragment, waive with that reason | both Row 2 answers are circular here — waiting for the tag waits on your own PR, and a fragment would fail the release you are unblocking. The code ships in *this* release, so its note belongs in *this* section |
 
 An open release PR does not close the window for release notes; it is the one
 window where the answer is *most* automatic. Add the fragment, and it lands in

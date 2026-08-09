@@ -28,6 +28,15 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"RemoveTagsFromCertificate": op.NewTyped[removeTagsFromCertificateRequest, struct{}](
 			"RemoveTagsFromCertificate", h.removeTagsFromCertificateTyped,
 		),
+		"TagResource": op.NewTyped[tagResourceRequest, struct{}](
+			"TagResource", h.tagResourceTyped,
+		),
+		"UntagResource": op.NewTyped[untagResourceRequest, struct{}](
+			"UntagResource", h.untagResourceTyped,
+		),
+		"ListTagsForResource": op.NewTyped[listTagsForResourceRequest, listTagsForResourceResponse](
+			"ListTagsForResource", h.listTagsForResourceTyped,
+		),
 	}
 }
 

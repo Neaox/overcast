@@ -212,7 +212,7 @@ build_and_push "$CONSOLE_IMAGE:$TAG" overcast:dev
 success "Published $CONSOLE_IMAGE:$TAG"
 success "Registry page: $(github_package_url "$CONSOLE_IMAGE")"
 
-build_and_push "$SLIM_IMAGE:$TAG" overcast-slim:dev --target slim --build-arg NOSQLITE=1
+build_and_push "$SLIM_IMAGE:$TAG" overcast-slim:dev --target slim
 success "Published $SLIM_IMAGE:$TAG"
 success "Registry page: $(github_package_url "$SLIM_IMAGE")"
 
