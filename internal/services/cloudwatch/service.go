@@ -427,31 +427,11 @@ func (s *cloudwatchStore) listMetrics(ctx context.Context, namespace string) ([]
 	return out, nil
 }
 
-func (s *cloudwatchStore) setTags(ctx context.Context, arn string, tags map[string]string) error {
-	raw, err := json.Marshal(tags)
-	if err != nil {
-		return err
-	}
-	return s.store.Set(ctx, nsTags, arn, string(raw))
-}
-
+// deleteTags drops a resource's whole tag set, which is what deleting the
+// resource does. Reads and writes of individual tags go through
+// serviceutil's shared helpers instead — see Service.tagStore.
 func (s *cloudwatchStore) deleteTags(ctx context.Context, arn string) {
 	_ = s.store.Delete(ctx, nsTags, arn)
-}
-
-func (s *cloudwatchStore) getTags(ctx context.Context, arn string) (map[string]string, error) {
-	raw, found, err := s.store.Get(ctx, nsTags, arn)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
-		return map[string]string{}, nil
-	}
-	var tags map[string]string
-	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
-		return nil, err
-	}
-	return tags, nil
 }
 
 // ─── Service ──────────────────────────────────────────────────
@@ -941,7 +921,7 @@ func (s *Service) putMetricAlarmJSON(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if _, aerr := s.storeAlarmFromInput(r, in); aerr != nil {
+	if _, aerr := s.storeAlarmFromInput(r, in, jsonTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -1011,7 +991,7 @@ func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if _, aerr := s.storeAlarmFromInput(r, in); aerr != nil {
+	if _, aerr := s.storeAlarmFromInput(r, in, queryTagCfg); aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
@@ -1019,12 +999,27 @@ func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
 }
 
 // storeAlarmFromInput persists a validated PutMetricAlarm request, recording
-// the ConfigurationUpdate history item AWS records for it.
-func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput) (*MetricAlarm, *protocol.AWSError) {
+// the ConfigurationUpdate history item AWS records for it. cfg carries the
+// caller's protocol spelling of a tag-validation error.
+func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput, cfg serviceutil.TagValidationConfig) (*MetricAlarm, *protocol.AWSError) {
 	arn := s.alarmARN(r.Context(), in.AlarmName)
 	now := s.clk.Now().UTC()
 
 	previous, existed := s.store.getAlarm(r.Context(), in.AlarmName)
+
+	// Tags apply on creation only: AWS ignores the Tags parameter when
+	// PutMetricAlarm updates an existing alarm, and points callers at
+	// TagResource/UntagResource instead. They go through the same validated
+	// path TagResource uses, so the 50-tag cap and the key/value rules do not
+	// depend on which door the tags came in through — and they are applied
+	// before the alarm is written, so a tag set AWS would reject fails the
+	// whole call instead of leaving an alarm behind with no tags.
+	if !existed && len(in.Tags) > 0 {
+		if aerr := s.addResourceTags(r.Context(), arn, in.Tags, cfg); aerr != nil {
+			return nil, aerr
+		}
+	}
+
 	alarm := in.toAlarm(arn, now, previous)
 	if err := s.store.putAlarm(r.Context(), alarm); err != nil {
 		return nil, protocol.ErrInternalError
@@ -1035,18 +1030,6 @@ func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput) (*MetricAl
 	summary := "Alarm " + in.AlarmName + " created"
 	if existed {
 		summary = "Alarm " + in.AlarmName + " updated"
-	}
-	// Tags apply on creation only: AWS ignores the Tags parameter when
-	// PutMetricAlarm updates an existing alarm, and points callers at
-	// TagResource/UntagResource instead.
-	if !existed && len(in.Tags) > 0 {
-		tags := make(map[string]string, len(in.Tags))
-		for _, tag := range in.Tags {
-			tags[tag.Key] = tag.Value
-		}
-		if err := s.store.setTags(r.Context(), arn, tags); err != nil {
-			return nil, protocol.ErrInternalError
-		}
 	}
 	_ = s.store.putAlarmHistory(r.Context(), AlarmHistoryItem{
 		AlarmName:       alarm.AlarmName,
@@ -1894,6 +1877,31 @@ func (s *Service) describeAlarmHistoryJSON(w http.ResponseWriter, r *http.Reques
 // carries: arn:aws:cloudwatch:<region>:<account>:alarm:<name>.
 const alarmARNResourcePrefix = "alarm:"
 
+// tagLimitMessage is the model's own wording for the 50-tag cap, from
+// TagResource's documentation.
+const tagLimitMessage = "You can associate as many as 50 tags with a CloudWatch resource."
+
+// queryTagCfg and jsonTagCfg are the same tag rules under each protocol's
+// spelling of the error. CloudWatch's InvalidParameterValueException carries
+// an awsQueryError trait whose code is the shorter InvalidParameterValue, so
+// one violation genuinely has two names, and these two vars are the only
+// place either is written.
+//
+// serviceutil.MaxTags is 50, which is CloudWatch's own limit, so Limit stays
+// at its default.
+var (
+	queryTagCfg = serviceutil.TagValidationConfig{
+		ExceededCode:    "InvalidParameterValue",
+		InvalidCode:     "InvalidParameterValue",
+		ExceededMessage: tagLimitMessage,
+	}
+	jsonTagCfg = serviceutil.TagValidationConfig{
+		ExceededCode:    "InvalidParameterValueException",
+		InvalidCode:     "InvalidParameterValueException",
+		ExceededMessage: tagLimitMessage,
+	}
+)
+
 // tagResourceStatus is the outcome of validating a tagging ResourceARN.
 type tagResourceStatus int
 
@@ -1937,16 +1945,13 @@ func (s *Service) classifyTagResource(ctx context.Context, arn string) tagResour
 // queryError renders the status as the Query protocol's error, or nil when
 // the resource is fine.
 func (st tagResourceStatus) queryError(arn string) *protocol.AWSError {
-	// InvalidParameterValueException carries an awsQueryError trait whose
-	// code is the shorter InvalidParameterValue, so the two protocols
-	// genuinely spell this one differently.
-	return st.awsError(arn, "InvalidParameterValue")
+	return st.awsError(arn, queryTagCfg.InvalidCode)
 }
 
 // jsonError renders the status as the JSON protocol's error, or nil when the
 // resource is fine.
 func (st tagResourceStatus) jsonError(arn string) *protocol.AWSError {
-	return st.awsError(arn, "InvalidParameterValueException")
+	return st.awsError(arn, jsonTagCfg.InvalidCode)
 }
 
 func (st tagResourceStatus) awsError(arn, invalidARNCode string) *protocol.AWSError {
@@ -1985,30 +1990,33 @@ func sortedTags(tags map[string]string) []Tag {
 	return out
 }
 
-// addResourceTags merges add into the tag set stored against arn,
-// overwriting the value of any key already present.
-func (s *Service) addResourceTags(ctx context.Context, arn string, add []Tag) error {
-	tags, err := s.store.getTags(ctx, arn)
-	if err != nil {
-		return err
-	}
+// tagStore exposes the cloudwatch:tags namespace through serviceutil's shared
+// tag helpers, so the merge, remove and validation rules are the ones every
+// other service uses rather than a third hand-rolled copy of them.
+func (s *Service) tagStore() serviceutil.TagStore {
+	return &serviceutil.NSStore{Store: s.store.store, NS: nsTags}
+}
+
+// addResourceTags merges add into the tag set stored against arn, overwriting
+// the value of any key already present, and validates the result. A rejected
+// set is not written.
+func (s *Service) addResourceTags(ctx context.Context, arn string, add []Tag, cfg serviceutil.TagValidationConfig) *protocol.AWSError {
+	incoming := make(map[string]string, len(add))
 	for _, t := range add {
-		tags[t.Key] = t.Value
+		incoming[t.Key] = t.Value
 	}
-	return s.store.setTags(ctx, arn, tags)
+	return serviceutil.ApplyStoreTags(ctx, s.tagStore(), arn, incoming, cfg)
 }
 
 // removeResourceTags deletes keys from the tag set stored against arn.
 // A key that is not present is ignored, as on AWS.
-func (s *Service) removeResourceTags(ctx context.Context, arn string, keys []string) error {
-	tags, err := s.store.getTags(ctx, arn)
-	if err != nil {
-		return err
-	}
-	for _, k := range keys {
-		delete(tags, k)
-	}
-	return s.store.setTags(ctx, arn, tags)
+func (s *Service) removeResourceTags(ctx context.Context, arn string, keys []string) *protocol.AWSError {
+	return serviceutil.RemoveStoreTags(ctx, s.tagStore(), arn, keys)
+}
+
+// resourceTags reads the tag set stored against arn.
+func (s *Service) resourceTags(ctx context.Context, arn string) (map[string]string, *protocol.AWSError) {
+	return serviceutil.ListStoreTags(ctx, s.tagStore(), arn)
 }
 
 func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
@@ -2017,9 +2025,9 @@ func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	tags, err := s.store.getTags(r.Context(), arn)
-	if err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+	tags, aerr := s.resourceTags(r.Context(), arn)
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 	var members strings.Builder
@@ -2042,9 +2050,9 @@ func (s *Service) listTagsForResourceJSON(w http.ResponseWriter, r *http.Request
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	tags, err := s.store.getTags(r.Context(), in.ResourceARN)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	tags, aerr := s.resourceTags(r.Context(), in.ResourceARN)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	writeJSONResult(w, r, struct {
@@ -2058,8 +2066,8 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if err := s.addResourceTags(r.Context(), arn, memberTags(r, "Tags")); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+	if aerr := s.addResourceTags(r.Context(), arn, memberTags(r, "Tags"), queryTagCfg); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 	writeXMLResult(w, r, "TagResource", "")
@@ -2078,8 +2086,8 @@ func (s *Service) tagResourceJSON(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if err := s.addResourceTags(r.Context(), in.ResourceARN, in.Tags); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if aerr := s.addResourceTags(r.Context(), in.ResourceARN, in.Tags, jsonTagCfg); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	writeJSONResult(w, r, struct{}{})
@@ -2091,8 +2099,8 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if err := s.removeResourceTags(r.Context(), arn, memberList(r, "TagKeys")); err != nil {
-		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
+	if aerr := s.removeResourceTags(r.Context(), arn, memberList(r, "TagKeys")); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 	writeXMLResult(w, r, "UntagResource", "")
@@ -2111,8 +2119,8 @@ func (s *Service) untagResourceJSON(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if err := s.removeResourceTags(r.Context(), in.ResourceARN, in.TagKeys); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if aerr := s.removeResourceTags(r.Context(), in.ResourceARN, in.TagKeys); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	writeJSONResult(w, r, struct{}{})
