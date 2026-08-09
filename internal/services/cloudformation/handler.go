@@ -175,6 +175,12 @@ func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
 	stackID := fmt.Sprintf("arn:aws:cloudformation:%s:%s:stack/%s/%s",
 		region, h.cfg.AccountID, stackName, uuid.NewString())
 
+	disableRollback, aerr := parseDisableRollback(r.FormValue("DisableRollback"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
 	params := collectParameters(r)
 	tags := collectTags(r)
 	caps := collectCapabilities(r)
@@ -188,7 +194,7 @@ func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
 		Tags:            tags,
 		Capabilities:    caps,
 		RoleARN:         r.FormValue("RoleARN"),
-		DisableRollback: r.FormValue("DisableRollback") == "true",
+		DisableRollback: disableRollback,
 		Status:          StatusCreateInProgress,
 		StatusReason:    "User Initiated",
 		CreatedAt:       h.clk.Now(),
@@ -234,6 +240,12 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	disableRollback, aerr := parseDisableRollback(r.FormValue("DisableRollback"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+
 	params := collectParameters(r)
 	if len(params) > 0 {
 		stack.Parameters = params
@@ -242,6 +254,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 		applyStackTags(stack, collectTags(r), true)
 	}
 
+	stack.DisableRollback = disableRollback
 	stack.TemplateBody = templateBody
 	stack.Status = StatusUpdateInProgress
 	stack.StatusReason = "User Initiated"
@@ -1104,6 +1117,28 @@ func filterStacksByStatus(stacks []*Stack, statuses []string) []*Stack {
 		}
 	}
 	return filtered
+}
+
+// parseDisableRollback resolves one operation's DisableRollback member from its
+// wire value, empty meaning absent.
+//
+// AWS models it as an optional Boolean on CreateStack and UpdateStack alike and
+// documents the same default for both — `False`. It is therefore a decision
+// each operation makes for itself: an UpdateStack that omits it rolls back on
+// failure even when the stack was created with rollback disabled, and one that
+// sends `false` overrides the value CreateStack was given.
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_UpdateStack.html
+func parseDisableRollback(raw string) (bool, *protocol.AWSError) {
+	if raw == "" {
+		return false, nil
+	}
+	disabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, cfnerr("ValidationError",
+			fmt.Sprintf("Value '%s' at 'disableRollback' failed to satisfy constraint: Member must be a boolean", raw),
+			http.StatusBadRequest)
+	}
+	return disabled, nil
 }
 
 func collectCapabilities(r *http.Request) []string {
