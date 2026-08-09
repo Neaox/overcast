@@ -692,7 +692,8 @@ func (h *Handler) V2UntagResource(w http.ResponseWriter, r *http.Request) {
 	writeV2EmptyJSON(w)
 }
 
-// V2ListTagsForResource handles GET /v2/email/tags?ResourceArn=…
+// V2ListTagsForResource handles GET /v2/email/tags, reading the resource from
+// the ResourceArn query parameter.
 func (h *Handler) V2ListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	identity, aerr := identityFromResourceARN(r.URL.Query().Get("ResourceArn"))
 	if aerr != nil {
