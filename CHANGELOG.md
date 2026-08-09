@@ -66,6 +66,190 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.32] - 2026-08-09
+
+### Added
+
+- [cloudwatch-logs] `CreateLogGroup` accepts AWS's `tags` field and applies it as part of creating the log group, over AWS JSON and RPC v2 CBOR alike; `AWS::Logs::LogGroup` now passes its `Tags` straight to the create instead of following up with `TagLogGroup`, so a rejected tag map leaves nothing behind
+
+- [config] `OVERCAST_HOST` accepts a comma-separated list of addresses to bind, so one emulator can be on loopback and on a host-local bridge address without being on any network the machine is attached to. A wildcard combined with a specific address is refused rather than silently failing the second bind
+
+- [lambda] `TagResource`, `UntagResource` and `ListTags` work on event source mappings. Their tags are stored separately from the mapping and are deleted with it, so they never appear in `EventSourceMappingConfiguration`, which has no `Tags` member. Code signing configurations, capacity providers and network connectors still return `501`
+
+- [lambda] `Code.S3ObjectVersion` on `CreateFunction` and `UpdateFunctionCode` fetches that version of the deployment package, which is what CDK emits once the asset bucket has versioning enabled
+
+- [lambda] `LogFormat: JSON` is honoured on `CreateFunction` and `UpdateFunctionConfiguration`, which used to answer 501 for it: the plain-text START/END/REPORT lines are replaced by Telemetry-API-shaped `platform.start`, `platform.runtimeDone` and `platform.report` events, one `{"time","type","record"}` object per log line. Text output is unchanged. The init-phase `platform.initStart` and `platform.initReport` records are not emitted yet; both are DEBUG at the default system log level
+
+- [lambda] `SystemLogLevel` and `ApplicationLogLevel` filtering under the JSON log format — platform records by AWS's system log level event mapping, function output by the `"level"` member of each record, with anything unparseable treated as INFO. Both default to INFO. Filtering covers CloudWatch Logs and the `X-Amz-Log-Result` tail; Telemetry and Logs API subscribers still receive every record
+
+- [lambda] `AWS_LAMBDA_LOG_FORMAT`, and `AWS_LAMBDA_LOG_LEVEL` under the JSON format, reach the execution environment so managed and custom runtimes can structure their own output; a change to the logging configuration retires warm environments
+
+- [lambda] execution images for every runtime AWS still accepts on CreateFunction: Python 3.14, Java 25 and the Amazon Linux 2023 Java runtimes, .NET 10, Ruby 3.4 and 4.0, plus the Node.js, Python, .NET, Ruby and `provided.al2` runtimes that are past end of support but still deployable
+
+- [lambda] `TracingConfig`, `EphemeralStorage` and `KMSKeyArn` are validated against AWS's own constraints, stored, and returned by `CreateFunction`, `GetFunction`, `GetFunctionConfiguration` and `UpdateFunctionConfiguration`. `TracingConfig` and `EphemeralStorage` are always present in a function's configuration, defaulting to `PassThrough` and 512 MB as on AWS. None of the three changes what a function does: X-Ray is not emulated, the ephemeral storage size is not enforced on the container, and environment variables are not encrypted at rest
+
+- [release] Docker line tags `:1` and `:1.2`, so a user can pin a release line rather than a single version or the moving `:latest`
+
+- [release] a maintenance-release path for patching an older minor after 1.0: `support/<major>.<minor>` branches cut from their tag, backports cherry-picked out of `main`, and the full test and compat suites running on them
+
+- [s3] `PutBucketLifecycleConfiguration` accepts `x-amz-transition-default-minimum-object-size`, and both it and `GetBucketLifecycleConfiguration` report the behaviour in force. The sweeper applies it: under the default `all_storage_classes_128K` an object below 128 KB does not transition, under `varies_by_storage_class` it still transitions to `GLACIER` or `DEEP_ARCHIVE`, and a rule with its own `ObjectSizeGreaterThan`/`ObjectSizeLessThan` filter sets its own floor. `AWS::S3::Bucket.LifecycleConfiguration.TransitionDefaultMinimumObjectSize` now dispatches through it instead of failing the resource
+
+- [s3] `PutBucketWebsite` and `GetBucketWebsite` carry the whole `WebsiteConfiguration`: `RedirectAllRequestsTo` and `RoutingRules` are preserved alongside the index and error documents, with AWS's mutual exclusion, required fields and `Protocol` enum enforced rather than silently dropped. `AWS::S3::Bucket.WebsiteConfiguration` dispatches both new elements through S3, translating CloudFormation's `RedirectRule`/`RoutingRuleCondition` spellings. Overcast still serves no S3 website endpoint, so nothing is actually redirected
+
+- [s3] buckets can send their object events to EventBridge. `NotificationConfiguration` now carries `EventBridgeConfiguration`, and while it is set every object mutation is published to the default event bus as AWS's `aws.s3` / `Object Created` / `Object Deleted` event, through EventBridge's own delivery path so rule patterns, input transformers, retries and DLQs all apply. The detail omits `request-id`, `requester`, `source-ip-address`, `sequencer` and `version-id` rather than fabricating them. `AWS::S3::Bucket.NotificationConfiguration.EventBridgeConfiguration` dispatches through S3 instead of failing the resource
+
+- **BREAKING** [s3] object version history. A versioning-enabled bucket mints a version id for every write, keeps the previous version as noncurrent, and answers a delete by adding a delete marker instead of removing anything; `versionId` addresses a specific version on `GetObject`, `HeadObject`, `DeleteObject`, `DeleteObjects` and `CopyObject`'s source. `Suspended` keeps the versions it already has and writes the single `null` version, and objects stored before a bucket was versioned — including objects persisted by an earlier build — are that key's `null` version with nothing to migrate by hand. `ListObjectVersions` returns versions and delete markers in AWS's order, keys ascending then most recently stored first, with `prefix`, `delimiter`, `max-keys` and resumable `key-marker`/`version-id-marker` pagination. A bucket that never enables versioning behaves exactly as before, down to the absent `x-amz-version-id`
+  migration: a bucket you had already set `VersioningConfiguration` `Enabled` or `Suspended` on now behaves as AWS does — `DeleteObject` writes a delete marker rather than removing the object, and `DeleteBucket` reports `BucketNotEmpty` until the markers and the versions under them are deleted by version id. Empty such a bucket with `ListObjectVersions` followed by version-targeted `DeleteObjects`, which is what the AWS SDKs' own cleanup loop does. Set the bucket back to unversioned if you did not mean to enable it — there is no such transition on AWS or here, so delete the bucket and recreate it
+
+- [s3] the lifecycle sweeper executes `NoncurrentVersionExpiration`, `NoncurrentVersionTransition` and `ExpiredObjectDeleteMarker`, which were previously refused for want of any versions to act on. A version's noncurrent clock starts when the version that replaced it was written, `NewerNoncurrentVersions` retains that many newer versions first, and noncurrent transitions honour the bucket's `x-amz-transition-default-minimum-object-size` exactly as current-version transitions do. Expiring the current version of a versioned object adds a delete marker rather than deleting it, and `ExpiredObjectDeleteMarker` clears a marker once it is the key's only version. `AWS::S3::Bucket.LifecycleConfiguration` translates all three instead of failing the resource
+
+- [s3] object event notifications carry `versionId` and `sequencer`, in both the `Records[].s3.object` payload delivered to SQS and Lambda and the EventBridge detail, and an EventBridge delete now reports `"deletion-type": "Delete Marker Created"` when a versioned bucket wrote a tombstone
+
+- [web/cloudformation] the stack detail page and the stack list say why a deploy failed. The banner carries `StackStatusReason`, falls back to the `ResourceStatusReason` of the resource that actually failed once a terminal rollback has cleared the stack-level reason, and spells out what the status means: a `ROLLBACK_COMPLETE` stack has no stable state to update onto and can only be deleted, where an `UPDATE_ROLLBACK_COMPLETE` one is back on its previous template and can be updated again. It is also raised while a rollback is still running, not only after it lands
+
+- [web/iam] group rows on the IAM page expand to list their members
+
+- [web] the Lambda function page has a Tags card that reads and writes through `ListTags`/`TagResource`/`UntagResource`, and the Versions tab can delete a single published version. The delete-function confirmation now says that versions and aliases go with it
+
+- [web/s3] the bucket Config tab shows the website configuration, the EventBridge destination and the lifecycle default minimum transition size
+
+- [web/s3] the bucket browser shows a bucket's versioning state and can list every version and delete marker under a prefix, with the current version marked, noncurrent ones dimmed, delete markers called out, and per-version deletion. Deleting a bucket from the UI drains it by version id, which is the only way to empty a versioned one
+
+- [web/lambda] a Logging configuration section on the function's Configuration tab: log group, log format, and the application and system log levels. `JSON` is selectable now that Lambda honours it, the two levels are settable only under JSON — the format AWS allows them for — and both start at `INFO`, the level a JSON function reports back
+
+- [web/lambda] the create wizard offers the same log format and levels, so a function can be created with JSON logging rather than having to be edited afterwards
+
+### Changed
+
+- **BREAKING** [cloudformation] a resource that refuses to be deleted now fails the stack. `DeleteStack` stops at that resource, emits `DELETE_FAILED` carrying the service's own message, and leaves the stack `DELETE_FAILED` with the resource still listed — as AWS does — instead of logging the refusal and reporting `DELETE_COMPLETE` over something still standing. IAM's `DeleteConflict` (409) from `DeleteRole`, `DeleteUser` and `DeletePolicy` joins the non-empty S3 bucket and the deletion-protected RDS cluster in reaching the stack; an entity that is already gone, a call that could not be made, and a stub resource type stay non-fatal
+  migration: a stack whose teardown is blocked by a dependency something outside the stack holds — an attached managed policy, an access key, a group membership — now ends `DELETE_FAILED` rather than `DELETE_COMPLETE`. Clear the dependency and run `DeleteStack` again; resources deleted before the failure stay deleted. A stack that owns all of its own dependencies is unaffected
+
+- [config] `OVERCAST_DEBUG_TRACE_BUFFER` is read through the typed configuration rather than directly from the environment, and is now documented alongside the other environment variables. Name and default (`1000`) are unchanged.
+
+- [dev] `scripts/docker-go.sh`, `scripts/docker-go.ps1` and `scripts/go.sh`'s Docker fallback bound their CPU use instead of taking the whole machine — a `go test` through the wrapper peaked at 2269% CPU on a 24-core host and held it there. `--cpus` and `GOMAXPROCS` now default to half the detected cores and `go test` gets a matching `-p`. All three are needed: `--cpus` alone leaves the Go 1.24 runtime seeing every host core (container-aware `GOMAXPROCS` arrived in Go 1.25), and `-p` defaults to `GOMAXPROCS`, so leaving it squares the parallelism. `OVERCAST_GO_CPUS` and `OVERCAST_GO_TEST_P` override the defaults, `OVERCAST_GO_CPUS=0` restores the old uncapped behaviour, and a `-p` the caller passed is never overridden
+
+- [dev] `docker-compose.dev.yml`'s `test` service bounds its CPU use instead of taking the whole machine, closing the gap left by the Go-in-Docker wrappers' cap. A Compose file cannot derive the bound itself — `--cpus=N` is rejected when N exceeds the CPUs the daemon reports, so it cannot be hardcoded, and `docker compose run` has no `--cpus` flag to pass one through — so `make container-test`, `container-test-unit` and `container-test-integration` (and their `task` equivalents) now route through `scripts/container-test.sh` / `.ps1`, which reuses the wrappers' detection ladder and exports `OVERCAST_GO_CPUS` and `OVERCAST_GO_TEST_P` for Compose to substitute into `cpus:`, `GOMAXPROCS` and `GOFLAGS`. `GOMAXPROCS` is set explicitly because the image is Go 1.24 and container-aware `GOMAXPROCS` only arrived in Go 1.25, so the cap alone leaves the runtime seeing every host core; `-p` travels via `GOFLAGS` so it survives a command override. Calling `docker compose` by hand is unchanged and stays unbounded
+
+- [docs/lambda] the service reference gains a log format and log levels section covering the record shapes, the filtering rules and the container environment variables, and names the two gaps: the missing init-phase records, and `UpdateFunctionConfiguration` with an explicitly empty `LoggingConfig` object, which still returns 501
+
+- **BREAKING** [iam] `DeleteUser`, `DeleteRole`, `DeleteGroup` and `DeletePolicy` refuse with AWS's `DeleteConflict` (HTTP 409) while the entity still has dependencies — access keys, group membership, inline or attached policies, an instance profile association, or a policy attachment — instead of deleting it and orphaning them. The message names what to clear, verbatim from AWS
+  migration: teardown scripts must unwind an IAM entity before deleting it, exactly as they must against AWS — `DeleteAccessKey`, `DeleteUserPolicy`, `DetachUserPolicy`, `RemoveUserFromGroup`, `RemoveRoleFromInstanceProfile`, `DeleteRolePolicy`, `DetachRolePolicy`, `DeleteGroupPolicy`, `DetachGroupPolicy`. CloudFormation stack teardown needs no change: `AWS::IAM::Policy` now removes its inline document from the entities it named, and reverse dependency order already puts instance profiles before their roles
+
+- [lambda] the runtime catalog, request validation, the runtime-to-image mapping and the web UI's runtime picker are all generated from one table derived from the pinned AWS Smithy model, so the four lists cannot drift apart. The picker offers exactly what CreateFunction accepts and labels the deprecated entries
+
+- [lambda] runtime deprecation follows AWS's three phases against the current date — end of support, then block function create, then block function update — rather than a single hardcoded set. A runtime past end of support stays deployable until AWS's block-create date, and one past it answers AWS's own `InvalidParameterValueException` naming the recommended successor
+
+- [lambda] `GET /_lambda/runtimes` is served from that table instead of being discovered from ECR Public on the request path, and reports `createBlocked` and `updateBlocked` alongside `deprecated` and `supported`
+
+- [lambda] `LAMBDA_SEED_RUNTIME_IMAGES` pre-pulls the images of currently-supported runtimes only; a deprecated-but-deployable runtime is pulled at its first cold start instead
+
+- [release] the floating image tags (`:latest`, `:alpha`, the new line tags) only ever move forward — a maintenance release of an older line no longer takes `:latest` back with it
+
+- [router] a trace now captures goroutine stacks for its first 20 internal hops and for the first 20 hops that failed, rather than for every hop. A CloudFormation or CDK deploy dispatches hundreds of hops through one trace, and a multi-KiB stack apiece cost more than it told anyone. Hops past the budget show "Stack trace not captured" in the console.
+
+- [web/iam] a refused delete names the blocking dependency in the failure toast
+
+- [web/lambda] Lambda log viewers, and the Test tab's log output, render a JSON system log record as the `START` / `END` / `REPORT` line it replaced, with the status and response size the plain-text line has nowhere to put. Ticking "Format" still shows the record itself, and a failed invocation's records now tint their rows at the level AWS assigns them
+
+### Fixed
+
+- [cloudformation] `ListStacks` summaries carry `StackStatusReason`, as AWS's `StackSummary` does, so a list of stacks can say why one failed without a `DescribeStacks` per row
+
+- [cloudformation] `UpdateStack`'s cleanup phase deletes resources the new template dropped in reverse dependency order. It walked a map, so the order was random and removing a role together with the instance profile holding it left the role behind about half the time
+
+- [cloudformation] a nested stack that cannot be torn down fails its parent instead of being reported as deleted
+
+- [cloudformation] `DescribeStackResources` returns `ResourceStatusReason`, so `aws cloudformation describe-stack-resources` says why a resource is `DELETE_FAILED` rather than only that it is
+
+- [cloudformation] a failed IAM role or user delete during stack teardown is logged instead of being discarded, so a leftover dependency is visible rather than leaving the resource standing behind a `DELETE_COMPLETE`
+
+- [cloudformation] `ListStacks` honours `StackStatusFilter` instead of ignoring it. A call asking for the `CREATE_COMPLETE` stacks got every stack in the region back — deleted ones included — so anything trusting the filter, rather than re-checking `StackStatus` itself, read a wrong answer. The capability table had advertised "Filter by status" the whole time. With no filter the response is unchanged: still every stack, including `DELETE_COMPLETE`, as AWS documents
+
+- [cloudformation] a stack's last-updated time reaches the SDKs. AWS declares it as `LastUpdatedTime` on both `Stack` and `StackSummary`, but `DescribeStacks` emitted it as `LastUpdatedTimestamp` — which is `StackResourceSummary`'s spelling, and one the generated deserialisers do not match on this shape — while `ListStacks` left it out of its summaries entirely. Every SDK therefore saw an absent field rather than an error, on a stack updated any number of times
+
+- [cloudformation] `ListStacks` summaries carry `DeletionTime`, so a caller listing deleted stacks can tell when each one went
+
+- [cloudwatch-logs] `CreateLogGroup` and `TagLogGroup` apply AWS's documented tag constraints — at most 50 tags, keys of 1–128 characters, values of up to 256, and no key beginning with the reserved `aws:` prefix — returning `InvalidParameterException` before any state changes, so a bad tag map no longer half-applies. Tag maps real AWS would have refused are refused here too
+
+- [dev] those same container test targets run at all again — the `test` service set `CGO_ENABLED=0` while its command used `-race`, so every one of them failed immediately with "go: -race requires cgo; enable cgo by setting CGO_ENABLED=1"
+
+- [docs/web] docs search now weights a term by the field it appears in. A title, a heading or an inline `code` operation name outranks the same word repeated in body prose, and repeated mentions count sub-linearly, so searching "live tail" finds CloudWatch Logs' `StartLiveTail`, and a query naming a service finds that service's page rather than the generated operation manifest.
+
+- [docs] the storage documentation no longer promises that `auto` can resolve to a persistent backend in every build. The `overcast-slim` image and the released `overcastd` binaries are compiled without SQLite, so `hybrid` and `persistent` do not exist in them and `auto` always lands on `memory` — mounting a volume at the data directory buys no durability there, and nothing says so at the time beyond the startup log. A new "Builds without SQLite" section in docs/storage.md lists which artifact ships which backends, and every page that described the `auto` rule now links to it. `OVERCAST_STATE=wal` is the durable backend those two artifacts do have.
+
+- **BREAKING** [dynamodb/cloudformation] CreateTable owns billing-mode defaulting and the throughput rules AWS documents: an omitted BillingMode is PROVISIONED, provisioned tables require ReadCapacityUnits and WriteCapacityUnits — per global secondary index too — and PAY_PER_REQUEST tables reject them, all before anything is stored. CloudFormation no longer rewrites a table without ProvisionedThroughput to PAY_PER_REQUEST, so an AWS::DynamoDB::Table template surfaces DynamoDB's own ValidationException through stack failure
+  migration: add ProvisionedThroughput, or an explicit `BillingMode: PAY_PER_REQUEST`, to any CreateTable call or AWS::DynamoDB::Table template that relied on the old implicit on-demand default
+
+- [dynamodb] a modeled DynamoDB operation Overcast has not implemented — CreateGlobalTable, DescribeGlobalTable, backups, exports, PartiQL — answers 501 with `x-emulator-unsupported: true`, where it used to answer 400 UnknownOperationException. That error is now kept for an `X-Amz-Target` naming no AWS operation, and ownership comes from the generated AWS operation registry so it cannot drift from the models
+
+- **BREAKING** [dynamodb/dynamodbstreams] tables are region-scoped end to end: items, GSI index entries and stream records are keyed by region as well as table name, so the same table name in two regions now holds entirely separate data with its own ItemCount, index results and stream. ListTables, ListStreams, DescribeStream and GetShardIterator answer for the request's region only, a shard iterator names the region it was issued for, and every stream record carries `awsRegion`
+  migration: two same-named tables in different regions used to share one set of items, index entries and stream records. A startup migration rewrites existing rows to the region their table was created in — single-region data carries over untouched — but where the same name existed in several regions the rows cannot be split faithfully, so they are assigned to the alphabetically first of those regions and the others start empty. Anything relying on writing in one region and reading in another must now use one region for both
+
+- [iam] `GetGroup` returns the group's members. Membership recorded by `AddUserToGroup` was stored but never surfaced, so every `GetGroup` answered with an empty `Users` collection; it now resolves each member's user record and pages over them with `Marker`/`MaxItems`. A membership entry whose user record has gone or cannot be decoded is skipped rather than failing the call
+
+- [lambda/pipes] a Lambda event source mapping or an EventBridge pipe sourced from a DynamoDB stream matches the source ARN's region as well as its table name, so it is no longer triggered by writes to a same-named table in another region
+
+- **BREAKING** [lambda] `DeleteFunction` honours `Qualifier` instead of ignoring it. A qualified request now deletes only that published version, along with its qualified resource policy and provisioned concurrency, and leaves `$LATEST`, the function record, other versions, aliases and unqualified policies alone. `$LATEST` is refused with `InvalidParameterValueException`, a version an alias still points at with `ResourceConflictException`, and an unknown version or alias with `ResourceNotFoundException`; an unqualified request still deletes the function. The qualifier may also travel in the function name, as `my-function:2`
+  migration: any caller that passed `Qualifier` to `DeleteFunction` expecting the whole function to go must drop the qualifier — it used to be ignored, so those calls deleted more than they asked for
+
+- **BREAKING** [lambda] `CreateFunction` fails when its `Code.S3Bucket`/`Code.S3Key` deployment package cannot be fetched, returning AWS's `InvalidParameterValueException` GetObject translation and persisting nothing. It used to log a warning and create a function with no usable code, which then failed at invoke time with an unrelated message. `AWS::Lambda::Function` surfaces the same failure through ordinary stack rollback
+  migration: a stack or script that relied on the function being created before its package was uploaded must upload the object first — CloudFormation now rolls the stack back instead
+
+- **BREAKING** [lambda] the tag operations take a `TaggableResource` ARN, as AWS models them. A bare function name, a partial ARN or another service's ARN is refused with `InvalidParameterValueException` rather than treated as a function name, and a version- or alias-qualified ARN is refused too because Lambda tags only the unqualified function. `TagResource` requires `Tags` and `UntagResource` requires `tagKeys`; a resource in another region or account reports `ResourceNotFoundException`
+  migration: callers passing a bare function name to `TagResource`, `UntagResource` or `ListTags` must pass the function ARN
+
+- [lambda/cloudformation] `cdk deploy --tags` no longer fails an SQS-to-Lambda stack: `CreateEventSourceMapping` stores the `Tags` it is sent instead of answering 501, and they are readable through `ListTags` like a function's
+
+- [lambda] an explicit `null`, `false`, empty string, empty list or empty object for a modeled-but-unimplemented request member now means `do nothing` and is accepted, rather than returning a 501; a value that genuinely asks for the feature still does
+
+- [lambda] an invocation that arrives while Overcast is still probing Docker now waits for the answer instead of being told Docker is unavailable. The stub runtime is registered synchronously at startup and the container runtime arrives on a background goroutine, so a function created and invoked in the first moments of a process's life was answered `Runtime.DockerUnavailable` on a machine where Docker was running fine.
+
+- [lambda] Docker that was not running when Overcast started is now picked up automatically. The startup probe's verdict used to be latched for the life of the process, so starting the emulator before Docker Desktop had finished booting left Lambda permanently unable to invoke — and the error told the user to restart the emulator, which was the only recovery there was.
+
+- [lambda] `PutProvisionedConcurrencyConfig` issued while Overcast is still probing Docker now waits for the answer instead of reporting `FAILED` with "Docker is not available, so no execution environments can be allocated." The pool is found by scanning the runtime registry, and before the probe reports the only runtime registered is the stub — so a reservation made in the first moments of a process's life was declared impossible on a machine where Docker was running fine, and never allocated. `GetProvisionedConcurrencyConfig`, `ListProvisionedConcurrencyConfigs` and `DeleteProvisionedConcurrencyConfig` read the pool the same way and are fixed with it.
+
+- [lambda] Lambda invocations now work with a natively-installed Overcast on Windows and macOS. The Runtime API identified a calling container by the source address of its requests, which Docker Desktop rewrites, so every invocation failed at initialisation with `Runtime.InitError` and nothing in the logs to say why. Each execution environment is now given a Runtime API endpoint of its own, and a call Overcast cannot attribute is logged.
+
+- [lambda] `CreateFunction` and `UpdateFunctionConfiguration` no longer answer `501 NotImplemented` when the request carries `TracingConfig`, `EphemeralStorage` or `KMSKeyArn`. CDK emits `TracingConfig` whenever a function sets `tracing`, and CloudFormation forwards all three from the template, so a stack that enabled tracing failed its Lambda resource outright with `Create Failed lambda CreateFunction: HTTP 501 NotImplemented`
+
+- [middleware] REST requests on a path more than one AWS service declares now resolve to the calling service's own operation. Where the models bind the same method and URI to differently named operations, the generated registry kept only the first service's name, so an AppSync-signed `GET /v2/apis`, an App Registry `GET /configuration` and an API Gateway or Backup `GET /tags/{arn}` resolved to no operation at all — leaving them unlabelled in logs, traces and metrics, and ungated by IAM enforcement, which cannot evaluate a policy without an action.
+
+- [middleware] request logs, debug traces and operation metrics name the right AWS operation for every REST-routed service. Lambda writes were counted as S3 `PutObject`/`DeleteObject`, and AppSync, CloudFront, API Gateway and EFS were left unlabelled; all now resolve from the Smithy `@http` bindings already generated into `internal/awsapi`. A path no service claims is reported with no operation instead of borrowing S3's.
+
+- [router] Smithy RPC v2 requests now resolve their service from the `{service}` path segment written as an absolute Smithy shape ID, the spelling the operation registry already accepts when it matches the request. Resolution also stops consulting the registry's attribution when the pinned models decline to make one: several services declaring the same protocol, service shape and operation leaves that attribution blank, which read as a lookup for the empty service key and could have answered 501 for an implemented service.
+
+- [router] request bodies are no longer read into memory on every request. The `Logger` middleware buffered the whole body up front so that a `5xx` could log it — including a multi-megabyte S3 upload, and a second time on top of that when `OVERCAST_DEBUG` was on. Capture is now lazy and shared: with debug off only what the handler itself reads is kept, bounded at 64 KiB, and a request rejected before its body is read buffers nothing; with debug on the trace capture serves the failure log too, so the body is read once. Measured in [docs/dev/performance.md](docs/dev/performance.md#current-measurement-methodology).
+
+- [router] the per-request stack trace is captured once instead of twice. The `Logger` and `RequestEvents` response writers both captured one at `WriteHeader` time and they nest, so the second overwrote the first with a stack one frame further from the handler.
+
+- [serviceutil] the shared tag validator checks keys in sorted order, so a map that violates more than one rule reports the same violation on every call instead of a random one
+
+- [state/web] The memory-only advisory on the Metrics & Health page gave advice that could not work in a build without SQLite. In the `overcast-slim` image and the `overcastd` binaries it suggested mounting a volume or setting `OVERCAST_STATE=hybrid`, but there the first changes nothing and the second stops the emulator from starting. Those builds are now told so, and pointed at `OVERCAST_STATE=wal` — the durable backend compiled into every build.
+
+- [waf] CreateWebACL accepts Tags as a list of {Key,Value} structs, matching the WAFv2 wire format SDK clients send and the shape TagResource already takes — an SDK CreateWebACL with tags previously failed with a SerializationException; create-time tags now get the same validation as TagResource
+
+- [web/lambda] the Test tab renders a Lambda log tail as UTF-8, so an accented character or an emoji from a handler no longer arrives as mojibake, and a log tail that is not valid base64 costs the log output alone rather than taking the whole result panel down with it
+
+- [web/cloudformation] a stack that failed and rolled back no longer wears a green success badge. `ROLLBACK_COMPLETE` and `UPDATE_ROLLBACK_COMPLETE` both end in `_COMPLETE`, and the badge tested that suffix before the specific cases below it, so every rollback state read as a success and the explicit `ROLLBACK_COMPLETE` arm underneath it was dead code. The suffix tests now run last, which also un-shadows `REVIEW_IN_PROGRESS`, and a rollback in progress is distinguishable from an ordinary deploy rather than sharing its amber
+
+- [web/cloudformation] `REVIEW_IN_PROGRESS` no longer counts as a transitional state: it spun a progress spinner that never stopped and hid Delete on a stack AWS is willing to delete. `canUpdateStack` now matches AWS's enumerated last-known-stable-state set, which adds `IMPORT_COMPLETE` and `IMPORT_ROLLBACK_COMPLETE`
+
+- [web/cloudformation] the stack list's "Last updated" column and the stack detail's "Last updated" field show the real time instead of always reading `—`
+
+- [web] the web console binds `OVERCAST_HOST` rather than every interface. Setting it to `127.0.0.1` restricted the AWS API but left the console — and the state-mutating actions in it — reachable from the network anyway
+
+- [web/lambda] the function Configuration tab no longer crashes to the error boundary on first open. Its tags section synchronised state during render against a default `{}` that was a new object every time, so while the tag query was still in flight the update never converged and React aborted at 25 re-renders — the tab was unreachable on first paint whenever tags had not already been fetched
+
+- [windows] init hook scripts run via a real POSIX sh (PATH, or the one bundled with Git) instead of the .sh file association, so a failing hook is reported as ERROR rather than successful and each script no longer opens a git-bash terminal window; cmd.exe remains the fallback when no sh is found
+
+### Security
+
+- [dev] the compat launcher tells a managed Overcast *binary* to listen on `127.0.0.1` too, not just a managed container. It set the ports and left `OVERCAST_HOST` alone, so the instance took the emulator's `0.0.0.0` default — and since compat prefers a built binary over the container image, that was the common case rather than the fallback
+
+- [lambda] the Lambda Runtime API is no longer published on every interface. It bound `0.0.0.0:9001` unconditionally — including on an instance otherwise restricted to loopback by `OVERCAST_HOST` — putting an unauthenticated control channel on whatever network the machine was attached to: anyone reaching it can claim a container's `GET /next` and answer an invocation with a payload of their own. It now binds loopback plus the single address containers on `LAMBDA_NETWORK` reach it at — Overcast's own address on that network when it is containerised, the network's gateway on a native Linux daemon, the host's routable address on Docker Desktop, decided by which of them this kernel can actually bind. When none of them resolves it still binds every interface, rather than strand every invocation, and logs that it has
+
+- [middleware/lambda] IAM enforcement no longer authorises Lambda REST calls against an operation inferred by S3's path heuristics. `POST /2015-03-31/functions/{name}/policy` authorised as `lambda:InvokeFunction`, so a principal granted only invoke rights could grant invoke rights to others; `RemovePermission` was denied as `lambda:DeleteObject` against a policy that allowed it; and several routes resolved to no action at all and were not gated. Actions now come from the pinned AWS models, scoped to the request's service.
+
 ## [0.0.1-alpha.31] - 2026-08-07
 
 ### Added
@@ -1021,7 +1205,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.31...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.32...HEAD
+[0.0.1-alpha.32]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.31...v0.0.1-alpha.32
 [0.0.1-alpha.31]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.30...v0.0.1-alpha.31
 [0.0.1-alpha.30]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.29...v0.0.1-alpha.30
 [0.0.1-alpha.29]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.28...v0.0.1-alpha.29

@@ -1,3 +1,0 @@
-*. [cloudformation] a stack's last-updated time reaches the SDKs. AWS declares it as `LastUpdatedTime` on both `Stack` and `StackSummary`, but `DescribeStacks` emitted it as `LastUpdatedTimestamp` — which is `StackResourceSummary`'s spelling, and one the generated deserialisers do not match on this shape — while `ListStacks` left it out of its summaries entirely. Every SDK therefore saw an absent field rather than an error, on a stack updated any number of times
-* [cloudformation] `ListStacks` summaries carry `DeletionTime`, so a caller listing deleted stacks can tell when each one went
-* [web/cloudformation] the stack list's "Last updated" column and the stack detail's "Last updated" field show the real time instead of always reading `—`
