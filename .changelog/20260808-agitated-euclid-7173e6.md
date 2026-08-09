@@ -1,1 +1,0 @@
-* [web/lambda] the Test tab renders a Lambda log tail as UTF-8, so an accented character or an emoji from a handler no longer arrives as mojibake, and a log tail that is not valid base64 costs the log output alone rather than taking the whole result panel down with it

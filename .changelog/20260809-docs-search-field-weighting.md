@@ -1,1 +1,0 @@
-* [docs/web] docs search now weights a term by the field it appears in. A title, a heading or an inline `code` operation name outranks the same word repeated in body prose, and repeated mentions count sub-linearly, so searching "live tail" finds CloudWatch Logs' `StartLiveTail`, and a query naming a service finds that service's page rather than the generated operation manifest.

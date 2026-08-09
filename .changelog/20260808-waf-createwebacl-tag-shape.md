@@ -1,1 +1,0 @@
-* [waf] CreateWebACL accepts Tags as a list of {Key,Value} structs, matching the WAFv2 wire format SDK clients send and the shape TagResource already takes — an SDK CreateWebACL with tags previously failed with a SerializationException; create-time tags now get the same validation as TagResource

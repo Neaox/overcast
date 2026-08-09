@@ -1,1 +1,0 @@
-* [windows] init hook scripts run via a real POSIX sh (PATH, or the one bundled with Git) instead of the .sh file association, so a failing hook is reported as ERROR rather than successful and each script no longer opens a git-bash terminal window; cmd.exe remains the fallback when no sh is found
