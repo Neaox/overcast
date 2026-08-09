@@ -219,6 +219,16 @@ services:
       - compat-ui-dist:/workspace/compat/ui/dist
     environment:
       CGO_ENABLED: "0"
+      # Target the overcast service this file already starts and waits on, the
+      # same way the compat service does. Without it the endpoint is unpinned,
+      # so the runner starts an instance of its own: a sibling container on the
+      # host daemon, published on the *host's* loopback and so absent from this
+      # container's network namespace, which the runner then polls for a health
+      # check that can never answer — or, if a Linux bin/overcast happens to be
+      # in the bind mount, a second in-container emulator that duplicates the
+      # one next door. depends_on and the CDK asset-bucket hosts entry below
+      # were always written for the shared service; this is what uses it.
+      OVERCAST_ENDPOINT: http://overcast:4566
       OVERCAST_COMPAT_SKIP_DOCKER: ${OVERCAST_COMPAT_SKIP_DOCKER:-0}
     # See the compat service above for why this replaces a chgrp of the shared
     # socket. Same reasoning, same override.
