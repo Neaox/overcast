@@ -32,8 +32,8 @@ import {
   UpdateTimeToLiveCommand,
   type AttributeValue,
 } from "@aws-sdk/client-dynamodb";
-import { makeClients } from "../lib/clients.js";
-import type { TestGroup } from "../lib/harness.js";
+import { makeClients } from "../lib/clients.ts";
+import type { TestGroup } from "../lib/harness.ts";
 import * as assert from "node:assert/strict";
 
 /** Simple marshalling helpers to avoid pulling in @aws-sdk/util-dynamodb. */

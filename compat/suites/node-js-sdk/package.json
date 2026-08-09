@@ -5,9 +5,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node --import tsx/esm src/runner.ts",
+    "test": "node run.js",
     "typecheck": "tsc --noEmit",
-    "test:unit": "node --import tsx/esm --test src/**/*.test.ts"
+    "test:unit": "node --test src/**/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-api-gateway": "^3.1020.0",
@@ -43,10 +43,9 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
-    "tsx": "^4",
     "typescript": "^5"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.18.0 <23.0.0 || >=23.6.0"
   }
 }

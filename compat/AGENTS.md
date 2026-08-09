@@ -485,10 +485,31 @@ COMPAT_DOCKER_GID=$(stat -c %g /var/run/docker.sock) \
 
 - Do **not** use shell scripts as entry points (`sh -c "..."`) — use a proper
   language runtime command in `CMD` to avoid platform-specific shell differences.
-- Do **not** use `#!/bin/sh` shebangs in TypeScript; rely on `node --import tsx/esm`.
+- Do **not** use `#!/bin/sh` shebangs in TypeScript. TypeScript suites are
+  launched as `node run.js`, a plain-JavaScript entry point that checks the
+  Node version and then imports the `.ts` runner — Node strips the types
+  itself, so there is no build step and no loader (no `tsx`). Relative
+  imports name the `.ts` file, and the suite's `tsconfig.json` sets
+  `allowImportingTsExtensions`, `erasableSyntaxOnly` and
+  `verbatimModuleSyntax` so `tsc --noEmit` means "Node can run this".
 - Do **not** hard-code `/tmp` paths; use `os.tmpdir()` / Node's `tmp` utilities.
-- All suite images derive from official multi-arch base images (`node:20-alpine`,
-  `golang:1.24-alpine`) and build cleanly on `amd64` and `arm64`.
+- Do **not** hard-code an interpreter name in a suite's `Argv`. `python3` is
+  right on Linux and macOS, and on Windows it is usually a Microsoft Store
+  *alias stub* — on PATH, executable, and good only for printing "Python was
+  not found". So `exec.LookPath` proves nothing: probe `--version` and require
+  the answer to look right (`compat/python.go`). If nothing usable is found,
+  set `SuiteConfig.ArgvErr` — the runner and the orchestrator both report it
+  as a suite failure naming what was tried, rather than spawning something
+  that dies further from its cause.
+- Do **not** spawn an npm-installed CLI by its bare name (`npx`, `npm`). On
+  Windows those are `.cmd` shims: `spawn` will not find them without an
+  extension, and since the CVE-2024-27980 fix refuses to run them at all
+  without `shell: true` (`spawn EINVAL`). Resolve the package's own entry
+  point and run it with `process.execPath` — see `runCdk` in the cdk suite.
+- All suite images derive from official multi-arch base images (`node:24-alpine`,
+  `golang:1.24-alpine`) and build cleanly on `amd64` and `arm64`. Node type
+  stripping needs 22.18+ on the 22.x line or 23.6+, so a TypeScript suite on
+  an older Node base image cannot start at all.
 
 ---
 

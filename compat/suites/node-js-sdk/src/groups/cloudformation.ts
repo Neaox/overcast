@@ -14,8 +14,8 @@ import {
   ValidateTemplateCommand,
   StackStatus,
 } from "@aws-sdk/client-cloudformation";
-import { makeClients } from "../lib/clients.js";
-import type { TestGroup } from "../lib/harness.js";
+import { makeClients } from "../lib/clients.ts";
+import type { TestGroup } from "../lib/harness.ts";
 import * as assert from "node:assert/strict";
 
 export function makeCloudFormationGroups(suite: string): TestGroup[] {
