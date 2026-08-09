@@ -3211,6 +3211,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Permissions boundaries",
+        "id": "permissions-boundaries"
+      },
+      {
+        "depth": 2,
         "text": "Request-time enforcement (opt-in)",
         "id": "request-time-enforcement-opt-in"
       },
@@ -3243,6 +3248,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "User managed policies",
         "id": "user-managed-policies"
+      },
+      {
+        "depth": 3,
+        "text": "Permissions boundaries",
+        "id": "permissions-boundaries-2"
       },
       {
         "depth": 3,

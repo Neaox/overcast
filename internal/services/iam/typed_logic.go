@@ -22,8 +22,9 @@ func metaFromCtx(ctx context.Context) respMeta {
 // ─── Request types ──────────────────────────────────────────────────────────
 
 type createUserReq struct {
-	UserName string `json:"UserName"`
-	Path     string `json:"Path"`
+	UserName            string `json:"UserName"`
+	Path                string `json:"Path"`
+	PermissionsBoundary string `json:"PermissionsBoundary"`
 }
 
 type getUserReq struct {
@@ -75,6 +76,7 @@ type createRoleReq struct {
 	RoleName                 string `json:"RoleName"`
 	AssumeRolePolicyDocument string `json:"AssumeRolePolicyDocument"`
 	Path                     string `json:"Path"`
+	PermissionsBoundary      string `json:"PermissionsBoundary"`
 }
 
 type getRoleReq struct {
@@ -888,12 +890,18 @@ func (h *Handler) createUserTyped(ctx context.Context, req *createUserReq) (*cre
 	if _, aerr := h.store.getUser(ctx, name); aerr == nil {
 		return nil, errEntityAlreadyExists("user", name)
 	}
+	if req.PermissionsBoundary != "" {
+		if aerr := h.checkPermissionsBoundaryExists(ctx, req.PermissionsBoundary); aerr != nil {
+			return nil, aerr
+		}
+	}
 	u := &User{
-		UserName:   name,
-		UserId:     iamID("AIDA", 17),
-		Arn:        h.store.arnForUser(path, name),
-		Path:       path,
-		CreateDate: h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		UserName:            name,
+		UserId:              iamID("AIDA", 17),
+		Arn:                 h.store.arnForUser(path, name),
+		Path:                path,
+		CreateDate:          h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		PermissionsBoundary: req.PermissionsBoundary,
 	}
 	if aerr := h.store.putUser(ctx, u); aerr != nil {
 		return nil, aerr
@@ -1073,6 +1081,11 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 	if _, aerr := h.store.getRole(ctx, req.RoleName); aerr == nil {
 		return nil, errEntityAlreadyExists("role", req.RoleName)
 	}
+	if req.PermissionsBoundary != "" {
+		if aerr := h.checkPermissionsBoundaryExists(ctx, req.PermissionsBoundary); aerr != nil {
+			return nil, aerr
+		}
+	}
 	role := &Role{
 		RoleName:                 req.RoleName,
 		RoleId:                   iamID("AROA", 17),
@@ -1080,6 +1093,7 @@ func (h *Handler) createRoleTyped(ctx context.Context, req *createRoleReq) (*cre
 		Path:                     path,
 		AssumeRolePolicyDocument: req.AssumeRolePolicyDocument,
 		CreateDate:               h.clk.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		PermissionsBoundary:      req.PermissionsBoundary,
 	}
 	if aerr := h.store.putRole(ctx, role); aerr != nil {
 		return nil, aerr
@@ -1855,6 +1869,7 @@ func (h *Handler) getAccountAuthorizationDetailsTyped(ctx context.Context, _ *ge
 			CreateDate:              u.CreateDate,
 			UserPolicyList:          inlinePolicyListXML(u.InlinePolicies),
 			AttachedManagedPolicies: attachedPolicyListXML(u.AttachedPolicies),
+			PermissionsBoundary:     toPermissionsBoundaryXML(u.PermissionsBoundary),
 		})
 	}
 	groupDetails := make([]groupDetailXML, 0, len(groups))
@@ -1880,6 +1895,7 @@ func (h *Handler) getAccountAuthorizationDetailsTyped(ctx context.Context, _ *ge
 			AssumeRolePolicyDocument: ro.AssumeRolePolicyDocument,
 			RolePolicyList:           inlinePolicyListXML(ro.InlinePolicies),
 			AttachedManagedPolicies:  attachedPolicyListXML(ro.AttachedPolicies),
+			PermissionsBoundary:      toPermissionsBoundaryXML(ro.PermissionsBoundary),
 		})
 	}
 	policyDetails := make([]policyXML, 0, len(policies))

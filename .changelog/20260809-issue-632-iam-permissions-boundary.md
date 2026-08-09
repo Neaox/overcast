@@ -1,0 +1,2 @@
+* [iam] IAM permissions boundaries attached to a user or role are now applied by `SimulatePrincipalPolicy` and by opt-in request-time enforcement, so a bounded principal no longer gets permissions AWS would deny through the boundary intersection
++ [iam] `PutUserPermissionsBoundary`, `DeleteUserPermissionsBoundary`, `PutRolePermissionsBoundary` and `DeleteRolePermissionsBoundary`, plus the `PermissionsBoundary` parameter on `CreateUser`/`CreateRole` and the `PermissionsBoundary` member on the user and role responses

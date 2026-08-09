@@ -153,8 +153,12 @@ func (h *Handler) simulatePrincipalPolicyTyped(ctx context.Context, req *simulat
 	}
 
 	result, aerr := h.runSimulation(simulationInput{
-		identityDocs:   identityDocs,
-		boundaryDocs:   req.PermissionsBoundaryPolicyInputList,
+		identityDocs: identityDocs,
+		boundaryDocs: req.PermissionsBoundaryPolicyInputList,
+		// AWS allows only one permissions boundary per simulation, so a
+		// caller-supplied one stands in for whatever the principal carries —
+		// asking "what would this boundary do" is the reason to supply it.
+		storedBoundary: h.resolvePermissionsBoundary(ctx, principal.boundaryArn),
 		resourcePolicy: req.ResourcePolicy,
 		actions:        req.ActionNames,
 		resources:      req.ResourceArns,
@@ -215,8 +219,12 @@ func (h *Handler) simulateCustomPolicyTyped(ctx context.Context, req *simulateCu
 // ─── Simulation core ─────────────────────────────────────────────────────────
 
 type simulationInput struct {
-	identityDocs   []iampolicy.SourcedDocument
+	identityDocs []iampolicy.SourcedDocument
+	// boundaryDocs is the caller's PermissionsBoundaryPolicyInputList;
+	// storedBoundary is the boundary attached to the simulated principal, used
+	// when the caller supplied none.
 	boundaryDocs   []string
+	storedBoundary *iampolicy.Boundary
 	resourcePolicy string
 	actions        []string
 	resources      []string
@@ -232,7 +240,7 @@ func (h *Handler) runSimulation(in simulationInput) (*simulateResultXML, *protoc
 		return nil, errInvalidInput(err.Error())
 	}
 
-	var boundary []iampolicy.Statement
+	boundary := in.storedBoundary
 	if len(in.boundaryDocs) > 0 {
 		docs := make([]iampolicy.SourcedDocument, 0, len(in.boundaryDocs))
 		for i, doc := range in.boundaryDocs {
@@ -244,10 +252,13 @@ func (h *Handler) runSimulation(in simulationInput) (*simulateResultXML, *protoc
 				Document: doc,
 			})
 		}
-		boundary, err = iampolicy.Compile(docs)
+		// A document supplied on the wire is rejected outright when it does not
+		// parse, unlike a stored one: the caller can fix what they just sent.
+		stmts, err := iampolicy.Compile(docs)
 		if err != nil {
 			return nil, errInvalidInput(err.Error())
 		}
+		boundary = &iampolicy.Boundary{Statements: stmts}
 	}
 
 	var resourceStatements []iampolicy.Statement
@@ -273,7 +284,7 @@ func (h *Handler) runSimulation(in simulationInput) (*simulateResultXML, *protoc
 	for _, action := range in.actions {
 		perResource := make([]resourceSpecificResultXML, 0, len(resources))
 		for _, resource := range resources {
-			evaluated := evaluateOne(iampolicy.Input{
+			evaluated := iampolicy.Evaluate(iampolicy.Input{
 				Request: iampolicy.Request{
 					Action:           action,
 					Resource:         resource,
@@ -283,9 +294,10 @@ func (h *Handler) runSimulation(in simulationInput) (*simulateResultXML, *protoc
 				},
 				Identity:       identity,
 				ResourcePolicy: resourceStatements,
-			}, boundary)
-			unsupported = appendUnsupported(unsupported, evaluated.unsupported)
-			perResource = append(perResource, evaluated.toResourceSpecific(resource))
+				Boundary:       boundary,
+			})
+			unsupported = appendUnsupported(unsupported, evaluated.Unsupported)
+			perResource = append(perResource, toResourceSpecificXML(evaluated, resource))
 		}
 
 		// AWS reports one EvaluationResult per action, naming the first
@@ -318,48 +330,12 @@ func (h *Handler) runSimulation(in simulationInput) (*simulateResultXML, *protoc
 	}, nil
 }
 
-// evaluation is one (action, resource) outcome plus the permissions-boundary
-// verdict that shaped it.
-type evaluation struct {
-	decision    iampolicy.Decision
-	matched     []iampolicy.Match
-	missing     []string
-	unsupported []string
-	boundary    *boundaryDetailXML
-}
-
-// evaluateOne applies the identity/resource evaluation, then caps it with the
-// permissions boundary if one was supplied: an action allowed by the identity
-// policies but not by the boundary is an implicit deny, which is how AWS
-// reports a boundary-capped permission.
-func evaluateOne(input iampolicy.Input, boundary []iampolicy.Statement) evaluation {
-	res := iampolicy.Evaluate(input)
-	out := evaluation{
-		decision:    res.Decision,
-		matched:     res.Matched,
-		missing:     res.MissingContextKeys,
-		unsupported: res.Unsupported,
-	}
-	if len(boundary) == 0 {
-		return out
-	}
-
-	boundaryRes := iampolicy.Evaluate(iampolicy.Input{Request: input.Request, Identity: boundary})
-	out.unsupported = appendUnsupported(out.unsupported, boundaryRes.Unsupported)
-	allowedByBoundary := boundaryRes.Decision == iampolicy.DecisionAllowed
-	out.boundary = &boundaryDetailXML{AllowedByPermissionsBoundary: allowedByBoundary}
-	if !allowedByBoundary && out.decision == iampolicy.DecisionAllowed {
-		out.decision = iampolicy.DecisionImplicitDeny
-	}
-	if boundaryRes.Decision == iampolicy.DecisionExplicitDeny {
-		out.decision = iampolicy.DecisionExplicitDeny
-	}
-	return out
-}
-
-func (e evaluation) toResourceSpecific(resource string) resourceSpecificResultXML {
-	matched := make([]statementXML, 0, len(e.matched))
-	for _, m := range e.matched {
+// toResourceSpecificXML renders one (action, resource) outcome. The
+// PermissionsBoundaryDecisionDetail member is present only when a boundary took
+// part in the decision, which is how AWS reports it.
+func toResourceSpecificXML(res iampolicy.Result, resource string) resourceSpecificResultXML {
+	matched := make([]statementXML, 0, len(res.Matched))
+	for _, m := range res.Matched {
 		matched = append(matched, statementXML{
 			SourcePolicyId:   m.Source.ID,
 			SourcePolicyType: m.Source.Type,
@@ -367,12 +343,16 @@ func (e evaluation) toResourceSpecific(resource string) resourceSpecificResultXM
 			EndPosition:      toPositionXML(m.EndPosition),
 		})
 	}
+	var boundary *boundaryDetailXML
+	if res.BoundaryApplied {
+		boundary = &boundaryDetailXML{AllowedByPermissionsBoundary: res.AllowedByBoundary}
+	}
 	return resourceSpecificResultXML{
 		EvalResourceName:            resource,
-		EvalResourceDecision:        string(e.decision),
+		EvalResourceDecision:        string(res.Decision),
 		MatchedStatements:           listMembersXML[statementXML]{Members: matched, Tag: "member"},
-		MissingContextValues:        listMembersXML[string]{Members: e.missing, Tag: "member"},
-		PermissionsBoundaryDecision: e.boundary,
+		MissingContextValues:        listMembersXML[string]{Members: res.MissingContextKeys, Tag: "member"},
+		PermissionsBoundaryDecision: boundary,
 	}
 }
 
@@ -433,11 +413,16 @@ func (h *Handler) simulationContext(in simulationInput) map[string]string {
 type simulatedPrincipal struct {
 	arn  string
 	name string
+	// boundaryArn is the principal's permissions boundary, empty when it has
+	// none. Only users and roles can carry one — AWS has no group boundary.
+	boundaryArn string
 }
 
 // principalPolicyDocuments resolves a PolicySourceArn to the identity policies
 // that apply to it: inline and attached policies for a user, role or group,
-// plus the policies of every group a user belongs to.
+// plus the policies of every group a user belongs to. The principal's
+// permissions boundary is returned alongside rather than mixed in, because it
+// caps those policies rather than adding to them.
 func (h *Handler) principalPolicyDocuments(ctx context.Context, sourceArn string) ([]iampolicy.SourcedDocument, simulatedPrincipal, *protocol.AWSError) {
 	kind, name, ok := parsePrincipalArn(sourceArn)
 	if !ok {
@@ -460,7 +445,9 @@ func (h *Handler) principalPolicyDocuments(ctx context.Context, sourceArn string
 		for i := range groups {
 			docs = h.appendIdentityDocs(ctx, docs, iampolicy.SourceTypeGroup, groups[i].InlinePolicies, groups[i].AttachedPolicies)
 		}
-		return docs, simulatedPrincipal{arn: user.Arn, name: user.UserName}, nil
+		return docs, simulatedPrincipal{
+			arn: user.Arn, name: user.UserName, boundaryArn: user.PermissionsBoundary,
+		}, nil
 
 	case "role":
 		role, aerr := h.store.getRole(ctx, name)
@@ -468,7 +455,9 @@ func (h *Handler) principalPolicyDocuments(ctx context.Context, sourceArn string
 			return nil, simulatedPrincipal{}, aerr
 		}
 		docs = h.appendIdentityDocs(ctx, docs, iampolicy.SourceTypeRole, role.InlinePolicies, role.AttachedPolicies)
-		return docs, simulatedPrincipal{arn: role.Arn, name: role.RoleName}, nil
+		return docs, simulatedPrincipal{
+			arn: role.Arn, name: role.RoleName, boundaryArn: role.PermissionsBoundary,
+		}, nil
 
 	case "group":
 		group, aerr := h.store.getGroup(ctx, name)

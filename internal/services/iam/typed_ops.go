@@ -69,6 +69,11 @@ func (h *Handler) typedOps() map[string]op.Operation {
 		"ListAttachedUserPolicies": op.NewTyped("ListAttachedUserPolicies", h.listAttachedUserPoliciesTyped),
 		// Inline user policy listing
 		"ListUserPolicies": op.NewTyped("ListUserPolicies", h.listUserPoliciesTyped),
+		// Permissions boundaries
+		"PutUserPermissionsBoundary":    op.NewTyped("PutUserPermissionsBoundary", h.putUserPermissionsBoundaryTyped),
+		"DeleteUserPermissionsBoundary": op.NewTyped("DeleteUserPermissionsBoundary", h.deleteUserPermissionsBoundaryTyped),
+		"PutRolePermissionsBoundary":    op.NewTyped("PutRolePermissionsBoundary", h.putRolePermissionsBoundaryTyped),
+		"DeleteRolePermissionsBoundary": op.NewTyped("DeleteRolePermissionsBoundary", h.deleteRolePermissionsBoundaryTyped),
 		// Role tagging
 		"TagRole":      op.NewTyped("TagRole", h.tagRoleTyped),
 		"UntagRole":    op.NewTyped("UntagRole", h.untagRoleTyped),

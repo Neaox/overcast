@@ -59,7 +59,7 @@ same behaviour Terraform, CDK, `aws-nuke` and eksctl already expect from real IA
 | `DeleteGroup`  | the group has members             | `Cannot delete entity, must remove users from group first.`        |
 |                | inline policies exist             | `Cannot delete entity, must delete policies first.`                |
 |                | managed policies are attached     | `Cannot delete entity, must detach all policies first.`            |
-| `DeletePolicy` | attached to any user, role or group | `Cannot delete a policy attached to entities.`                   |
+| `DeletePolicy` | attached to any user, role or group, or used as one of their permissions boundaries | `Cannot delete a policy attached to entities.` |
 
 A non-existent entity is still `NoSuchEntity` (404): existence is checked before dependencies.
 When several dependencies block at once the checks run in the order listed above, which is the
@@ -116,13 +116,48 @@ What the evaluator covers:
 - Resource-based policies passed as `ResourcePolicy`, including `Principal`/`NotPrincipal`
   matching. Within the single account Overcast emulates, an allow in either the identity
   policies or the resource policy is sufficient, and a deny in either is final.
-- `PermissionsBoundaryPolicyInputList`, reported through `PermissionsBoundaryDecisionDetail`.
+- Permissions boundaries — both the one attached to the simulated principal and one supplied
+  as `PermissionsBoundaryPolicyInputList` — reported through
+  `PermissionsBoundaryDecisionDetail`. See below.
 
 What it does not cover, and says so rather than guessing: a condition operator or principal
 type it does not implement makes the call fail with AWS's `PolicyEvaluation` error naming the
 construct, instead of resolving to an allow or a deny. Service control policies, session
 policies, and the `ForAllValues`/`ForAnyValue` set operators are not implemented. A policy
 document that cannot be parsed is rejected with `InvalidInput`.
+
+Permissions boundaries granted through a `ResourcePolicy` are **not** exempted: on AWS a
+resource-based policy that names an IAM user principal directly is allowed to bypass that
+user's boundary, and Overcast applies the boundary to the combined identity/resource decision
+instead. That divergence only shows up when a simulation supplies a `ResourcePolicy` *and* the
+principal carries a boundary.
+
+## Permissions boundaries
+
+`PutUserPermissionsBoundary` / `PutRolePermissionsBoundary` attach a managed policy as a user's
+or role's permissions boundary, and `CreateUser` / `CreateRole` accept one directly through
+their `PermissionsBoundary` parameter (which is what `AWS::IAM::User` passes from a template).
+`GetUser`, `GetRole`, `ListUsers`, `ListRoles` and `GetAccountAuthorizationDetails` report it as
+AWS's `AttachedPermissionsBoundary`. A boundary naming a policy that does not exist is refused
+with `NoSuchEntity`, and `DeletePolicy` refuses with `DeleteConflict` while a policy is still
+bounding an entity.
+
+A boundary grants nothing on its own: it caps what the entity's identity policies can grant, so
+the effective permissions are the **intersection** of the two, and an explicit deny in either is
+final. Both `SimulatePrincipalPolicy` and opt-in request-time enforcement read the stored
+boundary, so a boundary attached out of band takes effect on the very next call — attaching,
+replacing or removing one invalidates the enforcement middleware's compiled-policy cache, as any
+other policy change does.
+
+Supplying `PermissionsBoundaryPolicyInputList` to `SimulatePrincipalPolicy` uses that boundary
+*instead of* the stored one: AWS allows only one boundary per simulation, and asking "what would
+this boundary do" is the reason to supply it.
+
+A boundary that is attached but cannot be read — its managed policy has been deleted out of
+band, its stored record does not decode, or its document is not a valid policy — allows nothing.
+Reading it as absent would grant exactly the permissions it was attached to withhold, and
+failing the whole call would let one corrupt record break an otherwise healthy principal. The
+reason is logged at warn level.
 
 ## Request-time enforcement (opt-in)
 
@@ -133,7 +168,8 @@ it off the evaluator reads nothing and decides nothing** — behaviour is exactl
 When it is on:
 
 - The caller is resolved from the SigV4 access key to an IAM user (its inline, attached and
-  group policies) or to a role assumed through STS (its inline and attached policies).
+  group policies) or to a role assumed through STS (its inline and attached policies), plus
+  that entity's permissions boundary if it has one.
 - A request the policies do not allow is refused with the calling service's own
   `AccessDenied`-shaped error, in that service's wire format.
 - Enforcement is **fail-closed**: an unsigned request, a policy that cannot be parsed, or a
@@ -155,6 +191,7 @@ for catching missing permissions early, not a security control.
 | Access keys            | 3            |
 | User inline policies   | 4            |
 | User managed policies  | 3            |
+| Permissions boundaries | 4            |
 | User tagging           | 3            |
 | Roles                  | 6            |
 | Role inline policies   | 4            |
@@ -206,6 +243,15 @@ for catching missing permissions early, not a security control.
 | `AttachUserPolicy`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_AttachUserPolicy.html)         |
 | `DetachUserPolicy`         | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DetachUserPolicy.html)         |
 | `ListAttachedUserPolicies` | ✅ Supported |       | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListAttachedUserPolicies.html) |
+
+### Permissions boundaries
+
+| Operation                       | Status       | Notes                                                                                                   | AWS Docs                                                                                           |
+| ------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `PutUserPermissionsBoundary`    | ✅ Supported | Applied by SimulatePrincipalPolicy and by opt-in enforcement; NoSuchEntity if the policy does not exist | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_PutUserPermissionsBoundary.html)    |
+| `DeleteUserPermissionsBoundary` | ✅ Supported |                                                                                                         | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteUserPermissionsBoundary.html) |
+| `PutRolePermissionsBoundary`    | ✅ Supported | Applied by SimulatePrincipalPolicy and by opt-in enforcement; NoSuchEntity if the policy does not exist | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_PutRolePermissionsBoundary.html)    |
+| `DeleteRolePermissionsBoundary` | ✅ Supported |                                                                                                         | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteRolePermissionsBoundary.html) |
 
 ### User tagging
 
@@ -265,12 +311,12 @@ for catching missing permissions early, not a security control.
 
 ### Managed policies
 
-| Operation      | Status       | Notes                                                                        | AWS Docs                                                                          |
-| -------------- | ------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `CreatePolicy` | ✅ Supported |                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicy.html) |
-| `GetPolicy`    | ✅ Supported |                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicy.html)    |
-| `ListPolicies` | ✅ Supported |                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicies.html) |
-| `DeletePolicy` | ✅ Supported | DeleteConflict (409) while the policy is attached to any user, role or group | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicy.html) |
+| Operation      | Status       | Notes                                                                                                                        | AWS Docs                                                                          |
+| -------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `CreatePolicy` | ✅ Supported |                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_CreatePolicy.html) |
+| `GetPolicy`    | ✅ Supported |                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetPolicy.html)    |
+| `ListPolicies` | ✅ Supported |                                                                                                                              | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListPolicies.html) |
+| `DeletePolicy` | ✅ Supported | DeleteConflict (409) while the policy is attached to any user, role or group, or used as one of their permissions boundaries | [docs](https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeletePolicy.html) |
 
 ### Groups
 

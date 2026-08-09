@@ -31,6 +31,13 @@ import (
 type iamEnforceCacheEntry struct {
 	statements   []iampolicy.Statement
 	principalCtx map[string]string
+	// boundary is the principal's compiled permissions boundary, nil when it
+	// has none, and boundaryErr says why it could not be read when it could
+	// not. Both are cached alongside the identity policies because attaching,
+	// replacing or removing a boundary is an IAM mutation like any other and
+	// therefore already invalidates this cache.
+	boundary    *iampolicy.Boundary
+	boundaryErr error
 	// compileErr is set when the principal's policies could not be parsed.
 	// Enforcement fails closed on it rather than evaluating a partial set.
 	compileErr error
@@ -177,7 +184,7 @@ func IAMEnforce(enabled bool, st state.Store, logger *zap.Logger) func(http.Hand
 				// A deny the evaluator could not reason about is a gap in
 				// Overcast, not a decision the user asked for: say so at warn
 				// level rather than burying it in debug output.
-				if logger != nil && (result.compileErr != nil || len(result.Unsupported) > 0) {
+				if logger != nil && (result.compileErr != nil || result.boundaryErr != nil || len(result.Unsupported) > 0) {
 					logger.Warn("iam enforcement denied a request it could not evaluate",
 						zap.String("service", detectService(r)),
 						zap.String("action", action),
@@ -211,6 +218,9 @@ func iamDenialReason(result iamEnforceResult) (string, bool) {
 	if result.compileErr != nil {
 		return "principal policy could not be parsed: " + result.compileErr.Error(), true
 	}
+	if result.boundaryErr != nil {
+		return "permissions boundary could not be read: " + result.boundaryErr.Error(), true
+	}
 	if len(result.Unsupported) > 0 {
 		return "policy uses a construct the evaluator does not implement: " + strings.Join(result.Unsupported, "; "), true
 	}
@@ -223,6 +233,12 @@ func iamDenialReason(result iamEnforceResult) (string, bool) {
 		fallthrough
 	default:
 		reason := "policy did not allow action"
+		if result.BoundaryApplied && !result.AllowedByBoundary {
+			// Distinguishable because the fix is different: the boundary caps
+			// what the identity policies can grant, so widening those changes
+			// nothing until the boundary is widened too.
+			reason = "permissions boundary did not allow action"
+		}
 		if len(result.MissingContextKeys) > 0 {
 			reason += " (missing condition context keys: " + strings.Join(result.MissingContextKeys, ", ") + ")"
 		}
@@ -242,6 +258,7 @@ type iamUserRecord struct {
 	AttachedPolicies []struct {
 		PolicyArn string `json:"PolicyArn"`
 	} `json:"AttachedPolicies"`
+	PermissionsBoundary string `json:"PermissionsBoundary"`
 }
 
 type iamGroupRecord struct {
@@ -267,6 +284,7 @@ type iamRoleRecord struct {
 	AttachedPolicies []struct {
 		PolicyArn string `json:"PolicyArn"`
 	} `json:"AttachedPolicies"`
+	PermissionsBoundary string `json:"PermissionsBoundary"`
 }
 
 type iamManagedPolicyRecord struct {
@@ -1028,23 +1046,30 @@ func parseSQSQueueURL(queueURL string) (string, string) {
 // iamEnforceResult is an evaluation plus whatever stopped it being one.
 type iamEnforceResult struct {
 	iampolicy.Result
-	compileErr error
+	compileErr  error
+	boundaryErr error
 }
 
 func evaluateIAMDecision(r *http.Request, st state.Store, accessKeyID, action, resource string, cache *iamEnforceCache) iamEnforceResult {
 	cached, generation := cache.load(accessKeyID)
 	if cached == nil {
-		docs, principalCtx := collectPrincipalPolicyDocumentsAndContext(r.Context(), st, accessKeyID)
-		statements, err := iampolicy.Compile(docs)
+		principal := collectPrincipalPolicies(r.Context(), st, accessKeyID)
+		statements, err := iampolicy.Compile(principal.docs)
+		boundary, boundaryErr := resolveIAMPermissionsBoundary(r.Context(), st, principal.boundaryArn)
 		cached = &iamEnforceCacheEntry{
 			statements:   statements,
-			principalCtx: principalCtx,
+			principalCtx: principal.context,
+			boundary:     boundary,
+			boundaryErr:  boundaryErr,
 			compileErr:   err,
 		}
 		cache.store(generation, accessKeyID, cached)
 	}
 	if cached.compileErr != nil {
 		return iamEnforceResult{compileErr: cached.compileErr}
+	}
+	if cached.boundaryErr != nil {
+		return iamEnforceResult{boundaryErr: cached.boundaryErr}
 	}
 
 	reqCtx := buildIAMRequestContext(r)
@@ -1061,13 +1086,49 @@ func evaluateIAMDecision(r *http.Request, st state.Store, accessKeyID, action, r
 			PrincipalAccount: cached.principalCtx["aws:principalaccount"],
 		},
 		Identity: cached.statements,
+		Boundary: cached.boundary,
 	})}
 }
 
-func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Store, accessKeyID string) ([]iampolicy.SourcedDocument, map[string]string) {
+// iamPrincipalPolicies is the policy material an access key resolves to: the
+// identity policy documents, the condition-key context derived from the
+// principal itself, and the ARN of its permissions boundary if it has one.
+type iamPrincipalPolicies struct {
+	docs        []iampolicy.SourcedDocument
+	context     map[string]string
+	boundaryArn string
+}
+
+// resolveIAMPermissionsBoundary compiles the managed policy a principal's
+// boundary ARN names, or returns nil when it has no boundary.
+//
+// A boundary that is attached but cannot be read — the policy record is gone,
+// does not decode, or its document is not a valid policy — yields a boundary
+// with no statements, which allows nothing, plus the reason. Enforcement is
+// fail-closed throughout, and reading an unreadable boundary as absent would
+// grant exactly the permissions it was attached to withhold; the reason is what
+// stops that deny looking like an ordinary missing permission.
+func resolveIAMPermissionsBoundary(ctx context.Context, st state.Store, arn string) (*iampolicy.Boundary, error) {
+	if strings.TrimSpace(arn) == "" {
+		return nil, nil
+	}
+	unreadable := fmt.Errorf("permissions boundary policy %s could not be read", arn)
+	raw, found, err := st.Get(ctx, iamPoliciesNamespace, arn)
+	if err != nil || !found {
+		return &iampolicy.Boundary{}, unreadable
+	}
+	var managed iamManagedPolicyRecord
+	if err := json.Unmarshal([]byte(raw), &managed); err != nil || strings.TrimSpace(managed.Document) == "" {
+		return &iampolicy.Boundary{}, unreadable
+	}
+	return iampolicy.NewBoundary(managed.Document,
+		iampolicy.SourceRef{ID: arn, Type: iampolicy.SourceTypeIAMPolicy})
+}
+
+func collectPrincipalPolicies(ctx context.Context, st state.Store, accessKeyID string) iamPrincipalPolicies {
 	users, err := st.Scan(ctx, iamUsersNamespace, "")
 	if err != nil {
-		return nil, nil
+		return iamPrincipalPolicies{}
 	}
 
 	for _, kv := range users {
@@ -1108,10 +1169,14 @@ func collectPrincipalPolicyDocumentsAndContext(ctx context.Context, st state.Sto
 			"aws:principaltype":    "User",
 		}
 
-		return docs, principalCtx
+		return iamPrincipalPolicies{
+			docs:        docs,
+			context:     principalCtx,
+			boundaryArn: user.PermissionsBoundary,
+		}
 	}
 
-	return appendRoleSessionPolicyDocumentsWithContext(ctx, st, accessKeyID)
+	return collectRoleSessionPolicies(ctx, st, accessKeyID)
 }
 
 // PrincipalIdentity is the caller identity resolved from an IAM or STS access
@@ -1127,9 +1192,9 @@ func ResolvePrincipalIdentity(ctx context.Context, st state.Store, accessKeyID s
 	if st == nil || strings.TrimSpace(accessKeyID) == "" {
 		return PrincipalIdentity{}, false
 	}
-	_, principalCtx := collectPrincipalPolicyDocumentsAndContext(ctx, st, accessKeyID)
-	arn := strings.TrimSpace(principalCtx["aws:principalarn"])
-	account := strings.TrimSpace(principalCtx["aws:principalaccount"])
+	principal := collectPrincipalPolicies(ctx, st, accessKeyID)
+	arn := strings.TrimSpace(principal.context["aws:principalarn"])
+	account := strings.TrimSpace(principal.context["aws:principalaccount"])
 	if arn == "" {
 		return PrincipalIdentity{}, false
 	}
@@ -1206,19 +1271,19 @@ func groupHasMember(group iamGroupRecord, userName string) bool {
 	return false
 }
 
-// appendRoleSessionPolicyDocuments resolves a temporary access key issued by
-// STS AssumeRole to its originating role, then appends that role's inline and
-// attached managed policy documents.  Returns nil when the key is not found in
-// iam:sessions.
-func appendRoleSessionPolicyDocumentsWithContext(ctx context.Context, st state.Store, accessKeyID string) ([]iampolicy.SourcedDocument, map[string]string) {
+// collectRoleSessionPolicies resolves a temporary access key issued by STS
+// AssumeRole to its originating role, then collects that role's inline and
+// attached managed policy documents plus its permissions boundary. Returns the
+// zero value when the key is not found in iam:sessions.
+func collectRoleSessionPolicies(ctx context.Context, st state.Store, accessKeyID string) iamPrincipalPolicies {
 	sessionRaw, found, err := st.Get(ctx, iamSessionsNamespace, accessKeyID)
 	if err != nil || !found {
-		return nil, nil
+		return iamPrincipalPolicies{}
 	}
 
 	var session iamRoleSessionRecord
 	if err := json.Unmarshal([]byte(sessionRaw), &session); err != nil {
-		return nil, nil
+		return iamPrincipalPolicies{}
 	}
 
 	roleName := strings.TrimSpace(session.RoleName)
@@ -1229,17 +1294,17 @@ func appendRoleSessionPolicyDocumentsWithContext(ctx context.Context, st state.S
 		}
 	}
 	if roleName == "" {
-		return nil, nil
+		return iamPrincipalPolicies{}
 	}
 
 	roleRaw, found, err := st.Get(ctx, iamRolesNamespace, roleName)
 	if err != nil || !found {
-		return nil, nil
+		return iamPrincipalPolicies{}
 	}
 
 	var role iamRoleRecord
 	if err := json.Unmarshal([]byte(roleRaw), &role); err != nil {
-		return nil, nil
+		return iamPrincipalPolicies{}
 	}
 
 	docs := make([]iampolicy.SourcedDocument, 0, len(role.InlinePolicies)+len(role.AttachedPolicies))
@@ -1265,7 +1330,11 @@ func appendRoleSessionPolicyDocumentsWithContext(ctx context.Context, st state.S
 		"aws:principaltype":    "AssumedRole",
 	}
 
-	return docs, principalCtx
+	return iamPrincipalPolicies{
+		docs:        docs,
+		context:     principalCtx,
+		boundaryArn: role.PermissionsBoundary,
+	}
 }
 
 func accountFromARN(arn string) string {
