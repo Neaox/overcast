@@ -56,7 +56,35 @@ fires nothing, exactly as on AWS.
 | `TreatMissingData` — `missing`, `ignore`, `breaching`, `notBreaching` | Evaluated |
 | `AlarmActions` / `OKActions` / `InsufficientDataActions` naming an SNS topic | Delivered through the emulator's own SNS `Publish`, carrying real CloudWatch's notification body |
 | `ActionsEnabled`, `EnableAlarmActions`, `DisableAlarmActions` | Honoured |
+| `Unit` | Selects which datapoints the alarm sees — a metric published under several units evaluates separately per unit |
+| `Tags` | Applied when the alarm is created. Ignored on a `PutMetricAlarm` that updates an existing alarm, as on AWS — use `TagResource`/`UntagResource` |
 | `SetAlarmState` | Forces the state and fires that state's actions |
+
+### Optional parameters and their defaults
+
+`PutMetricAlarm` marks almost everything `Required: No`, but that is not the
+same as "has a default". Three parameters AWS documents a default for, and
+Overcast applies the same one:
+
+| Parameter | Default when omitted |
+| --- | --- |
+| `ActionsEnabled` | `true` |
+| `DatapointsToAlarm` | `EvaluationPeriods` — "N out of N" |
+| `TreatMissingData` | `missing` |
+
+Five more are optional only because a PromQL alarm carries them inside
+`EvaluationCriteria` instead. For an alarm on a metric they are required, and a
+request that omits one gets a `400 ValidationError` rather than a substituted
+value — `Statistic` (or `ExtendedStatistic`), `ComparisonOperator`, `Period`,
+`EvaluationPeriods` and `Threshold`. Overcast used to fill these in with
+`Average` / `GreaterThanThreshold` / 60s / 1 period / `0.0`, which is not a
+default so much as a different alarm from the one the caller half-described.
+`Threshold: 0` is a value, not an omission.
+
+`AlarmName` is required by `PutMetricAlarm` and optional on
+`AWS::CloudWatch::Alarm` — CloudFormation generates
+`{StackName}-{LogicalID}-{RANDOM}` when a template leaves it out, which is what
+CDK relies on.
 
 ### What is refused
 
@@ -66,6 +94,7 @@ never watched is the failure mode the fidelity-risk veto exists to prevent.
 | Configuration | Response |
 | --- | --- |
 | `Metrics` (metric math / multi-metric alarms) | `501 NotImplemented` from `PutMetricAlarm` |
+| `EvaluationCriteria` (PromQL alarms) | `501 NotImplemented` from `PutMetricAlarm` |
 | `ThresholdMetricId` (anomaly detection) | `501 NotImplemented` from `PutMetricAlarm` |
 | `ExtendedStatistic` (`p99`, `tm99`, …) | `501 NotImplemented` from `PutMetricAlarm` |
 | `LessThanLowerOrGreaterThanUpperThreshold`, `LessThanLowerThreshold`, `GreaterThanUpperThreshold` | `501 NotImplemented` from `PutMetricAlarm` — anomaly-band operators |
@@ -89,6 +118,14 @@ incomplete.
   range and resolves the gaps through `TreatMissingData`.
 - **Alarm history is bounded by count, not age.** The most recent 100 items per alarm are kept;
   real CloudWatch keeps 14 days.
+- **A datapoint published without a unit feeds an alarm that names one.** AWS files an
+  unqualified datapoint under `None`, so on AWS an alarm on `Count` never sees it and sits in
+  `INSUFFICIENT_DATA` — the trap the `PutMetricAlarm` docs warn about when they recommend
+  omitting `Unit`. Locally published metrics routinely omit the unit while the CDK construct
+  that created the alarm supplied one, so Overcast lets the unqualified datapoint count. A
+  datapoint that *does* name a unit is still held to it.
+- **`EvaluationWindow` is accepted and ignored.** Overcast always evaluates the period-aligned
+  window described above, rather than AWS's default sliding window.
 
 <!-- BEGIN overcast:capabilities -->
 

@@ -2188,6 +2188,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Optional parameters and their defaults",
+        "id": "optional-parameters-and-their-defaults"
+      },
+      {
+        "depth": 3,
         "text": "What is refused",
         "id": "what-is-refused"
       },

@@ -435,6 +435,10 @@ func (s *cloudwatchStore) setTags(ctx context.Context, arn string, tags map[stri
 	return s.store.Set(ctx, nsTags, arn, string(raw))
 }
 
+func (s *cloudwatchStore) deleteTags(ctx context.Context, arn string) {
+	_ = s.store.Delete(ctx, nsTags, arn)
+}
+
 func (s *cloudwatchStore) getTags(ctx context.Context, arn string) (map[string]string, error) {
 	raw, found, err := s.store.Get(ctx, nsTags, arn)
 	if err != nil {
@@ -952,13 +956,19 @@ func (s *Service) deleteAlarmsJSON(w http.ResponseWriter, r *http.Request) {
 	writeJSONResult(w, r, struct{}{})
 }
 
-// removeAlarm deletes an alarm along with the history and evaluation memo
-// that belong to it, so a recreated alarm starts clean.
+// removeAlarm deletes an alarm along with the history, tags and evaluation
+// memo that belong to it, so a recreated alarm starts clean.
 func (s *Service) removeAlarm(ctx context.Context, name string) {
 	_ = s.store.deleteAlarm(ctx, name)
 	s.store.deleteAlarmHistory(ctx, name)
+	s.store.deleteTags(ctx, s.alarmARN(ctx, name))
 	s.forgetAlarmMemo(name)
 	s.invalidateAlarmCount()
+}
+
+// alarmARN builds the ARN an alarm is stored and tagged under.
+func (s *Service) alarmARN(ctx context.Context, name string) string {
+	return protocol.ARN(middleware.RegionFromContext(ctx, s.cfg.Region), s.cfg.AccountID, "cloudwatch", "alarm:"+name)
 }
 
 func (s *Service) describeAlarmsForMetricJSON(w http.ResponseWriter, r *http.Request) {
@@ -1005,8 +1015,7 @@ func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
 // storeAlarmFromInput persists a validated PutMetricAlarm request, recording
 // the ConfigurationUpdate history item AWS records for it.
 func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput) (*MetricAlarm, *protocol.AWSError) {
-	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
-	arn := protocol.ARN(region, s.cfg.AccountID, "cloudwatch", "alarm:"+in.AlarmName)
+	arn := s.alarmARN(r.Context(), in.AlarmName)
 	now := s.clk.Now().UTC()
 
 	previous, existed := s.store.getAlarm(r.Context(), in.AlarmName)
@@ -1020,6 +1029,18 @@ func (s *Service) storeAlarmFromInput(r *http.Request, in alarmInput) (*MetricAl
 	summary := "Alarm " + in.AlarmName + " created"
 	if existed {
 		summary = "Alarm " + in.AlarmName + " updated"
+	}
+	// Tags apply on creation only: AWS ignores the Tags parameter when
+	// PutMetricAlarm updates an existing alarm, and points callers at
+	// TagResource/UntagResource instead.
+	if !existed && len(in.Tags) > 0 {
+		tags := make(map[string]string, len(in.Tags))
+		for _, tag := range in.Tags {
+			tags[tag.Key] = tag.Value
+		}
+		if err := s.store.setTags(r.Context(), arn, tags); err != nil {
+			return nil, protocol.ErrInternalError
+		}
 	}
 	_ = s.store.putAlarmHistory(r.Context(), AlarmHistoryItem{
 		AlarmName:       alarm.AlarmName,
