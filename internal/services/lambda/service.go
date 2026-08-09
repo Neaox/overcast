@@ -190,9 +190,14 @@ type Function struct {
 	// S3 refreshes preserve it so concurrent object events can be ordered while
 	// every manual/inline update—including one with identical bytes—fences out
 	// fetches that started against the previous generation.
-	CodeGeneration      string             `json:"code_generation,omitempty"`
-	CodeS3Bucket        string             `json:"code_s3_bucket,omitempty"`
-	CodeS3Key           string             `json:"code_s3_key,omitempty"`
+	CodeGeneration string `json:"code_generation,omitempty"`
+	CodeS3Bucket   string `json:"code_s3_bucket,omitempty"`
+	CodeS3Key      string `json:"code_s3_key,omitempty"`
+	// CodeS3ObjectVersion pins the deployment package to one immutable version
+	// of CodeS3Key. Empty means "whatever is current", which is also what makes
+	// the function eligible for reactive S3 code sync — a pinned function must
+	// not be refreshed when a new version lands at its key.
+	CodeS3ObjectVersion string             `json:"code_s3_object_version,omitempty"`
 	ImageUri            string             `json:"image_uri,omitempty"` // PackageType=Image only
 	PackageType         string             `json:"package_type,omitempty"`
 	Architectures       []string           `json:"architectures,omitempty"`

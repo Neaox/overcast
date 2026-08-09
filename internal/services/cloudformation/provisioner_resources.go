@@ -999,7 +999,13 @@ func (h *kmsAliasHandler) Delete(ctx context.Context, router http.Handler, cfg *
 
 type lambdaEventSourceMappingHandler struct{}
 
-func (h *lambdaEventSourceMappingHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+// lambdaESMCreateBody builds the CreateEventSourceMapping request an
+// AWS::Lambda::EventSourceMapping template resource dispatches. It is a pure
+// function of the resolved properties so that the set of request members this
+// resource can forward is derivable by running it — see
+// TestLambdaProvisionerForwardsOnlyReviewedGatedMembers, which checks that set
+// against Lambda's own 501 gate.
+func lambdaESMCreateBody(props map[string]any, stackTags []Tag) map[string]any {
 	body := map[string]any{}
 	if v, _ := props["EventSourceArn"].(string); v != "" {
 		body["EventSourceArn"] = v
@@ -1016,37 +1022,46 @@ func (h *lambdaEventSourceMappingHandler) Create(ctx context.Context, router htt
 	if v, _ := props["StartingPosition"].(string); v != "" {
 		body["StartingPosition"] = v
 	}
-	for _, key := range []string{
-		"MaximumBatchingWindowInSeconds",
-		"FilterCriteria",
-		"MaximumRecordAgeInSeconds",
-		"MaximumRetryAttempts",
-		"TumblingWindowInSeconds",
-		"BisectBatchOnFunctionError",
-		"DestinationConfig",
-		"ScalingConfig",
-		"FunctionResponseTypes",
-		"ParallelizationFactor",
-		"StartingPositionTimestamp",
-		"SourceAccessConfigurations",
-		"SelfManagedEventSource",
-		"Topics",
-		"Queues",
-		"MetricsConfig",
-		"ProvisionedPollerConfig",
-		"AmazonManagedKafkaEventSourceConfig",
-		"DocumentDBEventSourceConfig",
-		"LoggingConfig",
-		"SelfManagedKafkaEventSourceConfig",
-	} {
+	for _, key := range lambdaESMCreateForwardedProperties {
 		if v, ok := props[key]; ok {
 			body[key] = v
 		}
 	}
 	copyAnyProp(body, props, "KmsKeyArn", "KMSKeyArn")
-	if tags := mergeResourceTags(rCtx.StackTags, props["Tags"]); len(tags) > 0 {
+	if tags := mergeResourceTags(stackTags, props["Tags"]); len(tags) > 0 {
 		body["Tags"] = tags
 	}
+	return body
+}
+
+// lambdaESMCreateForwardedProperties are the template properties copied
+// straight through to CreateEventSourceMapping under the same name.
+var lambdaESMCreateForwardedProperties = []string{
+	"MaximumBatchingWindowInSeconds",
+	"FilterCriteria",
+	"MaximumRecordAgeInSeconds",
+	"MaximumRetryAttempts",
+	"TumblingWindowInSeconds",
+	"BisectBatchOnFunctionError",
+	"DestinationConfig",
+	"ScalingConfig",
+	"FunctionResponseTypes",
+	"ParallelizationFactor",
+	"StartingPositionTimestamp",
+	"SourceAccessConfigurations",
+	"SelfManagedEventSource",
+	"Topics",
+	"Queues",
+	"MetricsConfig",
+	"ProvisionedPollerConfig",
+	"AmazonManagedKafkaEventSourceConfig",
+	"DocumentDBEventSourceConfig",
+	"LoggingConfig",
+	"SelfManagedKafkaEventSourceConfig",
+}
+
+func (h *lambdaEventSourceMappingHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
+	body := lambdaESMCreateBody(props, rCtx.StackTags)
 
 	data, _ := json.Marshal(body)
 	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/2015-03-31/event-source-mappings/", "application/json", data)
@@ -1107,52 +1122,7 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 		}
 	}
 
-	body := map[string]any{"UUID": physicalID}
-	haveMutable := false
-	for _, key := range []string{
-		"BatchSize",
-		"Enabled",
-		"MaximumBatchingWindowInSeconds",
-		"FilterCriteria",
-		"MaximumRecordAgeInSeconds",
-		"MaximumRetryAttempts",
-		"BisectBatchOnFunctionError",
-		"DestinationConfig",
-		"ScalingConfig",
-		"FunctionResponseTypes",
-		"ParallelizationFactor",
-		"TumblingWindowInSeconds",
-		"SourceAccessConfigurations",
-		"MetricsConfig",
-		"ProvisionedPollerConfig",
-		"FunctionName",
-		"Topics",
-		"Queues",
-		"AmazonManagedKafkaEventSourceConfig",
-		"DocumentDBEventSourceConfig",
-		"LoggingConfig",
-		"SelfManagedKafkaEventSourceConfig",
-	} {
-		if reflect.DeepEqual(props[key], oldProps[key]) {
-			continue
-		}
-		if v, ok := props[key]; ok {
-			body[key] = v
-			haveMutable = true
-			continue
-		}
-		if empty, ok := lambdaEventSourceMappingClearValue(key, fmt.Sprint(oldProps["EventSourceArn"])); ok {
-			body[key] = empty
-			haveMutable = true
-		}
-	}
-	if !reflect.DeepEqual(props["KmsKeyArn"], oldProps["KmsKeyArn"]) {
-		haveMutable = true
-		body["KMSKeyArn"] = ""
-		if value, ok := props["KmsKeyArn"]; ok {
-			body["KMSKeyArn"] = value
-		}
-	}
+	body, haveMutable := lambdaESMUpdateBody(physicalID, props, oldProps)
 	if haveMutable {
 		data, _ := json.Marshal(body)
 		path := fmt.Sprintf("/2015-03-31/event-source-mappings/%s", physicalID)
@@ -1173,6 +1143,63 @@ func (h *lambdaEventSourceMappingHandler) Update(ctx context.Context, router htt
 		"Id":                    physicalID,
 		"EventSourceMappingArn": protocol.ARN(rCtx.Region, rCtx.AccountID, "lambda", "event-source-mapping:"+physicalID),
 	}, nil
+}
+
+// lambdaESMUpdateBody builds the UpdateEventSourceMapping request for a changed
+// AWS::Lambda::EventSourceMapping, and reports whether anything mutable
+// actually changed. Pure, for the same reason as lambdaESMCreateBody.
+func lambdaESMUpdateBody(physicalID string, props, oldProps map[string]any) (map[string]any, bool) {
+	body := map[string]any{"UUID": physicalID}
+	haveMutable := false
+	for _, key := range lambdaESMUpdateForwardedProperties {
+		if reflect.DeepEqual(props[key], oldProps[key]) {
+			continue
+		}
+		if v, ok := props[key]; ok {
+			body[key] = v
+			haveMutable = true
+			continue
+		}
+		if empty, ok := lambdaEventSourceMappingClearValue(key, fmt.Sprint(oldProps["EventSourceArn"])); ok {
+			body[key] = empty
+			haveMutable = true
+		}
+	}
+	if !reflect.DeepEqual(props["KmsKeyArn"], oldProps["KmsKeyArn"]) {
+		haveMutable = true
+		body["KMSKeyArn"] = ""
+		if value, ok := props["KmsKeyArn"]; ok {
+			body["KMSKeyArn"] = value
+		}
+	}
+	return body, haveMutable
+}
+
+// lambdaESMUpdateForwardedProperties are the mutable template properties copied
+// straight through to UpdateEventSourceMapping under the same name.
+var lambdaESMUpdateForwardedProperties = []string{
+	"BatchSize",
+	"Enabled",
+	"MaximumBatchingWindowInSeconds",
+	"FilterCriteria",
+	"MaximumRecordAgeInSeconds",
+	"MaximumRetryAttempts",
+	"BisectBatchOnFunctionError",
+	"DestinationConfig",
+	"ScalingConfig",
+	"FunctionResponseTypes",
+	"ParallelizationFactor",
+	"TumblingWindowInSeconds",
+	"SourceAccessConfigurations",
+	"MetricsConfig",
+	"ProvisionedPollerConfig",
+	"FunctionName",
+	"Topics",
+	"Queues",
+	"AmazonManagedKafkaEventSourceConfig",
+	"DocumentDBEventSourceConfig",
+	"LoggingConfig",
+	"SelfManagedKafkaEventSourceConfig",
 }
 
 func lambdaEventSourceMappingClearValue(property, eventSourceARN string) (any, bool) {

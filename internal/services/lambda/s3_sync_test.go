@@ -18,7 +18,7 @@ import (
 
 // testFetch returns a deterministic zip payload for the given bucket/key.
 func testFetch(data []byte) S3FetchFunc {
-	return func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	return func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		return data, nil
 	}
 }
@@ -111,7 +111,7 @@ func TestS3SyncWatcher_nonMatchingObjectLeavesCodeZipUnchanged(t *testing.T) {
 
 func TestS3SyncWatcher_fetchErrorLeavesCodeZipUnchanged(t *testing.T) {
 	// Given: a fetch func that always fails.
-	failFetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	failFetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		return nil, protocol.Wrap(protocol.ErrInternalError, errors.New("s3: connection refused"))
 	}
 	w, ls := testWatcher(t, failFetch)
@@ -137,7 +137,7 @@ func TestS3SyncWatcher_inlineDetachDuringFetchWins(t *testing.T) {
 	// Given: an S3-backed function and a watcher blocked in its object fetch.
 	fetchStarted := make(chan struct{})
 	releaseFetch := make(chan struct{})
-	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		close(fetchStarted)
 		<-releaseFetch
 		return []byte("stale-s3-code"), nil
@@ -194,7 +194,7 @@ func TestS3SyncWatcher_newerSameBindingUpdateDuringFetchWins(t *testing.T) {
 	// object generation.
 	fetchStarted := make(chan struct{})
 	releaseFetch := make(chan struct{})
-	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		close(fetchStarted)
 		<-releaseFetch
 		return []byte("stale-s3-code"), nil
@@ -266,7 +266,7 @@ func TestS3SyncWatcher_sameBytesManualUpdateDuringFetchWins(t *testing.T) {
 	fetchStarted := make(chan struct{})
 	releaseFetch := make(chan struct{})
 	code := []byte("same-code-bytes")
-	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		close(fetchStarted)
 		<-releaseFetch
 		return code, nil
@@ -308,7 +308,7 @@ func TestS3SyncWatcher_configurationUpdateDuringFetchDoesNotFence(t *testing.T) 
 	// Given: an S3 refresh blocked after reading the function.
 	fetchStarted := make(chan struct{})
 	releaseFetch := make(chan struct{})
-	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		close(fetchStarted)
 		<-releaseFetch
 		return []byte("refreshed-code"), nil
@@ -365,7 +365,7 @@ func testConcurrentS3EventsKeepNewest(t *testing.T, newerCommitsFirst bool) {
 	releaseNewer := make(chan struct{})
 	var calls int
 	var callsMu sync.Mutex
-	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		callsMu.Lock()
 		calls++
 		call := calls
@@ -424,7 +424,7 @@ func TestS3SyncWatcher_recreatedFunctionUsesStableStateSlot(t *testing.T) {
 	// Given: an initial function generation has applied an S3 event.
 	codes := []string{"first-generation-refresh", "stale-refresh", "recreated-refresh"}
 	call := 0
-	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		code := []byte(codes[call])
 		call++
 		return code, nil
@@ -516,7 +516,7 @@ func TestS3SyncWatcher_lateDeletedEventCannotRepopulateRecreationState(t *testin
 	releaseOld := make(chan struct{})
 	var calls int
 	var callsMu sync.Mutex
-	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		callsMu.Lock()
 		calls++
 		call := calls
@@ -600,7 +600,7 @@ func TestS3SyncWatcher_staleRetirementCannotReverseNewestPoolExpectation(t *test
 	olderRetireApplied := make(chan struct{}, 1)
 	var calls int
 	var callsMu sync.Mutex
-	fetch := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		callsMu.Lock()
 		calls++
 		call := calls
@@ -730,7 +730,7 @@ func TestS3SyncWatcher_register_cancelRemovesSubscription(t *testing.T) {
 func TestS3SyncWatcher_wrongPayloadTypeIgnored(t *testing.T) {
 	// Given: a watcher and a function in the store.
 	called := false
-	fetchSpy := func(_ context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetchSpy := func(_ context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		called = true
 		return nil, nil
 	}
@@ -758,7 +758,7 @@ func TestS3SyncWatcher_functionDeletedDuringFetch_staysDeleted(t *testing.T) {
 	// Given: a watcher whose S3 fetch deletes the function mid-flight — the
 	// deterministic stand-in for a delete racing a slow download.
 	var ls *lambdaStore
-	fetch := func(ctx context.Context, _, _ string) ([]byte, *protocol.AWSError) {
+	fetch := func(ctx context.Context, _, _, _ string) ([]byte, *protocol.AWSError) {
 		if aerr := ls.deleteFunction(ctx, "sync-del-fn"); aerr != nil {
 			return nil, protocol.Wrap(protocol.ErrInternalError, errors.New("delete mid-fetch: "+aerr.Message))
 		}

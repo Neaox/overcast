@@ -127,6 +127,60 @@ func TestLambdaTags_RequiresItsRequiredMembers(t *testing.T) {
 	}
 }
 
+// CreateEventSourceMapping has a Tags member, and CloudFormation merges the
+// stack's tags into it on every tagged deploy. The tags land in the mapping's
+// own tag store, reachable through the same three tag operations.
+func TestCreateEventSourceMapping_StoresTags(t *testing.T) {
+	// Given: a function to attach a mapping to.
+	srv := helpers.NewTestServer(t)
+	createFunction(t, srv, "esm-create-tag-fn")
+
+	// When: the mapping is created with Tags.
+	esm := createESM(t, srv, map[string]any{
+		"FunctionName":   "esm-create-tag-fn",
+		"EventSourceArn": sqsARN("esm-create-tag-queue"),
+		"Tags":           map[string]string{"team": "platform", "env": "dev"},
+	})
+	esmARN, _ := esm["EventSourceMappingArn"].(string)
+	if esmARN == "" {
+		t.Fatalf("event source mapping has no ARN: %v", esm)
+	}
+
+	// Then: ListTags reports them…
+	tags := listResourceTags(t, srv, esmARN)
+	if tags["team"] != "platform" || tags["env"] != "dev" {
+		t.Fatalf("tags after create = %v, want team=platform env=dev", tags)
+	}
+
+	// …TagResource still merges onto them…
+	add := doJSON(t, http.MethodPost, tagsURL(srv, esmARN),
+		map[string]map[string]string{"Tags": {"env": "prod"}})
+	add.Body.Close()
+	helpers.AssertStatus(t, add, http.StatusNoContent)
+	tags = listResourceTags(t, srv, esmARN)
+	if tags["team"] != "platform" || tags["env"] != "prod" {
+		t.Fatalf("tags after TagResource = %v", tags)
+	}
+
+	// …UntagResource removes them…
+	remove := doJSON(t, http.MethodDelete, tagsURL(srv, esmARN)+"?tagKeys=team", nil)
+	remove.Body.Close()
+	helpers.AssertStatus(t, remove, http.StatusNoContent)
+	tags = listResourceTags(t, srv, esmARN)
+	if _, present := tags["team"]; present {
+		t.Fatalf("tags after UntagResource = %v", tags)
+	}
+
+	// …and the create response keeps AWS's shape: EventSourceMappingConfiguration
+	// has no Tags member, so the tags are readable only through ListTags.
+	if _, present := esm["Tags"]; present {
+		t.Errorf("CreateEventSourceMapping echoed Tags; AWS's response shape has no such member")
+	}
+}
+
+// TestCreateEventSourceMapping_TagsSurviveRestart lives in tags_restart_test.go:
+// it needs a durable store, which a -tags nosqlite build does not have.
+
 // AWS tags event source mappings through the same three operations.
 func TestLambdaTags_EventSourceMappingLifecycle(t *testing.T) {
 	// Given: an event source mapping.

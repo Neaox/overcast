@@ -1,0 +1,3 @@
+* [lambda/cloudformation] `cdk deploy --tags` no longer fails an SQS-to-Lambda stack: `CreateEventSourceMapping` stores the `Tags` it is sent instead of answering 501, and they are readable through `ListTags` like a function's
+* [lambda] an explicit `null`, `false`, empty string, empty list or empty object for a modeled-but-unimplemented request member now means `do nothing` and is accepted, rather than returning a 501; a value that genuinely asks for the feature still does
++ [lambda] `Code.S3ObjectVersion` on `CreateFunction` and `UpdateFunctionCode` fetches that version of the deployment package, which is what CDK emits once the asset bucket has versioning enabled

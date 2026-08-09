@@ -10,7 +10,7 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "ListFunctions", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns all stored functions; empty list if none"},
 		capabilities.Capability{Service: "lambda", Operation: "CreateFunction", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Stores metadata; validates Runtime against the pinned model and refuses runtimes past AWS's block-create date; a modeled runtime with no execution image returns 501 and persists nothing; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); TracingConfig, EphemeralStorage and KMSKeyArn are validated, stored and echoed but change nothing — X-Ray tracing is not emulated, the ephemeral storage size is not enforced on the container, and environment variables are not encrypted at rest; an unfetchable Code.S3Bucket/S3Key fails the create and persists nothing"},
+			Status: capabilities.StatusSupported, Notes: "Stores metadata; validates Runtime against the pinned model and refuses runtimes past AWS's block-create date; a modeled runtime with no execution image returns 501 and persists nothing; auto-creates CWL log group; VpcConfig and ImageConfig supported; FileSystemConfigs round-trip (EFS mounts in live mode; S3 Files runtime mounts tracked in #647); TracingConfig, EphemeralStorage and KMSKeyArn are validated, stored and echoed but change nothing — X-Ray tracing is not emulated, the ephemeral storage size is not enforced on the container, and environment variables are not encrypted at rest; Code.S3ObjectVersion fetches that version of the object; an unfetchable Code.S3Bucket/S3Key/S3ObjectVersion fails the create and persists nothing"},
 		capabilities.Capability{Service: "lambda", Operation: "DeleteFunction", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Qualifier deletes only that published version, with its qualified policy and provisioned concurrency; refuses $LATEST and versions an alias references; unqualified deletes the function"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunction", Category: "Function management",
@@ -18,7 +18,7 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionConfiguration", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Returns FunctionConfiguration only (no Code block); TracingConfig and EphemeralStorage always present, defaulting to PassThrough and 512 MB as on AWS"},
 		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionCode", Category: "Function management",
-			Status: capabilities.StatusSupported, Notes: "Updates code zip or image URI and Architectures; generates new RevisionId"},
+			Status: capabilities.StatusSupported, Notes: "Updates code zip or image URI and Architectures; S3ObjectVersion fetches that version of the object, and a version that cannot be read leaves the function untouched; generates new RevisionId"},
 		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionConfiguration", Category: "Function management",
 			Status: capabilities.StatusSupported, Notes: "Presence-aware updates for supported configuration, including TracingConfig, EphemeralStorage and KMSKeyArn (recorded and echoed, never enforced); a Runtime past AWS's block-update date is refused; unsupported advanced fields fail before mutation"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionCodeSigningConfig", Category: "Function management",
@@ -88,7 +88,7 @@ func init() {
 
 		// Event source mappings
 		capabilities.Capability{Service: "lambda", Operation: "CreateEventSourceMapping", Category: "Event source mappings",
-			Status: capabilities.StatusSupported, Notes: "SQS→Lambda, DynamoDB Streams→Lambda"},
+			Status: capabilities.StatusSupported, Notes: "SQS→Lambda, DynamoDB Streams→Lambda; Tags are stored and readable through ListTags"},
 		capabilities.Capability{Service: "lambda", Operation: "GetEventSourceMapping", Category: "Event source mappings",
 			Status: capabilities.StatusSupported},
 		capabilities.Capability{Service: "lambda", Operation: "UpdateEventSourceMapping", Category: "Event source mappings",

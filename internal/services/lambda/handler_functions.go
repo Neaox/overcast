@@ -571,21 +571,173 @@ type unsupportedRequestField struct {
 	present bool
 }
 
+// rawRequestField reports whether a modeled member Overcast does not implement
+// was actually *asked for*. Serialised presence is not the same question: AWS's
+// default for each of these members is its falsy value, and SDKs,
+// CloudFormation clear-values and hand-written clients all send that value
+// explicitly. `"Publish": false` asks for nothing, so answering it with a 501
+// fails an ordinary no-op call.
+//
+// A JSON value means "do nothing" when it is null, false, "", [] or {}.
+// Anything else — true, a number, a non-empty string, a populated list or
+// object — is a real request and still returns 501.
 func rawRequestField(raw json.RawMessage) unsupportedRequestField {
-	return unsupportedRequestField{present: len(raw) > 0 && string(raw) != "null"}
+	return unsupportedRequestField{present: rawJSONRequestsFeature(raw)}
 }
 
-func stringRequestField(value string) unsupportedRequestField {
-	return unsupportedRequestField{present: value != ""}
+func rawJSONRequestsFeature(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		// Undecodable JSON cannot be shown to be a no-op. The surrounding
+		// decode has already accepted the body, so this is unreachable in
+		// practice; never treat it as absent.
+		return true
+	}
+	switch v := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return v
+	case string:
+		return v != ""
+	case []any:
+		return len(v) > 0
+	case map[string]any:
+		return len(v) > 0
+	default:
+		// Numbers: any number the caller bothered to send names a value, and
+		// none of the gated numeric members treats zero as "leave it alone".
+		return true
+	}
 }
 
-func hasUnsupportedRequestField(fields ...unsupportedRequestField) bool {
-	for _, field := range fields {
+// unsupportedRequestMembers maps each modeled request member an operation
+// refuses with a 501 to the value this caller sent for it. It is the single
+// definition of that operation's gate: the handler asks it whether anything was
+// requested, and UnsupportedRequestMembers reads the same table for its names,
+// so the two cannot drift apart.
+//
+// A nested member is keyed by its path — "Code.SourceKMSKeyArn".
+type unsupportedRequestMembers map[string]unsupportedRequestField
+
+// requested reports whether the caller asked for any member in the table.
+func (m unsupportedRequestMembers) requested() bool {
+	for _, field := range m {
 		if field.present {
 			return true
 		}
 	}
 	return false
+}
+
+// Lambda operation names used as keys by UnsupportedRequestMembers. They are
+// the AWS operation names, so a caller can line them up with the API it is
+// dispatching to.
+const (
+	OpCreateFunction              = "CreateFunction"
+	OpUpdateFunctionCode          = "UpdateFunctionCode"
+	OpUpdateFunctionConfiguration = "UpdateFunctionConfiguration"
+	OpCreateEventSourceMapping    = "CreateEventSourceMapping"
+	OpUpdateEventSourceMapping    = "UpdateEventSourceMapping"
+)
+
+// UnsupportedRequestMembers reports the modeled request members each Lambda
+// operation refuses with a 501, keyed by AWS operation name and sorted.
+//
+// It exists so that another package can check itself against Lambda's real
+// gate rather than a copy of it: a caller that forwards one of these members
+// produces a request that can only ever fail. CloudFormation's provisioner is
+// the caller that matters — see
+// TestLambdaProvisionerForwardsOnlyReviewedGatedMembers.
+func UnsupportedRequestMembers() map[string][]string {
+	gates := map[string]unsupportedRequestMembers{
+		OpCreateFunction:              (&createFunctionRequest{Code: &functionCode{}}).unsupportedMembers(),
+		OpUpdateFunctionCode:          (&updateFunctionCodeRequest{}).unsupportedMembers(),
+		OpUpdateFunctionConfiguration: (&updateFunctionConfigurationRequest{}).unsupportedMembers(),
+		OpCreateEventSourceMapping:    (&createESMRequest{}).unsupportedMembers(),
+		OpUpdateEventSourceMapping:    (&updateESMRequest{}).unsupportedMembers(),
+	}
+	out := make(map[string][]string, len(gates))
+	for operation, members := range gates {
+		names := make([]string, 0, len(members))
+		for name := range members {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		out[operation] = names
+	}
+	return out
+}
+
+// unsupportedMembers is CreateFunction's 501 gate. Each member here stays
+// refused because accepting one would promise behaviour a caller can observe
+// Overcast not delivering — unlike TracingConfig, EphemeralStorage and
+// KMSKeyArn, which are stored and echoed (see "advanced configuration" above):
+//
+//   - DeadLetterConfig — accepting it says failed async invocations reach the
+//     target queue or topic. They do not: async retry and on-failure delivery
+//     are not emulated outside event source mappings, so the DLQ would stay
+//     silently empty and the caller would never learn why.
+//   - SnapStart — promises a restored snapshot and the init-phase semantics
+//     that come with it; execution environments here always cold start.
+//   - CapacityProviderConfig, DurableConfig, TenancyConfig — each selects an
+//     execution substrate Overcast has no equivalent of.
+//   - Publish and PublishTo — publishing on create must report the resulting
+//     version, and functionConfiguration has no Version member to report it
+//     in. PublishVersion exists, so this is implementable; adding Version to
+//     the shared response shape is the work.
+//   - Code.S3ObjectStorageMode and Code.SourceKMSKeyArn — the storage mode and
+//     encryption of the deployment package are not emulated. Code.S3ObjectVersion
+//     is *not* here: it selects a real object version and is honoured.
+func (req *createFunctionRequest) unsupportedMembers() unsupportedRequestMembers {
+	members := unsupportedRequestMembers{
+		"DeadLetterConfig":       rawRequestField(req.DeadLetterConfig),
+		"SnapStart":              rawRequestField(req.SnapStart),
+		"CapacityProviderConfig": rawRequestField(req.CapacityProviderConfig),
+		"DurableConfig":          rawRequestField(req.DurableConfig),
+		"Publish":                rawRequestField(req.Publish),
+		"PublishTo":              rawRequestField(req.PublishTo),
+		"TenancyConfig":          rawRequestField(req.TenancyConfig),
+	}
+	code := req.Code
+	if code == nil {
+		code = &functionCode{}
+	}
+	members["Code.S3ObjectStorageMode"] = rawRequestField(code.S3ObjectStorageMode)
+	members["Code.SourceKMSKeyArn"] = rawRequestField(code.SourceKMSKeyArn)
+	return members
+}
+
+// unsupportedMembers is UpdateFunctionCode's 501 gate. DryRun, Publish/PublishTo
+// and RevisionId refuse for the same reasons as CreateFunction's; S3ObjectStorageMode
+// and SourceKMSKeyArn are the same two package members CreateFunction refuses
+// under Code. S3ObjectVersion is absent from both: it is honoured.
+func (req *updateFunctionCodeRequest) unsupportedMembers() unsupportedRequestMembers {
+	return unsupportedRequestMembers{
+		"DryRun":              rawRequestField(req.DryRun),
+		"Publish":             rawRequestField(req.Publish),
+		"PublishTo":           rawRequestField(req.PublishTo),
+		"RevisionId":          rawRequestField(req.RevisionId),
+		"S3ObjectStorageMode": rawRequestField(req.S3ObjectStorageMode),
+		"SourceKMSKeyArn":     rawRequestField(req.SourceKMSKeyArn),
+	}
+}
+
+// unsupportedMembers is UpdateFunctionConfiguration's 501 gate. Same rationale
+// as CreateFunction's, plus one member only this operation takes: RevisionId is
+// an optimistic-concurrency precondition, so accepting it would silently skip
+// the very check the caller asked for.
+func (req *updateFunctionConfigurationRequest) unsupportedMembers() unsupportedRequestMembers {
+	return unsupportedRequestMembers{
+		"DeadLetterConfig":       rawRequestField(req.DeadLetterConfig),
+		"SnapStart":              rawRequestField(req.SnapStart),
+		"CapacityProviderConfig": rawRequestField(req.CapacityProviderConfig),
+		"DurableConfig":          rawRequestField(req.DurableConfig),
+		"RevisionId":             rawRequestField(req.RevisionId),
+	}
 }
 
 // ─── runtime metadata ────────────────────────────────────────────────────────
@@ -751,31 +903,8 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrMissingParameter("Role"))
 		return
 	}
-	// The members below stay 501 because accepting one would promise behaviour
-	// a caller can observe Overcast not delivering — unlike TracingConfig,
-	// EphemeralStorage and KMSKeyArn, which are stored and echoed:
-	//
-	//   - DeadLetterConfig — accepting it says failed async invocations reach
-	//     the target queue or topic. They do not: async retry and on-failure
-	//     delivery are not emulated outside event source mappings, so the DLQ
-	//     would stay silently empty and the caller would never learn why.
-	//   - SnapStart — promises a restored snapshot and the init-phase semantics
-	//     that come with it; execution environments here always cold start.
-	//   - CapacityProviderConfig, DurableConfig, TenancyConfig — each selects an
-	//     execution substrate Overcast has no equivalent of.
-	//   - Publish and PublishTo — publishing on create must report the resulting
-	//     version, and functionConfiguration has no Version member to report it
-	//     in. PublishVersion exists, so this is implementable; adding Version to
-	//     the shared response shape is the work, and it is not this fix.
-	if hasUnsupportedRequestField(
-		rawRequestField(req.DeadLetterConfig),
-		rawRequestField(req.SnapStart), rawRequestField(req.CapacityProviderConfig),
-		rawRequestField(req.DurableConfig), rawRequestField(req.Publish), rawRequestField(req.PublishTo),
-		rawRequestField(req.TenancyConfig),
-	) || (req.Code != nil && hasUnsupportedRequestField(
-		stringRequestField(req.Code.S3ObjectVersion), rawRequestField(req.Code.S3ObjectStorageMode),
-		rawRequestField(req.Code.SourceKMSKeyArn),
-	)) {
+	// unsupportedMembers lists what stays 501 here, and why each one does.
+	if req.unsupportedMembers().requested() {
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
@@ -974,6 +1103,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		fn.setCode(req.Code.ZipFile)
 		fn.CodeS3Bucket = req.Code.S3Bucket
 		fn.CodeS3Key = req.Code.S3Key
+		fn.CodeS3ObjectVersion = req.Code.S3ObjectVersion
 		fn.ImageUri = req.Code.ImageUri
 
 		// Fetch the code from S3 when the caller provided S3Bucket/S3Key but
@@ -990,12 +1120,13 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 				protocol.NotImplementedJSON(w, r)
 				return
 			}
-			zip, fetchErr := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key)
+			zip, fetchErr := h.s3Fetch(ctx, fn.CodeS3Bucket, fn.CodeS3Key, fn.CodeS3ObjectVersion)
 			if fetchErr != nil {
 				log.Debug("lambda: create function: s3 fetch failed",
 					zap.String("function", fn.Name),
 					zap.String("bucket", fn.CodeS3Bucket),
 					zap.String("key", fn.CodeS3Key),
+					zap.String("version", fn.CodeS3ObjectVersion),
 					zap.Error(fetchErr),
 				)
 				protocol.WriteJSONError(w, r, lambdaS3CodeFetchError(fetchErr))
@@ -1432,11 +1563,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
 		return
 	}
-	if hasUnsupportedRequestField(
-		stringRequestField(req.S3ObjectVersion), rawRequestField(req.DryRun), rawRequestField(req.Publish),
-		rawRequestField(req.PublishTo), rawRequestField(req.RevisionId), rawRequestField(req.S3ObjectStorageMode),
-		rawRequestField(req.SourceKMSKeyArn),
-	) {
+	if req.unsupportedMembers().requested() {
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
@@ -1468,7 +1595,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 			protocol.NotImplementedJSON(w, r)
 			return
 		}
-		zip, err := h.s3Fetch(ctx, req.S3Bucket, req.S3Key)
+		zip, err := h.s3Fetch(ctx, req.S3Bucket, req.S3Key, req.S3ObjectVersion)
 		if err != nil {
 			protocol.WriteJSONError(w, r, lambdaS3CodeFetchError(err))
 			return
@@ -1486,6 +1613,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 			current.setCode(nil)
 			current.CodeS3Bucket = ""
 			current.CodeS3Key = ""
+			current.CodeS3ObjectVersion = ""
 			current.ImageUri = req.ImageUri
 		default:
 			current.ImageUri = ""
@@ -1493,10 +1621,12 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 				current.setCode(req.ZipFile)
 				current.CodeS3Bucket = ""
 				current.CodeS3Key = ""
+				current.CodeS3ObjectVersion = ""
 			} else {
 				current.setCode(s3Code)
 				current.CodeS3Bucket = req.S3Bucket
 				current.CodeS3Key = req.S3Key
+				current.CodeS3ObjectVersion = req.S3ObjectVersion
 			}
 		}
 		current.SourceCode = ""
@@ -1606,14 +1736,8 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Same 501 rationale as CreateFunction's gate, plus one member only this
-	// operation takes: RevisionId is an optimistic-concurrency precondition, so
-	// accepting it would silently skip the very check the caller asked for.
-	if hasUnsupportedRequestField(
-		rawRequestField(req.DeadLetterConfig),
-		rawRequestField(req.SnapStart), rawRequestField(req.CapacityProviderConfig),
-		rawRequestField(req.DurableConfig), rawRequestField(req.RevisionId),
-	) {
+	// unsupportedMembers lists what stays 501 here, and why each one does.
+	if req.unsupportedMembers().requested() {
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
