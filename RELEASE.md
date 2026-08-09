@@ -366,12 +366,25 @@ For an alpha release:
    docker pull ghcr.io/neaox/overcast-slim:<version>
    docker pull ghcr.io/neaox/overcast-slim:alpha
    ```
-11. Smoke test the slim image:
+11. Smoke test the slim image. Published on remapped ports so this does not
+   collide with your own instance on 4566/4567:
    ```sh
-   docker run --rm -d --name overcast-smoke -p 4566:4566 ghcr.io/neaox/overcast-slim:<version>
-   curl -sf http://localhost:4566/_health
+   docker run --rm -d --name overcast-smoke -p 4576:4566 -p 4577:4567 ghcr.io/neaox/overcast-slim:<version>
+   curl -sf http://localhost:4576/_health
+
+   # It is a *slim* image only if both of these hold. /_mcp is registered in
+   # !slim builds only, so anything but 404 means the console binary shipped
+   # under the slim tag — which is what #798 was, undetected for two releases.
+   curl -s -o /dev/null -w '%{http_code}\n' http://localhost:4576/_mcp   # 404
+   curl -s http://localhost:4577/                                        # web UI not included in slim build
+
    docker stop overcast-smoke
    ```
+
+   Both are asserted automatically as well — statically against the compiled
+   binary in the `Dockerfile`'s builder stages, and at runtime by the
+   `Docker build (slim)` CI job — so this step is a confirmation, not the only
+   line of defence.
 
 ## Keeping The Release PR Current
 

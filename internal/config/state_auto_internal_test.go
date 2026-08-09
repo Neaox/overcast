@@ -54,7 +54,7 @@ func TestResolveAutoState_allSignalCombinations(t *testing.T) {
 // internal/state/sqlite_hybrid_nosqlite.go), so resolveAutoState must never
 // pick hybrid regardless of how much evidence of persistence intent is
 // present. Resolving to hybrid there would crash the process at startup
-// (confirmed live: `docker run -v vol:/data overcast-slim` — the NOSQLITE
+// (confirmed live: `docker run -v vol:/data overcast-slim` — the `nosqlite`
 // build — with no OVERCAST_STATE set previously exited 1 with "hybrid
 // store: not compiled with SQLite support" before this gate was added),
 // which defeats the entire premise that auto's worst case is a safe,
