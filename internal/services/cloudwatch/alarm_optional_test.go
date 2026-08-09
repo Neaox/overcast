@@ -154,9 +154,9 @@ func TestPutMetricAlarm_Tags_AppliedOnCreateIgnoredOnUpdate(t *testing.T) {
 		t.Fatalf("create: status = %d; body = %s", w.Code, w.Body.String())
 	}
 	arn := "arn:aws:cloudwatch:us-east-1:000000000000:alarm:tagged"
-	tags, err := svc.store.getTags(context.Background(), arn)
-	if err != nil {
-		t.Fatalf("getTags: %v", err)
+	tags, aerr := svc.resourceTags(context.Background(), arn)
+	if aerr != nil {
+		t.Fatalf("resourceTags: %v", aerr)
 	}
 	if tags["Team"] != "platform" {
 		t.Fatalf("tags after create = %v, want Team=platform", tags)
@@ -169,9 +169,9 @@ func TestPutMetricAlarm_Tags_AppliedOnCreateIgnoredOnUpdate(t *testing.T) {
 	}
 
 	// Then: the original tag stands
-	tags, err = svc.store.getTags(context.Background(), arn)
-	if err != nil {
-		t.Fatalf("getTags: %v", err)
+	tags, aerr = svc.resourceTags(context.Background(), arn)
+	if aerr != nil {
+		t.Fatalf("resourceTags: %v", aerr)
 	}
 	if tags["Team"] != "platform" {
 		t.Errorf("tags after update = %v, want the create-time Team=platform", tags)
@@ -190,9 +190,9 @@ func TestDeleteAlarms_DropsTags(t *testing.T) {
 
 	svc.removeAlarm(context.Background(), "tag-cleanup")
 
-	tags, err := svc.store.getTags(context.Background(), "arn:aws:cloudwatch:us-east-1:000000000000:alarm:tag-cleanup")
-	if err != nil {
-		t.Fatalf("getTags: %v", err)
+	tags, aerr := svc.resourceTags(context.Background(), "arn:aws:cloudwatch:us-east-1:000000000000:alarm:tag-cleanup")
+	if aerr != nil {
+		t.Fatalf("resourceTags: %v", aerr)
 	}
 	if len(tags) != 0 {
 		t.Errorf("tags survived the delete: %v", tags)

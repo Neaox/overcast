@@ -2157,7 +2157,7 @@ export const DOCS_NAV = [
     "path": "docs/services/cloudwatch.md",
     "href": "services/cloudwatch.md",
     "title": "CloudWatch — Amazon CloudWatch",
-    "description": "Amazon CloudWatch (monitoring and alarms) uses the Query protocol — form-encoded POST requests with Action and Version=2010-08-01 parameters.",
+    "description": "Amazon CloudWatch (monitoring and alarms) answers both the Query protocol — form-encoded POST requests with Action and Version=2010-08-01 — and the JSON protocol the AWS CLI and SDKs send.",
     "section": "Service Reference",
     "tags": [
       "amazon",
@@ -2200,6 +2200,11 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Deliberate divergences",
         "id": "deliberate-divergences"
+      },
+      {
+        "depth": 2,
+        "text": "Tagging",
+        "id": "tagging"
       },
       {
         "depth": 2,
