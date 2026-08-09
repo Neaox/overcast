@@ -1085,6 +1085,52 @@ func (s *smithyRPCService) supports(operation, protocolName string) bool {
 	return operationImplemented && protocolImplemented
 }
 
+// smithyRPCServiceFor picks the implementation that answers a Smithy RPC v2
+// request, from the two signals available: the `{service}` path segment and
+// the registry's attribution of the modeled operation.
+//
+// The path segment leads, because it is the only one always present. A claim
+// names an owner only when the pinned models can attribute the binding to one:
+// where several services declare the same protocol, service shape and
+// operation, awsmodelgen marks the entry Ambiguous and blanks its service
+// rather than guess. `dispatchers[claim.Service]` then reads
+// `dispatchers[""]`, which is not a lookup that fails cleanly — it is one that
+// attributes an explicitly unattributable request to whatever is registered
+// under the empty key. So the claim is consulted only when it names a service.
+//
+// The pinned models contain no ambiguous RPC binding today, and the service
+// shape of the one implemented service they do bind (CloudWatch's
+// GraniteServiceVersion20100801) is also its target prefix, so the claim
+// branch is a bridge for the future rather than a live path. That is exactly
+// why it needs a guard: a model refresh that collided an implemented service's
+// RPC key would silently turn it into a 501, with nothing failing to say so.
+// TestSmithyRPCServiceFor_* synthesises the ambiguous claim the models cannot
+// yet supply.
+//
+// The segment is matched raw first so no dispatcher key can be shadowed by
+// normalisation, then as its bare shape name, because Smithy's `{service}`
+// label may be written as an absolute shape ID and ClaimRPC already accepts
+// that spelling. Without the second attempt a caller using the qualified form
+// gets a claim but no dispatcher — an implemented service answering 501.
+//
+// Returning nil is still possible, and is honest when it happens: both
+// spellings of the shape have been tried against every registered service, so
+// nothing here implements the request.
+func smithyRPCServiceFor(dispatchers map[string]*smithyRPCService, serviceShape string, claim awsapi.Claim, modeled bool) *smithyRPCService {
+	if service := dispatchers[strings.ToLower(serviceShape)]; service != nil {
+		return service
+	}
+	if shape := awsapi.ServiceShapeName(serviceShape); shape != serviceShape {
+		if service := dispatchers[strings.ToLower(shape)]; service != nil {
+			return service
+		}
+	}
+	if modeled && claim.Service != "" {
+		return dispatchers[claim.Service]
+	}
+	return nil
+}
+
 func smithyRPCDispatch(dispatchers map[string]*smithyRPCService, operationRegistry *awsapi.Registry, s3Router http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		protocolHeader := strings.TrimSpace(r.Header.Get("Smithy-Protocol"))
@@ -1106,10 +1152,7 @@ func smithyRPCDispatch(dispatchers map[string]*smithyRPCService, operationRegist
 		serviceShape := chi.URLParam(r, "service")
 		operation := chi.URLParam(r, "operation")
 		claim, modeled := operationRegistry.ClaimRPC(wireProtocol, serviceShape, operation)
-		service := dispatchers[strings.ToLower(serviceShape)]
-		if service == nil && modeled {
-			service = dispatchers[claim.Service]
-		}
+		service := smithyRPCServiceFor(dispatchers, serviceShape, claim, modeled)
 		if service != nil && modeled {
 			if service.supports(operation, wireCodec.Name()) {
 				service.dispatcher.Dispatch(w, r)
