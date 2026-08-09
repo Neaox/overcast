@@ -2465,11 +2465,14 @@ func functionTimeout(fn *Function) time.Duration {
 	return time.Duration(fn.Timeout) * time.Second
 }
 
+// lambdaInitTimeout is how long an invocation waits for a cold start to reach
+// its first GET /next. The Runtime API's registration wait is derived from it
+// and must stay shorter — see registrationWaitFor.
 func lambdaInitTimeout(cfg *config.Config) time.Duration {
 	if cfg != nil && cfg.LambdaInitTimeout > 0 {
 		return cfg.LambdaInitTimeout
 	}
-	return 10 * time.Second
+	return defaultLambdaInitTimeout
 }
 
 // invokeFailurePayload shapes the response body for an invocation that never

@@ -979,6 +979,139 @@ func TestLoad_hostBinding(t *testing.T) {
 	if cfg.Addr() != "127.0.0.1:9000" {
 		t.Errorf("Addr(): expected 127.0.0.1:9000, got %q", cfg.Addr())
 	}
+	// And: the single address is the whole bind set
+	if got := cfg.Addrs(); len(got) != 1 || got[0] != "127.0.0.1:9000" {
+		t.Errorf("Addrs(): expected [127.0.0.1:9000], got %v", got)
+	}
+}
+
+// TestLoad_hostBindingList verifies OVERCAST_HOST accepts several addresses.
+func TestLoad_hostBindingList(t *testing.T) {
+	// Given: OVERCAST_HOST names loopback and a host-local bridge address —
+	// the shape the compat launcher uses so a sibling container can reach an
+	// emulator that is otherwise invisible outside this machine
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOST", " 127.0.0.1 , 172.17.0.1 ,,127.0.0.1 ")
+	t.Setenv("OVERCAST_PORT", "9000")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: both addresses are bound, in order, with blanks and the repeat
+	// dropped — a duplicate would fail the second bind with EADDRINUSE
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"127.0.0.1:9000", "172.17.0.1:9000"}
+	if got := cfg.Addrs(); !slices.Equal(got, want) {
+		t.Errorf("Addrs(): expected %v, got %v", want, got)
+	}
+	// And: Host stays the first address, so every reader that predates the
+	// list — Addr(), the debug endpoint — sees what it always did
+	if cfg.Host != "127.0.0.1" {
+		t.Errorf("Host: expected the first address 127.0.0.1, got %q", cfg.Host)
+	}
+	if cfg.Addr() != "127.0.0.1:9000" {
+		t.Errorf("Addr(): expected 127.0.0.1:9000, got %q", cfg.Addr())
+	}
+}
+
+// TestLoad_hostBindingRejectsWildcardInList verifies a wildcard cannot be
+// combined with a specific address.
+func TestLoad_hostBindingRejectsWildcardInList(t *testing.T) {
+	// Given: OVERCAST_HOST pairs a wildcard with a specific address
+	// When: we load config
+	// Then: it is refused. A wildcard already covers every address, and on
+	// Linux the second bind fails with EADDRINUSE — which would surface as a
+	// listen error at startup rather than as the configuration mistake it is.
+	for _, host := range []string{"0.0.0.0,127.0.0.1", "127.0.0.1,::", "::,127.0.0.1"} {
+		clearEnv(t)
+		t.Setenv("OVERCAST_HOST", host)
+
+		_, err := config.Load()
+		if err == nil {
+			t.Errorf("OVERCAST_HOST=%q: expected an error, got none", host)
+			continue
+		}
+		if !strings.Contains(err.Error(), "OVERCAST_HOST") {
+			t.Errorf("OVERCAST_HOST=%q: error %q does not name the variable", host, err)
+		}
+	}
+}
+
+// TestLoad_hostBindingBracketsIPv6Literals verifies an IPv6 address comes back
+// in a form net.Listen accepts.
+func TestLoad_hostBindingBracketsIPv6Literals(t *testing.T) {
+	// Given: OVERCAST_HOST pairing the two loopbacks
+	clearEnv(t)
+	t.Setenv("OVERCAST_HOST", "127.0.0.1,::1")
+	t.Setenv("OVERCAST_PORT", "9000")
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: the v6 address is bracketed. Unbracketed it formats as
+	// "::1:9000", which net.Listen reads as a different address entirely —
+	// the kind of thing nobody writes until a list makes pairing v4 and v6
+	// the obvious thing to do.
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"127.0.0.1:9000", "[::1]:9000"}
+	if got := cfg.Addrs(); !slices.Equal(got, want) {
+		t.Errorf("Addrs(): expected %v, got %v", want, got)
+	}
+}
+
+// TestLoad_hostBindingRejectsAnEmptyList verifies a list of nothing is an
+// error rather than a silent fall back to the wildcard.
+func TestLoad_hostBindingRejectsAnEmptyList(t *testing.T) {
+	// Given: OVERCAST_HOST set to separators and whitespace only
+	// When: we load config
+	// Then: it is refused. Unset means "use the default"; set to something
+	// that names no address means the value is wrong, and defaulting it would
+	// bind every interface — the opposite of what anyone setting this wants.
+	for _, host := range []string{",", " , ", ",,"} {
+		clearEnv(t)
+		t.Setenv("OVERCAST_HOST", host)
+
+		if _, err := config.Load(); err == nil {
+			t.Errorf("OVERCAST_HOST=%q: expected an error, got none", host)
+		}
+	}
+}
+
+// TestLoad_hostBindingDefaultsToWildcard verifies the default is unchanged.
+func TestLoad_hostBindingDefaultsToWildcard(t *testing.T) {
+	// Given: no OVERCAST_HOST
+	clearEnv(t)
+
+	// When: we load config
+	cfg, err := config.Load()
+
+	// Then: a single wildcard bind, as before the list was accepted
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Host != "0.0.0.0" {
+		t.Errorf("Host: expected 0.0.0.0, got %q", cfg.Host)
+	}
+	if got := cfg.Addrs(); len(got) != 1 {
+		t.Errorf("Addrs(): expected one address, got %v", got)
+	}
+}
+
+// TestAddrsWithoutLoad verifies Addrs() on a hand-built Config.
+func TestAddrsWithoutLoad(t *testing.T) {
+	// Given: a Config assembled in code rather than by Load — the shape every
+	// test helper uses, where Hosts is never populated
+	cfg := &config.Config{Host: "127.0.0.1", Port: 4566}
+
+	// When: the bind set is read
+	// Then: it falls back to the single Host, so a struct literal keeps working
+	if got := cfg.Addrs(); len(got) != 1 || got[0] != "127.0.0.1:4566" {
+		t.Errorf("Addrs(): expected [127.0.0.1:4566], got %v", got)
+	}
 }
 
 // TestLoad_hostname verifies OVERCAST_HOSTNAME is used for external URLs.

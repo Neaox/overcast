@@ -10,8 +10,10 @@
 // Overcast instance — see AGENTS.md § Reserved ports. Nothing started from
 // here may bind either, even when the scan base or an explicit flag would land
 // on them. Every port is chosen by probing, so two compat sessions (or two
-// agents) can run side by side. Ports are published on loopback, never on
-// every interface — see loopbackHost and dockerBridgeGateway.
+// agents) can run side by side. Ports are bound on loopback, never on every
+// interface, whether the instance is a container (published with -p) or a
+// native binary (told where to listen with OVERCAST_HOST) — see loopbackHost,
+// bindHosts and dockerBridgeGateway.
 package main
 
 import (
@@ -45,11 +47,14 @@ const (
 	// available. Matches scripts/run-test-instance.sh.
 	defaultOvercastImage = "ghcr.io/neaox/overcast:alpha"
 
-	// loopbackHost is where a managed container's ports are published, and the
-	// address every port probe binds. A bare "<host>:<container>" mapping binds
-	// every interface, which puts an unauthenticated emulator on whatever
-	// network the machine is attached to, and trips a Windows Firewall prompt.
-	// Nothing that talks to a compat instance is off-box.
+	// loopbackHost is where a managed instance listens — published there for a
+	// container, bound there for a native binary — and the address every port
+	// probe binds. Both paths default to every interface if left alone: a bare
+	// "<host>:<container>" mapping publishes on all of them, and the emulator's
+	// own OVERCAST_HOST default is 0.0.0.0. Either puts an unauthenticated
+	// emulator on whatever network the machine is attached to, and trips a
+	// Windows Firewall prompt. Nothing that talks to a compat instance is
+	// off-box.
 	loopbackHost = "127.0.0.1"
 )
 
@@ -182,12 +187,33 @@ func shouldStartOvercast(mode string, endpointPinned bool) bool {
 // overcastEnv builds the environment for a managed native instance. A UI port
 // of 0 disables the emulator's own web UI, which is what compat wants: it
 // keeps the instance from binding the reserved 4567.
-func overcastEnv(apiPort, uiPort int) []string {
+//
+// hosts is where the instance listens. It is the binary path's counterpart to
+// the container path's -p mappings (see dockerRunArgs): without it the
+// emulator takes its own 0.0.0.0 default and a compat run puts an
+// unauthenticated instance on whatever network the machine is attached to —
+// and the binary path is the one compat prefers, so that is the common case,
+// not the fallback.
+func overcastEnv(apiPort, uiPort int, hosts []string) []string {
 	return []string{
 		"OVERCAST_PORT=" + strconv.Itoa(apiPort),
 		"OVERCAST_UI_PORT=" + strconv.Itoa(uiPort),
+		"OVERCAST_HOST=" + strings.Join(hosts, ","),
 		"OVERCAST_STATE=memory",
 	}
+}
+
+// bindHosts returns the addresses a managed native instance listens on:
+// loopback, plus the Docker bridge gateway when there is one. It is the same
+// address set publishArgs maps for a container, arrived at the same way — see
+// dockerBridgeGateway for why the gateway is needed, when it is empty, and why
+// it is never loopback itself.
+func bindHosts(gateway string) []string {
+	hosts := []string{loopbackHost}
+	if gateway != "" {
+		hosts = append(hosts, gateway)
+	}
+	return hosts
 }
 
 // overcastOptions configures a managed Overcast instance.
@@ -309,9 +335,10 @@ func startOvercastBinary(
 	endpoint := fmt.Sprintf("http://%s:%d", opts.Host, apiPort)
 	logf("starting Overcast (%s) on %s", filepath.Base(bin), endpoint)
 
+	hosts := bindHosts(dockerBridgeGateway(ctx, apiPort, uiPort))
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	cmd := exec.CommandContext(runCtx, bin, "serve")
-	cmd.Env = append(os.Environ(), overcastEnv(apiPort, uiPort)...)
+	cmd.Env = append(os.Environ(), overcastEnv(apiPort, uiPort, hosts)...)
 	cmd.Env = append(cmd.Env, "OVERCAST_LOG_LEVEL="+opts.LogLevel)
 	cmd.Stdout = os.Stderr // keep stdout clean for --format json
 	cmd.Stderr = os.Stderr
@@ -375,17 +402,34 @@ func publishArgs(hostPort, containerPort int, extraHost string) []string {
 // the host address a sibling container reaches by Docker's "host-gateway"
 // alias on native Linux. compat/suites/rust-sdk/run.sh rewrites a loopback
 // endpoint to host.docker.internal and maps that name to host-gateway, so a
-// managed instance published on loopback alone is invisible to it: the packet
-// arrives on the bridge, where nothing is listening. Publishing on the gateway
-// too keeps that suite working without putting the instance on any network the
+// managed instance that is on loopback alone is invisible to it: the packet
+// arrives on the bridge, where nothing is listening. Covering the gateway too
+// keeps that suite working without putting the instance on any network the
 // machine is attached to — the bridge address is host-local, reachable from
 // this machine's containers and from nowhere else.
+//
+// Both managed paths use it, and mean the same thing by it: publishArgs adds a
+// -p mapping on it, bindHosts adds it to OVERCAST_HOST.
+//
+// It is not a rust-sdk-only accommodation. internal/containerendpoint hands
+// every container Overcast starts itself — Lambda, ECS — an /etc/hosts entry
+// pointing at Docker's "host-gateway" whenever Overcast is on the host, and on
+// Linux that resolves to this same default-bridge address whatever network the
+// container is on. So loopback plus this gateway is the set that keeps a
+// managed instance reachable from everything that is supposed to reach it.
 //
 // Empty off Linux, where Docker Desktop routes host.docker.internal to the
 // host itself rather than over the bridge, so loopback is enough. Empty too
 // whenever the address cannot be determined or is already in use on one of the
-// ports, since a publish that cannot bind fails the whole run — the suite that
+// ports, since a bind that cannot be made fails the whole run — the suite that
 // needed it then reports honestly instead.
+//
+// That last check is also what tells this machine's own Docker apart from a
+// daemon somewhere else. On WSL2 with Docker Desktop, `docker network inspect`
+// answers with the gateway inside Desktop's VM, an address this kernel has on
+// no interface: the probe cannot bind it, so it is dropped rather than
+// configured and left unreachable. Nothing here reads uname or the daemon's
+// self-description — the evidence is whether the address exists locally.
 func dockerBridgeGateway(ctx context.Context, ports ...int) string {
 	if runtime.GOOS != "linux" {
 		return ""

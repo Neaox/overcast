@@ -24,6 +24,10 @@
 #                          logs. What you want when a later step drives the
 #                          instance; the container keeps running either way.
 #
+# Needs docker. Whether a port is in use is answered by Get-NetTCPConnection on
+# Windows and by a loopback connect elsewhere; a probe that cannot answer stops
+# the script rather than calling the port free. See Test-PortFree.
+#
 # ---------------------------------------------------------------------------
 # Why there is no `docker run` passthrough
 # ---------------------------------------------------------------------------
@@ -155,11 +159,27 @@ why, and it is worth reading before granting anyone permission to run it.
 '@
 }
 
-function Stop-WithUsage {
+function Write-Complaint {
     param([string]$Message, [string[]]$Detail = @())
     [Console]::Error.WriteLine("run-test-instance.ps1: $Message")
     foreach ($line in $Detail) { [Console]::Error.WriteLine("  $line") }
+}
+
+# The caller asked for something this script will not do.
+function Stop-WithUsage {
+    param([string]$Message, [string[]]$Detail = @())
+    Write-Complaint $Message $Detail
     exit 2
+}
+
+# The caller asked for something reasonable and the environment cannot deliver
+# it. Kept apart from Stop-WithUsage, and on a different exit code, so a wrapper
+# can tell "you typed something wrong" from "this machine is missing a tool".
+# Same split as the .sh's fail() and die().
+function Stop-WithEnvironment {
+    param([string]$Message, [string[]]$Detail = @())
+    Write-Complaint $Message $Detail
+    exit 1
 }
 
 # Deny-listed flags get the policy message; everything else unrecognised gets
@@ -287,9 +307,26 @@ if ($MountDockerSocket) {
 # us, and Get-NetTCPConnection would count it as a collision.
 $script:HaveGetNetTCPConnection = [bool](Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)
 
+# One thing the cmdlet path must not do is answer "free" for a question it
+# could not ask. -ErrorAction SilentlyContinue is not optional there -- the
+# cmdlet raises ObjectNotFound rather than returning nothing when no connection
+# matches, which is the ordinary free case -- but it is indiscriminate, and
+# `-not $nothing` is $true, so a CIM service that is unavailable or an access
+# error read as free too. Only ObjectNotFound means free; anything else stops
+# the script. Same rule as the .sh, which stops rather than guess when neither
+# ss nor netstat can be reached.
 function Test-PortFree([int]$Port) {
     if ($script:HaveGetNetTCPConnection) {
-        return -not (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+        try {
+            return -not (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
+        } catch {
+            if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { return $true }
+            Stop-WithEnvironment "Get-NetTCPConnection failed, so whether port $Port is in use is unknown." @(
+                $_.Exception.Message,
+                'Refusing to guess that it is free: that is how this script would publish onto',
+                "a port already in use, the user's own 4566/4567 included."
+            )
+        }
     }
     $client = [System.Net.Sockets.TcpClient]::new()
     try {
@@ -324,7 +361,7 @@ for ($p = $BasePort; $p -lt 65000; $p += 2) {
         break
     }
 }
-if ($apiPort -eq 0) { Write-Error "no free port pair found from $BasePort"; exit 1 }
+if ($apiPort -eq 0) { Stop-WithEnvironment "no free port pair found from $BasePort." }
 
 $runArgs = @('run', '-d', '--rm',
     '-p', "127.0.0.1:${apiPort}:4566",

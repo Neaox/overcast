@@ -10,10 +10,19 @@ package lambda
 //  3. POST /2018-06-01/runtime/invocation/{id}/error    — deliver function error
 //  4. POST /2018-06-01/runtime/init/error               — cold-start failure
 //
-// This server listens on a port reachable from Lambda containers (via the
+// This server listens on ports reachable from Lambda containers (via the
 // Docker network). The AWS_LAMBDA_RUNTIME_API env var in each container
-// points here. Multiple containers share the same server; each pending
-// invocation is keyed by its request ID.
+// points here. One server answers every container; each pending invocation is
+// keyed by its request ID.
+//
+// Identifying the *caller* is the subtle part, because the RIC builds its own
+// requests: it sends no header, no token and no path prefix Overcast could
+// choose, and AWS_LAMBDA_RUNTIME_API is parsed as a bare host:port, so there is
+// nothing to put in the URL either. The one thing left that Overcast controls
+// is which address the container was told to dial — so every execution
+// environment gets a listener of its own (containerListener) and is told about
+// only that port. See containerListener for why the source address, which is
+// what this used to key on, is not a safe identity.
 
 import (
 	"bytes"
@@ -21,11 +30,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -134,10 +146,21 @@ type RuntimeAPIServer struct {
 	seenNext         map[string]bool          // container IP → true after first GET /next
 	firstNextAt      map[string]time.Time     // container IP → time of first GET /next
 	ready            map[string]chan struct{} // container IP → closed after first GET /next
-	server           *http.Server
-	listener         net.Listener
-	logger           *zap.Logger
-	addr             string        // host:port as seen by containers
+	containerPorts   map[int]string           // per-environment listener port → container IP
+	// server fronts every listener the caller bound, plus every per-environment
+	// listener added since; http.Server tracks them itself, so Stop's Shutdown
+	// closes them all and nothing here needs to hold them.
+	server *http.Server
+	logger *zap.Logger
+	addr   string // host:port as seen by containers
+	// containerHost and bindHosts are addr's host and the local addresses it
+	// resolved to, kept so a per-environment listener can be bound on the same
+	// set at a fresh port. See AddContainerListener.
+	containerHost string
+	bindHosts     []string
+	// registrationWait bounds how long a Runtime API call waits for its
+	// container's registration to land. See registrationWaitFor.
+	registrationWait time.Duration
 	done             chan struct{} // closed on Stop to unblock long-polling handlers
 	clk              clock.Clock
 	logsDeliveries   chan extensionLogDelivery
@@ -165,6 +188,29 @@ func NewRuntimeAPIServer(listenAddr string, containerAddr string, logger *zap.Lo
 // pre-created listener. This allows the caller to bind first (e.g. to resolve
 // port 0) and then derive containerAddr from the actual port.
 func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logger *zap.Logger, clk clock.Clock) (*RuntimeAPIServer, error) {
+	return NewRuntimeAPIServerFromListeners([]net.Listener{ln}, containerAddr, defaultLambdaInitTimeout, logger, clk)
+}
+
+// NewRuntimeAPIServerFromListeners fronts every listener with the one server,
+// so a RIC is answered identically whichever address its request arrived on.
+//
+// Several listeners rather than one wildcard is how the Runtime API stays off
+// networks this machine merely happens to be attached to while remaining
+// reachable from the containers that have to connect back to it: the address
+// they dial, plus loopback. See containerendpoint.ResolveListen, which decides
+// the set.
+//
+// initTimeout is the budget an invocation gives a cold start (see
+// lambdaInitTimeout); it bounds how long a Runtime API call waits for its
+// container's registration, which must not outlive it.
+func NewRuntimeAPIServerFromListeners(lns []net.Listener, containerAddr string, initTimeout time.Duration, logger *zap.Logger, clk clock.Clock) (*RuntimeAPIServer, error) {
+	if len(lns) == 0 {
+		return nil, fmt.Errorf("runtime api: no listeners")
+	}
+	containerHost, _, err := net.SplitHostPort(containerAddr)
+	if err != nil {
+		containerHost = containerAddr
+	}
 	s := &RuntimeAPIServer{
 		pending:          make(map[string]*pendingInvocation),
 		funcQueues:       make(map[string][]*pendingInvocation),
@@ -177,8 +223,12 @@ func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logg
 		seenNext:         make(map[string]bool),
 		firstNextAt:      make(map[string]time.Time),
 		ready:            make(map[string]chan struct{}),
+		containerPorts:   make(map[int]string),
 		logger:           logger,
 		addr:             containerAddr,
+		containerHost:    containerHost,
+		bindHosts:        bindHostsOf(lns),
+		registrationWait: registrationWaitFor(initTimeout),
 		done:             make(chan struct{}),
 		clk:              clk,
 		logsDeliveries:   make(chan extensionLogDelivery, logsDeliveryQueueSize),
@@ -199,19 +249,212 @@ func NewRuntimeAPIServerFromListener(ln net.Listener, containerAddr string, logg
 	mux.HandleFunc("/2020-08-15/logs", s.handleExtensionLogsSubscribe)
 
 	s.server = &http.Server{Handler: mux}
-	s.listener = ln
 
-	go func() {
-		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
-			logger.Error("runtime api: serve error", zap.Error(err))
-		}
-	}()
+	listenAddrs := make([]string, 0, len(lns))
+	for _, ln := range lns {
+		listenAddrs = append(listenAddrs, ln.Addr().String())
+		go s.serve(ln)
+	}
 
 	logger.Info("lambda runtime API started",
-		zap.String("listen", ln.Addr().String()),
+		zap.Strings("listen", listenAddrs),
 		zap.String("container_addr", containerAddr))
 
 	return s, nil
+}
+
+// listenAllOn binds hosts on port and returns the listeners in the same order.
+//
+// The first host is the one containers dial, so its bind is the one that has to
+// succeed and the one that settles the port: a port of 0 (which the test server
+// uses to avoid collisions between parallel packages) is resolved by the first
+// listener and the rest join it there, rather than each taking a different
+// OS-assigned port and leaving containers pointed at one of them.
+//
+// A later host that cannot be bound is dropped with a warning instead of
+// failing the lot. Those addresses are conveniences — loopback for a developer
+// or a test on this machine — and something else holding the port on one of
+// them is no reason to leave Lambda without a runtime.
+func listenAllOn(hosts []string, port int, logger *zap.Logger) ([]net.Listener, error) {
+	if len(hosts) == 0 {
+		return nil, fmt.Errorf("runtime api: no address to bind")
+	}
+
+	primary := net.JoinHostPort(hosts[0], strconv.Itoa(port))
+	first, err := net.Listen("tcp", primary)
+	if err != nil {
+		return nil, fmt.Errorf("runtime api: listen %s: %w", primary, err)
+	}
+	lns := []net.Listener{first}
+
+	bound, ok := first.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = first.Close()
+		return nil, fmt.Errorf("runtime api: listen %s: not a TCP address", primary)
+	}
+
+	for _, host := range hosts[1:] {
+		addr := net.JoinHostPort(host, strconv.Itoa(bound.Port))
+		ln, lnErr := net.Listen("tcp", addr)
+		if lnErr != nil {
+			logger.Warn("runtime api: secondary listen failed — address unavailable",
+				zap.String("addr", addr), zap.Error(lnErr))
+			continue
+		}
+		lns = append(lns, ln)
+	}
+	return lns, nil
+}
+
+// serve runs one listener under the shared handler. A per-environment listener
+// is closed on its own when the execution environment goes away, which is not
+// an error — only Shutdown reports ErrServerClosed, so net.ErrClosed has to be
+// tolerated here as well.
+func (s *RuntimeAPIServer) serve(ln net.Listener) {
+	addr := ln.Addr().String()
+	if err := s.server.Serve(ln); err != nil &&
+		!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+		s.logger.Error("runtime api: serve error", zap.String("listen", addr), zap.Error(err))
+	}
+}
+
+// bindHostsOf recovers the local addresses a set of listeners is bound to, in
+// order, so a later per-environment listener can join the same set at a fresh
+// port. Order matters: listenAllOn settles the port on the first host, and the
+// first is the one containers dial.
+func bindHostsOf(lns []net.Listener) []string {
+	hosts := make([]string, 0, len(lns))
+	for _, ln := range lns {
+		tcp, ok := ln.Addr().(*net.TCPAddr)
+		if !ok {
+			continue
+		}
+		host := tcp.IP.String()
+		if !slices.Contains(hosts, host) {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
+}
+
+// defaultLambdaInitTimeout is the cold-start budget an invocation gives an
+// execution environment when LAMBDA_INIT_TIMEOUT_SECONDS says nothing.
+const defaultLambdaInitTimeout = 10 * time.Second
+
+// registrationWaitMargin is how far ahead of the init timeout the registration
+// wait gives up, leaving room for the 403 and its log line to be written before
+// the invocation abandons the environment.
+const registrationWaitMargin = time.Second
+
+// registrationWaitFor returns how long a Runtime API call may block waiting for
+// its container's registration to arrive.
+//
+// The wait covers a real race: the RIC starts polling /next the instant the
+// container boots, while Overcast cannot register the environment until Docker
+// reports its address. But it has to expire *before* awaitRuntimeReady gives up
+// at the init timeout, and for a long time it did not — the wait was a hardcoded
+// 15 s against a 10 s init timeout, so the environment was always torn down
+// first and the 403 was never written. An unattributable container therefore
+// produced no diagnostic at all, and surfaced to the caller as the function's
+// own Runtime.InitError. Shorter than the init timeout for every positive value
+// of it, and as close to it as the margin allows.
+func registrationWaitFor(initTimeout time.Duration) time.Duration {
+	if initTimeout <= 0 {
+		initTimeout = defaultLambdaInitTimeout
+	}
+	wait := initTimeout - registrationWaitMargin
+	if quarter := initTimeout / 4; wait < quarter {
+		wait = quarter
+	}
+	return wait
+}
+
+// containerListener is one execution environment's own Runtime API endpoint.
+//
+// Overcast used to identify a calling container by the source address of its
+// Runtime API requests, matched against the bridge IP InspectContainer
+// reported. That identity holds only while the container's packets arrive
+// on-link. Docker Desktop's userspace host proxy re-originates the connection
+// from the host, so a natively-built Overcast on Windows or macOS saw 127.0.0.1
+// or the host's LAN address for every container and could match none of them —
+// two of the three published binaries could not invoke Lambda at all.
+//
+// The listener a request arrives on is not something a proxy can rewrite, so
+// each environment is given a port of its own and told about only that one.
+// The count is bounded by LAMBDA_MAX_INSTANCES.
+type containerListener struct {
+	srv  *RuntimeAPIServer
+	lns  []net.Listener
+	port int
+	addr string
+	once sync.Once
+}
+
+// AddContainerListener binds a fresh port across the same local addresses the
+// server already answers on, fronted by the same handler, for one execution
+// environment's exclusive use.
+func (s *RuntimeAPIServer) AddContainerListener() (*containerListener, error) {
+	if len(s.bindHosts) == 0 {
+		return nil, fmt.Errorf("runtime api: no bind address for a per-container listener")
+	}
+	lns, err := listenAllOn(s.bindHosts, 0, s.logger)
+	if err != nil {
+		return nil, err
+	}
+	bound, ok := lns[0].Addr().(*net.TCPAddr)
+	if !ok {
+		for _, ln := range lns {
+			_ = ln.Close()
+		}
+		return nil, fmt.Errorf("runtime api: per-container listen: not a TCP address")
+	}
+	for _, ln := range lns {
+		go s.serve(ln)
+	}
+	return &containerListener{
+		srv:  s,
+		lns:  lns,
+		port: bound.Port,
+		addr: net.JoinHostPort(s.containerHost, strconv.Itoa(bound.Port)),
+	}, nil
+}
+
+// Addr is what this environment's AWS_LAMBDA_RUNTIME_API must be set to.
+func (l *containerListener) Addr() string {
+	if l == nil {
+		return ""
+	}
+	return l.addr
+}
+
+// Attach records which container reaches the Runtime API on this listener.
+// Called once the environment's address is known and registered, because every
+// other piece of per-container state — readiness, extensions, log delivery —
+// is still keyed by that address.
+func (l *containerListener) Attach(containerIP string) {
+	if l == nil || containerIP == "" {
+		return
+	}
+	l.srv.mu.Lock()
+	l.srv.containerPorts[l.port] = containerIP
+	l.srv.mu.Unlock()
+}
+
+// Close retires the environment's endpoint. Idempotent: Close runs on every
+// failure path in acquireContainer as well as on containerInstance.Close.
+func (l *containerListener) Close() error {
+	if l == nil {
+		return nil
+	}
+	l.once.Do(func() {
+		l.srv.mu.Lock()
+		delete(l.srv.containerPorts, l.port)
+		l.srv.mu.Unlock()
+		for _, ln := range l.lns {
+			_ = ln.Close()
+		}
+	})
+	return nil
 }
 
 // Addr returns the host:port that containers should use to reach this server.
@@ -275,6 +518,15 @@ func (s *RuntimeAPIServer) UnregisterContainer(containerIP string) {
 	delete(s.seenNext, containerIP)
 	delete(s.firstNextAt, containerIP)
 	delete(s.ready, containerIP)
+	// Any per-environment listener still pointing here goes with it. The
+	// listener is normally closed by containerInstance.Close, which drops its
+	// own entry; this covers an environment retired without one and keeps a
+	// recycled bridge address from resolving through a dead port.
+	for port, ip := range s.containerPorts {
+		if ip == containerIP {
+			delete(s.containerPorts, port)
+		}
+	}
 	for id, ext := range s.extensions {
 		if ext.ContainerIP == containerIP {
 			delete(s.extensions, id)
@@ -306,51 +558,131 @@ func (s *RuntimeAPIServer) ContainerError(containerIP string) (string, bool) {
 	return reason, ok
 }
 
-func (s *RuntimeAPIServer) lookupContainerConfigWait(ctx context.Context, ip string, maxWait time.Duration) (runtimeContainerConfig, bool) {
-	functionARN, ok := s.lookupContainerWait(ctx, ip, maxWait)
+func (s *RuntimeAPIServer) lookupContainerConfigWait(ctx context.Context, r *http.Request) (string, runtimeContainerConfig, bool) {
+	ip, functionARN, ok := s.lookupContainerWait(ctx, r)
 	if !ok {
-		return runtimeContainerConfig{}, false
+		return "", runtimeContainerConfig{}, false
 	}
 	s.mu.Lock()
 	cfg, ok := s.containerConfigs[ip]
 	s.mu.Unlock()
 	if ok {
-		return cfg, true
+		return ip, cfg, true
 	}
-	return runtimeContainerConfig{FunctionARN: functionARN, FunctionName: functionNameFromARN(functionARN)}, true
+	return ip, runtimeContainerConfig{FunctionARN: functionARN, FunctionName: functionNameFromARN(functionARN)}, true
 }
 
-// lookupContainerWait resolves a container IP to its function ARN, blocking
-// up to maxWait for the registration if it hasn't landed yet. Returns ok=false
-// if the wait expires or the request is cancelled first.
-func (s *RuntimeAPIServer) lookupContainerWait(ctx context.Context, ip string, maxWait time.Duration) (string, bool) {
+// lookupContainerWait resolves a Runtime API request to the execution
+// environment that made it, returning the container's address and its function
+// ARN. It blocks up to the registration wait if the registration has not landed
+// yet, and returns ok=false if that expires or the request is cancelled first.
+func (s *RuntimeAPIServer) lookupContainerWait(ctx context.Context, r *http.Request) (string, string, bool) {
+	localPort := localPortOf(r)
+	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+
 	s.mu.Lock()
-	arn, ok := s.containers[ip]
+	ip, arn, ok := s.containerForRequestLocked(localPort, remoteIP)
 	s.mu.Unlock()
 	if ok {
-		return arn, true
+		return ip, arn, true
 	}
-	deadline := s.clk.Now().Add(maxWait)
+	deadline := s.clk.Now().Add(s.registrationWait)
 	ticker := s.clk.Ticker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return "", false
+			return "", "", false
 		case <-s.done:
-			return "", false
+			return "", "", false
 		case <-ticker.C:
 			s.mu.Lock()
-			arn, ok = s.containers[ip]
+			ip, arn, ok = s.containerForRequestLocked(localPort, remoteIP)
 			s.mu.Unlock()
 			if ok {
-				return arn, true
+				return ip, arn, true
 			}
 			if s.clk.Now().After(deadline) {
-				return "", false
+				return "", "", false
 			}
 		}
 	}
+}
+
+// containerForRequestLocked names the execution environment a Runtime API call
+// came from. Caller must hold s.mu.
+//
+// The listener it arrived on is tried first: that is assigned per environment
+// and survives anything in the path rewriting the source address. The source
+// address is the fallback, and stays the whole answer for a containerised
+// Overcast, where the Lambda containers are siblings on the same Docker network
+// and their packets arrive on-link exactly as registered.
+func (s *RuntimeAPIServer) containerForRequestLocked(localPort int, remoteIP string) (string, string, bool) {
+	if ip, mapped := s.containerPorts[localPort]; mapped {
+		if arn, known := s.containers[ip]; known {
+			return ip, arn, true
+		}
+	}
+	if arn, known := s.containers[remoteIP]; known {
+		return remoteIP, arn, true
+	}
+	return "", "", false
+}
+
+// localPortOf reports the port the request was accepted on, which is how a
+// per-environment listener identifies its container. Zero when the server did
+// not record a local address (a handler driven directly by a test).
+func localPortOf(r *http.Request) int {
+	addr, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if addr == nil {
+		return 0
+	}
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		return tcp.Port
+	}
+	_, port, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// logUnknownContainer reports a Runtime API call Overcast could not attribute
+// to any execution environment.
+//
+// This used to be answered 403 in silence, which is most of the reason a
+// container Overcast could not identify took a day to diagnose: the operator
+// saw a Runtime.InitError blaming their function and nothing at all in
+// Overcast's own logs. The source address and the registered set are what
+// distinguish "registration has not landed yet" from "this caller's address is
+// not the one Docker reported".
+func (s *RuntimeAPIServer) logUnknownContainer(r *http.Request) {
+	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+
+	s.mu.Lock()
+	registeredIPs := make([]string, 0, len(s.containers))
+	for ip := range s.containers {
+		registeredIPs = append(registeredIPs, ip)
+	}
+	registeredPorts := make([]int, 0, len(s.containerPorts))
+	for port := range s.containerPorts {
+		registeredPorts = append(registeredPorts, port)
+	}
+	s.mu.Unlock()
+
+	slices.Sort(registeredIPs)
+	slices.Sort(registeredPorts)
+	s.logger.Debug("runtime api: call from an unidentified container — answering 403",
+		zap.String("path", r.URL.Path),
+		zap.String("source_ip", remoteIP),
+		zap.Int("arrived_on_port", localPortOf(r)),
+		zap.Duration("waited", s.registrationWait),
+		zap.Strings("registered_ips", registeredIPs),
+		zap.Ints("registered_ports", registeredPorts))
 }
 
 // CancelInvocation removes a pending invocation from the map and closes its
@@ -509,20 +841,20 @@ func (s *RuntimeAPIServer) handleExtensionRegister(w http.ResponseWriter, r *htt
 			return
 		}
 	}
-	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-	cfg, known := s.lookupContainerConfigWait(r.Context(), remoteIP, 15*time.Second)
+	containerIP, cfg, known := s.lookupContainerConfigWait(r.Context(), r)
 	if !known {
+		s.logUnknownContainer(r)
 		http.Error(w, "unknown container", http.StatusForbidden)
 		return
 	}
 	id := uuid.New().String()
 	s.mu.Lock()
-	s.extensions[id] = &extensionState{ID: id, Name: name, ContainerIP: remoteIP, FunctionARN: cfg.FunctionARN, Events: events}
-	if _, ok := s.containerExts[remoteIP]; !ok {
-		s.containerExts[remoteIP] = make(map[string]bool)
+	s.extensions[id] = &extensionState{ID: id, Name: name, ContainerIP: containerIP, FunctionARN: cfg.FunctionARN, Events: events}
+	if _, ok := s.containerExts[containerIP]; !ok {
+		s.containerExts[containerIP] = make(map[string]bool)
 	}
-	s.containerExts[remoteIP][name] = true
-	s.maybeMarkReadyLocked(remoteIP)
+	s.containerExts[containerIP][name] = true
+	s.maybeMarkReadyLocked(containerIP)
 	s.mu.Unlock()
 
 	w.Header().Set("Lambda-Extension-Identifier", id)
@@ -780,18 +1112,18 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Identify the calling container's function ARN by its source IP.
-	// Containers register their IP → function ARN via RegisterContainer.
-	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-
+	// Identify the calling execution environment — by the listener the request
+	// arrived on, falling back to its source address.
+	//
 	// Race window: the container's runtime starts polling /next the instant
-	// it boots, but overcast can't call RegisterContainer until InspectContainer
-	// reports the IP (up to several seconds later on slow Docker hosts). Early
-	// polls would 403 and the RIC would give up with an init error. Wait a
-	// bounded window for registration to catch up — the registration is almost
-	// always in flight when we land here.
-	functionARN, known := s.lookupContainerWait(r.Context(), remoteIP, 15*time.Second)
+	// it boots, but overcast can't register it until InspectContainer reports
+	// the IP (up to several seconds later on slow Docker hosts). Early polls
+	// would 403 and the RIC would give up with an init error. Wait a bounded
+	// window for registration to catch up — the registration is almost always
+	// in flight when we land here.
+	containerIP, functionARN, known := s.lookupContainerWait(r.Context(), r)
 	if !known {
+		s.logUnknownContainer(r)
 		http.Error(w, "unknown container", http.StatusForbidden)
 		return
 	}
@@ -799,17 +1131,17 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	// Detect the first GET /next from this container — signals that the RIC
 	// (and the language runtime + handler code) has finished initialising.
 	s.mu.Lock()
-	if !s.seenNext[remoteIP] {
-		s.seenNext[remoteIP] = true
-		s.firstNextAt[remoteIP] = s.clk.Now()
-		s.maybeMarkReadyLocked(remoteIP)
+	if !s.seenNext[containerIP] {
+		s.seenNext[containerIP] = true
+		s.firstNextAt[containerIP] = s.clk.Now()
+		s.maybeMarkReadyLocked(containerIP)
 	}
 
 	// Check the function's invocation queue first.
 	if inv := s.popQueuedLocked(functionARN); inv != nil {
 		// Do NOT delete from s.pending here — handleInvocationAction needs it
 		// to route the container's response POST back to the caller's ResultCh.
-		s.enqueueExtensionInvokeLocked(remoteIP, inv)
+		s.enqueueExtensionInvokeLocked(containerIP, inv)
 		s.mu.Unlock()
 		s.writeNextResponse(w, inv)
 		return
@@ -820,7 +1152,7 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 	// environments at once, and a shared slot meant the last one to poll
 	// displaced the rest, leaving them blocked on a channel nothing would send
 	// to while queued work went undelivered until its deadline expired.
-	waiter := &runtimeWaiter{ch: make(chan *pendingInvocation, 1), containerIP: remoteIP}
+	waiter := &runtimeWaiter{ch: make(chan *pendingInvocation, 1), containerIP: containerIP}
 	s.waiting[functionARN] = append(s.waiting[functionARN], waiter)
 	s.mu.Unlock()
 
@@ -836,10 +1168,10 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 		if inv == nil {
 			s.waiting[functionARN] = append(s.waiting[functionARN], waiter)
 			s.mu.Unlock()
-			s.awaitWaiter(w, r, functionARN, waiter, remoteIP)
+			s.awaitWaiter(w, r, functionARN, waiter, containerIP)
 			return
 		}
-		s.enqueueExtensionInvokeLocked(remoteIP, inv)
+		s.enqueueExtensionInvokeLocked(containerIP, inv)
 		s.mu.Unlock()
 		s.writeNextResponse(w, inv)
 	case <-ctx.Done():
@@ -851,7 +1183,7 @@ func (s *RuntimeAPIServer) handleNext(w http.ResponseWriter, r *http.Request) {
 
 // awaitWaiter re-enters the long poll after a claimed invocation turned out to
 // be cancelled. Split out so handleNext stays a single level deep.
-func (s *RuntimeAPIServer) awaitWaiter(w http.ResponseWriter, r *http.Request, functionARN string, waiter *runtimeWaiter, remoteIP string) {
+func (s *RuntimeAPIServer) awaitWaiter(w http.ResponseWriter, r *http.Request, functionARN string, waiter *runtimeWaiter, containerIP string) {
 	select {
 	case inv := <-waiter.ch:
 		s.mu.Lock()
@@ -860,7 +1192,7 @@ func (s *RuntimeAPIServer) awaitWaiter(w http.ResponseWriter, r *http.Request, f
 			s.releaseWaiter(functionARN, waiter)
 			return
 		}
-		s.enqueueExtensionInvokeLocked(remoteIP, inv)
+		s.enqueueExtensionInvokeLocked(containerIP, inv)
 		s.mu.Unlock()
 		s.writeNextResponse(w, inv)
 	case <-r.Context().Done():

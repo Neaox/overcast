@@ -117,7 +117,6 @@ func TestContainerRuntimeBuildEnv_includesServiceSpecificEndpointURLs(t *testing
 	runtime := &ContainerRuntime{
 		cfg:              &config.Config{Region: "us-east-1", AccountID: "000000000000"},
 		overcastEndpoint: "http://172.18.0.1:4566",
-		runtimeAPI:       &RuntimeAPIServer{addr: "172.18.0.1:9001"},
 	}
 	fn := &Function{
 		Name:       "demo",
@@ -129,7 +128,7 @@ func TestContainerRuntimeBuildEnv_includesServiceSpecificEndpointURLs(t *testing
 	}
 
 	// When: Lambda environment variables are built.
-	env := envMap(runtime.buildEnv(fn, "stream", initTypeOnDemand))
+	env := envMap(runtime.buildEnv(fn, "stream", initTypeOnDemand, "172.18.0.1:41001"))
 
 	// Then: both the global SDK endpoint and Parameters/Secrets backend endpoints target Overcast.
 	if env["AWS_ENDPOINT_URL"] != runtime.overcastEndpoint {
@@ -148,7 +147,6 @@ func TestContainerRuntimeBuildEnv_runtimeEndpointsOverrideBlankUserEnv(t *testin
 	runtime := &ContainerRuntime{
 		cfg:              &config.Config{Region: "us-east-1", AccountID: "000000000000"},
 		overcastEndpoint: "http://172.18.0.1:4566",
-		runtimeAPI:       &RuntimeAPIServer{addr: "172.18.0.1:9001"},
 	}
 	fn := &Function{
 		Name:       "demo",
@@ -168,7 +166,7 @@ func TestContainerRuntimeBuildEnv_runtimeEndpointsOverrideBlankUserEnv(t *testin
 	}
 
 	// When: Lambda environment variables are built for the container.
-	env := envMap(runtime.buildEnv(fn, "stream", initTypeOnDemand))
+	env := envMap(runtime.buildEnv(fn, "stream", initTypeOnDemand, "172.18.0.1:41001"))
 
 	// Then: runtime-provided endpoint and credential values win so extensions inherit usable values.
 	if env["AWS_ENDPOINT_URL"] != runtime.overcastEndpoint {

@@ -30,15 +30,16 @@ interface DocsIndexEntry extends Omit<DocsIndexLine, "terms"> {
 let docsIndexCache: DocsIndexEntry[] | null = null
 
 /**
- * Read the same generated search index the Go BFF embeds
+ * Parse the same generated search index the Go BFF embeds
  * (internal/docssearch/index.gen.jsonl): one JSON line per doc, each carrying
  * its own "term:score" pairs. Sharing the artifact - and the tokenizer and
  * ranking below - is what keeps dev-mode search answering like production. A
  * term may itself contain ':', so each pair splits on its last colon.
+ *
+ * Exported so tests can rank a synthetic corpus, the way
+ * internal/docssearch/score_test.go does.
  */
-async function loadDocsIndex(): Promise<DocsIndexEntry[]> {
-  if (docsIndexCache) return docsIndexCache
-  const raw = await fs.readFile(DOCS_INDEX_PATH, "utf-8")
+export function parseDocsIndex(raw: string): DocsIndexEntry[] {
   const entries: DocsIndexEntry[] = []
   for (const line of raw.split("\n")) {
     const trimmed = line.trim()
@@ -55,7 +56,12 @@ async function loadDocsIndex(): Promise<DocsIndexEntry[]> {
     entries.push({ ...parsed, id: entries.length, terms })
   }
   if (entries.length === 0) throw new Error("docs index is empty; run: make docs-index")
-  docsIndexCache = entries
+  return entries
+}
+
+async function loadDocsIndex(): Promise<DocsIndexEntry[]> {
+  if (docsIndexCache) return docsIndexCache
+  docsIndexCache = parseDocsIndex(await fs.readFile(DOCS_INDEX_PATH, "utf-8"))
   return docsIndexCache
 }
 
@@ -142,8 +148,16 @@ function tokenize(s: string): string[] {
  * Port of Search in internal/docssearch/search.go: a doc matches only when it
  * holds every query token, and ranks by the sum of its per-term scores, ties
  * broken by title.
+ *
+ * The *weighting* is not here and must not be added here. A term's score is
+ * decided once, at index time, by docssearch.ScoreDocument - which field it
+ * came from (a title, a heading, an inline `code` span, or plain prose) and
+ * how often, with repetition counting sub-linearly so a word used a dozen
+ * times in passing cannot outrank the page that names the operation. By the
+ * time either implementation reads a "term:score" pair that judgement has
+ * already been made, and both must apply it identically.
  */
-function searchDocs(index: DocsIndexEntry[], query: string, limit: number) {
+export function searchDocs(index: DocsIndexEntry[], query: string, limit: number) {
   const tokens = [...new Set(tokenize(query))]
   if (tokens.length === 0) return []
   const results = []
