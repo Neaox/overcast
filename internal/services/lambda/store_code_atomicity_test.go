@@ -18,6 +18,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
@@ -60,6 +61,15 @@ func (s *recordWriteFailStore) Set(ctx context.Context, namespace, key, value st
 // newCodeAtomicityStores returns one backing store per state backend this build
 // provides. Under -tags nosqlite the map degrades to memory only rather than the
 // file being tagged out — see tests/AGENTS.md § Parity tests.
+//
+// The hybrid backend is here because it is the one whose read semantics depend
+// on the namespace's tier: "lambda:function-code" is TierCached, so a package
+// is never seeded into memory and every read of one resolves through the
+// pending-write overlay and SQLite rather than the in-memory map that serves
+// the function record. The guarantee has to hold across that split, not just
+// within one uniform backend. Writes are given an hour-long flush interval so
+// the packages stay in the overlay for the duration of a test — the flushed
+// half of the split is covered by store_code_hybrid_test.go.
 func newCodeAtomicityStores(t *testing.T) map[string]state.Store {
 	t.Helper()
 
@@ -77,6 +87,20 @@ func newCodeAtomicityStores(t *testing.T) map[string]state.Store {
 		}
 	})
 	stores["sql"] = sqlStore
+
+	hybridStore, err := state.NewHybridStore(t.TempDir(), time.Hour)
+	if err != nil {
+		t.Fatalf("state.NewHybridStore: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := hybridStore.Close(); err != nil {
+			t.Logf("hybridStore.Close: %v", err)
+		}
+	})
+	if err := hybridStore.WaitReady(context.Background()); err != nil {
+		t.Fatalf("hybrid WaitReady: %v", err)
+	}
+	stores["hybrid"] = hybridStore
 	return stores
 }
 

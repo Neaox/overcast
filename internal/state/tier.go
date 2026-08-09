@@ -20,8 +20,12 @@ const (
 	TierCached
 )
 
-// namespaceTiers maps every known namespace to its tier.
-// New namespaces default to TierHot (safe — keeps data in memory).
+// namespaceTiers maps every known namespace to its tier. It is also the sole
+// input to HybridStore's startup seed list (hybridHotNamespaces in hybrid.go),
+// which is why an entry has to be added for a namespace to be memory-resident:
+// a namespace missing from this table is never seeded and is read lazily from
+// SQLite, so it behaves as TierCached whatever anyone intended. Register new
+// namespaces explicitly rather than relying on the fallback — see TierFor.
 var namespaceTiers = map[string]Tier{
 	// ── ACM ─────────────────────────────────────────────────────────────
 	"acm:certs": TierHot,
@@ -97,10 +101,18 @@ var namespaceTiers = map[string]Tier{
 	"lambda:esm-tags":                TierHot,
 	"lambda:layers":                  TierHot,
 	"lambda:provisioned-concurrency": TierHot,
-	"lambda:layer-counters":          TierCached,
-	"lambda:version-counters":        TierCached,
-	"lambda:invocations":             TierCached,
-	"lambda:test-events":             TierCached,
+	// Deployment packages are data-plane bulk, not control-plane metadata: a
+	// function record is a few hundred bytes, its zip can be tens of
+	// megabytes, and only a cold start ever reads one. The namespace exists to
+	// keep them off the record-read path (see nsFunctionCode in
+	// internal/services/lambda/store.go), so seeding them into memory would
+	// give back half of that split — the reasoning that already keeps
+	// s3:objects out of the memory tier.
+	"lambda:function-code":    TierCached,
+	"lambda:layer-counters":   TierCached,
+	"lambda:version-counters": TierCached,
+	"lambda:invocations":      TierCached,
+	"lambda:test-events":      TierCached,
 
 	// ── CloudWatch Logs ─────────────────────────────────────────────────
 	"logs:groups":  TierHot,
@@ -288,10 +300,16 @@ var namespaceTiers = map[string]Tier{
 	"appsync": TierHot,
 }
 
-// TierFor returns the tier for a namespace. Unknown namespaces default to TierHot.
+// TierFor returns the tier for a namespace. An unregistered namespace reports
+// TierCached, because that is what it actually gets: the hybrid seed list is
+// built from namespaceTiers, so a namespace absent from the table is never
+// loaded into memory at startup and every read of it goes to SQLite through
+// the pending-write overlay (shouldReadHybridNamespaceFromSQLite). The
+// fallback used to answer TierHot, which described no code path and made a
+// missing entry read as a decision to keep that namespace resident.
 func TierFor(namespace string) Tier {
 	if t, ok := namespaceTiers[namespace]; ok {
 		return t
 	}
-	return TierHot
+	return TierCached
 }
