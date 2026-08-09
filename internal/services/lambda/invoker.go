@@ -180,13 +180,7 @@ func (inv *ServiceInvoker) InvokeEvent(ctx context.Context, functionARN string, 
 	}
 
 	// Find a runtime that can handle the function.
-	var rt Runtime
-	for _, r := range inv.runtimes.get() {
-		if r.CanHandle(fn.Runtime) {
-			rt = r
-			break
-		}
-	}
+	rt := inv.runtimes.runtimeFor(ctx, fn.Runtime)
 	if rt == nil {
 		msg := "no runtime available for " + fn.Runtime
 		inv.logger.Warn("lambda: invokeEvent: no runtime for function",
@@ -244,13 +238,7 @@ func (inv *ServiceInvoker) Invoke(ctx context.Context, functionName string, payl
 		return nil, nil
 	}
 
-	var rt Runtime
-	for _, r := range inv.runtimes.get() {
-		if r.CanHandle(fn.Runtime) {
-			rt = r
-			break
-		}
-	}
+	rt := inv.runtimes.runtimeFor(ctx, fn.Runtime)
 	if rt == nil {
 		inv.logger.Debug("lambda: invoke: no runtime",
 			zap.String("function", functionName),

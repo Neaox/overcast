@@ -263,9 +263,11 @@ jobs:
   # One function, one invoke, deliberately: the cost that matters is the runtime
   # image pull, and nothing here is made more convincing by a second case.
   #
-  # NOT a required check yet. A check cannot be added to the branch ruleset
-  # until it has reported green on main at least once; promote it after this
-  # lands.
+  # A required check since it first reported green on main. It is a
+  # start-to-invoke race detector as much as a runtime test: it drives an
+  # invocation within ~100 ms of the process starting, which is what caught the
+  # Lambda service answering Runtime.DockerUnavailable while its own Docker
+  # probe was still wiring the container runtime.
   lambda-host-runtime:
     name: Lambda invoke (native host binary)
     needs: changes
@@ -410,9 +412,14 @@ jobs:
             exit 1
           fi
 
+      # The whole log, not a tail: OVERCAST_LOG_LEVEL=debug is on precisely so
+      # this is readable when something fails, and the lines that explain a
+      # Lambda failure — the Docker probe's verdict and the container runtime
+      # coming up — are written at startup, which a tail is exactly what cuts
+      # off. Failure only; a green run's log changes no decision.
       - name: Overcast log
-        if: always() && needs.changes.outputs.code == 'true'
-        run: tail -n 200 overcast.log || true
+        if: failure() && needs.changes.outputs.code == 'true'
+        run: cat overcast.log || true
 
       - name: Stop Overcast
         if: always() && needs.changes.outputs.code == 'true'

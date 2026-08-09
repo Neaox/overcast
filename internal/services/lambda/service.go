@@ -340,12 +340,33 @@ func (f *Function) logGroupName() string {
 // runtimeRegistry holds the active set of Runtimes behind an atomic pointer so
 // the Docker initialisation goroutine can upgrade from stub→container runtimes
 // after startup without locking any callers.
+//
+// It also carries the answer to "is that upgrade still coming?". The stub
+// runtime replies to an invocation with Runtime.DockerUnavailable, which is the
+// truth only once the Docker probe has reported; before that it is a guess, and
+// on a machine where Docker is running it is the wrong one. settled is closed
+// when the first probe has decided, and runtimeFor waits for it — so an
+// invocation that arrives during startup gets the container runtime rather than
+// a report that Docker is missing.
 type runtimeRegistry struct {
 	p atomic.Pointer[[]Runtime]
+
+	settled    chan struct{}
+	settleOnce sync.Once
 }
 
+// newRuntimeRegistry returns a registry whose runtime set is already final.
 func newRuntimeRegistry(initial []Runtime) *runtimeRegistry {
-	rr := &runtimeRegistry{}
+	rr := newPendingRuntimeRegistry(initial)
+	rr.settle()
+	return rr
+}
+
+// newPendingRuntimeRegistry returns a registry whose runtime set is not final
+// yet: runtimeFor blocks until settle is called. Only New uses it — every other
+// construction site knows its runtimes up front.
+func newPendingRuntimeRegistry(initial []Runtime) *runtimeRegistry {
+	rr := &runtimeRegistry{settled: make(chan struct{})}
 	rr.p.Store(&initial)
 	return rr
 }
@@ -360,6 +381,32 @@ func (rr *runtimeRegistry) set(runtimes []Runtime) {
 	rr.p.Store(&runtimes)
 }
 
+// settle marks the runtime set final for the current Docker verdict and
+// releases anything waiting in runtimeFor. Idempotent, because
+// initDockerRuntime calls it from every exit path.
+func (rr *runtimeRegistry) settle() {
+	rr.settleOnce.Do(func() { close(rr.settled) })
+}
+
+// runtimeFor returns the first registered runtime that can execute runtimeID,
+// waiting for the initial Docker verdict before it chooses. Returns nil when
+// nothing registered can handle the runtime.
+func (rr *runtimeRegistry) runtimeFor(ctx context.Context, runtimeID string) Runtime {
+	select {
+	case <-rr.settled:
+	case <-ctx.Done():
+		// The caller has gone, so answer from whatever is registered now
+		// rather than inventing a new failure mode for a response that nobody
+		// is left to read.
+	}
+	for _, rt := range rr.get() {
+		if rt.CanHandle(runtimeID) {
+			return rt
+		}
+	}
+	return nil
+}
+
 // Service implements router.Service for Lambda.
 type Service struct {
 	cfg         *config.Config
@@ -372,8 +419,17 @@ type Service struct {
 	logWriter   events.LogWriter
 	tracker     *instanceTracker
 	esmDelivery *esmDeliveryManager // nil until InitESMDelivery is called
-	initWg      sync.WaitGroup      // signals when initDockerRuntime completes
+	initWg      sync.WaitGroup      // signals when the first Docker probe has reported
 	gc          *docker.GC          // nil until Docker init completes
+	// stop is closed by Stop; it ends the background re-probe loop that runs
+	// when Docker was not available at startup.
+	stop     chan struct{}
+	stopOnce sync.Once
+	// probe is docker.Probe, indirected so tests can drive the re-probe loop
+	// without a daemon. dockerRetryInterval is how long that loop waits
+	// between attempts.
+	probe               dockerProbeFunc
+	dockerRetryInterval time.Duration
 	// mu protects the fields below, which are written by initDockerRuntime.
 	mu               sync.Mutex
 	bus              *events.Bus       // set by InitBus; read by initDockerRuntime
@@ -391,10 +447,9 @@ type Service struct {
 	dockerEventsSubscribed bool
 }
 
-// WaitReady blocks until the background Docker runtime initialisation has
-// completed (successfully or not). Production callers should never need this;
-// it exists so integration tests can ensure the ContainerRuntime is wired
-// before invoking functions.
+// WaitReady blocks until the first Docker probe has reported (successfully or
+// not). Production callers should never need this; it exists so integration
+// tests can ensure the ContainerRuntime is wired before invoking functions.
 func (s *Service) WaitReady() { s.initWg.Wait() }
 
 // InitLogWriter wires the CloudWatch Logs writer so Lambda invocations can
@@ -563,22 +618,29 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	ls := newLambdaStore(store, cfg.Region, clk)
 	tracker := newInstanceTracker(clk, logger)
 
-	// Start with the stub runtime so the service is immediately available.
-	rr := newRuntimeRegistry([]Runtime{newNodeRuntime(clk, logger)})
+	// Start with the stub runtime so the service is immediately available, but
+	// leave the registry unsettled: until the probe has reported, "Docker is
+	// not available" is a guess rather than an answer, and an invocation that
+	// lands in that window must wait for the verdict instead of being told
+	// Docker is missing on a machine where it is running.
+	rr := newPendingRuntimeRegistry([]Runtime{newNodeRuntime(clk, logger)})
 
 	esmSt := newESMStore(ls)
 	h := newHandler(cfg, log, clk, rr, ls, tracker)
 	h.esm = esmSt
 
 	s := &Service{
-		cfg:     cfg,
-		clk:     clk,
-		store:   store,
-		ls:      ls,
-		log:     log,
-		tracker: tracker,
-		handler: h,
-		invoker: newServiceInvoker(h, ls, rr, logger, tracker),
+		cfg:                 cfg,
+		clk:                 clk,
+		store:               store,
+		ls:                  ls,
+		log:                 log,
+		tracker:             tracker,
+		handler:             h,
+		invoker:             newServiceInvoker(h, ls, rr, logger, tracker),
+		stop:                make(chan struct{}),
+		probe:               docker.Probe,
+		dockerRetryInterval: dockerRetryInterval,
 	}
 
 	// Probe Docker in the background so startup of other services is not delayed.
@@ -591,11 +653,31 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	return s
 }
 
-// initDockerRuntime probes the Docker daemon (with retries) and, if available,
-// replaces the stub runtime in rr with ContainerRuntime. Called once from a
-// goroutine spawned by New.
+// dockerProbeFunc is docker.Probe's signature, indirected through a Service
+// field so tests can drive the re-probe loop without a daemon.
+type dockerProbeFunc func(socketPath, network string, logger *zap.Logger) (*docker.ProbeResult, error)
+
+// dockerRetryInterval is how long the Lambda service waits between attempts
+// when Docker was not reachable at startup. Starting the emulator before Docker
+// Desktop has finished booting is an ordinary sequence on Windows and macOS, so
+// that verdict has to be revisited rather than latched for the process's life.
+const dockerRetryInterval = 5 * time.Second
+
+// initDockerRuntime probes the Docker daemon and, if available, replaces the
+// stub runtime in rr with ContainerRuntime. Called once from a goroutine
+// spawned by New.
+//
+// The registry is settled on every exit path: invocations block until this
+// function has decided, and must never block on a decision that is not coming.
+// When the probe fails the verdict is "no Docker" — invocations get the stub's
+// honest answer straight away — and a background loop keeps re-probing,
+// upgrading the registry if Docker appears later.
 func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *runtimeRegistry) {
 	log := s.log.Logger()
+	// However this returns — no socket, a failed probe, a panic — the verdict
+	// is published. An unsettled registry with nothing left to settle it would
+	// park every invocation for the life of the process.
+	defer rr.settle()
 
 	// Skip Docker entirely when no socket is configured. This avoids
 	// unnecessary probe retries in test servers that don't need containers.
@@ -604,12 +686,59 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		return
 	}
 
-	result, probeErr := docker.Probe(cfg.LambdaDockerSocket, cfg.LambdaNetwork, log)
+	result, probeErr := s.probe(cfg.LambdaDockerSocket, cfg.LambdaNetwork, log)
 	if probeErr != nil {
-		s.log.Warn("Docker not available — using stub runtime (invocations will return mock responses)",
-			zap.String("socket", cfg.LambdaDockerSocket), zap.Error(probeErr))
+		s.log.Warn("Docker not available — using stub runtime for now; re-probing in the background",
+			zap.String("socket", cfg.LambdaDockerSocket),
+			zap.Duration("retry_interval", s.dockerRetryInterval),
+			zap.Error(probeErr))
+		go func() {
+			if late := s.awaitDockerProbe(cfg, clk, log); late != nil {
+				s.log.Info("Docker became available after startup — enabling the container runtime",
+					zap.String("socket", cfg.LambdaDockerSocket))
+				s.wireDockerRuntime(cfg, clk, rr, late)
+			}
+		}()
 		return
 	}
+
+	s.wireDockerRuntime(cfg, clk, rr, result)
+}
+
+// awaitDockerProbe re-probes Docker until it answers or the service stops.
+// Returns nil when Stop happened first.
+func (s *Service) awaitDockerProbe(cfg *config.Config, clk clock.Clock, log *zap.Logger) *docker.ProbeResult {
+	for {
+		// A fresh timer per attempt rather than a ticker: a ticker registered
+		// against a mock clock replays every interval a test winds past, and
+		// this loop can outlive startup by the whole life of the process.
+		t := clk.Timer(s.dockerRetryInterval)
+		select {
+		case <-s.stop:
+			t.Stop()
+			return nil
+		case <-t.C:
+		}
+
+		result, err := s.probe(cfg.LambdaDockerSocket, cfg.LambdaNetwork, log)
+		if err != nil {
+			log.Debug("lambda: Docker still not available",
+				zap.String("socket", cfg.LambdaDockerSocket), zap.Error(err))
+			continue
+		}
+		return result
+	}
+}
+
+// wireDockerRuntime builds the ContainerRuntime around a successful probe and
+// installs it in rr, replacing the stub. Reached from the startup probe and
+// from the background re-probe, so it must be safe to run after requests have
+// already been served by the stub.
+func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *runtimeRegistry, result *docker.ProbeResult) {
+	log := s.log.Logger()
+	// Every exit below leaves the stub in place; publish that verdict so an
+	// invocation waiting on it is not parked indefinitely.
+	defer rr.settle()
 
 	dc := result.Client
 
@@ -730,6 +859,10 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	// reconfigured it.
 	go s.reloadProvisionedConcurrency(context.Background(), pool)
 	rr.set([]Runtime{pool, newNodeRuntime(clk, log)})
+	// The verdict is in as soon as the pool is registered — release any
+	// invocation waiting on it without making it sit through the rest of the
+	// wiring below.
+	rr.settle()
 
 	// Wire the image prewarmer so CreateFunction can kick off image pulls
 	// in the background instead of paying the cost on the first Invoke.
@@ -952,6 +1085,12 @@ func (s *Service) AddTriggerSource(src TriggerSource) {
 
 // Stop shuts down the Runtime API server and any background resources.
 func (s *Service) Stop(ctx context.Context) {
+	// End the background Docker re-probe loop, if one is running.
+	s.stopOnce.Do(func() {
+		if s.stop != nil {
+			close(s.stop)
+		}
+	})
 	if s.esmDelivery != nil {
 		s.esmDelivery.StopAll(ctx)
 	}

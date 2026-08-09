@@ -112,13 +112,7 @@ func (h *Handler) InvokeFunctionURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var rt Runtime
-	for _, cand := range h.runtimes.get() {
-		if cand.CanHandle(fn.Runtime) {
-			rt = cand
-			break
-		}
-	}
+	rt := h.runtimes.runtimeFor(ctx, fn.Runtime)
 	if rt == nil {
 		log.Warn("function url invoke: no runtime available",
 			zap.String("function", fn.Name), zap.String("runtime", fn.Runtime))
