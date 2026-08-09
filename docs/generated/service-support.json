@@ -7346,7 +7346,7 @@
           "operation": "ListTagsForResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Lists tags for an alarm"
+          "notes": "Lists tags for an alarm, over both the Query and JSON protocols. Alarms are the only taggable CloudWatch resource Overcast emulates, so any other ResourceARN is ResourceNotFoundException — or InvalidParameterValue when it is not a CloudWatch ARN at all"
         },
         {
           "operation": "PutMetricAlarm",
@@ -7382,13 +7382,13 @@
           "operation": "TagResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Adds or updates tags on an alarm"
+          "notes": "Adds or updates tags on an alarm, over both the Query and JSON protocols. Tagging an alarm that does not exist is ResourceNotFoundException, as on AWS; the 50-tag limit is not enforced"
         },
         {
           "operation": "UntagResource",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Removes tags from an alarm"
+          "notes": "Removes tags from an alarm, over both the Query and JSON protocols. A key that is not present is ignored; an alarm that does not exist is ResourceNotFoundException"
         }
       ]
     },

@@ -1,1 +1,2 @@
 * [cloudwatch] `ListTagsForResource`, `TagResource` and `UntagResource` answer the JSON protocol the AWS CLI and the SDKs speak, not only the Query form — alarm tags were previously unreadable with `aws cloudwatch list-tags-for-resource`
+* [cloudwatch] the alarm tagging operations reject an unknown or non-CloudWatch `ResourceARN` with AWS's `ResourceNotFoundException`/`InvalidParameterValue` instead of quietly tagging a resource that does not exist

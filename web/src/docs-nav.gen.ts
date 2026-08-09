@@ -2203,6 +2203,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Tagging",
+        "id": "tagging"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },

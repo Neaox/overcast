@@ -1890,6 +1890,85 @@ func (s *Service) describeAlarmHistoryJSON(w http.ResponseWriter, r *http.Reques
 // in one protocol's handler (issue #794 shipped because the JSON side was
 // simply absent).
 
+// alarmARNResourcePrefix is the resource segment a CloudWatch alarm ARN
+// carries: arn:aws:cloudwatch:<region>:<account>:alarm:<name>.
+const alarmARNResourcePrefix = "alarm:"
+
+// tagResourceStatus is the outcome of validating a tagging ResourceARN.
+type tagResourceStatus int
+
+const (
+	tagResourceOK tagResourceStatus = iota
+	tagResourceInvalidARN
+	tagResourceMissing
+)
+
+// classifyTagResource decides what a tagging ResourceARN names.
+//
+// The model marks ResourceARN required on all three tagging operations and
+// declares exactly two client errors for them: InvalidParameterValueException
+// for an ARN that is not a CloudWatch resource, and ResourceNotFoundException
+// for one that names a resource which does not exist. Answering 200 for both
+// would let a caller tag an alarm that was never created — it works here and
+// fails in their account, the divergence CONTRIBUTING calls the expensive one.
+//
+// AWS tags alarms, dashboards, metric streams and Contributor Insights rules.
+// Overcast emulates alarms only, so an ARN naming one of the other three is
+// well-formed but refers to something that genuinely does not exist here, and
+// gets the same ResourceNotFoundException a missing alarm does.
+func (s *Service) classifyTagResource(ctx context.Context, arn string) tagResourceStatus {
+	if protocol.ServiceFromARN(arn) != serviceName {
+		return tagResourceInvalidARN
+	}
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 {
+		return tagResourceInvalidARN
+	}
+	name, isAlarm := strings.CutPrefix(parts[5], alarmARNResourcePrefix)
+	if !isAlarm || name == "" {
+		return tagResourceMissing
+	}
+	if _, found := s.store.getAlarm(ctx, name); !found {
+		return tagResourceMissing
+	}
+	return tagResourceOK
+}
+
+// queryError renders the status as the Query protocol's error, or nil when
+// the resource is fine.
+func (st tagResourceStatus) queryError(arn string) *protocol.AWSError {
+	// InvalidParameterValueException carries an awsQueryError trait whose
+	// code is the shorter InvalidParameterValue, so the two protocols
+	// genuinely spell this one differently.
+	return st.awsError(arn, "InvalidParameterValue")
+}
+
+// jsonError renders the status as the JSON protocol's error, or nil when the
+// resource is fine.
+func (st tagResourceStatus) jsonError(arn string) *protocol.AWSError {
+	return st.awsError(arn, "InvalidParameterValueException")
+}
+
+func (st tagResourceStatus) awsError(arn, invalidARNCode string) *protocol.AWSError {
+	switch st {
+	case tagResourceInvalidARN:
+		return &protocol.AWSError{
+			Code:       invalidARNCode,
+			Message:    "The value " + strconv.Quote(arn) + " for parameter ResourceARN is not a valid CloudWatch resource ARN.",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	case tagResourceMissing:
+		return &protocol.AWSError{
+			Code:       "ResourceNotFoundException",
+			Message:    "The named resource does not exist.",
+			HTTPStatus: http.StatusNotFound,
+		}
+	case tagResourceOK:
+		// Nothing to report — the resource exists.
+	}
+	return nil
+}
+
 // sortedTags renders a stored tag map as an AWS tag list ordered by key.
 // Go map iteration is randomised, so without this the same resource
 // returns its tags in a different order on every call.
@@ -1933,7 +2012,12 @@ func (s *Service) removeResourceTags(ctx context.Context, arn string, keys []str
 }
 
 func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
-	tags, err := s.store.getTags(r.Context(), r.FormValue("ResourceARN"))
+	arn := r.FormValue("ResourceARN")
+	if aerr := s.classifyTagResource(r.Context(), arn).queryError(arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	tags, err := s.store.getTags(r.Context(), arn)
 	if err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
@@ -1954,6 +2038,10 @@ func (s *Service) listTagsForResourceJSON(w http.ResponseWriter, r *http.Request
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 
+	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	tags, err := s.store.getTags(r.Context(), in.ResourceARN)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
@@ -1965,7 +2053,12 @@ func (s *Service) listTagsForResourceJSON(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
-	if err := s.addResourceTags(r.Context(), r.FormValue("ResourceARN"), memberTags(r, "Tags")); err != nil {
+	arn := r.FormValue("ResourceARN")
+	if aerr := s.classifyTagResource(r.Context(), arn).queryError(arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if err := s.addResourceTags(r.Context(), arn, memberTags(r, "Tags")); err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
@@ -1981,6 +2074,10 @@ func (s *Service) tagResourceJSON(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
 		return
 	}
+	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 	if err := s.addResourceTags(r.Context(), in.ResourceARN, in.Tags); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -1989,7 +2086,12 @@ func (s *Service) tagResourceJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
-	if err := s.removeResourceTags(r.Context(), r.FormValue("ResourceARN"), memberList(r, "TagKeys")); err != nil {
+	arn := r.FormValue("ResourceARN")
+	if aerr := s.classifyTagResource(r.Context(), arn).queryError(arn); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if err := s.removeResourceTags(r.Context(), arn, memberList(r, "TagKeys")); err != nil {
 		protocol.WriteQueryXMLError(w, r, protocol.ErrInternalError)
 		return
 	}
@@ -2003,6 +2105,10 @@ func (s *Service) untagResourceJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{Code: "InvalidParameterValue", Message: "Invalid JSON body", HTTPStatus: http.StatusBadRequest})
+		return
+	}
+	if aerr := s.classifyTagResource(r.Context(), in.ResourceARN).jsonError(in.ResourceARN); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
 	if err := s.removeResourceTags(r.Context(), in.ResourceARN, in.TagKeys); err != nil {

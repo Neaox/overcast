@@ -134,6 +134,31 @@ incomplete.
 - **`EvaluationWindow` is accepted and ignored.** Overcast always evaluates the period-aligned
   window described above, rather than AWS's default sliding window.
 
+## Tagging
+
+AWS tags four CloudWatch resource types — alarms, dashboards, metric streams and Contributor
+Insights rules. Overcast emulates alarms only, so **the alarm is the whole taggable surface**;
+an ARN naming any of the other three is well-formed but refers to a resource that does not
+exist here, and is answered accordingly.
+
+| Resource | Tag on create | Tag after create |
+| --- | --- | --- |
+| Alarm (`arn:aws:cloudwatch:<region>:<account>:alarm:<name>`) | `PutMetricAlarm` `Tags` | `TagResource` / `UntagResource` / `ListTagsForResource` |
+| Dashboard, metric stream, Contributor Insights rule | not emulated | not emulated — `ResourceNotFoundException` |
+
+- **Tags apply at creation only.** `PutMetricAlarm` applies `Tags` when it creates the alarm and
+  ignores them when the same call updates an existing one, as on AWS. `TagResource` and
+  `UntagResource` are the only way to change an existing alarm's tags.
+- **Tags are deleted with the alarm.** `DeleteAlarms` drops the tags too, so an alarm recreated
+  under the same name starts untagged.
+- **An unknown resource is an error, not an empty tag set.** All three tagging operations return
+  `404 ResourceNotFoundException` for an ARN whose alarm does not exist, and
+  `400 InvalidParameterValue` (`InvalidParameterValueException` over the JSON protocol — the
+  model gives that shape a shorter `awsQueryError` code) for a `ResourceARN` that is not a
+  CloudWatch ARN, including an empty one.
+- **The 50-tag-per-resource limit is not enforced.** AWS caps a CloudWatch resource at 50 tags;
+  Overcast accepts more.
+
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary
@@ -159,13 +184,13 @@ incomplete.
 | `GetMetricData`           | ✅ Supported   | Returns query-based metric values over time ranges                                                                                                                                                                                                                                                                                                | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_GetMetricData.html)           |
 | `GetMetricStatistics`     | ✅ Supported   | Returns aggregated datapoints by period                                                                                                                                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_GetMetricStatistics.html)     |
 | `ListMetrics`             | ✅ Supported   | Lists available metrics                                                                                                                                                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_ListMetrics.html)             |
-| `ListTagsForResource`     | ✅ Supported   | Lists tags for an alarm                                                                                                                                                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_ListTagsForResource.html)     |
+| `ListTagsForResource`     | ✅ Supported   | Lists tags for an alarm, over both the Query and JSON protocols. Alarms are the only taggable CloudWatch resource Overcast emulates, so any other ResourceARN is ResourceNotFoundException — or InvalidParameterValue when it is not a CloudWatch ARN at all                                                                                      | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_ListTagsForResource.html)     |
 | `PutMetricAlarm`          | ✅ Supported   | Creates or updates a single-metric alarm, which is then evaluated automatically (Threshold, ComparisonOperator, Period, EvaluationPeriods, DatapointsToAlarm, Dimensions, TreatMissingData). Metric-math/multi-metric alarms, anomaly detection (ThresholdMetricId) and extended statistics are refused with 501 rather than created un-evaluated | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutMetricAlarm.html)          |
 | `PutMetricData`           | ✅ Supported   | Publishes metric data points                                                                                                                                                                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutMetricData.html)           |
 | `SetAlarmState`           | ✅ Supported   | Forces an alarm's state and fires that state's actions; the forced state is held against the evaluator for one evaluation range                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_SetAlarmState.html)           |
 | `PutAnomalyDetector`      | ❌ Unsupported | stub; returns 501 — there is no anomaly-detection model behind the emulator                                                                                                                                                                                                                                                                       | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutAnomalyDetector.html)      |
 | `PutCompositeAlarm`       | ❌ Unsupported | stub; returns 501 — composite alarm rules are not evaluated                                                                                                                                                                                                                                                                                       | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutCompositeAlarm.html)       |
-| `TagResource`             | ✅ Supported   | Adds or updates tags on an alarm                                                                                                                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_TagResource.html)             |
-| `UntagResource`           | ✅ Supported   | Removes tags from an alarm                                                                                                                                                                                                                                                                                                                        | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_UntagResource.html)           |
+| `TagResource`             | ✅ Supported   | Adds or updates tags on an alarm, over both the Query and JSON protocols. Tagging an alarm that does not exist is ResourceNotFoundException, as on AWS; the 50-tag limit is not enforced                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_TagResource.html)             |
+| `UntagResource`           | ✅ Supported   | Removes tags from an alarm, over both the Query and JSON protocols. A key that is not present is ignored; an alarm that does not exist is ResourceNotFoundException                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_UntagResource.html)           |
 
 <!-- END overcast:capabilities -->
