@@ -32,7 +32,17 @@ var stopwords = map[string]bool{
 // Search returns ranked documentation matches from the generated index. A
 // document matches only when it holds every token in the query; its score is
 // the sum of the per-term scores the generator weighted by field.
-func Search(query string, limit int) []Result {
+//
+// The weighting happens once, at index time, in ScoreDocument — which field a
+// term came from, and how often, with repetition counting sub-linearly. By the
+// time a "term:score" pair is read here that judgement is already made, so
+// this function and its port in web/api/src/routes/docs.ts only have to apply
+// it identically.
+func Search(query string, limit int) []Result { return index().search(query, limit) }
+
+// search is Search against a given index, so tests can rank a synthetic corpus
+// rather than only the embedded one.
+func (idx *searchIndex) search(query string, limit int) []Result {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -40,7 +50,6 @@ func Search(query string, limit int) []Result {
 	if len(tokens) == 0 {
 		return []Result{}
 	}
-	idx := index()
 	scores := map[int]int{}
 	hits := map[int]int{}
 	for _, token := range tokens {
