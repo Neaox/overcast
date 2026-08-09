@@ -105,27 +105,49 @@ func (p *provisioner) regionCtx(region string) context.Context {
 	return middleware.ContextWithRegion(p.ctx, region)
 }
 
+// ── Asynchronous provisioning ──────────────────────────────────────────────
+
+// provisionAsync runs one stack operation on a provisioning goroutine and
+// waits briefly for it, so a fast stack is already terminal by the time an SDK
+// waiter issues its first DescribeStacks.
+//
+// It is the only place an async provisioning context is built, and rec is a
+// required parameter for that reason: every internal call the operation makes
+// records a trace hop against rec, and a helper that let a caller omit it is
+// exactly how DeleteStack and RollbackStack came to record no hops at all.
+// Pass the originating request's recorder — trace.RecorderFromContext returns
+// nil when debug tracing is off, and nil is the correct value to pass then.
+//
+// The recorder outlives the HTTP request that created it, which is the point:
+// provisioning continues after the caller has been answered, and the hops it
+// records still belong to the request that asked for the work.
+func (p *provisioner) provisionAsync(stack *Stack, rec *trace.Recorder, run func(ctx context.Context)) {
+	ctx := p.regionCtx(stack.Region)
+	if rec != nil {
+		ctx = trace.ContextWithRecorder(ctx, rec)
+	}
+	done := make(chan struct{})
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		defer close(done)
+		run(ctx)
+	}()
+	p.awaitBriefly(done)
+}
+
 // ── Create stack (async) ───────────────────────────────────────────────────
 
 // createStack provisions all resources in a template asynchronously, but waits
 // briefly for fast stacks so SDK waiters can observe the terminal status on
 // their immediate first DescribeStacks call.
 func (p *provisioner) createStack(stack *Stack, tmpl *Template, onComplete stackCompletionFunc, rec *trace.Recorder) {
-	done := make(chan struct{})
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-		defer close(done)
-		ctx := p.regionCtx(stack.Region)
-		if rec != nil {
-			ctx = trace.ContextWithRecorder(ctx, rec)
-		}
+	p.provisionAsync(stack, rec, func(ctx context.Context) {
 		p.provisionStackResourcesCtx(ctx, stack, tmpl)
 		if onComplete != nil {
-			onComplete(p.regionCtx(stack.Region), stack)
+			onComplete(ctx, stack)
 		}
-	}()
-	p.awaitBriefly(done)
+	})
 }
 
 func (p *provisioner) awaitBriefly(done <-chan struct{}) {
@@ -295,21 +317,12 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 // ── Update stack (async) ───────────────────────────────────────────────────
 
 func (p *provisioner) updateStack(stack *Stack, tmpl *Template, previousStackTags []Tag, onComplete stackCompletionFunc, rec *trace.Recorder) {
-	done := make(chan struct{})
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-		defer close(done)
-		ctx := p.regionCtx(stack.Region)
-		if rec != nil {
-			ctx = trace.ContextWithRecorder(ctx, rec)
-		}
+	p.provisionAsync(stack, rec, func(ctx context.Context) {
 		p.updateStackResourcesCtx(ctx, stack, tmpl, previousStackTags)
 		if onComplete != nil {
-			onComplete(p.regionCtx(stack.Region), stack)
+			onComplete(ctx, stack)
 		}
-	}()
-	p.awaitBriefly(done)
+	})
 }
 
 func (p *provisioner) updateStackResources(stack *Stack, tmpl *Template, previousStackTags []Tag) {
@@ -612,25 +625,17 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 
 // ── Delete stack (async) ───────────────────────────────────────────────────
 
-func (p *provisioner) deleteStack(stack *Stack) {
-	done := make(chan struct{})
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-		defer close(done)
-		p.deleteStackResources(stack)
-	}()
-	p.awaitBriefly(done)
+func (p *provisioner) deleteStack(stack *Stack, rec *trace.Recorder) {
+	p.provisionAsync(stack, rec, func(ctx context.Context) {
+		p.deleteStackResourcesCtx(ctx, stack)
+	})
 }
 
-// deleteStackResources is the synchronous core of stack deletion.
+// deleteStackResourcesCtx is the synchronous core of stack deletion.
 // It tears down all resources in reverse order and marks the stack as
 // DELETE_COMPLETE. Both top-level deleteStack (async) and nestedStackHandler
-// (inline) use this method.
-func (p *provisioner) deleteStackResources(stack *Stack) {
-	p.deleteStackResourcesCtx(p.regionCtx(stack.Region), stack)
-}
-
+// (inline) use this method, and both pass a context carrying the originating
+// request's trace recorder so every teardown call is recorded as a hop.
 func (p *provisioner) deleteStackResourcesCtx(ctx context.Context, stack *Stack) {
 	log := p.log.WithRecorder(ctx)
 
@@ -1454,21 +1459,14 @@ func (p *provisioner) failRollbackInPlaceUpdate(ctx context.Context, stack *Stac
 // createPath selects the CREATE_FAILED → ROLLBACK_COMPLETE flow (unwind
 // everything the failed create built) over the UPDATE_FAILED →
 // UPDATE_ROLLBACK_COMPLETE flow.
-func (p *provisioner) rollbackStack(stack *Stack, createPath bool) {
-	done := make(chan struct{})
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-		defer close(done)
-		p.rollbackStackResources(stack, createPath)
-	}()
-	p.awaitBriefly(done)
+func (p *provisioner) rollbackStack(stack *Stack, createPath bool, rec *trace.Recorder) {
+	p.provisionAsync(stack, rec, func(ctx context.Context) {
+		p.rollbackStackResourcesCtx(ctx, stack, createPath)
+	})
 }
 
-// rollbackStackResources is the synchronous core of an explicit rollback.
-func (p *provisioner) rollbackStackResources(stack *Stack, createPath bool) {
-	ctx := p.regionCtx(stack.Region)
-
+// rollbackStackResourcesCtx is the synchronous core of an explicit rollback.
+func (p *provisioner) rollbackStackResourcesCtx(ctx context.Context, stack *Stack, createPath bool) {
 	// The stored template drives Ref/GetAtt resolution for any deletes. A
 	// stack that failed early may have no usable template; an empty one still
 	// yields a valid resolve context, and the resource list is the real source
@@ -2280,16 +2278,145 @@ func (h *stubResourceHandler) Delete(_ context.Context, _ http.Handler, _ *confi
 	return nil
 }
 
-// ── Concrete resource handlers ─────────────────────────────────────────────
+// ── Internal dispatch ──────────────────────────────────────────────────────
 
-// setParentRequestID propagates the parent request ID from the context's
-// trace recorder (when debug tracing is on) so the child trace can link back
-// to the CloudFormation request that triggered it. Every internal dispatch
-// helper must call it.
-func setParentRequestID(ctx context.Context, req *http.Request) {
-	if id := trace.RecorderFromContext(ctx).RequestID(); id != "" {
-		req.Header.Set("X-Overcast-Parent-Request-Id", id)
+// internalCall describes one internal service-to-service request: the HTTP
+// call to make, and enough about what it is aimed at to label the trace hop it
+// produces.
+//
+// target and action identify the operation for the two RPC-shaped protocols;
+// a REST call leaves both empty and is identified by its method and path. They
+// are kept raw rather than pre-resolved into hop labels because resolving them
+// walks long prefix chains and concatenates strings, and an untraced deploy —
+// the normal case, issuing thousands of these — must not pay for labels that
+// nothing will read. See hopLabels.
+type internalCall struct {
+	method      string
+	path        string
+	contentType string
+	body        []byte
+	region      string
+	headers     []http.Header // extra request headers, applied in order
+
+	target string // X-Amz-Target, for the JSON protocols
+	action string // Action parameter, for the Query protocol
+}
+
+// hopLabels renders the call for the trace UI: which service and operation it
+// is aimed at, and a human-readable target. Called only when a trace is being
+// recorded.
+func (c internalCall) hopLabels() (service, operation, targetURI string) {
+	switch {
+	case c.target != "":
+		service, operation = serviceFromTarget(c.target)
+		return service, operation, "POST " + c.path + " (X-Amz-Target: " + c.target + ")"
+	case c.action != "":
+		return serviceFromAction(c.action), c.action, "POST " + c.path + "?Action=" + c.action
+	default:
+		return serviceFromPath(c.path), c.method, c.method + " " + c.path
 	}
+}
+
+// do dispatches the call into the emulator router and records exactly one
+// trace hop for it.
+//
+// Every internal dispatch helper in this package funnels through here, and
+// that is the point: hop recording used to be copy-pasted into each helper,
+// and the two helpers written without it (CloudFront's If-Match flow and
+// AppSync Events) dropped their hops silently for as long as they existed.
+//
+// Nothing below is CloudFormation-specific but the "cloudformation" caller
+// label, so this is the shape to lift into a shared package when the other
+// in-process dispatchers adopt it — internal/eventtarget,
+// internal/alarmaction, stepfunctions' service integrations, autoscaling's
+// reconciler and dynamodb's stream fan-out all repeat some of it today.
+func (c internalCall) do(ctx context.Context, router http.Handler) (*httptest.ResponseRecorder, error) {
+	req, err := http.NewRequestWithContext(ctx, c.method, c.path, bytes.NewReader(c.body))
+	if err != nil {
+		return nil, err
+	}
+	if c.contentType != "" {
+		req.Header.Set("Content-Type", c.contentType)
+	}
+	if c.region != "" {
+		req.Header.Set("X-Overcast-Region", c.region)
+	}
+	if c.target != "" {
+		req.Header.Set("X-Amz-Target", c.target)
+	}
+	for _, header := range c.headers {
+		for name, values := range header {
+			for _, value := range values {
+				req.Header.Add(name, value)
+			}
+		}
+	}
+
+	rec := httptest.NewRecorder()
+
+	// Debug tracing off: dispatch and return without paying for a clock read,
+	// a minted request ID, or a hop. A large deploy issues thousands of these.
+	recorder := trace.RecorderFromContext(ctx)
+	if recorder == nil {
+		router.ServeHTTP(rec, req)
+		return rec, statusError(rec)
+	}
+
+	childID := linkChildRequest(req, recorder)
+	start := time.Now()
+	router.ServeHTTP(rec, req)
+	duration := time.Since(start)
+
+	var hopErr string
+	if rec.Code >= 400 {
+		hopErr = rec.Body.String()
+	}
+	service, operation, targetURI := c.hopLabels()
+	recorder.AddHop(trace.Hop{
+		CallerService:  "cloudformation",
+		Service:        service,
+		Operation:      operation,
+		RequestID:      childID,
+		TargetURI:      targetURI,
+		RequestBody:    c.body,
+		ResponseStatus: rec.Code,
+		ResponseBody:   rec.Body.Bytes(),
+		Duration:       duration,
+		Timestamp:      start,
+		Error:          hopErr,
+	})
+	return rec, statusError(rec)
+}
+
+// statusError maps a >= 400 internal response to an error, as every dispatch
+// helper here has always done.
+func statusError(rec *httptest.ResponseRecorder) error {
+	if rec.Code >= 400 {
+		return fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+	return nil
+}
+
+// linkChildRequest wires an internal dispatch into the trace graph: the child
+// request is told which request it descends from, and is given the request ID
+// it must answer under. It returns that child request ID for the hop.
+//
+// Pinning the child's ID is what makes the link reliable. Reading it back off
+// the response — which is what the hop used to do — made the link depend on
+// which header the target service's protocol happens to use: the JSON and
+// Query protocols answer with x-amzn-requestid, S3's REST XML with
+// x-amz-request-id, and some successful responses (S3's idempotent
+// CreateBucket among them) set neither. Every one of those hops recorded an
+// empty request ID and linked to nothing. middleware.RequestID honours a
+// caller-supplied x-amzn-requestid, so the ID pinned here is the ID the child
+// trace is stored under.
+func linkChildRequest(req *http.Request, rec *trace.Recorder) string {
+	if parentID := rec.RequestID(); parentID != "" {
+		req.Header.Set("X-Overcast-Parent-Request-Id", parentID)
+	}
+	childID := protocol.NewRequestID()
+	req.Header.Set("x-amzn-requestid", childID)
+	return childID
 }
 
 // internalRequest dispatches an HTTP request to the emulator router.
@@ -2297,57 +2424,18 @@ func setParentRequestID(ctx context.Context, req *http.Request) {
 // build ARNs in the correct region.
 //
 // extra carries operation parameters a service models as request headers
-// rather than in the body — S3's x-amz-transition-default-minimum-object-size,
-// for example. It is variadic so the common headerless call stays unchanged.
+// rather than in the body — S3's x-amz-transition-default-minimum-object-size
+// and CloudFront's If-Match, for example. It is variadic so the common
+// headerless call stays unchanged.
 func internalRequest(ctx context.Context, router http.Handler, region, method, path, contentType string, body []byte, extra ...http.Header) (*httptest.ResponseRecorder, error) {
-	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	if region != "" {
-		req.Header.Set("X-Overcast-Region", region)
-	}
-	for _, header := range extra {
-		for name, values := range header {
-			for _, value := range values {
-				req.Header.Add(name, value)
-			}
-		}
-	}
-	setParentRequestID(ctx, req)
-	start := time.Now()
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	duration := time.Since(start)
-
-	if r := trace.RecorderFromContext(ctx); r != nil {
-		svc := serviceFromPath(path)
-		var hopErr string
-		if rec.Code >= 400 {
-			hopErr = rec.Body.String()
-		}
-		r.AddHop(trace.Hop{
-			CallerService:  "cloudformation",
-			Service:        svc,
-			Operation:      method,
-			RequestID:      rec.Header().Get("X-Amzn-Requestid"),
-			TargetURI:      method + " " + path,
-			RequestBody:    body,
-			ResponseStatus: rec.Code,
-			ResponseBody:   rec.Body.Bytes(),
-			Duration:       duration,
-			Timestamp:      start,
-			Error:          hopErr,
-		})
-	}
-
-	if rec.Code >= 400 {
-		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
-	}
-	return rec, nil
+	return internalCall{
+		method:      method,
+		path:        path,
+		contentType: contentType,
+		body:        body,
+		region:      region,
+		headers:     extra,
+	}.do(ctx, router)
 }
 
 // internalJSON dispatches a JSON POST with X-Amz-Target header.
@@ -2356,46 +2444,14 @@ func internalJSON(ctx context.Context, router http.Handler, region, target strin
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
-	req.Header.Set("X-Amz-Target", target)
-	if region != "" {
-		req.Header.Set("X-Overcast-Region", region)
-	}
-	setParentRequestID(ctx, req)
-	start := time.Now()
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	duration := time.Since(start)
-
-	if r := trace.RecorderFromContext(ctx); r != nil {
-		svc, op := serviceFromTarget(target)
-		var hopErr string
-		if rec.Code >= 400 {
-			hopErr = rec.Body.String()
-		}
-		r.AddHop(trace.Hop{
-			CallerService:  "cloudformation",
-			Service:        svc,
-			Operation:      op,
-			RequestID:      rec.Header().Get("X-Amzn-Requestid"),
-			TargetURI:      "POST / (X-Amz-Target: " + target + ")",
-			RequestBody:    data,
-			ResponseStatus: rec.Code,
-			ResponseBody:   rec.Body.Bytes(),
-			Duration:       duration,
-			Timestamp:      start,
-			Error:          hopErr,
-		})
-	}
-
-	if rec.Code >= 400 {
-		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
-	}
-	return rec, nil
+	return internalCall{
+		method:      http.MethodPost,
+		path:        "/",
+		contentType: "application/x-amz-json-1.0",
+		body:        data,
+		region:      region,
+		target:      target,
+	}.do(ctx, router)
 }
 
 // internalQuery dispatches a Query-protocol POST.
@@ -2404,49 +2460,20 @@ func internalQuery(ctx context.Context, router http.Handler, region string, para
 	for k, v := range params {
 		form.Set(k, v)
 	}
-	body := form.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", strings.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if region != "" {
-		req.Header.Set("X-Overcast-Region", region)
-	}
-	setParentRequestID(ctx, req)
-	start := time.Now()
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	duration := time.Since(start)
-
-	if r := trace.RecorderFromContext(ctx); r != nil {
-		action := params["Action"]
-		svc := serviceFromAction(action)
-		var hopErr string
-		if rec.Code >= 400 {
-			hopErr = rec.Body.String()
-		}
-		r.AddHop(trace.Hop{
-			CallerService:  "cloudformation",
-			Service:        svc,
-			Operation:      action,
-			RequestID:      rec.Header().Get("X-Amzn-Requestid"),
-			TargetURI:      "POST /?Action=" + action,
-			RequestBody:    []byte(body),
-			ResponseStatus: rec.Code,
-			ResponseBody:   rec.Body.Bytes(),
-			Duration:       duration,
-			Timestamp:      start,
-			Error:          hopErr,
-		})
-	}
-
-	if rec.Code >= 400 {
-		return rec, fmt.Errorf("HTTP %d: %s", rec.Code, rec.Body.String())
-	}
-	return rec, nil
+	return internalCall{
+		method:      http.MethodPost,
+		path:        "/",
+		contentType: "application/x-www-form-urlencoded",
+		body:        []byte(form.Encode()),
+		region:      region,
+		action:      params["Action"],
+	}.do(ctx, router)
 }
 
+// serviceFromTarget, serviceFromAction and serviceFromPath name the service a
+// dispatch is aimed at, so a hop reads as "sqs / CreateQueue" rather than as a
+// bare URL. They are best-effort labels for the trace UI; nothing routes on
+// them.
 func serviceFromTarget(target string) (service, operation string) {
 	if idx := strings.LastIndex(target, "."); idx >= 0 {
 		operation = target[idx+1:]
@@ -2599,6 +2626,8 @@ func serviceFromPath(path string) string {
 		return ""
 	}
 }
+
+// ── Concrete resource handlers ─────────────────────────────────────────────
 
 // ── SQS Queue handler ─────────────────────────────────────────────────────
 
