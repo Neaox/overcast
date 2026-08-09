@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -201,6 +202,22 @@ func (r *Runner) defaultSuites() []SuiteConfig {
 // OnEvent is called under a mutex so callers receive events from all suites
 // on a single goroutine (same contract as the previous sequential Run).
 func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
+	// Resolve the suite selection before anything is started or swept: a name
+	// that matches nothing is a caller mistake, and the run has no work to do.
+	// Checked here rather than only at the CLI because callers reach Run from
+	// elsewhere too — the dashboard's POST /run carries a suite name straight
+	// from an HTTP request.
+	suites := r.suites
+	if len(r.cfg.Suites) > 0 {
+		if err := checkSuiteNames(suiteConfigNames(r.suites), r.cfg.Suites); err != nil {
+			return nil, fmt.Errorf("compat: %w", err)
+		}
+		suites = FilterSuiteConfigs(suites, r.cfg.Suites)
+	}
+	if len(suites) == 0 {
+		return nil, fmt.Errorf("compat: no suites to run")
+	}
+
 	if r.cfg.RunID == "" {
 		r.cfg.RunID = makeCompatRunID()
 	}
@@ -208,11 +225,6 @@ func (r *Runner) Run(ctx context.Context) (*RunReport, error) {
 	report := &RunReport{
 		Endpoint:  r.cfg.Endpoint,
 		StartedAt: time.Now(),
-	}
-
-	suites := r.suites
-	if len(r.cfg.Suites) > 0 {
-		suites = FilterSuiteConfigs(suites, r.cfg.Suites)
 	}
 
 	// Compute a per-suite parallelism budget so that running all suites
@@ -493,6 +505,61 @@ func parseNDJSON(r io.Reader, suiteName string, onEvent func([]byte)) *SuiteRepo
 	}
 
 	return sr
+}
+
+// KnownSuiteNames returns the name of every built-in suite, in the order the
+// runner registers them. It is the list a caller may pass to --suite.
+func KnownSuiteNames() []string {
+	r := &Runner{}
+	return suiteConfigNames(r.defaultSuites())
+}
+
+// ValidateSuiteNames reports any requested suite name that no built-in suite
+// answers to, naming every one of them and listing the valid names.
+//
+// A single unrecognised name fails the whole selection rather than narrowing it
+// to the names that did match: "--suite go-sdk,go-skd" asked for two suites, and
+// running one of them while quietly dropping the other would report a green run
+// for coverage nobody checked. An empty selection is not an error — it means
+// "every suite", which is the flag's default.
+func ValidateSuiteNames(names []string) error {
+	return checkSuiteNames(KnownSuiteNames(), names)
+}
+
+// checkSuiteNames is ValidateSuiteNames against an explicit list of known
+// names, so the runner can check the suites it actually holds.
+func checkSuiteNames(known, want []string) error {
+	valid := make(map[string]bool, len(known))
+	for _, n := range known {
+		valid[n] = true
+	}
+	var unknown []string
+	seen := make(map[string]bool, len(want))
+	for _, n := range want {
+		if valid[n] || seen[n] {
+			continue
+		}
+		seen[n] = true
+		unknown = append(unknown, strconv.Quote(n))
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	noun := "suite"
+	if len(unknown) > 1 {
+		noun = "suites"
+	}
+	return fmt.Errorf("unknown %s %s; valid suites are: %s",
+		noun, strings.Join(unknown, ", "), strings.Join(known, ", "))
+}
+
+// suiteConfigNames returns the Name of each config, in order.
+func suiteConfigNames(configs []SuiteConfig) []string {
+	names := make([]string, len(configs))
+	for i, s := range configs {
+		names[i] = s.Name
+	}
+	return names
 }
 
 // FilterSuiteConfigs filters a list of suite configs to only those whose Name
