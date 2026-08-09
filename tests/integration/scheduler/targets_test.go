@@ -78,13 +78,13 @@ func createQueueForSchedule(t *testing.T, srv *helpers.TestServer, name string) 
 // callers only have to advance the mock clock past one tick to fire it once.
 func createScheduleWithTarget(t *testing.T, srv *helpers.TestServer, name string, target map[string]any) {
 	t.Helper()
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedules/"+name, map[string]any{
+	resp := schDo(t, srv, http.MethodPost, "/schedules/"+name, map[string]any{
 		"ScheduleExpression": "rate(1 minute)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target":             target,
 	})
 	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 // fireOnce advances the mock clock past a single engine tick.
@@ -316,7 +316,7 @@ func TestCreateSchedule_unsupportedTargetType(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: a schedule names a target kind the emulator cannot deliver to
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedules/unsupported-target", map[string]any{
+	resp := schDo(t, srv, http.MethodPost, "/schedules/unsupported-target", map[string]any{
 		"ScheduleExpression": "rate(1 minute)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -331,7 +331,7 @@ func TestCreateSchedule_unsupportedTargetType(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "ValidationException")
 
 	// And: the schedule is not stored
-	get := schDo(t, srv, http.MethodGet, "/_scheduler/schedules/unsupported-target", nil)
+	get := schDo(t, srv, http.MethodGet, "/schedules/unsupported-target", nil)
 	defer get.Body.Close()
 	helpers.AssertStatus(t, get, http.StatusNotFound)
 }
@@ -341,7 +341,7 @@ func TestCreateSchedule_malformedTargetARN(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: a schedule names a target that is not ARN-shaped
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedules/bad-arn", map[string]any{
+	resp := schDo(t, srv, http.MethodPost, "/schedules/bad-arn", map[string]any{
 		"ScheduleExpression": "rate(1 minute)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -365,7 +365,7 @@ func TestUpdateSchedule_unsupportedTargetType(t *testing.T) {
 	})
 
 	// When: it is updated to a target kind the emulator cannot deliver to
-	resp := schDo(t, srv, http.MethodPut, "/_scheduler/schedules/retargeted", map[string]any{
+	resp := schDo(t, srv, http.MethodPut, "/schedules/retargeted", map[string]any{
 		"ScheduleExpression": "rate(1 minute)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -379,7 +379,7 @@ func TestUpdateSchedule_unsupportedTargetType(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
 	helpers.AssertJSONError(t, resp, "ValidationException")
 
-	get := schDo(t, srv, http.MethodGet, "/_scheduler/schedules/retargeted", nil)
+	get := schDo(t, srv, http.MethodGet, "/schedules/retargeted", nil)
 	defer get.Body.Close()
 	var stored struct {
 		Target struct {

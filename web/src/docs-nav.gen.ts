@@ -4223,7 +4223,7 @@ export const DOCS_NAV = [
     "path": "docs/services/scheduler.md",
     "href": "services/scheduler.md",
     "title": "Scheduler — Amazon EventBridge Scheduler",
-    "description": "EventBridge Scheduler is served as a REST-JSON API under /_scheduler/*. This implementation focuses on schedule groups, schedules, tagging, and clock-driven target dispatch to...",
+    "description": "EventBridge Scheduler is served as a REST-JSON API at AWS's own paths, so an unmodified SDK or aws scheduler CLI call reaches it. This implementation focuses on schedule groups,...",
     "section": "Service Reference",
     "tags": [
       "amazon",

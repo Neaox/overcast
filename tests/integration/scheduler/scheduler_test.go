@@ -5,7 +5,6 @@ package scheduler_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -17,7 +16,10 @@ import (
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// schDo performs a Scheduler REST-JSON request.
+// schDo performs a Scheduler REST-JSON request the way an AWS SDK does: at
+// AWS's own path, carrying a SigV4 credential scope that names the scheduler
+// service. That scope is what classifies the request for logging and IAM, so
+// signing here keeps the suite on the code path a real client takes.
 func schDo(t *testing.T, srv *helpers.TestServer, method, path string, body any) *http.Response {
 	t.Helper()
 	var reqBody io.Reader
@@ -35,6 +37,9 @@ func schDo(t *testing.T, srv *helpers.TestServer, method, path string, body any)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Header.Set("Authorization",
+		"AWS4-HMAC-SHA256 Credential=test/20260809/us-east-1/scheduler/aws4_request, "+
+			"SignedHeaders=host;x-amz-date, Signature=0000")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
@@ -45,11 +50,11 @@ func schDo(t *testing.T, srv *helpers.TestServer, method, path string, body any)
 // createGroup creates a schedule group and returns its ARN.
 func createGroup(t *testing.T, srv *helpers.TestServer, name string) string {
 	t.Helper()
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedule-groups/"+name, map[string]any{
-		"Tags": []any{},
+	resp := schDo(t, srv, http.MethodPost, "/schedule-groups/"+name, map[string]any{
+		"Tags": map[string]any{},
 	})
 	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
 		ScheduleGroupArn string `json:"ScheduleGroupArn"`
 	}
@@ -63,8 +68,8 @@ func createGroup(t *testing.T, srv *helpers.TestServer, name string) string {
 // createSchedule creates a schedule in the given group and returns its ARN.
 func createSchedule(t *testing.T, srv *helpers.TestServer, group, name, expression string) string {
 	t.Helper()
-	path := fmt.Sprintf("/_scheduler/schedules/%s/%s", group, name)
-	resp := schDo(t, srv, http.MethodPost, path, map[string]any{
+	resp := schDo(t, srv, http.MethodPost, "/schedules/"+name, map[string]any{
+		"GroupName":          group,
 		"ScheduleExpression": expression,
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -73,7 +78,7 @@ func createSchedule(t *testing.T, srv *helpers.TestServer, group, name, expressi
 		},
 	})
 	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
 		ScheduleArn string `json:"ScheduleArn"`
 	}
@@ -91,13 +96,13 @@ func TestCreateScheduleGroup_success(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: CreateScheduleGroup is called
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedule-groups/my-group", map[string]any{
+	resp := schDo(t, srv, http.MethodPost, "/schedule-groups/my-group", map[string]any{
 		"Tags": map[string]any{"Env": "test"},
 	})
 	defer resp.Body.Close()
 
-	// Then: 201 with ScheduleGroupArn
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	// Then: 200 with ScheduleGroupArn
+	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
 		ScheduleGroupArn string `json:"ScheduleGroupArn"`
 	}
@@ -110,10 +115,10 @@ func TestCreateScheduleGroup_success(t *testing.T) {
 func TestCreateScheduleGroup_duplicate(t *testing.T) {
 	// Given: a group already exists
 	srv := helpers.NewTestServer(t)
-	schDo(t, srv, http.MethodPost, "/_scheduler/schedule-groups/dup-group", map[string]any{}).Body.Close()
+	schDo(t, srv, http.MethodPost, "/schedule-groups/dup-group", map[string]any{}).Body.Close()
 
 	// When: CreateScheduleGroup is called again with same name
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedule-groups/dup-group", map[string]any{})
+	resp := schDo(t, srv, http.MethodPost, "/schedule-groups/dup-group", map[string]any{})
 	defer resp.Body.Close()
 
 	// Then: 409 Conflict
@@ -126,7 +131,7 @@ func TestGetScheduleGroup_success(t *testing.T) {
 	createGroup(t, srv, "get-group")
 
 	// When: GetScheduleGroup is called
-	resp := schDo(t, srv, http.MethodGet, "/_scheduler/schedule-groups/get-group", nil)
+	resp := schDo(t, srv, http.MethodGet, "/schedule-groups/get-group", nil)
 	defer resp.Body.Close()
 
 	// Then: 200 with group details
@@ -150,7 +155,7 @@ func TestGetScheduleGroup_notFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: GetScheduleGroup is called for unknown group
-	resp := schDo(t, srv, http.MethodGet, "/_scheduler/schedule-groups/no-such-group", nil)
+	resp := schDo(t, srv, http.MethodGet, "/schedule-groups/no-such-group", nil)
 	defer resp.Body.Close()
 
 	// Then: 404
@@ -164,7 +169,7 @@ func TestListScheduleGroups_success(t *testing.T) {
 	createGroup(t, srv, "group-b")
 
 	// When: ListScheduleGroups is called
-	resp := schDo(t, srv, http.MethodGet, "/_scheduler/schedule-groups", nil)
+	resp := schDo(t, srv, http.MethodGet, "/schedule-groups", nil)
 	defer resp.Body.Close()
 
 	// Then: 200 with both groups + "default"
@@ -186,12 +191,12 @@ func TestDeleteScheduleGroup_success(t *testing.T) {
 	createGroup(t, srv, "del-group")
 
 	// When: DeleteScheduleGroup is called
-	resp := schDo(t, srv, http.MethodDelete, "/_scheduler/schedule-groups/del-group", nil)
+	resp := schDo(t, srv, http.MethodDelete, "/schedule-groups/del-group", nil)
 	resp.Body.Close()
 
 	// Then: 200, and subsequent Get returns 404
 	helpers.AssertStatus(t, resp, http.StatusOK)
-	get := schDo(t, srv, http.MethodGet, "/_scheduler/schedule-groups/del-group", nil)
+	get := schDo(t, srv, http.MethodGet, "/schedule-groups/del-group", nil)
 	defer get.Body.Close()
 	helpers.AssertStatus(t, get, http.StatusNotFound)
 }
@@ -204,7 +209,8 @@ func TestCreateSchedule_success(t *testing.T) {
 	createGroup(t, srv, "sched-group")
 
 	// When: CreateSchedule is called
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedules/sched-group/my-schedule", map[string]any{
+	resp := schDo(t, srv, http.MethodPost, "/schedules/my-schedule", map[string]any{
+		"GroupName":          "sched-group",
 		"ScheduleExpression": "rate(5 minutes)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -214,8 +220,8 @@ func TestCreateSchedule_success(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 201 with ScheduleArn
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	// Then: 200 with ScheduleArn
+	helpers.AssertStatus(t, resp, http.StatusOK)
 	var result struct {
 		ScheduleArn string `json:"ScheduleArn"`
 	}
@@ -229,8 +235,8 @@ func TestCreateSchedule_defaultGroup(t *testing.T) {
 	// Given: no explicit group (uses implicit "default" group)
 	srv := helpers.NewTestServer(t)
 
-	// When: CreateSchedule is called without a group path prefix
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedules/my-default-schedule", map[string]any{
+	// When: CreateSchedule is called with no GroupName in the body
+	resp := schDo(t, srv, http.MethodPost, "/schedules/my-default-schedule", map[string]any{
 		"ScheduleExpression": "rate(1 hour)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -240,8 +246,8 @@ func TestCreateSchedule_defaultGroup(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 201
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	// Then: 200
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 func TestGetSchedule_success(t *testing.T) {
@@ -251,7 +257,7 @@ func TestGetSchedule_success(t *testing.T) {
 	createSchedule(t, srv, "g1", "sched1", "rate(10 minutes)")
 
 	// When: GetSchedule is called
-	resp := schDo(t, srv, http.MethodGet, "/_scheduler/schedules/g1/sched1", nil)
+	resp := schDo(t, srv, http.MethodGet, "/schedules/sched1?groupName=g1", nil)
 	defer resp.Body.Close()
 
 	// Then: 200 with schedule details
@@ -283,7 +289,7 @@ func TestGetSchedule_notFound(t *testing.T) {
 	createGroup(t, srv, "g2")
 
 	// When: GetSchedule is called for non-existent schedule
-	resp := schDo(t, srv, http.MethodGet, "/_scheduler/schedules/g2/no-such-schedule", nil)
+	resp := schDo(t, srv, http.MethodGet, "/schedules/no-such-schedule?groupName=g2", nil)
 	defer resp.Body.Close()
 
 	// Then: 404
@@ -297,7 +303,8 @@ func TestUpdateSchedule_success(t *testing.T) {
 	createSchedule(t, srv, "g3", "updatable", "rate(5 minutes)")
 
 	// When: UpdateSchedule changes the expression
-	resp := schDo(t, srv, http.MethodPut, "/_scheduler/schedules/g3/updatable", map[string]any{
+	resp := schDo(t, srv, http.MethodPut, "/schedules/updatable", map[string]any{
+		"GroupName":          "g3",
 		"ScheduleExpression": "rate(15 minutes)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -311,7 +318,7 @@ func TestUpdateSchedule_success(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 
 	// And: GetSchedule returns the new expression
-	get := schDo(t, srv, http.MethodGet, "/_scheduler/schedules/g3/updatable", nil)
+	get := schDo(t, srv, http.MethodGet, "/schedules/updatable?groupName=g3", nil)
 	defer get.Body.Close()
 	var result struct {
 		ScheduleExpression string `json:"ScheduleExpression"`
@@ -329,12 +336,12 @@ func TestDeleteSchedule_success(t *testing.T) {
 	createSchedule(t, srv, "g4", "del-sched", "rate(1 hour)")
 
 	// When: DeleteSchedule is called
-	resp := schDo(t, srv, http.MethodDelete, "/_scheduler/schedules/g4/del-sched", nil)
+	resp := schDo(t, srv, http.MethodDelete, "/schedules/del-sched?groupName=g4", nil)
 	resp.Body.Close()
 
 	// Then: 200, subsequent Get returns 404
 	helpers.AssertStatus(t, resp, http.StatusOK)
-	get := schDo(t, srv, http.MethodGet, "/_scheduler/schedules/g4/del-sched", nil)
+	get := schDo(t, srv, http.MethodGet, "/schedules/del-sched?groupName=g4", nil)
 	defer get.Body.Close()
 	helpers.AssertStatus(t, get, http.StatusNotFound)
 }
@@ -347,7 +354,7 @@ func TestListSchedules_success(t *testing.T) {
 	createSchedule(t, srv, "g5", "sched-y", "rate(2 minutes)")
 
 	// When: ListSchedules is called
-	resp := schDo(t, srv, http.MethodGet, "/_scheduler/schedules?ScheduleGroup=g5", nil)
+	resp := schDo(t, srv, http.MethodGet, "/schedules?ScheduleGroup=g5", nil)
 	defer resp.Body.Close()
 
 	// Then: 200 with both schedules
@@ -372,7 +379,7 @@ func TestListSchedules_filterByGroup(t *testing.T) {
 	createSchedule(t, srv, "grp-b", "b-sched", "rate(1 minute)")
 
 	// When: ListSchedules is filtered by grp-a
-	resp := schDo(t, srv, http.MethodGet, "/_scheduler/schedules?ScheduleGroup=grp-a", nil)
+	resp := schDo(t, srv, http.MethodGet, "/schedules?ScheduleGroup=grp-a", nil)
 	defer resp.Body.Close()
 
 	// Then: only grp-a schedules are returned
@@ -398,7 +405,8 @@ func TestCreateSchedule_cronExpression(t *testing.T) {
 	createGroup(t, srv, "cron-group")
 
 	// When: CreateSchedule with AWS cron expression
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedules/cron-group/cron-sched", map[string]any{
+	resp := schDo(t, srv, http.MethodPost, "/schedules/cron-sched", map[string]any{
+		"GroupName":          "cron-group",
 		"ScheduleExpression": "cron(0 12 * * ? *)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -408,8 +416,8 @@ func TestCreateSchedule_cronExpression(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: 201 — cron expression is accepted and stored
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	// Then: 200 — cron expression is accepted and stored
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 // ─── Target Firing Tests ──────────────────────────────────────────────────────
@@ -425,7 +433,7 @@ func TestSchedule_rateFiresTarget(t *testing.T) {
 	createResp.Body.Close()
 
 	// Create a schedule targeting that SQS queue with a 5-minute rate
-	resp := schDo(t, srv, http.MethodPost, "/_scheduler/schedules/my-fire-sched", map[string]any{
+	resp := schDo(t, srv, http.MethodPost, "/schedules/my-fire-sched", map[string]any{
 		"ScheduleExpression": "rate(5 minutes)",
 		"FlexibleTimeWindow": map[string]any{"Mode": "OFF"},
 		"Target": map[string]any{
@@ -435,7 +443,7 @@ func TestSchedule_rateFiresTarget(t *testing.T) {
 		},
 	})
 	resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusCreated)
+	helpers.AssertStatus(t, resp, http.StatusOK)
 
 	// When: advance mock clock by 6 minutes (past the 5-minute rate)
 	srv.Clock.Add(6 * time.Minute)
@@ -443,7 +451,7 @@ func TestSchedule_rateFiresTarget(t *testing.T) {
 
 	// Then: the SQS queue should have received a message
 	// Then: verify we can still GET the schedule (engine didn't crash)
-	getResp := schDo(t, srv, http.MethodGet, "/_scheduler/schedules/my-fire-sched", nil)
+	getResp := schDo(t, srv, http.MethodGet, "/schedules/my-fire-sched", nil)
 	defer getResp.Body.Close()
 	helpers.AssertStatus(t, getResp, http.StatusOK)
 }
