@@ -29,6 +29,33 @@ func TestSearch_ignoresStopwords(t *testing.T) {
 	}
 }
 
+// TestSearch_servicePageOutranksTheOperationManifest guards a corpus-wide
+// consequence of weighting by field. docs/operation-manifest.md is a generated
+// listing of every modelled AWS operation, so it mentions every service name;
+// summed occurrence counts let that listing beat the page that actually
+// documents the service. Its mirror is in web/api/src/routes/docs.test.ts.
+func TestSearch_servicePageOutranksTheOperationManifest(t *testing.T) {
+	// Given: queries naming a service that the manifest also lists.
+	for query, want := range map[string]string{
+		"msk cluster":         "services/msk.md",
+		"opensearch domain":   "services/opensearch.md",
+		"autoscaling group":   "services/autoscaling.md",
+		"log group retention": "services/cloudwatch-logs.md",
+	} {
+		// When: each is searched for.
+		results := Search(query, 5)
+
+		// Then: the service's own page ranks above the generated listing.
+		if len(results) == 0 {
+			t.Errorf("%q: expected search results", query)
+			continue
+		}
+		if results[0].Href != want {
+			t.Errorf("%q: ranked %q first, want %q", query, results[0].Href, want)
+		}
+	}
+}
+
 func TestSearch_camelCaseOperationWords(t *testing.T) {
 	// Given: the generated docs index includes operation names.
 

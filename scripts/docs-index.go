@@ -22,6 +22,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/Neaox/overcast/internal/docssearch"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
@@ -55,15 +56,9 @@ const (
 )
 
 var (
-	headingRE       = regexp.MustCompile(`(?m)^(#{1,6})\s+(.+?)\s*$`)
-	spaceRE         = regexp.MustCompile(`\s+`)
-	md              = goldmark.New(goldmark.WithExtensions(extension.GFM))
-	searchStopwords = map[string]bool{
-		"a": true, "an": true, "and": true, "are": true, "as": true, "at": true,
-		"be": true, "by": true, "for": true, "from": true, "in": true, "into": true,
-		"is": true, "it": true, "of": true, "on": true, "or": true, "the": true,
-		"this": true, "to": true, "with": true,
-	}
+	headingRE = regexp.MustCompile(`(?m)^(#{1,6})\s+(.+?)\s*$`)
+	spaceRE   = regexp.MustCompile(`\s+`)
+	md        = goldmark.New(goldmark.WithExtensions(extension.GFM))
 )
 
 type docMeta struct {
@@ -94,8 +89,9 @@ type docEntry struct {
 
 // searchEntry is one line of searchOutput: a document's result metadata plus
 // its own term scores, as "term:score" pairs in one space-separated field.
-// Terms are sorted, and a term can itself contain ':' (normalizeSearchText
-// keeps it), so a reader splits each pair on its *last* colon.
+// Terms are sorted by docssearch.FormatTerms, and a term can itself contain
+// ':' (the tokenizer keeps it), so a reader splits each pair on its *last*
+// colon.
 type searchEntry struct {
 	Path        string   `json:"path"`
 	Href        string   `json:"href"`
@@ -107,8 +103,12 @@ type searchEntry struct {
 }
 
 type weightedDoc struct {
-	Entry    docEntry
-	BodyText string
+	Entry docEntry
+	// BodyText is the document's prose; CodeSpans are its inline `code`
+	// fragments, kept apart because they score differently — see
+	// docssearch.ScoreDocument.
+	BodyText  string
+	CodeSpans []string
 }
 
 func main() {
@@ -219,7 +219,7 @@ func validateDocs(docs []weightedDoc) error {
 			problems = append(problems, e.Path+": no section")
 		case e.Href == "" || strings.HasPrefix(e.Href, "/"):
 			problems = append(problems, e.Path+": bad href "+e.Href)
-		case len(scoreDoc(doc)) == 0:
+		case len(docssearch.ScoreDocument(searchFields(doc))) == 0:
 			problems = append(problems, e.Path+": no searchable terms")
 		}
 	}
@@ -481,7 +481,26 @@ func buildEntry(path string, meta docMeta, body string) weightedDoc {
 		Tags:        uniqueSortedTags(meta.Tags),
 		Headings:    extractHeadings(body),
 	}
-	return weightedDoc{Entry: entry, BodyText: markdownText(body)}
+	content := markdownFields(body)
+	return weightedDoc{Entry: entry, BodyText: content.Prose, CodeSpans: content.Code}
+}
+
+// searchFields is what the scorer sees: the entry's metadata plus the prose
+// and inline code the Markdown parse produced.
+func searchFields(doc weightedDoc) docssearch.DocumentFields {
+	headings := make([]docssearch.Heading, 0, len(doc.Entry.Headings))
+	for _, h := range doc.Entry.Headings {
+		headings = append(headings, docssearch.Heading{Depth: h.Depth, Text: h.Text})
+	}
+	return docssearch.DocumentFields{
+		Title:       doc.Entry.Title,
+		Tags:        doc.Entry.Tags,
+		Section:     doc.Entry.Section,
+		Headings:    headings,
+		Description: doc.Entry.Description,
+		Code:        doc.CodeSpans,
+		Body:        doc.BodyText,
+	}
 }
 
 func extractHeadings(body string) []heading {
@@ -508,14 +527,30 @@ func cleanHeadingText(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func stripMarkdown(raw string) string {
-	return markdownText(raw)
+func stripMarkdown(raw string) string { return markdownFields(raw).Text }
+
+// markdownContent is one document's Markdown rendered for indexing. Text is
+// everything in reading order, used to infer a description; Prose and Code are
+// the same content split by how it should be weighted.
+type markdownContent struct {
+	Text  string
+	Prose string
+	Code  []string
 }
 
-func markdownText(raw string) string {
+// markdownFields walks the parsed Markdown once. A code span used to be
+// emitted twice — once for the span and once for the Text node inside it —
+// which made inline code accidentally worth double a plain word. It is now
+// emitted once, and into its own field, where the scorer weights it
+// deliberately instead of by accident.
+//
+// Fenced and indented code blocks stay in the prose: a whole worked example is
+// bulk, not a name.
+func markdownFields(raw string) markdownContent {
 	source := []byte(raw)
 	doc := md.Parser().Parse(text.NewReader(source))
-	var parts []string
+	var all, prose []string
+	var code []string
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -523,60 +558,33 @@ func markdownText(raw string) string {
 		switch n.Kind() {
 		case ast.KindHTMLBlock, ast.KindRawHTML:
 			return ast.WalkSkipChildren, nil
-		case ast.KindText, ast.KindCodeSpan, ast.KindString:
+		case ast.KindCodeSpan:
 			text := strings.TrimSpace(string(n.Text(source)))
 			if text != "" {
-				parts = append(parts, text)
+				all = append(all, text)
+				code = append(code, text)
+			}
+			return ast.WalkSkipChildren, nil
+		case ast.KindText, ast.KindString:
+			text := strings.TrimSpace(string(n.Text(source)))
+			if text != "" {
+				all = append(all, text)
+				prose = append(prose, text)
 			}
 		case ast.KindFencedCodeBlock, ast.KindCodeBlock:
 			for i := 0; i < n.Lines().Len(); i++ {
 				segment := n.Lines().At(i)
 				text := strings.TrimSpace(string(segment.Value(source)))
 				if text != "" {
-					parts = append(parts, text)
+					all = append(all, text)
+					prose = append(prose, text)
 				}
 			}
 			return ast.WalkSkipChildren, nil
 		}
 		return ast.WalkContinue, nil
 	})
-	return strings.Join(parts, "\n")
-}
-
-func normalizeSearchText(s string) string {
-	s = splitIdentifierWords(s)
-	s = strings.ToLower(s)
-	var b strings.Builder
-	lastSpace := true
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == ':' || r == '/' {
-			b.WriteRune(r)
-			lastSpace = false
-			continue
-		}
-		if !lastSpace {
-			b.WriteByte(' ')
-			lastSpace = true
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
-func splitIdentifierWords(s string) string {
-	var b strings.Builder
-	var prev rune
-	for i, r := range s {
-		if i > 0 && isIdentifierBoundary(prev, r) {
-			b.WriteByte(' ')
-		}
-		b.WriteRune(r)
-		prev = r
-	}
-	return b.String()
-}
-
-func isIdentifierBoundary(prev, curr rune) bool {
-	return (unicode.IsLower(prev) && unicode.IsUpper(curr)) || (unicode.IsLetter(prev) && unicode.IsDigit(curr)) || (unicode.IsDigit(prev) && unicode.IsLetter(curr))
+	return markdownContent{Text: strings.Join(all, "\n"), Prose: strings.Join(prose, "\n"), Code: code}
 }
 
 func renderNav(entries []docEntry) ([]byte, error) {
@@ -597,28 +605,18 @@ func renderNav(entries []docEntry) ([]byte, error) {
 }
 
 // renderSearchIndex writes one JSONL line per document, in path order, each
-// carrying that document's own term scores. The scores are the same weighted
-// occurrence counts the inverted index held before (title 10, tags 8, heading
-// 7/5, section 6, description 4, body 1), just grouped by document instead of
-// by term, so ranking is unchanged and a docs edit touches one line.
+// carrying that document's own term scores, so a docs edit touches one line.
+//
+// The scoring itself belongs to internal/docssearch, not here: the weights and
+// the tokenizer are half of a contract whose other half is the query, and this
+// file used to hold a second copy of both. docssearch.ScoreDocument is now the
+// only implementation, and it is unit-testable — which a `//go:build ignore`
+// script is not.
 func renderSearchIndex(docs []weightedDoc) ([]byte, error) {
 	var b strings.Builder
 	b.WriteString("# Generated by go run ./scripts/docs-index.go --write-search-index; DO NOT EDIT.\n")
 	for _, doc := range docs {
 		e := doc.Entry
-		terms := scoreDoc(doc)
-		names := make([]string, 0, len(terms))
-		for term := range terms {
-			names = append(names, term)
-		}
-		sort.Strings(names)
-		var pairs strings.Builder
-		for i, term := range names {
-			if i > 0 {
-				pairs.WriteByte(' ')
-			}
-			fmt.Fprintf(&pairs, "%s:%d", term, terms[term])
-		}
 		line, err := json.Marshal(searchEntry{
 			Path:        e.Path,
 			Href:        e.Href,
@@ -626,7 +624,7 @@ func renderSearchIndex(docs []weightedDoc) ([]byte, error) {
 			Description: e.Description,
 			Section:     e.Section,
 			Tags:        e.Tags,
-			Terms:       pairs.String(),
+			Terms:       docssearch.FormatTerms(docssearch.ScoreDocument(searchFields(doc))),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("marshal search entry for %s: %w", e.Path, err)
@@ -635,45 +633,6 @@ func renderSearchIndex(docs []weightedDoc) ([]byte, error) {
 		b.WriteByte('\n')
 	}
 	return []byte(b.String()), nil
-}
-
-// scoreDoc weights one document's terms the way search ranks them: a term in
-// the title is worth ten of the same term in the body, and a term occurring
-// twice counts twice.
-func scoreDoc(doc weightedDoc) map[string]int {
-	scores := map[string]int{}
-	add := func(text string, weight int) {
-		for _, token := range tokenize(text) {
-			scores[token] += weight
-		}
-	}
-	add(doc.Entry.Title, 10)
-	add(strings.Join(doc.Entry.Tags, " "), 8)
-	add(doc.Entry.Section, 6)
-	for _, heading := range doc.Entry.Headings {
-		weight := 5
-		if heading.Depth == 1 {
-			weight = 7
-		}
-		add(heading.Text, weight)
-	}
-	add(doc.Entry.Description, 4)
-	add(doc.BodyText, 1)
-	return scores
-}
-
-func tokenize(s string) []string {
-	normalized := normalizeSearchText(s)
-	fields := strings.Fields(normalized)
-	out := make([]string, 0, len(fields))
-	for _, field := range fields {
-		field = strings.Trim(field, "-_:/. ")
-		if len(field) < 2 || searchStopwords[field] {
-			continue
-		}
-		out = append(out, field)
-	}
-	return out
 }
 
 func parseInlineList(value string) []string {
