@@ -111,6 +111,7 @@ class ExemptTest(unittest.TestCase):
 			".gitignore",
 			".gitattributes",
 			"opencode.json",
+			".mcp.json",
 		):
 			with self.subTest(path=path):
 				self.assertTrue(gate.exempt(path))

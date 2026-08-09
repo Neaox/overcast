@@ -22,6 +22,11 @@
 # "mkdir /home/vscode/go/pkg/mod/cache: permission denied". Drop it once:
 #   docker compose -f docker-compose.dev.yml down -v
 #
+# Neither service declares an `image:`, so Compose names what it builds after
+# the project (the directory) and the service. That is already per-worktree, so
+# there is nothing here to give a per-branch tag the way the Makefile and
+# Taskfile targets do — see CONTRIBUTING.md § Docker image tags are per-branch.
+#
 # To run tests:
 #   make container-test          (or: task container-test)
 #

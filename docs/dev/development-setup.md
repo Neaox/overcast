@@ -298,6 +298,14 @@ All three tools produce identical results:
 | Format         | `make fmt`              | `task fmt`              | `go fmt ./...`                                           |
 | Pre-PR check   | `make check`            | `task check`            | run fmt + vet + lint + test manually                     |
 | Container test | `make container-test`   | `task container-test`   | `docker compose -f docker-compose.dev.yml run --rm test` (uncapped — prefer the targets) |
+| Docker image   | `make docker-console`   | `task docker-console`   | `docker build -t "overcast:$(sh scripts/image-tag.sh)" .`  |
+| Drop the image | `make docker-clean`     | `task docker-clean`     | `docker image rm "overcast:$(sh scripts/image-tag.sh)"`     |
+
+The image is tagged after the current branch rather than a fixed `overcast:dev`,
+so two checkouts cannot build into one name and silently run each other's code.
+`scripts/image-tag.sh` derives the tag and `OVERCAST_IMAGE_TAG` overrides it; see
+[CONTRIBUTING.md § Docker image tags are per-branch](../../CONTRIBUTING.md#docker-image-tags-are-per-branch).
+An image per branch adds up — `make docker-clean` removes the current one.
 
 ## Step debugging
 
