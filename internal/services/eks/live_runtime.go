@@ -90,7 +90,7 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 	// or function running kubectl against it resolves the same endpoint the API
 	// hands out. Non-fatal: the published host port still serves the host.
 	if err := dataplane.Attach(ctx, s.docker, s.cfg, containerID,
-		dataplane.Placement{Aliases: s.clusterEndpointAliases(cluster.Name)}); err != nil {
+		dataplane.Placement{Aliases: s.clusterEndpointAliases(region, cluster.Name)}); err != nil {
 		s.log.Warn("eks: cluster container could not join the data plane — "+
 			"its endpoint resolves only from the host",
 			zap.String("cluster", cluster.Name), zap.Error(err))
@@ -104,12 +104,15 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 // on the data plane. AWS serves one at
 // `{hash}.{xx}.{region}.eks.amazonaws.com`; Overcast keys it on the cluster
 // name, which is what a caller actually has.
-func (s *Service) clusterEndpointAliases(name string) []string {
-	if name == "" {
+//
+// region is the record's, not the configured default — a cluster created in
+// another region is named for that one.
+func (s *Service) clusterEndpointAliases(region, name string) []string {
+	if name == "" || region == "" {
 		return nil
 	}
 	return dataplane.Hostnames(s.cfg, func(base string) string {
-		return name + "." + s.cfg.Region + ".eks." + base
+		return name + "." + region + ".eks." + base
 	})
 }
 

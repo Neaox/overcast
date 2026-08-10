@@ -98,7 +98,7 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, network
 			entry = &probeEntry{result: pr, err: err}
 			probeCache[cfg.Socket] = entry
 			if err == nil {
-				RemoveLegacyNetworks(ctx, pr.Client, log)
+				RemoveLegacyNetworks(ctx, pr.Client, log, networks...)
 			}
 		}
 

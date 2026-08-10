@@ -13,15 +13,17 @@ import (
 // fakeConnector records what a service asked Docker to attach, so the tests
 // assert on the plane and aliases rather than on a daemon.
 type fakeConnector struct {
-	network string
-	aliases []string
-	calls   int
-	err     error
+	network  string
+	networks []string
+	aliases  []string
+	calls    int
+	err      error
 }
 
 func (f *fakeConnector) ConnectNetworkWithAliases(_ context.Context, network, _ string, aliases []string) error {
 	f.calls++
 	f.network, f.aliases = network, aliases
+	f.networks = append(f.networks, network)
 	return f.err
 }
 
@@ -61,9 +63,12 @@ func TestDataNetwork_defaultsToThePlaneAndPrefersAVPC(t *testing.T) {
 // whatever VPC a resource joins, the second is what a VPC restricts.
 func TestNetworks_isControlThenData(t *testing.T) {
 	got := Networks(testConfig(), Placement{VPCNetwork: "overcast-vpc-vpc-abc"})
-	want := []string{"overcast_control", "overcast-vpc-vpc-abc"}
+	want := []string{"overcast_control", "overcast-vpc-vpc-abc", "overcast"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("Networks = %#v, want %#v", got, want)
+	}
+	if got := Networks(testConfig(), Placement{}); !slices.Equal(got, []string{"overcast_control", "overcast"}) {
+		t.Fatalf("no VPC: Networks = %#v", got)
 	}
 }
 
@@ -87,15 +92,55 @@ func TestAttach_joinsTheDataPlaneWithAliases(t *testing.T) {
 	}
 }
 
-func TestAttach_prefersTheVPCPlane(t *testing.T) {
+// Until enforcement lands, a VPC-placed resource keeps the default plane too.
+// Dropping it early would restrict reachability with no resolver guard behind
+// it, so the connection a VPC forbids would hang rather than fail — which is
+// the #872 failure mode, reintroduced deliberately.
+func TestAttach_aVPCPlacedResourceAlsoKeepsTheDefaultPlane(t *testing.T) {
 	dc := &fakeConnector{}
 
 	if err := Attach(context.Background(), dc, testConfig(), "container-1",
 		Placement{VPCNetwork: "overcast-vpc-vpc-abc", Aliases: []string{"db.localhost"}}); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
-	if dc.network != "overcast-vpc-vpc-abc" {
-		t.Fatalf("attached to %q, want the VPC network", dc.network)
+	want := []string{"overcast-vpc-vpc-abc", "overcast"}
+	if !slices.Equal(dc.networks, want) {
+		t.Fatalf("attached to %#v, want %#v", dc.networks, want)
+	}
+	// The names have to be on both, or resolving from outside the VPC still
+	// falls through to Overcast's resolver.
+	if !slices.Equal(dc.aliases, []string{"db.localhost"}) {
+		t.Fatalf("aliases on the default plane = %#v", dc.aliases)
+	}
+}
+
+// A VPC network that happens to equal the default plane — which is exactly what
+// the seeded default VPC carries — must not be attached twice.
+func TestAttach_doesNotDoubleAttachTheDefaultVPC(t *testing.T) {
+	dc := &fakeConnector{}
+
+	if err := Attach(context.Background(), dc, testConfig(), "container-1",
+		Placement{VPCNetwork: "overcast"}); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if !slices.Equal(dc.networks, []string{"overcast"}) {
+		t.Fatalf("attached to %#v, want one attachment", dc.networks)
+	}
+}
+
+// A container adopted after a restart may predate the plane layout, so it needs
+// the control plane too — ContainerAddr looks for it there, and without it a
+// containerized Overcast falls back to a host port it cannot reach.
+func TestAttachAdopted_alsoJoinsTheControlPlane(t *testing.T) {
+	dc := &fakeConnector{}
+
+	if err := AttachAdopted(context.Background(), dc, testConfig(), "container-1",
+		Placement{Aliases: []string{"db.localhost"}}); err != nil {
+		t.Fatalf("AttachAdopted: %v", err)
+	}
+	want := []string{"overcast_control", "overcast"}
+	if !slices.Equal(dc.networks, want) {
+		t.Fatalf("attached to %#v, want %#v", dc.networks, want)
 	}
 }
 

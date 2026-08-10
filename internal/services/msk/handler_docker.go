@@ -66,7 +66,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 		}
 		// Re-attach: a container adopted from an earlier run predates the
 		// current alias set. Attaching is idempotent.
-		if err := dataplane.Attach(ctx, h.docker, h.cfg, existing.ID, dataplane.Placement{Aliases: aliases}); err != nil {
+		if err := dataplane.AttachAdopted(ctx, h.docker, h.cfg, existing.ID, dataplane.Placement{Aliases: aliases}); err != nil {
 			h.log.Warn("MSK: reused container could not join the data plane — "+
 				"its bootstrap name will not resolve for sibling containers",
 				zap.String("cluster", clusterARN), zap.Error(err))

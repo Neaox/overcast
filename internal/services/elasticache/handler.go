@@ -601,7 +601,7 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		c.HostPort = hostPort
 		// Re-attach: a container adopted from an earlier run predates the
 		// current alias set. Attaching is idempotent.
-		if err := h.attachToDataPlane(ctx, existing.ID,
+		if err := h.attachAdoptedToDataPlane(ctx, existing.ID,
 			h.vpcForSubnetGroup(ctx, c.CacheSubnetGroupName), h.clusterEndpointAliases(c)); err != nil {
 			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
 				"its endpoint name will not resolve for sibling containers",
@@ -678,18 +678,34 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 // EC2 service to ask — lands on the default plane. That is the same plane
 // everything else without a VPC is on, so it stays reachable either way.
 func (h *Handler) attachToDataPlane(ctx context.Context, containerID, vpcID string, aliases []string) error {
-	// The nil check is explicit rather than left to PlaceInVPC: a typed nil in
-	// an interface is non-nil, and this field is a concrete interface type.
+	placement, err := h.placementFor(ctx, vpcID, aliases)
+	if err != nil {
+		return err
+	}
+	return dataplane.Attach(ctx, h.docker, h.cfg, containerID, placement)
+}
+
+// attachAdoptedToDataPlane is attachToDataPlane for a container reused after a
+// restart, which may predate the current plane layout entirely.
+func (h *Handler) attachAdoptedToDataPlane(ctx context.Context, containerID, vpcID string, aliases []string) error {
+	placement, err := h.placementFor(ctx, vpcID, aliases)
+	if err != nil {
+		return err
+	}
+	return dataplane.AttachAdopted(ctx, h.docker, h.cfg, containerID, placement)
+}
+
+func (h *Handler) placementFor(ctx context.Context, vpcID string, aliases []string) (dataplane.Placement, error) {
 	var resolver dataplane.VPCResolver
 	if h.vpcResolver != nil {
 		resolver = h.vpcResolver
 	}
 	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
 	if err != nil {
-		return err
+		return placement, err
 	}
 	placement.Aliases = aliases
-	return dataplane.Attach(ctx, h.docker, h.cfg, containerID, placement)
+	return placement, nil
 }
 
 // setContainerEndpoint updates the cluster's ConfigurationEndpoint to reflect
@@ -819,7 +835,7 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		}
 		rg.DockerContainerID = existing.ID
 		rg.HostPort = hostPort
-		if err := h.attachToDataPlane(ctx, existing.ID, "", h.replicationGroupEndpointAliases(rg)); err != nil {
+		if err := h.attachAdoptedToDataPlane(ctx, existing.ID, "", h.replicationGroupEndpointAliases(rg)); err != nil {
 			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
 				"its endpoint name will not resolve for sibling containers",
 				zap.String("rg", rg.ReplicationGroupId), zap.Error(err))

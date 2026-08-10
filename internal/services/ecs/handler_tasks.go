@@ -405,17 +405,18 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			}
 		}
 
-		// A task with no awsvpc placement joins the default data plane, and does
-		// so before it starts: it was created on the control plane, and an
-		// application that dials a database in its first breath would otherwise
-		// race the attachment. The awsvpc path below cannot be hoisted the same
-		// way — it reads back the address Docker assigned, which is not fixed
-		// until the container runs.
-		if placement.networkID == "" {
-			if err := dataplane.Attach(ctx, h.docker, h.cfg, dockerID, dataplane.Placement{}); err != nil {
-				_ = h.docker.RemoveContainerForce(dockerID)
-				return fmt.Errorf("ecs: container %s: %w", cd.Name, err)
-			}
+		// Join the default data plane before starting: the container was created
+		// on the control plane, and an application that dials a database in its
+		// first breath would otherwise race the attachment.
+		//
+		// An awsvpc task joins this as well as its VPC network, which is what
+		// keeps a resource outside its VPC resolvable — the same union every
+		// other service keeps until enforcement lands (see dataplane.DataNetworks).
+		// The VPC attachment itself cannot be hoisted here: it reads back the
+		// address Docker assigned, which is not fixed until the container runs.
+		if err := dataplane.Attach(ctx, h.docker, h.cfg, dockerID, dataplane.Placement{}); err != nil {
+			_ = h.docker.RemoveContainerForce(dockerID)
+			return fmt.Errorf("ecs: container %s: %w", cd.Name, err)
 		}
 
 		if err := h.docker.StartContainer(ctx, dockerID); err != nil {

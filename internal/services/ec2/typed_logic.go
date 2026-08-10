@@ -1175,6 +1175,11 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 	}, nil
 }
 
+// describeVpcsTyped is not dispatched to — EC2 runs the legacy handlers (see
+// Service.DispatchQuery). It seeds the default VPC so the two paths agree on
+// what exists, but does not filter: describeVpcsReq carries no filter fields,
+// and the missing filters are part of the wider typed-path audit in #754. The
+// legacy DescribeVpcs does filter, and is the one that answers requests.
 func (h *Handler) describeVpcsTyped(ctx context.Context, _ *describeVpcsReq) (*describeVpcsResp, *protocol.AWSError) {
 	h.ensureDefaultVPCQuietly(ctx)
 

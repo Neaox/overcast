@@ -174,32 +174,28 @@ func (cr *ContainerRuntime) SetRemoteLayerFetcher(fetcher *RemoteLayerFetcher) {
 // A function is compute, so it registers no aliases: nothing resolves a Lambda
 // container by name.
 func (cr *ContainerRuntime) connectDataPlane(ctx context.Context, containerID string, fn *Function) error {
-	var placement dataplane.Placement
+	var vpcID string
+	if fn.VpcConfig != nil {
+		vpcID = fn.VpcConfig.VpcId
+	}
 
-	if fn.VpcConfig != nil && fn.VpcConfig.VpcId != "" {
-		rp := cr.vpcResolver.Load()
-		if rp == nil {
-			// No resolver wired: the function keeps the default plane rather
-			// than failing, which is what it had before EC2 was consulted.
-			return dataplane.Attach(ctx, cr.docker, cr.cfg, containerID, placement)
-		}
-		resolver := *rp
-		status := resolver.VPCNetworkStatus(ctx, fn.VpcConfig.VpcId)
-		switch status {
-		case "", "ok", "shared", "remapped":
-			// launchable
-		default:
-			return fmt.Errorf("lambda VPC %s is not launchable (network status=%s)", fn.VpcConfig.VpcId, status)
-		}
-		netID := resolver.DockerNetworkForVpc(ctx, fn.VpcConfig.VpcId)
-		if netID == "" {
-			return fmt.Errorf("lambda VPC %s has no Docker network", fn.VpcConfig.VpcId)
-		}
-		placement.VPCNetwork = netID
+	// A nil pointer here means EC2 is not wired; the function then lands on the
+	// default plane rather than failing, which is what it had before there was
+	// a resolver to consult.
+	var resolver dataplane.VPCResolver
+	if rp := cr.vpcResolver.Load(); rp != nil {
+		resolver = *rp
+	}
+
+	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
+	if err != nil {
+		return fmt.Errorf("lambda %s: %w", fn.Name, err)
+	}
+	if placement.VPCNetwork != "" {
 		cr.logger.Info("placing Lambda container on its VPC network",
 			zap.String("function", fn.Name),
-			zap.String("vpc", fn.VpcConfig.VpcId),
-			zap.String("network", netID))
+			zap.String("vpc", vpcID),
+			zap.String("network", placement.VPCNetwork))
 	}
 
 	return dataplane.Attach(ctx, cr.docker, cr.cfg, containerID, placement)
@@ -705,6 +701,16 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	}
 	mark("copy")
 
+	// Join the data plane before starting. Function code routinely opens a
+	// database or cache connection during INIT, which begins the moment the
+	// runtime starts — a name it dials before the attachment lands resolves
+	// nowhere in Docker, falls through to Overcast's split-horizon resolver,
+	// and hangs on the engine port.
+	if err := cr.connectDataPlane(ctx, id, fn); err != nil {
+		cleanup()
+		return nil, err
+	}
+
 	progress("Starting container")
 	if err := cr.docker.StartContainer(ctx, id); err != nil {
 		cleanup()
@@ -719,12 +725,6 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	var initStartedAt time.Time
 	if initType == initTypeOnDemand && !proactive {
 		initStartedAt = cr.clk.Now()
-	}
-
-	// Join the data plane — the function's VPC network, or the default one.
-	if err := cr.connectDataPlane(ctx, id, fn); err != nil {
-		cleanup()
-		return nil, err
 	}
 
 	// Register for INIT-burst throttle-down when the RIC first polls /next.

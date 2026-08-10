@@ -418,7 +418,7 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 		}
 		c.DockerContainerID = existing.ID
 		c.HostPort = hostPort
-		if err := h.attachToDataPlane(ctx, existing.ID,
+		if err := h.attachAdoptedToDataPlane(ctx, existing.ID,
 			h.vpcForSubnets(ctx, c.SubnetIds), h.serverlessEndpointAliases(c)); err != nil {
 			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
 				"its endpoint name will not resolve for sibling containers",

@@ -82,14 +82,26 @@ func Probe(socketPath string, networks []string, logger *zap.Logger) (*ProbeResu
 // removal and the refusal is logged at debug, since an adopted container is a
 // good reason to keep one and not a fault.
 //
+// keep names the planes currently in use, which must survive even when one of
+// them was configured to a legacy name: OVERCAST_NETWORK=overcast_eks is a
+// plausible migration setting, and without this the plane created moments
+// earlier would be removed and every later attach would fail.
+//
 // Each name is inspected before the attempt, because RemoveNetwork treats a
 // missing network as success: without the check, a fresh installation that
 // never had these would report removing all seven on every startup.
-func RemoveLegacyNetworks(ctx context.Context, dc *Client, logger *zap.Logger) {
+func RemoveLegacyNetworks(ctx context.Context, dc *Client, logger *zap.Logger, keep ...string) {
 	if dc == nil {
 		return
 	}
+	inUse := make(map[string]struct{}, len(keep))
+	for _, name := range keep {
+		inUse[name] = struct{}{}
+	}
 	for _, name := range legacyNetworks {
+		if _, ok := inUse[name]; ok {
+			continue
+		}
 		if _, err := dc.InspectNetwork(ctx, name); err != nil {
 			continue // absent, which is the normal case
 		}

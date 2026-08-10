@@ -7,11 +7,20 @@
 > so **nothing is restricted yet** — every container still reaches every other,
 > which is the intended state until enforcement lands.
 >
-> Two deviations from the plan as written, both recorded in place: the control
-> plane is created as an ordinary bridge rather than `--internal` (§5, the flag
-> is only observable once enforcement exists, so it moves to phase 6), and
-> ElastiCache replication groups land on the default plane because the record
-> carries no `CacheSubnetGroupName` (§10, phase 6 prerequisite).
+> Three deviations from the plan as written, all recorded in place:
+>
+> 1. The control plane is created as an ordinary bridge rather than `--internal`
+>    (§5) — the flag is only observable once enforcement exists, so it moves to
+>    phase 6.
+> 2. **A VPC-placed resource keeps the default plane as well as its VPC network**
+>    (`dataplane.DataNetworks`). The "exactly one data plane" rule of §5 is the
+>    target, not the current state: withdrawing the default plane now would
+>    restrict reachability while the resolver guard that turns a forbidden
+>    connection into a named error is still phase 5, so the failure would be the
+>    hang of §2. Deleting the second entry in `DataNetworks` is the enforcement
+>    change.
+> 3. ElastiCache replication groups land on the default plane because the record
+>    carries no `CacheSubnetGroupName` (§10, phase 6 prerequisite).
 > Scope: `internal/config/config.go`, `internal/router/router.go`,
 > `internal/docker/probe.go`, `internal/containerendpoint/`, `internal/dns/`,
 > `internal/services/{lambda,ecs,rds,elasticache,msk,efs,eks,ec2}/`,

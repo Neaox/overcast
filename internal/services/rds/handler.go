@@ -667,7 +667,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 				zap.String("instance", inst.DBInstanceIdentifier), zap.Error(err))
 		} else {
 			placement.Aliases = aliases
-			if err := dataplane.Attach(ctx, h.docker, h.cfg, existing.ID, placement); err != nil {
+			if err := dataplane.AttachAdopted(ctx, h.docker, h.cfg, existing.ID, placement); err != nil {
 				h.log.Warn("RDS: reused container could not join the data plane — "+
 					"its endpoint name will not resolve for sibling containers",
 					zap.String("instance", inst.DBInstanceIdentifier), zap.Error(err))

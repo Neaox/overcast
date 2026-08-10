@@ -96,7 +96,11 @@ func PrimaryEndpoints(cfg *config.Config) *docker.NetworkingConfig {
 	}
 }
 
-// DataNetwork returns the one data plane p belongs on.
+// DataNetwork returns the plane p's resource is addressed on — its VPC's
+// network when it named a VPC, the default plane otherwise.
+//
+// This is the *primary* plane, not the only one it can be reached on today;
+// see DataNetworks.
 func DataNetwork(cfg *config.Config, p Placement) string {
 	if p.VPCNetwork != "" {
 		return p.VPCNetwork
@@ -104,18 +108,73 @@ func DataNetwork(cfg *config.Config, p Placement) string {
 	return cfg.Network
 }
 
-// Attach connects a container to its data plane, advertising p.Aliases there.
+// DataNetworks returns every data plane a container placed by p joins.
 //
-// Call it after CreateContainer and before StartContainer: a container that
-// starts before it is attached can race its own first outbound connection.
-// Connecting is idempotent, so reconcile paths may repeat it freely.
-func Attach(ctx context.Context, dc connector, cfg *config.Config, containerID string, p Placement) error {
-	network := DataNetwork(cfg, p)
-	if network == "" || containerID == "" {
+// The target model is exactly one — a VPC restricts what a resource can reach,
+// so a VPC-placed resource should not also sit on the default plane. Overcast
+// does not enforce that yet: the failure mode for a connection a VPC forbids is
+// a *hang*, not an error (a name that resolves nowhere in Docker falls through
+// to Overcast's split-horizon resolver, which answers with Overcast's own
+// address), and the resolver guard that turns it into a named refusal is a
+// later phase. Restricting before that guard exists would trade a working
+// setup for an unexplained timeout.
+//
+// So until then a VPC-placed resource keeps the default plane as well, and a
+// caller outside its VPC can still resolve it — which is what Overcast did
+// before the planes existed, when every service attached its containers to the
+// compute networks regardless of VPC.
+//
+// **Deleting the second entry here is the enforcement change.** See
+// docs/plans/container-network-topology.md § 10, phase 6.
+func DataNetworks(cfg *config.Config, p Placement) []string {
+	if p.VPCNetwork == "" || p.VPCNetwork == cfg.Network {
+		return []string{cfg.Network}
+	}
+	return []string{p.VPCNetwork, cfg.Network}
+}
+
+// AttachAdopted is Attach for a container Overcast did not create in this run —
+// one reused after a restart.
+//
+// It joins the control plane too. A container created by this version was
+// created there, but one adopted from an earlier version was created on a
+// per-service network that no longer exists in the model, and without this it
+// would never be on the plane ContainerAddr inspects — leaving a containerised
+// Overcast dialling a published host port it cannot reach, so health checks
+// never pass and the resource never leaves "creating".
+func AttachAdopted(ctx context.Context, dc connector, cfg *config.Config, containerID string, p Placement) error {
+	if dc == nil || containerID == "" {
 		return nil
 	}
-	if err := dc.ConnectNetworkWithAliases(ctx, network, containerID, p.Aliases); err != nil {
-		return fmt.Errorf("attach container to data plane %s: %w", network, err)
+	if err := dc.ConnectNetworkWithAliases(ctx, Primary(cfg), containerID, nil); err != nil {
+		return fmt.Errorf("attach adopted container to the control plane: %w", err)
+	}
+	return Attach(ctx, dc, cfg, containerID, p)
+}
+
+// Attach connects a container to its data planes, advertising p.Aliases on
+// each.
+//
+// Call it after CreateContainer and before StartContainer: a container that
+// starts before it is attached can race its own first outbound connection —
+// application code that opens a database connection on the first line runs
+// before the name it dials resolves. The one caller that cannot obey this is
+// ECS's awsvpc path, which reads back the address Docker assigned and so needs
+// the container running.
+//
+// Safe to repeat: a container already on a plane is left as it is, so reconcile
+// and container-reuse paths may call this freely.
+func Attach(ctx context.Context, dc connector, cfg *config.Config, containerID string, p Placement) error {
+	if dc == nil || containerID == "" {
+		return nil
+	}
+	for _, network := range DataNetworks(cfg, p) {
+		if network == "" {
+			continue
+		}
+		if err := dc.ConnectNetworkWithAliases(ctx, network, containerID, p.Aliases); err != nil {
+			return fmt.Errorf("attach container to data plane %s: %w", network, err)
+		}
 	}
 	return nil
 }
@@ -124,7 +183,7 @@ func Attach(ctx context.Context, dc connector, cfg *config.Config, containerID s
 // Useful for diagnostics and for callers that need the full set rather than
 // the create-time/attach-time split Primary and Attach express.
 func Networks(cfg *config.Config, p Placement) []string {
-	return []string{Primary(cfg), DataNetwork(cfg, p)}
+	return append([]string{Primary(cfg)}, DataNetworks(cfg, p)...)
 }
 
 // Hostnames builds the complete alias set for one container-backed resource:

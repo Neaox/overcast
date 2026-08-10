@@ -443,7 +443,7 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 	// Exports join the data plane so sibling NFS clients reach them by the
 	// mount target's DNS name; the published host port serves the host itself.
 	if err := dataplane.Attach(startCtx, s.docker, s.cfg, containerID,
-		dataplane.Placement{Aliases: s.mountTargetAliases(fsID, mountTargetID)}); err != nil {
+		dataplane.Placement{Aliases: s.mountTargetAliases(region, fsID, mountTargetID)}); err != nil {
 		s.log.Warn("efs: export container could not join the data plane — "+
 			"the mount target is reachable by address but not by name",
 			zap.String("mount_target", mountTargetID), zap.Error(err))
@@ -629,11 +629,14 @@ func (s *Service) scheduleExportReadiness(region, mountTargetID, containerID str
 // the data plane. AWS serves a mount target at
 // `{fsID}.efs.{region}.amazonaws.com`; Overcast mints the same grammar on each
 // base it could hand a caller.
-func (s *Service) mountTargetAliases(fsID, mountTargetID string) []string {
-	if fsID == "" {
+//
+// region is the record's, not the configured default: a file system created in
+// another region is named for that region, and aliases minted under the wrong
+// one resolve nowhere.
+func (s *Service) mountTargetAliases(region, fsID, mountTargetID string) []string {
+	if fsID == "" || region == "" {
 		return nil
 	}
-	region := s.cfg.Region
 	return dataplane.Hostnames(s.cfg, func(base string) string {
 		return fsID + ".efs." + region + "." + base
 	}, mountTargetID+".efs."+region+"."+s.cfg.ExternalHostname())

@@ -2,6 +2,7 @@ package ec2
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"go.uber.org/zap"
@@ -185,6 +186,76 @@ func TestDefaultVPCGuard_reassertsADriftedNetwork(t *testing.T) {
 	if got.DockerNetworkID != "overcast" || got.NetworkStatus != vpcNetworkStatusOK {
 		t.Fatalf("after reconcile: network=%q status=%q, want the data plane and ok",
 			got.DockerNetworkID, got.NetworkStatus)
+	}
+}
+
+// Seeding a default VPC means a region routinely holds more than one VPC. CDK's
+// context provider sends filters, treats the response as already filtered, and
+// fails unless exactly one comes back — so an unfiltered DescribeVpcs would
+// break `Vpc.fromLookup` for anyone who has a VPC of their own.
+func TestFilterVPCs(t *testing.T) {
+	def := &VPC{VpcID: "vpc-default", IsDefault: true}
+	mine := &VPC{VpcID: "vpc-mine"}
+	all := []*VPC{def, mine}
+
+	cases := []struct {
+		name      string
+		ids       []string
+		filterIDs map[string]bool
+		isDefault map[string]bool
+		want      []string
+	}{
+		{name: "no selectors returns everything", want: []string{"vpc-default", "vpc-mine"}},
+		{name: "VpcId.N", ids: []string{"vpc-mine"}, want: []string{"vpc-mine"}},
+		{name: "vpc-id filter", filterIDs: map[string]bool{"vpc-mine": true}, want: []string{"vpc-mine"}},
+		{name: "isDefault true", isDefault: map[string]bool{"true": true}, want: []string{"vpc-default"}},
+		{name: "isDefault false", isDefault: map[string]bool{"false": true}, want: []string{"vpc-mine"}},
+		{name: "isDefault is case-insensitive", isDefault: map[string]bool{"True": true}, want: []string{"vpc-default"}},
+		{
+			name:      "selectors are AND-ed",
+			ids:       []string{"vpc-mine"},
+			isDefault: map[string]bool{"true": true},
+			want:      nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := filterVPCs(all, tc.ids, tc.filterIDs, tc.isDefault)
+			ids := make([]string, 0, len(got))
+			for _, v := range got {
+				ids = append(ids, v.VpcID)
+			}
+			if !slices.Equal(ids, tc.want) {
+				t.Fatalf("filterVPCs = %#v, want %#v", ids, tc.want)
+			}
+		})
+	}
+}
+
+// On AWS a deleted default VPC stays deleted until CreateDefaultVpc. Reseeding
+// on the next describe would contradict the delete and leak the subnets,
+// gateway and security group the previous one left behind.
+func TestEnsureDefaultVPC_doesNotReseedAfterDelete(t *testing.T) {
+	h := defaultVPCHandler(t)
+	ctx := context.Background()
+
+	vpc, _ := h.ensureDefaultVPC(ctx)
+	h.vpcStrategy.OnDelete(ctx, vpc)
+	if aerr := h.store.deleteVPC(ctx, vpc.VpcID); aerr != nil {
+		t.Fatalf("deleteVPC: %v", aerr.Message)
+	}
+
+	got, aerr := h.ensureDefaultVPC(ctx)
+	if aerr != nil {
+		t.Fatalf("ensureDefaultVPC: %v", aerr.Message)
+	}
+	if got != nil {
+		t.Fatalf("reseeded %q after the default VPC was deleted", got.VpcID)
+	}
+	vpcs, _ := h.store.listVPCs(ctx)
+	if len(vpcs) != 0 {
+		t.Fatalf("VPCs = %d, want 0", len(vpcs))
 	}
 }
 

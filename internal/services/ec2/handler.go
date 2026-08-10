@@ -428,7 +428,12 @@ type xmlDescribeVpcsResponse struct {
 	VpcSet    []xmlVpc `xml:"vpcSet>item"`
 }
 
-// DescribeVpcs returns all VPCs.
+// DescribeVpcs returns VPCs, optionally filtered by ID or by isDefault.
+//
+// The filters are not decoration. CDK's VPC context provider sends them, treats
+// the response as already filtered, and fails unless exactly one VPC comes
+// back — so an unfiltered response breaks `Vpc.fromLookup` the moment a region
+// holds more than one VPC, which seeding a default VPC guarantees.
 func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 	// Every AWS region has a default VPC. Seeding on first read rather than at
 	// startup keeps regions nobody touches free of records.
@@ -439,6 +444,11 @@ func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
 		return
 	}
+	vpcs = filterVPCs(vpcs,
+		parseIndexedParam(r, "VpcId"),
+		parseFilterValues(r, "vpc-id"),
+		parseFilterValues(r, "isDefault"))
+
 	items := make([]xmlVpc, 0, len(vpcs))
 	for _, v := range vpcs {
 		ns := v.NetworkStatus

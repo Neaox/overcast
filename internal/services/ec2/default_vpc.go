@@ -3,6 +3,8 @@ package ec2
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
@@ -68,7 +70,38 @@ func (h *Handler) ensureDefaultVPC(ctx context.Context) (*VPC, *protocol.AWSErro
 			return v, nil
 		}
 	}
+
+	// A default VPC that was deleted stays deleted, as on AWS, where
+	// CreateDefaultVpc is the only way back. Reseeding on the next describe
+	// would both contradict the delete and leak the subnets, gateway and
+	// security group the previous one left behind.
+	if deleted, derr := h.defaultVPCDeleted(ctx); derr != nil {
+		return nil, derr
+	} else if deleted {
+		return nil, nil
+	}
 	return h.seedDefaultVPC(ctx)
+}
+
+// defaultVPCTombstone marks a region whose default VPC was deleted. It is a
+// store record rather than process state so the decision survives a restart.
+const defaultVPCTombstone = "deleted"
+
+func (h *Handler) defaultVPCDeleted(ctx context.Context) (bool, *protocol.AWSError) {
+	got, found, err := h.store.store.Get(ctx, nsDefaultVPC, h.store.region(ctx))
+	if err != nil {
+		return false, protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return found && got == defaultVPCTombstone, nil
+}
+
+// markDefaultVPCDeleted records that this region's default VPC is gone.
+func (h *Handler) markDefaultVPCDeleted(ctx context.Context) {
+	if err := h.store.store.Set(ctx, nsDefaultVPC, h.store.region(ctx), defaultVPCTombstone); err != nil {
+		h.log.WithRecorder(ctx).Warn("could not record the default VPC deletion — "+
+			"it may be seeded again on the next describe",
+			zap.Error(err))
+	}
 }
 
 // seedDefaultVPC writes the default VPC and the records CDK's VPC lookup and
@@ -93,9 +126,12 @@ func (h *Handler) seedDefaultVPC(ctx context.Context) (*VPC, *protocol.AWSError)
 		DockerNetworkID: h.cfg.Network,
 		NetworkStatus:   vpcNetworkStatusOK,
 	}
-	if aerr := h.store.putVPC(ctx, vpc); aerr != nil {
-		return nil, aerr
-	}
+
+	// The VPC record is written last, so it is the commit point: everything
+	// below is keyed to a VpcID nothing yet reports, and ensureDefaultVPC's
+	// "is one already seeded" test is exactly this record. A store failure
+	// part-way therefore leaves no half-seeded default VPC to be returned as
+	// complete on the next call.
 
 	igwID := fmt.Sprintf("igw-%s", shortID())
 	if aerr := h.store.putInternetGateway(ctx, &InternetGateway{
@@ -105,20 +141,14 @@ func (h *Handler) seedDefaultVPC(ctx context.Context) (*VPC, *protocol.AWSError)
 		return nil, aerr
 	}
 
-	// The main route table with a default route through the gateway. CDK reads
-	// exactly this to classify a subnet as public rather than private.
-	rt := &RouteTable{
-		RouteTableID: fmt.Sprintf("rtb-%s", shortID()),
-		VpcID:        vpc.VpcID,
-		Routes: []Route{
-			{DestinationCidrBlock: defaultVPCCidr, GatewayID: "local", Origin: "CreateRouteTable"},
-			{DestinationCidrBlock: "0.0.0.0/0", GatewayID: igwID, Origin: "CreateRoute"},
-		},
-		Associations: []RouteTableAssociation{{
-			AssociationID: fmt.Sprintf("rtbassoc-%s", shortID()),
-			Main:          true,
-		}},
-	}
+	// The main route table, plus a default route through the gateway — which is
+	// what CDK reads to classify a subnet as public rather than private.
+	rt := newMainRouteTable(vpc.VpcID, defaultVPCCidr)
+	rt.Routes = append(rt.Routes, Route{
+		DestinationCidrBlock: "0.0.0.0/0",
+		GatewayID:            igwID,
+		Origin:               "CreateRoute",
+	})
 	if aerr := h.store.putRouteTable(ctx, rt); aerr != nil {
 		return nil, aerr
 	}
@@ -150,11 +180,54 @@ func (h *Handler) seedDefaultVPC(ctx context.Context) (*VPC, *protocol.AWSError)
 		return nil, aerr
 	}
 
+	if aerr := h.store.putVPC(ctx, vpc); aerr != nil {
+		return nil, aerr
+	}
+
 	log.Info("seeded the region's default VPC",
 		zap.String("vpc", vpc.VpcID),
 		zap.String("region", region),
 		zap.String("network", vpc.DockerNetworkID))
 	return vpc, nil
+}
+
+// filterVPCs applies the selectors DescribeVpcs accepts. Each is AND-ed with
+// the others and an empty one matches everything, which is AWS's rule.
+//
+// ids and filterIDs are the two ways a caller names VPCs — `VpcId.N` params and
+// a `vpc-id` filter — and they are OR-ed with each other because AWS treats
+// them as one selection.
+func filterVPCs(vpcs []*VPC, ids []string, filterIDs, isDefault map[string]bool) []*VPC {
+	wanted := make(map[string]bool, len(ids)+len(filterIDs))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	for id := range filterIDs {
+		wanted[id] = true
+	}
+
+	out := make([]*VPC, 0, len(vpcs))
+	for _, v := range vpcs {
+		if len(wanted) > 0 && !wanted[v.VpcID] {
+			continue
+		}
+		if len(isDefault) > 0 && !matchesBool(isDefault, v.IsDefault) {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// matchesBool reports whether any of the boolean spellings in values matches
+// want. AWS accepts "true"/"false" in either case.
+func matchesBool(values map[string]bool, want bool) bool {
+	for v := range values {
+		if strings.EqualFold(strings.TrimSpace(v), strconv.FormatBool(want)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureDefaultVPCQuietly is ensureDefaultVPC for read paths that have no good
@@ -227,6 +300,7 @@ func (g *defaultVPCGuard) Reconcile(ctx context.Context, vpcs []*VPC, existing [
 // but removing the plane would take every container in the emulator with it.
 func (g *defaultVPCGuard) OnDelete(ctx context.Context, vpc *VPC) {
 	if vpc != nil && vpc.IsDefault {
+		g.h.markDefaultVPCDeleted(ctx)
 		g.h.log.WithRecorder(ctx).Info(
 			"default VPC deleted — its record is gone, the shared data plane is not",
 			zap.String("vpc", vpc.VpcID), zap.String("network", vpc.DockerNetworkID))
