@@ -74,13 +74,9 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [cloudtrail] Trails are taggable: `AddTags`, `RemoveTags` and `ListTags`, plus an inline `TagsList` on `CreateTrail`
 
-- [iam] Managed policies and instance profiles are taggable: `TagPolicy`/`UntagPolicy`/`ListPolicyTags` and `TagInstanceProfile`/`UntagInstanceProfile`/`ListInstanceProfileTags`
+- [iam] Managed policies and instance profiles are taggable: `TagPolicy`/`UntagPolicy`/`ListPolicyTags` and `TagInstanceProfile`/`UntagInstanceProfile`/`ListInstanceProfileTags`; and `CreateUser`, `CreateRole`, `CreatePolicy` and `CreateInstanceProfile` apply inline `Tags` at creation
 
-- [iam] `CreateUser`, `CreateRole`, `CreatePolicy` and `CreateInstanceProfile` apply inline `Tags` at creation
-
-- [kinesis] `TagResource`, `UntagResource` and `ListTagsForResource` — the ARN-addressed tag operations the AWS CLI's `kinesis tag-resource` uses. They read and write the same tag set as `AddTagsToStream`
-
-- [kinesis] `CreateStream` applies inline `Tags` at creation
+- [kinesis] `TagResource`, `UntagResource` and `ListTagsForResource` — the ARN-addressed tag operations the AWS CLI's `kinesis tag-resource` uses, reading and writing the same tag set as `AddTagsToStream` — and `CreateStream` applies inline `Tags` at creation
 
 - [scheduler] `ListSchedules` and `ListScheduleGroups` honour `MaxResults`, `NextToken` and `NamePrefix`, and `ListSchedules` also filters on `State`; a `NextToken` that cannot be decoded gets a `ValidationException` in place of a silent restart at the first page
 
@@ -114,15 +110,11 @@ can be applied mechanically rather than reconstructed from memory.
 
 ### Fixed
 
-- [acm] tagging a certificate that does not exist is a `ResourceNotFoundException` instead of succeeding and stranding the tags under an ARN nothing owns
-
-- [acm] `ListTagsForCertificate` returns tags in a stable key order instead of a different order per call
+- [acm] tagging a certificate that does not exist is a `ResourceNotFoundException` instead of succeeding and stranding the tags under an ARN nothing owns, and `ListTagsForCertificate` returns tags in a stable key order instead of a different order per call
 
 - [cloudformation] a create that fails with rollback disabled leaves `StackStatusReason` set to AWS's summary of which resources failed, rather than to the underlying service error — which stays on the resource and its event, where AWS keeps it
 
-- [cloudformation] stack operations accept the stack ARN wherever AWS does — `DescribeStacks`, `DescribeStackEvents`, `ListStackResources`, `DescribeStackResources`, `GetTemplate`, `GetTemplateSummary`, `UpdateStack`, `DeleteStack`, `CreateChangeSet`, and `DeleteChangeSet` resolved `StackName` by name only, so clients that poll by the stack ID (CDK's deploy monitor among them) got `ValidationError: Stack [arn:…] does not exist` for a stack that was right there
-
-- [cloudformation] a `CREATE`-type `CreateChangeSet` naming an unknown stack ARN no longer mints a placeholder stack literally named the ARN — an ARN is a handle to an existing stack and now answers "does not exist"
+- [cloudformation] stack operations accept the stack ARN wherever AWS does — `DescribeStacks`, `DescribeStackEvents`, `ListStackResources`, `DescribeStackResources`, `GetTemplate`, `GetTemplateSummary`, `UpdateStack`, `DeleteStack`, `CreateChangeSet`, and `DeleteChangeSet` resolved `StackName` by name only, so clients that poll by the stack ID (CDK's deploy monitor among them) got `ValidationError: Stack [arn:…] does not exist` for a stack that was right there. Conversely, a `CREATE`-type `CreateChangeSet` naming an unknown stack ARN no longer mints a placeholder stack literally named the ARN — an ARN is a handle to an existing stack, and now answers "does not exist"
 
 - [cloudformation] mutating a deleted stack now behaves as on AWS — `UpdateStack` on a `DELETE_COMPLETE` stack reports it does not exist instead of resurrecting it, and a repeat `DeleteStack` is a no-op success instead of re-running the delete and appending a second wave of delete events
 
@@ -135,11 +127,7 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [cloudformation/cloudwatch] a stack update that changes an `AWS::CloudWatch::Alarm`'s tags now applies them, through `TagResource`/`UntagResource` as real CloudFormation does. `PutMetricAlarm` applies `Tags` only when it creates an alarm, so the update reached `UPDATE_COMPLETE` having changed nothing
 
-- [cloudwatch] `ListTagsForResource`, `TagResource` and `UntagResource` answer the JSON protocol the AWS CLI and the SDKs speak, not only the Query form — alarm tags were previously unreadable with `aws cloudwatch list-tags-for-resource`
-
-- [cloudwatch] the alarm tagging operations reject an unknown or non-CloudWatch `ResourceARN` with AWS's `ResourceNotFoundException`/`InvalidParameterValue` instead of quietly tagging a resource that does not exist
-
-- [cloudwatch] alarm tag sets are held to AWS's rules — 50 tags per resource, no `aws:` key prefix, key and value length limits — on `TagResource` and on the `Tags` a `PutMetricAlarm` applies at creation
+- [cloudwatch] alarm tagging works over the JSON protocol the AWS CLI and the SDKs speak, not only the Query form — `ListTagsForResource`, `TagResource` and `UntagResource` were absent from the JSON dispatch, so alarm tags were unreadable with `aws cloudwatch list-tags-for-resource`. The same operations now reject an unknown or non-CloudWatch `ResourceARN` with AWS's `ResourceNotFoundException`/`InvalidParameterValue` instead of quietly tagging a resource that does not exist, and hold tag sets to AWS's rules — 50 tags per resource, no `aws:` key prefix, key and value length limits — on `TagResource` and on the `Tags` a `PutMetricAlarm` applies at creation
 
 - [cloudwatch] `PutMetricData` aggregates datapoints that share a timestamp instead of keeping only the last one — two datums in one call with no `Timestamp` take the same clock reading on a coarse platform timer, and were recorded as one value rather than being summed into the period
 
@@ -147,19 +135,11 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [docker] container start failures now carry the daemon's error message instead of a bare status code
 
-- [ecr] the registry port `repositoryUri` advertises is now proved to be *this* instance's registry, not merely a registry: the daemon-vantage startup probe carries the instance's own credentials, so a port answering as another Overcast's registry is passed over instead of advertised. Two instances sharing a Docker daemon could previously interleave their ephemeral dual-stack publishes such that one advertised a port serving the other's registry, and every token it then issued failed authentication against that registry's htpasswd
+- [ecr] the emulated registry is reachable from the Docker daemon in the shapes that previously failed outright. Its port is published dual-stack instead of IPv4-only — the v4-only binding was invisible to Docker Desktop's port forwarding, leaving the daemon unable to reach its own registry at `localhost`, so every `docker push` and every ECS pull of an ECR image died on a dial. Its htpasswd file is copied into the container rather than bind-mounted from a path only Overcast's own filesystem has, so `docker push` no longer refuses on every containerised deployment. And `ListImages`/`DescribeImages`/`BatchGetImage` reconcile pushed images when Overcast itself runs in a container, probing the addresses the registry can actually be at rather than assuming Overcast's own loopback
 
-- [ecr] the shared registry container comes up when Overcast itself runs in Docker — its htpasswd file is copied into the container rather than bind-mounted from a path only Overcast's own filesystem has, so `docker push` to the emulated ECR no longer refuses on every containerised deployment
+- [ecr] two Overcast instances sharing one Docker daemon no longer interfere with each other. The registry container's name is per-claim — port-derived for a fixed port, random for an ephemeral one — instead of a shared singleton, so startup removes nothing but a legacy singleton-named leftover and shutdown removes only the instance's own container; and the port `repositoryUri` advertises is proved to be *this* instance's registry rather than merely a registry, because the daemon-vantage startup probe carries the instance's own credentials. Interleaved ephemeral dual-stack publishes could previously leave one instance advertising a port serving the other's registry, and every token it then issued failed authentication against that registry's htpasswd
 
-- [ecr] a registry container whose name is still held by a predecessor being removed is waited out rather than treated as fatal, and every step of the registry's startup that fails now says so in the log
-
-- [ecr] the registry's port is published dual-stack instead of IPv4-only — the v4-only binding was invisible to Docker Desktop's port forwarding, leaving the daemon unable to reach its own registry at `localhost`, so every `docker push` and every ECS pull of an ECR image died on a dial
-
-- [ecr] `ListImages`/`DescribeImages`/`BatchGetImage` reconcile pushed images even when Overcast itself runs in a container: the registry sync no longer assumes the registry is on Overcast's own loopback, probing the addresses it can actually be at
-
-- [ecr] two Overcast instances on one Docker daemon no longer destroy each other's registries — the registry container's name is per-claim (port-derived for a fixed port, random for an ephemeral one) instead of a shared singleton, startup removes nothing but a legacy singleton-named leftover, and shutdown removes only the instance's own container
-
-- [ecr] `GetAuthorizationToken` and `repositoryUri` wait for the registry to actually answer before they are served, so a token can no longer be handed out ahead of a registry that is still booting — a race that made `docker login` fail with EOF on loaded machines
+- [ecr] the registry's startup is no longer raced or silent: `GetAuthorizationToken` and `repositoryUri` wait for it to actually answer before they are served — a token handed out ahead of a still-booting registry made `docker login` fail with EOF on loaded machines — a container name still held by a predecessor being removed is waited out rather than treated as fatal, and every startup step that fails says so in the log
 
 - [ecs/ecr] a task definition whose image is a CDK container asset now starts: the `{account}.dkr.ecr.{region}.amazonaws.com/…` reference CDK synthesises is resolved to the registry Overcast serves and pulled with the credentials `GetAuthorizationToken` issues, instead of reaching real AWS and failing with `CannotPullContainerError: … no basic auth credentials`
 
@@ -186,9 +166,7 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [scheduler] a schedule whose target is slow, unreachable or working through its `RetryPolicy` no longer holds up every other schedule in the emulator: the engine hands each due firing to a pool of delivery workers instead of delivering them one after another on the tick itself. A schedule is still never fired twice at once, so its own firings stay in order
 
-- [scheduler] a sparse `cron(...)` schedule no longer burns CPU on every engine tick. The evaluator advanced a minute at a time until something matched, so it cost one iteration per minute between now and the next firing — around 525,000 of them, once a second, for a yearly schedule. It now advances field by field, and parsing a cron expression allocates nothing
-
-- [scheduler] a step over a range in a `cron(...)` field walks the range, so `cron(0 9-17/4 * * ? *)` fires at 09:00, 13:00 and 17:00. The range was unreadable to the old evaluator, which fell back to stepping the whole field from zero and fired at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00
+- [scheduler] a sparse `cron(...)` schedule no longer burns CPU on every engine tick. The evaluator advanced a minute at a time until something matched, so it cost one iteration per minute between now and the next firing — around 525,000 of them, once a second, for a yearly schedule. It now advances field by field, and parsing a cron expression allocates nothing. That rewrite also fixed a step over a range: `cron(0 9-17/4 * * ? *)` now fires at 09:00, 13:00 and 17:00, where the range was unreadable to the old parser, which fell back to stepping the whole field from zero and fired at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00
 
 - [scheduler] deleting a schedule sticks even when an `UpdateSchedule` for the same schedule is in flight. The update read the record, built its replacement and wrote it back without holding a lock, so a `DeleteSchedule` that landed in between was written over — the caller was told the delete had succeeded and the schedule stayed stored and kept firing
 
@@ -198,11 +176,7 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web] the stack page's failure banner reports the most recent failure rather than the first resource listed
 
-- [web/cloudwatch] the log viewer's level badge now labels every row whose level it detects, including a runtime's plain-text `console.*` lines — previously only a JSON document was labelled and a text line got the row tint alone
-
-- [web/cloudwatch] level badges are legible in light mode, where the warning badge used to be lighter than the row behind it
-
-- [web/cloudwatch] a long log stream name no longer overflows its column into the message text in the all-streams view
+- [web/cloudwatch] the log viewer's level badge labels every row whose level it detects, including a runtime's plain-text `console.*` lines — previously only a JSON document was labelled and a text line got the row tint alone — and the badges are legible in light mode, where the warning badge used to be lighter than the row behind it. A long log stream name no longer overflows its column into the message text in the all-streams view
 
 - [web] a log event carried by both a Live Tail session and a refresh of the events list is shown once, in place of a duplicate row
 
