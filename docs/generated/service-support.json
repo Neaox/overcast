@@ -5568,12 +5568,8 @@
         {
           "operation": "DescribeCacheEngineVersions",
           "category": "General",
-<<<<<<< HEAD
-          "status": "❌ Unsupported"
-=======
           "status": "❌ Unsupported",
           "notes": "stub; returns 501"
->>>>>>> 919e7932 (fix(capgen,router,elasticache): assert an operation reaches every protocol its service speaks)
         },
         {
           "operation": "DescribeCacheParameterGroups",
@@ -5632,12 +5628,8 @@
         {
           "operation": "RebootCacheCluster",
           "category": "General",
-<<<<<<< HEAD
-          "status": "❌ Unsupported"
-=======
           "status": "❌ Unsupported",
           "notes": "stub; returns 501"
->>>>>>> 919e7932 (fix(capgen,router,elasticache): assert an operation reaches every protocol its service speaks)
         },
         {
           "operation": "RemoveTagsFromResource",
@@ -6574,64 +6566,56 @@
           "category": "SES v2 — Sending",
           "status": "✅ Supported",
           "notes": "`POST /v2/email/outbound-emails`; simple content",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html)"
         },
         {
           "operation": "V2CreateEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
           "notes": "`POST /v2/email/identities`; auto-verified; inline `Tags` applied at creation",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)"
         },
         {
           "operation": "V2ListEmailIdentities",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
           "notes": "`GET /v2/email/identities`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html)"
         },
         {
           "operation": "V2GetEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
           "notes": "`GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)"
         },
         {
           "operation": "V2DeleteEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
           "notes": "`DELETE /v2/email/identities/{EmailIdentity}`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html)"
         },
         {
           "operation": "V2TagResource",
           "category": "SES v2 — Tags",
           "status": "✅ Supported",
           "notes": "`POST /v2/email/tags`; email identity ARNs — configuration sets are not emulated",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)"
         },
         {
           "operation": "V2UntagResource",
           "category": "SES v2 — Tags",
           "status": "✅ Supported",
           "notes": "`DELETE /v2/email/tags?ResourceArn=…\u0026TagKeys=…`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)"
         },
         {
           "operation": "V2ListTagsForResource",
           "category": "SES v2 — Tags",
           "status": "✅ Supported",
           "notes": "`GET /v2/email/tags?ResourceArn=…`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html)"
         },
         {
           "operation": "V2Other",

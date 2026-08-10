@@ -105,6 +105,12 @@ var unservedBindings = map[string]string{
 	"appsync/EvaluateCode":            "#860",
 	"appsync/EvaluateMappingTemplate": "#860",
 
+	// #862 is deliberately absent. SESv2's CreateEmailIdentity was registered
+	// as PUT where AWS models POST, and #871 moved it while this branch was in
+	// flight. The entry was here; this gate's second direction reported it as a
+	// ledger row naming a binding that is now served, which is the ratchet
+	// doing the job an exemption list cannot.
+
 	// #815 — Backup's Inert tier answers on invented paths.
 	"backup/CreateBackupPlan":    "#815",
 	"backup/CreateBackupVault":   "#815",
@@ -115,13 +121,6 @@ var unservedBindings = map[string]string{
 	"backup/ListBackupPlans":     "#815",
 	"backup/ListBackupVaults":    "#815",
 	"backup/UpdateBackupPlan":    "#815",
-
-	// #862 — implemented, correct, and registered as PUT where AWS models
-	// POST, so it is 501 to every SDK. The capability's DocOnly flag and its
-	// wrong-method Notes are fixed in this change; the route move belongs to
-	// #862, which requires the SESv2 implementation to be reviewed in full
-	// first because it has never served SDK traffic.
-	"ses/V2CreateEmailIdentity": "#862",
 }
 
 // weaklyServedBindings records the operations the router delivers without

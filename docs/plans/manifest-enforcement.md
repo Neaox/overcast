@@ -101,12 +101,21 @@ establish AWS fidelity from the pinned model rather than by assumption — and
 
 | Ledger | Rows | Owners |
 | --- | --- | --- |
-| `unservedBindings` | 44 | #815, #854, #855, #856, #857, #858, #859, #860, #862 |
+| `unservedBindings` | 43 | #815, #854, #855, #856, #857, #858, #859, #860 |
 | `weaklyServedBindings` | 8 | not faults; the gate's honest margin |
 | `protocolAsymmetries` | 1 | **no issue** — see below |
 
 43 capability rows moved from Supported/Inert to WIP, because they are
 implemented, work, and cannot be called by any SDK.
+
+#862 is not in that table, and the reason is the ratchet earning its keep.
+`ses/V2CreateEmailIdentity` was in `unservedBindings` while this branch was
+being written; #871 moved the route to POST in the meantime, and on rebase the
+gate's second direction failed with "a ledger entry names a binding that is now
+served". An exemption list would have carried that row indefinitely, still
+claiming a fault that no longer existed. #871 also left the eight SESv2 rows'
+`DocOnly` flags in place with a comment saying they were untrue and that
+"the flag comes off these eight rows with [#864]" — which is this change.
 
 ### Two findings from running the gates
 
