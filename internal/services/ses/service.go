@@ -13,12 +13,21 @@
 //   - DeleteIdentity
 //   - GetSendQuota
 //
+// Every SES v2 route below is registered on the method and URI the pinned AWS
+// Smithy models give the operation. Nothing else is served: an invented
+// binding is one no SDK will ever send, and it hides the absence of the real
+// one (see #862, where CreateEmailIdentity sat on PUT and answered every
+// client with an error).
+//
 // SES v2 (REST-JSON) implemented operations:
 //   - POST /v2/email/outbound-emails (SendEmail)
-//   - PUT  /v2/email/identities
-//   - GET  /v2/email/identities
-//   - GET  /v2/email/identities/{EmailIdentity}
-//   - DELETE /v2/email/identities/{EmailIdentity}
+//   - POST /v2/email/identities (CreateEmailIdentity)
+//   - GET  /v2/email/identities (ListEmailIdentities)
+//   - GET  /v2/email/identities/{EmailIdentity} (GetEmailIdentity)
+//   - DELETE /v2/email/identities/{EmailIdentity} (DeleteEmailIdentity)
+//   - POST /v2/email/tags (TagResource)
+//   - DELETE /v2/email/tags (UntagResource)
+//   - GET  /v2/email/tags (ListTagsForResource)
 //
 // Admin endpoints (for web console):
 //
@@ -84,7 +93,7 @@ func (s *Service) Name() string { return serviceName }
 func (s *Service) RegisterRoutes(r chi.Router) {
 	// SES v2 (REST-JSON) — path-based routing.
 	r.Post("/v2/email/outbound-emails", s.handler.V2SendEmail)
-	r.Put("/v2/email/identities", s.handler.V2CreateEmailIdentity)
+	r.Post("/v2/email/identities", s.handler.V2CreateEmailIdentity)
 	r.Get("/v2/email/identities", s.handler.V2ListEmailIdentities)
 	r.Get("/v2/email/identities/{EmailIdentity}", s.handler.V2GetEmailIdentity)
 	r.Delete("/v2/email/identities/{EmailIdentity}", s.handler.V2DeleteEmailIdentity)
