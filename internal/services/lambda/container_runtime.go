@@ -1888,10 +1888,12 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 	}
 }
 
-// dockerSilentSince answers the question firstReadMax is really asking: since
-// when has Docker had an unanswered question from us and given us nothing back?
-// It reports false while there is no such question outstanding, which is not the
-// same as a negative answer and must not be timed as one.
+// dockerSilentSince answers the question the two first-read bounds are really
+// asking — waitForScannerIdle's firstReadMax and waitForLogDrain's
+// firstReadGrace: since when has Docker had an unanswered question from us and
+// given us nothing back? It reports false while there is no such question
+// outstanding, which is not the same as a negative answer and must not be timed
+// as one.
 //
 // The three states of logParkedAt map onto it directly:
 //
@@ -1986,29 +1988,53 @@ const logDrainFirstReadGrace = 25 * time.Millisecond
 // pipe is lost) and before writing END/REPORT lines so that ordering matches
 // AWS.
 //
-// Two signals are combined:
+// Three signals are combined:
 //   - logReadAt: timestamp of the last successful Read from the Docker log
 //     stream. "Idle" = no new bytes for ≥10 ms. This catches the case where
 //     Docker is still flushing pipe data after the function returned.
 //   - logInFlight: counter of lines parsed by the scanner but not yet flushed
 //     to CWL. Must be 0 before drain returns, regardless of reader state.
+//   - logParkedAt, read through dockerSilentSince: whether the reader has a
+//     question outstanding with Docker at all, which is what decides whether
+//     "Docker has handed over nothing" means anything. See firstReadGrace.
 //
 // The 2 s safety-net only matters when something is genuinely stuck (slow
 // CWL writer, stalled Docker connection); the common case completes in
 // 10–15 ms.
 //
 // firstReadGrace says how long to keep waiting when the stream has never
-// produced anything at all (logReadAt == 0 AND inFlight == 0). That state is
-// ambiguous in the same way waitForScannerIdle's is — a container that logged
-// nothing all its life looks exactly like one whose first bytes are still in
-// Docker's pipe — but here the stakes and the costs differ by caller, so the
+// produced anything at all (logReadAt == 0 AND inFlight == 0). Docker having
+// handed nothing over is the only evidence there is that the container printed
+// nothing, and — exactly as on the tail path — it is worth nothing at all while
+// the reader has asked Docker no question to be silent about. So the grace is
+// timed from dockerSilentSince rather than from the start of the wait, and
+// while the reader is between Reads it is not timed down at all. A container
+// that dies early is where that matters most: opening the log stream is a
+// Docker round trip racing container start, so the reader is likelier than
+// usual to be short of its first Read, and the output at stake is the stack
+// trace that says why it died. #873 was this same misreading on the tail path,
+// where it cost a truncated tail; here it costs the output outright.
+//
+// A reader with no stream open at all (logReaderNotReading) is the one state
+// this does not hold for, and dockerSilentSince times it from the start of the
+// wait. That is right here as well as on the tail path: nothing arrives over a
+// connection that does not exist, a reconnect backoff opens at 50 ms — twice
+// the grace, so holding on could not outlast one anyway — and a stream that
+// can never be opened at all would otherwise park every teardown on the 2 s
+// deadline.
+//
+// What none of this can resolve is a container that really did print nothing,
+// which looks the same from outside however long we wait. The size of the grace
+// is the answer to that, and the stakes and costs differ by caller, so the
 // choice is theirs:
 //
 //   - A container that died mid-invocation, or an invocation that timed out,
 //     passes logDrainFirstReadGrace. Whatever it printed on the way out is the
 //     output most worth keeping and the likeliest to be in flight, and logCtx
 //     is cancelled moments later, which loses it from CloudWatch for good.
-//   - Close passes 0. Pool eviction closes stale instances on the acquire path
+//   - Close passes 0, which is a caller declining the question rather than
+//     answering it: the branch returns at once without consulting the reader.
+//     Pool eviction closes stale instances on the acquire path
 //     (InstancePool.takeWarm), so a grace there is charged to the next cold
 //     start; and a container that produced no reads across its whole lifetime,
 //     having already drained through one of the paths above on any failed
@@ -2036,7 +2062,14 @@ func (ci *containerInstance) waitForLogDrain(ctx context.Context, firstReadGrace
 			last := ci.logReadAt.Load()
 			// Reader has never produced anything — see firstReadGrace above.
 			if last == 0 {
-				if ci.clk.Since(start) >= firstReadGrace {
+				if firstReadGrace == 0 {
+					return
+				}
+				silentSince, asked := ci.dockerSilentSince(start)
+				if !asked {
+					continue
+				}
+				if ci.clk.Since(silentSince) >= firstReadGrace {
 					return
 				}
 				continue
@@ -2217,8 +2250,8 @@ const (
 // logReadTracker wraps an io.Reader and records two things about the reader
 // that pulls Docker's log stream: the time of the last successful read (used by
 // waitForLogDrain to detect that streamLogs has consumed all buffered output),
-// and whether it is currently blocked in a Read at all (used by
-// waitForScannerIdle — see logReaderBetweenReads).
+// and whether it is currently blocked in a Read at all (used by both waits,
+// through dockerSilentSince — see logReaderBetweenReads).
 type logReadTracker struct {
 	r        io.Reader
 	readAt   *atomic.Int64
