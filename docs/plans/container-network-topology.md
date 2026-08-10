@@ -1,11 +1,11 @@
 # Container network topology — what should be able to reach what
 
-> Status: **phases 1–3 implemented** (§10). The two planes exist, every
-> container-backed service is on the shared `internal/dataplane` helper, and
-> #872 is closed. Phase 4 (default VPC) is in progress; phases 5–6 (resolver
-> guard, enforcement) are not started, so **nothing is restricted yet** — every
-> container still reaches every other, which is the intended state until
-> enforcement lands.
+> Status: **phases 1–4 implemented** (§10). The two planes exist, every
+> container-backed service is on the shared `internal/dataplane` helper, #872 is
+> closed, and each region seeds a default VPC whose backing network *is* the
+> default data plane. Phases 5–6 (resolver guard, enforcement) are not started,
+> so **nothing is restricted yet** — every container still reaches every other,
+> which is the intended state until enforcement lands.
 >
 > Two deviations from the plan as written, both recorded in place: the control
 > plane is created as an ordinary bridge rather than `--internal` (§5, the flag

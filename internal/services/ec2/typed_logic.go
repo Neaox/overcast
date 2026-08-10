@@ -1176,6 +1176,8 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 }
 
 func (h *Handler) describeVpcsTyped(ctx context.Context, _ *describeVpcsReq) (*describeVpcsResp, *protocol.AWSError) {
+	h.ensureDefaultVPCQuietly(ctx)
+
 	vpcs, aerr := h.store.listVPCs(ctx)
 	if aerr != nil {
 		return nil, aerr
@@ -1191,7 +1193,7 @@ func (h *Handler) describeVpcsTyped(ctx context.Context, _ *describeVpcsReq) (*d
 			State:           v.State,
 			CidrBlock:       v.CidrBlock,
 			InstanceTenancy: "default",
-			IsDefault:       false,
+			IsDefault:       v.IsDefault,
 			TagSet: []typedTagXML{
 				{Key: "overcast:network-status", Value: ns},
 			},
@@ -1406,6 +1408,8 @@ func (h *Handler) describeSecurityGroupsTyped(ctx context.Context, _ *describeSe
 }
 
 func (h *Handler) describeSubnetsTyped(ctx context.Context, _ *describeSubnetsReq) (*describeSubnetsResp, *protocol.AWSError) {
+	h.ensureDefaultVPCQuietly(ctx)
+
 	all, aerr := h.store.listSubnets(ctx)
 	if aerr != nil {
 		return nil, aerr

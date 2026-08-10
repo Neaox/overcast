@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -719,14 +718,6 @@ func nfsNullPing(ctx context.Context, addr string, timeout time.Duration) error 
 }
 
 func be32(b []byte) uint32 { return binary.BigEndian.Uint32(b) }
-
-// runningInContainer reports whether Overcast itself is running inside a
-// container, in which case a sibling's published host port is not reachable
-// and its container IP must be used instead. Same probe MSK uses.
-func runningInContainer() bool {
-	_, err := os.Stat("/.dockerenv")
-	return err == nil
-}
 
 // publishedPort returns the host port from a container's port bindings.
 func publishedPort(bindings []docker.PortBinding) int {

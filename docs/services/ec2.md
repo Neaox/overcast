@@ -18,7 +18,28 @@ tags:
 EC2 uses the AWS Query protocol (form-encoded POST, XML responses). Operations are
 identified by the `Action` parameter with API version `2016-11-15`.
 
-When Docker is available, each VPC is backed by a real Docker bridge network.
+### The default VPC
+
+Each region seeds a default VPC the first time something reads VPCs or subnets
+in it — `IsDefault: true`, `172.31.0.0/16`, a default subnet per availability
+zone, an attached internet gateway, a main route table with the default route,
+and a `default` security group. That is the set `DescribeVpcs --filters
+Name=isDefault,Values=true` and CDK's `Vpc.fromLookup(isDefault: true)` read.
+
+Its backing network is not a per-VPC bridge: it is the shared data plane
+(`OVERCAST_NETWORK`), which is where every container that named no VPC already
+sits. "No VPC" and "the default VPC" are therefore the same place, by
+construction rather than by coincidence.
+
+Two consequences follow from that network being the emulator's own:
+
+- `DeleteVpc` on the default VPC removes the record and leaves the network. AWS
+  allows the delete, but the network has every container Overcast started
+  attached to it.
+- Attaching or detaching an internet gateway on it is ignored with a warning.
+  The toggle recreates the network, which would sever every attached container.
+
+When Docker is available, each non-default VPC is backed by a real Docker bridge network.
 The VPC's CIDR block maps to the Docker subnet, and the network's isolation mode
 (`--internal`) reflects whether an internet gateway is attached. When Docker is
 unavailable, VPC operations are metadata-only.

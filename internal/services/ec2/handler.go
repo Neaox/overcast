@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -38,6 +39,10 @@ type Handler struct {
 	dockerReady atomic.Bool
 	vpcStrategy vpcNetworkStrategy
 
+	// defaultVPCLocks serialises default-VPC seeding per region, so two
+	// concurrent describes cannot both find none and both seed one.
+	defaultVPCLocks sync.Map // region → *sync.Mutex
+
 	ops     map[string]http.HandlerFunc
 	typedOp map[string]op.Operation
 }
@@ -50,7 +55,13 @@ func newHandler(cfg *config.Config, store state.Store, log *serviceutil.ServiceL
 		clk:       clk,
 		scheduler: lifecycle.NewScheduler(clk),
 	}
-	h.vpcStrategy = resolveVPCNetworkStrategy(cfg.EC2VPCNetworkStrategy, h)
+	// The guard wraps whichever strategy is configured: the default VPC's
+	// network is the shared data plane, not a per-VPC bridge, and no mapping
+	// policy may create, adopt, recreate or remove it.
+	h.vpcStrategy = &defaultVPCGuard{
+		inner: resolveVPCNetworkStrategy(cfg.EC2VPCNetworkStrategy, h),
+		h:     h,
+	}
 	h.buildOpsMap()
 	h.buildTypedOps()
 	return h
@@ -419,6 +430,10 @@ type xmlDescribeVpcsResponse struct {
 
 // DescribeVpcs returns all VPCs.
 func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
+	// Every AWS region has a default VPC. Seeding on first read rather than at
+	// startup keeps regions nobody touches free of records.
+	h.ensureDefaultVPCQuietly(r.Context())
+
 	vpcs, aerr := h.store.listVPCs(r.Context())
 	if aerr != nil {
 		protocol.WriteEC2QueryXMLError(w, r, aerr)
@@ -435,7 +450,7 @@ func (h *Handler) DescribeVpcs(w http.ResponseWriter, r *http.Request) {
 			State:           v.State,
 			CidrBlock:       v.CidrBlock,
 			InstanceTenancy: "default",
-			IsDefault:       false,
+			IsDefault:       v.IsDefault,
 			TagSet: []xmlTag{
 				{Key: "overcast:network-status", Value: ns},
 			},
