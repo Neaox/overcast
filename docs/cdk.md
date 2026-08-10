@@ -157,6 +157,23 @@ executes and the response (`PhysicalResourceId`, `Data`) is used as the
 resource's physical ID and attributes. When Docker is unavailable, the handler
 degrades gracefully to a stub physical ID so the stack can still deploy.
 
+### Container assets are served from Overcast's own registry
+
+A `DockerImageAsset` — an ECS `ContainerImage.fromAsset`, or any construct that
+builds an image — is published to the ECR repository `cdk bootstrap` created,
+which is a `registry:2` container Overcast starts and authenticates. CDK then
+writes the image into the template as
+`{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}`, built from
+`AWS::AccountId` and `AWS::Region` rather than read back from the repository.
+Overcast recognises that address as its own and pulls from the registry it
+serves, so the task runs the image the deploy published. See
+[ECR § Running an image from here](./services/ecr.md#running-an-image-from-here).
+
+The daemon must be able to reach the registry's published port at the hostname
+Overcast advertises. On Docker Desktop, whose daemon runs in a VM with its own
+`localhost`, a `localhost` registry endpoint cannot be reached and asset
+publishing fails at `docker push`.
+
 ### Nested stack TemplateURL must be reachable
 
 `AWS::CloudFormation::Stack` (nested stacks) is supported. The `TemplateURL`

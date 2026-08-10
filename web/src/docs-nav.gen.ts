@@ -210,6 +210,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Container assets are served from Overcast's own registry",
+        "id": "container-assets-are-served-from-overcast-s-own-registry"
+      },
+      {
+        "depth": 3,
         "text": "Nested stack TemplateURL must be reachable",
         "id": "nested-stack-templateurl-must-be-reachable"
       },
@@ -2639,6 +2644,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Running an image from here",
+        "id": "running-an-image-from-here"
+      },
+      {
+        "depth": 2,
         "text": "Limitations",
         "id": "limitations"
       },
@@ -2708,6 +2718,11 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "A task definition change is a rollout",
         "id": "a-task-definition-change-is-a-rollout"
+      },
+      {
+        "depth": 2,
+        "text": "Images published to the emulated ECR",
+        "id": "images-published-to-the-emulated-ecr"
       },
       {
         "depth": 2,

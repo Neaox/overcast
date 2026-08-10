@@ -22,13 +22,20 @@ RPC v2 CBOR is also supported via the Smithy RPC path
 
 ## Repository URI
 
-Repositories are assigned a URI using the configured external base URL:
+Repositories are assigned a URI on the registry Overcast serves:
 
 ```
-<hostname>/<accountId>/<repositoryName>
+<hostname>:<registryPort>/<accountId>/<repositoryName>
 ```
 
-For example, with the default config: `localhost:4566/000000000000/my-app`.
+For example, `localhost:32768/000000000000/my-app`. The port is the one the
+shared registry container published, not the API port — this URI is what a
+`docker push` targets, so it has to name the registry rather than the emulator.
+Without Docker there is no registry, and the URI falls back to the API base URL.
+
+`proxyEndpoint` from `GetAuthorizationToken` names the same address, and
+`Fn::GetAtt Repo.RepositoryUri` returns this value rather than an
+`amazonaws.com` one.
 
 ## Authorization token
 
@@ -37,10 +44,26 @@ When Docker is available, the same password is provisioned into the lazy-started
 shared `registry:2` container via htpasswd auth, so the returned token can be used
 for authenticated calls against the local registry endpoint. Token expiry is 12 hours.
 
+## Running an image from here
+
+ECS resolves a task definition image addressed as
+`{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}` — the form CDK
+synthesises for a container asset — to this registry, and pulls it with the same
+credentials `GetAuthorizationToken` returns. See
+[ECS § Images published to the emulated ECR](./ecs.md#images-published-to-the-emulated-ecr).
+
 ## Limitations
 
-- Push/pull via `docker push` / `docker pull` requires Docker daemon support and an
-  `insecure-registries` daemon entry for the chosen hostname (HTTP registry).
+- Push/pull via `docker push` / `docker pull` requires Docker daemon support. The
+  registry speaks plain HTTP, which a daemon accepts for `localhost` without
+  configuration; any other hostname needs an `insecure-registries` daemon entry.
+- The daemon has to be able to reach the registry's published port at the
+  hostname Overcast advertises. That is the ordinary case on Linux, where the
+  daemon is on the host it publishes to. On Docker Desktop the daemon runs in a
+  VM whose `localhost` is not the host's, so pushes and pulls to a
+  `localhost:{port}` registry endpoint cannot connect.
+- Images live in the registry container, which is removed on shutdown, so a
+  restart starts empty — repository metadata persists, image content does not.
 - Image content/layers are not stored in Overcast state; read APIs persist manifest metadata derived from `PutImage` calls and from manifests pushed into the local registry.
 - Replication and public-registry APIs are not implemented.
 - `DescribeImageScanFindings` is supported but always reports scanner-unavailable state with empty findings.
