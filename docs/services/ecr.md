@@ -54,6 +54,17 @@ proxy arrangement that does not loop published ports back — one warning names
 the problem and the remediation instead of every later push and pull failing on
 its own.
 
+That probe carries this instance's own credentials, so it establishes *which*
+registry is listening and not merely that one is. It matters when two Overcast
+instances share a daemon: their ephemeral publishes can interleave across
+address families, leaving one instance's `localhost:<port>` pointing at the
+other's registry. An anonymous probe cannot tell the two apart, because every
+authenticated registry refuses an anonymous request alike. With credentials the
+answers separate — ours accepts them and reports the probe repository absent, a
+sibling's rejects them — so a port answering as someone else's is passed over
+rather than advertised. The fixed default port never had the ambiguity; this
+affects only the ephemeral fallback.
+
 ## Authorization token
 
 `GetAuthorizationToken` returns a token in AWS format: `base64("AWS:<password>")`.
