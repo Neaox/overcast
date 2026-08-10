@@ -1,0 +1,1 @@
++ [web/cloudwatch] a Clear button on the log events viewer empties the buffer on screen without stopping the tail, so a live stream can be read from a known point instead of scrolling past everything that came before. The events are hidden, not lost — "Show N earlier" puts them back, and so does Refresh
