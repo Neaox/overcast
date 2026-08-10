@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 )
@@ -12,7 +13,8 @@ import (
 // the sync.Map + sync.Once pattern.
 type ImagePuller struct {
 	client   *Client
-	pullOnce sync.Map // image → *pullEntry
+	resolver ImageResolver
+	pullOnce sync.Map // resolved image reference → *pullEntry
 }
 
 // pullEntry pairs a sync.Once with the error it produced.
@@ -26,6 +28,26 @@ func NewImagePuller(c *Client) *ImagePuller {
 	return &ImagePuller{client: c}
 }
 
+// WithResolver wires an ImageResolver so references to a registry Overcast
+// serves are pulled — and run — from where they actually live. Returns the
+// puller for chaining at construction. Without one every reference is taken
+// at face value, which is right for the fixed public images most services use.
+func (p *ImagePuller) WithResolver(r ImageResolver) *ImagePuller {
+	p.resolver = r
+	return p
+}
+
+// resolve maps image onto the reference this daemon can fetch. Pulls are keyed
+// on the result rather than the input, so a reference whose resolution changes
+// — the local registry coming up, or coming back on a new port — is fetched
+// again rather than served from a record that no longer describes it.
+func (p *ImagePuller) resolve(ctx context.Context, image string) ImageReference {
+	if p.resolver == nil {
+		return ImageReference{Ref: image}
+	}
+	return p.resolver.ResolveImage(ctx, image)
+}
+
 // Ensure pulls image if it hasn't been pulled yet. Concurrent calls for the
 // same image block until the first pull completes and share its result. A
 // FAILED pull drops the entry, so the next launch attempt retries instead of
@@ -34,11 +56,26 @@ func NewImagePuller(c *Client) *ImagePuller {
 // registry; what it prevents is one transient network failure bricking an
 // image for the process lifetime.
 func (p *ImagePuller) Ensure(ctx context.Context, image string) error {
-	v, _ := p.pullOnce.LoadOrStore(image, &pullEntry{})
+	ref := p.resolve(ctx, image)
+	err := p.ensure(ctx, ref)
+	if err != nil && ref.Ref != image {
+		// The failure reaches a user as a task's stoppedReason, so it has to
+		// name the image they asked for as well as the one it was fetched as —
+		// neither alone explains what happened.
+		return fmt.Errorf("pull image %s, served here as %s: %w", image, ref.Ref, err)
+	}
+	return err
+}
+
+// ensure is Ensure on an already-resolved reference, so a caller that has one
+// in hand does not resolve twice — and cannot lose the credentials by
+// re-resolving a reference that no longer looks like the original.
+func (p *ImagePuller) ensure(ctx context.Context, ref ImageReference) error {
+	v, _ := p.pullOnce.LoadOrStore(ref.Ref, &pullEntry{})
 	e := v.(*pullEntry)
 	e.once.Do(func() {
-		e.err = p.client.PullImage(ctx, image)
-		if e.err != nil && p.imagePresent(ctx, image) {
+		e.err = p.client.PullImageWithOptions(ctx, ref.Ref, PullOptions{Auth: ref.Auth})
+		if e.err != nil && p.imagePresent(ctx, ref.Ref) {
 			// The pull failed but the daemon already has the image, so the
 			// container can still start. This is the difference between "you
 			// are offline" and "you cannot run anything": a registry that is
@@ -48,7 +85,7 @@ func (p *ImagePuller) Ensure(ctx context.Context, image string) error {
 			e.err = nil
 		}
 		if e.err != nil {
-			p.pullOnce.Delete(image)
+			p.invalidate(ref)
 		}
 	})
 	return e.err
@@ -60,11 +97,11 @@ func (p *ImagePuller) imagePresent(ctx context.Context, image string) bool {
 	return err == nil && present
 }
 
-// Invalidate forgets that image was pulled, so the next Ensure pulls again.
-// Call when the daemon proves the cached knowledge wrong — a create failing
-// with "No such image" after the image was removed behind our back.
-func (p *ImagePuller) Invalidate(image string) {
-	p.pullOnce.Delete(image)
+// invalidate forgets that ref was pulled, so the next ensure pulls it again.
+// Called when the pull failed, and when the daemon proves the record wrong by
+// failing a create with "No such image".
+func (p *ImagePuller) invalidate(ref ImageReference) {
+	p.pullOnce.Delete(ref.Ref)
 }
 
 // IsImageMissingErr reports whether a container-create failure means the
@@ -74,16 +111,27 @@ func IsImageMissingErr(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no such image")
 }
 
-// CreateContainerWithRetry creates a container and, when the daemon reports
-// its image missing — removed behind our back after the pull was recorded —
-// forgets the stale pull record, re-pulls, and retries the create once.
-// Without this, `docker rmi` of a task or DB image makes every later launch
-// fail until restart, because the spent pull record short-circuits Ensure.
+// CreateContainerWithRetry creates a container from the resolved form of the
+// requested image and, when the daemon reports that image missing — removed
+// behind our back after the pull was recorded — forgets the stale pull record,
+// re-pulls, and retries the create once. Without this, `docker rmi` of a task
+// or DB image makes every later launch fail until restart, because the spent
+// pull record short-circuits Ensure.
+//
+// The request's image is rewritten in place to the resolved reference: the
+// daemon stored the bytes under that name, so creating from the original would
+// fail with "No such image" straight after a pull that worked.
 func (p *ImagePuller) CreateContainerWithRetry(ctx context.Context, name string, req *CreateContainerRequest) (string, error) {
+	if req == nil || req.ContainerConfig == nil {
+		return p.client.CreateContainer(ctx, name, req)
+	}
+	ref := p.resolve(ctx, req.ContainerConfig.Image)
+	req.ContainerConfig.Image = ref.Ref
+
 	id, err := p.client.CreateContainer(ctx, name, req)
-	if err != nil && IsImageMissingErr(err) && req != nil && req.ContainerConfig != nil {
-		p.Invalidate(req.ContainerConfig.Image)
-		if pullErr := p.Ensure(ctx, req.ContainerConfig.Image); pullErr == nil {
+	if err != nil && IsImageMissingErr(err) {
+		p.invalidate(ref)
+		if pullErr := p.ensure(ctx, ref); pullErr == nil {
 			id, err = p.client.CreateContainer(ctx, name, req)
 		}
 	}

@@ -22,13 +22,37 @@ RPC v2 CBOR is also supported via the Smithy RPC path
 
 ## Repository URI
 
-Repositories are assigned a URI using the configured external base URL:
+Repositories are assigned a URI on the registry Overcast serves:
 
 ```
-<hostname>/<accountId>/<repositoryName>
+<hostname>:<registryPort>/<accountId>/<repositoryName>
 ```
 
-For example, with the default config: `localhost:4566/000000000000/my-app`.
+For example, `localhost:4510/000000000000/my-app`. The port is the registry
+container's, not the API port — this URI is what a `docker push` targets, so it
+has to name the registry rather than the emulator. The registry asks for a
+fixed port (`OVERCAST_ECR_REGISTRY_PORT`, default `4510`, the same port
+LocalStack serves its registry on) so the URI is stable across restarts; if
+something else holds that port the registry falls back to an ephemeral one and
+says so in the log. Without Docker there is no registry, and the URI falls back
+to the API base URL.
+
+`proxyEndpoint` from `GetAuthorizationToken` names the same address, and
+`Fn::GetAtt Repo.RepositoryUri` returns this value rather than an
+`amazonaws.com` one.
+
+The address is chosen for the party that actually dials it. `docker push`,
+`docker pull` and `docker login` are all performed by the Docker daemon, never
+by the CLI that requested them, so `localhost` here means the daemon's own
+loopback — which is correct on native Linux and on Docker Desktop alike, and
+regardless of where the client runs. Docker also trusts loopback registries
+with plain HTTP automatically, so no `insecure-registries` configuration is
+needed. At startup the registry's reachability is verified from the daemon's
+own vantage (the Engine's distribution-inspect endpoint, which makes the daemon
+contact the registry); if the daemon cannot reach it — a remote daemon, or a
+proxy arrangement that does not loop published ports back — one warning names
+the problem and the remediation instead of every later push and pull failing on
+its own.
 
 ## Authorization token
 
@@ -37,10 +61,23 @@ When Docker is available, the same password is provisioned into the lazy-started
 shared `registry:2` container via htpasswd auth, so the returned token can be used
 for authenticated calls against the local registry endpoint. Token expiry is 12 hours.
 
+## Running an image from here
+
+ECS resolves a task definition image addressed as
+`{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}` — the form CDK
+synthesises for a container asset — to this registry, and pulls it with the same
+credentials `GetAuthorizationToken` returns. See
+[ECS § Images published to the emulated ECR](./ecs.md#images-published-to-the-emulated-ecr).
+
 ## Limitations
 
-- Push/pull via `docker push` / `docker pull` requires Docker daemon support and an
-  `insecure-registries` daemon entry for the chosen hostname (HTTP registry).
+- Push/pull via `docker push` / `docker pull` requires Docker daemon support.
+  The registry speaks plain HTTP, which the daemon accepts for a loopback
+  registry without configuration; only a setup that advertises the registry on
+  a non-loopback hostname (`OVERCAST_HOSTNAME` pointing at a remote Overcast)
+  needs an `insecure-registries` daemon entry for `<hostname>:<registryPort>`.
+- Images live in the registry container, which is removed on shutdown, so a
+  restart starts empty — repository metadata persists, image content does not.
 - Image content/layers are not stored in Overcast state; read APIs persist manifest metadata derived from `PutImage` calls and from manifests pushed into the local registry.
 - Replication and public-registry APIs are not implemented.
 - `DescribeImageScanFindings` is supported but always reports scanner-unavailable state with empty findings.

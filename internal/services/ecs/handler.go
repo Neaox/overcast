@@ -40,6 +40,7 @@ type Handler struct {
 	dockerReady atomic.Bool
 	puller      *docker.ImagePuller
 	gc          *docker.GC
+	images      docker.ImageResolver
 	vpcResolver VPCNetworkResolver
 	efsResolver EFSVolumeResolver
 	targets     TargetRegistrar

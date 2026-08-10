@@ -66,6 +66,27 @@ deployment is dropped once it holds no tasks. A new deployment that never starts
 anything therefore leaves the old tasks running, which is what ECS does with a
 rollout that fails.
 
+## Images published to the emulated ECR
+
+A container definition may name an image by its ECR address —
+`{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}` — which is what CDK
+synthesises for a container asset, from `AWS::AccountId` and `AWS::Region`
+rather than from the repository it pushed to. That hostname belongs to real AWS
+and resolves, so pulling it as written leaves the machine and is refused
+anonymously.
+
+When the address is this account's registry, Overcast pulls it from the registry
+it actually serves — the same `repositoryUri` the push went to — with the
+credentials `ecr:GetAuthorizationToken` issues. Any other image is pulled exactly
+as written: a public image keeps its meaning, and another registry is never
+offered these credentials. The task still reports the image its definition asked
+for; the rewrite decides where the bytes come from, not what was deployed.
+
+Nothing has to be pushed through ECR for this to apply, and nothing changes for a
+task whose image is a public one. If the registry is not running — Docker
+unavailable, so nothing could have been pushed to it either — the reference is
+left alone rather than pointed at a registry that cannot answer.
+
 ## When a task cannot start
 
 A task whose containers fail to start is `STOPPED` with `stopCode`
