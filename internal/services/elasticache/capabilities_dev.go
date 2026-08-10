@@ -18,7 +18,10 @@ func init() {
 		capabilities.Capability{Service: "elasticache", Operation: "DeleteReplicationGroup", Category: "General", Status: capabilities.StatusSupported, Notes: "Sets status to \"deleting\"; stops and removes Docker container asynchronously"},
 		capabilities.Capability{Service: "elasticache", Operation: "DeleteServerlessCache", Category: "General", Status: capabilities.StatusSupported, Notes: "Sets status to \"deleting\"; stops and removes Docker container asynchronously"},
 		capabilities.Capability{Service: "elasticache", Operation: "DescribeCacheClusters", Category: "General", Status: capabilities.StatusSupported, Notes: "List all or filter by CacheClusterId"},
-		capabilities.Capability{Service: "elasticache", Operation: "DescribeCacheEngineVersions", Category: "General", Status: capabilities.StatusSupported},
+		// Routed, but handler_stubs.go answers NotImplemented (TODO priority:P3) —
+		// which is precisely what StatusUnsupported means. Declared Supported, the
+		// matrix advertised an operation that always 501s.
+		capabilities.Capability{Service: "elasticache", Operation: "DescribeCacheEngineVersions", Category: "General", Status: capabilities.StatusUnsupported},
 		capabilities.Capability{Service: "elasticache", Operation: "DescribeCacheParameterGroups", Category: "General", Status: capabilities.StatusSupported, Notes: "List all or filter by name"},
 		capabilities.Capability{Service: "elasticache", Operation: "DescribeCacheParameters", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns curated static parameters for the group's family; supports Source filter and MaxRecords/Marker pagination"},
 		capabilities.Capability{Service: "elasticache", Operation: "DescribeCacheSubnetGroups", Category: "General", Status: capabilities.StatusSupported, Notes: "List all or filter by name"},
@@ -28,7 +31,8 @@ func init() {
 		capabilities.Capability{Service: "elasticache", Operation: "ModifyCacheCluster", Category: "General", Status: capabilities.StatusSupported, Notes: "Metadata-only; updates nodeType, engineVersion, numNodes, parameterGroup; modifying→available"},
 		capabilities.Capability{Service: "elasticache", Operation: "ModifyReplicationGroup", Category: "General", Status: capabilities.StatusSupported, Notes: "Metadata-only; updates description, nodeType, failover, multiAZ; modifying→available"},
 		capabilities.Capability{Service: "elasticache", Operation: "ModifyServerlessCache", Category: "General", Status: capabilities.StatusSupported, Notes: "Metadata-only; updates description, engine/version, usage limits, security groups, snapshots, and user group; modifying→available"},
-		capabilities.Capability{Service: "elasticache", Operation: "RebootCacheCluster", Category: "General", Status: capabilities.StatusSupported},
+		// Same: routed to a NotImplemented stub, so Unsupported is the honest status.
+		capabilities.Capability{Service: "elasticache", Operation: "RebootCacheCluster", Category: "General", Status: capabilities.StatusUnsupported},
 		capabilities.Capability{Service: "elasticache", Operation: "RemoveTagsFromResource", Category: "General", Status: capabilities.StatusSupported, Notes: "Removes specific tag keys"},
 	)
 }

@@ -1,0 +1,1 @@
+* [elasticache] the support matrix no longer advertises `DescribeCacheEngineVersions` and `RebootCacheCluster` as supported — both are routed to a NotImplemented stub and always answer 501, so they are marked Unsupported until they are emulated
