@@ -1,0 +1,1 @@
+* [cloudformation] a create that fails with rollback disabled leaves `StackStatusReason` set to AWS's summary of which resources failed, rather than to the underlying service error — which stays on the resource and its event, where AWS keeps it

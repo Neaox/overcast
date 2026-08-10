@@ -273,8 +273,7 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 
 			if stack.DisableRollback {
 				// DisableRollback: leave partial stack, status CREATE_FAILED.
-				p.failStack(ctx, stack, StatusCreateFailed,
-					fmt.Sprintf("resource %s failed: %v", logicalID, provErr))
+				p.failStack(ctx, stack, StatusCreateFailed, createFailureSummary(logicalID))
 				return
 			}
 
@@ -1247,6 +1246,20 @@ func (p *provisioner) resolveOutputs(tmpl *Template, rCtx *resolveContext) []Out
 		outputs = append(outputs, out)
 	}
 	return outputs
+}
+
+// createFailureSummary renders the stack-level StackStatusReason AWS sets on a
+// stack left in CREATE_FAILED because rollback was disabled — a summary naming
+// the logical IDs, not the service error that caused it. The error itself stays
+// on the resource record and on its CREATE_FAILED event, which is where AWS
+// keeps it and where a client looks for the detail.
+//
+// Provisioning stops at the first failed resource, so the list AWS renders as
+// "[MyBucket, MyQueue]" always has a single entry here.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stack-failure-options.html
+func createFailureSummary(logicalID string) string {
+	return fmt.Sprintf("The following resource(s) failed to create: [%s]", logicalID)
 }
 
 func (p *provisioner) failStack(ctx context.Context, stack *Stack, status, reason string) {
