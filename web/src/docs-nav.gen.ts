@@ -2502,6 +2502,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "The default VPC",
+        "id": "the-default-vpc"
+      },
+      {
+        "depth": 3,
         "text": "Docker network conventions",
         "id": "docker-network-conventions"
       },

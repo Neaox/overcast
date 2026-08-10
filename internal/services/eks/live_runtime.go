@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 )
 
@@ -32,7 +33,6 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 
 	image := k3sImageForVersion(cluster.Version)
 	containerName := "overcast-eks-" + cluster.Name
-	network := s.cfg.EKSNetwork
 
 	createReq := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
@@ -42,16 +42,12 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 			ExposedPorts: map[string]struct{}{"6443/tcp": {}},
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
-			NetworkMode:  network,
+			NetworkMode:  dataplane.Primary(s.cfg),
 			Privileged:   true,
 			Tmpfs:        map[string]string{"/run": "", "/var/run": ""},
 			PortBindings: map[string][]docker.PortBinding{"6443/tcp": {{HostIP: "0.0.0.0"}}},
 		},
-		NetworkingConfig: &docker.NetworkingConfig{
-			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {},
-			},
-		},
+		NetworkingConfig: dataplane.PrimaryEndpoints(s.cfg),
 	}
 
 	containerID, err := s.docker.CreateContainer(ctx, containerName, createReq)
@@ -90,8 +86,34 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 		}
 	}
 
+	// The control plane is reachable by name from sibling containers, so a task
+	// or function running kubectl against it resolves the same endpoint the API
+	// hands out. Non-fatal: the published host port still serves the host.
+	if err := dataplane.Attach(ctx, s.docker, s.cfg, containerID,
+		dataplane.Placement{Aliases: s.clusterEndpointAliases(region, cluster.Name)}); err != nil {
+		s.log.Warn("eks: cluster container could not join the data plane — "+
+			"its endpoint resolves only from the host",
+			zap.String("cluster", cluster.Name), zap.Error(err))
+	}
+
 	s.setLiveClusterRuntime(region, cluster.Name, &liveClusterRuntime{containerID: containerID})
 	s.pollK3sReady(ctx, region, cluster, containerID)
+}
+
+// clusterEndpointAliases is the set of DNS names a k3s control plane answers to
+// on the data plane. AWS serves one at
+// `{hash}.{xx}.{region}.eks.amazonaws.com`; Overcast keys it on the cluster
+// name, which is what a caller actually has.
+//
+// region is the record's, not the configured default — a cluster created in
+// another region is named for that one.
+func (s *Service) clusterEndpointAliases(region, name string) []string {
+	if name == "" || region == "" {
+		return nil
+	}
+	return dataplane.Hostnames(s.cfg, func(base string) string {
+		return name + "." + region + ".eks." + base
+	})
 }
 
 // pollK3sReady polls the k3s API server host-mapped port until it responds,

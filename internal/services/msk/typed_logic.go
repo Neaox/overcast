@@ -187,16 +187,8 @@ func (s *Service) getBootstrapBrokersTyped(ctx context.Context, req *getBootstra
 		return nil, aerr
 	}
 
-	var bootstrapBrokerString string
-	if cluster.HostPort > 0 {
-		host := s.handler.cfg.ExternalHostname()
-		bootstrapBrokerString = fmt.Sprintf("%s:%d", host, cluster.HostPort)
-	} else if !s.handler.dockerReady.Load() {
-		bootstrapBrokerString = fmt.Sprintf("127.0.0.1:%d", s.handler.cfg.MSKPortBase)
-	}
-
 	return &getBootstrapBrokersResponse{
-		BootstrapBrokerString:    bootstrapBrokerString,
+		BootstrapBrokerString:    s.handler.bootstrapBrokerString(ctx, cluster),
 		BootstrapBrokerStringTls: "",
 	}, nil
 }

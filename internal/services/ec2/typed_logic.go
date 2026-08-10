@@ -1175,7 +1175,14 @@ func (h *Handler) createVpcTyped(ctx context.Context, req *createVpcReq) (*creat
 	}, nil
 }
 
+// describeVpcsTyped is not dispatched to — EC2 runs the legacy handlers (see
+// Service.DispatchQuery). It seeds the default VPC so the two paths agree on
+// what exists, but does not filter: describeVpcsReq carries no filter fields,
+// and the missing filters are part of the wider typed-path audit in #754. The
+// legacy DescribeVpcs does filter, and is the one that answers requests.
 func (h *Handler) describeVpcsTyped(ctx context.Context, _ *describeVpcsReq) (*describeVpcsResp, *protocol.AWSError) {
+	h.ensureDefaultVPCQuietly(ctx)
+
 	vpcs, aerr := h.store.listVPCs(ctx)
 	if aerr != nil {
 		return nil, aerr
@@ -1191,7 +1198,7 @@ func (h *Handler) describeVpcsTyped(ctx context.Context, _ *describeVpcsReq) (*d
 			State:           v.State,
 			CidrBlock:       v.CidrBlock,
 			InstanceTenancy: "default",
-			IsDefault:       false,
+			IsDefault:       v.IsDefault,
 			TagSet: []typedTagXML{
 				{Key: "overcast:network-status", Value: ns},
 			},
@@ -1406,6 +1413,8 @@ func (h *Handler) describeSecurityGroupsTyped(ctx context.Context, _ *describeSe
 }
 
 func (h *Handler) describeSubnetsTyped(ctx context.Context, _ *describeSubnetsReq) (*describeSubnetsResp, *protocol.AWSError) {
+	h.ensureDefaultVPCQuietly(ctx)
+
 	all, aerr := h.store.listSubnets(ctx)
 	if aerr != nil {
 		return nil, aerr

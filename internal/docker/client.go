@@ -1320,6 +1320,13 @@ func (d *Client) ConnectNetworkWithAliases(ctx context.Context, networkID, conta
 
 // ConnectNetworkWithConfig attaches a container to a network with an explicit
 // endpoint configuration — aliases, a pinned address, or both.
+//
+// A container already attached to the network is treated as success, the same
+// way CreateNetwork treats an existing network. Docker rejects the second
+// connect with "endpoint with name ... already exists", and every caller here
+// reaches this from a path that may legitimately run twice: startup reconcile,
+// container reuse after a restart, and Overcast joining a plane it may already
+// be on. Without this they would all have to special-case the daemon's wording.
 func (d *Client) ConnectNetworkWithConfig(ctx context.Context, networkID, containerID string, cfg *EndpointSettings) error {
 	if err := d.acquireOp(ctx); err != nil {
 		return fmt.Errorf("connect network %s: %w", networkID, err)
@@ -1330,7 +1337,19 @@ func (d *Client) ConnectNetworkWithConfig(ctx context.Context, networkID, contai
 		Container      string            `json:"Container"`
 		EndpointConfig *EndpointSettings `json:"EndpointConfig,omitempty"`
 	}{Container: containerID, EndpointConfig: cfg}
-	return d.doJSON(ctx, http.MethodPost, "/v1.45/networks/"+networkID+"/connect", &body, nil)
+	err := d.doJSON(ctx, http.MethodPost, "/v1.45/networks/"+networkID+"/connect", &body, nil)
+	if err != nil && isAlreadyConnected(err) {
+		return nil
+	}
+	return err
+}
+
+// isAlreadyConnected reports whether err is Docker refusing a connect because
+// the container is on that network already.
+func isAlreadyConnected(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "already exists in network") ||
+		strings.Contains(msg, "is already attached to network")
 }
 
 // DisconnectNetwork detaches a container from a network.

@@ -25,7 +25,7 @@ func TestLiveModeCreateClusterPersistsBootstrapRecord(t *testing.T) {
 		AccountID:       "000000000000",
 		EKSMode:         config.EKSModeLive,
 		EKSDockerSocket: "/var/run/docker.sock",
-		EKSNetwork:      "overcast_eks",
+		Network:         "overcast_eks",
 	}
 	// Use an unreachable TCP endpoint so Docker calls fail fast without side-effects.
 	service := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
@@ -96,7 +96,7 @@ func TestLiveModeDeleteClusterClearsRuntimeRegistry(t *testing.T) {
 		AccountID:       "000000000000",
 		EKSMode:         config.EKSModeLive,
 		EKSDockerSocket: "/var/run/docker.sock",
-		EKSNetwork:      "overcast_eks",
+		Network:         "overcast_eks",
 	}
 	// Use an unreachable TCP endpoint so Docker calls fail fast without side-effects.
 	service := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())

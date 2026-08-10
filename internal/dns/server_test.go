@@ -276,9 +276,10 @@ func TestServer_IgnoresMalformedQueries(t *testing.T) {
 	}
 }
 
-// Overcast attaches to overcast_lambda and overcast_ecs by default, so it has
-// an address on each. A container on one network cannot reach its address on
-// the other, so the answer has to depend on who asked.
+// Overcast attaches to the control plane, the default data plane and any VPC
+// networks it has work in, so it has an address on each. A container on one
+// network cannot reach its address on another, so the answer has to depend on
+// who asked.
 func TestServer_AnswersWithTheAddressReachableFromTheCaller(t *testing.T) {
 	const ecsSideAddr = "172.19.0.5"
 	z := NewZone(netip.MustParseAddr(overcastAddr), "localhost.overcast.sh")
