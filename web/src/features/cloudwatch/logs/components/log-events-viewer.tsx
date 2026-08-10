@@ -614,6 +614,33 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
 
 // ── Log message cell ───────────────────────────────────────────────────────
 
+/**
+ * The chip that names a row's level.
+ *
+ * Every row the tint applies to gets one, whatever the message looks like. The
+ * badge used to render only for a syntax-highlighted document, or for a plain
+ * line once Format was ticked — so a `console.warn` from a Node runtime, whose
+ * level AWS writes as a tab-separated column
+ *
+ *   2026-08-10T02:34:39.674Z\t<request id>\tWARN\tCannot push rates…
+ *
+ * arrived tinted but unlabelled, and the label was the part that read at a
+ * glance. Nothing about that line is less worth labelling than a Powertools
+ * document carrying the same level in a `"level"` field.
+ */
+function LevelBadge({ level }: { level: LogLevel }) {
+  return (
+    <span
+      className={cn(
+        "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
+        logLevelBadgeClass[level],
+      )}
+    >
+      {level}
+    </span>
+  )
+}
+
 function LogMessage({
   prefix,
   message,
@@ -659,16 +686,7 @@ function LogMessage({
   if (showSyntax) {
     return (
       <div className="flex items-start gap-1.5">
-        {level && !hideLevel && (
-          <span
-            className={cn(
-              "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
-              logLevelBadgeClass[level],
-            )}
-          >
-            {level}
-          </span>
-        )}
+        {level && !hideLevel && <LevelBadge level={level} />}
         {prefix && !formatted && (
           <span className="shrink-0 pt-0.5 font-mono text-[11px] leading-relaxed text-fg-muted tabular-nums">
             {prefix}
@@ -688,16 +706,7 @@ function LogMessage({
   // Plain message — with optional filter highlighting
   return (
     <div className="flex items-start gap-1.5">
-      {level && formatted && !hideLevel && (
-        <span
-          className={cn(
-            "mt-0.5 shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-bold uppercase",
-            logLevelBadgeClass[level],
-          )}
-        >
-          {level}
-        </span>
-      )}
+      {level && !hideLevel && <LevelBadge level={level} />}
       <pre
         className={cn(
           "font-mono text-[11px] leading-relaxed text-fg",
