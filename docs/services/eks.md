@@ -22,7 +22,8 @@ EKS supports two modes:
 ## Behavior notes
 
 - In `mock` mode, cluster status is immediately `ACTIVE` and endpoint/CA fields are synthetic placeholders.
-- In `live` mode, cluster status starts `CREATING` and transitions to `ACTIVE` after k3s `/readyz` responds.
+- In `live` mode, cluster status starts `CREATING` and transitions to `ACTIVE` after k3s `/readyz` responds. The k3s image is pulled first, so the first cluster on a machine that has never run one waits on that download.
+- In `live` mode, a control plane that cannot be started reaches `FAILED` instead of staying `CREATING`, and `DescribeCluster` reports why under `cluster.health.issues` — the Docker error verbatim for an image that cannot be pulled or a container that cannot be created or started.
 - In `live` mode, `DescribeCluster` endpoint uses `https://<OVERCAST_HOSTNAME-or-localhost>:<mapped-port>`.
 - In `live` mode, `ListClusters` filters out legacy mock-record clusters (`*.mock.eks.local`) to avoid mixed-mode leakage.
 - In `live` mode, cluster-scoped read/update APIs for update/insight/config flows reject legacy mock-record clusters with `501` to keep behavior mode-consistent.

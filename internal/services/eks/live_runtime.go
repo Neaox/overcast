@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -22,17 +24,27 @@ func k3sImageForVersion(version string) string {
 // startLiveCluster creates and starts a k3s control-plane container for the
 // given cluster. The caller must have already persisted the cluster record with
 // CREATING status. On success the live runtime registry is updated with the
-// container ID. On failure a log warning is emitted and the registry entry
-// keeps an empty container ID so the cluster stays in CREATING indefinitely
-// until a retry or cleanup path handles it.
+// container ID. On failure the cluster is moved to the terminal FAILED state
+// carrying the reason, so a caller waiting on it is answered rather than left
+// polling CREATING — see failLiveCluster.
 func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *Cluster) {
-	if s.docker == nil {
-		s.log.Warn("startLiveCluster called without docker client", zap.String("cluster", cluster.Name))
+	if s.docker == nil || s.puller == nil {
+		s.failLiveCluster(ctx, region, cluster.Name, issueInternalFailure,
+			errors.New("EKS live mode requires Docker; no daemon is wired"))
 		return
 	}
 
 	image := k3sImageForVersion(cluster.Version)
 	containerName := "overcast-eks-" + cluster.Name
+
+	// Pull first, deduplicated per process lifetime, as every other
+	// container-starting service does. Without it the create below is the
+	// first thing to touch the image, and a machine that does not already
+	// hold it gets 404 "No such image" from the daemon (#892).
+	if err := s.puller.Ensure(ctx, image); err != nil {
+		s.failLiveCluster(ctx, region, cluster.Name, issueInternalFailure, err)
+		return
+	}
 
 	createReq := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
@@ -55,33 +67,31 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 		if docker.IsConflict(err) {
 			existing, inspectErr := s.docker.GetContainerByName(ctx, containerName)
 			if inspectErr != nil || existing == nil {
-				s.log.Warn("k3s container name conflict, inspect failed",
-					zap.String("cluster", cluster.Name), zap.Error(err))
+				s.failLiveCluster(ctx, region, cluster.Name, issueConfigurationConflict,
+					fmt.Errorf("container %s already exists and could not be inspected: %w", containerName, err))
 				return
 			}
 			if !existing.HasOvercastLabels(serviceName, cluster.Name) {
-				s.log.Warn("conflicting container not managed by overcast-eks",
-					zap.String("cluster", cluster.Name), zap.String("container", containerName))
+				s.failLiveCluster(ctx, region, cluster.Name, issueConfigurationConflict,
+					fmt.Errorf("container %s already exists and is not managed by Overcast", containerName))
 				return
 			}
 			containerID = existing.ID
 			if !existing.State.Running {
 				if err := s.docker.StartContainer(ctx, containerID); err != nil {
-					s.log.Warn("failed to start existing k3s container after name conflict",
-						zap.String("cluster", cluster.Name), zap.Error(err))
+					s.failLiveCluster(ctx, region, cluster.Name, issueInternalFailure,
+						fmt.Errorf("start existing container after name conflict: %w", err))
 					return
 				}
 			}
 		} else {
-			s.log.Warn("failed to create k3s container",
-				zap.String("cluster", cluster.Name), zap.Error(err))
+			s.failLiveCluster(ctx, region, cluster.Name, issueInternalFailure, err)
 			return
 		}
 	} else {
 		if err := s.docker.StartContainer(ctx, containerID); err != nil {
 			_ = s.docker.RemoveContainerForce(containerID)
-			s.log.Warn("failed to start k3s container",
-				zap.String("cluster", cluster.Name), zap.Error(err))
+			s.failLiveCluster(ctx, region, cluster.Name, issueInternalFailure, err)
 			return
 		}
 	}
@@ -126,8 +136,8 @@ func (s *Service) pollK3sReady(ctx context.Context, region string, cluster *Clus
 
 	inspect, err := s.docker.InspectContainer(ctx, containerID)
 	if err != nil {
-		s.log.Warn("pollK3sReady: failed to inspect container",
-			zap.String("cluster", cluster.Name), zap.Error(err))
+		s.failLiveCluster(ctx, region, cluster.Name, issueInternalFailure,
+			fmt.Errorf("inspect the control-plane container: %w", err))
 		return
 	}
 
@@ -136,8 +146,8 @@ func (s *Service) pollK3sReady(ctx context.Context, region string, cluster *Clus
 		hostPort = bindings[0].HostPort
 	}
 	if hostPort == "" {
-		s.log.Warn("pollK3sReady: no host port mapping for 6443/tcp",
-			zap.String("cluster", cluster.Name))
+		s.failLiveCluster(ctx, region, cluster.Name, issueInternalFailure,
+			errors.New("the control-plane container published no host port for 6443/tcp"))
 		return
 	}
 
@@ -175,8 +185,56 @@ func (s *Service) pollK3sReady(ctx context.Context, region string, cluster *Clus
 		case <-s.clk.After(pollInterval):
 		}
 	}
-	s.log.Warn("pollK3sReady: timed out waiting for k3s API",
-		zap.String("cluster", cluster.Name))
+	s.failLiveCluster(ctx, region, cluster.Name, issueClusterUnreachable,
+		fmt.Errorf("the k3s API server did not answer %s within %s", readyzURL, pollTimeout))
+}
+
+// AWS ClusterIssueCode values DescribeCluster's health.issues carry. Overcast
+// uses the three that a local control plane can actually run into.
+const (
+	issueInternalFailure       = "InternalFailure"
+	issueConfigurationConflict = "ConfigurationConflict"
+	issueClusterUnreachable    = "ClusterUnreachable"
+)
+
+// failLiveCluster moves a cluster that could not be brought up to FAILED and
+// records why in the health.issues DescribeCluster returns.
+//
+// The reason used to exist only as a warn log line, which no API caller reads:
+// the cluster kept reporting CREATING, so `aws eks wait cluster-active` — and
+// any other waiter — spun until it gave up with nothing to say. FAILED is
+// terminal for that waiter, and the issue message carries the daemon's own
+// words.
+//
+// Deliberately EKS-scoped. The same "a container failed to start and the
+// resource still claims progress" shape has now been reported three times
+// (#892 here, #881 for ElastiCache, #873 for Lambda INIT); fixing it once
+// across every container-starting service is worth doing and is a separate
+// piece of work.
+//
+// Re-reading before writing avoids clobbering a concurrent mutation, the same
+// way setClusterActiveWithEndpoint does — a DeleteCluster that already removed
+// the record leaves nothing to fail.
+func (s *Service) failLiveCluster(ctx context.Context, region, name, code string, reason error) {
+	s.log.Warn("eks: cluster could not be started — marking it FAILED",
+		zap.String("cluster", name), zap.String("code", code), zap.Error(reason))
+
+	existing, found, err := s.getCluster(ctx, region, name)
+	if err != nil || !found {
+		return
+	}
+	existing.Status = "FAILED"
+	existing.Health = map[string]any{
+		"issues": []map[string]any{{
+			"code":        code,
+			"message":     reason.Error(),
+			"resourceIds": []string{name},
+		}},
+	}
+	if err := s.putCluster(ctx, region, existing); err != nil {
+		s.log.Warn("failLiveCluster: failed to persist",
+			zap.String("cluster", name), zap.Error(err))
+	}
 }
 
 // setClusterActiveWithEndpoint reads the current cluster record and updates it
@@ -191,6 +249,9 @@ func (s *Service) setClusterActiveWithEndpoint(ctx context.Context, region, name
 	}
 	existing.Status = "ACTIVE"
 	existing.Endpoint = endpoint
+	// A cluster that came up has no outstanding issue, even if an earlier
+	// attempt recorded one.
+	existing.Health = nil
 	if strings.TrimSpace(caData) != "" {
 		existing.CertificateAuthority = map[string]any{"data": caData}
 	}
