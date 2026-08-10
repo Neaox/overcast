@@ -144,6 +144,64 @@ var weaklyServedBindings = map[string]string{
 	"appconfig/UntagResource":       "another service's fallback handler",
 }
 
+// protocolAsymmetries records operations reachable over one of their service's
+// protocols and not another. See
+// TestDeclaredProtocols_areDispatchedSymmetrically.
+//
+// Like unservedBindings this is a ratchet: an unrecorded asymmetry fails the
+// build, and so does a recorded one that has been resolved.
+var protocolAsymmetries = map[string]string{
+	// Pre-existing and deliberate. CloudWatch's own
+	// TestDispatchJSON_CoversEveryQueryOperation has carried the same
+	// exemption since #794, with the reason "no JSON request/response shape
+	// yet: MetricDataQueries, epoch timestamps and MetricDataResults all need
+	// their own encoding". The model makes awsJson1_0 GetMetricData's
+	// *primary* protocol, so this is the one CloudWatch operation an SDK
+	// reaches only by falling back to Query.
+	//
+	// It is the one entry in these ledgers with no issue behind it. It wants
+	// one: unlike the routing faults, nothing here records who will encode
+	// those shapes or when.
+	"cloudwatch/GetMetricData": "no JSON encoding for MetricDataQueries/MetricDataResults; exempted in cloudwatch's own dispatch test since #794 — needs an issue",
+}
+
+// assertProtocolAsymmetry compares the observed asymmetries with the recorded
+// ones in both directions.
+func assertProtocolAsymmetry(t *testing.T, observed []string) {
+	t.Helper()
+
+	unrecorded := make([]string, 0, len(observed))
+	resolved := map[string]bool{}
+	for key := range protocolAsymmetries {
+		resolved[key] = true
+	}
+	for _, finding := range observed {
+		key := strings.SplitN(finding, ":", 2)[0]
+		if _, recorded := protocolAsymmetries[key]; recorded {
+			delete(resolved, key)
+			continue
+		}
+		unrecorded = append(unrecorded, finding)
+	}
+
+	stale := make([]string, 0, len(resolved))
+	for key := range resolved {
+		stale = append(stale, key+" ("+protocolAsymmetries[key]+")")
+	}
+	sort.Strings(stale)
+
+	if len(unrecorded) > 0 {
+		t.Errorf("%d operation(s) are reachable over one modeled protocol and not another:\n\t%s\n\n"+
+			"Dispatch the operation on both. This is the #794 fault class: the same call succeeds or 501s "+
+			"depending only on which protocol the SDK happened to choose.",
+			len(unrecorded), strings.Join(unrecorded, "\n\t"))
+	}
+	if len(stale) > 0 {
+		t.Errorf("%d recorded asymmetr(ies) no longer hold — delete them from protocolAsymmetries:\n\t%s",
+			len(stale), strings.Join(stale, "\n\t"))
+	}
+}
+
 // assertWeaklyServed compares the observed weak-coverage set with the recorded
 // one, in both directions and including the grade, so a binding that slips
 // from an exact route to a wildcard is reported rather than absorbed.

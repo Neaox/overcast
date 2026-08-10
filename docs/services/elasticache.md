@@ -61,7 +61,11 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey** (`valkey/valkey:
 | `DeleteReplicationGroup`       | ✅ Supported   | Sets status to "deleting"; stops and removes Docker container asynchronously                                                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteReplicationGroup.html)       |
 | `DeleteServerlessCache`        | ✅ Supported   | Sets status to "deleting"; stops and removes Docker container asynchronously                                                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteServerlessCache.html)        |
 | `DescribeCacheClusters`        | ✅ Supported   | List all or filter by CacheClusterId                                                                                              | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheClusters.html)        |
+<<<<<<< HEAD
 | `DescribeCacheEngineVersions`  | ❌ Unsupported |                                                                                                                                   | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheEngineVersions.html)  |
+=======
+| `DescribeCacheEngineVersions`  | ❌ Unsupported | stub; returns 501                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheEngineVersions.html)  |
+>>>>>>> 919e7932 (fix(capgen,router,elasticache): assert an operation reaches every protocol its service speaks)
 | `DescribeCacheParameterGroups` | ✅ Supported   | List all or filter by name                                                                                                        | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheParameterGroups.html) |
 | `DescribeCacheParameters`      | ✅ Supported   | Returns curated static parameters for the group's family; supports Source filter and MaxRecords/Marker pagination                 | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheParameters.html)      |
 | `DescribeCacheSubnetGroups`    | ✅ Supported   | List all or filter by name                                                                                                        | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheSubnetGroups.html)    |
@@ -71,7 +75,11 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey** (`valkey/valkey:
 | `ModifyCacheCluster`           | ✅ Supported   | Metadata-only; updates nodeType, engineVersion, numNodes, parameterGroup; modifying→available                                     | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyCacheCluster.html)           |
 | `ModifyReplicationGroup`       | ✅ Supported   | Metadata-only; updates description, nodeType, failover, multiAZ; modifying→available                                              | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyReplicationGroup.html)       |
 | `ModifyServerlessCache`        | ✅ Supported   | Metadata-only; updates description, engine/version, usage limits, security groups, snapshots, and user group; modifying→available | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyServerlessCache.html)        |
+<<<<<<< HEAD
 | `RebootCacheCluster`           | ❌ Unsupported |                                                                                                                                   | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_RebootCacheCluster.html)           |
+=======
+| `RebootCacheCluster`           | ❌ Unsupported | stub; returns 501                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_RebootCacheCluster.html)           |
+>>>>>>> 919e7932 (fix(capgen,router,elasticache): assert an operation reaches every protocol its service speaks)
 | `RemoveTagsFromResource`       | ✅ Supported   | Removes specific tag keys                                                                                                         | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_RemoveTagsFromResource.html)       |
 
 <!-- END overcast:capabilities -->

@@ -5568,7 +5568,12 @@
         {
           "operation": "DescribeCacheEngineVersions",
           "category": "General",
+<<<<<<< HEAD
           "status": "❌ Unsupported"
+=======
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
+>>>>>>> 919e7932 (fix(capgen,router,elasticache): assert an operation reaches every protocol its service speaks)
         },
         {
           "operation": "DescribeCacheParameterGroups",
@@ -5627,7 +5632,12 @@
         {
           "operation": "RebootCacheCluster",
           "category": "General",
+<<<<<<< HEAD
           "status": "❌ Unsupported"
+=======
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
+>>>>>>> 919e7932 (fix(capgen,router,elasticache): assert an operation reaches every protocol its service speaks)
         },
         {
           "operation": "RemoveTagsFromResource",

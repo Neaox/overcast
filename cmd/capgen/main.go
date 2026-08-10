@@ -777,16 +777,16 @@ func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 			if !isOperationSwitch(sw) {
 				return true
 			}
-			awsCases := collectAWSCasesFromSwitch(sw)
+			awsCases := collectAWSCasesFromSwitch(sw, stubMethods)
 			if len(awsCases) < 3 {
 				return true
 			}
-			for _, opName := range awsCases {
-				if _, exists := seen[opName]; exists {
+			for _, op := range awsCases {
+				if _, exists := seen[op.Name]; exists {
 					continue
 				}
-				seen[opName] = struct{}{}
-				ops = append(ops, Operation{Name: opName, IsStub: false})
+				seen[op.Name] = struct{}{}
+				ops = append(ops, op)
 			}
 			return true
 		})
@@ -939,8 +939,18 @@ func typedOpIsStub(value ast.Expr, stubMethods map[string]struct{}) bool {
 	return false
 }
 
-func collectAWSCasesFromSwitch(sw *ast.SwitchStmt) []string {
-	var cases []string
+// collectAWSCasesFromSwitch returns the operations an action switch dispatches,
+// each marked according to whether the method its arm calls is a stub.
+//
+// The stub flag used to be hardcoded false here, so an operation dispatched
+// from a switch could never be reported as a 501 however plainly its handler
+// said so — while the same operation registered in a map or the typed registry
+// would be. That is why ElastiCache advertised DescribeCacheEngineVersions and
+// RebootCacheCluster as ✅ Supported while both answered 501 from
+// handler_stubs.go under a TODO, recorded in #861 and #864 as the
+// status-honesty gap.
+func collectAWSCasesFromSwitch(sw *ast.SwitchStmt, stubMethods map[string]struct{}) []Operation {
+	var cases []Operation
 	for _, s := range sw.Body.List {
 		cc, ok := s.(*ast.CaseClause)
 		if !ok || len(cc.List) == 0 {
@@ -952,10 +962,33 @@ func collectAWSCasesFromSwitch(sw *ast.SwitchStmt) []string {
 		}
 		val := strings.Trim(lit.Value, `"`)
 		if isAWSOperation(val) && !isKnownNonOperationCase(val) {
-			cases = append(cases, val)
+			cases = append(cases, Operation{Name: val, IsStub: switchArmIsStub(cc, stubMethods)})
 		}
 	}
 	return cases
+}
+
+// switchArmIsStub reports whether a switch arm's only work is to call a method
+// that answers 501 — the `case "X": h.X(w, r)` shape every action switch uses.
+func switchArmIsStub(cc *ast.CaseClause, stubMethods map[string]struct{}) bool {
+	for _, stmt := range cc.Body {
+		expr, ok := stmt.(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		call, ok := expr.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		if _, found := stubMethods[sel.Sel.Name]; found {
+			return true
+		}
+	}
+	return false
 }
 
 // aslChoiceOperators are the Amazon States Language Choice comparison

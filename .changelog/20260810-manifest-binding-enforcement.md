@@ -1,1 +1,2 @@
 * [ses] the support matrix no longer advertises `CreateEmailIdentity` as fully supported. It is implemented and works, but is registered on `PUT` where AWS models `POST`, so no SDK or CLI can reach it; the entry now says so and is marked WIP until the route moves
+* [elasticache] the support matrix no longer advertises `DescribeCacheEngineVersions` and `RebootCacheCluster` as supported. Both have always returned 501; they are now listed as unsupported, which is what a client sees
