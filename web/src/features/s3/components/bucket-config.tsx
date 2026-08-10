@@ -33,7 +33,6 @@ import {
 import { describeLifecycleFilter, describeLifecycleActions } from "@/features/s3/lifecycle"
 import { sqsQueuesQueryOptions } from "@/features/sqs/data"
 import { Badge } from "@/components/ui/badge"
-import { Definition, DefinitionList } from "@/components/ui/definition-card"
 import { ArnLink } from "@/components/ui/arn-link"
 import { PageHeader, Spinner, EmptyState } from "@/components/ui/primitives"
 import { Button } from "@/components/ui/button"
@@ -49,6 +48,8 @@ import {
 } from "@/components/ui/dialog"
 import { useToast } from "@/components/ui/toast"
 import { BucketTabs } from "./bucket-tabs"
+import { ConfigSection, ConfigRow } from "./config-section"
+import { BucketVersioningPanel } from "./bucket-versioning"
 import type {
   QueueNotificationConfig,
   TopicNotificationConfig,
@@ -407,6 +408,7 @@ export function BucketConfig() {
               </Button>
             }
           />
+          <BucketVersioningPanel bucket={bucket} />
           <LifecycleRules
             rules={lifecycle?.rules ?? []}
             transitionDefaultMinimumObjectSize={lifecycle?.transitionDefaultMinimumObjectSize}
@@ -470,6 +472,7 @@ export function BucketConfig() {
             </ConfigSection>
           )}
 
+          <BucketVersioningPanel bucket={bucket} />
           <LifecycleRules
             rules={lifecycle?.rules ?? []}
             transitionDefaultMinimumObjectSize={lifecycle?.transitionDefaultMinimumObjectSize}
@@ -679,28 +682,6 @@ function BadgeList({ values }: { values: string[] }) {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function ConfigSection({
-  title,
-  icon,
-  children,
-}: {
-  title: string
-  icon: React.ReactNode
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        {icon}
-        <h2 className="font-mono text-sm font-medium text-fg">{title}</h2>
-      </div>
-      <div className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-bg-elevated">
-        {children}
-      </div>
-    </div>
-  )
-}
-
 function EventList({ events }: { events: string[] }) {
   return (
     <div className="flex flex-wrap gap-1">
@@ -819,18 +800,5 @@ function LambdaRow({ config: l }: { config: LambdaNotificationConfig }) {
         <FilterList rules={l.filterRules} />
       </ConfigRow>
     </div>
-  )
-}
-
-/**
- * A notification config's Events/Filters rows. Always inline — this sits under
- * a queue or topic heading where the label column is what ties the rows
- * together, however wide the panel gets.
- */
-function ConfigRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <DefinitionList layout="inline" className="pl-5">
-      <Definition label={label} value={children} valueClassName="flex-1" />
-    </DefinitionList>
   )
 }
