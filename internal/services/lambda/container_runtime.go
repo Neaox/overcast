@@ -1246,6 +1246,7 @@ type containerInstance struct {
 	tailAppendAt   atomic.Int64  // UnixNano of last container line appended to tailBuf; 0 until the first
 	logReadAt      atomic.Int64  // UnixNano of last Docker log read; 0 until first read
 	logInFlight    atomic.Int64  // lines parsed by scanner but not yet flushed to CWL
+	logParkedAt    atomic.Int64  // where the log reader is: see logReaderNotReading / logReaderBetweenReads
 	peakMemMB      atomic.Int64  // running peak memory (MB) — what REPORT's Max Memory Used reads
 	logCursor      logCursor     // exact Docker timestamp cursor used for reconnect/reconcile deduplication
 	logDone        chan struct{} // closed when streamLogs goroutine exits
@@ -1801,7 +1802,12 @@ func durationMillis(d time.Duration) float64 {
 //   - firstReadMax caps how long we wait when not a byte has arrived. A handler
 //     that prints nothing is indistinguishable from one whose output has not
 //     left Docker's pipe, so silence costs this much — paid only by
-//     tail-requesting invokes.
+//     tail-requesting invokes. It is measured from the moment the reader is
+//     actually blocked in a Read (dockerSilentSince), never from a moment it
+//     was away from the stream: a reader that has asked Docker nothing cannot
+//     have been told the container had nothing to say, and timing its backlog
+//     as though it had is what left warm invocations with a tail holding only
+//     START / END / REPORT (#873).
 //   - Once bytes have arrived, output exists and is on its way, so there is
 //     nothing to guess at: the wait holds for the line itself, bounded only by
 //     deadlineMax. A handler that writes without a trailing newline pays that
@@ -1860,13 +1866,48 @@ func (ci *containerInstance) waitForScannerIdle(mark tailMark) {
 				// it rather than for the clock.
 				continue
 			}
-			// Nothing has been read at all since this invocation started. Give
-			// Docker a bounded grace period before concluding the handler was
-			// simply silent.
-			if ci.clk.Since(start) >= firstReadMax {
+			// Nothing has been read at all since this invocation started. That
+			// is evidence about the function only once the reader has actually
+			// put the question to Docker; until then it is evidence about
+			// Overcast's own scheduling. Grant the grace period from whichever
+			// came later — the start of the wait, or the reader's return to the
+			// stream — and hold on entirely while it is still away from it.
+			silentSince, asked := ci.dockerSilentSince(start)
+			if !asked {
+				continue
+			}
+			if ci.clk.Since(silentSince) >= firstReadMax {
 				return
 			}
 		}
+	}
+}
+
+// dockerSilentSince answers the question firstReadMax is really asking: since
+// when has Docker had an unanswered question from us and given us nothing back?
+// It reports false while there is no such question outstanding, which is not the
+// same as a negative answer and must not be timed as one.
+//
+// The three states of logParkedAt map onto it directly:
+//
+//   - Parked in a Read. That Read covers everything Docker held from the moment
+//     it began, so silence counts from then — or from the start of the wait if
+//     the reader was already parked before it, since output from earlier
+//     invocations is not this one's to wait for.
+//   - Between Reads. The reader is somewhere in the loop that takes it back to
+//     the stream and cannot be told anything until it arrives; there is no
+//     question outstanding and no silence to measure.
+//   - Not reading, because no stream is open. Nothing can arrive over a
+//     connection that does not exist, so there is nothing to wait for and the
+//     caller's own clock is all there is to go on.
+func (ci *containerInstance) dockerSilentSince(waitStart time.Time) (time.Time, bool) {
+	switch parked := ci.logParkedAt.Load(); {
+	case parked == logReaderBetweenReads:
+		return time.Time{}, false
+	case parked > waitStart.UnixNano():
+		return time.Unix(0, parked), true
+	default:
+		return waitStart, true
 	}
 }
 
@@ -2153,13 +2194,31 @@ func (ci *containerInstance) Close() error {
 	return nil
 }
 
-// logReadTracker wraps an io.Reader and records the time of the last successful
-// read. Used by waitForLogDrain to detect when streamLogs has consumed all
-// buffered Docker output (i.e. the reader has gone idle).
+// The two values of containerInstance.logParkedAt that are a state rather
+// than the moment the reader parked in its current Read.
+const (
+	// logReaderNotReading: no Docker log stream is open, so nothing is on its
+	// way through one. This is the zero value, which is what an instance whose
+	// streamLogs has not started — or has ended — should read as.
+	logReaderNotReading = 0
+	// logReaderBetweenReads: a stream is open and the reader is not blocked in
+	// a Read on it — either it has not reached its first, or one has returned
+	// and it has not got back yet. Either way it has no question outstanding
+	// with Docker, so Docker having handed nothing over says nothing about the
+	// container.
+	logReaderBetweenReads = -1
+)
+
+// logReadTracker wraps an io.Reader and records two things about the reader
+// that pulls Docker's log stream: the time of the last successful read (used by
+// waitForLogDrain to detect that streamLogs has consumed all buffered output),
+// and whether it is currently blocked in a Read at all (used by
+// waitForScannerIdle — see logReaderBetweenReads).
 type logReadTracker struct {
-	r      io.Reader
-	readAt *atomic.Int64
-	clk    clock.Clock
+	r        io.Reader
+	readAt   *atomic.Int64
+	parkedAt *atomic.Int64
+	clk      clock.Clock
 }
 
 const (
@@ -2266,7 +2325,9 @@ func shortContainerID(id string) string {
 }
 
 func (t *logReadTracker) Read(p []byte) (int, error) {
+	t.parkedAt.Store(t.clk.Now().UnixNano())
 	n, err := t.r.Read(p)
+	t.parkedAt.Store(logReaderBetweenReads)
 	if n > 0 {
 		t.readAt.Store(t.clk.Now().UnixNano())
 	}
@@ -2376,7 +2437,15 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 	// with the timestamp Docker repeats on each continuation chunk of a long
 	// line dropped rather than spliced into the middle of it.
 	stripped := docker.NewLogDemuxReader(stream)
-	tracked := &logReadTracker{r: stripped, readAt: &ci.logReadAt, clk: ci.clk}
+	tracked := &logReadTracker{r: stripped, readAt: &ci.logReadAt, parkedAt: &ci.logParkedAt, clk: ci.clk}
+	// The reader is now on this connection but has not reached its first Read,
+	// which is the same position it is in between any two of them. Recording it
+	// bounds the state to the connection's life at both ends: once this one is
+	// gone nothing can arrive over it, and a "between reads" left behind would
+	// hold every tail wait open for its full deadline across a reconnect
+	// backoff.
+	ci.logParkedAt.Store(logReaderBetweenReads)
+	defer ci.logParkedAt.Store(logReaderNotReading)
 	reader := bufio.NewReaderSize(tracked, 64*1024)
 	admission := ci.logCursor.NewAdmission(!since.IsZero())
 
