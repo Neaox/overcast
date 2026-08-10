@@ -9,22 +9,24 @@ import (
 )
 
 // ServiceConfig describes a single service's Docker requirements.
-// The Supervisor uses this to probe the socket, create the network, and
-// wire the Docker client into the service.
+// The Supervisor uses this to probe the socket and wire the Docker client
+// into the service.
+//
+// Note the absence of a network: they are a property of the deployment, not of
+// a service. Every container Overcast starts shares the same two planes (see
+// docs/dev/container-networking.md), so the Supervisor ensures them once per
+// daemon rather than once per service.
 type ServiceConfig struct {
 	// Name is used for logging ("rds", "ecs", "lambda").
 	Name string
 	// Socket is the Docker daemon socket path (e.g. /var/run/docker.sock).
 	Socket string
-	// Network is the Docker network to create for this service.
-	Network string
 }
 
 // ServiceResult is returned per-service after a successful probe.
 type ServiceResult struct {
-	Name      string
-	Client    *Client
-	NetworkID string
+	Name   string
+	Client *Client
 }
 
 // Supervisor centralises Docker lifecycle management for the entire process.
@@ -69,11 +71,11 @@ func NewSupervisorWithTracker(bus *events.Bus, logger *zap.Logger, tracker *Trac
 	return s
 }
 
-// Probe probes Docker for each ServiceConfig. Configs sharing the same socket
-// path reuse a single client connection and share a single availability probe.
-// Each config gets its own network created. Returns one ServiceResult per
-// successful config. Configs that fail to probe are logged and skipped.
-func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig) []ServiceResult {
+// Probe probes Docker for each ServiceConfig, ensuring networks exist on every
+// daemon reached. Configs sharing the same socket path reuse a single client
+// connection and share a single availability probe. Returns one ServiceResult
+// per successful config; configs that fail to probe are logged and skipped.
+func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, networks []string) []ServiceResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -81,21 +83,23 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig) []Servi
 		result *ProbeResult
 		err    error
 	}
-	// probeCache deduplicates probes per socket+network pair. The Probe()
-	// function both verifies connectivity *and* creates the network, so we
-	// must call it once per unique (socket, network) combination.
-	probeCache := make(map[string]*probeEntry) // "socket\000network" → result
+	// One probe per daemon. Probe verifies connectivity *and* ensures the
+	// planes, both of which are per-daemon properties, so services sharing a
+	// socket share the result.
+	probeCache := make(map[string]*probeEntry) // socket → result
 
 	var results []ServiceResult
 	for _, cfg := range configs {
 		log := s.logger.With(zap.String("service", cfg.Name))
-		cacheKey := cfg.Socket + "\x00" + cfg.Network
 
-		entry, ok := probeCache[cacheKey]
+		entry, ok := probeCache[cfg.Socket]
 		if !ok {
-			pr, err := Probe(cfg.Socket, cfg.Network, log)
+			pr, err := Probe(cfg.Socket, networks, log)
 			entry = &probeEntry{result: pr, err: err}
-			probeCache[cacheKey] = entry
+			probeCache[cfg.Socket] = entry
+			if err == nil {
+				RemoveLegacyNetworks(ctx, pr.Client, log)
+			}
 		}
 
 		if entry.err != nil {
@@ -108,13 +112,10 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig) []Servi
 		s.clients[cfg.Socket] = entry.result.Client
 
 		results = append(results, ServiceResult{
-			Name:      cfg.Name,
-			Client:    entry.result.Client,
-			NetworkID: entry.result.NetworkID,
+			Name:   cfg.Name,
+			Client: entry.result.Client,
 		})
-		log.Info("Docker wired",
-			zap.String("socket", cfg.Socket),
-			zap.String("network", cfg.Network))
+		log.Info("Docker wired", zap.String("socket", cfg.Socket))
 	}
 
 	if s.tracker != nil {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -418,7 +418,12 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 		}
 		c.DockerContainerID = existing.ID
 		c.HostPort = hostPort
-		h.connectToLambdaNetwork(ctx, existing.ID, h.serverlessEndpointAliases(c))
+		if err := h.attachToDataPlane(ctx, existing.ID,
+			h.vpcForSubnets(ctx, c.SubnetIds), h.serverlessEndpointAliases(c)); err != nil {
+			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
+				"its endpoint name will not resolve for sibling containers",
+				zap.String("cache", c.ServerlessCacheName), zap.Error(err))
+		}
 		h.setServerlessEndpoint(ctx, c)
 		return nil
 	}
@@ -431,10 +436,6 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 		h.store.releasePort(ctx, hostPort) //nolint:errcheck
 		return fmt.Errorf("pull image: %w", err)
 	}
-	network := h.network()
-	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
-		h.log.Warn("ElastiCache: failed to create network (may already exist)", zap.String("network", network), zap.Error(err))
-	}
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        image,
@@ -442,12 +443,12 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 			Labels:       docker.ManagedLabels(serviceName, resourceLabel),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
-			NetworkMode: network,
+			NetworkMode: dataplane.Primary(h.cfg),
 			PortBindings: map[string][]docker.PortBinding{
 				containerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
 			},
 		},
-		NetworkingConfig: &docker.NetworkingConfig{EndpointsConfig: map[string]*docker.EndpointSettings{network: {Aliases: h.serverlessEndpointAliases(c)}}},
+		NetworkingConfig: dataplane.PrimaryEndpoints(h.cfg),
 	}
 	containerID, err := h.docker.CreateContainer(ctx, containerName, req)
 	if err != nil {
@@ -458,6 +459,13 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 		h.store.releasePort(ctx, hostPort) //nolint:errcheck
 		return fmt.Errorf("create container: %w", err)
 	}
+	// A serverless cache carries subnet IDs rather than a subnet group, so the
+	// VPC is resolved from the first of them EC2 can name.
+	if err := h.attachToDataPlane(ctx, containerID, h.vpcForSubnets(ctx, c.SubnetIds), h.serverlessEndpointAliases(c)); err != nil {
+		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+		return fmt.Errorf("ElastiCache %s: %w", c.ServerlessCacheName, err)
+	}
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
@@ -465,48 +473,31 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 	}
 	c.DockerContainerID = containerID
 	c.HostPort = hostPort
-	h.connectToLambdaNetwork(ctx, containerID, h.serverlessEndpointAliases(c))
 	h.setServerlessEndpoint(ctx, c)
 	return nil
 }
 
 func (h *Handler) serverlessEndpointAliases(c *ServerlessCache) []string {
-	if c == nil {
+	if c == nil || c.ServerlessCacheName == "" {
 		return nil
 	}
-	var endpointAddress, readerAddress string
+	var advertised []string
 	if c.Endpoint != nil {
-		endpointAddress = c.Endpoint.Address
+		advertised = append(advertised, c.Endpoint.Address)
 	}
 	if c.ReaderEndpoint != nil {
-		readerAddress = c.ReaderEndpoint.Address
+		advertised = append(advertised, c.ReaderEndpoint.Address)
 	}
-	var canonical string
-	if c.ServerlessCacheName != "" {
-		canonical = fmt.Sprintf("%s.%s.serverless.%s", c.ServerlessCacheName, h.region(), h.externalHostname())
-	}
-	return docker.EndpointAliases(endpointAddress, readerAddress, canonical)
+	return dataplane.Hostnames(h.cfg, func(base string) string {
+		return fmt.Sprintf("%s.%s.serverless.%s", c.ServerlessCacheName, h.region(), base)
+	}, advertised...)
 }
 
 func (h *Handler) setServerlessEndpoint(ctx context.Context, c *ServerlessCache) {
-	port := enginePort(c.Engine)
-	network := h.network()
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		hostname, _ := os.Hostname()
-		if hostname != "" {
-			_ = h.docker.ConnectNetwork(ctx, network, hostname)
-		}
-		info, err := h.docker.InspectContainer(ctx, c.DockerContainerID)
-		if err == nil {
-			if ep, ok := info.NetworkSettings.Networks[network]; ok && ep.IPAddress != "" {
-				endpoint := &ClusterEndpoint{Address: ep.IPAddress, Port: port}
-				c.Endpoint = endpoint
-				c.ReaderEndpoint = endpoint
-				return
-			}
-		}
-	}
-	endpoint := &ClusterEndpoint{Address: "127.0.0.1", Port: c.HostPort}
+	// Writer and reader are the same container here: there is one node, and a
+	// serverless cache's reader endpoint is an addressing convenience on AWS
+	// rather than a second engine.
+	endpoint := h.endpointFor(ctx, c.DockerContainerID, c.Engine, c.HostPort)
 	c.Endpoint = endpoint
 	c.ReaderEndpoint = endpoint
 }

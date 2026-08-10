@@ -191,9 +191,9 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_TLS_CERT`              | —                      | Path to your own TLS certificate (enables HTTPS for API and web UI; mutually exclusive with `OVERCAST_TLS=auto`) |
 | `OVERCAST_TLS_KEY`               | —                      | Path to the matching TLS private key                                                 |
 | `OVERCAST_SHUTDOWN_TIMEOUT`      | `5s`                   | Graceful shutdown wait; also budgets the final store flush — if it can't finish in time the process exits anyway and unflushed writes replay from the pending log on next start |
-| `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` | Docker endpoint — Unix path or `tcp://host:port` (for DinD)                          |
-| `LAMBDA_NETWORK`                 | `overcast_lambda`      | Docker network for Lambda containers                                                 |
-| `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on. The addresses are not configurable and do not follow `OVERCAST_HOST`: Overcast binds loopback plus the one address containers on `LAMBDA_NETWORK` reach it at — its own address on that network when Overcast is containerised, the network's gateway on a native Linux daemon, the host's routable address on Docker Desktop |
+| `OVERCAST_NETWORK`               | `overcast`             | Docker network every container Overcast starts is reachable on by name when it belongs to no VPC — the default data plane. A resource that names a VPC joins that VPC's network instead. Overcast derives a second network from this, `<name>_control`, which carries the Lambda Runtime API and the emulator endpoint; see [container networking](./dev/container-networking.md) |
+| `LAMBDA_DOCKER_SOCKET`           | `/var/run/docker.sock` | Docker endpoint — Unix path or `tcp://host:port` (for DinD). The per-service socket overrides below must all address the **same** daemon: containers are attached to shared networks across service boundaries |
+| `LAMBDA_RUNTIME_API_PORT`        | `9001`                 | Port Overcast exposes the Lambda Runtime API on. The addresses are not configurable and do not follow `OVERCAST_HOST`: Overcast binds loopback plus the one address containers on the control plane reach it at — its own address on that network when Overcast is containerised, the network's gateway on a native Linux daemon, the host's routable address on Docker Desktop |
 | `LAMBDA_DOCKER_MAX_CONCURRENT_STARTS` | _(auto)_               | Max concurrent Docker-backed Lambda container starts. Unset: derived from the Docker host as `clamp(NCPU/2, 2, 8)` (each start bursts ~2 CPUs during INIT); `4` when Docker `/info` is unavailable |
 | `LAMBDA_MAX_INSTANCES`           | _(auto)_               | Max Lambda containers across all functions. Unset: derived from the Docker host as `clamp(MemTotal×0.65 / 256 MiB, 4, 32)`; `25` when `/info` is unavailable |
 | `LAMBDA_MAX_INSTANCES_PER_FUNCTION` | _(auto)_            | Max concurrent containers for one function. Unset: `clamp(maxInstances/2, 2, maxInstances)`; `10` when `/info` is unavailable |
@@ -203,11 +203,9 @@ All configuration is via environment variables. No config file required.
 | `LAMBDA_INIT_TIMEOUT_SECONDS`    | `10`                   | Max seconds to wait for a Lambda runtime to finish INIT                              |
 | `LAMBDA_KEEP_CONTAINERS`         | `false`                | Keep stopped Lambda containers after expiry/delete (useful for debugging)            |
 | `ECS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for ECS — Unix path or `tcp://host:port`                             |
-| `ECS_NETWORK`                    | `overcast_ecs`         | Docker network for ECS task containers                                               |
 | `ECS_KEEP_CONTAINERS`            | `false`                | Keep stopped ECS task containers after they exit                                     |
 | `OVERCAST_RDS_MODE`              | `live`                 | `live` runs a real engine container per instance; `mock` is metadata-only            |
 | `RDS_DOCKER_SOCKET`              | _(Lambda socket)_      | Docker endpoint for RDS — Unix path or `tcp://host:port`                             |
-| `RDS_NETWORK`                    | `overcast_rds`         | Docker network for RDS database containers                                           |
 | `RDS_PORT_BASE`                  | `33060`                | Starting host port for RDS containers (each instance gets the next available port)   |
 | `RDS_KEEP_CONTAINERS`            | `false`                | Keep stopped RDS containers after instance deletion                                  |
 | `OVERCAST_SMTP_MOCK`             | `true`                 | Enable built-in SMTP capture server (auto-disabled when `OVERCAST_SMTP_HOST` is set) |

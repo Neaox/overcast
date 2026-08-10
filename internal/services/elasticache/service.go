@@ -61,6 +61,12 @@ func (s *Service) InitBus(bus *events.Bus) {
 	bus.Subscribe(events.DockerContainerStarted, s.handler.handleContainerStarted)
 }
 
+// SetVPCResolver wires the EC2 VPC resolver, so a cache whose subnet group
+// names a VPC is placed on that VPC's network rather than the default plane.
+func (s *Service) SetVPCResolver(r VPCNetworkResolver) {
+	s.handler.vpcResolver = r
+}
+
 // SetDocker wires the Docker client for ElastiCache container management and
 // starts the DockerGC background remove loop.
 func (s *Service) SetDocker(dc *docker.Client) {

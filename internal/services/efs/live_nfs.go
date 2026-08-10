@@ -13,6 +13,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -40,6 +41,10 @@ const (
 	// nfsContainerPort is the NFS port inside the container, published on a
 	// dynamic host port.
 	nfsContainerPort = "2049/tcp"
+
+	// nfsPort is the same port bare — what a sibling container dials on the
+	// data plane, as opposed to the published host port.
+	nfsPort = "2049"
 	// nsNFSPorts reserves host ports: key is the port, value the mount target.
 	nsNFSPorts = "efs:nfsports"
 	// nfsPortRange bounds the search above EFSNFSPortBase.
@@ -409,17 +414,6 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 	startCtx, cancelStart := context.WithTimeout(ctx, nfsStartTimeout)
 	defer cancelStart()
 
-	// Exports also join a user-defined network so a containerized Overcast and
-	// sibling NFS clients can reach them by container IP; the published host
-	// port serves clients on the host itself.
-	network := s.cfg.EFSNetwork
-	if network != "" {
-		if _, err := s.docker.CreateNetwork(startCtx, network); err != nil {
-			s.log.Debug("efs: create export network (may already exist)",
-				zap.String("network", network), zap.Error(err))
-		}
-	}
-
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        s.cfg.EFSNFSImage,
@@ -433,14 +427,10 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 			PortBindings: map[string][]docker.PortBinding{
 				nfsContainerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
 			},
-			CapAdd: []string{nfsExportCapability},
+			CapAdd:      []string{nfsExportCapability},
+			NetworkMode: dataplane.Primary(s.cfg),
 		},
-	}
-	if network != "" {
-		req.HostConfig.NetworkMode = network
-		req.NetworkingConfig = &docker.NetworkingConfig{
-			EndpointsConfig: map[string]*docker.EndpointSettings{network: {}},
-		}
+		NetworkingConfig: dataplane.PrimaryEndpoints(s.cfg),
 	}
 	containerID, err := s.docker.CreateContainer(startCtx, name, req)
 	if err != nil {
@@ -449,6 +439,15 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 		s.releaseNFSPort(ctx, hostPort)
 		s.markExportFailed(ctx, region, mountTargetID)
 		return
+	}
+
+	// Exports join the data plane so sibling NFS clients reach them by the
+	// mount target's DNS name; the published host port serves the host itself.
+	if err := dataplane.Attach(startCtx, s.docker, s.cfg, containerID,
+		dataplane.Placement{Aliases: s.mountTargetAliases(fsID, mountTargetID)}); err != nil {
+		s.log.Warn("efs: export container could not join the data plane — "+
+			"the mount target is reachable by address but not by name",
+			zap.String("mount_target", mountTargetID), zap.Error(err))
 	}
 
 	if err := s.docker.StartContainer(startCtx, containerID); err != nil {
@@ -627,29 +626,26 @@ func (s *Service) scheduleExportReadiness(region, mountTargetID, containerID str
 	s.scheduler.AfterScoped(region, mountTargetID, "nfs-ready", nfsReadyInterval, probe)
 }
 
-// exportProbeAddr returns the address to probe: the container's own IP when
-// Overcast itself runs in a container (published host ports are not reachable
-// from a sibling), otherwise 127.0.0.1 and the published port.
+// mountTargetAliases is the set of DNS names an export container answers to on
+// the data plane. AWS serves a mount target at
+// `{fsID}.efs.{region}.amazonaws.com`; Overcast mints the same grammar on each
+// base it could hand a caller.
+func (s *Service) mountTargetAliases(fsID, mountTargetID string) []string {
+	if fsID == "" {
+		return nil
+	}
+	region := s.cfg.Region
+	return dataplane.Hostnames(s.cfg, func(base string) string {
+		return fsID + ".efs." + region + "." + base
+	}, mountTargetID+".efs."+region+"."+s.cfg.ExternalHostname())
+}
+
+// exportProbeAddr returns the address to probe: the container's own address
+// when Overcast itself runs in a container (published host ports are not
+// reachable from a sibling), otherwise 127.0.0.1 and the published port.
 func (s *Service) exportProbeAddr(ctx context.Context, containerID string, hostPort int) string {
-	if runningInContainer() {
-		// Join the export network so the container IP below is routable.
-		if network := s.cfg.EFSNetwork; network != "" {
-			if hostname, err := os.Hostname(); err == nil && hostname != "" {
-				if err := s.docker.ConnectNetwork(ctx, network, hostname); err != nil {
-					s.log.Debug("efs: join export network", zap.String("network", network), zap.Error(err))
-				}
-			}
-		}
-		if info, err := s.docker.InspectContainer(ctx, containerID); err == nil {
-			if ep, ok := info.NetworkSettings.Networks[s.cfg.EFSNetwork]; ok && ep.IPAddress != "" {
-				return net.JoinHostPort(ep.IPAddress, "2049")
-			}
-			for _, ep := range info.NetworkSettings.Networks {
-				if ep.IPAddress != "" {
-					return net.JoinHostPort(ep.IPAddress, "2049")
-				}
-			}
-		}
+	if addr := dataplane.ContainerAddr(ctx, s.docker, s.cfg, containerID); addr != "" {
+		return net.JoinHostPort(addr, nfsPort)
 	}
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(hostPort))
 }

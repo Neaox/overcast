@@ -14,6 +14,44 @@ started, and they answer different questions:
 | Where is **Overcast**? | `internal/dns`, via `--dns` | Owns the split-horizon domains and every subdomain; answers with Overcast's own address, chosen per caller |
 | Where is **that other container**? | Docker's embedded resolver, `127.0.0.11` | Network **aliases** on containers attached to the caller's network — consulted *before* anything is forwarded to `internal/dns` |
 
+## 0. Two planes, and one package that owns them
+
+Every container Overcast starts sits on exactly two networks, and
+`internal/dataplane` decides both. Nothing else should be reaching for a
+network name.
+
+| Plane | Name | Members | Carries |
+| --- | --- | --- | --- |
+| **Control** | `overcast_control` (`cfg.ControlNetwork()`) | Overcast, and every container it starts | The Lambda Runtime API, and the `AWS_ENDPOINT_URL` calls function and task code makes back into the emulator |
+| **Data** | `overcast` (`OVERCAST_NETWORK`), or the resource's VPC network | one per container | Traffic *between* resources — a task reaching a cache node, a function reaching a database |
+
+The split exists because those two are not the same kind of thing. On AWS the
+Runtime API lives inside the execution sandbox and is reachable whatever VPC a
+function joins — it is the mechanism by which the function runs at all — and
+Overcast's own API stands in for a VPC endpoint per service. Both must survive
+VPC placement. Reaching a database must not. One network cannot express that,
+and while they shared one, "keep the Runtime API" was inseparable from "keep
+reaching every database".
+
+The API is small on purpose:
+
+| Call | Use |
+| --- | --- |
+| `dataplane.Primary(cfg)` | The network to create a container on (`HostConfig.NetworkMode`). Always the control plane — Docker accepts one network at create, and this is the one that must be up from the first packet |
+| `dataplane.PrimaryEndpoints(cfg)` | The same as a `NetworkingConfig` |
+| `dataplane.PlaceInVPC(ctx, resolver, vpcID)` | Resolve a VPC to a `Placement`. Refuses an unlaunchable VPC rather than silently falling back |
+| `dataplane.Attach(ctx, dc, cfg, id, placement)` | Join the data plane, advertising the placement's aliases. Call it **after create, before start** |
+| `dataplane.Hostnames(cfg, name, advertised...)` | The alias set: `name` applied to every base an endpoint could be minted under, plus what the record already advertises |
+| `dataplane.ContainerAddr(ctx, dc, cfg, id)` | The address *Overcast itself* dials a managed container on, or `""` meaning "use the published port on loopback" |
+
+**Historical note, because the shape of the old bug is instructive.** There used
+to be one network per emulator service — `overcast_lambda`, `overcast_rds`,
+`overcast_elasticache`, and four more — partitioned by *which package called
+Docker*, which is not a boundary AWS has. Everything downstream was
+compensation: RDS attached its containers to two compute networks, ElastiCache
+to one, MSK to none. Whether a given pair could talk came down to how completely
+each service remembered to undo the partition, and #872 is what that costs.
+
 Getting these the wrong way round is the standing trap. Overcast's resolver is
 authoritative for the domains an endpoint name ends in, so it will happily
 answer for `my-db.us-east-1.rds.localhost.overcast.sh` — with **Overcast's**
@@ -45,11 +83,11 @@ containers dial, and the local addresses that has to be listening on.
 The Lambda Runtime API is the case that needs it. Nothing off this machine is a
 legitimate caller — it is an unauthenticated control channel for every Lambda
 container — but loopback alone strands every invocation, because the RIC dials
-back over `LAMBDA_NETWORK`. So it binds loopback plus exactly one more address:
+back over the control plane. So it binds loopback plus exactly one more address:
 
 | Overcast is | Containers dial | Also bound |
 | --- | --- | --- |
-| in a container | our address on `LAMBDA_NETWORK` | loopback |
+| in a container | our address on the control plane | loopback |
 | on a native Linux host | that network's **gateway** — host-local, and on-link from every container attached, so it survives a function joining a VPC network that takes over the default route | loopback |
 | on a Docker Desktop host | the host's routable address (Desktop's networks have a gateway too, but it belongs to the daemon's VM) | loopback |
 
@@ -70,7 +108,7 @@ arrive on-link**, which is the Docker Desktop row above and nowhere else:
 
 | Overcast is | Listener sees | Matches the registered IP |
 | --- | --- | --- |
-| in a container, container dials our address on `LAMBDA_NETWORK` | the container's bridge IP | yes |
+| in a container, container dials our address on the control plane | the container's bridge IP | yes |
 | on a native Linux host, container dials the bridge gateway | the container's bridge IP | yes |
 | on a Docker Desktop host, container dials the host's address | the host's own address | **no** |
 
@@ -111,24 +149,21 @@ The utilities:
 | `docker.Client.ConnectNetwork(ctx, network, container)` | The same with no aliases — reachable by IP, **not resolvable by name** |
 | `NetworkingConfig.EndpointsConfig[net] = {Aliases: …}` | The same at container-create time |
 
-The established shape, as RDS uses it
-(`internal/services/rds/endpoint.go` — ElastiCache still registers only the
-configured name):
+The established shape, as every container-backed service now uses it:
 
 ```go
 // aliases: every hostname the API could hand a caller for this resource.
 func (h *Handler) instanceEndpointAliases(region string, inst *Instance) []string {
-    bases := containerendpoint.ResourceHostnames(h.cfg)
-    names := make([]string, 0, len(bases))
-    for _, base := range bases {
-        names = append(names, instanceEndpointHostname(inst.ID, region, base))
-    }
-    return docker.EndpointAliases(names...)
+    return dataplane.Hostnames(h.cfg, func(base string) string {
+        return instanceEndpointHostname(inst.ID, region, base)
+    }, advertised...)
 }
 
-// Attach to the networks emulated compute runs on, so a Lambda function or an
-// ECS task can resolve the endpoint name the API gave it.
-for _, network := range []string{h.cfg.LambdaNetwork, h.cfg.ECSNetwork} { … }
+// Create on the control plane, then join the one data plane this resource
+// belongs on — its VPC's network, or the default one.
+placement, err := dataplane.PlaceInVPC(ctx, h.vpcResolver, inst.VpcID)
+placement.Aliases = aliases
+err = dataplane.Attach(ctx, h.docker, h.cfg, containerID, placement)
 ```
 
 Note the **set**, not the one name. Endpoint names are minted on the hostname
@@ -142,16 +177,17 @@ caller connects to Overcast on 3306 and hangs. Register every name you can mint.
 
 Three more things worth knowing:
 
-- **Every consumer network needs its own attachment.** An alias on
-  `overcast_lambda` does nothing for an ECS task; that was the bug behind a
-  Fargate task being unable to reach its RDS instance.
-- **A VPC attachment needs aliases too.** When a service places its container on
-  a VPC's Docker network (`DockerNetworkForVpc`), attaching without aliases
-  leaves it reachable by IP but unresolvable by name — so the caller falls
-  through to Overcast's resolver and connects to a port nothing is listening on.
-- **Overcast attaches itself** to `overcast_lambda`/`overcast_ecs` and, for VPC
-  work, to the VPC networks, which is why the fallback answer is reachable
-  at all.
+- **Attach after create, before start.** A container that starts before it has
+  joined its data plane can race its own first outbound connection. The one
+  exception is ECS's `awsvpc` path, which reads back the address Docker
+  assigned and therefore cannot run until the container does.
+- **A VPC attachment needs aliases too**, which is why they live on `Placement`
+  rather than being passed only on the default path. Attaching without them
+  leaves the container reachable by IP but unresolvable by name — so the caller
+  falls through to Overcast's resolver and connects to a port nothing is
+  listening on.
+- **Overcast attaches itself** to the control plane, and for VPC work to the VPC
+  networks, which is why the fallback answer is reachable at all.
 
 ## 3. VPC networks
 

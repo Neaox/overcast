@@ -111,7 +111,8 @@ port per mount target. Implementation in `internal/services/efs/live_nfs.go`.
   the export answers, then goes `available`; if the retries run out it goes
   `available` anyway with a warning, so a wedged export cannot strand the
   resource.
-- **Reachability**: exports join `EFS_NETWORK` (default `overcast_efs`) as
+- **Reachability**: exports join the shared data plane (`OVERCAST_NETWORK`,
+  default `overcast`; originally a per-service `EFS_NETWORK`) as
   well as publishing a host port, so a containerized Overcast and sibling
   clients reach them by container IP while host clients use
   `localhost:<mapped-port>`. `DescribeMountTargets.IpAddress` stays synthetic.

@@ -291,11 +291,12 @@ a CDK stack bakes into an ECS task definition or a Secrets Manager secret.
 server — that one answers "where is Overcast" (see
 [the container-DNS notes](./dev/container-networking.md)). The engine container
 carries its endpoint name as a **Docker network alias** on every network
-emulated compute runs on (`overcast_lambda`, `overcast_ecs`, and the VPC network
-of its DB subnet group), and Docker's embedded resolver answers from those
-aliases before forwarding anything upstream. The alias set covers the name under
-*every* hostname Overcast could mint it under, because the name a caller holds
-depends on the endpoint that caller used.
+emulated compute runs on — the shared data plane (`OVERCAST_NETWORK`, default
+`overcast`), or the VPC network of its DB subnet group when it has one — and
+Docker's embedded resolver answers from those aliases before forwarding anything
+upstream. The alias set covers the name under *every* hostname Overcast could
+mint it under, because the name a caller holds depends on the endpoint that
+caller used.
 
 **The port differs by caller, and this one is not cosmetic.** The engine listens
 on 3306/5432 inside the Docker network; on the host it is reachable only through

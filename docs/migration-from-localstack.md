@@ -213,7 +213,7 @@ a built-in Node.js runtime for simple handlers.
 
 **Impact:** Lambda execution should be compatible with LocalStack Community
 Edition. Ensure Docker is accessible to the overcast container (see the
-`LAMBDA_DOCKER_SOCKET` and `LAMBDA_NETWORK` configuration variables).
+`LAMBDA_DOCKER_SOCKET` and `OVERCAST_NETWORK` configuration variables).
 
 ### Persistence: auto-detected, same as LocalStack's `DATA_DIR` presence
 

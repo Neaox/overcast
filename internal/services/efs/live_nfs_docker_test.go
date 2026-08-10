@@ -13,6 +13,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -52,12 +53,22 @@ func newDockerNFSService(t *testing.T, dc *docker.Client, portBase int, network 
 	// just reporting a timeout.
 	logs, logged := observer.New(zap.WarnLevel)
 
-	svc := New(&config.Config{
+	cfg := &config.Config{
 		Region: "us-east-1", AccountID: "000000000000",
 		EFSMode: config.EFSModeLive, EFSNFSExport: true,
 		EFSNFSPortBase: portBase, EFSNFSImage: config.DefaultEFSNFSImage,
-		EFSNetwork: network,
-	}, state.NewMemoryStore(), zap.New(logs), clock.New())
+		Network: network,
+	}
+	// The Docker supervisor creates both planes before it hands a service its
+	// client, so services no longer ensure networks themselves. This test has
+	// no supervisor, so it stands in for one.
+	for _, plane := range dataplane.Networks(cfg, dataplane.Placement{}) {
+		if _, err := dc.CreateNetwork(context.Background(), plane); err != nil {
+			t.Fatalf("create plane %s: %v", plane, err)
+		}
+	}
+
+	svc := New(cfg, state.NewMemoryStore(), zap.New(logs), clock.New())
 	svc.docker = dc
 	svc.puller = docker.NewImagePuller(dc)
 	svc.dockerReady.Store(true)
@@ -97,15 +108,18 @@ func cleanupFileSystem(t *testing.T, svc *Service, dc *docker.Client, fsID, netw
 		if err := dc.RemoveVolume(cctx, volumeName(fsID), true); err != nil {
 			t.Logf("cleanup: remove volume: %v", err)
 		}
-		// The export network is this test's own; production reuses a
-		// long-lived one, so only the test removes it. When the test itself
-		// runs in a container, exportProbeAddr attached us to the network —
-		// Docker refuses to remove a network with endpoints, so detach first.
-		if hostname, err := os.Hostname(); err == nil && hostname != "" {
-			_ = dc.DisconnectNetwork(cctx, network, hostname) //nolint:errcheck
-		}
-		if err := dc.RemoveNetwork(cctx, network); err != nil {
-			t.Logf("cleanup: remove network: %v", err)
+		// The planes are this test's own; production reuses long-lived ones, so
+		// only the test removes them. When the test itself runs in a container,
+		// exportProbeAddr attached us to the control plane — Docker refuses to
+		// remove a network with endpoints, so detach first.
+		hostname, hostErr := os.Hostname()
+		for _, plane := range dataplane.Networks(&config.Config{Network: network}, dataplane.Placement{}) {
+			if hostErr == nil && hostname != "" {
+				_ = dc.DisconnectNetwork(cctx, plane, hostname) //nolint:errcheck
+			}
+			if err := dc.RemoveNetwork(cctx, plane); err != nil {
+				t.Logf("cleanup: remove network %s: %v", plane, err)
+			}
 		}
 	})
 }

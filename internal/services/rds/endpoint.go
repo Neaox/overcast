@@ -5,8 +5,7 @@ import (
 	"net"
 	"net/url"
 
-	"github.com/Neaox/overcast/internal/containerendpoint"
-	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -173,15 +172,13 @@ func (h *Handler) instanceEndpointAliases(region string, inst *DBInstance) []str
 	if region == "" {
 		region = h.region()
 	}
-	bases := containerendpoint.ResourceHostnames(h.cfg)
-	names := make([]string, 0, len(bases)+1)
-	for _, base := range bases {
-		names = append(names, instanceEndpointHostname(inst.DBInstanceIdentifier, region, base))
-	}
-	// Whatever the record already advertises, in case it was minted under a
-	// hostname the current configuration no longer lists.
+	// Whatever the record already advertises goes in too, in case it was
+	// minted under a hostname the current configuration no longer lists.
+	var advertised []string
 	if inst.Endpoint != nil {
-		names = append(names, inst.Endpoint.Address)
+		advertised = append(advertised, inst.Endpoint.Address)
 	}
-	return docker.EndpointAliases(names...)
+	return dataplane.Hostnames(h.cfg, func(base string) string {
+		return instanceEndpointHostname(inst.DBInstanceIdentifier, region, base)
+	}, advertised...)
 }

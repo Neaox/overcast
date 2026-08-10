@@ -279,7 +279,7 @@ func WithLambdaDocker() Option {
 func WithECSDocker() Option {
 	return func(so *serverOptions) {
 		so.cfg.ECSDockerSocket = "/var/run/docker.sock"
-		so.cfg.ECSNetwork = fmt.Sprintf("overcast_ecs_test_%d", time.Now().UnixNano())
+		so.cfg.Network = fmt.Sprintf("overcast_ecs_test_%d", time.Now().UnixNano())
 	}
 }
 
@@ -408,7 +408,7 @@ func defaultTestConfig() *config.Config {
 		CFNSyncWait:          time.Second,
 		LogLevel:             "error", // suppress info/debug logs in test output
 		LambdaDockerSocket:   "",      // empty = skip Docker probe; use WithLambdaDocker() for container tests
-		LambdaNetwork:        "overcast_lambda",
+		Network:              "overcast",
 		LambdaRuntimeAPIPort: 0, // OS-assigned port — avoids conflicts when test packages run in parallel
 		ShutdownTimeout:      0,
 		SigV4Validate:        false,

@@ -16,6 +16,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/containerendpoint"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
@@ -292,13 +293,9 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 // DockerIDs. The RUNNING transition is queued by launchTask once the task
 // record has been persisted, not here — see the comment there.
 func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement) error {
-	// Ensure the ECS network exists.
-	if _, err := h.docker.CreateNetwork(ctx, h.cfg.ECSNetwork); err != nil {
-		return fmt.Errorf("ecs: create network %s: %w", h.cfg.ECSNetwork, err)
-	}
-
-	// Resolve how task containers reach Overcast. Deferred until here because
-	// it may attach Overcast to the ECS network, which must exist first.
+	// Resolve how task containers reach Overcast. The planes themselves are
+	// created once by the Docker supervisor, before any client is handed to a
+	// service, so there is nothing to ensure here.
 	endpoint := h.containerEndpoint(ctx)
 
 	// Build an override index by container name.
@@ -380,16 +377,12 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			HostConfig: &docker.HostConfig{AutoRemove: false,
 				Privileged:   cd.Privileged != nil && *cd.Privileged,
 				Mounts:       h.efsMountsForContainer(ctx, td, &td.ContainerDefinitions[i]),
-				NetworkMode:  h.cfg.ECSNetwork,
+				NetworkMode:  dataplane.Primary(h.cfg),
 				PortBindings: portBindings,
 				ExtraHosts:   endpoint.ExtraHosts(),
 				Dns:          endpoint.DNSServers(),
 			},
-			NetworkingConfig: &docker.NetworkingConfig{
-				EndpointsConfig: map[string]*docker.EndpointSettings{
-					h.cfg.ECSNetwork: {},
-				},
-			},
+			NetworkingConfig: dataplane.PrimaryEndpoints(h.cfg),
 		}
 
 		// The puller retries once when the image was removed behind our back
@@ -409,6 +402,19 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			if err := h.docker.CopyToContainer(ctx, dockerID, "/", bytes.NewReader(caTar)); err != nil {
 				_ = h.docker.RemoveContainerForce(dockerID)
 				return fmt.Errorf("ecs: inject CA bundle into %s: %w", cd.Name, err)
+			}
+		}
+
+		// A task with no awsvpc placement joins the default data plane, and does
+		// so before it starts: it was created on the control plane, and an
+		// application that dials a database in its first breath would otherwise
+		// race the attachment. The awsvpc path below cannot be hoisted the same
+		// way — it reads back the address Docker assigned, which is not fixed
+		// until the container runs.
+		if placement.networkID == "" {
+			if err := dataplane.Attach(ctx, h.docker, h.cfg, dockerID, dataplane.Placement{}); err != nil {
+				_ = h.docker.RemoveContainerForce(dockerID)
+				return fmt.Errorf("ecs: container %s: %w", cd.Name, err)
 			}
 		}
 
@@ -538,7 +544,7 @@ func (h *Handler) containerEndpoint(ctx context.Context) *containerendpoint.Mapp
 	h.endpointOnce.Do(func() {
 		// ResolveHost + BaseURL rather than Resolve: the endpoint scheme must
 		// follow the listener (https under OVERCAST_TLS), which only config knows.
-		host := containerendpoint.ResolveHost(ctx, h.docker, h.cfg.ECSNetwork, h.log.ZapLogger())
+		host := containerendpoint.ResolveHost(ctx, h.docker, dataplane.Primary(h.cfg), h.log.ZapLogger())
 		h.endpoint = containerendpoint.New(h.cfg, containerendpoint.BaseURL(h.cfg, host)).WithPublishedPort(h.cfg.PublishedPort)
 	})
 	return h.endpoint

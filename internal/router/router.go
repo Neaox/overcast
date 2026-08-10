@@ -519,6 +519,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// ECS/RDS → EC2: resolve subnet-backed launches against VPC network state.
 	ecsSvc.SetVPCResolver(ec2Svc)
 	rdsSvc.SetVPCResolver(ec2Svc)
+	elasticacheSvc.SetVPCResolver(ec2Svc)
 	// SNS: wire lifecycle/publish events for topology / UI.
 	snsSvc.InitBus(bus)
 	// SNS → SQS: wire enqueuer for Publish fan-out (and subscription DLQs).
@@ -709,39 +710,34 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	dockerServices := map[string]docker.ServiceConfig{}
 	dockerSetters := map[string]func(*docker.Client){} // name → SetDocker callback
 	// Lambda probes Docker independently (it needs the Runtime API server);
-	// we register its socket/network so the Supervisor starts a watcher.
-	dockerServices["lambda"] = docker.ServiceConfig{Name: "lambda", Socket: cfg.LambdaDockerSocket, Network: cfg.LambdaNetwork}
+	// we register its socket so the Supervisor starts a watcher.
+	dockerServices["lambda"] = docker.ServiceConfig{Name: "lambda", Socket: cfg.LambdaDockerSocket}
 	// Live is the default. Mock mode is not registered at all, so no probe runs
-	// and no rds network is created for containers that will never exist.
+	// for containers that will never exist.
 	if cfg.RDSMode == config.RDSModeLive {
-		dockerServices["rds"] = docker.ServiceConfig{Name: "rds", Socket: cfg.RDSDockerSocket, Network: cfg.RDSNetwork}
+		dockerServices["rds"] = docker.ServiceConfig{Name: "rds", Socket: cfg.RDSDockerSocket}
 		dockerSetters["rds"] = rdsSvc.SetDocker
 	}
-	dockerServices["elasticache"] = docker.ServiceConfig{Name: "elasticache", Socket: cfg.ElastiCacheDockerSocket, Network: cfg.ElastiCacheNetwork}
+	dockerServices["elasticache"] = docker.ServiceConfig{Name: "elasticache", Socket: cfg.ElastiCacheDockerSocket}
 	dockerSetters["elasticache"] = elasticacheSvc.SetDocker
-	dockerServices["msk"] = docker.ServiceConfig{Name: "msk", Socket: cfg.MSKDockerSocket, Network: cfg.MSKNetwork}
+	dockerServices["msk"] = docker.ServiceConfig{Name: "msk", Socket: cfg.MSKDockerSocket}
 	dockerSetters["msk"] = mskSvc.SetDocker
-	dockerServices["ecs"] = docker.ServiceConfig{Name: "ecs", Socket: cfg.ECSDockerSocket, Network: cfg.ECSNetwork}
+	dockerServices["ecs"] = docker.ServiceConfig{Name: "ecs", Socket: cfg.ECSDockerSocket}
 	dockerSetters["ecs"] = ecsSvc.SetDocker
-	// EC2 manages its own networks (one per VPC) — empty Network skips
-	// static network creation in the Supervisor probe.
-	dockerServices["ec2"] = docker.ServiceConfig{Name: "ec2", Socket: cfg.LambdaDockerSocket, Network: ""}
+	// EC2 additionally manages one network per VPC, created on demand rather
+	// than at probe time.
+	dockerServices["ec2"] = docker.ServiceConfig{Name: "ec2", Socket: cfg.LambdaDockerSocket}
 	dockerSetters["ec2"] = ec2Svc.SetDocker
 	if cfg.EKSMode == config.EKSModeLive && cfg.EKSDockerSocket != "" {
-		dockerServices["eks"] = docker.ServiceConfig{Name: "eks", Socket: cfg.EKSDockerSocket, Network: cfg.EKSNetwork}
+		dockerServices["eks"] = docker.ServiceConfig{Name: "eks", Socket: cfg.EKSDockerSocket}
 		dockerSetters["eks"] = eksSvc.SetDocker
 	}
 	// EFS live mode is the default, so this normally registers: it manages
 	// named volumes, and without the opt-in NFS data plane it starts no
-	// long-lived containers, so an empty Network skips static network creation
-	// in the Supervisor probe. A failed probe leaves the service metadata-only,
+	// long-lived containers. A failed probe leaves the service metadata-only,
 	// which is what mock mode is.
 	if cfg.EFSMode == config.EFSModeLive && cfg.EFSDockerSocket != "" {
-		efsNetwork := ""
-		if cfg.EFSNFSExport {
-			efsNetwork = cfg.EFSNetwork
-		}
-		dockerServices["efs"] = docker.ServiceConfig{Name: "efs", Socket: cfg.EFSDockerSocket, Network: efsNetwork}
+		dockerServices["efs"] = docker.ServiceConfig{Name: "efs", Socket: cfg.EFSDockerSocket}
 		dockerSetters["efs"] = efsSvc.SetDocker
 	}
 	var dockerStatusFn func() *docker.Status
@@ -763,7 +759,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 				}
 			}
 
-			results := dockerSup.Probe(context.Background(), configs)
+			results := dockerSup.Probe(context.Background(), configs,
+				[]string{cfg.Network, cfg.ControlNetwork()})
 
 			// Wire each successful service and reconcile containers/networks.
 			for _, res := range results {

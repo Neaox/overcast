@@ -3,8 +3,10 @@ package msk
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,18 +227,51 @@ func (h *Handler) getBootstrapBrokers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var bootstrapBrokerString string
-	if cluster.HostPort > 0 {
-		host := h.cfg.ExternalHostname()
-		bootstrapBrokerString = fmt.Sprintf("%s:%d", host, cluster.HostPort)
-	} else if !h.dockerReady.Load() {
-		bootstrapBrokerString = fmt.Sprintf("127.0.0.1:%d", h.cfg.MSKPortBase)
-	}
-
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"bootstrapBrokerString":    bootstrapBrokerString,
+		"bootstrapBrokerString":    h.bootstrapBrokerString(r.Context(), cluster),
 		"bootstrapBrokerStringTls": "",
 	})
+}
+
+// bootstrapBrokerString is the address this caller should dial for cluster.
+//
+// Both halves are per-caller, on the same rule every other data-plane endpoint
+// follows (docs/networking.md § Data-plane endpoints):
+//
+//   - A sibling container resolves the bootstrap hostname to the broker
+//     container through Docker's embedded resolver — the alias set
+//     clusterEndpointAliases registers — and dials 9092, as on AWS.
+//   - The host reaches the same container only through its published port
+//     binding, and is given a loopback address when the base carries no
+//     wildcard DNS, since *.localhost does not resolve on Windows.
+//
+// Before this was per-caller it returned ExternalHostname():hostPort to
+// everyone, which inside any container resolves to Overcast — a process that
+// serves no Kafka on that port.
+func (h *Handler) bootstrapBrokerString(ctx context.Context, cluster *Cluster) string {
+	if cluster == nil || cluster.HostPort == 0 {
+		if !h.dockerReady.Load() {
+			return net.JoinHostPort("127.0.0.1", strconv.Itoa(h.cfg.MSKPortBase))
+		}
+		return ""
+	}
+
+	base := serviceutil.ClientBaseURLFromOrigin(h.cfg, middleware.ClientEndpointFromContext(ctx))
+	host := h.cfg.ExternalHostname()
+	if u, err := url.Parse(base); err == nil {
+		if parsed := u.Hostname(); parsed != "" && net.ParseIP(parsed) == nil {
+			host = parsed
+		}
+	}
+	name := bootstrapHostname(clusterNameFromARN(cluster.ClusterArn), serviceutil.ARNRegion(cluster.ClusterArn), host)
+
+	if serviceutil.CallerIsSiblingContainer(middleware.ClientAddrFromContext(ctx)) {
+		return net.JoinHostPort(name, strconv.Itoa(kafkaPort))
+	}
+	if serviceutil.SupportsHostRouting("http://" + host) {
+		return net.JoinHostPort(name, strconv.Itoa(cluster.HostPort))
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(cluster.HostPort))
 }
 
 // ── createConfiguration ───────────────────────────────────────────────────────

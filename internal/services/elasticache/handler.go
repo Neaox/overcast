@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/lifecycle"
@@ -45,6 +45,10 @@ type Handler struct {
 	dockerReady atomic.Bool
 	puller      *docker.ImagePuller
 	gc          *docker.GC
+	// vpcResolver maps a cache's VPC onto its Docker network, so a cache placed
+	// in a VPC is reachable from the rest of it. nil when EC2 is not enabled,
+	// which puts every cache on the default plane.
+	vpcResolver VPCNetworkResolver
 	dockerWg    sync.WaitGroup // tracks in-flight container-start goroutines
 	typedOp     map[string]op.Operation
 	// bgCtx is cancelled by Service.Stop so async goroutines and scheduler
@@ -595,7 +599,14 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		}
 		c.DockerContainerID = existing.ID
 		c.HostPort = hostPort
-		h.connectToLambdaNetwork(ctx, existing.ID, h.clusterEndpointAliases(c))
+		// Re-attach: a container adopted from an earlier run predates the
+		// current alias set. Attaching is idempotent.
+		if err := h.attachToDataPlane(ctx, existing.ID,
+			h.vpcForSubnetGroup(ctx, c.CacheSubnetGroupName), h.clusterEndpointAliases(c)); err != nil {
+			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
+				"its endpoint name will not resolve for sibling containers",
+				zap.String("cluster", c.CacheClusterId), zap.Error(err))
+		}
 		h.setContainerEndpoint(ctx, c)
 		return nil
 	}
@@ -612,13 +623,6 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		return fmt.Errorf("pull image: %w", err)
 	}
 
-	// Ensure Docker network exists.
-	network := h.network()
-	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
-		h.log.Warn("ElastiCache: failed to create network (may already exist)",
-			zap.String("network", network), zap.Error(err))
-	}
-
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        image,
@@ -626,16 +630,12 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 			Labels:       docker.ManagedLabels(serviceName, c.CacheClusterId),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
-			NetworkMode: network,
+			NetworkMode: dataplane.Primary(h.cfg),
 			PortBindings: map[string][]docker.PortBinding{
 				containerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
 			},
 		},
-		NetworkingConfig: &docker.NetworkingConfig{
-			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {Aliases: h.clusterEndpointAliases(c)},
-			},
-		},
+		NetworkingConfig: dataplane.PrimaryEndpoints(h.cfg),
 	}
 
 	containerID, err := h.docker.CreateContainer(ctx, containerName, req)
@@ -650,6 +650,15 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		return fmt.Errorf("create container: %w", err)
 	}
 
+	// Join the data plane before starting, so the node answers to its endpoint
+	// names from the moment it accepts connections. Every name, on the plane
+	// every consumer shares — an ECS task included, which is what #872 was.
+	if err := h.attachToDataPlane(ctx, containerID, h.vpcForSubnetGroup(ctx, c.CacheSubnetGroupName), h.clusterEndpointAliases(c)); err != nil {
+		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+		return fmt.Errorf("ElastiCache %s: %w", c.CacheClusterId, err)
+	}
+
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
@@ -658,52 +667,52 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 
 	c.DockerContainerID = containerID
 	c.HostPort = hostPort
-	h.connectToLambdaNetwork(ctx, containerID, h.clusterEndpointAliases(c))
 	h.setContainerEndpoint(ctx, c)
 	return nil
 }
 
-// setContainerEndpoint updates the cluster's ConfigurationEndpoint to reflect
-// the actual container address: Docker network IP when running inside a
-// container, 127.0.0.1 + host-port when running natively.
-func (h *Handler) setContainerEndpoint(ctx context.Context, c *CacheCluster) {
-	port := enginePort(c.Engine)
-	network := h.network()
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		hostname, _ := os.Hostname()
-		if hostname != "" {
-			_ = h.docker.ConnectNetwork(ctx, network, hostname)
-		}
-		info, err := h.docker.InspectContainer(ctx, c.DockerContainerID)
-		if err == nil {
-			if ep, ok := info.NetworkSettings.Networks[network]; ok && ep.IPAddress != "" {
-				c.ConfigurationEndpoint = &ClusterEndpoint{Address: ep.IPAddress, Port: port}
-				return
-			}
-		}
+// attachToDataPlane joins a cache container to the plane its consumers are on,
+// advertising every name the API could hand out for it.
+//
+// A cache Overcast cannot place in a VPC — no subnet group, no subnets, or no
+// EC2 service to ask — lands on the default plane. That is the same plane
+// everything else without a VPC is on, so it stays reachable either way.
+func (h *Handler) attachToDataPlane(ctx context.Context, containerID, vpcID string, aliases []string) error {
+	// The nil check is explicit rather than left to PlaceInVPC: a typed nil in
+	// an interface is non-nil, and this field is a concrete interface type.
+	var resolver dataplane.VPCResolver
+	if h.vpcResolver != nil {
+		resolver = h.vpcResolver
 	}
-	c.ConfigurationEndpoint = &ClusterEndpoint{Address: "127.0.0.1", Port: c.HostPort}
+	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
+	if err != nil {
+		return err
+	}
+	placement.Aliases = aliases
+	return dataplane.Attach(ctx, h.docker, h.cfg, containerID, placement)
+}
+
+// setContainerEndpoint updates the cluster's ConfigurationEndpoint to reflect
+// the actual container address: the container's own address when Overcast runs
+// beside it, 127.0.0.1 + host-port when running natively.
+func (h *Handler) setContainerEndpoint(ctx context.Context, c *CacheCluster) {
+	c.ConfigurationEndpoint = h.endpointFor(ctx, c.DockerContainerID, c.Engine, c.HostPort)
 }
 
 // setReplicationGroupEndpoint updates a replication group's ConfigurationEndpoint
 // using the same Docker-vs-native logic as setContainerEndpoint.
 func (h *Handler) setReplicationGroupEndpoint(ctx context.Context, rg *ReplicationGroup) {
-	port := enginePort(rg.Engine)
-	network := h.network()
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		hostname, _ := os.Hostname()
-		if hostname != "" {
-			_ = h.docker.ConnectNetwork(ctx, network, hostname)
-		}
-		info, err := h.docker.InspectContainer(ctx, rg.DockerContainerID)
-		if err == nil {
-			if ep, ok := info.NetworkSettings.Networks[network]; ok && ep.IPAddress != "" {
-				rg.ConfigurationEndpoint = &ClusterEndpoint{Address: ep.IPAddress, Port: port}
-				return
-			}
-		}
+	rg.ConfigurationEndpoint = h.endpointFor(ctx, rg.DockerContainerID, rg.Engine, rg.HostPort)
+}
+
+// endpointFor is the address/port pair the two setters above share: the engine
+// port on the container's own address when Overcast is containerised beside
+// it, else the published port on loopback.
+func (h *Handler) endpointFor(ctx context.Context, containerID, engine string, hostPort int) *ClusterEndpoint {
+	if addr := dataplane.ContainerAddr(ctx, h.docker, h.cfg, containerID); addr != "" {
+		return &ClusterEndpoint{Address: addr, Port: enginePort(engine)}
 	}
-	rg.ConfigurationEndpoint = &ClusterEndpoint{Address: "127.0.0.1", Port: rg.HostPort}
+	return &ClusterEndpoint{Address: "127.0.0.1", Port: hostPort}
 }
 
 // cleanupCacheContainer releases the port reservation for a cache cluster.
@@ -810,7 +819,11 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		}
 		rg.DockerContainerID = existing.ID
 		rg.HostPort = hostPort
-		h.connectToLambdaNetwork(ctx, existing.ID, h.replicationGroupEndpointAliases(rg))
+		if err := h.attachToDataPlane(ctx, existing.ID, "", h.replicationGroupEndpointAliases(rg)); err != nil {
+			h.log.Warn("ElastiCache: reused container could not join the data plane — "+
+				"its endpoint name will not resolve for sibling containers",
+				zap.String("rg", rg.ReplicationGroupId), zap.Error(err))
+		}
 		h.setReplicationGroupEndpoint(ctx, rg)
 		return nil
 	}
@@ -825,12 +838,6 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		return fmt.Errorf("pull image: %w", err)
 	}
 
-	network := h.network()
-	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
-		h.log.Warn("ElastiCache: failed to create network (may already exist)",
-			zap.String("network", network), zap.Error(err))
-	}
-
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        image,
@@ -838,16 +845,12 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 			Labels:       docker.ManagedLabels(serviceName, resourceLabel),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
-			NetworkMode: network,
+			NetworkMode: dataplane.Primary(h.cfg),
 			PortBindings: map[string][]docker.PortBinding{
 				containerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
 			},
 		},
-		NetworkingConfig: &docker.NetworkingConfig{
-			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {Aliases: h.replicationGroupEndpointAliases(rg)},
-			},
-		},
+		NetworkingConfig: dataplane.PrimaryEndpoints(h.cfg),
 	}
 
 	containerID, err := h.docker.CreateContainer(ctx, containerName, req)
@@ -860,6 +863,16 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		return fmt.Errorf("create container: %w", err)
 	}
 
+	// A replication group record carries no CacheSubnetGroupName, so there is
+	// no VPC to derive and it lands on the default plane. That is reachable
+	// from everywhere today; it becomes a gap only when placement starts to
+	// restrict, so the field is a prerequisite of that phase, not this one.
+	if err := h.attachToDataPlane(ctx, containerID, "", h.replicationGroupEndpointAliases(rg)); err != nil {
+		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+		return fmt.Errorf("ElastiCache %s: %w", rg.ReplicationGroupId, err)
+	}
+
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
@@ -868,39 +881,86 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 
 	rg.DockerContainerID = containerID
 	rg.HostPort = hostPort
-	h.connectToLambdaNetwork(ctx, containerID, h.replicationGroupEndpointAliases(rg))
 	h.setReplicationGroupEndpoint(ctx, rg)
 	return nil
 }
 
+// Endpoint hostnames. A cache endpoint is a data-plane name: it points at the
+// engine container, not at Overcast. AWS's shapes are
+// `{cluster}.{hash}.cfg.{region}.cache.amazonaws.com` for a cluster and
+// `{group}.{hash}.ng.{region}.cache.amazonaws.com` for a replication group;
+// Overcast mints the same grammar with the account-specific hash dropped, on
+// each base it could hand a caller. See dataplane.Hostnames for why the whole
+// set is registered rather than the configured name alone.
+
+func clusterEndpointHostname(id, region, base string) string {
+	return fmt.Sprintf("%s.%s.cfg.%s", id, region, base)
+}
+
+func replicationGroupEndpointHostname(id, region, base string) string {
+	return fmt.Sprintf("%s.%s.ng.cfg.%s", id, region, base)
+}
+
 func (h *Handler) clusterEndpointAliases(c *CacheCluster) []string {
-	if c == nil {
+	if c == nil || c.CacheClusterId == "" {
 		return nil
 	}
-	var current string
-	if c.ConfigurationEndpoint != nil {
-		current = c.ConfigurationEndpoint.Address
-	}
-	var canonical string
-	if c.CacheClusterId != "" {
-		canonical = fmt.Sprintf("%s.%s.cfg.%s", c.CacheClusterId, h.region(), h.externalHostname())
-	}
-	return docker.EndpointAliases(current, canonical)
+	return dataplane.Hostnames(h.cfg, func(base string) string {
+		return clusterEndpointHostname(c.CacheClusterId, h.region(), base)
+	}, advertisedAddress(c.ConfigurationEndpoint))
 }
 
 func (h *Handler) replicationGroupEndpointAliases(rg *ReplicationGroup) []string {
-	if rg == nil {
+	if rg == nil || rg.ReplicationGroupId == "" {
 		return nil
 	}
-	var current string
-	if rg.ConfigurationEndpoint != nil {
-		current = rg.ConfigurationEndpoint.Address
+	return dataplane.Hostnames(h.cfg, func(base string) string {
+		return replicationGroupEndpointHostname(rg.ReplicationGroupId, h.region(), base)
+	}, advertisedAddress(rg.ConfigurationEndpoint))
+}
+
+// advertisedAddress is whatever a stored record already hands out, so a
+// container keeps answering to a name minted before the current configuration.
+func advertisedAddress(ep *ClusterEndpoint) string {
+	if ep == nil {
+		return ""
 	}
-	var canonical string
-	if rg.ReplicationGroupId != "" {
-		canonical = fmt.Sprintf("%s.%s.ng.cfg.%s", rg.ReplicationGroupId, h.region(), h.externalHostname())
+	return ep.Address
+}
+
+// vpcForSubnetGroup returns the VPC a cache subnet group belongs to, or "" for
+// a cache that named no group or named one Overcast has no record of. Both
+// mean the default plane rather than an error: a cache with nowhere better to
+// be is still a working cache.
+//
+// A subnet group whose own VpcId was never populated is resolved through its
+// subnets, which is how RDS fills the same field in.
+func (h *Handler) vpcForSubnetGroup(ctx context.Context, name string) string {
+	if name == "" {
+		return ""
 	}
-	return docker.EndpointAliases(current, canonical)
+	sg, aerr := h.store.getCacheSubnetGroup(ctx, name)
+	if aerr != nil || sg == nil {
+		return ""
+	}
+	if sg.VpcId != "" {
+		return sg.VpcId
+	}
+	return h.vpcForSubnets(ctx, sg.SubnetIds)
+}
+
+// vpcForSubnets resolves the first subnet that names a VPC. A serverless cache
+// carries subnet IDs directly rather than through a group.
+func (h *Handler) vpcForSubnets(ctx context.Context, subnetIDs []string) string {
+	if h.vpcResolver == nil {
+		return ""
+	}
+	for _, id := range subnetIDs {
+		if vpcID := h.vpcResolver.VpcIDForSubnet(ctx, id); vpcID != "" {
+			return vpcID
+		}
+	}
+	return ""
 }
 
 func (h *Handler) region() string {
@@ -908,23 +968,6 @@ func (h *Handler) region() string {
 		return h.cfg.Region
 	}
 	return "us-east-1"
-}
-
-func (h *Handler) externalHostname() string {
-	if h.cfg != nil {
-		return h.cfg.ExternalHostname()
-	}
-	return "localhost"
-}
-
-func (h *Handler) connectToLambdaNetwork(ctx context.Context, containerID string, aliases []string) {
-	if h.cfg == nil || h.cfg.LambdaNetwork == "" || h.cfg.LambdaNetwork == h.network() || len(aliases) == 0 {
-		return
-	}
-	if err := h.docker.ConnectNetworkWithAliases(ctx, h.cfg.LambdaNetwork, containerID, aliases); err != nil {
-		h.log.Warn("ElastiCache: failed to attach container to Lambda network for DNS aliases",
-			zap.String("network", h.cfg.LambdaNetwork), zap.String("container", containerID), zap.Error(err))
-	}
 }
 
 // cleanupReplicationGroupContainer releases the port for a replication group container.
@@ -974,11 +1017,12 @@ func (h *Handler) portBase() int {
 	return 63790
 }
 
-func (h *Handler) network() string {
-	if h.cfg.ElastiCacheNetwork != "" {
-		return h.cfg.ElastiCacheNetwork
-	}
-	return "overcast_elasticache"
+// VPCNetworkResolver resolves cache placement against EC2 VPC network state.
+// Implemented by the EC2 service; nil when EC2 is not enabled.
+type VPCNetworkResolver interface {
+	dataplane.VPCResolver
+	// VpcIDForSubnet returns the VPC ID that owns the given subnet.
+	VpcIDForSubnet(ctx context.Context, subnetID string) string
 }
 
 // ── ModifyCacheCluster ───────────────────────────────────────────────────────

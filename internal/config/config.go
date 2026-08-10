@@ -316,15 +316,25 @@ type Config struct {
 	// levels. Default "info".
 	LogLevel string
 
+	// Network is the Docker network every container Overcast starts is
+	// reachable on by name when it belongs to no VPC — the *default data
+	// plane*, Overcast's stand-in for the account's default VPC. A resource
+	// that names a VPC joins that VPC's network instead; see
+	// docs/dev/container-networking.md for the two-plane model and
+	// ControlNetwork below for the other half of it.
+	//
+	// Corresponds to env var OVERCAST_NETWORK. Defaults to "overcast".
+	Network string
+
 	// LambdaDockerSocket is the path to the Docker daemon socket used to
 	// manage Lambda container siblings. Defaults to the platform Docker socket
 	// (/var/run/docker.sock on Linux/macOS, npipe:////./pipe/docker_engine on Windows).
+	//
+	// The per-service socket overrides below exist for unusual setups, but
+	// every one of them must address the *same* daemon: containers are attached
+	// to shared networks across service boundaries, which one daemon cannot do
+	// on another's behalf.
 	LambdaDockerSocket string
-
-	// LambdaNetwork is the Docker network name that Lambda containers are
-	// attached to. Must be reachable from the Overcast container.
-	// Defaults to "overcast_lambda".
-	LambdaNetwork string
 
 	// LambdaRuntimeAPIPort is the port on which Overcast exposes the Lambda
 	// Runtime API to containers. Each container connects back on this port.
@@ -445,10 +455,6 @@ type Config struct {
 	// ECS task containers. Defaults to the same value as LambdaDockerSocket.
 	ECSDockerSocket string
 
-	// ECSNetwork is the Docker network name that ECS task containers are
-	// attached to. Defaults to "overcast_ecs".
-	ECSNetwork string
-
 	// ECSKeepContainers controls whether Docker containers are removed when
 	// an ECS task stops. Set to true for post-mortem inspection.
 	// Corresponds to env var ECS_KEEP_CONTAINERS. Default false.
@@ -468,10 +474,6 @@ type Config struct {
 	// RDS database containers. Defaults to the same value as LambdaDockerSocket.
 	RDSDockerSocket string
 
-	// RDSNetwork is the Docker network name that RDS database containers are
-	// attached to. Defaults to "overcast_rds".
-	RDSNetwork string
-
 	// RDSPortBase is the starting host port for RDS database containers.
 	// Each DB instance gets a sequential port starting from this base.
 	// Defaults to 33060.
@@ -487,10 +489,6 @@ type Config struct {
 	// LambdaDockerSocket.
 	ElastiCacheDockerSocket string
 
-	// ElastiCacheNetwork is the Docker network name that ElastiCache containers
-	// are attached to. Defaults to "overcast_elasticache".
-	ElastiCacheNetwork string
-
 	// ElastiCachePortBase is the starting host port for ElastiCache containers.
 	// Each cache cluster gets a sequential port starting from this base.
 	// Defaults to 63790.
@@ -504,9 +502,6 @@ type Config struct {
 	// MSKDockerSocket is the path to the Docker daemon socket for MSK Redpanda containers.
 	MSKDockerSocket string
 
-	// MSKNetwork is the Docker network name for MSK containers.
-	MSKNetwork string
-
 	// MSKPortBase is the starting host port for MSK containers.
 	MSKPortBase int
 
@@ -517,10 +512,6 @@ type Config struct {
 	// EKS live-mode control-plane containers. Defaults to the same value as
 	// LambdaDockerSocket.
 	EKSDockerSocket string
-
-	// EKSNetwork is the Docker network name that EKS live-mode containers are
-	// attached to. Defaults to "overcast_eks".
-	EKSNetwork string
 
 	// EFSDockerSocket is the path to the Docker daemon socket used to manage
 	// EFS live-mode volumes. Defaults to the same value as LambdaDockerSocket.
@@ -541,12 +532,6 @@ type Config struct {
 	// EFSNFSImage is the NFS-Ganesha image used for mount-target exports,
 	// pinned by digest. Override to run a different build.
 	EFSNFSImage string
-
-	// EFSNetwork is the Docker network mount-target export containers are
-	// attached to, so a containerized Overcast and sibling NFS clients can
-	// reach them without going through a published host port. Defaults to
-	// "overcast_efs"; unused unless EFSNFSExport is on.
-	EFSNetwork string
 
 	// EC2VPCNetworkStrategy selects the policy used to map stored VPCs onto
 	// Docker networks. Docker bridges share one host address space, so two
@@ -767,6 +752,24 @@ var WildcardDNSDomains = []string{
 	"localhost.overcast.sh",
 	"localhost.localstack.cloud",
 	"localhost.floci.io",
+}
+
+// ControlNetwork returns the Docker network that carries the channel between
+// Overcast and every container it starts: the Lambda Runtime API, and the
+// AWS_ENDPOINT_URL calls function and task code makes back into the emulator.
+//
+// It is deliberately *not* the data plane. On AWS the Runtime API is inside the
+// execution sandbox — reachable whatever VPC a function joins, because it is
+// the mechanism by which the function runs at all — and the emulator's own API
+// stands in for a VPC endpoint per service. Both must survive VPC placement;
+// reaching a database must not. Keeping them on separate networks is what lets
+// a VPC restrict the second without severing the first (which would strand
+// every invocation at INIT).
+//
+// Derived from Network rather than separately configurable: one name to set,
+// no way to configure half a pair.
+func (c *Config) ControlNetwork() string {
+	return c.Network + "_control"
 }
 
 // ExternalHostname returns the hostname that should appear in client-facing
@@ -1286,9 +1289,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: OVERCAST_SHUTDOWN_TIMEOUT %q is not a valid duration", timeoutStr)
 	}
 
+	// The default data plane. Every container Overcast starts is reachable by
+	// name here unless it belongs to a VPC, in which case it is reachable on
+	// that VPC's network instead. ControlNetwork() derives the other plane.
+	cfg.Network = envOr("OVERCAST_NETWORK", "overcast")
+
 	// Lambda container runtime
 	cfg.LambdaDockerSocket = envOr("LAMBDA_DOCKER_SOCKET", defaultDockerSocket)
-	cfg.LambdaNetwork = envOr("LAMBDA_NETWORK", "overcast_lambda")
 	cfg.LambdaRuntimeAPIPort = envInt("LAMBDA_RUNTIME_API_PORT", 9001)
 	// For the three derivable limits, 0 is a sentinel meaning "unset — derive
 	// from the Docker host when the Lambda runtime initialises" (see
@@ -1342,7 +1349,6 @@ func Load() (*Config, error) {
 
 	// ECS container runtime — defaults fall back to Lambda socket
 	cfg.ECSDockerSocket = envOr("ECS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
-	cfg.ECSNetwork = envOr("ECS_NETWORK", "overcast_ecs")
 	cfg.ECSKeepContainers = envBool("ECS_KEEP_CONTAINERS", false)
 
 	// ECR registry — see the field's comment for why the default is pinned.
@@ -1350,32 +1356,27 @@ func Load() (*Config, error) {
 
 	// RDS container runtime — defaults fall back to Lambda socket
 	cfg.RDSDockerSocket = envOr("RDS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
-	cfg.RDSNetwork = envOr("RDS_NETWORK", "overcast_rds")
 	cfg.RDSPortBase = envInt("RDS_PORT_BASE", 33060)
 	cfg.RDSKeepContainers = envBool("RDS_KEEP_CONTAINERS", false)
 
 	// ElastiCache container runtime — defaults fall back to Lambda socket
 	cfg.ElastiCacheDockerSocket = envOr("ELASTICACHE_DOCKER_SOCKET", cfg.LambdaDockerSocket)
-	cfg.ElastiCacheNetwork = envOr("ELASTICACHE_NETWORK", "overcast_elasticache")
 	cfg.ElastiCachePortBase = envInt("ELASTICACHE_PORT_BASE", 63790)
 	cfg.ElastiCacheKeepContainers = envBool("ELASTICACHE_KEEP_CONTAINERS", false)
 
 	// MSK container runtime — defaults fall back to Lambda socket
 	cfg.MSKDockerSocket = envOr("MSK_DOCKER_SOCKET", cfg.LambdaDockerSocket)
-	cfg.MSKNetwork = envOr("MSK_NETWORK", "overcast_msk")
 	cfg.MSKPortBase = envInt("MSK_PORT_BASE", 49092)
 	cfg.MSKKeepContainers = envBool("MSK_KEEP_CONTAINERS", false)
 
 	// EKS live-mode container runtime — defaults fall back to Lambda socket
 	cfg.EKSDockerSocket = envOr("EKS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
-	cfg.EKSNetwork = envOr("EKS_NETWORK", "overcast_eks")
 
 	// EFS live-mode volume runtime — defaults fall back to Lambda socket
 	cfg.EFSDockerSocket = envOr("EFS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
 	cfg.EFSNFSExport = envBool("OVERCAST_EFS_NFS", false)
 	cfg.EFSNFSPortBase = envInt("EFS_NFS_PORT_BASE", 22049)
 	cfg.EFSNFSImage = envOr("EFS_NFS_IMAGE", DefaultEFSNFSImage)
-	cfg.EFSNetwork = envOr("EFS_NETWORK", "overcast_efs")
 
 	// EC2 VPC network strategy — unknown values fall back to "shared" at
 	// service construction with a logged warning. "netns" is explicitly

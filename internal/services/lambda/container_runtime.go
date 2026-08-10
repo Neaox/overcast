@@ -37,6 +37,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/containerendpoint"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/logging"
@@ -52,7 +53,7 @@ type ContainerRuntime struct {
 	gc               *docker.GC // async container cleanup with retries
 	runtimeAPI       *RuntimeAPIServer
 	logger           *zap.Logger
-	network          string                               // Docker network name
+	network          string                               // control plane — containers are created here, then attached to a data plane
 	overcastEndpoint string                               // http://host:port — AWS_ENDPOINT_URL for containers
 	endpoint         *containerendpoint.Mapper            // rewrites resource URLs and /etc/hosts for sibling containers
 	pullOnce         sync.Map                             // image name → *sync.Once — ensures each image is pulled only once
@@ -164,40 +165,44 @@ func (cr *ContainerRuntime) SetRemoteLayerFetcher(fetcher *RemoteLayerFetcher) {
 	cr.remoteFetcher = fetcher
 }
 
-// connectVPCNetworks connects a running container to the VPC's Docker network
-// if the function has a VpcConfig. This is called after the container starts
-// on the default Lambda network, giving it connectivity to both the Runtime API
-// and the VPC resources.
-func (cr *ContainerRuntime) connectVPCNetworks(ctx context.Context, containerID string, fn *Function) error {
-	if fn.VpcConfig == nil || fn.VpcConfig.VpcId == "" {
-		return nil
+// connectDataPlane attaches a container to the data plane it belongs on: its
+// VPC's Docker network when the function has a VpcConfig, the default plane
+// otherwise. The container was created on the control plane, which carries the
+// Runtime API and the emulator endpoint and is never withheld — see
+// internal/dataplane.
+//
+// A function is compute, so it registers no aliases: nothing resolves a Lambda
+// container by name.
+func (cr *ContainerRuntime) connectDataPlane(ctx context.Context, containerID string, fn *Function) error {
+	var placement dataplane.Placement
+
+	if fn.VpcConfig != nil && fn.VpcConfig.VpcId != "" {
+		rp := cr.vpcResolver.Load()
+		if rp == nil {
+			// No resolver wired: the function keeps the default plane rather
+			// than failing, which is what it had before EC2 was consulted.
+			return dataplane.Attach(ctx, cr.docker, cr.cfg, containerID, placement)
+		}
+		resolver := *rp
+		status := resolver.VPCNetworkStatus(ctx, fn.VpcConfig.VpcId)
+		switch status {
+		case "", "ok", "shared", "remapped":
+			// launchable
+		default:
+			return fmt.Errorf("lambda VPC %s is not launchable (network status=%s)", fn.VpcConfig.VpcId, status)
+		}
+		netID := resolver.DockerNetworkForVpc(ctx, fn.VpcConfig.VpcId)
+		if netID == "" {
+			return fmt.Errorf("lambda VPC %s has no Docker network", fn.VpcConfig.VpcId)
+		}
+		placement.VPCNetwork = netID
+		cr.logger.Info("placing Lambda container on its VPC network",
+			zap.String("function", fn.Name),
+			zap.String("vpc", fn.VpcConfig.VpcId),
+			zap.String("network", netID))
 	}
-	rp := cr.vpcResolver.Load()
-	if rp == nil {
-		return nil
-	}
-	resolver := *rp
-	status := resolver.VPCNetworkStatus(ctx, fn.VpcConfig.VpcId)
-	switch status {
-	case "", "ok", "shared", "remapped":
-		// launchable
-	case "conflict", "unbacked":
-		return fmt.Errorf("lambda VPC %s is not launchable (network status=%s)", fn.VpcConfig.VpcId, status)
-	default:
-		return fmt.Errorf("lambda VPC %s is not launchable (network status=%s)", fn.VpcConfig.VpcId, status)
-	}
-	netID := resolver.DockerNetworkForVpc(ctx, fn.VpcConfig.VpcId)
-	if netID == "" {
-		return fmt.Errorf("lambda VPC %s has no Docker network", fn.VpcConfig.VpcId)
-	}
-	if err := cr.docker.ConnectNetwork(ctx, netID, containerID); err != nil {
-		return fmt.Errorf("connect Lambda container to VPC network %s: %w", netID, err)
-	}
-	cr.logger.Info("connected Lambda container to VPC network",
-		zap.String("function", fn.Name),
-		zap.String("vpc", fn.VpcConfig.VpcId),
-		zap.String("network", netID))
-	return nil
+
+	return dataplane.Attach(ctx, cr.docker, cr.cfg, containerID, placement)
 }
 
 // NewContainerRuntime creates a ContainerRuntime.
@@ -216,9 +221,9 @@ func NewContainerRuntime(
 ) *ContainerRuntime {
 	// Derive the Overcast emulator endpoint from the Runtime API address.
 	// The Runtime API host is the IP that Lambda containers can route to on
-	// the overcast_lambda Docker network — the same IP serves the main HTTP
-	// API on cfg.Port. Setting AWS_ENDPOINT_URL lets function code call S3,
-	// SQS, DynamoDB, etc. back into Overcast without any SDK configuration.
+	// the control plane — the same IP serves the main HTTP API on cfg.Port.
+	// Setting AWS_ENDPOINT_URL lets function code call S3, SQS, DynamoDB, etc.
+	// back into Overcast without any SDK configuration.
 	runtimeHost, _, _ := net.SplitHostPort(runtimeAPI.Addr())
 	// BaseURL rather than a hand-built string: the scheme must follow the
 	// listener (https under OVERCAST_TLS), which only config knows.
@@ -237,7 +242,7 @@ func NewContainerRuntime(
 		gc:               gc,
 		runtimeAPI:       runtimeAPI,
 		logger:           logger,
-		network:          cfg.LambdaNetwork,
+		network:          dataplane.Primary(cfg),
 		overcastEndpoint: overcastEndpoint,
 		// The Runtime API address is already an address Lambda containers can
 		// route to, so it is used directly rather than re-resolved. The mapper
@@ -716,8 +721,8 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		initStartedAt = cr.clk.Now()
 	}
 
-	// Connect to VPC Docker network if the function has a VpcConfig.
-	if err := cr.connectVPCNetworks(ctx, id, fn); err != nil {
+	// Join the data plane — the function's VPC network, or the default one.
+	if err := cr.connectDataPlane(ctx, id, fn); err != nil {
 		cleanup()
 		return nil, err
 	}

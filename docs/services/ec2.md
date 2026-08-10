@@ -117,7 +117,7 @@ but several aspects differ materially from real AWS networking:
 ### Lambda VPC integration
 
 - **Lambda containers are connected to the VPC's Docker network** (in addition to the
-  `overcast_lambda` network) when a function has a `VpcConfig`. This provides real
+  control plane) when a function has a `VpcConfig`. This provides real
   connectivity between Lambda and other containers on the same VPC network (e.g. RDS,
   ECS tasks). However, subnet-level and security-group-level isolation is not enforced —
   a Lambda connected to one subnet can reach resources in any other subnet within the same
