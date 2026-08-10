@@ -153,6 +153,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [lambda] a log stream is named with the 32 hex characters AWS uses for the execution environment GUID (`2026/08/10/[$LATEST]312c2d81e2e64af58dbe557754f9aa13`) rather than 26, which failed a caller matching stream names against AWS's shape
 
+- [lambda] an invoke that asks for a log tail (`X-Amz-Log-Type: Tail`) carries the function's own output, not only the START / END / REPORT lines. A warm invocation arriving while the log reader was still working through the previous one's output was reported as a function that had printed nothing, and answered with a tail missing its `console.log`
+
 - [scheduler] every EventBridge Scheduler operation is served at AWS's own path, so an unmodified SDK, CDK construct or `aws scheduler …` call reaches it instead of answering 501
 
 - **BREAKING** [scheduler] `CreateSchedule` and `UpdateSchedule` validate the schedule name, the schedule expression, `FlexibleTimeWindow.Mode` and `State`, answering `ValidationException` where a schedule that could never fire used to be stored
