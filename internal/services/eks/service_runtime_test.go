@@ -260,13 +260,18 @@ func TestStopReconcilesManagedRuntimeWhenCachedContainerIDIsStale(t *testing.T) 
 
 func TestLiveModeCreateClusterStartsK3sContainer(t *testing.T) {
 	var mu sync.Mutex
-	creates, starts := 0, 0
+	pulls, creates, starts := 0, 0, 0
+	var pulled string
 	var createPayload map[string]any
 
 	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/images/create"):
+			pulls++
+			pulled = r.URL.Query().Get("fromImage") + ":" + r.URL.Query().Get("tag")
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/containers/create"):
 			if err := json.NewDecoder(r.Body).Decode(&createPayload); err != nil {
 				t.Fatalf("decode create request payload: %v", err)
@@ -321,9 +326,12 @@ func TestLiveModeCreateClusterStartsK3sContainer(t *testing.T) {
 	}
 
 	mu.Lock()
-	gotCreates, gotStarts := creates, starts
+	gotPulls, gotPulled, gotCreates, gotStarts := pulls, pulled, creates, starts
 	mu.Unlock()
 
+	if gotPulls != 1 || gotPulled != "rancher/k3s:v1.31.3-k3s1" {
+		t.Fatalf("expected the k3s image pulled once before create, got %d pull(s) of %q", gotPulls, gotPulled)
+	}
 	if gotCreates != 1 {
 		t.Fatalf("expected 1 docker create call, got %d", gotCreates)
 	}
@@ -357,6 +365,8 @@ func TestLiveModeCreateClusterReusesStoppedManagedContainerOnConflict(t *testing
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/images/create"):
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/containers/create"):
 			creates++
 			w.WriteHeader(http.StatusConflict)
@@ -465,6 +475,8 @@ func TestLiveModeClusterTransitionsToACTIVE(t *testing.T) {
 
 	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/images/create"):
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/containers/create"):
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"Id": "k3s-ready-ctr"}) //nolint:errcheck

@@ -9,7 +9,7 @@ package containerendpoint
 // containers dial *and* the local addresses that has to be listening on for the
 // dial to arrive. The Lambda Runtime API is the case in point — nothing off this
 // machine has any business reaching it, but Lambda containers connect back to it
-// over LAMBDA_NETWORK, so loopback alone would strand every invocation.
+// over the control plane, so loopback alone would strand every invocation.
 //
 // The two are resolved together, in one function, because a bind set derived
 // separately from the address containers were handed is a silent misconfiguration
