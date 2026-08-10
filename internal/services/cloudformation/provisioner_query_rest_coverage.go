@@ -1357,7 +1357,14 @@ func (h *mskClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 		body["brokerNodeGroupInfo"] = v
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "Kafka.CreateCluster", body)
+	// MSK is restJson1 throughout: these four calls used an X-Amz-Target
+	// namespace ("Kafka.") that no client sends and that Overcast no longer
+	// registers — see internal/services/msk.
+	jsonBytes, err := json.Marshal(body)
+	if err != nil {
+		return "", nil, fmt.Errorf("MSK: marshal request: %w", err)
+	}
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/v1/clusters", "application/json", jsonBytes)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateCluster: %w", err)
 	}
@@ -1378,8 +1385,9 @@ func (h *mskClusterHandler) Create(ctx context.Context, router http.Handler, cfg
 }
 
 func (h *mskClusterHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{"clusterArn": physicalID}
-	_, err := internalJSON(ctx, router, rCtx.Region, "Kafka.DeleteCluster", body)
+	// The ARN is a non-greedy httpLabel, so it goes into one escaped path
+	// segment exactly as an SDK would send it.
+	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/clusters/"+url.PathEscape(physicalID), "", nil)
 	if err != nil {
 		return fmt.Errorf("DeleteCluster: %w", err)
 	}
@@ -1410,7 +1418,11 @@ func (h *mskConfigurationHandler) Create(ctx context.Context, router http.Handle
 		body["serverProperties"] = v
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "Kafka.CreateConfiguration", body)
+	jsonBytes, err := json.Marshal(body)
+	if err != nil {
+		return "", nil, fmt.Errorf("MSK: marshal request: %w", err)
+	}
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost, "/v1/configurations", "application/json", jsonBytes)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateConfiguration: %w", err)
 	}
@@ -1431,8 +1443,7 @@ func (h *mskConfigurationHandler) Create(ctx context.Context, router http.Handle
 }
 
 func (h *mskConfigurationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{"arn": physicalID}
-	_, err := internalJSON(ctx, router, rCtx.Region, "Kafka.DeleteConfiguration", body)
+	_, err := internalRequest(ctx, router, rCtx.Region, http.MethodDelete, "/v1/configurations/"+url.PathEscape(physicalID), "", nil)
 	if err != nil {
 		return fmt.Errorf("DeleteConfiguration: %w", err)
 	}

@@ -85,6 +85,15 @@ func detectService(r *http.Request, body ...[]byte) string {
 		// as s3, because step 2 runs ahead of the credential scope.
 		strings.HasPrefix(r.URL.Path, "/v1/dataplane-"):
 		return "appsync"
+	case strings.HasPrefix(r.URL.Path, "/api/v2/clusters"):
+		// MSK's v2 cluster API. This is the only entry whose root segment
+		// ("/api") no other implemented service uses, and the only reason it
+		// needs claiming: without it an unsigned request to /api/v2/clusters
+		// falls through to S3 and is read as the object v2/clusters in a
+		// bucket named api. kafka is the only modeled service binding anything
+		// under /api/v2, so there is nothing for the credential scope to
+		// disambiguate.
+		return "msk"
 	case strings.HasPrefix(r.URL.Path, "/v2/email/"):
 		return "ses"
 	case strings.HasPrefix(r.URL.Path, "/2020-05-31/"):

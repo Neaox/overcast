@@ -72,12 +72,6 @@ var unservedBindings = map[string]string{
 	// under /_opensearch; they now answer on the /2021-01-01 bindings the
 	// model gives them, so the ledger must not still claim the fault.
 
-	// #859 — the v2 API is served at /v2/clusters where the model binds
-	// /api/v2/clusters. The v1 surface is reachable: it is claimed by
-	// /v1/clusters/* wildcards whose handlers parse the tail themselves, which
-	// is why only the v2 pair is listed here.
-	"msk/CreateClusterV2":   "#859",
-	"msk/DescribeClusterV2": "#859",
 
 	// #860 is deliberately absent. AppSync's two evaluation operations were
 	// served under /v1/apis/{apiId}/… where the model binds them to the

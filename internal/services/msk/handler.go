@@ -20,14 +20,127 @@ import (
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
-// arnFromWildcard extracts the ARN from a chi wildcard URL param.
-// The wildcard may be URL-encoded, so we PathUnescape it.
-func arnFromWildcard(r *http.Request) (string, error) {
-	wild := chi.URLParam(r, "*")
-	if wild == "" {
+const (
+	// The two members AWS requires on a provisioned cluster and Overcast lets
+	// a caller omit. Both create paths default to the same values.
+	defaultKafkaVersion = "3.5.1"
+	defaultBrokerNodes  = 3
+
+	clusterTypeProvisioned = "PROVISIONED"
+	clusterTypeServerless  = "SERVERLESS"
+
+	// maxClustersPerPage is the MaxResults ceiling AWS documents for MSK's list
+	// operations. It comes from the API reference, not from the pinned model —
+	// this repo vendors no Smithy source to read a range trait out of. No
+	// default is documented, so the ceiling doubles as one.
+	maxClustersPerPage = 100
+)
+
+// errBadRequest builds MSK's 400. The kafka model defines no
+// ValidationException: BadRequestException is the only client-error shape its
+// operations declare for a malformed request.
+func errBadRequest(format string, args ...any) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "BadRequestException",
+		Message:    fmt.Sprintf(format, args...),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// arnFromPath extracts an ARN from a chi path parameter, percent-decoding it.
+//
+// AWS models every MSK ARN path member as a non-greedy httpLabel, which the
+// SDKs percent-encode whole — ':' as %3A and '/' as %2F — so the ARN arrives as
+// one path segment. smithy-go's httpbinding.EscapePath escapes the separator
+// for a non-greedy label, and botocore's percent_encode and the JS SDK's
+// extendedEncodeURIComponent do the same. chi matches against URL.RawPath when
+// the request carries one, so the parameter holds the encoded form and this
+// decodes it. A caller that sends literal slashes instead reaches the v1
+// subtree wildcards, where the decode is a no-op.
+func arnFromPath(r *http.Request, param string) (string, error) {
+	raw := chi.URLParam(r, param)
+	if raw == "" {
 		return "", fmt.Errorf("missing ARN in path")
 	}
-	return url.PathUnescape(wild)
+	return url.PathUnescape(raw)
+}
+
+// provisionedInput is the broker configuration of a provisioned cluster.
+// CreateCluster carries these members at the top level of its request and
+// CreateClusterV2 nests the same three under `provisioned`, so the defaulting
+// lives here rather than in each handler.
+type provisionedInput struct {
+	KafkaVersion        string              `json:"kafkaVersion"`
+	NumberOfBrokerNodes int                 `json:"numberOfBrokerNodes"`
+	BrokerNodeGroupInfo BrokerNodeGroupInfo `json:"brokerNodeGroupInfo"`
+}
+
+// applyTo writes the broker configuration onto a cluster record.
+func (p *provisionedInput) applyTo(c *Cluster) {
+	c.KafkaVersion = p.KafkaVersion
+	if c.KafkaVersion == "" {
+		c.KafkaVersion = defaultKafkaVersion
+	}
+	c.NumberOfBrokerNodes = serviceutil.DefaultInt(p.NumberOfBrokerNodes, defaultBrokerNodes)
+	c.BrokerNodeGroupInfo = p.BrokerNodeGroupInfo
+}
+
+// mskARN mints an MSK ARN in the request's region. resource is everything after
+// the account ID, e.g. "cluster/my-cluster/<uuid>".
+func (h *Handler) mskARN(ctx context.Context, resource string) string {
+	region := middleware.RegionFromContext(ctx, h.cfg.Region)
+	return fmt.Sprintf("arn:aws:kafka:%s:%s:%s", region, h.cfg.AccountID, resource)
+}
+
+// newCluster builds the record both create paths store — everything that does
+// not depend on whether the caller used the v1 or the v2 request shape.
+func (h *Handler) newCluster(ctx context.Context, name string, tags map[string]string) *Cluster {
+	id := uuid.NewString()
+	return &Cluster{
+		ClusterArn:     h.mskARN(ctx, "cluster/"+name+"/"+id),
+		ClusterName:    name,
+		State:          "CREATING",
+		CreationTime:   h.clk.Now(),
+		CurrentVersion: id,
+		Tags:           tags,
+	}
+}
+
+// startClusterAsync starts a cluster's Redpanda container in the background.
+// Without Docker there is nothing to start and the cluster stays in CREATING,
+// which is what a caller polling DescribeCluster sees on AWS while brokers are
+// still being provisioned.
+func (h *Handler) startClusterAsync(clusterARN string) {
+	if !h.dockerReady.Load() {
+		return
+	}
+	if h.puller != nil {
+		h.puller.Prewarm(redpandaImage)
+	}
+	h.dockerWg.Add(1)
+	go func() {
+		defer h.dockerWg.Done()
+		if err := h.startClusterContainer(clusterRegionCtx(clusterARN), clusterARN); err != nil {
+			h.log.Warn("failed to start Docker container for MSK cluster — cluster stays in CREATING state",
+				zap.String("cluster", clusterARN), zap.Error(err))
+		}
+	}()
+}
+
+// clusterTypeOf reports a stored cluster's type. CreateCluster (v1) creates
+// only provisioned clusters and does not record a type, so an unset value means
+// provisioned rather than unknown.
+func clusterTypeOf(c *Cluster) string {
+	if c.ClusterType == "" {
+		return clusterTypeProvisioned
+	}
+	return c.ClusterType
+}
+
+// matchesNameFilter applies MSK's clusterNameFilter, which AWS documents as a
+// prefix over the cluster name rather than an exact match.
+func matchesNameFilter(c *Cluster, filter string) bool {
+	return filter == "" || strings.HasPrefix(c.ClusterName, filter)
 }
 
 // ── clusterGetDispatch ────────────────────────────────────────────────────────
@@ -47,72 +160,31 @@ func (h *Handler) clusterGetDispatch(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ClusterName         string              `json:"clusterName"`
-		KafkaVersion        string              `json:"kafkaVersion"`
-		NumberOfBrokerNodes int                 `json:"numberOfBrokerNodes"`
-		BrokerNodeGroupInfo BrokerNodeGroupInfo `json:"brokerNodeGroupInfo"`
-		Tags                map[string]string   `json:"tags"`
+		ClusterName      string            `json:"clusterName"`
+		Tags             map[string]string `json:"tags"`
+		provisionedInput                   // promoted: v1 carries these at the top level
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 	if req.ClusterName == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "clusterName is required",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("clusterName is required"))
 		return
 	}
-	if req.KafkaVersion == "" {
-		req.KafkaVersion = "3.5.1"
-	}
-	if req.NumberOfBrokerNodes == 0 {
-		req.NumberOfBrokerNodes = 3
-	}
 
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
-	id := uuid.NewString()
-	clusterARN := fmt.Sprintf("arn:aws:kafka:%s:%s:cluster/%s/%s", region, h.cfg.AccountID, req.ClusterName, id)
-
-	cluster := &Cluster{
-		ClusterArn:          clusterARN,
-		ClusterName:         req.ClusterName,
-		State:               "CREATING",
-		CreationTime:        h.clk.Now(),
-		CurrentVersion:      id,
-		BrokerNodeGroupInfo: req.BrokerNodeGroupInfo,
-		NumberOfBrokerNodes: req.NumberOfBrokerNodes,
-		KafkaVersion:        req.KafkaVersion,
-		Tags:                req.Tags,
-	}
+	cluster := h.newCluster(r.Context(), req.ClusterName, req.Tags)
+	req.provisionedInput.applyTo(cluster)
 
 	if aerr := h.store.putCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	clusterARNCopy := clusterARN
-	if h.dockerReady.Load() {
-		if h.puller != nil {
-			h.puller.Prewarm(redpandaImage)
-		}
-		h.dockerWg.Add(1)
-		go func() {
-			defer h.dockerWg.Done()
-			bgCtx := clusterRegionCtx(clusterARNCopy)
-			if err := h.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-				h.log.Warn("failed to start Docker container for MSK cluster — cluster stays in CREATING state",
-					zap.String("cluster", clusterARNCopy), zap.Error(err))
-			}
-		}()
-	}
-	// Docker is not available — leave the cluster in CREATING.
+	h.startClusterAsync(cluster.ClusterArn)
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"clusterArn":  clusterARN,
-		"clusterName": req.ClusterName,
-		"state":       "CREATING",
+		"clusterArn":  cluster.ClusterArn,
+		"clusterName": cluster.ClusterName,
+		"state":       cluster.State,
 	})
 }
 
@@ -127,7 +199,7 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 	}
 	result := make([]*Cluster, 0, len(all))
 	for _, c := range all {
-		if nameFilter != "" && c.ClusterName != nameFilter {
+		if !matchesNameFilter(c, nameFilter) {
 			continue
 		}
 		result = append(result, c)
@@ -141,13 +213,9 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 // ── describeCluster ───────────────────────────────────────────────────────────
 
 func (h *Handler) describeCluster(w http.ResponseWriter, r *http.Request) {
-	clusterArn, err := arnFromWildcard(r)
+	clusterArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid clusterArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
 	cluster, aerr := h.store.getCluster(r.Context(), clusterArn)
@@ -163,13 +231,9 @@ func (h *Handler) describeCluster(w http.ResponseWriter, r *http.Request) {
 // ── deleteCluster ─────────────────────────────────────────────────────────────
 
 func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
-	clusterArn, err := arnFromWildcard(r)
+	clusterArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid clusterArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
 	cluster, aerr := h.mutateCluster(r.Context(), clusterArn, func(cluster *Cluster) *protocol.AWSError {
@@ -208,18 +272,13 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 // ── getBootstrapBrokers ───────────────────────────────────────────────────────
 
 func (h *Handler) getBootstrapBrokers(w http.ResponseWriter, r *http.Request) {
-	// For /v1/clusters/*/bootstrap-brokers, extract from path directly.
-	// The chi wildcard for route /*/bootstrap-brokers captures only the ARN part.
-	clusterArn, err := arnFromWildcard(r)
+	// clusterGetDispatch routed this off the /v1/clusters/* wildcard, so the
+	// parameter still holds the whole tail — the ARN and the sub-resource.
+	clusterArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid clusterArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
-	// Strip trailing /bootstrap-brokers if chi didn't strip it (depends on route matching)
 	clusterArn = strings.TrimSuffix(clusterArn, "/bootstrap-brokers")
 	cluster, aerr := h.store.getCluster(r.Context(), clusterArn)
 	if aerr != nil {
@@ -287,17 +346,12 @@ func (h *Handler) createConfiguration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "name is required",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("name is required"))
 		return
 	}
 
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 	id := uuid.NewString()
-	arn := fmt.Sprintf("arn:aws:kafka:%s:%s:configuration/%s/%s", region, h.cfg.AccountID, req.Name, id)
+	arn := h.mskARN(r.Context(), "configuration/"+req.Name+"/"+id)
 	now := h.clk.Now()
 
 	cfg := &ClusterConfiguration{
@@ -346,13 +400,9 @@ func (h *Handler) listConfigurations(w http.ResponseWriter, r *http.Request) {
 // ── describeConfiguration ─────────────────────────────────────────────────────
 
 func (h *Handler) describeConfiguration(w http.ResponseWriter, r *http.Request) {
-	configArn, err := arnFromWildcard(r)
+	configArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid configArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid configArn"))
 		return
 	}
 	cfg, aerr := h.store.getConfiguration(r.Context(), configArn)
@@ -366,13 +416,9 @@ func (h *Handler) describeConfiguration(w http.ResponseWriter, r *http.Request) 
 // ── deleteConfiguration ───────────────────────────────────────────────────────
 
 func (h *Handler) deleteConfiguration(w http.ResponseWriter, r *http.Request) {
-	configArn, err := arnFromWildcard(r)
+	configArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid configArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid configArn"))
 		return
 	}
 	if _, aerr := h.store.getConfiguration(r.Context(), configArn); aerr != nil {
@@ -408,13 +454,9 @@ func (h *Handler) listKafkaVersions(w http.ResponseWriter, r *http.Request) {
 // ── Tag operations ────────────────────────────────────────────────────────────
 
 func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
-	resourceArn, err := arnFromWildcard(r)
+	resourceArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid resourceArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid resourceArn"))
 		return
 	}
 	var req struct {
@@ -440,13 +482,9 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
-	resourceArn, err := arnFromWildcard(r)
+	resourceArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid resourceArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid resourceArn"))
 		return
 	}
 	tagStore := &serviceutil.NSStore{Store: h.store.store, NS: nsTags}
@@ -461,13 +499,9 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
-	resourceArn, err := arnFromWildcard(r)
+	resourceArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid resourceArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid resourceArn"))
 		return
 	}
 	tagKeysParam := r.URL.Query().Get("tagKeys")
@@ -497,97 +531,100 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ClusterName string            `json:"clusterName"`
 		Tags        map[string]string `json:"tags"`
-		Provisioned *struct {
-			KafkaVersion        string              `json:"kafkaVersion"`
-			NumberOfBrokerNodes int                 `json:"numberOfBrokerNodes"`
-			BrokerNodeGroupInfo BrokerNodeGroupInfo `json:"brokerNodeGroupInfo"`
-		} `json:"provisioned"`
-		Serverless *struct{} `json:"serverless"`
+		Provisioned *provisionedInput `json:"provisioned"`
+		Serverless  *struct{}         `json:"serverless"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 	if req.ClusterName == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "clusterName is required",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("clusterName is required"))
+		return
+	}
+	// CreateClusterV2 carries the cluster's shape in exactly one of two
+	// mutually exclusive members. Defaulting a request that names neither — as
+	// this handler did while nothing could call it — invents a serverless
+	// cluster the caller never asked for.
+	if (req.Provisioned == nil) == (req.Serverless == nil) {
+		protocol.WriteJSONError(w, r, errBadRequest("Exactly one of provisioned or serverless must be specified."))
 		return
 	}
 
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
-	id := uuid.NewString()
-	clusterARN := fmt.Sprintf("arn:aws:kafka:%s:%s:cluster/%s/%s", region, h.cfg.AccountID, req.ClusterName, id)
-
-	clusterType := "SERVERLESS"
-	initialState := "ACTIVE"
-	cluster := &Cluster{
-		ClusterArn:     clusterARN,
-		ClusterName:    req.ClusterName,
-		ClusterType:    clusterType,
-		State:          initialState,
-		CreationTime:   h.clk.Now(),
-		CurrentVersion: id,
-		Tags:           req.Tags,
-	}
-
+	cluster := h.newCluster(r.Context(), req.ClusterName, req.Tags)
 	if req.Provisioned != nil {
-		cluster.ClusterType = "PROVISIONED"
-		cluster.State = "CREATING"
-		cluster.KafkaVersion = req.Provisioned.KafkaVersion
-		cluster.NumberOfBrokerNodes = req.Provisioned.NumberOfBrokerNodes
-		cluster.BrokerNodeGroupInfo = req.Provisioned.BrokerNodeGroupInfo
-		if cluster.KafkaVersion == "" {
-			cluster.KafkaVersion = "3.5.1"
-		}
-		if cluster.NumberOfBrokerNodes == 0 {
-			cluster.NumberOfBrokerNodes = 3
-		}
+		cluster.ClusterType = clusterTypeProvisioned
+		req.Provisioned.applyTo(cluster)
+	} else {
+		// A serverless cluster has no brokers to provision, so there is nothing
+		// to wait for and it is ACTIVE straight away.
+		cluster.ClusterType = clusterTypeServerless
+		cluster.State = "ACTIVE"
 	}
 
 	if aerr := h.store.putCluster(r.Context(), cluster); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	if cluster.ClusterType == "PROVISIONED" {
-		clusterARNCopy := clusterARN
-		if h.dockerReady.Load() {
-			if h.puller != nil {
-				h.puller.Prewarm(redpandaImage)
-			}
-			h.dockerWg.Add(1)
-			go func() {
-				defer h.dockerWg.Done()
-				bgCtx := clusterRegionCtx(clusterARNCopy)
-				if err := h.startClusterContainer(bgCtx, clusterARNCopy); err != nil {
-					h.log.Warn("failed to start Docker container for MSK V2 cluster — cluster stays in CREATING state",
-						zap.String("cluster", clusterARNCopy), zap.Error(err))
-				}
-			}()
-		}
-		// Docker is not available — leave the cluster in CREATING.
+	if cluster.ClusterType == clusterTypeProvisioned {
+		h.startClusterAsync(cluster.ClusterArn)
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"clusterArn":  clusterARN,
-		"clusterName": req.ClusterName,
+		"clusterArn":  cluster.ClusterArn,
+		"clusterName": cluster.ClusterName,
 		"clusterType": cluster.ClusterType,
 		"state":       cluster.State,
 	})
 }
 
+// ── listClustersV2 ────────────────────────────────────────────────────────────
+
+func (h *Handler) listClustersV2(w http.ResponseWriter, r *http.Request) {
+	// Every ListClustersV2 input is an httpQuery member — AWS binds none of
+	// them to the body, and the request has none. Reading them from the body
+	// would be the second half of #793.
+	query := r.URL.Query()
+	nameFilter := query.Get("clusterNameFilter")
+	typeFilter := strings.ToUpper(query.Get("clusterTypeFilter"))
+
+	all, aerr := h.store.listClusters(r.Context())
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	matched := make([]map[string]any, 0, len(all))
+	for _, c := range all {
+		if !matchesNameFilter(c, nameFilter) {
+			continue
+		}
+		// clusterTypeFilter selects one type; "ALL" is its documented
+		// everything value and an absent filter means the same.
+		if typeFilter != "" && typeFilter != "ALL" && clusterTypeOf(c) != typeFilter {
+			continue
+		}
+		matched = append(matched, clusterV2View(c))
+	}
+
+	page, err := serviceutil.Paginate(matched, serviceutil.QueryInt(r, "maxResults", 0), query.Get("nextToken"),
+		serviceutil.PaginateOptions{DefaultLimit: maxClustersPerPage, MaxLimit: maxClustersPerPage})
+	if err != nil {
+		protocol.WriteJSONError(w, r, errBadRequest("The nextToken is not valid."))
+		return
+	}
+
+	body := map[string]any{"clusterInfoList": page.Items}
+	if page.NextToken != "" {
+		body["nextToken"] = page.NextToken
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, body)
+}
+
 // ── describeClusterV2 ─────────────────────────────────────────────────────────
 
 func (h *Handler) describeClusterV2(w http.ResponseWriter, r *http.Request) {
-	clusterArn, err := arnFromWildcard(r)
+	clusterArn, err := arnFromPath(r, "clusterArn")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid clusterArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
 	cluster, aerr := h.store.getCluster(r.Context(), clusterArn)
@@ -596,37 +633,40 @@ func (h *Handler) describeClusterV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clusterType := cluster.ClusterType
-	if clusterType == "" {
-		clusterType = "PROVISIONED"
-	}
+	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
+		"clusterInfo": clusterV2View(cluster),
+	})
+}
 
-	info := map[string]any{
-		"clusterArn":     cluster.ClusterArn,
-		"clusterName":    cluster.ClusterName,
+// clusterV2View renders a stored cluster in the v2 API's shape. DescribeClusterV2's
+// `clusterInfo` and every element of ListClustersV2's `clusterInfoList` are the
+// same modeled Cluster structure, so both are shaped here.
+func clusterV2View(c *Cluster) map[string]any {
+	clusterType := clusterTypeOf(c)
+	view := map[string]any{
+		"clusterArn":     c.ClusterArn,
+		"clusterName":    c.ClusterName,
 		"clusterType":    clusterType,
-		"state":          cluster.State,
-		"creationTime":   cluster.CreationTime,
-		"currentVersion": cluster.CurrentVersion,
-		"tags":           cluster.Tags,
+		"state":          c.State,
+		"creationTime":   c.CreationTime,
+		"currentVersion": c.CurrentVersion,
 	}
-
-	if clusterType == "PROVISIONED" {
-		info["provisioned"] = map[string]any{
-			"numberOfBrokerNodes": cluster.NumberOfBrokerNodes,
-			"brokerNodeGroupInfo": cluster.BrokerNodeGroupInfo,
+	if len(c.Tags) > 0 {
+		view["tags"] = c.Tags
+	}
+	if clusterType == clusterTypeProvisioned {
+		view["provisioned"] = map[string]any{
+			"numberOfBrokerNodes": c.NumberOfBrokerNodes,
+			"brokerNodeGroupInfo": c.BrokerNodeGroupInfo,
 			"currentBrokerSoftwareInfo": map[string]any{
-				"kafkaVersion": cluster.KafkaVersion,
+				"kafkaVersion": c.KafkaVersion,
 			},
 		}
 	} else {
-		info["serverless"] = map[string]any{}
+		view["serverless"] = map[string]any{}
 	}
-
-	docker.SetBackingHeaders(w, h.dockerReady.Load(), docker.ContainerHealthUnknown)
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"clusterInfo": info,
-	})
+	return view
 }
 
 // ── clusterPutDispatch ────────────────────────────────────────────────────────
@@ -644,13 +684,9 @@ func (h *Handler) clusterPutDispatch(w http.ResponseWriter, r *http.Request) {
 // ── updateClusterConfiguration ────────────────────────────────────────────────
 
 func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Request) {
-	clusterArn, err := arnFromWildcard(r)
+	clusterArn, err := arnFromPath(r, "*")
 	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ValidationException",
-			Message:    "invalid clusterArn",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("invalid clusterArn"))
 		return
 	}
 	clusterArn = strings.TrimSuffix(clusterArn, "/configuration")
@@ -671,11 +707,7 @@ func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Requ
 	}
 
 	if req.CurrentVersion != "" && req.CurrentVersion != cluster.CurrentVersion {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "BadRequestException",
-			Message:    "currentVersion does not match the cluster's current version",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, errBadRequest("currentVersion does not match the cluster's current version"))
 		return
 	}
 
@@ -686,9 +718,8 @@ func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	region := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 	opID := uuid.NewString()
-	opArn := fmt.Sprintf("arn:aws:kafka:%s:%s:cluster-operation/%s", region, h.cfg.AccountID, opID)
+	opArn := h.mskARN(r.Context(), "cluster-operation/"+opID)
 
 	if _, aerr := h.mutateCluster(r.Context(), cluster.ClusterArn, func(stored *Cluster) *protocol.AWSError {
 		stored.CurrentVersion = opID
