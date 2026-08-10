@@ -13,11 +13,54 @@ import type { S3LifecycleRule, S3LifecycleFilter } from "@/types"
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 
+/**
+ * Where a version sits in its key's history, as the sweeper counts it.
+ *
+ * `since` is when the version stopped being current, which AWS defines as the
+ * moment its successor was written — not when the version itself was written.
+ * `rank` is its position among the key's noncurrent versions, newest first,
+ * which is what NewerNoncurrentVersions counts. Delete markers occupy a rank
+ * like any other version.
+ */
+export interface NoncurrentPosition {
+  since: string
+  rank: number
+}
+
 /** The listing fields a rule can be evaluated against. */
 export interface LifecycleCandidate {
   key: string
   size: number
   lastModified: string
+  /**
+   * Set for a noncurrent version, which is on a different clock and answers to
+   * a different action. Absent for the current version of a key.
+   */
+  noncurrent?: NoncurrentPosition
+}
+
+/**
+ * Pairs each entry of a version listing with its position in its key's history.
+ *
+ * The listing arrives in S3's order — keys ascending, and within a key most
+ * recently stored first — so a key's group is contiguous and starts at its
+ * current version. That is the same grouping the sweeper walks, and the reason
+ * a noncurrent version's clock can be read off the row above it.
+ */
+export function withNoncurrentPositions<T extends { key: string; lastModified: string }>(
+  versions: T[],
+): { version: T; noncurrent?: NoncurrentPosition }[] {
+  let groupStart = 0
+  return versions.map((version, i) => {
+    if (i === 0 || versions[i - 1].key !== version.key) {
+      groupStart = i
+      return { version }
+    }
+    return {
+      version,
+      noncurrent: { since: versions[i - 1].lastModified, rank: i - groupStart - 1 },
+    }
+  })
 }
 
 export type ExpiryEstimate =
@@ -74,11 +117,33 @@ export function nextUtcMidnight(at: Date): Date {
 
 /** When the given rule would expire the object, if it expires it at all. */
 function ruleExpiry(rule: S3LifecycleRule, object: LifecycleCandidate): Date | undefined {
+  if (object.noncurrent) return noncurrentRuleExpiry(rule, object.noncurrent)
   if (rule.expirationDate) return new Date(rule.expirationDate)
   if (rule.expirationDays === undefined) return undefined
   const written = new Date(object.lastModified).getTime()
   if (Number.isNaN(written)) return undefined
   return nextUtcMidnight(new Date(written + rule.expirationDays * MS_PER_DAY))
+}
+
+/**
+ * When the rule's NoncurrentVersionExpiration would remove this version.
+ *
+ * A noncurrent version answers to that action alone: the plain Expiration
+ * action applies only to a key's current version, where in a versioned bucket
+ * it adds a delete marker rather than deleting anything.
+ */
+function noncurrentRuleExpiry(
+  rule: S3LifecycleRule,
+  position: NoncurrentPosition,
+): Date | undefined {
+  const action = rule.noncurrentVersionExpiration
+  if (!action) return undefined
+  // The newest `newerNoncurrentVersions` noncurrent versions are retained
+  // whatever their age, so nothing is scheduled for them.
+  if (position.rank < (action.newerNoncurrentVersions ?? 0)) return undefined
+  const since = new Date(position.since).getTime()
+  if (Number.isNaN(since)) return undefined
+  return nextUtcMidnight(new Date(since + action.noncurrentDays * MS_PER_DAY))
 }
 
 /**
@@ -94,14 +159,16 @@ export function estimateExpiry(
 
   for (const rule of rules) {
     if (rule.status !== "Enabled") continue
-    if (rule.expirationDays === undefined && !rule.expirationDate) continue
     if (!matchesIgnoringTags(rule, object)) continue
+    // Ask for the date before asking about tags: a rule that schedules nothing
+    // for this object — no expiry action, or a noncurrent version the rule
+    // retains by rank — is not an unknown, it is a no.
+    const date = ruleExpiry(rule, object)
+    if (!date) continue
     if (dependsOnTags(rule.filter)) {
       unknown ??= rule.id
       continue
     }
-    const date = ruleExpiry(rule, object)
-    if (!date) continue
     if (!best || date < best.date) best = { date, ruleId: rule.id }
   }
 
@@ -138,27 +205,55 @@ export function describeLifecycleFilter(rule: S3LifecycleRule): string {
   return parts.join(" · ")
 }
 
+/** "1 day" / "2 days" — the unit every lifecycle action is counted in. */
+function days(count: number): string {
+  return `${count} day${count === 1 ? "" : "s"}`
+}
+
+/**
+ * What a noncurrent action retains regardless of age, if anything. AWS counts
+ * how many newer noncurrent versions must exist before it applies, which is the
+ * same as saying that many are kept.
+ */
+function keeping(newerNoncurrentVersions?: number): string {
+  if (newerNoncurrentVersions === undefined) return ""
+  return `, keeping the ${newerNoncurrentVersions} newest`
+}
+
 /** Human descriptions of every action a rule takes. */
 export function describeLifecycleActions(rule: S3LifecycleRule): string[] {
   const actions: string[] = []
   if (rule.expirationDays !== undefined) {
-    actions.push(`Expire after ${rule.expirationDays} day${rule.expirationDays === 1 ? "" : "s"}`)
+    actions.push(`Expire after ${days(rule.expirationDays)}`)
   }
   if (rule.expirationDate) {
     actions.push(`Expire on ${rule.expirationDate.slice(0, 10)}`)
   }
+  if (rule.expiredObjectDeleteMarker) {
+    actions.push("Remove expired delete markers")
+  }
   for (const transition of rule.transitions) {
     const when =
       transition.days !== undefined
-        ? `after ${transition.days} day${transition.days === 1 ? "" : "s"}`
+        ? `after ${days(transition.days)}`
         : `on ${(transition.date ?? "").slice(0, 10)}`
     actions.push(`Mark ${transition.storageClass} ${when}`)
   }
-  if (rule.abortIncompleteMultipartUploadDays !== undefined) {
+  const noncurrentExpiration = rule.noncurrentVersionExpiration
+  if (noncurrentExpiration) {
     actions.push(
-      `Abort incomplete uploads after ${rule.abortIncompleteMultipartUploadDays} day` +
-        (rule.abortIncompleteMultipartUploadDays === 1 ? "" : "s"),
+      `Expire noncurrent versions after ${days(noncurrentExpiration.noncurrentDays)}` +
+        keeping(noncurrentExpiration.newerNoncurrentVersions),
     )
+  }
+  for (const transition of rule.noncurrentVersionTransitions) {
+    actions.push(
+      `Mark noncurrent versions ${transition.storageClass} after ${days(transition.noncurrentDays)}` +
+        keeping(transition.newerNoncurrentVersions),
+    )
+  }
+  if (rule.abortIncompleteMultipartUploadDays !== undefined) {
+    actions.push(`Abort incomplete uploads after ${days(rule.abortIncompleteMultipartUploadDays)}`)
   }
   return actions
 }

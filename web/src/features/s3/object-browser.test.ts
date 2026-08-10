@@ -273,4 +273,50 @@ describe("buildRows", () => {
     const rows = buildRows({ ...base, term: "b", versions: [version("a.txt"), version("b.txt")] })
     expect(names(rows)).toEqual(["b.txt"])
   })
+
+  it("marks the current version of a key as current and the rest as noncurrent", () => {
+    const rows = buildRows({
+      ...base,
+      versions: [
+        version("a.txt", { lastModified: "2026-02-01T00:00:00.000Z" }),
+        version("a.txt", { lastModified: "2026-01-01T00:00:00.000Z" }),
+      ],
+    })
+    const positions = rows.map((r) => (r.type === "version" ? r.noncurrent : undefined))
+    expect(positions[0]).toBeUndefined()
+    expect(positions[1]).toEqual({ since: "2026-02-01T00:00:00.000Z", rank: 0 })
+  })
+
+  it("dates a noncurrent version from its successor even when the term hides it", () => {
+    // The lifecycle clock starts when the successor was written. Reading the
+    // position after filtering would take it from whatever row happened to
+    // survive, and put every hint on the wrong day.
+    const rows = buildRows({
+      ...base,
+      term: "old",
+      versions: [
+        version("app-new.txt", { lastModified: "2026-02-01T00:00:00.000Z" }),
+        version("app-old.txt", { lastModified: "2026-01-01T00:00:00.000Z" }),
+      ],
+    })
+    expect(names(rows)).toEqual(["app-old.txt"])
+    expect(rows[0].type === "version" && rows[0].noncurrent).toBeUndefined()
+  })
+
+  it("keeps a version's history position when a sort reorders the rows", () => {
+    const rows = buildRows({
+      ...base,
+      sort: { column: "modified", direction: "asc" },
+      versions: [
+        version("a.txt", { versionId: "v2", lastModified: "2026-02-01T00:00:00.000Z" }),
+        version("a.txt", { versionId: "v1", lastModified: "2026-01-01T00:00:00.000Z" }),
+      ],
+    })
+    // Oldest first now, so the noncurrent one leads — carrying the position it
+    // had in S3's order.
+    expect(rows[0].type === "version" && rows[0].noncurrent).toEqual({
+      since: "2026-02-01T00:00:00.000Z",
+      rank: 0,
+    })
+  })
 })
