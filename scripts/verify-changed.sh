@@ -158,6 +158,24 @@ if [ -n "$record" ]; then
   exit 0
 fi
 
+# ---- CPU bound, native path ------------------------------------------------
+# scripts/go.sh caps only its Docker fallback, reasoning that a host toolchain
+# is the user's own to schedule. That left this gate unbounded as soon as a host
+# Go existed: three full-repo test-compiles default to -p=GOMAXPROCS=NumCPU and
+# saturate every core for the duration. Honour the same two knobs the Docker
+# entry points use, so a machine that wants the bound can ask for it.
+#
+# Unset means uncapped — the behaviour every other machine has today. This only
+# ever does something when someone opts in, so it changes nobody's gate by
+# default. "0" is the explicit no-cap spelling, matching lib/go-cpu-bound.sh.
+go_test_p=""
+if [ -n "${OVERCAST_GO_CPUS:-}" ] && [ "${OVERCAST_GO_CPUS}" != "0" ]; then
+  export GOMAXPROCS="$OVERCAST_GO_CPUS"
+fi
+if [ -n "${OVERCAST_GO_TEST_P:-}" ] && [ "${OVERCAST_GO_TEST_P}" != "0" ]; then
+  go_test_p="-p $OVERCAST_GO_TEST_P"
+fi
+
 base=$(git merge-base HEAD origin/main 2>/dev/null) || base=""
 if [ -z "$base" ]; then
   # No origin/main to compare against (fresh clone, detached CI checkout).
@@ -209,7 +227,8 @@ if [ -n "$go_changed" ]; then
     tags_failed=""
     for tagset in $_ci_build_tags; do
       if command -v go >/dev/null 2>&1; then
-        go test -run='^$' -count=1 -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
+        # shellcheck disable=SC2086 # $go_test_p is a whole flag pair or empty
+        go test -run='^$' -count=1 $go_test_p -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
       elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
         scripts/docker-go.sh test -run='^$' -count=1 -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
       else
@@ -239,7 +258,8 @@ if [ -n "$go_changed" ]; then
     # The tag pass above already compiled every package, and its tests, under
     # all three sets, so what is left here is whether they pass.
     if command -v go >/dev/null 2>&1; then
-      go test -count=1 -tags slim $test_pkgs || failed="$failed test-run"
+      # shellcheck disable=SC2086 # $go_test_p and $test_pkgs are word-split on purpose
+      go test -count=1 $go_test_p -tags slim $test_pkgs || failed="$failed test-run"
     elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
       scripts/docker-go.sh test -count=1 -tags slim $test_pkgs || failed="$failed test-run"
     else
