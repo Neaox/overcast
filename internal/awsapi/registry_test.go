@@ -548,6 +548,56 @@ func TestHasOperation_rejectsMisattributedServiceFamilies(t *testing.T) {
 	}
 }
 
+func TestOperations_carriesTheModeledBinding(t *testing.T) {
+	// Given: the SES v2 operation that #862 served on the wrong HTTP method.
+
+	// When: build tooling asks where AWS binds it.
+	got := Operations("ses", "CreateEmailIdentity")
+
+	// Then: the corpus answers with the method and URI, not merely "yes".
+	if len(got) != 1 {
+		t.Fatalf("Operations() returned %d bindings, want 1: %+v", len(got), got)
+	}
+	if got[0].HTTPMethod != "POST" || got[0].URI != "/v2/email/identities" {
+		t.Errorf("Operations() = %s %s, want POST /v2/email/identities", got[0].HTTPMethod, got[0].URI)
+	}
+}
+
+func TestOperations_returnsEveryIdentityBehindOneServiceKey(t *testing.T) {
+	// Given: an operation name both API Gateway v1 and v2 model, under the
+	// single "apigateway" key. A caller that assumed one answer would silently
+	// validate a v2 route against v1's binding.
+
+	// When: build tooling asks for its bindings.
+	got := Operations("apigateway", "DeleteDomainName")
+
+	// Then: both modeled identities come back so the caller can select.
+	if len(got) < 2 {
+		t.Fatalf("Operations() returned %d bindings, want both API Gateway identities: %+v", len(got), got)
+	}
+	identities := map[string]bool{}
+	for _, op := range got {
+		identities[op.Service] = true
+	}
+	for _, want := range []string{"api-gateway", "apigatewayv2"} {
+		if !identities[want] {
+			t.Errorf("Operations() omitted the %s identity; got %v", want, identities)
+		}
+	}
+}
+
+func TestOperations_unmodeledNameHasNoBinding(t *testing.T) {
+	// Given: an operation name AWS does not model.
+
+	// When: build tooling asks for its bindings.
+	got := Operations("secretsmanager", "NotAnAWSOperation")
+
+	// Then: the corpus reports none rather than inventing one.
+	if len(got) != 0 {
+		t.Errorf("Operations() = %+v, want no bindings", got)
+	}
+}
+
 func TestServiceAliases_referenceModeledIdentities(t *testing.T) {
 	// Given: the set of modeled service identities in the corpus.
 	identities := map[string]bool{}
