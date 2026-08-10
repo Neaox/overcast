@@ -132,8 +132,68 @@ _fp_go() {
 # in test code.
 _ci_build_tags='slim slim,nosqlite slim,dev'
 
+# The first set is compiled in full. The others only have to cover what can
+# actually differ under them, which is a minority of the module: see _tag_scope.
+_baseline_tags=${_ci_build_tags%% *}
+
+# _tag_scope <tagset> — packages that can compile differently under <tagset>
+# than under the baseline, and so must be compiled again. Prints one import
+# path per line; prints nothing if it cannot work the set out, and the caller
+# falls back to ./... rather than checking less than it used to.
+#
+# A package qualifies two ways. Either its own file set changes under the tag —
+# a //go:build dev or nosqlite file appearing or disappearing — or something in
+# its transitive dependency closure does. The second clause is the conservative
+# half and the one that keeps coverage identical to compiling everything: a
+# package with no constrained files of its own still fails to build when a
+# dependency's exported API changes with the tag. `go list -test` expands the
+# test binaries, so a test-only import of a changed package counts too.
+#
+# Derived on every run, never checked in. A hardcoded list would stop covering
+# the next package someone puts a //go:build dev file in, silently, which is
+# exactly the blind spot the matrix exists to close. `go list` parses build
+# constraints without compiling, so the whole derivation costs a few seconds.
+_manifest() {
+  go list -e -tags "$1" -f '{{.ImportPath}} {{.GoFiles}} {{.TestGoFiles}} {{.XTestGoFiles}}' ./... 2>/dev/null | LC_ALL=C sort
+}
+
+_tag_scope() {
+  _scope_dir=$(mktemp -d 2>/dev/null) || return 0
+  _manifest "$_baseline_tags" >"$_scope_dir/base" 2>/dev/null
+  _manifest "$1" >"$_scope_dir/tgt" 2>/dev/null
+  if [ ! -s "$_scope_dir/base" ] || [ ! -s "$_scope_dir/tgt" ]; then
+    rm -rf "$_scope_dir"
+    return 0
+  fi
+
+  # Manifest lines present in exactly one listing: the package's files changed,
+  # or the package exists under only one of the two tag sets.
+  LC_ALL=C sort "$_scope_dir/base" "$_scope_dir/tgt" | uniq -u | awk '{print $1}' | LC_ALL=C sort -u >"$_scope_dir/changed"
+
+  go list -e -test -tags "$1" -f '{{.ImportPath}}|{{range .Deps}}{{.}} {{end}}' ./... 2>/dev/null |
+    awk -F'|' -v changed="$_scope_dir/changed" '
+      BEGIN { while ((getline l < changed) > 0) c[l] = 1 }
+      {
+        path = $1
+        # go list -test decorates variants: "pkg.test", "pkg [pkg.test]" and
+        # "pkg_test [pkg.test]". Only the bracketed name is a real package.
+        if (match(path, / \[.*\]$/)) {
+          path = substr(path, RSTART + 2, RLENGTH - 3)
+        }
+        sub(/\.test$/, "", path)
+        hit = (path in c)
+        if (!hit) {
+          n = split($2, d, " ")
+          for (i = 1; i <= n && !hit; i++) if (d[i] in c) hit = 1
+        }
+        if (hit) print path
+      }' | LC_ALL=C sort -u
+
+  rm -rf "$_scope_dir"
+}
+
 _fp_tags() {
-  _fingerprint "go test -run _ -tags [$_ci_build_tags] ./..." \
+  _fingerprint "go test -run _ -tags [$_ci_build_tags] scoped-to-affected" \
     '*.go' go.mod go.sum ':(exclude)compat/suites/*'
 }
 
@@ -221,9 +281,20 @@ if [ -n "$go_changed" ]; then
   else
     tags_failed=""
     for tagset in $_ci_build_tags; do
+      # The baseline set is compiled whole; the rest are scoped to the packages
+      # that can differ under them. An empty scope means the derivation did not
+      # work — no `go`, no mktemp, an unreadable listing — so fall back to
+      # ./... . This gate is never allowed to check less than it did before.
+      tag_pkgs='./...'
+      if [ "$tagset" != "$_baseline_tags" ] && command -v go >/dev/null 2>&1; then
+        scoped=$(_tag_scope "$tagset")
+        if [ -n "$scoped" ]; then
+          tag_pkgs=$(printf '%s\n' "$scoped" | tr '\n' ' ')
+        fi
+      fi
       if command -v go >/dev/null 2>&1; then
-        # shellcheck disable=SC2086 # $go_test_p is a whole flag pair or empty
-        go test -run='^$' -count=1 $go_test_p -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
+        # shellcheck disable=SC2086 # $go_test_p and $tag_pkgs are word-split on purpose
+        go test -run='^$' -count=1 $go_test_p -tags "$tagset" $tag_pkgs || tags_failed="$tags_failed test-compile(-tags $tagset)"
       elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
         scripts/docker-go.sh test -run='^$' -count=1 -tags "$tagset" ./... || tags_failed="$tags_failed test-compile(-tags $tagset)"
       else
