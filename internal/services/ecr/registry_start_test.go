@@ -78,6 +78,50 @@ func TestCreateRegistryContainer_waitsOutAPredecessorsName(t *testing.T) {
 	}
 }
 
+func TestReapLegacyRegistry_neverTouchesSiblingsInAnyState(t *testing.T) {
+	// Given: a daemon holding a legacy singleton-named registry plus sibling
+	// registries under per-claim names in every lifecycle state — including
+	// "created", which is a registry mid-birth between its create and start.
+	var removed []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/overcast-ecr-registry/json"):
+			_, _ = w.Write([]byte(`{"Id":"legacy-1","Config":{"Labels":{
+				"overcast.managed":"true","overcast.service":"ecr","overcast.resource-id":"registry"}}}`))
+		case r.Method == http.MethodDelete:
+			removed = append(removed, strings.TrimPrefix(r.URL.Path, "/v1.45/containers/"))
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(r.URL.Path, "/stop"):
+			w.WriteHeader(http.StatusNoContent)
+		case strings.Contains(r.URL.Path, "/containers/json"):
+			// The sweep must not even ask — a list is the first step of the
+			// race that force-removed a sibling's newborn registry — but if it
+			// does, hand it every tempting target.
+			_, _ = w.Write([]byte(`[
+				{"Id":"sib-created","State":"created","Labels":{"overcast.managed":"true","overcast.service":"ecr","overcast.resource-id":"registry"}},
+				{"Id":"sib-exited","State":"exited","Labels":{"overcast.managed":"true","overcast.service":"ecr","overcast.resource-id":"registry"}},
+				{"Id":"sib-running","State":"running","Labels":{"overcast.managed":"true","overcast.service":"ecr","overcast.resource-id":"registry"}}
+			]`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	s := &Service{
+		cfg:    &config.Config{},
+		log:    serviceutil.NewServiceLogger(zap.NewNop(), serviceName),
+		docker: docker.NewClient(strings.Replace(srv.URL, "http://", "tcp://", 1), zap.NewNop()),
+	}
+
+	// When: startup's sweep runs.
+	s.reapLegacyRegistry(context.Background())
+
+	// Then: exactly the legacy container went; every sibling survived.
+	if len(removed) != 1 || removed[0] != "legacy-1" {
+		t.Errorf("removed = %v, want exactly the legacy singleton", removed)
+	}
+}
+
 func TestCreateRegistryContainer_nonConflictFailsImmediately(t *testing.T) {
 	// Given: a daemon that refuses the create for a reason waiting cannot fix.
 	var creates atomic.Int32

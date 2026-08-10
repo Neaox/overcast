@@ -1443,13 +1443,11 @@ func (s *Service) initRegistryDocker() {
 	}
 	s.registryMu.Unlock()
 
-	// Sweep registries that are certainly dead before claiming anything: a
-	// crashed predecessor's exited container, and any container still on the
-	// pre-suffix singleton name. A RUNNING registry under a unique name is
-	// deliberately not touched — it may belong to a live sibling process on
-	// the same daemon, and removing a stranger's registry kills their pushes
-	// mid-flight with connection resets.
-	s.reapDeadRegistries(context.Background())
+	// The only container startup may remove sight-unseen is one on the legacy
+	// singleton name. Registries under per-claim names are never swept, in any
+	// state: a "created" one is a sibling's being born, a running one is a
+	// sibling's serving pushes, and an exited one is AutoRemove's to reclaim.
+	s.reapLegacyRegistry(context.Background())
 
 	// A fixed, well-known port first — stable repositoryUri across restarts
 	// and a nameable address for daemon configuration — falling back to an
@@ -1599,27 +1597,24 @@ func ephemeralRegistryName() string {
 	return ecrRegistryNamePrefix + "-" + hex.EncodeToString(b)
 }
 
-// reapDeadRegistries removes registry containers that cannot be serving
-// anyone: exited ones, and any still on the pre-suffix singleton name (an
-// older Overcast's registry, which the names in use now would otherwise never
-// reclaim). Running registries under unique names are left alone — they may
-// be a live sibling's.
-func (s *Service) reapDeadRegistries(ctx context.Context) {
-	if legacy, err := s.docker.GetContainerByName(ctx, ecrRegistryNamePrefix); err == nil && legacy != nil {
-		if legacy.HasOvercastLabels(serviceName, ecrRegistryResource) {
-			_ = s.docker.StopContainer(ctx, legacy.ID, 3)
-			_ = s.docker.RemoveContainerForce(legacy.ID)
-		}
-	}
-	summaries, err := s.docker.ListContainers(ctx, serviceName)
-	if err != nil {
+// reapLegacyRegistry removes a registry still on the pre-suffix singleton
+// name — an older Overcast's, which the per-claim names would otherwise never
+// reclaim. Nothing else is swept, deliberately. A sibling's registry passes
+// through the "created" state between its create and start, and a sweep that
+// removed non-running registries force-removed exactly those newborns (list,
+// then force-remove, is not atomic — the container could be running by the
+// time the removal landed). Exited registries need no sweep: AutoRemove
+// already reclaims them the moment they stop.
+func (s *Service) reapLegacyRegistry(ctx context.Context) {
+	legacy, err := s.docker.GetContainerByName(ctx, ecrRegistryNamePrefix)
+	if err != nil || legacy == nil {
 		return
 	}
-	for _, c := range summaries {
-		if c.Labels[docker.LabelResourceID] == ecrRegistryResource && c.State != "running" {
-			_ = s.docker.RemoveContainerForce(c.ID)
-		}
+	if !legacy.HasOvercastLabels(serviceName, ecrRegistryResource) {
+		return
 	}
+	_ = s.docker.StopContainer(ctx, legacy.ID, 3)
+	_ = s.docker.RemoveContainerForce(legacy.ID)
 }
 
 // replaceRegistryHolder removes whatever Overcast-managed registry holds name.
