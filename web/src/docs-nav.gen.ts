@@ -2654,6 +2654,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Reclaiming a leaked registry container",
+        "id": "reclaiming-a-leaked-registry-container"
+      },
+      {
+        "depth": 2,
         "text": "Summary",
         "id": "summary"
       },
