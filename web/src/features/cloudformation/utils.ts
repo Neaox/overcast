@@ -186,12 +186,20 @@ type FailedResourceCandidate = Pick<
 /**
  * Finds the resource that actually failed.
  *
- * Overcast clears `StackStatusReason` once a rollback reaches its terminal
- * state, so a `ROLLBACK_COMPLETE` stack carries no stack-level reason at all.
- * The reason survives on the resource that failed and on the event timeline,
- * which is where the UI has to go to answer "why". Real CloudFormation is
- * believed to keep a summary reason there instead, naming the resources that
- * failed — see #823, which would make this fallback unnecessary.
+ * CloudFormation clears `StackStatusReason` once a rollback reaches its
+ * terminal state, so a `ROLLBACK_COMPLETE` stack carries no stack-level reason
+ * at all. The reason survives on the resource that failed and on the event
+ * timeline, which is where the UI has to go to answer "why".
+ *
+ * That is the real AWS behaviour, not a shortcut, and it has been checked
+ * twice — so it does not need checking a third time. AWS's own `describe-stacks`
+ * example for a stack in `UPDATE_ROLLBACK_COMPLETE` carries no
+ * `StackStatusReason` key at all, and the CLI prints the field as `null` rather
+ * than omitting it when it exists, so the absence is the answer. The summary a
+ * failed deploy is remembered for — "The following resource(s) failed to
+ * create: [X]" — belongs to the `DisableRollback` `CREATE_FAILED` path and to
+ * the events' `ResourceStatusReason`, never to a rolled-back stack.
+ * See #823.
  *
  * The most recently stamped failure wins, because the question the banner
  * answers is why *this* deployment failed. A stack deployed more than once can
