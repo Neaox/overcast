@@ -1568,7 +1568,7 @@ func clearEnv(t *testing.T) {
 		// running the suite has not exported an opt-out of their own.
 		"OVERCAST_EFS_MODE", "OVERCAST_RDS_MODE",
 		"OVERCAST_MCP_REPLAY_LIMIT", "OVERCAST_MCP_REMOTE_EXPOSURE", "OVERCAST_MCP_AUTH_TOKEN",
-		"EKS_DOCKER_SOCKET", "EKS_NETWORK",
+		"EKS_DOCKER_SOCKET", "OVERCAST_NETWORK",
 	}
 	for _, v := range awsEmuVars {
 		original := os.Getenv(v)

@@ -1020,28 +1020,31 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	LAMBDA_INIT_TIMEOUT_SECONDS       10
 //	LAMBDA_KEEP_CONTAINERS             false (true = keep stopped containers after expiry/delete)
 //	LAMBDA_FETCH_REMOTE_LAYERS         false (true = download missing layers from real AWS)
+//	OVERCAST_NETWORK                   overcast (the data plane every container Overcast starts
+//	                                           shares, unless the resource names a VPC, in which
+//	                                           case it joins that VPC's network. The control plane
+//	                                           is derived from this rather than configured — see
+//	                                           Config.ControlNetwork. One variable for every
+//	                                           service: the per-service LAMBDA_NETWORK,
+//	                                           ECS_NETWORK, RDS_NETWORK, ELASTICACHE_NETWORK,
+//	                                           MSK_NETWORK, EKS_NETWORK and EFS_NETWORK are gone
+//	                                           and are no longer read.)
 //	ECS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET> (default: same as Lambda)
-//	ECS_NETWORK                        overcast_ecs
 //	ECS_KEEP_CONTAINERS                false
 //	RDS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET> (default: same as Lambda)
-//	RDS_NETWORK                        overcast_rds
 //	RDS_PORT_BASE                      33060
 //	RDS_KEEP_CONTAINERS                false
 //	ELASTICACHE_DOCKER_SOCKET          <LAMBDA_DOCKER_SOCKET> (default: same as Lambda)
-//	ELASTICACHE_NETWORK                overcast_elasticache
 //	ELASTICACHE_PORT_BASE              63790
 //	ELASTICACHE_KEEP_CONTAINERS        false
 //	MSK_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET>
-//	MSK_NETWORK                        overcast_msk
 //	MSK_PORT_BASE                      49092
 //	MSK_KEEP_CONTAINERS                false
 //	EKS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET>
-//	EKS_NETWORK                        overcast_eks
 //	EFS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET>
 //	OVERCAST_EFS_NFS                   false (true = one NFS-Ganesha export container per mount target, live mode only)
 //	EFS_NFS_PORT_BASE                  22049
 //	EFS_NFS_IMAGE                      registry.k8s.io/sig-storage/nfs-provisioner@sha256:c825f3d5… (digest-pinned)
-//	EFS_NETWORK                        overcast_efs (export containers; unused unless OVERCAST_EFS_NFS is on)
 //	OVERCAST_SMTP_MOCK                 true  (false when SMTP_HOST is set)
 //	OVERCAST_SMTP_PORT                 1025
 //	OVERCAST_SMTP_HOST                 ""    (set to use an external relay)
