@@ -71,7 +71,19 @@ describe("detectLogLevel", () => {
     expect(detectLogLevel("ERROR ==> WORDPRESS_PASSWORD must be set")).toBe("error")
     expect(detectLogLevel("WARN  ==> could not resolve host")).toBe("warn")
     expect(detectLogLevel("DEBUG connecting")).toBe("debug")
+    expect(detectLogLevel("INFO  ==> Starting gosu")).toBe("info")
     expect(detectLogLevel("Certificate request self-signature ok")).toBeNull()
+  })
+
+  it("reads the level column of a Node runtime's console.* line", () => {
+    // Where AWS puts it: after the timestamp and the request id, tab separated.
+    // The request id alone is 36 characters, so this leans on the whole 80.
+    const line = (level: string) =>
+      `2026-08-10T02:34:39.674Z\t13aa488f-ea9e-4d38-bdfe-74ad3d71e708\t${level}\tCannot push rates`
+    expect(detectLogLevel(line("ERROR"))).toBe("error")
+    expect(detectLogLevel(line("WARN"))).toBe("warn")
+    expect(detectLogLevel(line("INFO"))).toBe("info")
+    expect(detectLogLevel(line("DEBUG"))).toBe("debug")
   })
 
   it("prefers the structured field over the text", () => {
@@ -87,6 +99,7 @@ describe("detectLogLevel", () => {
   it("needs a whole word, not a substring", () => {
     expect(detectLogLevel("TERRORISM statistics loaded")).toBeNull()
     expect(detectLogLevel("no-warnings mode")).toBeNull()
+    expect(detectLogLevel("reinformation pipeline ready")).toBeNull()
   })
 })
 

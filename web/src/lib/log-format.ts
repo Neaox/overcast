@@ -38,7 +38,7 @@ export function formatLogDate(ts?: number | null): string {
 }
 
 /**
- * Guesses a log event's level from its text, for tinting the row.
+ * Guesses a log event's level from its text, for tinting the row and labelling it.
  *
  * A structured `"level"` field wins, because a line that carries one means it.
  * Otherwise only the first 80 characters are considered: `ERROR` appearing in
@@ -63,6 +63,12 @@ export function detectLogLevel(msg: string): LogLevel | null {
   if (/\bERROR\b|\bFATAL\b|\bCRITICAL\b/.test(prefix)) return "error"
   if (/\bWARN(ING)?\b/.test(prefix)) return "warn"
   if (/\bDEBUG\b|\bTRACE\b/.test(prefix)) return "debug"
+  // INFO is matched last and earns no tint, so for a long time it was not
+  // matched at all — nothing downstream would have looked different. It matters
+  // now that the level is also a badge: a Node runtime writes `console.info` and
+  // `console.log` with an INFO column, and leaving those the one severity with a
+  // column but no label reads as a detection failure rather than as a choice.
+  if (/\bINFO\b/.test(prefix)) return "info"
   return null
 }
 
@@ -77,11 +83,19 @@ export const logLevelRowClass: Record<LogLevel, string> = {
   debug: "border-l-fg-muted/30 bg-fg-muted/3",
 }
 
-/** Badge tint by level, for the viewers that label the row as well as tint it. */
+/**
+ * Badge tint by level, for the viewers that label the row as well as tint it.
+ *
+ * Each colour is stated twice because the badge has to read on both themes and
+ * a `/15` background is close to whatever it sits on. The 400s are the dark
+ * theme's: on a light row `text-yellow-400` is lighter than the paper behind it
+ * and the label disappears, which is the one thing a badge cannot do. `debug`
+ * needs no pair — `fg-muted` is a semantic token and already flips.
+ */
 export const logLevelBadgeClass: Record<LogLevel, string> = {
-  error: "bg-red-500/15 text-red-400",
-  warn: "bg-yellow-500/15 text-yellow-400",
-  info: "bg-sky-500/15 text-sky-400",
+  error: "bg-red-500/15 text-red-700 dark:text-red-400",
+  warn: "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400",
+  info: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
   debug: "bg-fg-muted/15 text-fg-muted",
 }
 
