@@ -187,6 +187,13 @@ changed=$(git diff --name-only "$base"...HEAD; git diff --name-only; git ls-file
 [ -z "$changed" ] && exit 0
 
 go_changed=$(printf '%s\n' "$changed" | grep -E '\.go$' | head -1)
+# The two checks below reach the root module only: `golangci-lint run ./...`
+# and `go test ./...` both stop at a nested go.mod, and both fingerprints
+# already exclude compat/suites/ to say so. Scheduling them for a change
+# confined to a suite would lint and re-compile code that change cannot have
+# touched, and then report "already green" against a fingerprint that never
+# moved — a cache hit standing in for a run that was never relevant.
+root_go_changed=$(printf '%s\n' "$changed" | grep -E '\.go$' | grep -Ev '^compat/suites/' | head -1)
 web_changed=$(printf '%s\n' "$changed" | grep -E '^web/src/|^web/[^/]*\.(ts|json)$' | head -1)
 
 failed=""
@@ -194,7 +201,7 @@ skipped=""
 cached=""
 
 # ---- Go: golangci-lint -----------------------------------------------------
-if [ -n "$go_changed" ]; then
+if [ -n "$root_go_changed" ]; then
   fp=$(_fp_go)
   if [ "$force" -eq 0 ] && [ -n "$fp" ] && [ "$(_cache_get golangci-lint)" = "$fp" ]; then
     cached="$cached golangci-lint"
@@ -219,7 +226,7 @@ if [ -n "$go_changed" ]; then
 fi
 
 # ---- Go: compile packages and tests under CI's build tags ------------------
-if [ -n "$go_changed" ]; then
+if [ -n "$root_go_changed" ]; then
   fp=$(_fp_tags)
   if [ "$force" -eq 0 ] && [ -n "$fp" ] && [ "$(_cache_get vet-tags)" = "$fp" ]; then
     cached="$cached vet-tags"
@@ -244,28 +251,47 @@ if [ -n "$go_changed" ]; then
   fi
 fi
 
-# ---- Go: run tests in packages touched by this branch ----------------------
+# ---- Go: run the tests of every module this branch touched ------------------
+# One `go test ./...` per owning module, from inside that module.
+#
+# The repository is not one module. compat/suites/{go-sdk,cli,cdk} each carry
+# their own go.mod, and a root-module invocation matches nothing inside them:
+# this step used to hand `go test` a path like `compat/suites/go-sdk/...`,
+# which the root module answers with "no packages to test" and a non-zero exit.
+# So touching a compat suite failed the gate instead of running that suite's
+# own tests — and those tests are the ones that stop a compat run reporting a
+# result for a test that never executed (impl-key resolution, duplicate
+# registration, dependency ordering within a group). CI missed them for the
+# same reason; test.yml's "Compat suite unit tests" job is the other half.
+#
+# `go -C dir` rather than a subshell `cd`: it is the form scripts/docker-go.sh
+# also understands — it injects the -p cap after the subcommand for
+# `-C dir test` — so the Docker fallback stays equivalent to the host path.
 if [ -n "$go_changed" ]; then
-  test_pkgs=$(for f in $(printf '%s\n' "$changed" | grep '\.go$'); do
+  mod_dirs=$(for f in $(printf '%s\n' "$changed" | grep '\.go$'); do
     d=$(dirname "$f")
     if [ -f "$d" ]; then d="."; fi
     while [ ! -f "$d/go.mod" ] && [ "$d" != "." ]; do d=$(dirname "$d"); done
-    [ -f "$d/go.mod" ] && printf '%s/...\n' "$d"
-  done | sort -u | tr '\n' ' ')
-  # Extract unique package paths from changed files
-  if [ -n "$test_pkgs" ]; then
-    # Only run under the default tag set (it's the most common path).
-    # The tag pass above already compiled every package, and its tests, under
-    # all three sets, so what is left here is whether they pass.
+    [ -f "$d/go.mod" ] && printf '%s\n' "$d"
+  done | sort -u)
+  for mod in $mod_dirs; do
+    label=$mod
+    [ "$label" = "." ] && label="root"
+    # Only the default tag set: the tag pass above already compiled every
+    # package of the root module, and its tests, under all three sets, so what
+    # is left here is whether they pass. The suite modules declare no build
+    # tags at all, which makes `-tags slim` a no-op there rather than a
+    # different build.
     if command -v go >/dev/null 2>&1; then
-      # shellcheck disable=SC2086 # $go_test_p and $test_pkgs are word-split on purpose
-      go test -count=1 $go_test_p -tags slim $test_pkgs || failed="$failed test-run"
+      # shellcheck disable=SC2086 # $go_test_p is a whole flag pair or empty
+      go -C "$mod" test -count=1 $go_test_p -tags slim ./... || failed="$failed test-run($label)"
     elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
-      scripts/docker-go.sh test -count=1 -tags slim $test_pkgs || failed="$failed test-run"
+      scripts/docker-go.sh -C "$mod" test -count=1 -tags slim ./... || failed="$failed test-run($label)"
     else
       skipped="$skipped test-run(no go/docker)"
+      break
     fi
-  fi
+  done
 fi
 
 # ---- Web: typecheck + lint -------------------------------------------------

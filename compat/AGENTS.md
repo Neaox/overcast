@@ -943,13 +943,29 @@ because merging the real maps is itself the duplicate check:
 | `java-sdk` | loader + real registrations | `mvn test` (also runs in the image build) |
 | `python-sdk` | loader + real registrations | `python -m unittest discover -s tests` |
 | `node-js-sdk` | loader + real registrations | `npm run test:unit` |
-| `rust-sdk` | loader | `cargo test` |
+| `rust-sdk` | loader | `cargo test` (also runs in the image build) |
 | `dotnet-sdk` | — (no test project) | covered by the startup abort |
 
 `dotnet-sdk` is the one gap: it has no test project, so its only guard is the
 abort at startup. Adding one is worth doing on its own — it needs a csproj, a
 test SDK package and a Dockerfile stage — and until then a duplicate there
 surfaces on the first run rather than in CI's unit tests.
+
+In CI they run in `test.yml`'s **Compat suite unit tests** job: `go-sdk`, `cli`,
+`python-sdk` and `node-js-sdk`, each from its own directory, with no emulator
+and no Docker. `java-sdk` and `rust-sdk` stay out of that job because their
+image builds already run them — `mvn package` runs surefire, and `cargo test`
+sits beside `cargo build` — on a dependency layer that is already resolved and
+compiled there. Repeating either in the job would mean fetching or building the
+whole AWS SDK a second time for a verdict CI already has.
+
+Until that job existed nothing ran any of them. Every suite is its own module,
+so the root `go test ./...` matches no package under `compat/suites/`, and
+`compat.yml` installs each suite's dependencies only to run it against a live
+emulator — the unit tests fell between the two. `scripts/verify-changed.sh` had
+the same blind spot from the other side: it now runs `go test ./...` inside each
+module a branch touched, so editing a suite runs that suite's tests instead of
+failing the pre-push gate with "no packages to test".
 
 **Rules for modifying the registry:**
 
