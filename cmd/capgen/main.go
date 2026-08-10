@@ -65,14 +65,18 @@ func main() {
 		initCaps   = flag.Bool("init", false, "generate missing capabilities_dev.go files from detected handler ops")
 		writeDocs  = flag.Bool("write-docs", false, "regenerate sentinel-bracketed tables in docs/services/*.md")
 		initDocs   = flag.Bool("init-docs", false, "add sentinel markers to docs that don't have them yet")
+		routes     = flag.Bool("routes", false, "print the chi route skeleton the pinned model gives --service")
 		service    = flag.String("service", "", "limit to one service (all if empty)")
 	)
 	flag.Parse()
 
-	if !*check && !*checkModel && !*generate && !*writeDocs && !*initCaps && !*initDocs {
+	if !*check && !*checkModel && !*generate && !*writeDocs && !*initCaps && !*initDocs && !*routes {
 		flag.Usage()
-		fmt.Fprintln(os.Stderr, "\ncapgen: no action specified; use --check, --generate, --write-docs, --init, or --init-docs")
+		fmt.Fprintln(os.Stderr, "\ncapgen: no action specified; use --check, --check-model, --generate, --write-docs, --routes, --init, or --init-docs")
 		os.Exit(1)
+	}
+	if *routes && *service == "" {
+		fatalf("--routes needs --service: the skeleton is one service's modeled bindings")
 	}
 
 	root, err := findWorkspaceRoot(*workspace)
@@ -115,6 +119,10 @@ func main() {
 			}
 		}
 		allCaps = append(allCaps, caps...)
+
+		if *routes {
+			printRouteSkeleton(svc, caps)
+		}
 
 		if *checkModel {
 			failures += checkCapabilitiesInManifest(caps)
@@ -492,6 +500,96 @@ func isPointerToSelector(expr ast.Expr, pkg, name string) bool {
 	return ok && isSelector(star.X, pkg, name)
 }
 
+// printRouteSkeleton writes the chi route registrations a service's modeled
+// operations require, straight from the pinned manifest.
+//
+// #864's seventh point. EKS has six hand-invented paths, four of them with the
+// wrong HTTP method (#858), written by hand beside a file that already had the
+// right answers; the same is true of every service in the fault class. Nothing
+// stops the next one being typed out too unless there is something easier to
+// reach for than typing.
+//
+// Output goes to stdout for a human to paste and prune, rather than to a
+// generated file. A service does not implement every operation AWS models —
+// deciding which ones to serve is the work — but where it does serve one, the
+// method and URI are not a judgement call, and this is where they come from.
+func printRouteSkeleton(service string, caps []CapabilityDecl) {
+	for _, line := range routeSkeleton(service, caps) {
+		fmt.Println(line)
+	}
+}
+
+// routeSkeleton builds the skeleton's lines. It is separate from printing so a
+// test can assert that the methods and paths come from the model rather than
+// from whatever the service happens to register.
+func routeSkeleton(service string, caps []CapabilityDecl) []string {
+	declared := map[string]CapabilityDecl{}
+	for _, cap := range caps {
+		declared[modeledOperationName(cap)] = cap
+	}
+
+	type route struct{ method, uri, operation, status string }
+	var routes []route
+	seen := map[string]bool{}
+	awsapi.WalkOperations(func(op awsapi.Operation) bool {
+		if awsapi.ServiceKey(op.Service) != service || op.URI == "" {
+			return true
+		}
+		if op.Protocol != awsapi.ProtocolRESTJSON && op.Protocol != awsapi.ProtocolRESTXML {
+			return true
+		}
+		if seen[op.Name] {
+			return true
+		}
+		seen[op.Name] = true
+		status := "not declared"
+		if cap, ok := declared[op.Name]; ok {
+			status = strings.TrimPrefix(cap.Status, "Status")
+		}
+		routes = append(routes, route{method: op.HTTPMethod, uri: op.URI, operation: op.Name, status: status})
+		return true
+	})
+	if len(routes) == 0 {
+		return []string{fmt.Sprintf("// %s: the model declares no REST bindings for this service (it is an AWS JSON or Query API).", service)}
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].uri != routes[j].uri {
+			return routes[i].uri < routes[j].uri
+		}
+		return routes[i].method < routes[j].method
+	})
+
+	lines := []string{
+		fmt.Sprintf("// Route skeleton for %s, generated from internal/awsapi/manifest.gen.go.", service),
+		"// Delete the operations this service does not serve; do not edit the methods or paths.",
+		"func (s *Service) RegisterRoutes(r chi.Router) {",
+	}
+	for _, route := range routes {
+		lines = append(lines, fmt.Sprintf("\tr.%s(%q, s.handler.%s) // %s",
+			chiMethod(route.method), stripQueryBinding(route.uri), route.operation, route.status))
+	}
+	return append(lines, "}")
+}
+
+// chiMethod maps an HTTP method to chi's registration helper.
+func chiMethod(method string) string {
+	if method == "" {
+		return "HandleFunc"
+	}
+	return strings.ToUpper(method[:1]) + strings.ToLower(method[1:])
+}
+
+// stripQueryBinding drops the literal query a URI template may pin
+// (/apikeys?mode=import). chi routes on the path, so the handler has to branch
+// on the parameter; the skeleton leaves a comment-free path and the two
+// operations that share it appear as two lines, which is the prompt to look.
+func stripQueryBinding(uri string) string {
+	if i := strings.IndexByte(uri, '?'); i >= 0 {
+		return uri[:i]
+	}
+	return uri
+}
+
 // checkServiceKeysInManifest enforces that every service key — directory name
 // or capability declaration — resolves to at least one modeled AWS identity
 // through awsapi's key-or-alias mapping. A key that resolves to nothing means
@@ -562,6 +660,10 @@ func checkCompatRegistryServiceKeys(root string, caps []CapabilityDecl) int {
 		Groups []struct {
 			Service string `json:"service"`
 			Name    string `json:"name"`
+			Tests   []struct {
+				Name string `json:"name"`
+				Op   string `json:"op"`
+			} `json:"tests"`
 		} `json:"groups"`
 	}
 	if err := json.Unmarshal(raw, &registry); err != nil {
@@ -577,15 +679,33 @@ func checkCompatRegistryServiceKeys(root string, caps []CapabilityDecl) int {
 	violations := 0
 	reported := map[string]bool{}
 	for _, group := range registry.Groups {
-		if capabilityKeys[group.Service] || compatRegistryServiceExemptions[group.Service] != "" {
+		if !capabilityKeys[group.Service] && compatRegistryServiceExemptions[group.Service] == "" {
+			if !reported[group.Service] {
+				reported[group.Service] = true
+				fmt.Printf("COMPAT_REGISTRY_UNKNOWN_SERVICE %s  (group %q; not a capability service key — fix the key or add an explicit exemption)\n", group.Service, group.Name)
+				violations++
+			}
 			continue
 		}
-		if reported[group.Service] {
-			continue
+		// A test's `op` is the registry's own statement of which AWS operation
+		// it exercises, and until now nothing read it. `--check-parity`
+		// measures the registry against a run of the registry — a uniformity
+		// check across the eight suites, not a coverage check — so a typo in
+		// an `op` detaches that test from the operation it claims to cover and
+		// nothing anywhere notices.
+		//
+		// Only `op` is validated. A test `name` is a scenario name where it
+		// needs to be (PutObjectMultipleKeys, ListObjectsV2Delimiter), so the
+		// schema makes `op` the field that names an operation; holding names
+		// to the model would reject the ones doing their job.
+		for _, test := range group.Tests {
+			if test.Op == "" || awsapi.HasOperation(group.Service, test.Op) {
+				continue
+			}
+			fmt.Printf("COMPAT_REGISTRY_UNKNOWN_OPERATION %s/%s  (group %q, test %q; AWS models no such operation for this service)\n",
+				group.Service, test.Op, group.Name, test.Name)
+			violations++
 		}
-		reported[group.Service] = true
-		fmt.Printf("COMPAT_REGISTRY_UNKNOWN_SERVICE %s  (group %q; not a capability service key — fix the key or add an explicit exemption)\n", group.Service, group.Name)
-		violations++
 	}
 	return violations
 }

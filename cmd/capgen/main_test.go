@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -166,6 +167,41 @@ func (h *Handler) DescribeWidget(id string) error { return nil }
 	}
 }
 
+func TestRouteSkeleton_bindsOperationsWhereTheModelDoes(t *testing.T) {
+	// Given: EKS, whose six hand-invented paths — four with the wrong HTTP
+	// method — were typed out beside a manifest that already had the answers
+	// (#858).
+	caps := []CapabilityDecl{{Service: "eks", Operation: "UpdateAddon", Status: "StatusWIP"}}
+
+	// When: the skeleton is generated from the model.
+	lines := strings.Join(routeSkeleton("eks", caps), "\n")
+
+	// Then: it gives the modeled method and path, not the registered ones —
+	// EKS serves UpdateAddon at POST /clusters/{name}/addons/{addonName}/updates.
+	want := `r.Post("/clusters/{clusterName}/addons/{addonName}/update", s.handler.UpdateAddon) // WIP`
+	if !strings.Contains(lines, want) {
+		t.Errorf("routeSkeleton() did not contain\n\t%s\ngot:\n%s", want, lines)
+	}
+	// And an operation with no capability row is offered, marked so the
+	// reader decides rather than the generator.
+	if !strings.Contains(lines, "s.handler.RegisterCluster) // not declared") {
+		t.Error("routeSkeleton() omitted an undeclared modeled operation; the skeleton is the model's whole REST surface")
+	}
+}
+
+func TestRouteSkeleton_nonRESTServiceHasNoBindings(t *testing.T) {
+	// Given: SQS, an AWS JSON API dispatched from X-Amz-Target rather than
+	// from a path.
+
+	// When: the skeleton is generated.
+	lines := routeSkeleton("sqs", nil)
+
+	// Then: it says so rather than emitting a route table that would be wrong.
+	if len(lines) != 1 || !strings.Contains(lines[0], "no REST bindings") {
+		t.Errorf("routeSkeleton() = %v, want a single explanatory line", lines)
+	}
+}
+
 func TestCheckServiceKeysInManifest_requiresKeyOrAliasResolution(t *testing.T) {
 	// Given: service keys that resolve directly, via an alias, and not at all.
 	services := []string{"sqs", "stepfunctions", "cloudwatch-logs"}
@@ -207,6 +243,35 @@ func TestCheckCompatRegistryServiceKeys_requiresCapabilityServiceKeys(t *testing
 	// Then: only the undeclared service key is rejected.
 	if violations != 1 {
 		t.Errorf("checkCompatRegistryServiceKeys() = %d violations, want 1", violations)
+	}
+}
+
+func TestCheckCompatRegistryServiceKeys_rejectsAnUnmodeledTestOperation(t *testing.T) {
+	// Given: compat tests naming the operation they exercise — one real, one a
+	// typo, one belonging to a different service, and one scenario test with no
+	// `op` at all, which is the shape most registry entries have.
+	root := t.TempDir()
+	writeCompatRegistry(t, root, `{
+	  "version": 1,
+	  "groups": [
+	    {"service": "s3", "name": "s3-objects", "tests": [
+	      {"name": "PutObjectMultipleKeys", "op": "PutObject"},
+	      {"name": "ListObjectsV2Delimiter"},
+	      {"name": "PutObjectTypo", "op": "PutObjcet"},
+	      {"name": "SendMessage", "op": "SendMessage"}
+	    ]}
+	  ]
+	}`)
+	caps := []CapabilityDecl{{Service: "s3", Operation: "PutObject"}}
+
+	// When: capgen validates the registry against the corpus.
+	violations := checkCompatRegistryServiceKeys(root, caps)
+
+	// Then: the typo and the other service's operation are rejected, and the
+	// scenario test without an `op` is left alone — a test name is a scenario
+	// name where it needs to be.
+	if violations != 2 {
+		t.Errorf("checkCompatRegistryServiceKeys() = %d violations, want 2", violations)
 	}
 }
 
