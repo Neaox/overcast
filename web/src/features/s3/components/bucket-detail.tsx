@@ -76,6 +76,7 @@ import {
   type NoncurrentPosition,
   type LifecycleCandidate,
 } from "@/features/s3/lifecycle"
+import { shortVersionId } from "@/features/s3/version-id"
 import { BucketTabs } from "./bucket-tabs"
 import { cn } from "@/lib/utils"
 import { ObjectPreviewDialog } from "./object-preview-dialog"
@@ -922,7 +923,7 @@ function VersionRow({
       <TableCell className="whitespace-nowrap">
         <div className="flex items-center gap-1">
           <span className="font-mono text-xs text-fg-muted" title={version.versionId}>
-            {version.versionId === "null" ? "null" : version.versionId.slice(0, 8) + "…"}
+            {shortVersionId(version.versionId)}
           </span>
           {!version.isDeleteMarker && version.storageClass !== "STANDARD" && (
             <Badge variant="default">{formatStorageClass(version.storageClass)}</Badge>
