@@ -89,7 +89,7 @@ func (h *Handler) pumpContainerLogs(ctx context.Context, dockerID string, target
 	}
 	defer stream.Close() //nolint:errcheck
 
-	scanner := bufio.NewScanner(docker.NewDemuxReader(stream))
+	scanner := bufio.NewScanner(docker.NewLogDemuxReader(stream))
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLogLine)
 	for scanner.Scan() {
 		ts, message := splitDockerTimestamp(scanner.Text())

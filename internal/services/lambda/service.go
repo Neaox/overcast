@@ -73,7 +73,7 @@ type RuntimeInstance interface {
 
 	// LogStreamName returns the CloudWatch Logs stream name for this container
 	// instance. The name is assigned when the instance starts and remains fixed
-	// for its lifetime. Format: YYYY/MM/DD/[$LATEST]<26-char hex>
+	// for its lifetime. Format: YYYY/MM/DD/[$LATEST]<32-char hex>
 	LogStreamName() string
 
 	// Healthy reports whether the instance is usable after the last invocation.

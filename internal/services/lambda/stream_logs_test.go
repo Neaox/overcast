@@ -42,7 +42,7 @@ func TestLambdaLogLines_timestampPerFrame(t *testing.T) {
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:46.123456789Z line two\n")))
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:47.123456789Z line three\n")))
 
-	stripped := docker.NewDemuxReader(&buf)
+	stripped := docker.NewLogDemuxReader(&buf)
 	scanner := bufio.NewScanner(stripped)
 
 	var got []string
@@ -86,7 +86,7 @@ func TestLambdaLogLines_lineSpansFrames(t *testing.T) {
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:45.123456789Z partial")))
 	buf.Write(makeDockerFrame([]byte(" line\n")))
 
-	stripped := docker.NewDemuxReader(&buf)
+	stripped := docker.NewLogDemuxReader(&buf)
 	scanner := bufio.NewScanner(stripped)
 
 	var got []string
@@ -105,9 +105,8 @@ func TestLambdaLogLines_lineSpansFrames(t *testing.T) {
 	if ts.IsZero() {
 		t.Errorf("expected timestamp, got zero")
 	}
-	// The message will include the second frame's raw data (no timestamp prefix
-	// because parseDockerTimestamp only strips the first one).
-	// After stripping the first timestamp, msg = "partial line"
+	// The continuation frame carries no timestamp of its own, so its bytes join
+	// the line as they are; the opening timestamp is the only one stripped.
 	expected := "partial line"
 	if msg != expected {
 		t.Errorf("got %q, want %q", msg, expected)
@@ -119,7 +118,7 @@ func TestLambdaLogLines_multipleLinesInOneFrame(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:45.123456789Z line1\nline2\n")))
 
-	stripped := docker.NewDemuxReader(&buf)
+	stripped := docker.NewLogDemuxReader(&buf)
 	scanner := bufio.NewScanner(stripped)
 
 	var got []string
@@ -227,7 +226,7 @@ func TestLambdaLogLines_largePayload(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write(makeDockerFrame([]byte("2024-01-15T10:30:45.123456789Z " + payload + "\n")))
 
-	stripped := docker.NewDemuxReader(&buf)
+	stripped := docker.NewLogDemuxReader(&buf)
 	// Use a small buffer to force multiple reads within the demux reader.
 	scanner := bufio.NewScanner(stripped)
 	scanner.Buffer(make([]byte, 16*1024), 128*1024) // 64KB initial, 128KB max
@@ -313,6 +312,44 @@ func TestReadBoundedLogLine_truncatesAndContinues(t *testing.T) {
 	}
 	if second != "next" {
 		t.Fatalf("second = %q, want next", second)
+	}
+}
+
+// A log line longer than Docker's 16 KiB chunk size arrives as several frames,
+// each stamped with its own timestamp. Reassembling them naively splices those
+// stamps through the middle of the message — a serialized error object comes
+// back with a timestamp cutting a number in half. What reaches CloudWatch must
+// be the line the function actually wrote.
+func TestLambdaLogLines_chunkedLineHasNoEmbeddedTimestamp(t *testing.T) {
+	// Given: one message split at Docker's chunk boundary, both frames stamped.
+	const (
+		head = "2026-08-10T02:27:36.830921293Z "
+		cont = "2026-08-10T02:27:36.830921294Z "
+	)
+	payload := strings.Repeat("A", 16384) + strings.Repeat("B", 4000)
+
+	var buf bytes.Buffer
+	buf.Write(makeDockerFrame([]byte(head + payload[:16384])))
+	buf.Write(makeDockerFrame([]byte(cont + payload[16384:] + "\n")))
+
+	// When: the streaming path reads the line back.
+	r := bufio.NewReaderSize(docker.NewLogDemuxReader(&buf), 64*1024)
+	line, err := readBoundedLogLine(r, maxDockerLogLineBytes)
+	if err != nil {
+		t.Fatalf("readBoundedLogLine: %v", err)
+	}
+	ts, msg := parseDockerTimestamp(line)
+
+	// Then: the message is exactly what the function wrote, and the timestamp
+	// is the one that opened it.
+	if msg != payload {
+		if idx := strings.Index(msg, "2026-08-10T"); idx >= 0 {
+			t.Fatalf("message carries an embedded Docker timestamp at byte %d", idx)
+		}
+		t.Fatalf("message = %d bytes, want %d", len(msg), len(payload))
+	}
+	if want := time.Date(2026, 8, 10, 2, 27, 36, 830921293, time.UTC); !ts.Equal(want) {
+		t.Errorf("timestamp = %v, want %v", ts, want)
 	}
 }
 

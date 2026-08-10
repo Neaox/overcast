@@ -2305,8 +2305,10 @@ func (ci *containerInstance) streamOnce(ctx context.Context, since time.Time) {
 		ci.logInFlight.Add(-int64(len(batch)))
 	}
 
-	// Wrap the multiplexed stream so the line reader sees a plain byte stream.
-	stripped := docker.NewDemuxReader(stream)
+	// Wrap the multiplexed stream so the line reader sees a plain byte stream,
+	// with the timestamp Docker repeats on each continuation chunk of a long
+	// line dropped rather than spliced into the middle of it.
+	stripped := docker.NewLogDemuxReader(stream)
 	tracked := &logReadTracker{r: stripped, readAt: &ci.logReadAt, clk: ci.clk}
 	reader := bufio.NewReaderSize(tracked, 64*1024)
 	admission := ci.logCursor.NewAdmission(!since.IsZero())
@@ -2479,7 +2481,7 @@ func (ci *containerInstance) reconcileLogs() {
 	}
 	defer body.Close()
 
-	stripped := docker.NewDemuxReader(body)
+	stripped := docker.NewLogDemuxReader(body)
 	reader := bufio.NewReaderSize(stripped, 64*1024)
 	admission := ci.logCursor.NewAdmission(!since.IsZero())
 
@@ -2521,12 +2523,15 @@ func (ci *containerInstance) reconcileLogs() {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-// lambdaLogStreamName generates an AWS-style log stream name.
-// Format: YYYY/MM/DD/[$LATEST]<26-char lowercase hex>.
+// lambdaLogStreamName generates an AWS-style log stream name. AWS names the
+// stream after the date and the execution environment's GUID, so the suffix is
+// 32 hex characters — 2019/07/12/[$LATEST]312c2d81e2e64af58dbe557754f9aa13 —
+// and a shorter one fails anything matching stream names against that shape.
+// Format: YYYY/MM/DD/[$LATEST]<32-char lowercase hex>.
 func lambdaLogStreamName(clk clock.Clock) string {
 	date := clk.Now().UTC().Format("2006/01/02")
 	hash := sha256.Sum256([]byte(fmt.Sprintf("%d", clk.Now().UnixNano())))
-	return date + "/[$LATEST]" + hex.EncodeToString(hash[:13])
+	return date + "/[$LATEST]" + hex.EncodeToString(hash[:16])
 }
 
 // cpuAllocation calculates the fractional CPU count for a Lambda function based
