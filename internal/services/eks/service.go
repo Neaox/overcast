@@ -62,6 +62,7 @@ type Cluster struct {
 	Endpoint                string            `json:"endpoint"`
 	RoleArn                 string            `json:"roleArn"`
 	Status                  string            `json:"status"`
+	Health                  map[string]any    `json:"health,omitempty"`
 	CertificateAuthority    map[string]any    `json:"certificateAuthority"`
 	ResourcesVPCConfig      map[string]any    `json:"resourcesVpcConfig"`
 	KubernetesNetworkConfig map[string]any    `json:"kubernetesNetworkConfig,omitempty"`
@@ -183,6 +184,7 @@ type Service struct {
 	typedOp map[string]op.Operation
 
 	docker      *docker.Client
+	puller      *docker.ImagePuller
 	dockerReady atomic.Bool
 
 	liveMu       sync.Mutex
@@ -224,9 +226,16 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedJSON(w, r)
 }
 
-// SetDocker wires the Docker client used for future live-mode control-plane runtime work.
+// SetDocker wires the Docker client used for live-mode control-plane runtime
+// work, and the shared image puller that fetches the k3s image before a
+// control plane is created.
 func (s *Service) SetDocker(dc *docker.Client) {
 	s.docker = dc
+	if dc != nil {
+		s.puller = docker.NewImagePuller(dc)
+	} else {
+		s.puller = nil
+	}
 	s.dockerReady.Store(dc != nil)
 }
 
