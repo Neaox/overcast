@@ -941,8 +941,8 @@ because merging the real maps is itself the duplicate check:
 | --- | --- | --- |
 | `go-sdk`, `cli` | loader + real registrations | `scripts/docker-go.sh -C compat/suites/<suite> test ./...` |
 | `java-sdk` | loader + real registrations | `mvn test` (also runs in the image build) |
-| `python-sdk` | loader + real registrations | `python -m unittest discover -s tests` |
-| `node-js-sdk` | loader + real registrations | `npm run test:unit` |
+| `python-sdk` | loader + real registrations | `python -m unittest discover -s tests` (after `pip install -r requirements.txt`) |
+| `node-js-sdk` | loader + real registrations | `npm run test:unit` (after `npm ci`) |
 | `rust-sdk` | loader | `cargo test` (also runs in the image build) |
 | `dotnet-sdk` | — (no test project) | covered by the startup abort |
 
@@ -953,7 +953,14 @@ surfaces on the first run rather than in CI's unit tests.
 
 In CI they run in `test.yml`'s **Compat suite unit tests** job: `go-sdk`, `cli`,
 `python-sdk` and `node-js-sdk`, each from its own directory, with no emulator
-and no Docker. `java-sdk` and `rust-sdk` stay out of that job because their
+and no Docker. The two interpreted suites install their dependencies there
+first, and both need to: their real-registration cases import the suite's own
+group files, which import the SDK clients those files drive. For `python-sdk`
+it reaches further than that import — `lib/harness.py` imports `botocore`
+lazily, inside the path that classifies a raised exception, so the cases that
+*deliberately* raise need it too.
+
+`java-sdk` and `rust-sdk` stay out of that job because their
 image builds already run them — `mvn package` runs surefire, and `cargo test`
 sits beside `cargo build` — on a dependency layer that is already resolved and
 compiled there. Repeating either in the job would mean fetching or building the

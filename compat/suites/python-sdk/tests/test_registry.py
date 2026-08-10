@@ -583,17 +583,27 @@ class RealRegistrations(unittest.TestCase):
         import importlib
         import pkgutil
 
+        # An unimportable group module fails rather than skips. These two are
+        # the only checks in the file that read the suite's *real*
+        # registrations, and they used to call skipTest here — so on an
+        # interpreter without boto3 they were reported as skipped and the run
+        # still exited 0. A skip is indistinguishable from a pass at the exit
+        # code, which is the same silently-do-the-wrong-thing failure the
+        # loader validation these tests cover exists to refuse. CI ran them
+        # that way until the dependency install landed beside this change.
+        remedy = "run 'pip install -r requirements.txt' from compat/suites/python-sdk/"
+
         try:
             import groups as groups_pkg
-        except ImportError as exc:  # pragma: no cover - depends on environment
-            self.skipTest(f"suite group modules unavailable: {exc}")
+        except ImportError as exc:
+            self.fail(f"suite group modules unavailable: {exc}. To fix, {remedy}")
 
         sources = []
         for info in pkgutil.iter_modules(groups_pkg.__path__):
             try:
                 module = importlib.import_module(f"groups.{info.name}")
-            except ImportError as exc:  # pragma: no cover
-                self.skipTest(f"cannot import groups.{info.name}: {exc}")
+            except ImportError as exc:
+                self.fail(f"cannot import groups.{info.name}: {exc}. To fix, {remedy}")
             sources.append((module.__name__, getattr(module, "IMPLS", {})))
 
         merged = merge_impls(sources, "python-sdk")
