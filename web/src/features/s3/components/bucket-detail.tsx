@@ -1,5 +1,11 @@
-import { useState, useRef, useCallback, useEffect } from "react"
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useNavigate } from "@tanstack/react-router"
 import {
@@ -15,6 +21,7 @@ import {
   Timer,
   History,
   FileX,
+  SearchX,
 } from "lucide-react"
 import { Route } from "@/routes/s3/$bucket/index"
 import {
@@ -28,7 +35,21 @@ import {
   deleteObjectVersionMutationOptions,
   deleteByPrefixMutationOptions,
   deleteBucketMutationOptions,
+  type ListScope,
 } from "@/features/s3/data"
+import {
+  DEFAULT_SORT,
+  buildRows,
+  highlightSlices,
+  isServerOrder,
+  nextSort,
+  splitSearch,
+  type NameSlice,
+  type ObjectSort,
+  type SortColumn,
+} from "@/features/s3/object-browser"
+import { HighlightedName, ObjectSearchBar, SortHead } from "./object-controls"
+import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { s3 } from "@/services/api"
 import { uploadStore } from "@/lib/upload-store"
 import { Button } from "@/components/ui/button"
@@ -55,6 +76,19 @@ import { cn } from "@/lib/utils"
 import { ObjectPreviewDialog } from "./object-preview-dialog"
 import type { S3LifecycleRule, S3ObjectVersion } from "@/types"
 
+/** Long enough to swallow a burst of typing, short enough to feel live. */
+const SEARCH_DEBOUNCE_MS = 200
+
+/**
+ * Where an automatic scan stops.
+ *
+ * A filter or a non-default sort makes the browser read the listing to the end,
+ * and a bucket has no end worth waiting for. Stopping here keeps a mistyped
+ * search from walking a million keys; the summary line says the view is partial
+ * and points at the prefix that would narrow it.
+ */
+const MAX_SCAN_ENTRIES = 20_000
+
 export function BucketDetail() {
   "use no memo"
   const { bucket } = Route.useParams()
@@ -64,6 +98,9 @@ export function BucketDetail() {
   const { toast } = useToast()
 
   const [prefix, setPrefix] = useState("")
+  const [search, setSearch] = useState("")
+  const [scope, setScope] = useState<ListScope>("folder")
+  const [sort, setSort] = useState<ObjectSort>(DEFAULT_SORT)
   const [metaTarget, setMetaTarget] = useState<string>()
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [deletePrefixTarget, setDeletePrefixTarget] = useState<string>()
@@ -91,6 +128,18 @@ export function BucketDetail() {
     },
     [prefix, bucket, navigate],
   )
+
+  // Moving folders drops the search with it. A filter carried into a folder the
+  // user only reached by following a breadcrumb reads as an empty folder, and
+  // the query that emptied it is two controls away from where they are looking.
+  const goToPrefix = useCallback((next: string) => {
+    setPrefix(next)
+    setSearch("")
+  }, [])
+
+  const handleSort = useCallback((column: SortColumn) => {
+    setSort((current) => nextSort(current, column))
+  }, [])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -126,16 +175,37 @@ export function BucketDetail() {
   const isVersioned = versioningStatus === "Enabled" || versioningStatus === "Suspended"
   const viewingVersions = showVersions && isVersioned
 
+  // The search box is answered in two places. Everything up to its last "/" is
+  // a prefix S3 can filter on for free, so it goes into the request; the rest
+  // is a substring match S3 has no API for, so it is applied to what comes back.
+  const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS)
+  const { prefixPart, term } = useMemo(() => splitSearch(debouncedSearch), [debouncedSearch])
+  const listPrefix = prefix + prefixPart
+
+  // Typing a prefix changes the query key on every keystroke that lands a "/".
+  // Keeping the previous page means the table dims and refills rather than
+  // collapsing to a spinner and back, which at emulator latencies is the
+  // difference between a filter and a flicker.
   const objectsQuery = useInfiniteQuery({
-    ...s3ObjectsQueryOptions(bucket, prefix),
+    ...s3ObjectsQueryOptions(bucket, listPrefix, scope),
     enabled: !viewingVersions,
+    placeholderData: keepPreviousData,
   })
   const versionsQuery = useInfiniteQuery({
-    ...s3ObjectVersionsQueryOptions(bucket, prefix),
+    ...s3ObjectVersionsQueryOptions(bucket, listPrefix, scope),
     enabled: viewingVersions,
+    placeholderData: keepPreviousData,
   })
-  const { data, isLoading, isFetching, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    viewingVersions ? versionsQuery : objectsQuery
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isPlaceholderData,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = viewingVersions ? versionsQuery : objectsQuery
 
   const { data: meta, isLoading: metaLoading } = useQuery({
     ...s3ObjectMetaQueryOptions(bucket, metaTarget ?? ""),
@@ -188,40 +258,64 @@ export function BucketDetail() {
   const crumbs = [
     {
       label: bucket,
-      onClick: () => setPrefix(""),
+      onClick: () => goToPrefix(""),
     },
     ...prefix
       .split("/")
       .filter(Boolean)
       .map((seg, i, arr) => ({
         label: seg,
-        onClick: () => setPrefix(arr.slice(0, i + 1).join("/") + "/"),
+        onClick: () => goToPrefix(arr.slice(0, i + 1).join("/") + "/"),
       })),
   ]
 
-  const prefixes = data?.pages.flatMap((p) => p.prefixes) ?? []
-  const objects = objectsQuery.data?.pages.flatMap((p) => p.objects) ?? []
-  const versions = versionsQuery.data?.pages.flatMap((p) => p.versions) ?? []
+  const prefixes = useMemo(() => data?.pages.flatMap((p) => p.prefixes) ?? [], [data])
+  const objects = useMemo(
+    () => objectsQuery.data?.pages.flatMap((p) => p.objects) ?? [],
+    [objectsQuery.data],
+  )
+  const versions = useMemo(
+    () => versionsQuery.data?.pages.flatMap((p) => p.versions) ?? [],
+    [versionsQuery.data],
+  )
 
   // Flat list of all rows for the virtualizer: folders first, then either the
-  // current objects or the full version history, never both.
-  type RowItem =
-    | { type: "prefix"; prefix: string }
-    | { type: "object"; key: string; size: number; lastModified: string; storageClass: string }
-    | { type: "version"; version: S3ObjectVersion }
+  // current objects or the full version history, never both. Memoised because
+  // this filters and sorts every loaded entry, which is thousands of them once
+  // a scan has run — not something to redo on a hover.
+  const allItems = useMemo(
+    () =>
+      buildRows({
+        browsePrefix: prefix,
+        listPrefix,
+        term,
+        sort,
+        prefixes,
+        objects: viewingVersions ? undefined : objects,
+        versions: viewingVersions ? versions : undefined,
+      }),
+    [prefix, listPrefix, term, sort, prefixes, objects, versions, viewingVersions],
+  )
 
-  const allItems: RowItem[] = [
-    ...prefixes.map((p) => ({ type: "prefix" as const, prefix: p.prefix })),
-    ...(viewingVersions
-      ? versions.map((v) => ({ type: "version" as const, version: v }))
-      : objects.map((o) => ({
-          type: "object" as const,
-          key: o.key,
-          size: o.size,
-          lastModified: o.lastModified,
-          storageClass: o.storageClass,
-        }))),
-  ]
+  // How much came back, before filtering — the denominator of the summary line
+  // and what the scan cap is measured against.
+  const scanned = viewingVersions ? versions.length : objects.length
+  const reachedScanCap = scanned >= MAX_SCAN_ENTRIES
+
+  // Both a filter and a non-default sort are answered over rows already in
+  // hand, so an unread page is a row that could belong at the top. Neither is
+  // truthful until the listing has been read to the end.
+  const needsFullListing = term !== "" || !isServerOrder(sort)
+  const isScanning = needsFullListing && !!hasNextPage && !reachedScanCap
+
+  useEffect(() => {
+    if (!isScanning || isFetchingNextPage) return
+    void fetchNextPage()
+  }, [isScanning, isFetchingNextPage, fetchNextPage])
+
+  // Offset of the part of each row name the term applies to: the segment before
+  // it came from the search's own prefix, which S3 matched exactly.
+  const nameOffset = listPrefix.length - prefix.length
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -348,6 +442,18 @@ export function BucketDetail() {
         </div>
       )}
 
+      <ObjectSearchBar
+        value={search}
+        onChange={setSearch}
+        scope={scope}
+        onScopeChange={setScope}
+        matches={allItems.length}
+        scanned={scanned}
+        isScanning={isScanning}
+        capped={reachedScanCap && !!hasNextPage}
+        noun={viewingVersions ? "versions" : "objects"}
+      />
+
       {/* Object list — virtual-scrolled for 1000s of items */}
       <div className="overflow-hidden rounded-lg border border-border bg-bg-elevated">
         {isLoading ? (
@@ -356,25 +462,68 @@ export function BucketDetail() {
           </div>
         ) : allItems.length === 0 ? (
           <div className="py-12 text-center text-sm text-fg-muted">
-            <EmptyState
-              icon={<Folder className="h-8 w-8" />}
-              title={viewingVersions ? "No versions" : "No objects"}
-              description={
-                viewingVersions
-                  ? "This prefix has no stored versions or delete markers."
-                  : "Upload an object to get started."
-              }
-            />
+            {debouncedSearch.trim() ? (
+              <EmptyState
+                icon={<SearchX className="h-8 w-8" />}
+                title="No matches"
+                description={
+                  scope === "folder"
+                    ? "Nothing in this folder matches. Try searching all nested objects."
+                    : "Nothing beneath this prefix matches."
+                }
+                action={
+                  <Button variant="secondary" size="md" onClick={() => setSearch("")}>
+                    Clear search
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon={<Folder className="h-8 w-8" />}
+                title={viewingVersions ? "No versions" : "No objects"}
+                description={
+                  viewingVersions
+                    ? "This prefix has no stored versions or delete markers."
+                    : "Upload an object to get started."
+                }
+              />
+            )}
           </div>
         ) : (
-          <div ref={scrollRef} className="max-h-[calc(100vh-220px)] overflow-auto">
+          <div
+            ref={scrollRef}
+            className={cn(
+              "max-h-[calc(100vh-220px)] overflow-auto transition-opacity",
+              isPlaceholderData && "opacity-60",
+            )}
+          >
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-10 bg-bg">
                 <tr className="border-b border-border">
-                  <TableHead className="w-full">Name</TableHead>
-                  <TableHead className="w-[1%]">Size</TableHead>
-                  <TableHead className="w-[1%]">Last modified</TableHead>
-                  <TableHead className="w-[1%]">{viewingVersions ? "Version" : "Storage class"}</TableHead>
+                  <SortHead
+                    column="name"
+                    label="Name"
+                    sort={sort}
+                    onSort={handleSort}
+                    className="w-full"
+                  />
+                  <SortHead
+                    column="size"
+                    label="Size"
+                    sort={sort}
+                    onSort={handleSort}
+                    className="w-[1%]"
+                  />
+                  <SortHead
+                    column="modified"
+                    label="Last modified"
+                    sort={sort}
+                    onSort={handleSort}
+                    className="w-[1%]"
+                  />
+                  <TableHead className="w-[1%]">
+                    {viewingVersions ? "Version" : "Storage class"}
+                  </TableHead>
                   <TableHead className="w-[1%] px-1" />
                 </tr>
               </thead>
@@ -401,7 +550,7 @@ export function BucketDetail() {
                         // gets neither the pointer nor the interactive hover tint.
                         item.type === "prefix" && "cursor-pointer hover:bg-accent-muted",
                       )}
-                      onClick={item.type === "prefix" ? () => setPrefix(item.prefix) : undefined}
+                      onClick={item.type === "prefix" ? () => goToPrefix(item.prefix) : undefined}
                     >
                       {item.type === "prefix" ? (
                         <>
@@ -409,7 +558,9 @@ export function BucketDetail() {
                             <div className="flex min-w-0 items-center gap-2">
                               <Folder className="h-3.5 w-3.5 shrink-0 text-yellow-400" />
                               <span className="truncate text-accent hover:underline">
-                                {item.prefix.slice(prefix.length)}
+                                <HighlightedName
+                                  slices={highlightSlices(item.name, term, nameOffset)}
+                                />
                               </span>
                             </div>
                           </TableCell>
@@ -441,7 +592,8 @@ export function BucketDetail() {
                       ) : item.type === "version" ? (
                         <VersionRow
                           bucket={bucket}
-                          prefix={prefix}
+                          name={item.name}
+                          nameSlices={highlightSlices(item.name, term, nameOffset)}
                           version={item.version}
                           onInspect={() => setMetaTarget(item.version.key)}
                           onDelete={() => setDeleteVersionTarget(item.version)}
@@ -459,7 +611,9 @@ export function BucketDetail() {
                                   setMetaTarget(item.key)
                                 }}
                               >
-                                {item.key.slice(prefix.length)}
+                                <HighlightedName
+                                  slices={highlightSlices(item.name, term, nameOffset)}
+                                />
                               </button>
                             </div>
                           </TableCell>
@@ -600,8 +754,9 @@ export function BucketDetail() {
               </>
             ) : (
               <>
-                Version <span className="font-medium text-fg">{deleteVersionTarget?.versionId}</span>{" "}
-                of <span className="font-medium text-fg">{deleteVersionTarget?.key}</span> will be
+                Version{" "}
+                <span className="font-medium text-fg">{deleteVersionTarget?.versionId}</span> of{" "}
+                <span className="font-medium text-fg">{deleteVersionTarget?.key}</span> will be
                 permanently removed. Other versions are untouched.
               </>
             )}
@@ -695,18 +850,20 @@ export function BucketDetail() {
  */
 function VersionRow({
   bucket,
-  prefix,
+  name,
+  nameSlices,
   version,
   onInspect,
   onDelete,
 }: {
   bucket: string
-  prefix: string
+  /** The key relative to the folder being browsed. */
+  name: string
+  nameSlices: NameSlice[]
   version: S3ObjectVersion
   onInspect: () => void
   onDelete: () => void
 }) {
-  const name = version.key.slice(prefix.length)
   return (
     <>
       <TableCell className="max-w-0">
@@ -717,7 +874,9 @@ function VersionRow({
             <File className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
           )}
           {version.isDeleteMarker ? (
-            <span className="truncate text-fg-muted line-through">{name}</span>
+            <span className="truncate text-fg-muted line-through" title={name}>
+              <HighlightedName slices={nameSlices} />
+            </span>
           ) : (
             <button
               className="truncate text-left text-accent hover:underline"
@@ -727,7 +886,7 @@ function VersionRow({
                 onInspect()
               }}
             >
-              {name}
+              <HighlightedName slices={nameSlices} />
             </button>
           )}
           {version.isDeleteMarker && <Badge variant="danger">Delete marker</Badge>}
