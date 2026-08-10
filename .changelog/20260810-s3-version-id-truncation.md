@@ -1,1 +1,0 @@
-* [web/s3] the version column shows the end of a version id rather than the start, so two versions of one key can be told apart. Overcast mints ids with the timestamp leading, so versions written moments apart share their first characters — three versions of one key all rendered as the same eight characters followed by an ellipsis

@@ -1,1 +1,0 @@
-* [sns] the notification envelope's `UnsubscribeURL` names the port the publisher reached Overcast on, rather than the configured one — on an instance published on a remapped port the link pointed at a port nothing was listening on

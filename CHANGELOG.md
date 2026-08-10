@@ -66,6 +66,158 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.34] - 2026-08-10
+
+### Added
+
+- [acm] `TagResource`, `UntagResource` and `ListTagsForResource` — the modern aliases of the `*Certificate` tag operations, addressing the certificate by `ResourceArn`. `RequestCertificate` applies inline `Tags` at creation
+
+- [cloudtrail] Trails are taggable: `AddTags`, `RemoveTags` and `ListTags`, plus an inline `TagsList` on `CreateTrail`
+
+- [iam] Managed policies and instance profiles are taggable: `TagPolicy`/`UntagPolicy`/`ListPolicyTags` and `TagInstanceProfile`/`UntagInstanceProfile`/`ListInstanceProfileTags`; and `CreateUser`, `CreateRole`, `CreatePolicy` and `CreateInstanceProfile` apply inline `Tags` at creation
+
+- [kinesis] `TagResource`, `UntagResource` and `ListTagsForResource` — the ARN-addressed tag operations the AWS CLI's `kinesis tag-resource` uses, reading and writing the same tag set as `AddTagsToStream` — and `CreateStream` applies inline `Tags` at creation
+
+- [scheduler] `ListSchedules` and `ListScheduleGroups` honour `MaxResults`, `NextToken` and `NamePrefix`, and `ListSchedules` also filters on `State`; a `NextToken` that cannot be decoded gets a `ValidationException` in place of a silent restart at the first page
+
+- [ses] SESv2 resource tagging: `TagResource`, `UntagResource` and `ListTagsForResource` on `/v2/email/tags`, for email identities. `CreateEmailIdentity` applies inline `Tags` at creation, `GetEmailIdentity` reports them, and deleting an identity drops them
+
+- [sns] `CreateTopic` applies inline `Tags` at creation, as AWS does; a repeat idempotent call leaves an existing topic's tags untouched
+
+- [transfer] Transfer Family servers and users are taggable: `TagResource`, `UntagResource` and `ListTagsForResource`, plus inline `Tags` on `CreateServer` and `CreateUser`. `DescribeServer` and `DescribeUser` report them
+
+- [web/s3] the object inspector opens on a named version: it shows that version's metadata and body, its copy-URL carries `?versionId=`, and a version that cannot be read is explained rather than left blank — a delete marker as the tombstone it is, an id that no longer exists as a listing that has gone stale
+
+- [web/cloudwatch] a Clear button on the log events viewer empties the buffer on screen without stopping the tail, so a live stream can be read from a known point instead of scrolling past everything that came before. The events are hidden, not lost — "Show N earlier" puts them back, and so does Refresh
+
+- [web/s3] an expiry hint on noncurrent version rows, counted the way the sweeper counts it — from the moment the version's successor was written, and skipping the newest versions a rule's `NewerNoncurrentVersions` retains
+
+- [web/s3] search and sort controls on the bucket object browser: filter by name or prefix, switch between this-folder and fully recursive listings, and sort by name, size or last modified
+
+- [web/s3] a Versioning panel on the bucket Configuration tab, which is the first way to enable or suspend versioning from the console rather than through the API. The state was already reported there; only the control was missing. Suspending says what it actually does — new writes are stored with version id `null`, and every version already stored is kept, which is not the same as turning versioning off
+
+- [ec2] each region seeds a default VPC on first use, with a default subnet per availability zone, an attached internet gateway, a main route table carrying the default route, and a default security group — `DescribeVpcs --filters Name=isDefault,Values=true` and CDK's `Vpc.fromLookup(isDefault: true)` previously found nothing. Its backing network is the shared data plane, so "no VPC" and "the default VPC" are the same place; `DeleteVpc` on it removes the record and leaves the network, and an internet-gateway change on it is ignored rather than recreating the network under every running container
+
+- [eks] a live-mode cluster's API server carries DNS aliases on the shared data plane. The endpoint `DescribeCluster` returns is still the published host port, so this is groundwork rather than a complete path
+
+### Changed
+
+- **BREAKING** [docker] `overcast-slim` has no SQLite, so a volume mounted at `/data` no longer gives it persistent storage: `auto` resolves to memory, and `hybrid` and `persistent` refuse to start. This is what the image was always documented to do — it only appeared to persist because the wrong binary was shipped
+  migration: use `wal`, which is durable and needs no SQLite, or switch to the full `overcast` image
+
+- [ecr] the registry asks for a fixed host port (`OVERCAST_ECR_REGISTRY_PORT`, default 4510 — LocalStack's registry port) so `repositoryUri` is stable across restarts, falling back to an ephemeral port when it is taken; the port `repositoryUri` then advertises is selected by the Docker daemon itself proving it can dial it — a dual-stack ephemeral publish can split IPv4 and IPv6 onto different host ports, and only the daemon knows which family its `localhost` reaches — and a path nothing answers on is one actionable warning instead of a `CannotPullContainerError` in a later task launch
+
+- [scheduler] `CreateSchedule` and `CreateScheduleGroup` answer 200, the status code their AWS models bind, in place of 201
+
+- **BREAKING** [scheduler] `UpdateSchedule` replaces the whole schedule, as AWS does. An optional member the caller leaves out of the request — `Description`, `ScheduleExpressionTimezone`, `State`, `StartDate`, `EndDate`, or anything inside `Target` — ends up unset, where it used to keep its stored value; the schedule keeps its name, group, ARN and `CreationDate`
+  migration: send the whole schedule, not just the parts you are changing — read it with `GetSchedule`, change what you mean to change, and send the result back
+
+- **BREAKING** [config] `LAMBDA_NETWORK`, `ECS_NETWORK`, `RDS_NETWORK`, `ELASTICACHE_NETWORK`, `MSK_NETWORK`, `EKS_NETWORK` and `EFS_NETWORK` are replaced by a single `OVERCAST_NETWORK` (default `overcast`). Every container Overcast starts now shares one data plane instead of one network per emulator service, which is what made cross-service reachability a per-service bug; the seven per-service networks are removed at startup once nothing is attached to them
+  migration: unset the old variables. If you set one to a custom value, set `OVERCAST_NETWORK` to it instead; if you joined a compose service to `overcast_lambda` or another per-service network, join `overcast` instead.
+
+- [lambda/ecs] containers are created on a control plane that carries the Runtime API and the emulator endpoint, separately from the data plane they reach other resources on — the split a VPC needs in order to restrict one without severing the other
+
+### Fixed
+
+- [acm] tagging a certificate that does not exist is a `ResourceNotFoundException` instead of succeeding and stranding the tags under an ARN nothing owns, and `ListTagsForCertificate` returns tags in a stable key order instead of a different order per call
+
+- [cloudformation] a create that fails with rollback disabled leaves `StackStatusReason` set to AWS's summary of which resources failed, rather than to the underlying service error — which stays on the resource and its event, where AWS keeps it
+
+- [cloudformation] stack operations accept the stack ARN wherever AWS does — `DescribeStacks`, `DescribeStackEvents`, `ListStackResources`, `DescribeStackResources`, `GetTemplate`, `GetTemplateSummary`, `UpdateStack`, `DeleteStack`, `CreateChangeSet`, and `DeleteChangeSet` resolved `StackName` by name only, so clients that poll by the stack ID (CDK's deploy monitor among them) got `ValidationError: Stack [arn:…] does not exist` for a stack that was right there. Conversely, a `CREATE`-type `CreateChangeSet` naming an unknown stack ARN no longer mints a placeholder stack literally named the ARN — an ARN is a handle to an existing stack, and now answers "does not exist"
+
+- [cloudformation] mutating a deleted stack now behaves as on AWS — `UpdateStack` on a `DELETE_COMPLETE` stack reports it does not exist instead of resurrecting it, and a repeat `DeleteStack` is a no-op success instead of re-running the delete and appending a second wave of delete events
+
+- **BREAKING** [cloudformation] a stack operation is now checked against the stack's state: a `CREATE` change set naming a stack that already exists is `AlreadyExistsException`, at `CreateChangeSet` and at `ExecuteChangeSet`, and `UpdateStack` (with `CreateChangeSet` for `ChangeSetType: UPDATE`) is `ValidationError` from anything but a last known stable state — or a `CREATE_FAILED` / `UPDATE_FAILED` stack the update resumes with `DisableRollback`
+  migration: delete a `ROLLBACK_COMPLETE` stack before deploying over it, as the AWS CLI and CDK already do; resume a `CREATE_FAILED` or `UPDATE_FAILED` stack with `--disable-rollback`, or recover it with `RollbackStack`
+
+- [cloudformation] re-deploying a stack that failed replaces the previous attempt's resource records instead of adding to them — a second `cdk deploy` over a `ROLLBACK_COMPLETE` stack left two records per logical ID, so `DescribeStackResources` answered with the first run's failure reason rather than the reason this run actually failed for
+
+- [cloudformation] an update re-provisions a resource the stack no longer has behind a record — one whose create failed before naming anything, or one a rollback deleted — instead of matching it by logical ID, reading the missing property hash as "unchanged" and skipping it
+
+- [cloudformation/cloudwatch] a stack update that changes an `AWS::CloudWatch::Alarm`'s tags now applies them, through `TagResource`/`UntagResource` as real CloudFormation does. `PutMetricAlarm` applies `Tags` only when it creates an alarm, so the update reached `UPDATE_COMPLETE` having changed nothing
+
+- [cloudwatch] alarm tagging works over the JSON protocol the AWS CLI and the SDKs speak, not only the Query form — `ListTagsForResource`, `TagResource` and `UntagResource` were absent from the JSON dispatch, so alarm tags were unreadable with `aws cloudwatch list-tags-for-resource`. The same operations now reject an unknown or non-CloudWatch `ResourceARN` with AWS's `ResourceNotFoundException`/`InvalidParameterValue` instead of quietly tagging a resource that does not exist, and hold tag sets to AWS's rules — 50 tags per resource, no `aws:` key prefix, key and value length limits — on `TagResource` and on the `Tags` a `PutMetricAlarm` applies at creation
+
+- [cloudwatch] `PutMetricData` aggregates datapoints that share a timestamp instead of keeping only the last one — two datums in one call with no `Timestamp` take the same clock reading on a coarse platform timer, and were recorded as one value rather than being summed into the period
+
+- [docker] the published `overcast-slim` image is a slim build. Every caller that selected the slim stage had to pass a matching `NOSQLITE=1` build arg as well, and the release workflow did not, so `-slim` shipped the console binary — embedded web console, `/_mcp`, SQLite and all, the same size as the console image. The build target now decides the flavour on its own, and each builder asserts what it produced
+
+- [docker] container start failures now carry the daemon's error message instead of a bare status code
+
+- [ecr] the emulated registry is reachable from the Docker daemon in the shapes that previously failed outright. Its port is published dual-stack instead of IPv4-only — the v4-only binding was invisible to Docker Desktop's port forwarding, leaving the daemon unable to reach its own registry at `localhost`, so every `docker push` and every ECS pull of an ECR image died on a dial. Its htpasswd file is copied into the container rather than bind-mounted from a path only Overcast's own filesystem has, so `docker push` no longer refuses on every containerised deployment. And `ListImages`/`DescribeImages`/`BatchGetImage` reconcile pushed images when Overcast itself runs in a container, probing the addresses the registry can actually be at rather than assuming Overcast's own loopback
+
+- [ecr] two Overcast instances sharing one Docker daemon no longer interfere with each other. The registry container's name is per-claim — port-derived for a fixed port, random for an ephemeral one — instead of a shared singleton, so startup removes nothing but a legacy singleton-named leftover and shutdown removes only the instance's own container; and the port `repositoryUri` advertises is proved to be *this* instance's registry rather than merely a registry, because the daemon-vantage startup probe carries the instance's own credentials. Interleaved ephemeral dual-stack publishes could previously leave one instance advertising a port serving the other's registry, and every token it then issued failed authentication against that registry's htpasswd
+
+- [ecr] the registry's startup is no longer raced or silent: `GetAuthorizationToken` and `repositoryUri` wait for it to actually answer before they are served — a token handed out ahead of a still-booting registry made `docker login` fail with EOF on loaded machines — a container name still held by a predecessor being removed is waited out rather than treated as fatal, and every startup step that fails says so in the log
+
+- [ecs/ecr] a task definition whose image is a CDK container asset now starts: the `{account}.dkr.ecr.{region}.amazonaws.com/…` reference CDK synthesises is resolved to the registry Overcast serves and pulled with the credentials `GetAuthorizationToken` issues, instead of reaching real AWS and failing with `CannotPullContainerError: … no basic auth credentials`
+
+- [ecs] `awslogs` log lines longer than 16 KiB are reassembled the same way, having had the same stamps spliced into them
+
+- [lambda] an execution environment that fails to initialise is now explained: the container, the Runtime API endpoint it was handed, whether anything ever connected there, and what it printed
+
+- [lambda/ecr] a `PackageType=Image` function whose image is a CDK container asset now runs: the `{account}.dkr.ecr.{region}.amazonaws.com/…` reference CDK synthesises into `Code.ImageUri` is resolved to the registry Overcast serves and pulled with the credentials `GetAuthorizationToken` issues, and the container is created from that reference, instead of the pull reaching real AWS and failing with `no basic auth credentials`. The function still reports `Code.ImageUri` exactly as it was deployed
+
+- [lambda] a log line longer than 16 KiB reaches CloudWatch as the function wrote it, instead of with an RFC3339Nano timestamp spliced through the middle of it at every chunk boundary — Docker stamps each 16 KiB frame rather than each message, and reassembling the frames carried the continuation stamps into the line, cutting tokens of a serialized error object in half
+
+- [lambda] a log stream is named with the 32 hex characters AWS uses for the execution environment GUID (`2026/08/10/[$LATEST]312c2d81e2e64af58dbe557754f9aa13`) rather than 26, which failed a caller matching stream names against AWS's shape
+
+- [lambda] an invoke that asks for a log tail (`X-Amz-Log-Type: Tail`) carries the function's own output, not only the START / END / REPORT lines. A warm invocation arriving while the log reader was still working through the previous one's output was reported as a function that had printed nothing, and answered with a tail missing its `console.log`
+
+- [scheduler] every EventBridge Scheduler operation is served at AWS's own path, so an unmodified SDK, CDK construct or `aws scheduler …` call reaches it instead of answering 501
+
+- **BREAKING** [scheduler] `CreateSchedule` and `UpdateSchedule` validate the schedule name, the schedule expression, `FlexibleTimeWindow.Mode` and `State`, answering `ValidationException` where a schedule that could never fire used to be stored
+  migration: correct the offending field — a name is 1-64 characters of `[0-9a-zA-Z-_.]`, an expression must be `rate(...)`, `cron(...)` or `at(...)`, `FlexibleTimeWindow.Mode` must be `OFF` or `FLEXIBLE`, and `State` must be `ENABLED` or `DISABLED`
+
+- [scheduler] `DeleteScheduleGroup` deletes the schedules inside the group, as AWS does; they used to be left behind, unreachable through the API and still firing on every engine tick
+
+- [scheduler] `StartDate` and `EndDate` survive a `CreateSchedule` made over the JSON/CBOR protocols, the path CloudFormation takes; the REST routes and that dispatch now run one implementation rather than two copies that had drifted
+
+- [scheduler] a store failure while reading a schedule or a group is reported as `InternalError` in place of `ResourceNotFoundException`, and a single undecodable record is skipped and logged instead of disappearing from a listing without trace
+
+- [scheduler] a schedule whose target is slow, unreachable or working through its `RetryPolicy` no longer holds up every other schedule in the emulator: the engine hands each due firing to a pool of delivery workers instead of delivering them one after another on the tick itself. A schedule is still never fired twice at once, so its own firings stay in order
+
+- [scheduler] a sparse `cron(...)` schedule no longer burns CPU on every engine tick. The evaluator advanced a minute at a time until something matched, so it cost one iteration per minute between now and the next firing — around 525,000 of them, once a second, for a yearly schedule. It now advances field by field, and parsing a cron expression allocates nothing. That rewrite also fixed a step over a range: `cron(0 9-17/4 * * ? *)` now fires at 09:00, 13:00 and 17:00, where the range was unreadable to the old parser, which fell back to stepping the whole field from zero and fired at 00:00, 04:00, 08:00, 12:00, 16:00 and 20:00
+
+- [scheduler] deleting a schedule sticks even when an `UpdateSchedule` for the same schedule is in flight. The update read the record, built its replacement and wrote it back without holding a lock, so a `DeleteSchedule` that landed in between was written over — the caller was told the delete had succeeded and the schedule stayed stored and kept firing
+
+- [sns] the notification envelope's `UnsubscribeURL` names the port the publisher reached Overcast on, rather than the configured one — on an instance published on a remapped port the link pointed at a port nothing was listening on
+
+- [web/s3] the version-history view addresses each row by its version id, so downloading or inspecting a revision returns that revision. Every row resolved by key alone, which S3 answers with whichever version is current — a key with three stored revisions handed out the newest one whichever row was clicked
+
+- [web] the stack page's failure banner reports the most recent failure rather than the first resource listed
+
+- [web/cloudwatch] the log viewer's level badge labels every row whose level it detects, including a runtime's plain-text `console.*` lines — previously only a JSON document was labelled and a text line got the row tint alone — and the badges are legible in light mode, where the warning badge used to be lighter than the row behind it. A long log stream name no longer overflows its column into the message text in the all-streams view
+
+- [web] a log event carried by both a Live Tail session and a refresh of the events list is shown once, in place of a duplicate row
+
+- [web/s3] lifecycle rules that act on version history are no longer drawn as rules with no actions. NoncurrentVersionExpiration, NoncurrentVersionTransition and ExpiredObjectDeleteMarker were dropped on the way into the console, so a versioned bucket whose entire retention policy is one of them showed a rule that appeared to do nothing
+
+- [web/s3] the version column shows the end of a version id rather than the start, so two versions of one key can be told apart. Overcast mints ids with the timestamp leading, so versions written moments apart share their first characters — three versions of one key all rendered as the same eight characters followed by an ellipsis
+
+- [elasticache] the support matrix no longer advertises `DescribeCacheEngineVersions` and `RebootCacheCluster` as supported — both are routed to a NotImplemented stub and always answer 501, so they are marked Unsupported until they are emulated
+
+- [elasticache] a cache node is reachable from an ECS task, and under every hostname its endpoint could have been minted with — previously it was attached only to the Lambda network and registered only the configured name, so an ECS task resolving it reached Overcast on the Redis port and hung rather than failing (#872)
+
+- [ses] `CreateEmailIdentity` is served at `POST /v2/email/identities`, the binding AWS models, so the SDKs and `aws sesv2 create-email-identity` reach it instead of an error. It was registered under `PUT`, which no client sends, leaving the operation — and the inline `Tags` it applies at creation — unreachable. The `PUT` binding is gone; AWS never had one.
+
+- [ec2] `DescribeVpcs` honours `VpcId.N` and the `vpc-id` and `isDefault` filters, and reports `isDefault` from the record instead of always `false` — CDK's VPC lookup treats the response as already filtered and needs exactly one VPC back, so an unfiltered response would break `Vpc.fromLookup` for anyone holding more than one VPC
+
+- [efs] NFS mount-target exports are resolvable by name from sibling containers, not only by container address
+
+- [eks] a live-mode cluster's endpoint aliases use the cluster's own region rather than the configured default, so a cluster created in another region resolves
+
+- [eks] live mode pulls the k3s image before it creates a control plane, so a cluster can be created on a machine that has never run one. Docker answered `No such image` to the create and the cluster then reported `CREATING` indefinitely, with the reason only in a log line — a start that fails now reaches `FAILED` and carries the Docker error in `cluster.health.issues`, so a waiter gets an answer instead of hanging
+
+- [eks] a containerised Overcast can bring up a live-mode cluster at all. It probed the k3s API on `127.0.0.1:<published port>`, which inside its own network namespace is itself, so a healthy control plane never left `CREATING`; it now dials the container address on the control plane when it runs beside the daemon, the same lookup the RDS, ElastiCache, MSK and EFS health checks use. `DescribeCluster` still returns the published host port
+
+- [msk] `GetBootstrapBrokers` returns an address the caller can actually dial: a resolvable broker hostname on 9092 for a sibling container, the published port for the host. It previously returned `OVERCAST_HOSTNAME:hostPort` to everyone, which inside any container resolves to Overcast — a process that serves no Kafka
+
+### Removed
+
+- **BREAKING** [scheduler] the emulator-only `/_scheduler/*` path prefix
+  migration: use AWS's paths — `/schedules/{Name}` with `GroupName` in the body on create/update and `?groupName` on get/delete, `/schedules`, `/schedule-groups/{Name}`, `/schedule-groups`, and `/tags/{ResourceArn}`
+
 ## [0.0.1-alpha.33] - 2026-08-09
 
 ### Added
@@ -1234,7 +1386,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.33...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.34...HEAD
+[0.0.1-alpha.34]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.33...v0.0.1-alpha.34
 [0.0.1-alpha.33]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.32...v0.0.1-alpha.33
 [0.0.1-alpha.32]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.31...v0.0.1-alpha.32
 [0.0.1-alpha.31]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.30...v0.0.1-alpha.31
