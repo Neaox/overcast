@@ -17,10 +17,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Neaox/overcast/internal/awsapi"
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
+// modeledBinding returns the HTTP method and URI template the pinned AWS
+// Smithy models give an operation, so a route assertion is checked against the
+// model rather than against whatever the emulator happens to have registered.
+func modeledBinding(t *testing.T, modelService, operation string) (method, uri string) {
+	t.Helper()
+	awsapi.WalkOperations(func(op awsapi.Operation) bool {
+		if op.Service == modelService && op.Name == operation {
+			method, uri = op.HTTPMethod, op.URI
+			return false
+		}
+		return true
+	})
+	if method == "" {
+		t.Fatalf("%s/%s is not in the pinned AWS operation manifest", modelService, operation)
+	}
+	return method, uri
+}
 
 // sesCall performs an SES v1 Query-protocol POST / request.
 func sesCall(t *testing.T, srv *helpers.TestServer, action string, params url.Values) *http.Response {
@@ -299,12 +318,56 @@ func TestSES_GetSendQuota(t *testing.T) {
 
 // ─── SES v2 — POST /v2/email/identities ──────────────────────────────────────
 
+// CreateEmailIdentity is modeled as POST /v2/email/identities, so that is the
+// only binding an SDK or the CLI will ever send. Overcast registered it under
+// PUT instead, which left a fully implemented operation unreachable to every
+// real client (#862). Assert the modeled method reaches the handler and that
+// the invented one creates nothing, so the wrong binding cannot come back and
+// cannot be papered over with an alias.
+func TestSESV2_CreateEmailIdentity_boundToTheModeledMethod(t *testing.T) {
+	// Given the pinned model's binding for the operation
+	method, uri := modeledBinding(t, "sesv2", "CreateEmailIdentity")
+	if method != http.MethodPost || uri != "/v2/email/identities" {
+		t.Fatalf("model binds CreateEmailIdentity to %s %s; this test is out of date", method, uri)
+	}
+	srv := helpers.NewTestServer(t)
+
+	// When I call it the way the model says
+	resp := v2Call(t, srv, method, uri, map[string]string{
+		"EmailIdentity": "postbound@example.com",
+	})
+	defer resp.Body.Close()
+
+	// Then it is handled rather than left to the unimplemented-operation path
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	// And the method AWS does not model creates nothing
+	unmodeled := v2Call(t, srv, http.MethodPut, uri, map[string]string{
+		"EmailIdentity": "putbound@example.com",
+	})
+	unmodeled.Body.Close()
+
+	list := v2Call(t, srv, http.MethodGet, uri, nil)
+	defer list.Body.Close()
+	helpers.AssertStatus(t, list, http.StatusOK)
+	b, err := io.ReadAll(list.Body)
+	if err != nil {
+		t.Fatalf("read identity list: %v", err)
+	}
+	if !strings.Contains(string(b), "postbound@example.com") {
+		t.Errorf("%s %s did not create the identity: %s", method, uri, b)
+	}
+	if strings.Contains(string(b), "putbound@example.com") {
+		t.Errorf("PUT %s created an identity; AWS models no such binding: %s", uri, b)
+	}
+}
+
 func TestSESV2_CreateEmailIdentity_email(t *testing.T) {
 	// Given a running server
 	srv := helpers.NewTestServer(t)
 
 	// When I create an email identity via v2
-	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{
+	resp := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]string{
 		"EmailIdentity": "test@example.com",
 	})
 	defer resp.Body.Close()
@@ -323,7 +386,7 @@ func TestSESV2_CreateEmailIdentity_domain(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When I create a domain identity via v2
-	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{
+	resp := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]string{
 		"EmailIdentity": "example.com",
 	})
 	defer resp.Body.Close()
@@ -342,7 +405,7 @@ func TestSESV2_CreateEmailIdentity_domain(t *testing.T) {
 func TestSESV2_ListEmailIdentities(t *testing.T) {
 	// Given a server with an identity
 	srv := helpers.NewTestServer(t)
-	r := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{"EmailIdentity": "list@example.com"})
+	r := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]string{"EmailIdentity": "list@example.com"})
 	r.Body.Close()
 
 	// When I list identities
@@ -373,7 +436,7 @@ func TestSESV2_ListEmailIdentities(t *testing.T) {
 func TestSESV2_GetEmailIdentity(t *testing.T) {
 	// Given a server with an identity
 	srv := helpers.NewTestServer(t)
-	r := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{"EmailIdentity": "get@example.com"})
+	r := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]string{"EmailIdentity": "get@example.com"})
 	r.Body.Close()
 
 	// When I get the identity
@@ -394,7 +457,7 @@ func TestSESV2_GetEmailIdentity(t *testing.T) {
 func TestSESV2_DeleteEmailIdentity(t *testing.T) {
 	// Given a server with an identity
 	srv := helpers.NewTestServer(t)
-	r := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{"EmailIdentity": "delete@example.com"})
+	r := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]string{"EmailIdentity": "delete@example.com"})
 	r.Body.Close()
 
 	// When I delete it
@@ -677,7 +740,7 @@ func sesListTags(t *testing.T, srv *helpers.TestServer, arn string) map[string]s
 
 func TestSESV2_TagResource_roundTripsOnAnIdentity(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{
+	resp := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]string{
 		"EmailIdentity": "tagged@example.com",
 	})
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -698,7 +761,7 @@ func TestSESV2_TagResource_roundTripsOnAnIdentity(t *testing.T) {
 
 func TestSESV2_UntagResource_removesNamedKeysOnly(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{
+	resp := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]string{
 		"EmailIdentity": "untagged@example.com",
 	})
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -729,7 +792,7 @@ func TestSESV2_UntagResource_removesNamedKeysOnly(t *testing.T) {
 
 func TestSESV2_CreateEmailIdentity_appliesTagsAtCreation(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]any{
+	resp := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]any{
 		"EmailIdentity": "tagatcreate@example.com",
 		"Tags":          []map[string]string{{"Key": "env", "Value": "staging"}},
 	})
@@ -745,7 +808,7 @@ func TestSESV2_CreateEmailIdentity_appliesTagsAtCreation(t *testing.T) {
 // SDK read an identity's tags without a second call.
 func TestSESV2_GetEmailIdentity_reportsTags(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]any{
+	resp := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]any{
 		"EmailIdentity": "gettags@example.com",
 		"Tags":          []map[string]string{{"Key": "env", "Value": "dev"}},
 	})
@@ -771,7 +834,7 @@ func TestSESV2_GetEmailIdentity_reportsTags(t *testing.T) {
 // same name does not inherit them.
 func TestSESV2_DeleteEmailIdentity_dropsItsTags(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	resp := v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]any{
+	resp := v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]any{
 		"EmailIdentity": "recycled@example.com",
 		"Tags":          []map[string]string{{"Key": "env", "Value": "prod"}},
 	})
@@ -782,7 +845,7 @@ func TestSESV2_DeleteEmailIdentity_dropsItsTags(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusOK)
 	resp.Body.Close()
 
-	resp = v2Call(t, srv, http.MethodPut, "/v2/email/identities", map[string]string{
+	resp = v2Call(t, srv, http.MethodPost, "/v2/email/identities", map[string]string{
 		"EmailIdentity": "recycled@example.com",
 	})
 	helpers.AssertStatus(t, resp, http.StatusOK)

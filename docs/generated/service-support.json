@@ -6357,7 +6357,7 @@
           "operation": "SendEmail",
           "category": "SES v1 — Sending",
           "status": "✅ Supported",
-          "notes": "`POST /v2/email/outbound-emails`; simple content"
+          "notes": "Query `Action=SendEmail`; simple content"
         },
         {
           "operation": "SendRawEmail",
@@ -6571,7 +6571,7 @@
           "operation": "V2CreateEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
-          "notes": "`PUT /v2/email/identities`; auto-verified; inline `Tags` applied at creation",
+          "notes": "`POST /v2/email/identities`; auto-verified; inline `Tags` applied at creation",
           "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)",
           "doc_only": true
         },

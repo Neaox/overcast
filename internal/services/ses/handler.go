@@ -471,7 +471,7 @@ func (h *Handler) V2SendEmail(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"MessageId":%q}`, msgID)
 }
 
-// V2CreateEmailIdentity handles PUT /v2/email/identities.
+// V2CreateEmailIdentity handles POST /v2/email/identities.
 func (h *Handler) V2CreateEmailIdentity(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EmailIdentity string   `json:"EmailIdentity"`

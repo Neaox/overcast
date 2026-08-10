@@ -65,10 +65,10 @@ appear in the Mail page.
 
 ### SES v1 — Sending
 
-| Operation      | Status       | Notes                                            | AWS Docs                                                                          |
-| -------------- | ------------ | ------------------------------------------------ | --------------------------------------------------------------------------------- |
-| `SendEmail`    | ✅ Supported | `POST /v2/email/outbound-emails`; simple content | [docs](https://docs.aws.amazon.com/ses/latest/APIReference/API_SendEmail.html)    |
-| `SendRawEmail` | ✅ Supported | Delivers raw MIME to mail capture                | [docs](https://docs.aws.amazon.com/ses/latest/APIReference/API_SendRawEmail.html) |
+| Operation      | Status       | Notes                                    | AWS Docs                                                                          |
+| -------------- | ------------ | ---------------------------------------- | --------------------------------------------------------------------------------- |
+| `SendEmail`    | ✅ Supported | Query `Action=SendEmail`; simple content | [docs](https://docs.aws.amazon.com/ses/latest/APIReference/API_SendEmail.html)    |
+| `SendRawEmail` | ✅ Supported | Delivers raw MIME to mail capture        | [docs](https://docs.aws.amazon.com/ses/latest/APIReference/API_SendRawEmail.html) |
 
 ### SES v1 — Identities
 
@@ -127,12 +127,12 @@ appear in the Mail page.
 
 ### SES v2 — Identities
 
-| Operation             | Status       | Notes                                                                        | AWS Docs                                                                                    |
-| --------------------- | ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `CreateEmailIdentity` | ✅ Supported | `PUT /v2/email/identities`; auto-verified; inline `Tags` applied at creation | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html) |
-| `ListEmailIdentities` | ✅ Supported | `GET /v2/email/identities`                                                   | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html) |
-| `GetEmailIdentity`    | ✅ Supported | `GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`    | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)    |
-| `DeleteEmailIdentity` | ✅ Supported | `DELETE /v2/email/identities/{EmailIdentity}`                                | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html) |
+| Operation             | Status       | Notes                                                                         | AWS Docs                                                                                    |
+| --------------------- | ------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `CreateEmailIdentity` | ✅ Supported | `POST /v2/email/identities`; auto-verified; inline `Tags` applied at creation | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html) |
+| `ListEmailIdentities` | ✅ Supported | `GET /v2/email/identities`                                                    | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html) |
+| `GetEmailIdentity`    | ✅ Supported | `GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`     | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)    |
+| `DeleteEmailIdentity` | ✅ Supported | `DELETE /v2/email/identities/{EmailIdentity}`                                 | [docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html) |
 
 ### SES v2 — Tags
 

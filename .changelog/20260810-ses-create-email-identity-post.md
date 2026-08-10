@@ -1,0 +1,1 @@
+* [ses] `CreateEmailIdentity` is served at `POST /v2/email/identities`, the binding AWS models, so the SDKs and `aws sesv2 create-email-identity` reach it instead of an error. It was registered under `PUT`, which no client sends, leaving the operation — and the inline `Tags` it applies at creation — unreachable. The `PUT` binding is gone; AWS never had one.
