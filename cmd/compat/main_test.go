@@ -202,3 +202,98 @@ func TestResolveSuiteSelection_rejectsTypoEvenAlongsideARealSuite(t *testing.T) 
 		t.Errorf("error = %q, want it to list the valid suites", err.Error())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Announcing a managed instance that has no Docker (issue #867)
+// ---------------------------------------------------------------------------
+
+// unsetSkipDocker removes OVERCAST_COMPAT_SKIP_DOCKER for the duration of a
+// test, restoring whatever the machine had afterwards. t.Setenv registers that
+// restore; the unset then leaves the variable genuinely absent, which is the
+// state the automatic skip turns on and the one a bare t.Setenv("") cannot
+// produce.
+func unsetSkipDocker(t *testing.T) {
+	t.Helper()
+	t.Setenv(skipDockerEnv, "")
+	if err := os.Unsetenv(skipDockerEnv); err != nil {
+		t.Fatalf("unset %s: %v", skipDockerEnv, err)
+	}
+}
+
+func TestAnnounceNoDockerSaysNothingWhenTheInstanceHasDocker(t *testing.T) {
+	// Given: an instance that reported a reachable daemon
+	// When: the run announces what it found
+	// Then: nothing is printed and nothing is skipped — the normal case stays
+	// quiet
+	unsetSkipDocker(t)
+	var out strings.Builder
+	announceNoDocker(&out, "", false)
+	if out.String() != "" {
+		t.Errorf("announceNoDocker printed %q with nothing to report", out.String())
+	}
+	if _, set := os.LookupEnv(skipDockerEnv); set {
+		t.Errorf("announceNoDocker set %s with nothing to report", skipDockerEnv)
+	}
+}
+
+func TestAnnounceNoDockerSkipsWhenTheMachineIsTheReason(t *testing.T) {
+	// Given: a managed instance with no Docker, and the machine is why
+	// When: the run announces it
+	// Then: it says so once, up front, and turns on the suites' own opt-out so
+	// the Lambda groups skip. A skip is the honest report for a test the
+	// environment cannot run; the failures it replaces read as a broken
+	// emulator (issue #867).
+	unsetSkipDocker(t)
+	var out strings.Builder
+	announceNoDocker(&out, "the Docker socket was not mounted: nowhere to mount it from", true)
+
+	if got := os.Getenv(skipDockerEnv); got != "1" {
+		t.Errorf("%s = %q, want 1", skipDockerEnv, got)
+	}
+	printed := out.String()
+	if !strings.Contains(printed, "nowhere to mount it from") {
+		t.Errorf("output %q does not carry the reason", printed)
+	}
+	if !strings.Contains(printed, skipDockerEnv) {
+		t.Errorf("output %q does not say what it did about it", printed)
+	}
+}
+
+func TestAnnounceNoDockerLeavesAnExplicitOptOutAlone(t *testing.T) {
+	// Given: a caller who set the variable themselves — which is how
+	// compat/docker-compose.yml and CI both decide this question
+	// When: the run finds no Docker
+	// Then: their value stands. compat/AGENTS.md is explicit that CI must not
+	// skip these tests, and a harness that overwrote the setting would decide
+	// that for it.
+	t.Setenv(skipDockerEnv, "0")
+	var out strings.Builder
+	announceNoDocker(&out, "there is no reachable Docker daemon on this machine", true)
+
+	if got := os.Getenv(skipDockerEnv); got != "0" {
+		t.Errorf("%s = %q, want the caller's 0", skipDockerEnv, got)
+	}
+	if !strings.Contains(out.String(), "as you set it") {
+		t.Errorf("output %q does not say the caller's setting was kept", out.String())
+	}
+}
+
+func TestAnnounceNoDockerDoesNotSkipWhenTheInstanceIsTheReason(t *testing.T) {
+	// Given: compat mounted the socket and the daemon is up, and the instance
+	// still reports no Docker
+	// When: the run announces it
+	// Then: the tests are left to run and fail. Skipping here would hide an
+	// emulator answering from its stub behind a green run, which is the
+	// blindspot compat/AGENTS.md § "Docker-dependent tests are first-class"
+	// exists to prevent.
+	unsetSkipDocker(t)
+	var out strings.Builder
+	announceNoDocker(&out, "the instance reports no Docker daemon even though it was mounted", false)
+
+	if _, set := os.LookupEnv(skipDockerEnv); set {
+		t.Errorf("announceNoDocker skipped tests the environment could have run")
+	}
+	if !strings.Contains(out.String(), "will run and") {
+		t.Errorf("output %q does not say the tests are still going to run", out.String())
+	}
+}
