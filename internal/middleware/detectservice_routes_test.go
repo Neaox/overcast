@@ -79,28 +79,32 @@ var registeredRouteClassification = map[string]string{
 	// never reach the S3 fallback; internalService maps the known owners and
 	// calls the rest "internal". The multi-valued entries are directories with
 	// several owners under them (/_overcast/cognito, /_overcast/inbox, …).
-	"/_":              "internal",
-	"/_apigateway":    "internal",
-	"/_appconfig":     "internal",
-	"/_appconfigdata": "internal",
-	"/_appsync":       "appsync",
-	"/_cloudfront":    "cloudfront",
-	"/_cognito":       "cognito",
-	"/_ecs":           "ecs",
-	"/_elb":           "internal",
-	"/_events":        "events|internal",
-	"/_health":        "internal",
-	"/_internal":      "internal",
-	"/_lambda":        "lambda",
-	"/_mcp":           "internal",
-	"/_metrics":       "metrics",
-	"/_overcast":      "cognito|internal|secretsmanager|ses",
-	"/_rds":           "internal",
-	"/_topology":      "internal",
+	"/_":           "internal",
+	"/_apigateway": "internal",
+	"/_appconfig":  "internal",
+	"/_appsync":    "appsync",
+	"/_cloudfront": "cloudfront",
+	"/_cognito":    "cognito",
+	"/_ecs":        "ecs",
+	"/_elb":        "internal",
+	"/_events":     "events|internal",
+	"/_health":     "internal",
+	"/_internal":   "internal",
+	"/_lambda":     "lambda",
+	"/_mcp":        "internal",
+	"/_metrics":    "metrics",
+	"/_overcast":   "cognito|internal|secretsmanager|ses",
+	"/_rds":        "internal",
+	"/_topology":   "internal",
 
 	// Undated literals the prefix switch claims.
 	"/apikeys":      "apigateway",
 	"/applications": "appregistry",
+	// AppConfig Data's two modeled bindings. detectService claims both
+	// prefixes explicitly: they are root-level paths with no version
+	// segment, so nothing else identifies them before the credential scope.
+	"/configuration":         "appconfigdata",
+	"/configurationsessions": "appconfigdata",
 	// Bedrock Runtime's inference bindings. Claimed by the whole path shape
 	// rather than by the "/model" prefix, because that segment is also a legal
 	// S3 bucket name — see isBedrockRuntimeInferencePath.

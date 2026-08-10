@@ -109,6 +109,27 @@ func detectService(r *http.Request, body ...[]byte) string {
 		return "apigateway"
 	case strings.HasPrefix(r.URL.Path, "/applications"):
 		return "appregistry"
+	case r.URL.Path == "/configurationsessions":
+		// StartConfigurationSession, which only AppConfig Data models. Matched
+		// exactly rather than by prefix: the model binds nothing beneath it,
+		// and this step runs ahead of the credential scope, so a prefix would
+		// take "/configurationsessions-backup" from a bucket of that name for
+		// nothing.
+		return "appconfigdata"
+	case r.URL.Path == "/configuration":
+		// GetLatestConfiguration. Three modeled services bind this path —
+		// AppConfig Data, Omics and Service Catalog AppRegistry — so like
+		// /v2/apis above it asks the credential scope before answering.
+		// Overcast serves only AppConfig Data's binding here, but the label
+		// picks the IAM action, and a caller that named another service (or a
+		// genuine S3 request to a bucket called "configuration") must keep the
+		// classification it had before this route existed. AppConfig Data signs
+		// as "appconfig", which it shares with the AppConfig control plane;
+		// only AppConfig Data binds this path.
+		if svc := serviceFromAuthCredential(r); svc != "" && svc != "appconfig" {
+			return svc
+		}
+		return "appconfigdata"
 	case strings.HasPrefix(r.URL.Path, "/schedules"),
 		strings.HasPrefix(r.URL.Path, "/schedule-groups"):
 		// EventBridge Scheduler's entire non-tag surface. DataBrew is the only

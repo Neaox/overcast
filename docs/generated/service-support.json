@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1430,
+  "total_ops": 1429,
   "services": [
     {
       "service": "s3",
@@ -5947,30 +5947,22 @@
     {
       "service": "appconfigdata",
       "display_name": "AppConfigData",
-      "total_ops": 3,
-      "implemented_ops": 3,
+      "total_ops": 2,
+      "implemented_ops": 2,
       "operations": [
         {
           "operation": "StartConfigurationSession",
           "category": "Sessions",
-          "status": "🚧 WIP",
-          "notes": "Starts a polling session; returns `InitialConfigurationToken`; Overcast does not serve the binding AWS models, so no SDK reaches it (#855)",
+          "status": "✅ Supported",
+          "notes": "Starts a polling session; returns `InitialConfigurationToken`; honours `RequiredMinimumPollIntervalInSeconds`",
           "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_StartConfigurationSession.html)"
         },
         {
           "operation": "GetLatestConfiguration",
           "category": "Sessions",
-          "status": "🚧 WIP",
-          "notes": "Returns current config content; empty body when unchanged since last poll; Overcast does not serve the binding AWS models, so no SDK reaches it (#855)",
-          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)"
-        },
-        {
-          "operation": "AppConfig-Configuration-Version",
-          "category": "Response headers",
           "status": "✅ Supported",
-          "notes": "Integer version number (only when content is returned)",
-          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/Welcome.html)",
-          "doc_only": true
+          "notes": "Takes the token as the `configuration_token` query parameter; returns the configuration as the response payload with the session state in headers; empty payload when unchanged since the last poll",
+          "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)"
         }
       ]
     },
