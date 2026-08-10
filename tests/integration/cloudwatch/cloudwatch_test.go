@@ -239,6 +239,162 @@ func TestGetMetricStatistics_dimensionOrderInsensitive(t *testing.T) {
 	}
 }
 
+// TestGetMetricStatistics_sameTimestampDatumsAggregate covers the four ways two
+// datapoints can land on the identical timestamp — and therefore, before the
+// fix, on the identical cloudwatch:metricdata key, where the second silently
+// replaced the first instead of being aggregated with it.
+//
+// Two of the cases publish without any Timestamp at all: PutMetricData defaults
+// each datum to the current clock reading independently, so two datums in one
+// call collide whenever the clock does not tick between them — which on Windows
+// is the normal case, not a rare race (the platform timer granularity is coarse
+// enough that a whole request fits inside one tick). The mock clock reproduces
+// that deterministically on every platform. The other two publish an explicit,
+// deliberately shared Timestamp, which collides on any platform and is
+// something real callers do (a batch of samples all stamped with one
+// collection time).
+//
+// Real CloudWatch aggregates all of these into the period rather than keeping
+// only the last one: SampleCount 2, Sum 100, Average 50, Minimum 40,
+// Maximum 60.
+//
+// The persistent case is not redundant with the memory ones: the aggregation
+// has to hold for both state.Store implementations, and only this case
+// exercises SQLiteStore.
+func TestGetMetricStatistics_sameTimestampDatumsAggregate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T) (srv *helpers.TestServer, base time.Time)
+	}{
+		{
+			// The reported case: `aws cloudwatch put-metric-data` with two
+			// --metric-data entries and no timestamps.
+			name: "query protocol, defaulted timestamps",
+			run: func(t *testing.T) (*helpers.TestServer, time.Time) {
+				srv := helpers.NewTestServer(t, helpers.WithMockClock())
+				put := cwCall(t, srv, "PutMetricData", url.Values{
+					"Namespace":                      {"TestNS"},
+					"MetricData.member.1.MetricName": {"CPUUtilization"},
+					"MetricData.member.1.Value":      {"40"},
+					"MetricData.member.1.Unit":       {"Percent"},
+					"MetricData.member.2.MetricName": {"CPUUtilization"},
+					"MetricData.member.2.Value":      {"60"},
+					"MetricData.member.2.Unit":       {"Percent"},
+				})
+				defer put.Body.Close()
+				helpers.AssertStatus(t, put, http.StatusOK)
+				return srv, srv.Clock.Now().UTC()
+			},
+		},
+		{
+			name: "query protocol, identical explicit timestamps",
+			run: func(t *testing.T) (*helpers.TestServer, time.Time) {
+				srv := helpers.NewTestServer(t)
+				base := time.Now().UTC().Truncate(time.Second)
+				stamp := base.Add(-30 * time.Second).Format(time.RFC3339)
+				put := cwCall(t, srv, "PutMetricData", url.Values{
+					"Namespace":                      {"TestNS"},
+					"MetricData.member.1.MetricName": {"CPUUtilization"},
+					"MetricData.member.1.Timestamp":  {stamp},
+					"MetricData.member.1.Value":      {"40"},
+					"MetricData.member.1.Unit":       {"Percent"},
+					"MetricData.member.2.MetricName": {"CPUUtilization"},
+					"MetricData.member.2.Timestamp":  {stamp},
+					"MetricData.member.2.Value":      {"60"},
+					"MetricData.member.2.Unit":       {"Percent"},
+				})
+				defer put.Body.Close()
+				helpers.AssertStatus(t, put, http.StatusOK)
+				return srv, base
+			},
+		},
+		{
+			name: "json protocol, defaulted timestamps",
+			run: func(t *testing.T) (*helpers.TestServer, time.Time) {
+				srv := helpers.NewTestServer(t, helpers.WithMockClock())
+				put := cwTargetCall(t, srv, "PutMetricData", map[string]any{
+					"Namespace": "TestNS",
+					"MetricData": []map[string]any{
+						{"MetricName": "CPUUtilization", "Value": 40, "Unit": "Percent"},
+						{"MetricName": "CPUUtilization", "Value": 60, "Unit": "Percent"},
+					},
+				})
+				defer put.Body.Close()
+				helpers.AssertStatus(t, put, http.StatusOK)
+				return srv, srv.Clock.Now().UTC()
+			},
+		},
+		{
+			// SQLiteStore rather than MemoryStore. Deliberately on the real
+			// clock: the mock is stopped at the Unix epoch, and a timestamp
+			// before it is negative, whose decimal form does not sort in time
+			// order within the key prefix that listMetricDataPoints range-reads.
+			name: "persistent backend, identical explicit timestamps",
+			run: func(t *testing.T) (*helpers.TestServer, time.Time) {
+				srv := helpers.NewTestServer(
+					t,
+					helpers.WithServiceStates(map[string]config.StateBackend{"cloudwatch": config.StateBackendPersistent}),
+				)
+				base := time.Now().UTC().Truncate(time.Second)
+				stamp := base.Add(-30 * time.Second).Format(time.RFC3339)
+				put := cwCall(t, srv, "PutMetricData", url.Values{
+					"Namespace":                      {"TestNS"},
+					"MetricData.member.1.MetricName": {"CPUUtilization"},
+					"MetricData.member.1.Timestamp":  {stamp},
+					"MetricData.member.1.Value":      {"40"},
+					"MetricData.member.1.Unit":       {"Percent"},
+					"MetricData.member.2.MetricName": {"CPUUtilization"},
+					"MetricData.member.2.Timestamp":  {stamp},
+					"MetricData.member.2.Value":      {"60"},
+					"MetricData.member.2.Unit":       {"Percent"},
+				})
+				defer put.Body.Close()
+				helpers.AssertStatus(t, put, http.StatusOK)
+				return srv, base
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: two values published for one metric at one timestamp
+			srv, base := tc.run(t)
+
+			// When: GetMetricStatistics is requested over a period covering both
+			resp := cwCall(t, srv, "GetMetricStatistics", url.Values{
+				"Namespace":           {"TestNS"},
+				"MetricName":          {"CPUUtilization"},
+				"StartTime":           {base.Add(-1 * time.Minute).Format(time.RFC3339)},
+				"EndTime":             {base.Add(1 * time.Minute).Format(time.RFC3339)},
+				"Period":              {"120"},
+				"Statistics.member.1": {"Average"},
+				"Statistics.member.2": {"Sum"},
+				"Statistics.member.3": {"SampleCount"},
+				"Statistics.member.4": {"Minimum"},
+				"Statistics.member.5": {"Maximum"},
+			})
+			defer resp.Body.Close()
+
+			// Then: both datapoints are aggregated, not one replaced by the other
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			xml := string(body)
+			for _, want := range []string{
+				"<SampleCount>2</SampleCount>",
+				"<Sum>100</Sum>",
+				"<Average>50</Average>",
+				"<Minimum>40</Minimum>",
+				"<Maximum>60</Maximum>",
+			} {
+				if !strings.Contains(xml, want) {
+					t.Fatalf("expected %s in response (both datums should aggregate), got: %s", want, xml)
+				}
+			}
+		})
+	}
+}
+
 func TestListMetrics_includesDimensions(t *testing.T) {
 	// Given: a metric has been published with dimensions
 	srv := helpers.NewTestServer(t)

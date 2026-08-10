@@ -106,6 +106,16 @@ type Dimension struct {
 type cloudwatchStore struct {
 	store state.Store
 	clk   clock.Clock
+
+	// metricDataMu serializes putMetricDataPoint's read-modify-write of one
+	// cloudwatch:metricdata key. state.Store has no compare-and-swap, and each
+	// of Get/Set is only individually atomic, so two concurrent puts to the
+	// same key could otherwise both read the pre-merge value and the later Set
+	// would drop the earlier datum's contribution — the same lost-update the
+	// merge exists to prevent, just narrowed to a race. Held across a single
+	// keyed Get + Set, never across a scan, so it does not serialize reads or
+	// puts to different metrics for any meaningful duration.
+	metricDataMu sync.Mutex
 }
 
 func newCloudwatchStore(s state.Store, clk clock.Clock) *cloudwatchStore {
@@ -269,11 +279,77 @@ func metricDataKeySuffixNanos(key string) (int64, bool) {
 	return n, true
 }
 
+// putMetricDataPoint stores one datapoint, merging it into whatever is already
+// stored for the same namespace/metric/dimensions/timestamp rather than
+// replacing it.
+//
+// The merge is not an optimization — it is the semantics. A datapoint's key
+// ends in its timestamp, so two datums that share a timestamp share a key, and
+// a plain Set would let the later one silently erase the earlier one. That
+// happens in two ordinary situations:
+//
+//   - Neither datum carried a Timestamp, so each defaulted to the clock
+//     reading taken when it was processed. Two datums of one PutMetricData
+//     call collide whenever the clock does not tick between them, which on a
+//     coarse-grained platform timer (Windows) is the common case rather than a
+//     rare race: `aws cloudwatch put-metric-data --metric-data
+//     'MetricName=M,Value=40' 'MetricName=M,Value=60'` recorded only 60.
+//   - Both datums carried the same explicit Timestamp, which callers do
+//     deliberately when stamping a batch of samples with one collection time.
+//
+// Real CloudWatch aggregates both cases into the period (SampleCount 2, Sum
+// 100, Average 50 for the example above), which is exactly what merging
+// produces here. The arithmetic deliberately mirrors aggregateMetricBuckets'
+// per-bucket merge — summed counts and sums, extended min/max, first non-empty
+// unit wins — so a period's statistics do not depend on whether its points
+// were combined at write time (same timestamp) or at read time (different
+// timestamps in one period).
+//
+// Merging is the fix rather than giving each datum a unique key because the
+// key's timestamp suffix is load-bearing: it is what makes keys within a
+// prefix sort in time order, which listMetricDataPoints' bounded range read
+// and sweepMetricDataOnce's decode-free age check both depend on. Both store
+// implementations get this behavior for free — it lives above the state.Store
+// interface, not inside MemoryStore or SQLiteStore.
 func (s *cloudwatchStore) putMetricDataPoint(ctx context.Context, dp *MetricDataPoint) error {
 	metricDims := canonicalizeDimensions(dp.Dimensions)
 	dp.Dimensions = metricDims
 	key := metricDataKeyForNanos(metricDataPrefix(dp.Namespace, dp.MetricName, dimensionsKey(metricDims)), dp.Timestamp.UnixNano())
-	raw, err := json.Marshal(dp)
+
+	s.metricDataMu.Lock()
+	defer s.metricDataMu.Unlock()
+
+	// Merged into a copy, so a caller that reuses its MetricDataPoint across
+	// calls doesn't find the stored total written back into the value it passed.
+	stored := *dp
+	// A failed read is reported rather than treated as "nothing stored yet":
+	// the latter would overwrite a point this put was supposed to merge with,
+	// turning a transient store error into silent data loss.
+	existingRaw, found, err := s.store.Get(ctx, nsMetricData, key)
+	if err != nil {
+		return err
+	}
+	if found {
+		var existing MetricDataPoint
+		// A value that does not decode is treated as absent and overwritten:
+		// a malformed persisted record must not make new writes fail (AGENTS.md
+		// on isolating malformed records), and there is nothing to merge with.
+		if err := json.Unmarshal([]byte(existingRaw), &existing); err == nil {
+			stored.SampleCount += existing.SampleCount
+			stored.Sum += existing.Sum
+			if existing.Minimum < stored.Minimum {
+				stored.Minimum = existing.Minimum
+			}
+			if existing.Maximum > stored.Maximum {
+				stored.Maximum = existing.Maximum
+			}
+			if existing.Unit != "" {
+				stored.Unit = existing.Unit
+			}
+		}
+	}
+
+	raw, err := json.Marshal(&stored)
 	if err != nil {
 		return err
 	}
