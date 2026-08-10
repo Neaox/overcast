@@ -875,6 +875,14 @@ outlive the fix.
 So the bug is never in the resolvers. It is that the name was never registered
 with Docker.
 
+What a resolver *can* do is recognise the shapes Overcast itself mints — a name
+matching `{id}.{region}.rds.{base}` is a data-plane endpoint whatever else is
+true of it — and refuse those specifically, naming the resource and the caller,
+rather than answering with an address that hangs. That is narrower than the
+"stricter resolver" ruled out above, which is why it is possible at all; it is
+planned rather than built, in
+[docs/plans/container-network-topology.md](../plans/container-network-topology.md).
+
 **Overcast does that registration itself**, as part of starting the container —
 there is nothing for you to configure, and nothing to set up in Docker. This
 only becomes your problem if you are *adding* a service that starts containers,
@@ -894,12 +902,18 @@ the same hang:
    has to work — not only the one in play when the container was created.
 
 3. **It happens on every network a caller might be on.** Aliases are
-   per-network. A database container attached only to the RDS network is
-   invisible to a Lambda function on the Lambda network, however correct its
-   aliases are there.
+   per-network, so a container is invisible by name on any network it did not
+   register them on. Overcast keeps this from being a per-service decision:
+   every container it starts shares one **data plane**, and `internal/dataplane`
+   is the only thing that picks it. There used to be one network per emulator
+   service instead, and the reachability of any given pair came down to how
+   completely that service remembered to bridge the gap — which is the bug
+   this list exists to prevent.
 
-`internal/services/rds/endpoint.go` is the reference implementation, and worth
-reading before adding another container-backed service.
+`internal/dataplane` is the reference implementation — `Hostnames` for point 2,
+`Attach` for points 1 and 3 — and `internal/services/rds/endpoint.go` shows a
+service using it. Both are worth reading before adding another
+container-backed service.
 
 **Further reading:** [docs/dev/container-networking.md](./container-networking.md)
 — short, and required before touching either resolver.
