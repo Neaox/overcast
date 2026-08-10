@@ -5491,7 +5491,7 @@
       "service": "elasticache",
       "display_name": "ElastiCache",
       "total_ops": 24,
-      "implemented_ops": 24,
+      "implemented_ops": 22,
       "operations": [
         {
           "operation": "AddTagsToResource",
@@ -5568,7 +5568,7 @@
         {
           "operation": "DescribeCacheEngineVersions",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported"
         },
         {
           "operation": "DescribeCacheParameterGroups",
@@ -5627,7 +5627,7 @@
         {
           "operation": "RebootCacheCluster",
           "category": "General",
-          "status": "✅ Supported"
+          "status": "❌ Unsupported"
         },
         {
           "operation": "RemoveTagsFromResource",
