@@ -539,6 +539,8 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: compat/suites/python-sdk/requirements.txt
 
       # `npm ci` rather than a bare `node --test`: the last case in
       # registry.test.ts imports the suite's real group files, and those import
@@ -551,10 +553,26 @@ jobs:
           npm ci
           npm run test:unit
 
+      # `pip install` for the same reason `npm ci` is above — the
+      # real-registration cases import the suite's own group modules, and those
+      # import lib/clients.py, which imports boto3 — and it reaches further
+      # than that import: lib/harness.py imports botocore lazily, inside the
+      # path that classifies a raised exception, so the cases that deliberately
+      # raise need it too.
+      #
+      # Both failure modes were live on main between #843 and this change, and
+      # they are worth telling apart. The lazy botocore import errored, which
+      # is loud. The real-registration cases *skipped* — they called skipTest
+      # on the failed group import — and a skip is indistinguishable from a
+      # pass at the exit code, so the only checks in this job that read
+      # registry.json against a suite's own registrations were reported green
+      # without running. That half is now a hard failure in the test itself.
       - name: python-sdk suite
         if: needs.changes.outputs.code == 'true'
         working-directory: compat/suites/python-sdk
-        run: python3 -m unittest discover -s tests
+        run: |
+          pip install --quiet -r requirements.txt
+          python3 -m unittest discover -s tests
 
       - name: go-sdk suite
         if: needs.changes.outputs.code == 'true'
