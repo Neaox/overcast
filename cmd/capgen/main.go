@@ -118,6 +118,7 @@ func main() {
 
 		if *checkModel {
 			failures += checkCapabilitiesInManifest(caps)
+			failures += checkDocOnlyRowsAreNotDispatched(svc, svcDir, caps)
 		}
 
 		if *check {
@@ -126,21 +127,15 @@ func main() {
 				fmt.Fprintf(os.Stderr, "capgen: %s: parse handlers: %v\n", svc, opsErr)
 				continue
 			}
-			restOps, restErr := parseRESTOperations(svcDir)
-			if restErr != nil {
-				fmt.Fprintf(os.Stderr, "capgen: %s: parse REST operations: %v\n", svc, restErr)
+			handlers, handlerErr := implementedHandlerMethods(svcDir)
+			if handlerErr != nil && !os.IsNotExist(handlerErr) {
+				fmt.Fprintf(os.Stderr, "capgen: %s: parse handler methods: %v\n", svc, handlerErr)
 				continue
 			}
-			if len(restOps) > 0 {
-				ops = mergeOperations(ops, restOps)
-				comprehensive = true
-			}
-			if len(ops) == 0 {
-				// No action-dispatch ops detected (likely a REST-routed service).
-				// Cross-check is not possible; skip silently.
+			if len(ops) == 0 && len(handlers) == 0 {
 				continue
 			}
-			failures += checkService(svc, ops, caps, comprehensive)
+			failures += checkService(svc, ops, handlers, caps, comprehensive)
 		}
 	}
 
@@ -263,11 +258,24 @@ func checkCapabilitiesInManifest(caps []CapabilityDecl) int {
 	return violations
 }
 
-// modeledOperationName records the one legacy naming convention that differs
-// mechanically from Smithy: API Gateway v2 operations are exposed by
-// api-gateway-v2 as CreateApi et al., while Overcast's established capability
-// names include V2 (CreateV2Api) to distinguish them from REST API operations.
+// modeledOperationName resolves a declaration's operation identifier to the
+// AWS operation name it stands for.
+//
+// DisplayName is consulted first because that is precisely what the field
+// documents itself as: "the internal operation identifier differs from the AWS
+// API name (e.g. V2SendEmail -> SendEmail)". Not reading it here left SESv2's
+// rows failing the name check, and six of them carried DocOnly to silence
+// that — which also removed them from every other cross-check, and is how a
+// route registered on the wrong HTTP method survived 33 releases (#862).
+//
+// API Gateway records the same idea structurally rather than in a field: v2
+// operations are modeled by apigatewayv2 as CreateApi et al., while Overcast's
+// established capability names carry V2 (CreateV2Api) to keep them apart from
+// the REST API operations.
 func modeledOperationName(cap CapabilityDecl) string {
+	if cap.DisplayName != "" {
+		return cap.DisplayName
+	}
 	if cap.Service == "apigateway" {
 		return strings.Replace(cap.Operation, "V2", "", 1)
 	}
@@ -305,6 +313,111 @@ var capabilityManifestExemptions = map[string]string{
 
 func capabilityManifestExemption(cap CapabilityDecl) string {
 	return capabilityManifestExemptions[cap.Service+"/"+cap.Operation]
+}
+
+// checkDocOnlyRowsAreNotDispatched turns DocOnly from an exemption into a
+// checkable claim.
+//
+// Its contract says the same thing three ways — "documentation metadata only",
+// "generic behavior, unsupported operations without explicit stubs, or other
+// non-dispatched rows" — and every clause means *not dispatched*. But because
+// the flag only ever suppressed checks, nothing tested the claim, and a row
+// that was dispatched could carry it and disappear from the cross-check, the
+// model gate and the reachability probe at once. SESv2's CreateEmailIdentity
+// did exactly that: DocOnly, a handler, a registered route, and the wrong HTTP
+// method on it for 33 releases (#862, #863).
+//
+// A handler method that only returns 501 is not an implementation — one of the
+// three uses the contract names is documenting an unsupported operation that
+// does have an explicit stub — so stubs leave the flag intact.
+func checkDocOnlyRowsAreNotDispatched(service, svcDir string, caps []CapabilityDecl) int {
+	implemented, err := implementedHandlerMethods(svcDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		fmt.Fprintf(os.Stderr, "capgen: %s: parse handler methods: %v\n", service, err)
+		return 1
+	}
+
+	violations := 0
+	for _, cap := range caps {
+		if !cap.DocOnly || !implemented[cap.Operation] {
+			continue
+		}
+		fmt.Printf("DOCONLY_DISPATCHED %s/%s  (DocOnly means non-dispatched, but a handler implements it — drop the flag and fix whatever it was hiding)\n",
+			service, cap.Operation)
+		violations++
+	}
+	return violations
+}
+
+// implementedHandlerMethods returns the names of methods in svcDir that take
+// (http.ResponseWriter, *http.Request) and do something other than answer 501.
+// A dispatched operation has one; a row documenting generic behavior does not.
+func implementedHandlerMethods(svcDir string) (map[string]bool, error) {
+	entries, err := os.ReadDir(svcDir)
+	if err != nil {
+		return nil, err
+	}
+
+	fset := token.NewFileSet()
+	methods := map[string]bool{}
+	for _, e := range entries {
+		if shouldSkipFile(e) {
+			continue
+		}
+		f, err := parseGoFile(fset, filepath.Join(svcDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			fd, ok := n.(*ast.FuncDecl)
+			if !ok || fd.Recv == nil || fd.Body == nil || !isHTTPHandlerSignature(fd.Type) {
+				return true
+			}
+			// A method name can appear in more than one build-tagged file;
+			// an implementation anywhere makes the operation dispatched.
+			methods[fd.Name.Name] = methods[fd.Name.Name] || !containsNotImplementedCall(fd.Body)
+			return true
+		})
+	}
+	return methods, nil
+}
+
+// isHTTPHandlerSignature reports whether a function takes exactly
+// (http.ResponseWriter, *http.Request) and returns nothing.
+func isHTTPHandlerSignature(ft *ast.FuncType) bool {
+	if ft.Results != nil && len(ft.Results.List) > 0 {
+		return false
+	}
+	params := ft.Params.List
+	// One field can declare both parameters ("w http.ResponseWriter" and
+	// "r *http.Request" are separate fields, but a signature is free to group).
+	var types []ast.Expr
+	for _, param := range params {
+		for range max(len(param.Names), 1) {
+			types = append(types, param.Type)
+		}
+	}
+	if len(types) != 2 {
+		return false
+	}
+	return isSelector(types[0], "http", "ResponseWriter") && isPointerToSelector(types[1], "http", "Request")
+}
+
+func isSelector(expr ast.Expr, pkg, name string) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	return ok && ident.Name == pkg
+}
+
+func isPointerToSelector(expr ast.Expr, pkg, name string) bool {
+	star, ok := expr.(*ast.StarExpr)
+	return ok && isSelector(star.X, pkg, name)
 }
 
 // checkServiceKeysInManifest enforces that every service key — directory name
@@ -683,85 +796,6 @@ func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 	return ops, hasMap, nil
 }
 
-func parseRESTOperations(svcDir string) ([]Operation, error) {
-	entries, err := os.ReadDir(svcDir)
-	if err != nil {
-		return nil, err
-	}
-	fset := token.NewFileSet()
-	seen := map[string]struct{}{}
-	var ops []Operation
-	for _, e := range entries {
-		if shouldSkipFile(e) {
-			continue
-		}
-		f, err := parseGoFile(fset, filepath.Join(svcDir, e.Name()))
-		if err != nil {
-			continue
-		}
-		stringConsts := collectFileStringConsts(f)
-		ast.Inspect(f, func(n ast.Node) bool {
-			cl, ok := n.(*ast.CompositeLit)
-			if !ok || !isRESTOperationLit(cl) {
-				return true
-			}
-			op := restOperationName(cl, stringConsts)
-			if op == "" {
-				return true
-			}
-			if _, exists := seen[op]; exists {
-				return true
-			}
-			seen[op] = struct{}{}
-			ops = append(ops, Operation{Name: op})
-			return true
-		})
-	}
-	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
-	return ops, nil
-}
-
-func isRESTOperationLit(cl *ast.CompositeLit) bool {
-	if id, ok := cl.Type.(*ast.Ident); ok {
-		return id.Name == "restOperation"
-	}
-	return restOperationName(cl, nil) != ""
-}
-
-func restOperationName(cl *ast.CompositeLit, consts map[string]string) string {
-	for _, elt := range cl.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		key, ok := kv.Key.(*ast.Ident)
-		if !ok || key.Name != "Operation" {
-			continue
-		}
-		return stringExpr(kv.Value, consts)
-	}
-	return ""
-}
-
-func mergeOperations(a, b []Operation) []Operation {
-	seen := make(map[string]Operation, len(a)+len(b))
-	for _, op := range a {
-		seen[op.Name] = op
-	}
-	for _, op := range b {
-		if existing, ok := seen[op.Name]; ok && existing.IsStub {
-			continue
-		}
-		seen[op.Name] = op
-	}
-	out := make([]Operation, 0, len(seen))
-	for _, op := range seen {
-		out = append(out, op)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
 func isOperationSwitch(sw *ast.SwitchStmt) bool {
 	if sw.Tag == nil {
 		return false
@@ -807,23 +841,39 @@ func parseGoFile(fset *token.FileSet, path string) (*ast.File, error) {
 	return parser.ParseFile(fset, path, src, 0)
 }
 
+// containsNotImplementedCall reports whether a method's whole behaviour is to
+// answer 501 — the shape of a stub.
+//
+// Only top-level statements count. A NotImplemented call nested in an if or a
+// switch is a branch of a working handler, not a stub: Lambda's CreateFunction
+// implements the operation and refuses one unsupported package type that way,
+// and matching it anywhere in the body reported five working Lambda operations
+// as stubs declared Supported. "Directly calls" is what the rule always said;
+// this is it enforced.
 func containsNotImplementedCall(body *ast.BlockStmt) bool {
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+	for _, stmt := range body.List {
+		var expr ast.Expr
+		switch s := stmt.(type) {
+		case *ast.ExprStmt:
+			expr = s.X
+		case *ast.ReturnStmt:
+			if len(s.Results) != 1 {
+				continue
+			}
+			expr = s.Results[0]
+		default:
+			continue
+		}
+		call, ok := expr.(*ast.CallExpr)
 		if !ok {
-			return true
+			continue
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
+		if ok && strings.HasPrefix(sel.Sel.Name, "NotImplemented") {
 			return true
 		}
-		if strings.HasPrefix(sel.Sel.Name, "NotImplemented") {
-			found = true
-		}
-		return true
-	})
-	return found
+	}
+	return false
 }
 
 func isHandlerFuncMap(cl *ast.CompositeLit) bool {
@@ -1126,7 +1176,26 @@ func boolLit(e ast.Expr) bool {
 // When comprehensive is false (ops detected only via switch-case, not map),
 // ORPHAN entries are printed as warnings but do not count as violations, because
 // REST-routed operations cannot be detected by static analysis.
-func checkService(service string, ops []Operation, caps []CapabilityDecl, comprehensive bool) int {
+// checkService cross-checks a service's capability declarations against the
+// operations its package actually dispatches.
+//
+// ops are the action-dispatch registrations parseHandlerOps finds — the map or
+// switch a Query or AWS-JSON service routes on. handlers are the
+// (http.ResponseWriter, *http.Request) methods on the package's types, keyed by
+// name and valued by whether they do more than answer 501. A REST-routed
+// operation appears only in the second: chi binds it by path, so there is no
+// action table to read.
+//
+// Reading the methods is what removed the last hand-maintained operation
+// inventory in the tree. AppSync used to carry an 85-row
+// rest_operations_dev.go listing method, path and operation for every REST
+// route so that capgen had something to cross-check — every field of it
+// already in the pinned manifest, and kept in step by a test asserting it
+// matched the routes. The manifest supplies the bindings, the router gate
+// (internal/router/modelbinding_dev_test.go) asserts the routes, and the
+// handler methods supply dispatch, so all three of those artefacts are now
+// derived rather than typed.
+func checkService(service string, ops []Operation, handlers map[string]bool, caps []CapabilityDecl, comprehensive bool) int {
 	capByOp := make(map[string]CapabilityDecl, len(caps))
 	for _, c := range caps {
 		capByOp[c.Operation] = c
@@ -1152,22 +1221,37 @@ func checkService(service string, ops []Operation, caps []CapabilityDecl, compre
 		}
 	}
 	for _, cap := range caps {
-		if cap.DocOnly {
+		if cap.DocOnly || cap.Status == "StatusUnsupported" {
 			continue
 		}
-		if cap.Status == "StatusUnsupported" {
+		if _, found := opByName[cap.Operation]; found {
 			continue
 		}
-		if _, found := opByName[cap.Operation]; !found {
-			if comprehensive {
-				fmt.Printf("ORPHAN     %s/%s  (in capabilities_dev.go but not in handler)\n",
-					service, cap.Operation)
+		implemented, hasHandler := handlers[cap.Operation]
+		switch {
+		case implemented:
+			// Dispatched by path rather than by action.
+		case hasHandler:
+			// The only method of that name answers 501, so the row's status
+			// describes an operation that cannot behave as advertised. ops
+			// carries the same rule for action-dispatched operations above.
+			if cap.Status != "StatusWIP" {
+				fmt.Printf("WRONG_STATUS %s/%s  (stub returns 501 but declared as %s)\n",
+					service, cap.Operation, cap.Status)
 				violations++
-			} else {
-				fmt.Printf("ORPHAN     %s/%s  (REST-routed; not detectable — skipping)\n",
-					service, cap.Operation)
 			}
+		case comprehensive:
+			fmt.Printf("ORPHAN     %s/%s  (in capabilities_dev.go but not in handler)\n",
+				service, cap.Operation)
+			violations++
 		}
+		// A row this pass cannot attribute is not reported. It used to print
+		// "REST-routed; not detectable — skipping" twenty times a run, which
+		// asserted nothing and trained the reader to scroll past capgen's
+		// output. It is not undetectable any more: a REST-bound operation is
+		// held to the method and URI the manifest gives it by
+		// TestModeledBindings_areServedWhereAWSBindsThem, which reads the real
+		// router rather than guessing from a handler's name.
 	}
 	return violations
 }

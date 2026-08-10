@@ -58,28 +58,30 @@ func init() {
 		// `PUT /v2/email/identities` for an operation AWS binds to POST, which is both
 		// how the wrong route got written and why the docs went on advertising it.
 		//
-		// DocOnly is therefore untrue of all eight, and kept anyway for now, because it
-		// is the only way capgen accepts these rows. Its manifest check resolves an
-		// operation name under the `ses` service key, where SES v2 is modeled as `sesv2`
-		// and carries no V2 prefix, so every row reports UNKNOWN_MODEL_OPERATION without
-		// it; its ORPHAN check looks only at the v1 action table, so every row reports
-		// ORPHAN too. Both need capgen to learn about REST-routed operations — that is
-		// #864's work, and the flag comes off these eight rows with it.
+		// DocOnly used to sit on all eight, untrue of every one, because it was the
+		// only way capgen would accept them: its manifest check did not read
+		// DisplayName, so a row named V2SendEmail found no `sesv2` operation of that
+		// name and reported UNKNOWN_MODEL_OPERATION, and its ORPHAN check read only
+		// the v1 action table. #864 fixed both — modeledOperationName resolves
+		// through DisplayName, and the cross-check reads the package's handler
+		// methods, which is where a REST-routed operation is dispatched from. The
+		// flag is off, and capgen now rejects a DocOnly row that has an
+		// implementation, so it cannot come back as a way to silence a name.
 		//
 		// DisplayName uses the canonical AWS operation name (without the V2 prefix used
 		// internally to avoid clashes with v1).
-		capabilities.Capability{Service: "ses", Operation: "V2SendEmail", Category: "SES v2 — Sending", Status: capabilities.StatusSupported, Notes: "`POST /v2/email/outbound-emails`; simple content", DisplayName: "SendEmail", DocOnly: true, DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html)"},
+		capabilities.Capability{Service: "ses", Operation: "V2SendEmail", Category: "SES v2 — Sending", Status: capabilities.StatusSupported, Notes: "`POST /v2/email/outbound-emails`; simple content", DisplayName: "SendEmail", DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html)"},
 
 		// SES v2 — Identities
-		capabilities.Capability{Service: "ses", Operation: "V2CreateEmailIdentity", Category: "SES v2 — Identities", Status: capabilities.StatusSupported, Notes: "`POST /v2/email/identities`; auto-verified; inline `Tags` applied at creation", DisplayName: "CreateEmailIdentity", DocOnly: true, DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)"},
-		capabilities.Capability{Service: "ses", Operation: "V2ListEmailIdentities", Category: "SES v2 — Identities", Status: capabilities.StatusSupported, Notes: "`GET /v2/email/identities`", DisplayName: "ListEmailIdentities", DocOnly: true, DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html)"},
-		capabilities.Capability{Service: "ses", Operation: "V2GetEmailIdentity", Category: "SES v2 — Identities", Status: capabilities.StatusSupported, Notes: "`GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`", DisplayName: "GetEmailIdentity", DocOnly: true, DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)"},
-		capabilities.Capability{Service: "ses", Operation: "V2DeleteEmailIdentity", Category: "SES v2 — Identities", Status: capabilities.StatusSupported, Notes: "`DELETE /v2/email/identities/{EmailIdentity}`", DisplayName: "DeleteEmailIdentity", DocOnly: true, DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html)"},
+		capabilities.Capability{Service: "ses", Operation: "V2CreateEmailIdentity", Category: "SES v2 — Identities", Status: capabilities.StatusSupported, Notes: "`POST /v2/email/identities`; auto-verified; inline `Tags` applied at creation", DisplayName: "CreateEmailIdentity", DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)"},
+		capabilities.Capability{Service: "ses", Operation: "V2ListEmailIdentities", Category: "SES v2 — Identities", Status: capabilities.StatusSupported, Notes: "`GET /v2/email/identities`", DisplayName: "ListEmailIdentities", DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html)"},
+		capabilities.Capability{Service: "ses", Operation: "V2GetEmailIdentity", Category: "SES v2 — Identities", Status: capabilities.StatusSupported, Notes: "`GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`", DisplayName: "GetEmailIdentity", DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)"},
+		capabilities.Capability{Service: "ses", Operation: "V2DeleteEmailIdentity", Category: "SES v2 — Identities", Status: capabilities.StatusSupported, Notes: "`DELETE /v2/email/identities/{EmailIdentity}`", DisplayName: "DeleteEmailIdentity", DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html)"},
 
 		// SES v2 — Tags
-		capabilities.Capability{Service: "ses", Operation: "V2TagResource", Category: "SES v2 — Tags", Status: capabilities.StatusSupported, Notes: "`POST /v2/email/tags`; email identity ARNs — configuration sets are not emulated", DisplayName: "TagResource", DocOnly: true, DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)"},
-		capabilities.Capability{Service: "ses", Operation: "V2UntagResource", Category: "SES v2 — Tags", Status: capabilities.StatusSupported, Notes: "`DELETE /v2/email/tags?ResourceArn=…&TagKeys=…`", DisplayName: "UntagResource", DocOnly: true, DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)"},
-		capabilities.Capability{Service: "ses", Operation: "V2ListTagsForResource", Category: "SES v2 — Tags", Status: capabilities.StatusSupported, Notes: "`GET /v2/email/tags?ResourceArn=…`", DisplayName: "ListTagsForResource", DocOnly: true, DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html)"},
+		capabilities.Capability{Service: "ses", Operation: "V2TagResource", Category: "SES v2 — Tags", Status: capabilities.StatusSupported, Notes: "`POST /v2/email/tags`; email identity ARNs — configuration sets are not emulated", DisplayName: "TagResource", DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)"},
+		capabilities.Capability{Service: "ses", Operation: "V2UntagResource", Category: "SES v2 — Tags", Status: capabilities.StatusSupported, Notes: "`DELETE /v2/email/tags?ResourceArn=…&TagKeys=…`", DisplayName: "UntagResource", DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)"},
+		capabilities.Capability{Service: "ses", Operation: "V2ListTagsForResource", Category: "SES v2 — Tags", Status: capabilities.StatusSupported, Notes: "`GET /v2/email/tags?ResourceArn=…`", DisplayName: "ListTagsForResource", DocsURL: "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html)"},
 
 		// SES v2 — Other
 		capabilities.Capability{Service: "ses", Operation: "V2Other", Category: "SES v2 — Other", Status: capabilities.StatusUnsupported, Notes: "Returns `NotImplemented`", DisplayName: "All other v2 operations", DocOnly: true},
