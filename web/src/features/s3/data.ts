@@ -31,13 +31,30 @@ import { endpointStore } from "@/services/endpoint-store"
 
 // ─── Key factory ───────────────────────────────────────────────────────────
 
+/**
+ * How far a listing reaches. `"folder"` sends a `/` delimiter so nested keys
+ * come back rolled up as folders; `"recursive"` drops it so every key beneath
+ * the prefix is listed flat. The two answer different questions and cache
+ * separately, which is why the scope is part of the key.
+ */
+export type ListScope = "folder" | "recursive"
+
+/**
+ * Keys per page. A recursive listing exists to be scanned end to end — for a
+ * search or a non-default sort — so it trades a larger first response for far
+ * fewer round trips; folder browsing keeps the smaller page that paints sooner.
+ */
+const PAGE_SIZE: Record<ListScope, number> = { folder: 200, recursive: 1000 }
+
 export const s3Keys = {
   all: () => [...endpointStore.getKeys(), "s3"] as const,
   buckets: () => [...s3Keys.all(), "buckets"] as const,
   objects: () => [...s3Keys.all(), "objects"] as const,
-  objectList: (bucket: string, prefix: string) => [...s3Keys.objects(), bucket, prefix] as const,
+  objectList: (bucket: string, prefix: string, scope: ListScope = "folder") =>
+    [...s3Keys.objects(), bucket, prefix, scope] as const,
   versions: () => [...s3Keys.all(), "versions"] as const,
-  versionList: (bucket: string, prefix: string) => [...s3Keys.versions(), bucket, prefix] as const,
+  versionList: (bucket: string, prefix: string, scope: ListScope = "folder") =>
+    [...s3Keys.versions(), bucket, prefix, scope] as const,
   versioning: () => [...s3Keys.all(), "versioning"] as const,
   bucketVersioning: (bucket: string) => [...s3Keys.versioning(), bucket] as const,
   meta: () => [...s3Keys.all(), "meta"] as const,
@@ -61,11 +78,16 @@ export function s3BucketsQueryOptions() {
   })
 }
 
-export function s3ObjectsQueryOptions(bucket: string, prefix: string) {
+export function s3ObjectsQueryOptions(bucket: string, prefix: string, scope: ListScope = "folder") {
   return infiniteQueryOptions({
-    queryKey: s3Keys.objectList(bucket, prefix),
+    queryKey: s3Keys.objectList(bucket, prefix, scope),
     queryFn: ({ pageParam }) =>
-      s3.listObjects(bucket, { prefix, delimiter: "/", token: pageParam }),
+      s3.listObjects(bucket, {
+        prefix,
+        delimiter: scope === "recursive" ? "" : "/",
+        maxKeys: PAGE_SIZE[scope],
+        token: pageParam,
+      }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextContinuationToken ?? undefined,
   })
@@ -76,13 +98,18 @@ export function s3ObjectsQueryOptions(bucket: string, prefix: string) {
  * s3ObjectsQueryOptions because it answers a different question: that one shows
  * what the bucket currently holds, this one shows what it is still storing.
  */
-export function s3ObjectVersionsQueryOptions(bucket: string, prefix: string) {
+export function s3ObjectVersionsQueryOptions(
+  bucket: string,
+  prefix: string,
+  scope: ListScope = "folder",
+) {
   return infiniteQueryOptions({
-    queryKey: s3Keys.versionList(bucket, prefix),
+    queryKey: s3Keys.versionList(bucket, prefix, scope),
     queryFn: ({ pageParam }) =>
       s3.listObjectVersions(bucket, {
         prefix,
-        delimiter: "/",
+        delimiter: scope === "recursive" ? "" : "/",
+        maxKeys: PAGE_SIZE[scope],
         keyMarker: pageParam?.keyMarker,
         versionIdMarker: pageParam?.versionIdMarker,
       }),

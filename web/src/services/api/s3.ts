@@ -154,6 +154,11 @@ export const s3 = {
     return { ok: true }
   },
 
+  /**
+   * Lists one page of a bucket. `delimiter: ""` asks for a flat listing: S3
+   * only rolls keys up into CommonPrefixes when a delimiter is present, so
+   * dropping it is what turns folder browsing into a recursive one.
+   */
   listObjects: async (
     bucket: string,
     opts: {
@@ -167,7 +172,7 @@ export const s3 = {
       new ListObjectsV2Command({
         Bucket: bucket,
         Prefix: opts.prefix || undefined,
-        Delimiter: opts.delimiter ?? "/",
+        Delimiter: (opts.delimiter ?? "/") || undefined,
         MaxKeys: opts.maxKeys ?? 200,
         ContinuationToken: opts.token || undefined,
       }),
@@ -188,7 +193,8 @@ export const s3 = {
 
   /**
    * Lists every version and delete marker under a prefix, in AWS's order:
-   * keys ascending, then most recently stored first.
+   * keys ascending, then most recently stored first. As with `listObjects`,
+   * `delimiter: ""` makes the listing recursive.
    */
   listObjectVersions: async (
     bucket: string,
@@ -204,7 +210,7 @@ export const s3 = {
       new ListObjectVersionsCommand({
         Bucket: bucket,
         Prefix: opts.prefix || undefined,
-        Delimiter: opts.delimiter ?? "/",
+        Delimiter: (opts.delimiter ?? "/") || undefined,
         MaxKeys: opts.maxKeys ?? 200,
         KeyMarker: opts.keyMarker || undefined,
         VersionIdMarker: opts.versionIdMarker || undefined,

@@ -36,6 +36,7 @@
   --color-danger: var(--danger);
   --color-danger-muted: var(--danger-muted);
   --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
   --color-success: var(--success);
 
   --color-sidebar-bg: var(--sidebar-bg);
@@ -162,6 +163,7 @@
   --danger: #c9564a;
   --danger-muted: #f9e9e7; /* derived: soft tint of --danger */
   --warning: #c08a2d;
+  --warning-muted: #f7ecd6; /* derived: soft tint of --warning */
   --success: #2e9e6b;
 
   /* Brand mark (cloud logo) */
@@ -224,6 +226,7 @@
   --_dark-danger: #c9564a;
   --_dark-danger-muted: #34201e; /* derived: soft tint of --danger on dark */
   --_dark-warning: #c08a2d;
+  --_dark-warning-muted: #3d2f14; /* derived: soft tint of --warning on dark */
   --_dark-success: #2e9e6b;
 
   /* Brand mark (cloud logo) */
@@ -286,6 +289,7 @@
     --danger: var(--_dark-danger);
     --danger-muted: var(--_dark-danger-muted);
     --warning: var(--_dark-warning);
+    --warning-muted: var(--_dark-warning-muted);
     --success: var(--_dark-success);
 
     --cloud: var(--_dark-cloud);
@@ -341,6 +345,7 @@
   --danger: var(--_dark-danger);
   --danger-muted: var(--_dark-danger-muted);
   --warning: var(--_dark-warning);
+  --warning-muted: var(--_dark-warning-muted);
   --success: var(--_dark-success);
 
   --cloud: var(--_dark-cloud);
