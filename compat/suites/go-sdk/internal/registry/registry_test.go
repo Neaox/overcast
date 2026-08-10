@@ -2,6 +2,10 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -446,6 +450,261 @@ func TestBuildGroupsIgnoresUnknownDependency(t *testing.T) {
 
 	if strings.Join(got, ",") != "CreateQueue,SendMessage" {
 		t.Errorf("order = %v, want [CreateQueue SendMessage]", got)
+	}
+}
+
+// ─── Dependency cascade-skip ──────────────────────────────────────────────────
+//
+// Sorting by `depends` puts a prerequisite first; this half decides what happens
+// when that prerequisite does not pass. The schema promises runners "auto-skip
+// dependents when a dependency fails", and compat/AGENTS.md tells readers that
+// "dependency failed: X" means the cause is another failure in the same group —
+// advice that only holds if the harness emits it.
+
+// failing returns an impl that reports the given error, so a prerequisite can be
+// made to fail without an emulator.
+func failing(msg string) harness.TestFn {
+	return func(_ context.Context, _ *harness.TestContext) error {
+		return errors.New(msg)
+	}
+}
+
+// resultEvent is the subset of a test_result NDJSON line these tests assert on.
+type resultEvent struct {
+	Event  string `json:"event"`
+	Test   string `json:"test"`
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+// runOneGroup runs the single built group through the harness and returns its
+// counts plus the test_result events, in emission order. The harness writes
+// NDJSON to os.Stdout, so stdout is redirected through a pipe for the duration.
+func runOneGroup(t *testing.T, groups []harness.TestGroup) (harness.GroupResult, []resultEvent) {
+	t.Helper()
+	if len(groups) != 1 {
+		t.Fatalf("built %d groups, want exactly 1", len(groups))
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	drained := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		drained <- b
+	}()
+
+	orig := os.Stdout
+	os.Stdout = w
+	res := harness.RunGroup(context.Background(), groups[0], harness.NewTestContext("", "", ""))
+	os.Stdout = orig
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe: %v", err)
+	}
+	out := <-drained
+	if err := r.Close(); err != nil {
+		t.Fatalf("close pipe reader: %v", err)
+	}
+
+	var events []resultEvent
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var ev resultEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("harness emitted a non-JSON line %q: %v", line, err)
+		}
+		if ev.Event == "test_result" {
+			events = append(events, ev)
+		}
+	}
+	return res, events
+}
+
+// find returns the emitted result for a test name.
+func (e resultEvents) find(t *testing.T, name string) resultEvent {
+	t.Helper()
+	for _, ev := range e {
+		if ev.Test == name {
+			return ev
+		}
+	}
+	t.Fatalf("no test_result emitted for %q; got %v", name, e)
+	return resultEvent{}
+}
+
+type resultEvents []resultEvent
+
+// A failed prerequisite must skip the tests that declare it, not run them
+// against state it never created. Otherwise one root cause is reported as a
+// cascade of unrelated failures and every one of them has to be triaged.
+func TestRunGroupSkipsDependentsOfAFailedTest(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "s3", Name: "s3-crud", Tests: []RegistryTest{
+			{Name: "CreateBucket"},
+			{Name: "PutObject", Depends: []string{"CreateBucket"}},
+			{Name: "GetObject", Depends: []string{"PutObject"}},
+			{Name: "ListBuckets"},
+		}},
+	}}
+	impls := allImpls(reg)
+	impls["s3-crud:CreateBucket"] = failing("boom")
+
+	res, events := runOneGroup(t, BuildGroups(reg, impls, BuildGroupsOptions{Suite: "go-sdk"}))
+	got := resultEvents(events)
+
+	if ev := got.find(t, "CreateBucket"); ev.Status != "fail" {
+		t.Errorf("CreateBucket status = %q, want fail", ev.Status)
+	}
+
+	put := got.find(t, "PutObject")
+	if put.Status != "skip" {
+		t.Errorf("PutObject status = %q, want skip (its dependency failed)", put.Status)
+	}
+	if want := "dependency failed: CreateBucket"; put.Error != want {
+		t.Errorf("PutObject error = %q, want %q", put.Error, want)
+	}
+
+	// The skip has to propagate: GetObject depends on PutObject, which never
+	// ran. Blocking only the direct dependents would leave the second rank
+	// failing for the same single cause.
+	next := got.find(t, "GetObject")
+	if next.Status != "skip" {
+		t.Errorf("GetObject status = %q, want skip (transitively blocked)", next.Status)
+	}
+	if want := "dependency failed: PutObject"; next.Error != want {
+		t.Errorf("GetObject error = %q, want %q", next.Error, want)
+	}
+
+	// A test with no edge to the failure is unaffected — the gate must not
+	// quarantine the rest of the group.
+	if ev := got.find(t, "ListBuckets"); ev.Status != "pass" {
+		t.Errorf("ListBuckets status = %q, want pass; it declares no dependency", ev.Status)
+	}
+
+	if res.Failed != 1 || res.Skipped != 2 || res.Passed != 1 {
+		t.Errorf("counts = %d passed / %d failed / %d skipped, want 1 / 1 / 2",
+			res.Passed, res.Failed, res.Skipped)
+	}
+}
+
+// A dependency that was skipped rather than failed is just as absent — an
+// unimplemented test creates nothing for its dependents to act on.
+func TestRunGroupSkipsDependentsOfASkippedTest(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "queues", Tests: []RegistryTest{
+			{Name: "CreateQueue"},
+			{Name: "SendMessage", Depends: []string{"CreateQueue"}},
+		}},
+	}}
+	// No impl for CreateQueue → built as an "not yet implemented" skip.
+	impls := ImplMap{"queues:SendMessage": marker("SendMessage")}
+
+	_, events := runOneGroup(t, BuildGroups(reg, impls, BuildGroupsOptions{Suite: "go-sdk"}))
+	got := resultEvents(events)
+
+	if ev := got.find(t, "CreateQueue"); ev.Status != "skip" {
+		t.Fatalf("CreateQueue status = %q, want skip", ev.Status)
+	}
+	send := got.find(t, "SendMessage")
+	if send.Status != "skip" {
+		t.Errorf("SendMessage status = %q, want skip", send.Status)
+	}
+	if want := "dependency failed: CreateQueue"; send.Error != want {
+		t.Errorf("SendMessage error = %q, want %q", send.Error, want)
+	}
+}
+
+// Every blocking dependency is named, not just the first: the reason line is
+// the whole explanation a reader gets for a skip.
+func TestRunGroupNamesEveryFailedDependency(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "dynamodb", Name: "ddb", Tests: []RegistryTest{
+			{Name: "CreateTable"},
+			{Name: "PutItem"},
+			{Name: "Query", Depends: []string{"CreateTable", "PutItem"}},
+		}},
+	}}
+	impls := allImpls(reg)
+	impls["ddb:CreateTable"] = failing("boom")
+	impls["ddb:PutItem"] = failing("boom")
+
+	_, events := runOneGroup(t, BuildGroups(reg, impls, BuildGroupsOptions{Suite: "go-sdk"}))
+
+	query := resultEvents(events).find(t, "Query")
+	if want := "dependency failed: CreateTable, PutItem"; query.Error != want {
+		t.Errorf("Query error = %q, want %q", query.Error, want)
+	}
+}
+
+// The gate is inert on a green run — this is why a passing suite sees no change
+// from it, and why the baseline needs no update.
+func TestRunGroupRunsDependentsWhenDependenciesPass(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "s3", Name: "s3-crud", Tests: []RegistryTest{
+			{Name: "CreateBucket"},
+			{Name: "PutObject", Depends: []string{"CreateBucket"}},
+			{Name: "GetObject", Depends: []string{"PutObject"}},
+		}},
+	}}
+
+	res, events := runOneGroup(t, BuildGroups(reg, allImpls(reg), BuildGroupsOptions{Suite: "go-sdk"}))
+
+	for _, ev := range events {
+		if ev.Status != "pass" {
+			t.Errorf("%s status = %q (%s), want pass", ev.Test, ev.Status, ev.Error)
+		}
+	}
+	if res.Passed != 3 || res.Skipped != 0 {
+		t.Errorf("counts = %d passed / %d skipped, want 3 / 0", res.Passed, res.Skipped)
+	}
+}
+
+// A dependency the group does not declare cannot have failed, so it must never
+// block. `depends` is same-group only, per the registry schema, and a stale name
+// left in the registry would otherwise silently skip a working test.
+func TestRunGroupIgnoresUnknownDependencyAtRuntime(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "queues", Tests: []RegistryTest{
+			{Name: "CreateQueue"},
+			{Name: "SendMessage", Depends: []string{"CreateQueue", "NotInThisGroup"}},
+		}},
+	}}
+
+	_, events := runOneGroup(t, BuildGroups(reg, allImpls(reg), BuildGroupsOptions{Suite: "go-sdk"}))
+
+	if ev := resultEvents(events).find(t, "SendMessage"); ev.Status != "pass" {
+		t.Errorf("SendMessage status = %q (%s), want pass", ev.Status, ev.Error)
+	}
+}
+
+// An "na" dependency does not block. "na" means the AWS Go SDK does not expose
+// the operation, not that the run is broken, and the cli, node-js, Java, .NET
+// and Rust suites all let dependents through on it — a suite that blocked here
+// would report a different result for the same registry.
+func TestRunGroupDoesNotBlockOnNADependency(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "s3", Name: "s3-crud", Tests: []RegistryTest{
+			{Name: "CreateBucket"},
+			{Name: "PutObject", Depends: []string{"CreateBucket"}},
+		}},
+	}}
+	// A nil impl is the registry's "the SDK has no such call" signal → "na".
+	impls := allImpls(reg)
+	impls["s3-crud:CreateBucket"] = nil
+
+	_, events := runOneGroup(t, BuildGroups(reg, impls, BuildGroupsOptions{Suite: "go-sdk"}))
+	got := resultEvents(events)
+
+	if ev := got.find(t, "CreateBucket"); ev.Status != "na" {
+		t.Fatalf("CreateBucket status = %q, want na", ev.Status)
+	}
+	if ev := got.find(t, "PutObject"); ev.Status != "pass" {
+		t.Errorf("PutObject status = %q (%s), want pass", ev.Status, ev.Error)
 	}
 }
 

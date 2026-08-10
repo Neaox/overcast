@@ -13,12 +13,16 @@ Run with:  python -m unittest discover -s tests  (from compat/suites/python-sdk/
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from lib.harness import TestContext, run_group  # noqa: E402
 from lib.registry import (  # noqa: E402
     ambiguous_test_names,
     build_groups_from_registry,
@@ -267,6 +271,204 @@ class DependencyOrdering(unittest.TestCase):
                             f"{group.name}: {tc.name} runs before its dependency {dep}"
                         )
                 ran.add(tc.name)
+
+
+def _boom(ctx):
+    """An impl that fails, so a prerequisite can be broken without an emulator."""
+    raise RuntimeError("boom")
+
+
+def _run_one_group(registry, impls):
+    """Build the registry's single group and run it, returning
+    ((passed, failed, skipped, unimplemented, cancelled), {test name: result}).
+
+    The harness writes NDJSON to stdout, so stdout is captured for the run.
+    """
+    groups = build_groups_from_registry(registry, impls, "python-sdk")
+    assert len(groups) == 1, f"built {len(groups)} groups, want exactly 1"
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        counts = run_group(groups[0], TestContext("", "us-east-1", "test"))
+
+    results = {}
+    for line in buf.getvalue().splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if event.get("event") == "test_result":
+            results[event["test"]] = event
+    return counts, results
+
+
+class DependencyCascadeSkip(unittest.TestCase):
+    """A test whose dependency did not pass is skipped, not run.
+
+    Sorting by ``depends`` puts a prerequisite first; this half decides what
+    happens when that prerequisite does not pass. The schema promises runners
+    "auto-skip dependents when a dependency fails", and compat/AGENTS.md tells
+    readers that "dependency failed: X" means the cause is another failure in the
+    same group — advice that only holds if the harness emits it. Without the
+    gate, one root cause reports as a cascade of unrelated failures and every one
+    of them has to be triaged.
+    """
+
+    def test_failed_dependency_skips_its_dependents(self):
+        registry = {
+            "groups": [
+                {
+                    "service": "s3",
+                    "name": "s3-crud",
+                    "tests": [
+                        {"name": "CreateBucket"},
+                        {"name": "PutObject", "depends": ["CreateBucket"]},
+                        {"name": "GetObject", "depends": ["PutObject"]},
+                        {"name": "ListBuckets"},
+                    ],
+                }
+            ]
+        }
+        impls = _all_impls(registry)
+        impls["s3-crud:CreateBucket"] = _boom
+
+        counts, results = _run_one_group(registry, impls)
+
+        self.assertEqual("fail", results["CreateBucket"]["status"])
+        self.assertEqual("skip", results["PutObject"]["status"])
+        self.assertEqual(
+            "dependency failed: CreateBucket", results["PutObject"]["error"]
+        )
+        # The skip has to propagate: GetObject depends on PutObject, which never
+        # ran. Blocking only the direct dependents would leave the second rank
+        # failing for the same single cause.
+        self.assertEqual("skip", results["GetObject"]["status"])
+        self.assertEqual(
+            "dependency failed: PutObject", results["GetObject"]["error"]
+        )
+        # A test with no edge to the failure is unaffected — the gate must not
+        # quarantine the rest of the group.
+        self.assertEqual("pass", results["ListBuckets"]["status"])
+
+        passed, failed, skipped, _unimplemented, _cancelled = counts
+        self.assertEqual((1, 1, 2), (passed, failed, skipped))
+
+    def test_skipped_dependency_also_blocks(self):
+        # A dependency that was skipped rather than failed is just as absent —
+        # an unimplemented test creates nothing for its dependents to act on.
+        registry = {
+            "groups": [
+                {
+                    "service": "sqs",
+                    "name": "queues",
+                    "tests": [
+                        {"name": "CreateQueue"},
+                        {"name": "SendMessage", "depends": ["CreateQueue"]},
+                    ],
+                }
+            ]
+        }
+        # No impl for CreateQueue → built as a "not yet implemented" skip.
+        _counts, results = _run_one_group(registry, {"queues:SendMessage": _noop})
+
+        self.assertEqual("skip", results["CreateQueue"]["status"])
+        self.assertEqual("skip", results["SendMessage"]["status"])
+        self.assertEqual(
+            "dependency failed: CreateQueue", results["SendMessage"]["error"]
+        )
+
+    def test_every_blocking_dependency_is_named(self):
+        # The reason line is the whole explanation a reader gets for the skip.
+        registry = {
+            "groups": [
+                {
+                    "service": "dynamodb",
+                    "name": "ddb",
+                    "tests": [
+                        {"name": "CreateTable"},
+                        {"name": "PutItem"},
+                        {"name": "Query", "depends": ["CreateTable", "PutItem"]},
+                    ],
+                }
+            ]
+        }
+        impls = _all_impls(registry)
+        impls["ddb:CreateTable"] = _boom
+        impls["ddb:PutItem"] = _boom
+
+        _counts, results = _run_one_group(registry, impls)
+        self.assertEqual(
+            "dependency failed: CreateTable, PutItem", results["Query"]["error"]
+        )
+
+    def test_passing_dependencies_change_nothing(self):
+        # The gate is inert on a green run — this is why a passing suite sees no
+        # change from it, and why the baseline needs no update.
+        registry = {
+            "groups": [
+                {
+                    "service": "s3",
+                    "name": "s3-crud",
+                    "tests": [
+                        {"name": "CreateBucket"},
+                        {"name": "PutObject", "depends": ["CreateBucket"]},
+                        {"name": "GetObject", "depends": ["PutObject"]},
+                    ],
+                }
+            ]
+        }
+        counts, results = _run_one_group(registry, _all_impls(registry))
+
+        for name, result in results.items():
+            self.assertEqual("pass", result["status"], f"{name}: {result}")
+        passed, failed, skipped, _u, _c = counts
+        self.assertEqual((3, 0, 0), (passed, failed, skipped))
+
+    def test_unknown_dependency_never_blocks(self):
+        # `depends` is same-group only, per the registry schema. A dependency
+        # the group does not declare cannot have failed, so a stale name left in
+        # the registry must not silently skip a working test.
+        registry = {
+            "groups": [
+                {
+                    "service": "sqs",
+                    "name": "queues",
+                    "tests": [
+                        {"name": "CreateQueue"},
+                        {
+                            "name": "SendMessage",
+                            "depends": ["CreateQueue", "NotInThisGroup"],
+                        },
+                    ],
+                }
+            ]
+        }
+        _counts, results = _run_one_group(registry, _all_impls(registry))
+        self.assertEqual("pass", results["SendMessage"]["status"])
+
+    def test_na_dependency_does_not_block(self):
+        # "na" means boto3 does not expose the operation, not that the run is
+        # broken, and the cli, node-js, Go, Java, .NET and Rust suites all let
+        # dependents through on it — a suite that blocked here would report a
+        # different result for the same registry.
+        registry = {
+            "groups": [
+                {
+                    "service": "s3",
+                    "name": "s3-crud",
+                    "tests": [
+                        {"name": "CreateBucket"},
+                        {"name": "PutObject", "depends": ["CreateBucket"]},
+                    ],
+                }
+            ]
+        }
+        impls = _all_impls(registry)
+        # A None impl is the registry's "boto3 has no such call" signal → "na".
+        impls["s3-crud:CreateBucket"] = None
+
+        _counts, results = _run_one_group(registry, impls)
+        self.assertEqual("na", results["CreateBucket"]["status"])
+        self.assertEqual("pass", results["PutObject"]["status"])
 
 
 class OwnerTracking(unittest.TestCase):

@@ -67,6 +67,9 @@ class TestCase:
     skip: Union[bool, str, None] = None
     op: Union[str, bool, None] = None   # False = suppress doc link
     na: Optional[str] = None  # N/A reason: SDK doesn't expose this operation
+    # Tests in the SAME group that must have passed before this one runs.
+    # run_group skips the test when any of them failed or was skipped.
+    depends: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -185,6 +188,12 @@ def run_group(group: TestGroup, ctx: TestContext, *,
     """
     passed = failed = skipped = unimplemented = cancelled_count = 0
 
+    # Tests that did not pass, so a test declaring one of them as a dependency
+    # is skipped rather than run against a prerequisite that never happened.
+    # "na" and cancelled are deliberately absent: neither says the resource a
+    # dependent needs is missing.
+    failed_or_skipped: set[str] = set()
+
     # Setup phase
     if group.setup:
         try:
@@ -242,6 +251,27 @@ def run_group(group: TestGroup, ctx: TestContext, *,
                 "error": reason,
             })
             skipped += 1
+            failed_or_skipped.add(tc.name)
+            continue
+
+        # Dependency gate — skip if any declared dependency failed or was
+        # skipped. Without it a single broken prerequisite reports as a cascade
+        # of unrelated failures, and "dependency failed: X" is what tells a
+        # reader the cause is elsewhere in the group.
+        failed_deps = [d for d in tc.depends if d in failed_or_skipped]
+        if failed_deps:
+            _emit({
+                "event": "test_result",
+                "suite": group.suite,
+                "service": group.service,
+                "group": group.name,
+                "test": tc.name,
+                "status": "skip",
+                "duration_ms": 0,
+                "error": f"dependency failed: {', '.join(failed_deps)}",
+            })
+            skipped += 1
+            failed_or_skipped.add(tc.name)
             continue
 
         start = time.monotonic()
@@ -271,6 +301,7 @@ def run_group(group: TestGroup, ctx: TestContext, *,
             else:
                 status = "fail"
                 failed += 1
+            failed_or_skipped.add(tc.name)
             result = {
                 "event": "test_result",
                 "suite": group.suite,
