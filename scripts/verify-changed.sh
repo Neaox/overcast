@@ -13,6 +13,9 @@
 # pinned tool version, or the set of commands, and the check runs again. Passes
 # are cached per check, so touching web/ does not invalidate the Go result.
 #
+# The scoped test run below is the one exception: it is not fingerprinted and
+# not cached, so it runs every time a .go file changed.
+#
 # Usage:
 #   scripts/verify-changed.sh             run the outstanding checks
 #   scripts/verify-changed.sh --force     run them even if the cache says they passed
@@ -113,9 +116,9 @@ _fp_go() {
 }
 
 # The build-tag sets CI runs the suite under (test.yml, the `build-tags`
-# matrix). Vetting each of them is what makes tag-gated code visible here at
-# all: golangci-lint, `go vet ./...` and `go test ./...` all use the default
-# build context, so a file behind `//go:build dev` or `nosqlite` is not
+# matrix). Compiling under each of them is what makes tag-gated code visible
+# here at all: golangci-lint, `go vet ./...` and `go test ./...` all use the
+# default build context, so a file behind `//go:build dev` or `nosqlite` is not
 # compiled by any of them — a syntax error in one passes every local check and
 # fails only in CI.
 #
@@ -124,12 +127,14 @@ _fp_go() {
 # friends), so naming the tag drops the other half from analysis: the blind
 # spot moves rather than closing.
 #
-# Vet rather than test: this stays a compile-and-vet gate, matching the
-# script's charter of not running the suite. Every set carries `slim`, so none
-# of them needs a built web/dist.
-# `go test -run='^$'` compiles test files (which `go vet` does not) while
-# running zero tests — catches undefined helpers and other compile-only errors
-# in test code.
+# `go test -run='^$'` rather than `go vet`: it compiles the test files too,
+# which vet does not, so an undefined helper or a stale signature in a
+# `_test.go` behind one of these tags is caught here instead of in CI. No test
+# actually runs — the pattern matches no name — but this is not a cheap
+# substitution: building the test binaries costs about 3.8x what vetting them
+# did (12.1s -> 46.0s per set on a 5900X, so roughly 140s for the three rather
+# than 36s), and it is most of what a Go push spends its time on. Every set
+# carries `slim`, so none of them needs a built web/dist.
 _ci_build_tags='slim slim,nosqlite slim,dev'
 
 _fp_tags() {
@@ -195,7 +200,7 @@ if [ -n "$go_changed" ]; then
   fi
 fi
 
-# ---- Go: vet + test-file compilation under CI's build tags -----------------
+# ---- Go: compile packages and tests under CI's build tags ------------------
 if [ -n "$go_changed" ]; then
   fp=$(_fp_tags)
   if [ "$force" -eq 0 ] && [ -n "$fp" ] && [ "$(_cache_get vet-tags)" = "$fp" ]; then
@@ -231,7 +236,8 @@ if [ -n "$go_changed" ]; then
   # Extract unique package paths from changed files
   if [ -n "$test_pkgs" ]; then
     # Only run under the default tag set (it's the most common path).
-    # The tag-aware vet pass above already caught compile errors for all sets.
+    # The tag pass above already compiled every package, and its tests, under
+    # all three sets, so what is left here is whether they pass.
     if command -v go >/dev/null 2>&1; then
       go test -count=1 -tags slim $test_pkgs || failed="$failed test-run"
     elif command -v docker >/dev/null 2>&1 && [ -x scripts/docker-go.sh ]; then
