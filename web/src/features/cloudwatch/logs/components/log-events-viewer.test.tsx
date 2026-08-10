@@ -1,5 +1,15 @@
+import { StrictMode } from "react"
+import { QueryClientProvider } from "@tanstack/react-query"
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router"
+import { render } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
-import { createTestQueryClient, renderWithRouter, screen } from "@/test/render"
+import { createTestQueryClient, renderWithRouter, screen, userEvent, waitFor } from "@/test/render"
 import { ToastContextProvider } from "@/components/ui/toast"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { logsFilterQueryOptions } from "@/features/cloudwatch/logs/data"
@@ -24,6 +34,83 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }))
 
+// A live-tail session, plus whatever the next FilterLogEvents should return.
+// The viewer shows a fetched page and the session's pushes together, and those
+// two overlap once an event is on disk.
+const live = vi.hoisted(() => {
+  class Session {
+    private queue: unknown[] = []
+    private waiter: ((v: IteratorResult<unknown>) => void) | null = null
+    closed = false
+
+    push(event: { timestamp: number; message: string; logStreamName: string }) {
+      const frame = {
+        sessionUpdate: { sessionResults: [{ ...event, ingestionTime: event.timestamp }] },
+      }
+      if (this.waiter) {
+        const resolve = this.waiter
+        this.waiter = null
+        resolve({ value: frame, done: false })
+      } else {
+        this.queue.push(frame)
+      }
+    }
+
+    [Symbol.asyncIterator]() {
+      return {
+        next: (): Promise<IteratorResult<unknown>> => {
+          if (this.queue.length) return Promise.resolve({ value: this.queue.shift(), done: false })
+          if (this.closed) return Promise.resolve({ value: undefined, done: true })
+          return new Promise((resolve) => {
+            this.waiter = resolve
+          })
+        },
+        return: (): Promise<IteratorResult<unknown>> => {
+          this.closed = true
+          if (this.waiter) {
+            const resolve = this.waiter
+            this.waiter = null
+            resolve({ value: undefined, done: true })
+          }
+          return Promise.resolve({ value: undefined, done: true })
+        },
+      }
+    }
+  }
+
+  return {
+    Session,
+    sessions: [] as InstanceType<typeof Session>[],
+    /** What the next FilterLogEvents call returns. */
+    stored: [] as { timestamp: number; message: string; logStreamName: string }[],
+    filterCalls: 0,
+    reset() {
+      this.sessions = []
+      this.stored = []
+      this.filterCalls = 0
+    },
+  }
+})
+
+vi.mock("@/services/aws-clients", () => ({
+  awsClients: {
+    logs: () => ({
+      send: (command: { constructor: { name: string } }) => {
+        if (command.constructor.name === "FilterLogEventsCommand") {
+          live.filterCalls++
+          return Promise.resolve({
+            events: live.stored.map((e) => ({ ...e })),
+            searchedLogStreams: [],
+          })
+        }
+        const session = new live.Session()
+        live.sessions.push(session)
+        return Promise.resolve({ responseStream: session })
+      },
+    }),
+  },
+}))
+
 const GROUP = "/aws/lambda/checkout"
 
 const EVENTS: FilteredLogEvent[] = [
@@ -31,7 +118,16 @@ const EVENTS: FilteredLogEvent[] = [
   { timestamp: 2_000, ingestionTime: 2_000, logStreamName: "s1", message: "second message" },
 ]
 
+function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <ToastContextProvider>
+      <TooltipProvider>{children}</TooltipProvider>
+    </ToastContextProvider>
+  )
+}
+
 function renderViewer(events: FilteredLogEvent[] = EVENTS) {
+  live.reset()
   const queryClient = createTestQueryClient()
   queryClient.setQueryData(logsFilterQueryOptions(GROUP, {}).queryKey, {
     events,
@@ -40,11 +136,9 @@ function renderViewer(events: FilteredLogEvent[] = EVENTS) {
 
   return renderWithRouter(
     () => (
-      <ToastContextProvider>
-        <TooltipProvider>
-          <LogEventsViewer groupName={GROUP} />
-        </TooltipProvider>
-      </ToastContextProvider>
+      <Providers>
+        <LogEventsViewer groupName={GROUP} />
+      </Providers>
     ),
     { queryClient },
   )
@@ -98,6 +192,175 @@ describe("LogEventsViewer > clearing the buffer", () => {
     await user.click(await clearButton())
 
     expect(await clearButton()).toBeDisabled()
+  })
+})
+
+// ─── Live tail ─────────────────────────────────────────────────────────────
+
+const TAILED = {
+  timestamp: 1_700_000_000_000,
+  message: "the one and only line",
+  logStreamName: "stream-a",
+}
+
+/** Renders with an empty page, so only the live session can add rows. */
+function renderTailViewer() {
+  return renderViewer([])
+}
+
+/**
+ * The same tree with StrictMode where `main.tsx` puts it — at the root, which
+ * is the only place React honours it.
+ */
+function renderTailViewerUnderStrictMode() {
+  live.reset()
+  const queryClient = createTestQueryClient()
+  queryClient.setQueryData(logsFilterQueryOptions(GROUP, {}).queryKey, {
+    events: [],
+    searchedLogStreams: [],
+  })
+  const rootRoute = createRootRoute()
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([
+      createRoute({
+        getParentRoute: () => rootRoute,
+        path: "/",
+        component: () => (
+          <Providers>
+            <LogEventsViewer groupName={GROUP} />
+          </Providers>
+        ),
+      }),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  })
+
+  render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </StrictMode>,
+  )
+  return { user: userEvent.setup() }
+}
+
+const tailButton = () => screen.findByRole("button", { name: /^tail$/i })
+
+/** The toolbar's refresh control carries an icon and no label. */
+function refreshButton() {
+  const button = document.querySelector("svg.lucide-refresh-cw")?.closest("button")
+  if (!button) throw new Error("refresh button not found")
+  return button
+}
+
+const rowsShowing = (message: string) => screen.queryAllByText(message).length
+
+describe("LogEventsViewer > live tail", () => {
+  it("opens one session when tail is switched on", async () => {
+    const { user } = renderTailViewer()
+
+    await user.click(await tailButton())
+    await waitFor(() => expect(live.sessions).toHaveLength(1))
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(live.sessions).toHaveLength(1)
+  })
+
+  it("opens one session under StrictMode too", async () => {
+    const { user } = renderTailViewerUnderStrictMode()
+
+    // StrictMode's extra mount/unmount/remount happens while tail is off, and
+    // the effect subscribes to nothing in that state.
+    const tail = await tailButton()
+    expect(live.sessions).toHaveLength(0)
+
+    // Switching tail on is a dependency change on an already-mounted effect,
+    // which React runs once — in development as in production.
+    await user.click(tail)
+    await waitFor(() => expect(live.sessions).toHaveLength(1))
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(live.sessions).toHaveLength(1)
+  })
+
+  it("shows a live event once when a refetch has already picked it up", async () => {
+    const { user } = renderTailViewer()
+
+    await user.click(await tailButton())
+    await waitFor(() => expect(live.sessions).toHaveLength(1))
+
+    // The emulator now holds the event, so the next FilterLogEvents returns it.
+    // A refetch is not something the user asks for — react-query fires one on
+    // window focus, which is exactly what happens on the way back from a
+    // terminal after `aws logs put-log-events`.
+    live.stored = [TAILED]
+    await user.click(refreshButton())
+    await waitFor(() => expect(rowsShowing(TAILED.message)).toBe(1))
+
+    // …and the session that was already open pushes the same event.
+    live.sessions[0].push(TAILED)
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(rowsShowing(TAILED.message)).toBe(1)
+  })
+
+  it("keeps a live event that the refetch did not return", async () => {
+    const { user } = renderTailViewer()
+
+    await user.click(await tailButton())
+    await waitFor(() => expect(live.sessions).toHaveLength(1))
+
+    live.sessions[0].push(TAILED)
+    await waitFor(() => expect(rowsShowing(TAILED.message)).toBe(1))
+
+    // A refetch whose snapshot predates the event must not drop it — this is
+    // the other half of the overlap, and clearing the buffer on every refetch
+    // would lose the line entirely.
+    await user.click(refreshButton())
+    await waitFor(() => expect(live.filterCalls).toBeGreaterThan(0))
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(rowsShowing(TAILED.message)).toBe(1)
+  })
+
+  it("keeps a line the function really did log twice", async () => {
+    const { user } = renderTailViewer()
+
+    await user.click(await tailButton())
+    await waitFor(() => expect(live.sessions).toHaveLength(1))
+
+    live.sessions[0].push(TAILED)
+    live.sessions[0].push(TAILED)
+    await waitFor(() => expect(rowsShowing(TAILED.message)).toBe(2))
+
+    // The stored page holds both copies too, so both are accounted for and
+    // neither is dropped.
+    live.stored = [TAILED, TAILED]
+    await user.click(refreshButton())
+    await waitFor(() => expect(live.filterCalls).toBeGreaterThan(0))
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(rowsShowing(TAILED.message)).toBe(2)
+  })
+
+  it("hides a tailed event when Clear hides the page copy of it", async () => {
+    const { user } = renderTailViewer()
+
+    await user.click(await tailButton())
+    await waitFor(() => expect(live.sessions).toHaveLength(1))
+
+    live.sessions[0].push(TAILED)
+    await waitFor(() => expect(rowsShowing(TAILED.message)).toBe(1))
+
+    // Once the event is on disk both sources carry it, and reconciling leaves
+    // one row. Clear has to take that row away whichever source it came from.
+    live.stored = [TAILED]
+    await user.click(refreshButton())
+    await waitFor(() => expect(live.filterCalls).toBeGreaterThan(0))
+    await user.click(await clearButton())
+
+    expect(rowsShowing(TAILED.message)).toBe(0)
   })
 })
 
