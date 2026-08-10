@@ -207,6 +207,10 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [eks] a live-mode cluster's endpoint aliases use the cluster's own region rather than the configured default, so a cluster created in another region resolves
 
+- [eks] live mode pulls the k3s image before it creates a control plane, so a cluster can be created on a machine that has never run one. Docker answered `No such image` to the create and the cluster then reported `CREATING` indefinitely, with the reason only in a log line — a start that fails now reaches `FAILED` and carries the Docker error in `cluster.health.issues`, so a waiter gets an answer instead of hanging
+
+- [eks] a containerised Overcast can bring up a live-mode cluster at all. It probed the k3s API on `127.0.0.1:<published port>`, which inside its own network namespace is itself, so a healthy control plane never left `CREATING`; it now dials the container address on the control plane when it runs beside the daemon, the same lookup the RDS, ElastiCache, MSK and EFS health checks use. `DescribeCluster` still returns the published host port
+
 - [msk] `GetBootstrapBrokers` returns an address the caller can actually dial: a resolvable broker hostname on 9092 for a sibling container, the published port for the host. It previously returned `OVERCAST_HOSTNAME:hostPort` to everyone, which inside any container resolves to Overcast — a process that serves no Kafka
 
 ### Removed
