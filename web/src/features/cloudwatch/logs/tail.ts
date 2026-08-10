@@ -45,30 +45,122 @@ export function parseLogFilterTerms(pattern: string): string[] {
   return terms
 }
 
+// ── Merging a stored page with a live session ──────────────────────────────
+
+/** The fields a stored and a tailed log event have in common. */
+interface MergeableLogEvent {
+  eventId?: string
+  timestamp?: number
+  logStreamName?: string
+  message?: string
+}
+
+function mergeKey(event: MergeableLogEvent): string {
+  // Real CloudWatch stamps every event with an eventId and both APIs return
+  // it; the emulator does not, so identity otherwise falls back to the tuple
+  // that makes two records the same line.
+  if (event.eventId) return `id ${event.eventId}`
+  return `${event.logStreamName ?? ""} ${event.timestamp ?? 0} ${event.message ?? ""}`
+}
+
+/**
+ * Return the tailed events not already accounted for by `stored`.
+ *
+ * A live session and a FilterLogEvents/GetLogEvents page overlap: once an
+ * event is on disk, any later read returns it, and the session that was open
+ * when it was written has already pushed it. Rendering the concatenation shows
+ * that event twice.
+ *
+ * Dropping is by occurrence count, not by presence, so a line a function
+ * really did log twice within the same millisecond still shows twice — the
+ * stored page holds two copies too, and only those two are cancelled out.
+ */
+export function dropTailedDuplicates<T extends MergeableLogEvent>(
+  stored: readonly MergeableLogEvent[],
+  tailed: T[],
+): T[] {
+  if (stored.length === 0 || tailed.length === 0) return tailed
+
+  const unclaimed = new Map<string, number>()
+  for (const event of stored) {
+    const key = mergeKey(event)
+    unclaimed.set(key, (unclaimed.get(key) ?? 0) + 1)
+  }
+
+  const kept: T[] = []
+  for (const event of tailed) {
+    const key = mergeKey(event)
+    const count = unclaimed.get(key)
+    if (count) {
+      unclaimed.set(key, count - 1)
+      continue
+    }
+    kept.push(event)
+  }
+  return kept.length === tailed.length ? tailed : kept
+}
+
 function logGroupIdentifierArn(identifier: string): string {
   if (identifier.startsWith("arn:")) return identifier
   const endpoint = endpointResolver.get()
   return `arn:aws:logs:${endpoint.region}:000000000000:log-group:${identifier}`
 }
 
+/** Race marker for "the caller aborted while we were parked on the stream". */
+const ABORTED = Symbol("aborted")
+
 export async function* tailLogEvents(opts: TailLogEventsOptions): AsyncGenerator<TailedLogEvent> {
-  if (opts.signal?.aborted) return
+  const signal = opts.signal
+  if (signal?.aborted) return
 
   const logStreamNames = opts.streamNames ?? (opts.streamName ? [opts.streamName] : undefined)
-  const response = await awsClients.logs().send(
-    new StartLiveTailCommand({
-      logGroupIdentifiers: [logGroupIdentifierArn(opts.groupIdentifier)],
-      logStreamNames,
-      logStreamNamePrefixes: opts.streamNamePrefixes,
-      logEventFilterPattern: opts.filterPattern || undefined,
-    }),
-    { abortSignal: opts.signal },
-  )
+
+  let response
+  try {
+    response = await awsClients.logs().send(
+      new StartLiveTailCommand({
+        logGroupIdentifiers: [logGroupIdentifierArn(opts.groupIdentifier)],
+        logStreamNames,
+        logStreamNamePrefixes: opts.streamNamePrefixes,
+        logEventFilterPattern: opts.filterPattern || undefined,
+      }),
+      { abortSignal: signal },
+    )
+  } catch (err) {
+    // Every teardown — a filter change, a navigation, StrictMode's remount —
+    // races the request that opens the session, and the SDK rejects the send
+    // when the abort wins. That is the ordinary path, not a failure: the
+    // callers drive this generator from an effect body they cannot wrap in a
+    // catch, so a rejection here surfaces as an unhandled rejection.
+    if (signal?.aborted) return
+    throw err
+  }
+
+  const stream = response.responseStream
+  if (!stream) return
+
+  // Consume the stream through an explicit iterator rather than `for await`,
+  // so the generator's exit is its own rather than a consequence of the
+  // transport closing. `abortSignal` does abort the underlying request — the
+  // emulator sees the hang-up within a few milliseconds — but a `for await`
+  // re-checks the signal only when the next frame arrives, which leaves the
+  // exit at the mercy of how idle the stream happens to be.
+  const iterator = stream[Symbol.asyncIterator]()
 
   try {
-    for await (const frame of response.responseStream ?? []) {
-      if (opts.signal?.aborted) return
-      const results = frame.sessionUpdate?.sessionResults ?? []
+    // The abort may already have fired while the request was in flight, in
+    // which case the session came back to nobody and no further `abort` event
+    // is coming. Bail here and let `finally` hang it up.
+    if (signal?.aborted) return
+
+    const aborted = new Promise<typeof ABORTED>((resolve) => {
+      signal?.addEventListener("abort", () => resolve(ABORTED), { once: true })
+    })
+
+    for (;;) {
+      const next = await Promise.race([iterator.next(), aborted])
+      if (next === ABORTED || signal?.aborted || next.done) return
+      const results = next.value.sessionUpdate?.sessionResults ?? []
       for (const event of results) {
         yield {
           timestamp: event.timestamp ?? 0,
@@ -76,10 +168,15 @@ export async function* tailLogEvents(opts: TailLogEventsOptions): AsyncGenerator
           logStreamName: event.logStreamName ?? "",
           message: event.message ?? "",
         }
+        if (signal?.aborted) return
       }
     }
   } catch (err) {
-    if (opts.signal?.aborted) return
+    if (signal?.aborted) return
     throw err
+  } finally {
+    // Reached on the abort race, on a consumer that stops iterating, and on a
+    // stream error alike — all of them want the session closed.
+    await iterator.return?.()
   }
 }

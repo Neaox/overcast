@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
+﻿import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
@@ -39,9 +39,13 @@ import {
 } from "@/lib/log-format"
 import { AnsiText } from "@/components/logs/ansi-text"
 import type { FilteredLogEvent } from "@/types/logs"
-import { parseLogFilterTerms, tailLogEvents } from "@/features/cloudwatch/logs/tail"
+import {
+  dropTailedDuplicates,
+  parseLogFilterTerms,
+  tailLogEvents,
+} from "@/features/cloudwatch/logs/tail"
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Highlight matching filter terms in a message string. */
 function highlightMatches(message: string, filterPattern: string): React.ReactNode {
@@ -64,7 +68,7 @@ function highlightMatches(message: string, filterPattern: string): React.ReactNo
   )
 }
 
-// ── Row height estimation ──────────────────────────────────────────────────
+// â”€â”€ Row height estimation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Estimate the row height for a log event based on message length and format state. */
 function estimateRowHeight(msg: string, formatted: boolean): number {
@@ -77,7 +81,7 @@ function estimateRowHeight(msg: string, formatted: boolean): number {
   return baseHeight + (lines - 1) * 18
 }
 
-/** Stable empty fallback — a fresh `[]` would re-run every memo keyed on it. */
+/** Stable empty fallback â€” a fresh `[]` would re-run every memo keyed on it. */
 const NO_EVENTS: FilteredLogEvent[] = []
 
 function sortEvents(events: FilteredLogEvent[], asc: boolean): FilteredLogEvent[] {
@@ -90,7 +94,7 @@ function sortEvents(events: FilteredLogEvent[], asc: boolean): FilteredLogEvent[
   })
 }
 
-// ── Main component ─────────────────────────────────────────────────────────
+// â”€â”€ Main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface Props {
   groupName: string
@@ -111,7 +115,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const [tailEvents, setTailEvents] = useState<FilteredLogEvent[]>([])
   // Clearing the buffer hides everything on screen without stopping the tail.
   // The live events are simply dropped; the fetched ones are still in the
-  // query cache, so they are held back by timestamp instead — a marker that
+  // query cache, so they are held back by timestamp instead â€” a marker that
   // survives the refetches that would otherwise put them straight back.
   const [clearedThrough, setClearedThrough] = useState<number | null>(null)
 
@@ -119,7 +123,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const pinnedToLatestRef = useRef(true)
   const previousEventCountRef = useRef(0)
 
-  const { data, dataUpdatedAt, isLoading, isFetching, refetch } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     ...logsFilterQueryOptions(groupName, {
       filterPattern: activeFilter || undefined,
       startTime: timeRange.startTime,
@@ -132,10 +136,6 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     setTailEvents([])
     setClearedThrough(null)
   }, [groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
-
-  useEffect(() => {
-    setTailEvents([])
-  }, [dataUpdatedAt])
 
   useEffect(() => {
     if (!tailMode) return
@@ -165,9 +165,22 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   )
   const clearedCount = fetchedEvents.length - visibleFetched.length
 
+  // A refetch while tailing re-reads events the open session has already
+  // pushed, so the two sources are reconciled rather than concatenated.
+  // Clearing the tail buffer on every refetch would do it too, but at the cost
+  // of dropping whatever arrived after the refetch's snapshot was taken.
+  //
+  // Reconciled against the same list it is concatenated with, so what is on
+  // screen is what was counted. Clear empties the tail buffer as it hides the
+  // fetched rows, so the two lists never disagree about an event it hid.
+  const visibleTailed = useMemo(
+    () => dropTailedDuplicates(visibleFetched, tailEvents),
+    [visibleFetched, tailEvents],
+  )
+
   const events = useMemo(
-    () => sortEvents([...visibleFetched, ...tailEvents], sortAsc),
-    [visibleFetched, sortAsc, tailEvents],
+    () => sortEvents([...visibleFetched, ...visibleTailed], sortAsc),
+    [visibleFetched, visibleTailed, sortAsc],
   )
 
   // Pre-compute cheap row metadata once per data change. JSON parsing/highlighting stays row-local.
@@ -175,7 +188,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     () =>
       events.map((evt) => {
         const msg = evt.message ?? ""
-        // `plain` is the message without its escape sequences — what the level
+        // `plain` is the message without its escape sequences â€” what the level
         // detector reads, what the row height is estimated from, and what the
         // copy button puts on the clipboard.
         const plain = stripAnsi(msg)
@@ -221,7 +234,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
    * Empty the view, leaving the tail running so only events from here on show.
    *
    * The cut is taken from the newest timestamp on screen rather than the wall
-   * clock — the emulator stamps the events, and its clock is the only one that
+   * clock â€” the emulator stamps the events, and its clock is the only one that
    * decides which side of the line a record falls on.
    */
   const clearBuffer = useCallback(() => {
@@ -287,7 +300,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
       ? {
           title: "Buffer cleared",
           description: tailMode
-            ? "Waiting for new events — anything from before the clear is hidden."
+            ? "Waiting for new events â€” anything from before the clear is hidden."
             : clearedCount > 0
               ? "Turn on Tail to watch for new events, or show the earlier ones again."
               : "Turn on Tail to watch for new events.",
@@ -325,7 +338,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             <Button
               variant="ghost"
               size="sm"
-              // Refresh means "reload this window of logs" — honouring a cut
+              // Refresh means "reload this window of logs" â€” honouring a cut
               // taken before it would hand back an empty screen.
               onClick={() => {
                 restoreCleared()
@@ -347,7 +360,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
           <Input
             data-log-filter
             className="h-7 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-            placeholder='Filter — e.g. ERROR, "request failed", ERROR timeout'
+            placeholder='Filter â€” e.g. ERROR, "request failed", ERROR timeout'
             value={filterInput}
             onChange={(e) => setFilterInput(e.target.value)}
             onKeyDown={(e) => {
@@ -443,7 +456,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             onClick={clearBuffer}
             disabled={events.length === 0}
             className="h-7 px-2 text-[10px] uppercase"
-            title="Clear the events on screen — the tail keeps running, so only newer events appear"
+            title="Clear the events on screen â€” the tail keeps running, so only newer events appear"
           >
             <Eraser className="mr-1 h-3 w-3" />
             Clear
@@ -545,7 +558,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                           // Truncated, not just narrow: a Lambda stream name is
                           // wider than `w-44` at this size and the column has no
                           // overflow of its own, so it used to spill across the
-                          // message — over the level badge first.
+                          // message â€” over the level badge first.
                           <div
                             className="w-44 shrink-0 truncate px-1 pt-1.5 font-mono text-[10px] text-fg-muted"
                             title={evt.logStreamName}
@@ -612,17 +625,17 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   )
 }
 
-// ── Log message cell ───────────────────────────────────────────────────────
+// â”€â”€ Log message cell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * The chip that names a row's level.
  *
  * Every row the tint applies to gets one, whatever the message looks like. The
  * badge used to render only for a syntax-highlighted document, or for a plain
- * line once Format was ticked — so a `console.warn` from a Node runtime, whose
+ * line once Format was ticked â€” so a `console.warn` from a Node runtime, whose
  * level AWS writes as a tab-separated column
  *
- *   2026-08-10T02:34:39.674Z\t<request id>\tWARN\tCannot push rates…
+ *   2026-08-10T02:34:39.674Z\t<request id>\tWARN\tCannot push ratesâ€¦
  *
  * arrived tinted but unlabelled, and the label was the part that read at a
  * glance. Nothing about that line is less worth labelling than a Powertools
@@ -673,7 +686,7 @@ function LogMessage({
   }, [formatted, message, syntaxHighlight])
   // A system log record would otherwise render as a JSON blob among the
   // function's own output, so the summary is what shows until Format is ticked
-  // — which is the toggle that means "show me the document".
+  // â€” which is the toggle that means "show me the document".
   const asSummary = summary != null && !formatted
   const withPrefix = (text: string) => `${prefix ? `${prefix} ` : ""}${text}`
   const displayText = asSummary
@@ -703,7 +716,7 @@ function LogMessage({
     )
   }
 
-  // Plain message — with optional filter highlighting
+  // Plain message â€” with optional filter highlighting
   return (
     <div className="flex items-start gap-1.5">
       {level && !hideLevel && <LevelBadge level={level} />}

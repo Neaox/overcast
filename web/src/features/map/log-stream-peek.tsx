@@ -2,9 +2,9 @@
  * LogStreamPeek — right-side slide-in panel for peering into a Lambda
  * instance's log stream and trigger event.
  *
- * - Logs tab: loads existing events via REST then subscribes to the global
- *   SSE stream and appends any new `logs:LogEventsWritten` events that match
- *   the instance's log group + stream.
+ * - Logs tab: loads existing events via GetLogEvents, then opens a
+ *   StartLiveTail session on the instance's log group + stream and appends
+ *   what it pushes.
  * - Trigger Event tab: pretty-prints the JSON payload that triggered the
  *   invocation (as recorded by the instance tracker).
  */
@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils"
 import { logs } from "@/services/api"
 import type { LogEvent } from "@/types"
 import { useScrollTrigger } from "@/hooks/use-scroll-trigger"
-import { tailLogEvents } from "@/features/cloudwatch/logs/tail"
+import { dropTailedDuplicates, tailLogEvents } from "@/features/cloudwatch/logs/tail"
 import { TriggerEventViewer } from "./trigger-event-viewer"
 
 type Tab = "logs" | "trigger"
@@ -90,16 +90,22 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     ),
   )
 
-  // Append new log events for the active stream. The generator unsubscribes
-  // from the shared event stream when the target changes or the panel closes.
+  // Append new log events for the active stream, from a live tail session the
+  // cleanup hangs up when the stream changes or the panel closes.
+  //
+  // Keyed on the stream itself rather than the target object: the map builds a
+  // fresh target on every peek click, so an object dependency would tear down a
+  // perfectly good session only to open an identical one.
+  const logGroup = target?.logGroup
+  const logStream = target?.logStream
   useEffect(() => {
-    if (!target || !target.logGroup || !target.logStream || activeTab !== "logs") return
+    if (!logGroup || !logStream || activeTab !== "logs") return
 
     const controller = new AbortController()
     void (async () => {
       for await (const event of tailLogEvents({
-        groupIdentifier: target.logGroup,
-        streamName: target.logStream,
+        groupIdentifier: logGroup,
+        streamName: logStream,
         signal: controller.signal,
       })) {
         setAppendedEvents((prev) => [
@@ -114,7 +120,7 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     })()
 
     return () => controller.abort()
-  }, [target, activeTab])
+  }, [logGroup, logStream, activeTab])
 
   // All historical events: pages are in reverse order (newest first page),
   // so reverse them to get chronological order, then append live events.
@@ -122,8 +128,11 @@ export const LogStreamPeek = memo(function LogStreamPeek({ target, onClose }: Lo
     () => [...(logQuery.data?.pages ?? [])].reverse().flatMap((p) => p.events),
     [logQuery.data],
   )
+  // A page fetched while the session is open can already hold what the session
+  // has pushed, so the live events are reconciled against it rather than
+  // simply appended.
   const logEvents = useMemo(
-    () => [...historicalEvents, ...appendedEvents],
+    () => [...historicalEvents, ...dropTailedDuplicates(historicalEvents, appendedEvents)],
     [historicalEvents, appendedEvents],
   )
 
