@@ -71,6 +71,7 @@ var registeredRouteClassification = map[string]string{
 	"/2020-04-22": "lambda",
 	"/2020-05-31": "cloudfront",
 	"/2020-06-30": "lambda",
+	"/2021-01-01": "opensearch",
 	"/2021-10-31": "lambda",
 	"/2021-11-15": "lambda",
 
@@ -94,7 +95,6 @@ var registeredRouteClassification = map[string]string{
 	"/_lambda":        "lambda",
 	"/_mcp":           "internal",
 	"/_metrics":       "metrics",
-	"/_opensearch":    "internal",
 	"/_overcast":      "cognito|internal|secretsmanager|ses",
 	"/_rds":           "internal",
 	"/_topology":      "internal",

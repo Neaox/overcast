@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -1153,6 +1154,11 @@ func (h *schedulerScheduleGroupHandler) Update(ctx context.Context, router http.
 
 // ── AWS::OpenSearchService::Domain ──────────────────────────────────────────
 
+// opensearchDomainPath is OpenSearch's modeled CreateDomain binding. Domains
+// are addressed by name beneath it, and the physical ID this handler returns
+// is the ARN, so Delete has to recover the name from it.
+const opensearchDomainPath = "/2021-01-01/opensearch/domain"
+
 type opensearchDomainHandler struct{}
 
 func (h *opensearchDomainHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1163,8 +1169,13 @@ func (h *opensearchDomainHandler) Create(ctx context.Context, router http.Handle
 		"DomainName":    domainName,
 		"EngineVersion": engineVersion,
 	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", nil, fmt.Errorf("CreateDomain: %w", err)
+	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "OpenSearch.CreateDomain", body)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPost,
+		opensearchDomainPath, "application/json", data)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateDomain: %w", err)
 	}
@@ -1190,9 +1201,17 @@ func (h *opensearchDomainHandler) Create(ctx context.Context, router http.Handle
 	return arn, attrs, nil
 }
 
+// Delete addresses the domain by name. The physical ID is the ARN
+// (arn:aws:es:…:domain/<name>), and DeleteDomain binds the name as a path
+// label, so the name is taken from the ARN's last segment — sending the whole
+// ARN as the name, as this did before, never matched a domain.
 func (h *opensearchDomainHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{"DomainName": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "OpenSearch.DeleteDomain", body)
+	name := physicalID
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		opensearchDomainPath+"/"+url.PathEscape(name), "", nil)
 	return nil
 }
 

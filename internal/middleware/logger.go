@@ -86,6 +86,13 @@ func detectService(r *http.Request, body ...[]byte) string {
 		return "cloudfront"
 	case strings.HasPrefix(r.URL.Path, "/2013-04-01/"):
 		return "route53"
+	case strings.HasPrefix(r.URL.Path, "/2021-01-01/"):
+		// OpenSearch's whole surface, domains and tags alike. It is the only
+		// modeled service that binds this version prefix, so there is nothing
+		// for the credential scope to disambiguate — and leaving it to the
+		// scope would mislabel every request anyway, because OpenSearch signs
+		// as "es" while this function's key for it is "opensearch".
+		return "opensearch"
 	case strings.HasPrefix(r.URL.Path, "/v2/apis"):
 		if svc := serviceFromAuthCredential(r); svc == "appsync" {
 			return "appsync"
