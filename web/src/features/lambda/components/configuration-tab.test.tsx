@@ -9,7 +9,7 @@
  * so none of them could see it; only mounting the tab with a query left
  * pending does.
  */
-import { renderWithData, screen } from "@/test/render"
+import { createTestQueryClient, renderWithData, renderWithRouter, screen } from "@/test/render"
 import { ec2SecurityGroupsQueryOptions, ec2SubnetsQueryOptions } from "@/features/ec2/data"
 import {
   functionTagsQueryOptions,
@@ -57,4 +57,59 @@ describe("ConfigurationTab", () => {
       headings.indexOf("General configuration"),
     )
   })
+
+  // VPC placement is real connectivity here but restricts nothing, and security
+  // groups are never applied — so a test that "proves" the VPC wiring works
+  // passes locally whether or not it is correct. The notice is what stops that
+  // being a silent divergence, and it is shown only where someone could be
+  // relying on it: on a function that actually has a VPC configured.
+  describe("the VPC-not-enforced notice", () => {
+    it("appears when the function is in a VPC", async () => {
+      renderTab(TabWithVpc)
+      expect(await screen.findByText("Placement is real — isolation is not")).toBeInTheDocument()
+      expect(
+        screen.getByText(/Security groups are stored and returned but never applied/),
+      ).toBeInTheDocument()
+    })
+
+    it("links to the section of the docs that explains what to do", async () => {
+      renderTab(TabWithVpc)
+      const link = await screen.findByRole("link", { name: /What this means for your tests/ })
+      expect(link).toHaveAttribute("href", "/docs?path=networking.md#lambda-ecs-and-vpcs")
+    })
+
+    it("stays out of the way when no VPC is configured", async () => {
+      renderTab(TabWithoutVpc)
+      // The empty state still carries the divergence, so someone about to add a
+      // VPC config learns before they do — and awaiting it proves the tab
+      // rendered, which is what makes the absence below meaningful.
+      expect(await screen.findByText(/on AWS it could not/)).toBeInTheDocument()
+      expect(screen.queryByText("Placement is real — isolation is not")).not.toBeInTheDocument()
+    })
+  })
 })
+
+const withVpc: LambdaFunction = {
+  ...fn,
+  VpcConfig: { VpcId: "vpc-abc", SubnetIds: ["subnet-1"], SecurityGroupIds: ["sg-1"] },
+}
+
+function TabWithVpc() {
+  return <ConfigurationTab fn={withVpc} />
+}
+
+function TabWithoutVpc() {
+  return <ConfigurationTab fn={fn} />
+}
+
+/**
+ * The notice links into the in-app docs, so these cases need a router as well
+ * as the seeded queries every section of the tab reads.
+ */
+function renderTab(component: React.FC) {
+  const queryClient = createTestQueryClient()
+  for (const [queryKey, data] of baseSeeds) {
+    queryClient.setQueryData(queryKey, data)
+  }
+  return renderWithRouter(component, { queryClient })
+}

@@ -325,6 +325,23 @@ and it is the thing that makes enforcement worth having rather than merely
 faithful. It is also what converts every *future* instance of this bug class
 from an afternoon into a log line.
 
+**Naming the caller (decision, 2026-08-11).** The resolver sees a source
+address, not a container. It resolves that address through Docker on the miss
+path — which container holds it on the plane the query arrived on — and reads
+the VPC from the labels Overcast already puts on every managed container.
+
+The alternative was a registry written by `dataplane.Attach`, avoiding a Docker
+call on the query path. Rejected because it is state that can drift, and it
+drifts in exactly the cases most likely to be broken: a container adopted after
+a restart, or attached by an earlier process, is missing from it. Resolving
+through Docker cannot go stale.
+
+The cost is bounded by where it sits. Only a *miss* reaches Overcast's resolver
+at all — a working lookup is answered by Docker's embedded resolver and never
+gets here — so the inspect is paid by connections that are already broken. A
+short-lived cache keyed on the source address keeps a client's retry loop from
+turning one misconfiguration into a stream of inspects.
+
 ## 9. What this plan does not yet enforce
 
 Docker network membership is a coarse instrument: it expresses "in this VPC or
@@ -400,10 +417,48 @@ What seeding means, concretely:
 **Phase 5 — the resolver guard.** §8. Lands with, or before, enforcement.
 
 **Phase 6 — enforcement.** Only after everything above is in and the guard is
-proving itself: stop attaching VPC-placed resources to the default plane. This
-is the behaviour change; everything before it is structure. Add
-`PubliclyAccessible` to RDS and honour `assignPublicIp` in the same phase, so
-the escape hatches exist the day the restriction does.
+proving itself: stop attaching VPC-placed resources to the default plane (delete
+the second entry in `dataplane.DataNetworks`). This is the behaviour change;
+everything before it is structure. Add `PubliclyAccessible` to RDS and honour
+`assignPublicIp` in the same phase, so the escape hatches exist the day the
+restriction does.
+
+**On by default, escape hatches only (decision, 2026-08-11).** No
+`OVERCAST_VPC_ISOLATION` knob and no warn-only release. A flag nobody turns on
+is a feature nobody tests, and the whole value of the restriction is that it
+catches a real AWS misconfiguration locally rather than in a deploy.
+
+What this breaks, stated plainly because someone will hit it: a CDK stack that
+puts RDS in a VPC and a Lambda with no `VpcConfig` works in Overcast today and
+does **not** work on AWS. After this phase it stops working here too. The fix is
+the same one AWS needs — put the function in the VPC, or set
+`PubliclyAccessible` on the instance — so the user is not learning an Overcast
+rule, they are learning the AWS one, with a named error instead of a five-minute
+timeout.
+
+That trade is only acceptable because phase 5 lands first. Enforcement without
+the guard is the same restriction delivered as a hang, which is worse than not
+enforcing at all.
+
+**Phase 6 must ship its own documentation, not just its code.** Someone whose
+setup stopped working needs to find the answer without reading this plan:
+
+- **A user-facing page** — `docs/networking.md` § VPC placement, or its own page
+  under `docs/` — covering: what is now restricted and what is not, the fact that
+  Overcast's own APIs stay reachable from every container (§5a), the two escape
+  hatches with a worked example each, and the platform caveat where a host-mode
+  Overcast on Docker Desktop cannot make the control plane `--internal` (§5).
+- **The error text is documentation too.** The refusal message of §8 names both
+  sides and what to do; it is the first thing the user reads and for most people
+  the only thing. Treat its wording as part of the deliverable.
+- **A troubleshooting entry** keyed on the symptom people will search for — "my
+  Lambda can't reach RDS", "connection refused from an ECS task" — that names
+  the cause and links the page above.
+- **`docs/services/{rds,elasticache,ecs,lambda}.md`** each get the sentence that
+  applies to them, since that is where someone debugging one service looks first.
+- **The changelog fragment carries `!` and a `migration:` line**, per the
+  fragment grammar — this is a behaviour break and the release notes are where
+  most people will meet it.
 
 **Current session scope (decision 2026-08-11): phases 1–4.** Everything through
 the default VPC, nothing that restricts: the goal of the first phases is that

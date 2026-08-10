@@ -693,6 +693,26 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "The Docker networks Overcast uses",
+        "id": "the-docker-networks-overcast-uses"
+      },
+      {
+        "depth": 3,
+        "text": "Lambda, ECS and VPCs",
+        "id": "lambda-ecs-and-vpcs"
+      },
+      {
+        "depth": 3,
+        "text": "\"This used to work with `LAMBDA_NETWORK` set\"",
+        "id": "this-used-to-work-with-lambda-network-set"
+      },
+      {
+        "depth": 3,
+        "text": "\"`DescribeVpcs` returns a VPC I did not create\"",
+        "id": "describevpcs-returns-a-vpc-i-did-not-create"
+      },
+      {
+        "depth": 2,
         "text": "See also",
         "id": "see-also"
       }

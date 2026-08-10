@@ -331,8 +331,93 @@ Docker was unavailable or the image could not be pulled.
 
 ---
 
+## The Docker networks Overcast uses
+
+Everything Overcast starts as a container shares two Docker networks, and you
+normally never have to think about either.
+
+| Network | What it is for |
+| --- | --- |
+| `overcast` (`OVERCAST_NETWORK`) | The **data plane**: where resources reach each other. A Lambda function resolving an RDS endpoint, an ECS task reaching a cache node |
+| `overcast_control` | Overcast's own channel to the containers it starts — the Lambda Runtime API, and the `AWS_ENDPOINT_URL` calls your function and task code make back into the emulator. Derived from `OVERCAST_NETWORK`; not separately configurable |
+
+A resource created in a VPC additionally joins that VPC's network
+(`overcast-vpc-*`). It keeps the shared data plane as well, so anything can
+still reach it by name — Overcast does not yet restrict traffic by VPC.
+
+**If you attach your own containers to Overcast's network** — a compose service
+that needs to reach a database Overcast started, say — join `overcast`.
+
+### Lambda, ECS and VPCs
+
+Giving a function a `VpcConfig` (or a task an `awsvpc` configuration) is **real
+connectivity**: the container joins that VPC's Docker network, takes an address
+from its CIDR, and can reach the other resources in it by name.
+
+What it does **not** do yet is take anything away. This is where Overcast and
+AWS diverge, and the divergence runs in the direction that makes a local test
+pass when the deployed thing will fail:
+
+| | On AWS | In Overcast today |
+| --- | --- | --- |
+| A function **with** a `VpcConfig` reaching a resource outside that VPC | ✗ no route | ✓ works |
+| A function **without** a `VpcConfig` reaching a private VPC resource | ✗ no route | ✓ works |
+| A function in a VPC with no NAT gateway reaching the internet | ✗ | ✓ |
+| Security groups restricting any of the above | ✓ enforced | ✗ stored, never applied |
+| A function in a VPC calling the AWS APIs without a NAT or VPC endpoint | ✗ | ✓ **deliberately** — see below |
+
+So a test that proves "my Lambda can reach my database" passes here whether or
+not the VPC wiring is correct. If the wiring is what you are testing, that test
+is not yet meaningful in Overcast — check it against AWS, or against the
+[plan for enforcement](./plans/container-network-topology.md), which will make
+these rows agree.
+
+The last row stays divergent on purpose. Overcast's own API is what a container
+calls for S3, SQS, DynamoDB and everything else, and it rides the same channel
+as the Lambda Runtime API — so withholding it would not model a missing NAT
+gateway, it would stop the function from starting at all. Read it as *"every VPC
+has an interface endpoint for every service"*.
+
+### "This used to work with `LAMBDA_NETWORK` set"
+
+Overcast used to create one Docker network per emulator service:
+`overcast_lambda`, `overcast_ecs`, `overcast_rds`, `overcast_elasticache`,
+`overcast_msk`, `overcast_eks` and `overcast_efs`. That partition is gone, and
+so are the seven environment variables that named those networks. It was the
+reason a cache node could be reachable from a Lambda function and not from an
+ECS task ([#872](https://github.com/Neaox/overcast/issues/872)) — whether any
+two things could talk depended on which service happened to bridge the gap.
+
+What to do:
+
+- **You set one of the old variables.** They are no longer read. Set
+  `OVERCAST_NETWORK` instead — one value, for the one network.
+- **Your compose file joins `overcast_lambda`** (or another of the seven). Join
+  `overcast` instead.
+- **You have leftover `overcast_*` networks.** Overcast removes them at startup
+  once nothing is attached. One that survives still has a container on it —
+  `docker network inspect overcast_lambda` names it.
+
+### "`DescribeVpcs` returns a VPC I did not create"
+
+Each region now seeds a default VPC on first use, as every real AWS account
+has. It is marked `isDefault`, uses AWS's own `172.31.0.0/16`, and is what
+`Vpc.fromLookup(isDefault: true)` adopts.
+
+`DescribeVpcs` honours `VpcId.N` and the `vpc-id` and `isDefault` filters, so a
+lookup that names what it wants gets one VPC back. If you were relying on an
+unfiltered list containing exactly your own VPCs, filter it.
+
+You can delete it (`DeleteVpc`), as on AWS. Overcast will not seed another —
+also as on AWS, where `CreateDefaultVpc` is the way back. Its backing network is
+the shared data plane, so the delete removes the record and leaves the network
+that every running container is attached to.
+
+---
+
 ## See also
 
+- [Container networking (internals)](./dev/container-networking.md) — which resolver answers what, and why a missing alias hangs rather than erroring
 - [Using AWS SDKs and CLI](./sdk-cli.md) — endpoint configuration for every SDK
 - [Using AWS CDK](./cdk.md) — the S3-specific virtual-hosted-addressing / Windows DNS issue
 - [Lambda service reference](./services/lambda.md) — full endpoint coverage table
