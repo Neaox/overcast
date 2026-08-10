@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,8 +74,11 @@ const (
 	registryCreateAttempts = 20
 	registryCreateBackoff  = 250 * time.Millisecond
 	// registryAnswerTimeout bounds how long a started registry container gets
-	// to begin answering HTTP before startup gives up on it.
-	registryAnswerTimeout = 30 * time.Second
+	// to begin answering HTTP before startup gives up on it. registry:2 boots
+	// in a second or two; the bound exists for wedged containers and broken
+	// daemon topologies, and it is on the first waitRegistryReady caller's
+	// critical path, so it is generous without being an outage of its own.
+	registryAnswerTimeout = 15 * time.Second
 	registryAnswerBackoff = 200 * time.Millisecond
 )
 
@@ -1477,16 +1481,27 @@ func (s *Service) initRegistryDocker() {
 		return
 	}
 
-	bindings := inspect.NetworkSettings.Ports[ecrRegistryPortKey]
-	if len(bindings) == 0 || bindings[0].HostPort == "" {
+	hostPorts := publishedHostPorts(inspect)
+	if len(hostPorts) == 0 {
 		s.log.Warn("ECR registry container published no host port")
 		return
 	}
-	hostPort, err := strconv.Atoi(bindings[0].HostPort)
-	if err != nil {
-		s.log.Warn("ECR registry published an unreadable host port",
-			zap.String("port", bindings[0].HostPort), zap.Error(err))
-		return
+
+	// The port repositoryUri advertises is chosen by its only consumer: the
+	// daemon, which performs every push, pull and login. A dual-stack
+	// ephemeral publish can land the IPv4 and IPv6 bindings on different
+	// ports, and which family "localhost" dials is the daemon's business —
+	// a port verified from Overcast's own vantage still produced
+	// `docker login … dial tcp [::1]:<v4port>: connection refused` on CI.
+	// DistributionInspect makes the daemon itself dial, exactly as login
+	// does, so the port it answers on is the one that is true.
+	hostPort, reachable := s.selectDaemonReachablePort(hostPorts)
+	if !reachable {
+		s.log.Warn("the Docker daemon cannot reach the ECR registry it just published; "+
+			"docker push to the emulated ECR and ECS/Lambda pulls of its images will fail. "+
+			"If the daemon is remote or its published ports are not on its loopback, set "+
+			"OVERCAST_ECR_REGISTRY_PORT and add the registry to the daemon's insecure-registries.",
+			zap.Ints("ports", hostPorts))
 	}
 
 	s.registryMu.Lock()
@@ -1510,10 +1525,46 @@ func (s *Service) initRegistryDocker() {
 	if !s.awaitRegistryAnswering(password) {
 		s.log.Warn("ECR registry container started but never answered /v2/",
 			zap.Int("port", hostPort))
-		return
 	}
+}
 
-	s.verifyDaemonCanReachRegistry(hostPort)
+// publishedHostPorts returns the distinct host ports the registry's container
+// port is published on, in the order the daemon lists them. Usually one; two
+// when a dual-stack ephemeral publish gave IPv4 and IPv6 different ports.
+func publishedHostPorts(inspect *docker.ContainerInspect) []int {
+	var ports []int
+	for _, b := range inspect.NetworkSettings.Ports[ecrRegistryPortKey] {
+		p, err := strconv.Atoi(b.HostPort)
+		if err != nil || p <= 0 || slices.Contains(ports, p) {
+			continue
+		}
+		ports = append(ports, p)
+	}
+	return ports
+}
+
+// selectDaemonReachablePort asks the daemon to contact the registry at
+// "localhost:<port>" for each candidate and returns the first port it answers
+// on — an authorization refusal is an answer. The whole sweep retries while
+// the registry process is still booting (a transport failure during boot says
+// nothing about the port), bounded so a wedged container cannot hang startup.
+// When nothing answers within the deadline the first candidate is returned
+// with reachable=false: Overcast's own registry access may still work, and a
+// wrong-but-stated port beats no registry at all.
+func (s *Service) selectDaemonReachablePort(ports []int) (port int, reachable bool) {
+	deadline := time.Now().Add(registryAnswerTimeout)
+	for time.Now().Before(deadline) {
+		for _, candidate := range ports {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := s.docker.DistributionInspect(ctx, fmt.Sprintf("localhost:%d/overcast/connectivity-probe:none", candidate))
+			cancel()
+			if err == nil || !docker.RegistryUnreachable(err) {
+				return candidate, true
+			}
+		}
+		time.Sleep(registryAnswerBackoff)
+	}
+	return ports[0], false
 }
 
 // awaitRegistryAnswering polls the registry until it answers HTTP on any of
@@ -1656,27 +1707,6 @@ func (s *Service) startRegistry(ctx context.Context, name string, htpasswd []byt
 		return "", nil, fmt.Errorf("inspect: %w", err)
 	}
 	return containerID, inspect, nil
-}
-
-// verifyDaemonCanReachRegistry asks the daemon — the party that performs every
-// push, pull and login — to contact the registry at the address repositoryUri
-// advertises. An answer of any kind, including an authorization refusal,
-// proves the path; only a transport failure is worth a warning. This turns
-// "the daemon cannot dial the registry" into one actionable startup log line
-// instead of a CannotPullContainerError buried in a later task launch.
-func (s *Service) verifyDaemonCanReachRegistry(hostPort int) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	ref := fmt.Sprintf("localhost:%d/overcast/connectivity-probe:none", hostPort)
-	err := s.docker.DistributionInspect(ctx, ref)
-	if err == nil || !docker.RegistryUnreachable(err) {
-		return
-	}
-	s.log.Warn("the Docker daemon cannot reach the ECR registry it just published; "+
-		"docker push to the emulated ECR and ECS/Lambda pulls of its images will fail. "+
-		"If the daemon is remote or its published ports are not on its loopback, set "+
-		"OVERCAST_ECR_REGISTRY_PORT and add the registry to the daemon's insecure-registries.",
-		zap.Int("port", hostPort), zap.Error(err))
 }
 
 // registryBaseURL returns the base URL at which this process reaches the
