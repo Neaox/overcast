@@ -6,9 +6,11 @@ import {
   ArrowDown,
   ArrowDownUp,
   ArrowLeft,
+  Eraser,
   FileText,
   RefreshCw,
   Search,
+  Undo2,
   X,
   Zap,
 } from "lucide-react"
@@ -75,6 +77,9 @@ function estimateRowHeight(msg: string, formatted: boolean): number {
   return baseHeight + (lines - 1) * 18
 }
 
+/** Stable empty fallback — a fresh `[]` would re-run every memo keyed on it. */
+const NO_EVENTS: FilteredLogEvent[] = []
+
 function sortEvents(events: FilteredLogEvent[], asc: boolean): FilteredLogEvent[] {
   return [...events].sort((a, b) => {
     const timeDelta = (a.timestamp ?? 0) - (b.timestamp ?? 0)
@@ -104,6 +109,11 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   const [tailMode, setTailMode] = useState(false)
   const [sortAsc, setSortAsc] = useState(true)
   const [tailEvents, setTailEvents] = useState<FilteredLogEvent[]>([])
+  // Clearing the buffer hides everything on screen without stopping the tail.
+  // The live events are simply dropped; the fetched ones are still in the
+  // query cache, so they are held back by timestamp instead — a marker that
+  // survives the refetches that would otherwise put them straight back.
+  const [clearedThrough, setClearedThrough] = useState<number | null>(null)
 
   const parentRef = useRef<HTMLDivElement>(null)
   const pinnedToLatestRef = useRef(true)
@@ -120,6 +130,7 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
 
   useEffect(() => {
     setTailEvents([])
+    setClearedThrough(null)
   }, [groupName, streamName, activeFilter, timeRange.startTime, timeRange.endTime])
 
   useEffect(() => {
@@ -144,9 +155,19 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     return () => controller.abort()
   }, [activeFilter, groupName, streamName, tailMode])
 
+  const fetchedEvents = data?.events ?? NO_EVENTS
+  const visibleFetched = useMemo(
+    () =>
+      clearedThrough == null
+        ? fetchedEvents
+        : fetchedEvents.filter((evt) => (evt.timestamp ?? 0) > clearedThrough),
+    [fetchedEvents, clearedThrough],
+  )
+  const clearedCount = fetchedEvents.length - visibleFetched.length
+
   const events = useMemo(
-    () => sortEvents([...(data?.events ?? []), ...tailEvents], sortAsc),
-    [data, sortAsc, tailEvents],
+    () => sortEvents([...visibleFetched, ...tailEvents], sortAsc),
+    [visibleFetched, sortAsc, tailEvents],
   )
 
   // Pre-compute cheap row metadata once per data change. JSON parsing/highlighting stays row-local.
@@ -196,6 +217,24 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
     setShowScrollBottom(false)
   }, [virtualizer, events.length, sortAsc])
 
+  /**
+   * Empty the view, leaving the tail running so only events from here on show.
+   *
+   * The cut is taken from the newest timestamp on screen rather than the wall
+   * clock — the emulator stamps the events, and its clock is the only one that
+   * decides which side of the line a record falls on.
+   */
+  const clearBuffer = useCallback(() => {
+    setClearedThrough(
+      events.reduce((newest, evt) => Math.max(newest, evt.timestamp ?? 0), clearedThrough ?? 0),
+    )
+    setTailEvents([])
+    pinnedToLatestRef.current = true
+    setShowScrollBottom(false)
+  }, [events, clearedThrough])
+
+  const restoreCleared = useCallback(() => setClearedThrough(null), [])
+
   useLayoutEffect(() => {
     if (events.length <= previousEventCountRef.current) {
       previousEventCountRef.current = events.length
@@ -241,6 +280,22 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
   ) : (
     "All streams in this log group"
   )
+  // An emptied buffer is not an empty log group, and saying so would read as a
+  // bug in whatever the user is debugging.
+  const emptyState =
+    clearedThrough !== null
+      ? {
+          title: "Buffer cleared",
+          description: tailMode
+            ? "Waiting for new events — anything from before the clear is hidden."
+            : clearedCount > 0
+              ? "Turn on Tail to watch for new events, or show the earlier ones again."
+              : "Turn on Tail to watch for new events.",
+        }
+      : activeFilter
+        ? { title: "No matching events", description: "Try a different filter pattern." }
+        : { title: "No log events", description: "This stream has no events yet." }
+
   const virtualItems = virtualizer.getVirtualItems()
   const scrollOffset = virtualizer.scrollOffset ?? 0
   const viewportHeight = parentRef.current?.clientHeight ?? 0
@@ -267,7 +322,17 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
               {streamName ? "Back to Streams" : "Back to Group"}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => refetch()} disabled={isFetching}>
+            <Button
+              variant="ghost"
+              size="sm"
+              // Refresh means "reload this window of logs" — honouring a cut
+              // taken before it would hand back an empty screen.
+              onClick={() => {
+                restoreCleared()
+                void refetch()
+              }}
+              disabled={isFetching}
+            >
               <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             </Button>
           </div>
@@ -375,6 +440,31 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
             type="button"
             size="sm"
             variant="ghost"
+            onClick={clearBuffer}
+            disabled={events.length === 0}
+            className="h-7 px-2 text-[10px] uppercase"
+            title="Clear the events on screen — the tail keeps running, so only newer events appear"
+          >
+            <Eraser className="mr-1 h-3 w-3" />
+            Clear
+          </Button>
+          {clearedCount > 0 && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={restoreCleared}
+              className="h-7 px-2 text-[10px] uppercase"
+              title="Bring the cleared events back"
+            >
+              <Undo2 className="mr-1 h-3 w-3" />
+              Show {clearedCount.toLocaleString()} earlier
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
             onClick={() => setSortAsc((v) => !v)}
             className="h-7 px-2 text-[10px] uppercase"
           >
@@ -395,10 +485,8 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
       ) : events.length === 0 ? (
         <EmptyState
           icon={<FileText className="h-10 w-10" />}
-          title={activeFilter ? "No matching events" : "No log events"}
-          description={
-            activeFilter ? "Try a different filter pattern." : "This stream has no events yet."
-          }
+          title={emptyState.title}
+          description={emptyState.description}
         />
       ) : (
         <div className="relative min-h-0 flex-1">
