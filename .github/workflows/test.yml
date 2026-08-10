@@ -474,6 +474,98 @@ jobs:
           done
           exit "$status"
 
+  # The compat suites carry unit tests, and until this job nothing ran them.
+  #
+  # Every suite is its own module — its own go.mod, package.json,
+  # requirements.txt — so the root `go test ./...` in the jobs above matches no
+  # package under compat/suites/, and compat.yml installs each suite's
+  # dependencies only to run that suite against a live emulator. The tests
+  # below fell between the two and executed nowhere.
+  #
+  # What they pin is not incidental. They are the checks that a suite's
+  # registered implementations resolve against compat/suites/registry.json:
+  # impl-key resolution (a bare key for a name several groups declare binds
+  # whichever group registered last, so the run reports another service's
+  # result as this one's), duplicate registration, and the ordering a group's
+  # `depends` edges imply. A regression in any of those changes what a compat
+  # run *reports* while every suite still passes — the one class of compat bug
+  # a compat run cannot catch itself.
+  #
+  # Cheap by construction: no emulator, no Overcast binary, no Docker. Each
+  # test either builds a registry in memory or reads registry.json off disk.
+  #
+  # Three suites are deliberately absent:
+  #
+  #   java-sdk    already covered. Its Dockerfile runs `mvn package`, and
+  #               surefire runs RegistryTest and MainRegistrationTest as part
+  #               of it, so an unusable registration fails the image build that
+  #               every compat run performs.
+  #   rust-sdk    same arrangement, now that its Dockerfile runs `cargo test`
+  #               beside the `cargo build` — the dependency layer is already
+  #               compiled there, which is what makes it nearly free.
+  #   dotnet-sdk  carries no unit tests to run.
+  #
+  # Repeating java or rust here would mean resolving the whole AWS SDK, or
+  # compiling it, a second time for a verdict CI already has.
+  compat-suite-unit-tests:
+    name: Compat suite unit tests
+    needs: changes
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: needs.changes.outputs.code == 'true'
+
+      # go-version-file is the root go.mod, which is what compat.yml already
+      # uses to build the go-sdk and cli suites. cache-dependency-path names
+      # only go-sdk's go.sum: cli/ and cdk/ declare no requirements and so have
+      # no go.sum at all, and setup-go fails outright on a path that matches
+      # nothing.
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: compat/suites/go-sdk/go.sum
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: compat/suites/node-js-sdk/package-lock.json
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        if: needs.changes.outputs.code == 'true'
+        with:
+          python-version: "3.11"
+
+      # `npm ci` rather than a bare `node --test`: the last case in
+      # registry.test.ts imports the suite's real group files, and those import
+      # the AWS SDK clients they drive. The `test:unit` script is what
+      # contributors run, so CI invokes it rather than restating the command.
+      - name: node-js-sdk suite
+        if: needs.changes.outputs.code == 'true'
+        working-directory: compat/suites/node-js-sdk
+        run: |
+          npm ci
+          npm run test:unit
+
+      - name: python-sdk suite
+        if: needs.changes.outputs.code == 'true'
+        working-directory: compat/suites/python-sdk
+        run: python3 -m unittest discover -s tests
+
+      - name: go-sdk suite
+        if: needs.changes.outputs.code == 'true'
+        working-directory: compat/suites/go-sdk
+        run: go test -count=1 ./...
+
+      - name: cli suite
+        if: needs.changes.outputs.code == 'true'
+        working-directory: compat/suites/cli
+        run: go test -count=1 ./...
+
   # Unreleased changes live as one fragment file per PR under .changelog/
   # (files at unique paths cannot merge-conflict); CHANGELOG.md's [Unreleased]
   # section stays empty between releases. This check lints every fragment and

@@ -11,7 +11,13 @@ COPY rust-sdk/Cargo.toml rust-sdk/Cargo.lock* ./
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs && cargo build && rm -rf src
 
 COPY rust-sdk/src/ ./src/
-RUN touch src/main.rs && cargo build
+# `cargo test` beside the build, for the same reason java-sdk's Dockerfile runs
+# `mvn package`: src/registry.rs carries the unit tests that pin impl-key
+# resolution, and a regression there changes what a compat run *reports*
+# without failing it. They need no emulator, and the dependency layer above is
+# already compiled, so this costs one extra compile of this crate alone —
+# cheaper than standing a Rust toolchain up in test.yml to say the same thing.
+RUN touch src/main.rs && cargo test && cargo build
 
 FROM debian:bookworm-slim
 
