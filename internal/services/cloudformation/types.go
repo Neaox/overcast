@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"sort"
 	"time"
+
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // ── Stack ──────────────────────────────────────────────────────────────────
@@ -222,6 +226,19 @@ const (
 	StatusUpdateRollbackComplete   = "UPDATE_ROLLBACK_COMPLETE"
 	StatusUpdateRollbackFailed     = "UPDATE_ROLLBACK_FAILED"
 
+	// A stack that exists only because a change set was created against a name
+	// that had none. It has an ID and nothing else — no template, no resources
+	// — until the change set is executed, which is why it is the one state a
+	// CREATE change set may legitimately find its target stack in.
+	StatusReviewInProgress = "REVIEW_IN_PROGRESS"
+
+	// Import terminal states. Overcast never produces them — resource import
+	// is not emulated — but they are two of the five states AWS calls a last
+	// known stable state, so the update guard has to name them or it would
+	// refuse an imported stack that real CloudFormation updates happily.
+	StatusImportComplete         = "IMPORT_COMPLETE"
+	StatusImportRollbackComplete = "IMPORT_ROLLBACK_COMPLETE"
+
 	// Cleanup states. An update does not finish the moment every resource has
 	// been updated: CloudFormation then removes what the update superseded —
 	// resources dropped from the template, and the originals that replacements
@@ -252,6 +269,134 @@ const (
 	ResourceDeleteFailed     = "DELETE_FAILED"
 	ResourceDeleteSkipped    = "DELETE_SKIPPED"
 )
+
+// ── Stack status guards ────────────────────────────────────────────────────
+//
+// Which states an operation may start from is a property of the status
+// vocabulary, not of either dispatch path, so the predicates live here and
+// both handler.go (Query) and typed_logic.go (typed/JSON) call them. Inline
+// status comparisons at each entry point are what let CreateStack enforce a
+// rule CreateChangeSet did not — see #806 for the same shape in CloudWatch.
+
+// stackStableStatuses are the states AWS calls a stack's "last known stable
+// state": the exact set an update may start from, because each one is a
+// generation that completed and so is something an update rollback can return
+// to.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_RollbackStack.html
+//
+// ROLLBACK_COMPLETE is pointedly absent: a create that rolled back never
+// reached CREATE_COMPLETE, so there is nothing to update onto and nothing for
+// a failed update to unwind to — such a stack can only be deleted and created
+// again. The *_FAILED states are absent for the same reason and are the
+// business of RollbackStack (see rollbackPathFor), and the in-progress states
+// because an operation is already running.
+//
+// The web console keeps its own copy of this set in
+// web/src/features/cloudformation/utils.ts; TestStackStableStatuses_matchWebConsole
+// fails if the two drift, since a console that offers an update the server
+// refuses is worse than either rule alone.
+var stackStableStatuses = map[string]bool{
+	StatusCreateComplete:         true,
+	StatusUpdateComplete:         true,
+	StatusUpdateRollbackComplete: true,
+	StatusImportComplete:         true,
+	StatusImportRollbackComplete: true,
+}
+
+// canUpdateStackFrom reports whether a stack in the given status has a last
+// known stable state, and so can be updated.
+func canUpdateStackFrom(status string) bool {
+	return stackStableStatuses[status]
+}
+
+// stackStableStatusList returns the stable statuses in sorted order, for tests
+// and error messages that need to enumerate rather than test them.
+func stackStableStatusList() []string {
+	out := make([]string, 0, len(stackStableStatuses))
+	for status := range stackStableStatuses {
+		out = append(out, status)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// stackNameTaken reports whether a stack record in the given status still owns
+// its name, so that CreateStack naming it must fail with
+// AlreadyExistsException.
+//
+// Only DELETE_COMPLETE releases the name. Overcast keeps a deleted stack's
+// record as a tombstone — DescribeStacks by name and the event history still
+// answer for it, as they do in AWS — but the name is free again, which is what
+// makes the CDK CLI's delete-then-redeploy of a failed stack work.
+func stackNameTaken(status string) bool {
+	return status != StatusDeleteComplete
+}
+
+// changeSetCreateTargetTaken reports whether a stack record in the given status
+// blocks a change set with ChangeSetType=CREATE.
+//
+// It is deliberately one status weaker than stackNameTaken. A CREATE change set
+// creates a REVIEW_IN_PROGRESS stack that holds nothing but an ID, and both a
+// second CREATE change set and the execution of the first legitimately find
+// their target in that state — whereas CreateStack against the same placeholder
+// is AlreadyExistsException in real CloudFormation, because a stack of that
+// name does exist. The two rules are near neighbours and not the same rule, so
+// they are two predicates rather than one with a flag.
+func changeSetCreateTargetTaken(status string) bool {
+	return stackNameTaken(status) && status != StatusReviewInProgress
+}
+
+// changeSetTargetError reports why a change set of the given type cannot run
+// against a stack in its current state, or nil when it can.
+//
+// One function serves both change-set entrances: CreateChangeSet, which is
+// where real CloudFormation checks, and ExecuteChangeSet, which has to check
+// again because a change set outlives the state it was created against — the
+// stack it targets can be created, updated, rolled back or deleted between the
+// two calls.
+//
+// IMPORT rides with UPDATE, as it does everywhere else in these handlers
+// (computeChanges included): it edits an existing stack, so it needs the same
+// last known stable state an update does.
+func changeSetTargetError(stack *Stack, changeSetType string) *protocol.AWSError {
+	if changeSetType == "CREATE" {
+		if changeSetCreateTargetTaken(stack.Status) {
+			return stackAlreadyExistsErr(stack.StackName)
+		}
+		return nil
+	}
+	if !canUpdateStackFrom(stack.Status) {
+		return stackNotUpdatableErr(stack)
+	}
+	return nil
+}
+
+// stackAlreadyExistsErr is AWS's answer to a create naming a stack that exists.
+// The error code is modelled (AlreadyExistsException, HTTP 400); the message
+// wording follows CreateStack's, which is the shape AWS uses.
+func stackAlreadyExistsErr(stackName string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "AlreadyExistsException",
+		Message:    fmt.Sprintf("Stack [%s] already exists", stackName),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// stackNotUpdatableErr is AWS's answer to an update of a stack with no last
+// known stable state:
+//
+//	Stack:arn:aws:cloudformation:… is in ROLLBACK_COMPLETE state and can not
+//	be updated.
+//
+// The colon with no space, and "can not", are AWS's own.
+func stackNotUpdatableErr(stack *Stack) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ValidationError",
+		Message:    fmt.Sprintf("Stack:%s is in %s state and can not be updated.", stack.StackID, stack.Status),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
 
 // ── Template model ─────────────────────────────────────────────────────────
 

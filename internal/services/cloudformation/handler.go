@@ -153,9 +153,8 @@ func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	existing, _ := h.store.getStack(ctx, stackName)
-	if existing != nil && existing.Status != StatusDeleteComplete {
-		writeCFNError(w, r, "AlreadyExistsException",
-			fmt.Sprintf("Stack [%s] already exists", stackName), http.StatusBadRequest)
+	if existing != nil && stackNameTaken(existing.Status) {
+		protocol.WriteQueryXMLError(w, r, stackAlreadyExistsErr(stackName))
 		return
 	}
 
@@ -225,6 +224,10 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	if aerr != nil || stack == nil {
 		writeCFNError(w, r, "ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
+		return
+	}
+	if !canUpdateStackFrom(stack.Status) {
+		protocol.WriteQueryXMLError(w, r, stackNotUpdatableErr(stack))
 		return
 	}
 	previous := captureStackGeneration(stack)
@@ -502,7 +505,7 @@ func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
 			StackName: stackName,
 			StackID:   stackID,
 			Region:    chsRegion,
-			Status:    "REVIEW_IN_PROGRESS",
+			Status:    StatusReviewInProgress,
 			CreatedAt: h.clk.Now(),
 		}
 		if err := h.store.putStack(ctx, stack); err != nil {
@@ -510,6 +513,10 @@ func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		if aerr := changeSetTargetError(stack, changeSetType); aerr != nil {
+			protocol.WriteQueryXMLError(w, r, aerr)
+			return
+		}
 		stackID = stack.StackID
 	}
 
@@ -624,6 +631,10 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 	if stack == nil {
 		writeCFNError(w, r, "ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", cs.StackName), http.StatusBadRequest)
+		return
+	}
+	if aerr := changeSetTargetError(stack, cs.ChangeSetType); aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 

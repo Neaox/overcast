@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"testing"
 
@@ -77,58 +76,50 @@ func resourceRecords(t *testing.T, st *cfnStore, stackName string) []string {
 	return records
 }
 
-// executeCreateChangeSet runs the CreateChangeSet + ExecuteChangeSet pair the
-// CDK CLI issues for a stack it is creating.
-func executeCreateChangeSet(t *testing.T, h *Handler, stackName, csName, templateBody string) {
-	t.Helper()
-	for _, call := range []struct {
-		action string
-		params map[string]string
-	}{
-		{"CreateChangeSet", map[string]string{
-			"StackName": stackName, "ChangeSetName": csName,
-			"ChangeSetType": "CREATE", "TemplateBody": templateBody,
-		}},
-		{"ExecuteChangeSet", map[string]string{
-			"StackName": stackName, "ChangeSetName": csName,
-		}},
-	} {
-		rec := httptest.NewRecorder()
-		h.dispatch(rec, cfnPost(call.action, call.params))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("%s: status = %d, want 200; body: %s", call.action, rec.Code, rec.Body.String())
-		}
-	}
-}
-
-// Deploying a stack that already failed once is the CDK workflow this most
-// affects: the CLI executes a CREATE change set against the stored record,
-// which still describes the attempt that rolled back. Provisioning appended to
-// that record's resource list instead of replacing it, so the stack came out
+// Provisioning a stack record that already describes a failed generation
+// appended to its resource list instead of replacing it, so the stack came out
 // owning two entries for the same logical ID — and DescribeStackResources, the
 // console banner and `cdk deploy`'s own output all answer with the first one,
 // reporting the previous run's failure over the reason this run failed for.
-func TestExecuteChangeSet_recreatingAFailedStackReplacesItsResourceRecords(t *testing.T) {
-	// Given: a stack whose first deploy failed and rolled back
+//
+// This is asserted against the provisioner rather than through
+// CreateChangeSet + ExecuteChangeSet, which is how it was originally found:
+// re-creating over a ROLLBACK_COMPLETE stack is AlreadyExistsException since
+// the stack-status guards landed, and the CDK's delete-then-redeploy flow that
+// replaced it is covered in stack_status_guards_test.go. The invariant itself
+// belongs to the provisioner, which every deploy entrance funnels into.
+func TestProvisionStackResources_recreatingAFailedStackReplacesItsResourceRecords(t *testing.T) {
+	// Given: a stack record left by a create that failed and rolled back
 	handler := &redeployHandler{failName: "widget-v1"}
 	resourceType := registerRedeployHandler(t, handler)
-	h, st := newRollbackTestHandler(t)
-	h.prov.initRouter(http.NotFoundHandler())
-
-	executeCreateChangeSet(t, h, "app", "cs-1", redeployTemplate(resourceType, "widget-v1"))
-	if got, want := resourceRecords(t, st, "app"),
+	p := newProvisionerTestFixture(t)
+	stack := &Stack{
+		StackName: "app",
+		StackID:   "arn:aws:cloudformation:us-east-1:000000000000:stack/app/1111",
+		Region:    "us-east-1",
+	}
+	firstTmpl, err := parseTemplate(redeployTemplate(resourceType, "widget-v1"))
+	if err != nil {
+		t.Fatalf("parseTemplate: %v", err)
+	}
+	p.provisionStackResources(stack, firstTmpl)
+	if got, want := resourceRecords(t, p.store, "app"),
 		[]string{"Widget CREATE_FAILED cannot provision widget-v1"}; !slices.Equal(got, want) {
 		t.Fatalf("after the first deploy, resources = %v, want %v", got, want)
 	}
 
-	// When: it is deployed again and fails for a different reason
+	// When: the same record is provisioned again and fails for a different reason
 	handler.failName = "widget-v2"
-	executeCreateChangeSet(t, h, "app", "cs-2", redeployTemplate(resourceType, "widget-v2"))
+	secondTmpl, err := parseTemplate(redeployTemplate(resourceType, "widget-v2"))
+	if err != nil {
+		t.Fatalf("parseTemplate: %v", err)
+	}
+	p.provisionStackResources(stack, secondTmpl)
 
 	// Then: the stack holds one record for the resource, carrying this run's
 	// reason and not the previous run's
 	want := []string{"Widget CREATE_FAILED cannot provision widget-v2"}
-	if got := resourceRecords(t, st, "app"); !slices.Equal(got, want) {
+	if got := resourceRecords(t, p.store, "app"); !slices.Equal(got, want) {
 		t.Errorf("after the second deploy, resources = %v, want %v", got, want)
 	}
 }

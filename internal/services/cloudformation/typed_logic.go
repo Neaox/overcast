@@ -240,9 +240,8 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 	}
 
 	existing, _ := h.store.getStack(ctx, req.StackName)
-	if existing != nil && existing.Status != StatusDeleteComplete {
-		return nil, cfnerr("AlreadyExistsException",
-			fmt.Sprintf("Stack [%s] already exists", req.StackName), http.StatusBadRequest)
+	if existing != nil && stackNameTaken(existing.Status) {
+		return nil, stackAlreadyExistsErr(req.StackName)
 	}
 
 	templateBody, tplErr := h.resolveTypedTemplateBody(ctx, req.TemplateBody, req.TemplateURL)
@@ -306,6 +305,9 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 	if aerr != nil || stack == nil {
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
+	}
+	if !canUpdateStackFrom(stack.Status) {
+		return nil, stackNotUpdatableErr(stack)
 	}
 	previous := captureStackGeneration(stack)
 
@@ -487,13 +489,16 @@ func (h *Handler) createChangeSetTyped(ctx context.Context, req *createChangeSet
 			StackName: req.StackName,
 			StackID:   stackID,
 			Region:    chsRegion,
-			Status:    "REVIEW_IN_PROGRESS",
+			Status:    StatusReviewInProgress,
 			CreatedAt: h.clk.Now(),
 		}
 		if err := h.store.putStack(ctx, stack); err != nil {
 			return nil, cfnerr("InternalFailure", "failed to create stack placeholder", http.StatusInternalServerError)
 		}
 	} else {
+		if aerr := changeSetTargetError(stack, changeSetType); aerr != nil {
+			return nil, aerr
+		}
 		stackID = stack.StackID
 	}
 
@@ -597,6 +602,9 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 	if stack == nil {
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", cs.StackName), http.StatusBadRequest)
+	}
+	if aerr := changeSetTargetError(stack, cs.ChangeSetType); aerr != nil {
+		return nil, aerr
 	}
 
 	tmpl, err := parseTemplate(cs.TemplateBody)

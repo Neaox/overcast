@@ -1,0 +1,2 @@
+*! [cloudformation] a stack operation is now checked against the stack's state: a `CREATE` change set naming a stack that already exists is `AlreadyExistsException`, at `CreateChangeSet` and at `ExecuteChangeSet`, and `UpdateStack` (with `CreateChangeSet` for `ChangeSetType: UPDATE`) is `ValidationError` from anything but a last known stable state
+  migration: delete a `ROLLBACK_COMPLETE` stack before deploying over it, as the AWS CLI and CDK already do; recover a `*_FAILED` stack with `RollbackStack` first
