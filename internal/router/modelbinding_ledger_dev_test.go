@@ -171,10 +171,10 @@ var protocolAsymmetries = map[string]string{
 	// *primary* protocol, so this is the one CloudWatch operation an SDK
 	// reaches only by falling back to Query.
 	//
-	// It is the one entry in these ledgers with no issue behind it. It wants
-	// one: unlike the routing faults, nothing here records who will encode
-	// those shapes or when.
-	"cloudwatch/GetMetricData": "no JSON encoding for MetricDataQueries/MetricDataResults; exempted in cloudwatch's own dispatch test since #794 — needs an issue",
+	// #886 owns the encoding work: MetricDataQueries, epoch timestamps and
+	// MetricDataResults each need their own JSON shape, so it is not a rename
+	// away from the Query encoder.
+	"cloudwatch/GetMetricData": "#886",
 }
 
 // assertProtocolAsymmetry compares the observed asymmetries with the recorded

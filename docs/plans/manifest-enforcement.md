@@ -59,7 +59,8 @@ second copy of the Smithy models rather than an index of them. The thing that
 makes the manifest cheap to consult — one flat row per operation, no traversal
 — is exactly what member shapes would destroy.
 
-What a shape gate wants instead is a separate generated artefact, most likely
+What a shape gate wants instead is a separate generated artefact — **filed as
+#883**, with #884 for the fetch helper that produces it — most likely
 per-service and loaded only by a test: for each operation, the members bound to
 `httpLabel`, `httpQuery`, `httpHeader` and `httpPayload`, with their names.
 That is enough to assert that a handler reads a query member from the query
@@ -93,7 +94,7 @@ been fixed*. An exemption says "stop asking"; the ledger says "this is
 known-broken, here is who owns it, and the build fails the moment that stops
 being true".
 
-Every entry names a filed issue, bar one (see below). The route moves are not in
+Every entry names a filed issue. The route moves are not in
 this change because each carries the standing requirement stated on #854–#860
 and #862 — review the implementation in full against `CONTRIBUTING.md` and
 establish AWS fidelity from the pinned model rather than by assumption — and
@@ -103,7 +104,7 @@ establish AWS fidelity from the pinned model rather than by assumption — and
 | --- | --- | --- |
 | `unservedBindings` | 43 | #815, #854, #855, #856, #857, #858, #859, #860 |
 | `weaklyServedBindings` | 8 | not faults; the gate's honest margin |
-| `protocolAsymmetries` | 1 | **no issue** — see below |
+| `protocolAsymmetries` | 1 | #886 |
 
 43 capability rows moved from Supported/Inert to WIP, because they are
 implemented, work, and cannot be called by any SDK.
@@ -146,18 +147,18 @@ answer the same way: when the path matches a modeled binding for service X and
 the scope names a *different* real service, that is not ambiguity. `sigv4.go`
 already has `invalidSignature()` and the manifest already has the signing name.
 This is about the scope, not the signature, so it does not conflict with "not a
-security boundary"; unsigned traffic must keep falling to S3. **Wants an issue;
-it is a runtime behaviour change, out of scope here.**
+security boundary"; unsigned traffic must keep falling to S3. **Filed as #887**; it is a
+runtime behaviour change, out of scope here.
 
-### The one ledger entry with no issue
+### The one asymmetry, and why it is deliberate
 
 `cloudwatch/GetMetricData` is reachable over Query and not over awsJson1_0,
 which the model makes its *primary* protocol. It is deliberate and pre-existing
 — CloudWatch's own `TestDispatchJSON_CoversEveryQueryOperation` has carried the
 same exemption since #794, because the JSON encoding of `MetricDataQueries`,
 epoch timestamps and `MetricDataResults` does not exist yet. Unlike the routing
-faults, nothing records who will write that encoding or when. **Wants an
-issue.**
+faults, nothing recorded who will write that encoding or when. **Filed as
+#886.**
 
 ## What became derivable
 
