@@ -15,8 +15,24 @@ function encodeKeyForUrl(key: string): string {
  *
  * The `s3://` form stays raw — the AWS CLI expects the literal key. Only the
  * HTTP path-style form is percent-encoded.
+ *
+ * `versionId` names one stored revision. It reaches only the path-style URL, as
+ * `?versionId=`: an `s3://` URI has nowhere to put it, the CLI taking
+ * `--version-id` as a separate argument, so appending one there would produce a
+ * URI that addresses a key which does not exist. `"null"` is a real version id
+ * and is emitted like any other; presence decides, not truthiness.
  */
-export function s3CopyFormats(baseUrl: string, bucket: string, key?: string): CopyUrlFormat[] {
+export function s3CopyFormats(
+  baseUrl: string,
+  bucket: string,
+  key?: string,
+  versionId?: string,
+): CopyUrlFormat[] {
+  const pathStyle = `${baseUrl}/${key ? `${bucket}/${encodeKeyForUrl(key)}` : bucket}`
+  const query =
+    key !== undefined && versionId !== undefined
+      ? `?versionId=${encodeURIComponent(versionId)}`
+      : ""
   return [
     {
       label: "S3 URI",
@@ -25,7 +41,7 @@ export function s3CopyFormats(baseUrl: string, bucket: string, key?: string): Co
     },
     {
       label: "Path-style",
-      value: `${baseUrl}/${key ? `${bucket}/${encodeKeyForUrl(key)}` : bucket}`,
+      value: `${pathStyle}${query}`,
       description: "http",
     },
   ]

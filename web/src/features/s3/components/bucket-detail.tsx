@@ -106,7 +106,10 @@ export function BucketDetail() {
   const [search, setSearch] = useState("")
   const [scope, setScope] = useState<ListScope>("folder")
   const [sort, setSort] = useState<ObjectSort>(DEFAULT_SORT)
-  const [metaTarget, setMetaTarget] = useState<string>()
+  // What the inspector is pointed at. A version row carries its own id so the
+  // dialog reads that revision; a current-object row leaves it undefined, which
+  // is distinct from the literal id "null" an unversioned write is stored under.
+  const [metaTarget, setMetaTarget] = useState<{ key: string; versionId?: string }>()
   const [deleteTarget, setDeleteTarget] = useState<string>()
   const [deletePrefixTarget, setDeletePrefixTarget] = useState<string>()
   const [isDragOver, setIsDragOver] = useState(false)
@@ -212,9 +215,17 @@ export function BucketDetail() {
     isFetchingNextPage,
   } = viewingVersions ? versionsQuery : objectsQuery
 
-  const { data: meta, isLoading: metaLoading } = useQuery({
-    ...s3ObjectMetaQueryOptions(bucket, metaTarget ?? ""),
+  const {
+    data: meta,
+    isLoading: metaLoading,
+    error: metaError,
+  } = useQuery({
+    ...s3ObjectMetaQueryOptions(bucket, metaTarget?.key ?? "", metaTarget?.versionId),
     enabled: !!metaTarget,
+    // A version that has been deleted, or one that is a delete marker, answers
+    // the same way however many times it is asked. Retrying only delays the
+    // explanation.
+    retry: false,
   })
 
   // One request per bucket, not per row: the expiry hint on each object row is
@@ -602,7 +613,12 @@ export function BucketDetail() {
                           version={item.version}
                           noncurrent={item.noncurrent}
                           rules={lifecycleRules}
-                          onInspect={() => setMetaTarget(item.version.key)}
+                          onInspect={() =>
+                            setMetaTarget({
+                              key: item.version.key,
+                              versionId: item.version.versionId,
+                            })
+                          }
                           onDelete={() => setDeleteVersionTarget(item.version)}
                         />
                       ) : (
@@ -615,7 +631,7 @@ export function BucketDetail() {
                                 title="Inspect"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  setMetaTarget(item.key)
+                                  setMetaTarget({ key: item.key })
                                 }}
                               >
                                 <HighlightedName
@@ -651,7 +667,7 @@ export function BucketDetail() {
                                 title="Inspect"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  setMetaTarget(item.key)
+                                  setMetaTarget({ key: item.key })
                                 }}
                               >
                                 <Eye className="h-3.5 w-3.5" />
@@ -711,9 +727,11 @@ export function BucketDetail() {
 
       <ObjectPreviewDialog
         bucket={bucket}
-        objectKey={metaTarget}
+        objectKey={metaTarget?.key}
+        versionId={metaTarget?.versionId}
         metadata={meta}
         loading={metaLoading}
+        error={metaError}
         onClose={() => setMetaTarget(undefined)}
       />
 
@@ -950,7 +968,9 @@ function VersionRow({
               asChild
               onClick={(e) => e.stopPropagation()}
             >
-              <a href={s3.getObjectDownloadUrl(bucket, version.key)} download>
+              {/* Addressed by version id, not by key: by key this would always
+                  fetch whatever is current, whichever row was clicked. */}
+              <a href={s3.getObjectDownloadUrl(bucket, version.key, version.versionId)} download>
                 <Download className="h-3.5 w-3.5" />
               </a>
             </Button>

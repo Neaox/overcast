@@ -8,7 +8,8 @@
  *   s3Keys.objects()                            -> ["s3", "objects"]
  *   s3Keys.objectList(baseUrl, bucket, prefix)  -> ["s3", "objects", baseUrl, bucket, prefix]
  *   s3Keys.meta()                               -> ["s3", "meta"]
- *   s3Keys.objectMeta(baseUrl, bucket, key)     -> ["s3", "meta", baseUrl, bucket, key]
+ *   s3Keys.objectMeta(baseUrl, bucket, key, versionId)
+ *                                               -> ["s3", "meta", baseUrl, bucket, key, versionId ?? null]
  *
  * Queries — pass directly to useQuery:
  *   useQuery(s3Queries.buckets(endpoint.baseUrl))
@@ -58,9 +59,14 @@ export const s3Keys = {
   versioning: () => [...s3Keys.all(), "versioning"] as const,
   bucketVersioning: (bucket: string) => [...s3Keys.versioning(), bucket] as const,
   meta: () => [...s3Keys.all(), "meta"] as const,
-  objectMeta: (bucket: string, key: string) => [...s3Keys.meta(), bucket, key] as const,
-  objectPreview: (bucket: string, key: string) =>
-    [...s3Keys.objectMeta(bucket, key), "preview"] as const,
+  // The version id is part of the key, so two revisions of one object are two
+  // cache entries rather than one that overwrites the other. `null` stands for
+  // "whichever is current" and cannot collide with the literal id `"null"`,
+  // which is a real version id and stays a string.
+  objectMeta: (bucket: string, key: string, versionId?: string) =>
+    [...s3Keys.meta(), bucket, key, versionId ?? null] as const,
+  objectPreview: (bucket: string, key: string, versionId?: string) =>
+    [...s3Keys.objectMeta(bucket, key, versionId), "preview"] as const,
   notification: () => [...s3Keys.all(), "notification"] as const,
   bucketNotification: (bucket: string) => [...s3Keys.notification(), bucket] as const,
   lifecycle: () => [...s3Keys.all(), "lifecycle"] as const,
@@ -129,17 +135,21 @@ export function s3BucketVersioningQueryOptions(bucket: string) {
   })
 }
 
-export function s3ObjectMetaQueryOptions(bucket: string, key: string) {
+/**
+ * HeadObject for one object. `versionId` names a stored revision; omit it for
+ * whichever version is current.
+ */
+export function s3ObjectMetaQueryOptions(bucket: string, key: string, versionId?: string) {
   return queryOptions({
-    queryKey: s3Keys.objectMeta(bucket, key),
-    queryFn: () => s3.getObjectMetadata(bucket, key),
+    queryKey: s3Keys.objectMeta(bucket, key, versionId),
+    queryFn: () => s3.getObjectMetadata(bucket, key, versionId),
   })
 }
 
-export function s3ObjectPreviewQueryOptions(bucket: string, key: string) {
+export function s3ObjectPreviewQueryOptions(bucket: string, key: string, versionId?: string) {
   return queryOptions({
-    queryKey: s3Keys.objectPreview(bucket, key),
-    queryFn: () => s3.getObjectText(bucket, key),
+    queryKey: s3Keys.objectPreview(bucket, key, versionId),
+    queryFn: () => s3.getObjectText(bucket, key, versionId),
   })
 }
 

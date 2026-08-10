@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog"
 import { Spinner, CodeBlock } from "@/components/ui/primitives"
 import { formatBytes, formatDate } from "@/lib/format"
+import { describeObjectReadError } from "@/features/s3/object-read-error"
 import { formatPreviewText, isImagePreviewable, isTextPreviewable } from "./object-preview-format"
 
 const TEXT_PREVIEW_LIMIT = 1024 * 1024
@@ -35,20 +36,30 @@ interface ObjectMetadata {
 interface ObjectPreviewDialogProps {
   bucket: string
   objectKey: string | undefined
+  /**
+   * The stored revision being inspected, when the dialog was opened from the
+   * version history. Undefined means whichever version is current. `"null"` is
+   * a real version id, not an absent one, so every test here is for presence.
+   */
+  versionId?: string
   metadata: ObjectMetadata | undefined
   loading: boolean
+  /** Why the metadata read failed, if it did. */
+  error?: Error | null
   onClose: () => void
 }
 
 export function ObjectPreviewDialog({
   bucket,
   objectKey,
+  versionId,
   metadata,
   loading,
+  error,
   onClose,
 }: ObjectPreviewDialogProps) {
   const endpoint = useEndpoint()
-  const previewUrl = objectKey ? s3.getObjectDownloadUrl(bucket, objectKey) : undefined
+  const previewUrl = objectKey ? s3.getObjectDownloadUrl(bucket, objectKey, versionId) : undefined
   const canPreviewImage = !!metadata && isImagePreviewable(metadata.contentType)
   const canPreviewText =
     !!objectKey &&
@@ -56,7 +67,7 @@ export function ObjectPreviewDialog({
     metadata.contentLength <= TEXT_PREVIEW_LIMIT &&
     isTextPreviewable(metadata.contentType, objectKey)
   const { data: previewText, isLoading: previewLoading } = useQuery({
-    ...s3ObjectPreviewQueryOptions(bucket, objectKey ?? ""),
+    ...s3ObjectPreviewQueryOptions(bucket, objectKey ?? "", versionId),
     enabled: canPreviewText && !!previewUrl,
   })
   const formattedPreview = useMemo(
@@ -76,7 +87,7 @@ export function ObjectPreviewDialog({
             {objectKey && (
               <CopyUrlButton
                 compact
-                formats={s3CopyFormats(endpoint.baseUrl, bucket, objectKey)}
+                formats={s3CopyFormats(endpoint.baseUrl, bucket, objectKey, versionId)}
                 noun="URL"
               />
             )}
@@ -86,9 +97,17 @@ export function ObjectPreviewDialog({
           <div className="flex justify-center py-8">
             <Spinner />
           </div>
+        ) : error ? (
+          <div
+            role="alert"
+            className="rounded-lg border border-border bg-bg-muted px-3 py-2 text-sm text-fg-muted"
+          >
+            {describeObjectReadError(error, versionId)}
+          </div>
         ) : metadata ? (
           <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
             <DefinitionList layout="inline">
+              {versionId !== undefined && <Definition label="Version" value={versionId} />}
               <Definition label="Content-Type" value={metadata.contentType} />
               <Definition label="Size" value={formatBytes(metadata.contentLength)} />
               <Definition label="Last Modified" value={formatDate(metadata.lastModified)} />
@@ -150,9 +169,12 @@ export function ObjectPreviewDialog({
           <Button variant="secondary" onClick={onClose}>
             Close
           </Button>
-          {objectKey && (
+          {/* Gated on the metadata rather than the key: when the read failed
+              there is nothing at that address to download, and offering the
+              button anyway just moves the same failure into a new tab. */}
+          {objectKey && metadata && (
             <Button asChild>
-              <a href={s3.getObjectDownloadUrl(bucket, objectKey)} download>
+              <a href={s3.getObjectDownloadUrl(bucket, objectKey, versionId)} download>
                 <Download className="h-4 w-4" /> Download
               </a>
             </Button>
