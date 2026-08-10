@@ -378,12 +378,21 @@ func (c *ContainerSummary) FirstName() string {
 // ─── API helpers ───────────────────────────────────────────────────────────
 
 func (d *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return d.doRequestWithHeaders(ctx, method, path, body, nil)
+}
+
+// doRequestWithHeaders is doRequest with additional request headers, for the
+// few endpoints that carry one (X-Registry-Auth on an authenticated pull).
+func (d *Client) doRequestWithHeaders(ctx context.Context, method, path string, body io.Reader, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, d.host+path, body)
 	if err != nil {
 		return nil, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	return d.httpClient.Do(req)
 }
@@ -965,26 +974,52 @@ func splitImageRef(image string) (name, tag string) {
 	return image, ""
 }
 
-// PullImage pulls an image. This blocks until the pull is complete.
+// PullOptions carries the optional parameters of a pull: the Docker platform
+// to fetch, and the credentials for a registry that requires them.
+type PullOptions struct {
+	// Platform is a Docker platform such as linux/amd64. Empty pulls the
+	// daemon's default.
+	Platform string
+	// Auth authenticates against the registry serving the image. Nil pulls
+	// anonymously, which is what a public registry expects.
+	Auth *RegistryAuth
+}
+
+// PullImage pulls an image anonymously. This blocks until the pull is complete.
 func (d *Client) PullImage(ctx context.Context, image string) error {
-	return d.PullImageForPlatform(ctx, image, "")
+	return d.PullImageWithOptions(ctx, image, PullOptions{})
 }
 
 // PullImageForPlatform pulls an image for a specific Docker platform such as
-// linux/amd64. Docker Engine expects platform in the images/create query string,
-// not in a JSON body.
+// linux/amd64.
 func (d *Client) PullImageForPlatform(ctx context.Context, image, platform string) error {
+	return d.PullImageWithOptions(ctx, image, PullOptions{Platform: platform})
+}
+
+// PullImageWithOptions pulls an image, optionally for a specific platform and
+// against a registry that requires credentials. Docker Engine expects platform
+// in the images/create query string, not in a JSON body, and credentials in the
+// X-Registry-Auth header.
+func (d *Client) PullImageWithOptions(ctx context.Context, image string, opts PullOptions) error {
 	name, tag := splitImageRef(image)
 	query := url.Values{}
 	query.Set("fromImage", name)
 	if tag != "" {
 		query.Set("tag", tag)
 	}
-	if platform != "" {
-		query.Set("platform", platform)
+	if opts.Platform != "" {
+		query.Set("platform", opts.Platform)
+	}
+	authHeader, err := opts.Auth.Header()
+	if err != nil {
+		return fmt.Errorf("pull image %s: %w", image, err)
+	}
+	var headers map[string]string
+	if authHeader != "" {
+		headers = map[string]string{"X-Registry-Auth": authHeader}
 	}
 	path := "/v1.45/images/create?" + query.Encode()
-	resp, err := d.doRequest(ctx, http.MethodPost, path, nil)
+	resp, err := d.doRequestWithHeaders(ctx, http.MethodPost, path, nil, headers)
 	if err != nil {
 		return fmt.Errorf("pull image %s: %w", image, err)
 	}

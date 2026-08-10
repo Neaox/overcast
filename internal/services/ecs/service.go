@@ -54,11 +54,22 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 // execution for RunTask/StopTask. Called after Docker availability is confirmed.
 func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.docker = dc
-	s.handler.puller = docker.NewImagePuller(dc)
+	s.handler.puller = docker.NewImagePuller(dc).WithResolver(s.handler.images)
 	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.ECSKeepContainers)
 	s.handler.gc.StartRemoveLoop(context.Background())
 	s.handler.gc.Sweep(serviceName) // clean up orphaned containers from previous runs
 	s.handler.dockerReady.Store(true)
+}
+
+// SetImageResolver wires the registry resolver used when a container image
+// names a registry Overcast serves rather than a public one — an ECR image
+// built and pushed by CDK, whose reference points at real AWS. Implemented by
+// the ECR service.
+//
+// Wire this before SetDocker: the puller takes the resolver when it is built.
+// The router does, and the Docker probe that calls SetDocker starts after.
+func (s *Service) SetImageResolver(r docker.ImageResolver) {
+	s.handler.images = r
 }
 
 // SetVPCResolver wires the EC2 VPC resolver for awsvpc task placement.

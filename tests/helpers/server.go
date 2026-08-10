@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -265,6 +266,20 @@ func WithDataDir(dir string) Option {
 func WithLambdaDocker() Option {
 	return func(so *serverOptions) {
 		so.cfg.LambdaDockerSocket = "/var/run/docker.sock"
+	}
+}
+
+// WithECSDocker enables Docker-backed ECS task placement on the test server,
+// so RunTask starts real containers instead of leaving tasks at PROVISIONING.
+// Off by default for the same reason Lambda's is: most ECS tests are about the
+// API surface and would pay a daemon round-trip for nothing.
+//
+// The network is named per test run because the containers are: two packages
+// running in parallel must not share, or race to remove, one another's.
+func WithECSDocker() Option {
+	return func(so *serverOptions) {
+		so.cfg.ECSDockerSocket = "/var/run/docker.sock"
+		so.cfg.ECSNetwork = fmt.Sprintf("overcast_ecs_test_%d", time.Now().UnixNano())
 	}
 }
 

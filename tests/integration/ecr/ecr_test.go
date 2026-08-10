@@ -22,7 +22,6 @@ import (
 
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/tests/helpers"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // ecrCall performs an ECR JSON 1.1 dispatch request.
@@ -903,38 +902,36 @@ func TestGetAuthorizationToken_withDocker_tokenAuthenticatesRegistry(t *testing.
 		t.Fatalf("expected token username AWS, got %q", user)
 	}
 
-	registry := waitForManagedRegistry(t, dc)
+	waitForManagedRegistry(t, dc)
 
-	var htpasswdPath string
-	for _, bind := range registry.HostConfig.Binds {
-		parts := strings.Split(bind, ":")
-		if len(parts) < 2 {
-			continue
-		}
-		if parts[1] == "/auth/htpasswd" {
-			htpasswdPath = parts[0]
-			break
-		}
+	// The registry itself is the judge: it holds the credentials, and how they
+	// were installed is its business. Asking it directly also catches the
+	// failure a file check cannot see — an htpasswd that never arrived, which
+	// is what a bind mount produced whenever Overcast's own filesystem was not
+	// the daemon's (i.e. every dockerized Overcast).
+	if code := registryPing(t, proxy, user, pass); code != http.StatusOK {
+		t.Fatalf("registry rejected the authorization token: GET /v2/ = %d", code)
 	}
-	if htpasswdPath == "" {
-		t.Fatalf("expected /auth/htpasswd bind mount on managed registry")
+	if code := registryPing(t, proxy, user, pass+"-wrong"); code != http.StatusUnauthorized {
+		t.Fatalf("registry accepted a wrong password: GET /v2/ = %d, want 401", code)
 	}
+}
 
-	raw, err := os.ReadFile(htpasswdPath)
+// registryPing performs the registry API's own credential check — GET /v2/ —
+// against the endpoint ECR advertised, and returns its status.
+func registryPing(t *testing.T, proxy, user, password string) int {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, strings.TrimSuffix(proxy, "/")+"/v2/", nil)
 	if err != nil {
-		t.Fatalf("read htpasswd file: %v", err)
+		t.Fatalf("build registry request: %v", err)
 	}
-	entryLine := strings.TrimSpace(string(raw))
-	entryParts := strings.SplitN(entryLine, ":", 2)
-	if len(entryParts) != 2 {
-		t.Fatalf("unexpected htpasswd entry format: %q", entryLine)
+	req.SetBasicAuth(user, password)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("call registry %s: %v", proxy, err)
 	}
-	if entryParts[0] != "AWS" {
-		t.Fatalf("expected htpasswd username AWS, got %q", entryParts[0])
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(entryParts[1]), []byte(pass)); err != nil {
-		t.Fatalf("token password does not match registry htpasswd entry: %v", err)
-	}
+	defer resp.Body.Close()
+	return resp.StatusCode
 }
 
 func TestECR_withDocker_pushListGetAndPullRoundTrip(t *testing.T) {

@@ -13,6 +13,8 @@
 package ecr
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -22,8 +24,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,6 +52,13 @@ const (
 	ecrRegistryContainerName = "overcast-ecr-registry"
 	ecrRegistryImage         = "registry:2"
 	ecrRegistryPortKey       = "5000/tcp"
+	// ecrRegistryHTPasswdPath is where the registry container reads its
+	// credentials from; the file is copied in at create time.
+	ecrRegistryHTPasswdPath = "/auth/htpasswd"
+	// registryCreateAttempts bounds how long createRegistryContainer waits for
+	// a predecessor's name to be released — 5s at the retry interval below.
+	registryCreateAttempts = 20
+	registryCreateBackoff  = 250 * time.Millisecond
 )
 
 // ─── Store namespaces ─────────────────────────────────────────────────────────
@@ -1393,12 +1400,13 @@ func (s *Service) initRegistryDocker() {
 
 	info, err := s.docker.GetContainerByName(context.Background(), ecrRegistryContainerName)
 	if err != nil {
+		s.log.Warn("failed to inspect ECR registry container", zap.Error(err))
 		return
 	}
 
-	registryDir := filepath.Join(s.cfg.DataDir, "ecr-registry")
-	htpasswdPath := filepath.Join(registryDir, "htpasswd")
-	if err := writeHTPasswdFile(htpasswdPath, password); err != nil {
+	htpasswd, err := htpasswdArchive(password)
+	if err != nil {
+		s.log.Warn("failed to build ECR registry credentials", zap.Error(err))
 		return
 	}
 
@@ -1428,20 +1436,20 @@ func (s *Service) initRegistryDocker() {
 			Env: []string{
 				"REGISTRY_AUTH=htpasswd",
 				"REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm",
-				"REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd",
+				"REGISTRY_AUTH_HTPASSWD_PATH=" + ecrRegistryHTPasswdPath,
 			},
 			Labels: docker.ManagedLabels(serviceName, "registry"),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
-			Binds: []string{htpasswdPath + ":/auth/htpasswd:ro"},
 			PortBindings: map[string][]docker.PortBinding{
 				ecrRegistryPortKey: {{HostIP: "0.0.0.0"}},
 			},
 		},
 	}
 
-	containerID, err = s.docker.CreateContainer(context.Background(), ecrRegistryContainerName, req)
+	containerID, err = s.createRegistryContainer(context.Background(), req)
 	if err != nil {
+		s.log.Warn("failed to create ECR registry container", zap.Error(err))
 		return
 	}
 
@@ -1454,20 +1462,37 @@ func (s *Service) initRegistryDocker() {
 	}
 	s.registryMu.Unlock()
 
+	// The credentials are copied in rather than bind-mounted. A bind source is
+	// resolved by the daemon, not by us, so a dockerized Overcast would name a
+	// path inside its own filesystem that the host does not have — Docker then
+	// creates an empty directory there and the registry starts with no usable
+	// htpasswd file. Same reason function code and the CA bundle travel this way.
+	if err := s.docker.CopyToContainer(context.Background(), containerID, "/", bytes.NewReader(htpasswd)); err != nil {
+		s.log.Warn("failed to install ECR registry credentials", zap.Error(err))
+		_ = s.docker.RemoveContainerForce(containerID)
+		return
+	}
+
 	if err := s.docker.StartContainer(context.Background(), containerID); err != nil {
+		s.log.Warn("failed to start ECR registry container", zap.Error(err))
+		_ = s.docker.RemoveContainerForce(containerID)
 		return
 	}
 	inspect, err := s.docker.InspectContainer(context.Background(), containerID)
 	if err != nil {
+		s.log.Warn("failed to inspect started ECR registry container", zap.Error(err))
 		return
 	}
 
 	bindings := inspect.NetworkSettings.Ports[ecrRegistryPortKey]
 	if len(bindings) == 0 || bindings[0].HostPort == "" {
+		s.log.Warn("ECR registry container published no host port")
 		return
 	}
 	hostPort, err := strconv.Atoi(bindings[0].HostPort)
 	if err != nil {
+		s.log.Warn("ECR registry published an unreadable host port",
+			zap.String("port", bindings[0].HostPort), zap.Error(err))
 		return
 	}
 
@@ -1483,6 +1508,40 @@ func (s *Service) initRegistryDocker() {
 	s.registryMu.Unlock()
 }
 
+// createRegistryContainer creates the shared registry container, waiting out a
+// name still held by a predecessor.
+//
+// Docker keeps a container's name reserved until removal completes, and
+// removal is asynchronous — the container disappears from inspect before the
+// name is free. A previous process's registry being reaped therefore answers
+// the create with 409 Conflict for a moment. Failing on that left the registry
+// down for the lifetime of the process, which means every `docker push` to the
+// emulated ECR refused and every task launched from an image in it failed.
+func (s *Service) createRegistryContainer(ctx context.Context, req *docker.CreateContainerRequest) (string, error) {
+	// Real elapsed time, not the injected clock: this waits on the Docker
+	// daemon, which a test's mock clock does not move.
+	for attempt := 0; ; attempt++ {
+		id, err := s.docker.CreateContainer(ctx, ecrRegistryContainerName, req)
+		if err == nil || !docker.IsConflict(err) || attempt >= registryCreateAttempts {
+			return id, err
+		}
+		// A conflicting container that is still around is one we are entitled
+		// to replace; one already on its way out just needs a moment.
+		if info, inspectErr := s.docker.GetContainerByName(ctx, ecrRegistryContainerName); inspectErr == nil && info != nil {
+			if !info.HasOvercastLabels(serviceName, "registry") {
+				return "", err
+			}
+			_ = s.docker.StopContainer(ctx, info.ID, 3)
+			_ = s.docker.RemoveContainerForce(info.ID)
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(registryCreateBackoff):
+		}
+	}
+}
+
 func generateRegistryPassword() (string, error) {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
@@ -1491,19 +1550,33 @@ func generateRegistryPassword() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func writeHTPasswdFile(path, password string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir ecr auth dir: %w", err)
-	}
+// htpasswdArchive builds the tar carrying the registry's credentials file, for
+// CopyToContainer with destination "/". bcrypt is what registry:2 expects in an
+// htpasswd entry, and the username matches the one every ECR authorization
+// token carries.
+func htpasswdArchive(password string) ([]byte, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return fmt.Errorf("hash ecr registry password: %w", err)
+		return nil, fmt.Errorf("hash ecr registry password: %w", err)
 	}
-	line := "AWS:" + string(hash) + "\n"
-	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
-		return fmt.Errorf("write ecr htpasswd: %w", err)
+	line := []byte(ecrRegistryUser + ":" + string(hash) + "\n")
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name: strings.TrimPrefix(ecrRegistryHTPasswdPath, "/"),
+		Mode: 0o444, // world-readable: the registry image drops to its own user
+		Size: int64(len(line)),
+	}); err != nil {
+		return nil, fmt.Errorf("write ecr htpasswd header: %w", err)
 	}
-	return nil
+	if _, err := tw.Write(line); err != nil {
+		return nil, fmt.Errorf("write ecr htpasswd entry: %w", err)
+	}
+	if err := tw.Close(); err != nil {
+		return nil, fmt.Errorf("close ecr htpasswd archive: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // Stop tears down the shared registry container on server shutdown.
