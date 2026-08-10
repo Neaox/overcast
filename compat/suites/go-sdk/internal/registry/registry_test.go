@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -316,5 +317,169 @@ func TestAmbiguousTestNamesMatchesOwners(t *testing.T) {
 	owners := TestNameOwners(reg)
 	if got := strings.Join(owners["ListUsers"], ","); got != "cognito-userpools,iam-users" {
 		t.Errorf("owners[ListUsers] = %q, want sorted cognito-userpools,iam-users", got)
+	}
+}
+
+// builtOrder returns the names of a built group's tests, in run order.
+func builtOrder(t *testing.T, groups []harness.TestGroup, group string) []string {
+	t.Helper()
+	for _, g := range groups {
+		if g.Name != group {
+			continue
+		}
+		names := make([]string, 0, len(g.Tests))
+		for _, tc := range g.Tests {
+			names = append(names, tc.Name)
+		}
+		return names
+	}
+	t.Fatalf("group %q not built", group)
+	return nil
+}
+
+// allImpls registers a passing implementation for every test in the registry so
+// ordering is observed on real test cases rather than auto-skips.
+func allImpls(reg *Registry) ImplMap {
+	impls := make(ImplMap)
+	for _, rg := range reg.Groups {
+		for _, rt := range rg.Tests {
+			impls[rg.Name+":"+rt.Name] = marker(rt.Name)
+		}
+	}
+	return impls
+}
+
+// A group whose declaration order contradicts its own `depends` must run in
+// dependency order, not file order. `cloudformation-stacks` listed DeleteStack
+// before the UpdateStack it depends on, so this suite deleted the shared stack
+// and then updated it while the cli and node-js suites — which already sort —
+// did not. Ordering that differs by suite makes a group's outcome depend on
+// which language ran it.
+func TestBuildGroupsRunsDependenciesFirst(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "cloudformation", Name: "stacks", Tests: []RegistryTest{
+			{Name: "CreateStack"},
+			{Name: "DeleteStack", Depends: []string{"UpdateStack"}},
+			{Name: "ValidateTemplate"},
+			{Name: "UpdateStack", Depends: []string{"CreateStack"}},
+		}},
+	}}
+
+	groups := BuildGroups(reg, allImpls(reg), BuildGroupsOptions{Suite: "go-sdk"})
+	got := builtOrder(t, groups, "stacks")
+
+	pos := map[string]int{}
+	for i, name := range got {
+		pos[name] = i
+	}
+	if pos["UpdateStack"] > pos["DeleteStack"] {
+		t.Errorf("UpdateStack runs after the DeleteStack that depends on it: %v", got)
+	}
+	if pos["CreateStack"] > pos["UpdateStack"] {
+		t.Errorf("CreateStack runs after UpdateStack: %v", got)
+	}
+}
+
+// Tests at the same dependency depth keep their declaration order, so sorting
+// reorders only what the edges require. A group is otherwise free to be
+// rearranged run to run, which would make failures hard to reproduce.
+func TestBuildGroupsKeepsDeclarationOrderWithinDepth(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "s3", Name: "s3-crud", Tests: []RegistryTest{
+			{Name: "CreateBucket"},
+			{Name: "PutObject", Depends: []string{"CreateBucket"}},
+			{Name: "GetObject", Depends: []string{"PutObject"}},
+			{Name: "ListObjects", Depends: []string{"PutObject"}},
+		}},
+	}}
+
+	groups := BuildGroups(reg, allImpls(reg), BuildGroupsOptions{Suite: "go-sdk"})
+	got := builtOrder(t, groups, "s3-crud")
+	want := []string{"CreateBucket", "PutObject", "GetObject", "ListObjects"}
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("order = %v, want %v (already in dependency order — nothing to reorder)", got, want)
+	}
+}
+
+// A `depends` cycle is a registry bug, but it must not hang or drop tests: the
+// sort breaks the cycle and still emits every test exactly once.
+func TestBuildGroupsSurvivesDependencyCycle(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "cyclic", Tests: []RegistryTest{
+			{Name: "A", Depends: []string{"B"}},
+			{Name: "B", Depends: []string{"A"}},
+			{Name: "C"},
+		}},
+	}}
+
+	groups := BuildGroups(reg, allImpls(reg), BuildGroupsOptions{Suite: "go-sdk"})
+	got := builtOrder(t, groups, "cyclic")
+
+	if len(got) != 3 {
+		t.Fatalf("built %d tests from a 3-test group: %v", len(got), got)
+	}
+	seen := map[string]int{}
+	for _, name := range got {
+		seen[name]++
+	}
+	for _, name := range []string{"A", "B", "C"} {
+		if seen[name] != 1 {
+			t.Errorf("test %q emitted %d times, want exactly 1: %v", name, seen[name], got)
+		}
+	}
+}
+
+// A dependency naming a test the group does not declare must not drop it or the
+// dependent. Only same-group edges order a run; the registry schema says as
+// much, and a stale name is otherwise silently load-bearing.
+func TestBuildGroupsIgnoresUnknownDependency(t *testing.T) {
+	reg := &Registry{Groups: []RegistryGroup{
+		{Service: "sqs", Name: "queues", Tests: []RegistryTest{
+			{Name: "CreateQueue"},
+			{Name: "SendMessage", Depends: []string{"CreateQueue", "NotInThisGroup"}},
+		}},
+	}}
+
+	groups := BuildGroups(reg, allImpls(reg), BuildGroupsOptions{Suite: "go-sdk"})
+	got := builtOrder(t, groups, "queues")
+
+	if strings.Join(got, ",") != "CreateQueue,SendMessage" {
+		t.Errorf("order = %v, want [CreateQueue SendMessage]", got)
+	}
+}
+
+// The registry the suites actually run must sort the same way here as it does
+// in the cli and node-js suites: every `depends` edge satisfied before the test
+// that declares it.
+func TestRealRegistryBuildsInDependencyOrder(t *testing.T) {
+	// `go test` runs with the package directory as CWD, so the loader's default
+	// "../registry.json" resolves inside internal/. Point it at the real file.
+	t.Setenv("OVERCAST_REGISTRY_PATH", filepath.Join("..", "..", "..", "registry.json"))
+	reg, err := Load()
+	if err != nil {
+		t.Fatalf("load registry.json: %v", err)
+	}
+
+	groups := BuildGroups(reg, allImpls(reg), BuildGroupsOptions{Suite: "go-sdk"})
+	declared := map[string]map[string][]string{}
+	for _, rg := range reg.Groups {
+		deps := map[string][]string{}
+		for _, rt := range rg.Tests {
+			deps[rt.Name] = rt.Depends
+		}
+		declared[rg.Name] = deps
+	}
+
+	for _, g := range groups {
+		ran := map[string]bool{}
+		for _, tc := range g.Tests {
+			for _, dep := range declared[g.Name][tc.Name] {
+				if _, sameGroup := declared[g.Name][dep]; sameGroup && !ran[dep] {
+					t.Errorf("%s: %s runs before its dependency %s", g.Name, tc.Name, dep)
+				}
+			}
+			ran[tc.Name] = true
+		}
 	}
 }

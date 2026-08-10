@@ -26,6 +26,9 @@ type RegistryTest struct {
 	Op       *string  `json:"op"` // nil = absent, "" = null
 	Skip     string   `json:"skip"`
 	Requires []string `json:"requires"`
+	// Depends lists tests in the SAME group that must run before this one.
+	// BuildGroups sorts by these edges; they are not a cross-group reference.
+	Depends []string `json:"depends"`
 }
 
 // Registry is the root of registry.json.
@@ -74,6 +77,48 @@ type BuildGroupsOptions struct {
 	Teardown     map[string]func(context.Context, *harness.TestContext) error
 }
 
+// topoSort topologically sorts tests within a group using their declared
+// dependencies.  Tests with no dependencies come first; tests whose deps are all
+// resolved come next.  Falls back to declaration order for tests at the same
+// dependency depth, so the sort reorders only what the edges require.
+//
+// Registry file order is not authoritative on its own: `cloudformation-stacks`
+// listed DeleteStack before the UpdateStack it depends on, and this suite ran it
+// that way — deleting the shared stack and then updating it — while the cli and
+// node-js suites, which already sorted, did not. Same registry, different order
+// per language. Kept identical to the cli, node-js, Java, .NET and Rust sorts.
+func topoSort(tests []RegistryTest) []RegistryTest {
+	byName := make(map[string]*RegistryTest, len(tests))
+	for i := range tests {
+		byName[tests[i].Name] = &tests[i]
+	}
+
+	sorted := make([]RegistryTest, 0, len(tests))
+	visited := make(map[string]bool)
+	visiting := make(map[string]bool) // cycle detection
+
+	var visit func(t *RegistryTest)
+	visit = func(t *RegistryTest) {
+		if visited[t.Name] || visiting[t.Name] {
+			return
+		}
+		visiting[t.Name] = true
+		for _, dep := range t.Depends {
+			if dt, ok := byName[dep]; ok {
+				visit(dt)
+			}
+		}
+		delete(visiting, t.Name)
+		visited[t.Name] = true
+		sorted = append(sorted, *t)
+	}
+
+	for i := range tests {
+		visit(&tests[i])
+	}
+	return sorted
+}
+
 // BuildGroups creates a []harness.TestGroup from the registry, auto-skipping
 // tests whose impls are absent or whose requirements are unmet.
 func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harness.TestGroup {
@@ -91,7 +136,9 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 		}
 		var tests []harness.TestCase
 
-		for _, rt := range rg.Tests {
+		// Topologically sort tests by their declared dependencies so that
+		// prerequisites always execute before the tests that need them.
+		for _, rt := range topoSort(rg.Tests) {
 			op := ""
 			if rt.Op != nil {
 				op = *rt.Op
