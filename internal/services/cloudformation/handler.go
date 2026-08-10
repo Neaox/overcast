@@ -221,7 +221,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	stack, aerr := h.store.getStack(ctx, stackName)
+	stack, aerr := h.store.getLiveStackByNameOrARN(ctx, stackName)
 	if aerr != nil || stack == nil {
 		writeCFNError(w, r, "ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
@@ -359,9 +359,11 @@ func (h *Handler) DeleteStack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	stack, aerr := h.store.getStack(ctx, stackName)
+	// AWS returns success for non-existent stacks, and a stack already in
+	// DELETE_COMPLETE counts as one — repeating the delete must not run the
+	// provisioner again and append a second wave of delete events.
+	stack, aerr := h.store.getLiveStackByNameOrARN(ctx, stackName)
 	if aerr != nil || stack == nil {
-		// AWS returns success for non-existent stacks.
 		writeCFNResponse(w, r, "DeleteStackResponse", "DeleteStackResult", nil)
 		return
 	}
@@ -385,7 +387,7 @@ func (h *Handler) DescribeStacks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	if stackName != "" {
-		stack, aerr := h.store.getStack(ctx, stackName)
+		stack, aerr := h.store.getStackByNameOrARN(ctx, stackName)
 		if aerr != nil {
 			writeCFNError(w, r, "InternalFailure", "failed to read stack", http.StatusInternalServerError)
 			return
@@ -444,7 +446,7 @@ func (h *Handler) GetTemplate(w http.ResponseWriter, r *http.Request) {
 		writeCFNError(w, r, "ValidationError", "StackName is required", http.StatusBadRequest)
 		return
 	}
-	stack, aerr := h.store.getStack(r.Context(), stackName)
+	stack, aerr := h.store.getStackByNameOrARN(r.Context(), stackName)
 	if aerr != nil || stack == nil {
 		writeCFNError(w, r, "ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
@@ -484,10 +486,12 @@ func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
 	chsRegion := middleware.RegionFromContext(r.Context(), h.cfg.Region)
 
 	// For CREATE type, the stack may not exist yet — create a placeholder.
-	stack, _ := h.store.getStack(ctx, stackName)
+	// An ARN can never name a new stack, though: it is a handle to an
+	// existing one, so an unresolved ARN is "does not exist" even for CREATE.
+	stack, _ := h.store.getLiveStackByNameOrARN(ctx, stackName)
 	var stackID string
 	if stack == nil {
-		if changeSetType != "CREATE" {
+		if changeSetType != "CREATE" || isARN(stackName) {
 			writeCFNError(w, r, "ValidationError",
 				fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
 			return
@@ -516,10 +520,12 @@ func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
 	changes := computeChanges(tmpl, stack, changeSetType)
 
 	cs := &ChangeSet{
-		ChangeSetName:   csName,
-		ChangeSetID:     csID,
-		StackID:         stackID,
-		StackName:       stackName,
+		ChangeSetName: csName,
+		ChangeSetID:   csID,
+		StackID:       stackID,
+		// The resolved name, not the caller's reference — change sets are
+		// keyed by stack name, and the reference may have been the ARN.
+		StackName:       stack.StackName,
 		TemplateBody:    templateBody,
 		Parameters:      collectParameters(r),
 		Tags:            collectTags(r),
@@ -662,12 +668,17 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteChangeSet(w http.ResponseWriter, r *http.Request) {
 	stackName := r.FormValue("StackName")
 	csName := r.FormValue("ChangeSetName")
-	if csName == "" || stackName == "" {
+	if csName == "" || (stackName == "" && !isARN(csName)) {
 		writeCFNError(w, r, "ValidationError", "StackName and ChangeSetName are required", http.StatusBadRequest)
 		return
 	}
 
-	_ = h.store.deleteChangeSet(r.Context(), stackName, csName)
+	// Resolve first: change sets are keyed by stack name + change set name,
+	// and either field may be an ARN. Deleting a change set that does not
+	// exist stays a success, as on AWS.
+	if cs, aerr := h.store.getChangeSet(r.Context(), stackName, csName); aerr == nil && cs != nil {
+		_ = h.store.deleteChangeSet(r.Context(), cs.StackName, cs.ChangeSetName)
+	}
 	writeCFNResponse(w, r, "DeleteChangeSetResponse", "DeleteChangeSetResult", nil)
 }
 
@@ -712,7 +723,7 @@ func (h *Handler) DescribeStackResources(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	stack, aerr := h.store.getStack(r.Context(), stackName)
+	stack, aerr := h.store.getStackByNameOrARN(r.Context(), stackName)
 	if aerr != nil || stack == nil {
 		writeCFNError(w, r, "ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
@@ -744,7 +755,7 @@ func (h *Handler) ListStackResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stack, aerr := h.store.getStack(r.Context(), stackName)
+	stack, aerr := h.store.getStackByNameOrARN(r.Context(), stackName)
 	if aerr != nil || stack == nil {
 		writeCFNError(w, r, "ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
@@ -781,7 +792,7 @@ func (h *Handler) DescribeStackEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stack, aerr := h.store.getStack(r.Context(), stackName)
+	stack, aerr := h.store.getStackByNameOrARN(r.Context(), stackName)
 	if aerr != nil || stack == nil {
 		writeCFNError(w, r, "ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
@@ -789,8 +800,10 @@ func (h *Handler) DescribeStackEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Events are stored separately from the stack metadata so that stack
-	// reads stay cheap as the event history grows unboundedly.
-	allEvents, err := h.store.getStackEvents(r.Context(), stackName)
+	// reads stay cheap as the event history grows unboundedly. They are
+	// keyed by stack name, so look up under the resolved name — the caller's
+	// reference may have been the ARN.
+	allEvents, err := h.store.getStackEvents(r.Context(), stack.StackName)
 	if err != nil {
 		writeCFNError(w, r, "InternalError", "failed to load stack events", http.StatusInternalServerError)
 		return
@@ -857,7 +870,7 @@ func (h *Handler) GetTemplateSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if templateBody == "" && stackName != "" {
-		stack, aerr := h.store.getStack(r.Context(), stackName)
+		stack, aerr := h.store.getStackByNameOrARN(r.Context(), stackName)
 		if aerr != nil || stack == nil {
 			writeCFNError(w, r, "ValidationError",
 				fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)

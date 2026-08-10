@@ -302,7 +302,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("ValidationError", "StackName is required", http.StatusBadRequest)
 	}
 
-	stack, aerr := h.store.getStack(ctx, req.StackName)
+	stack, aerr := h.store.getLiveStackByNameOrARN(ctx, req.StackName)
 	if aerr != nil || stack == nil {
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
@@ -364,7 +364,10 @@ func (h *Handler) deleteStackTyped(ctx context.Context, req *deleteStackReq) (*s
 		return nil, cfnerr("ValidationError", "StackName is required", http.StatusBadRequest)
 	}
 
-	stack, aerr := h.store.getStack(ctx, req.StackName)
+	// AWS returns success for non-existent stacks, and a stack already in
+	// DELETE_COMPLETE counts as one — repeating the delete must not run the
+	// provisioner again and append a second wave of delete events.
+	stack, aerr := h.store.getLiveStackByNameOrARN(ctx, req.StackName)
 	if aerr != nil || stack == nil {
 		return &struct{}{}, nil
 	}
@@ -382,7 +385,7 @@ func (h *Handler) deleteStackTyped(ctx context.Context, req *deleteStackReq) (*s
 
 func (h *Handler) describeStacksTyped(ctx context.Context, req *describeStacksReq) (*describeStacksResp, *protocol.AWSError) {
 	if req.StackName != "" {
-		stack, aerr := h.store.getStack(ctx, req.StackName)
+		stack, aerr := h.store.getStackByNameOrARN(ctx, req.StackName)
 		if aerr != nil {
 			return nil, cfnerr("InternalFailure", "failed to read stack", http.StatusInternalServerError)
 		}
@@ -434,7 +437,7 @@ func (h *Handler) getTemplateTyped(ctx context.Context, req *getTemplateReq) (*g
 	if req.StackName == "" {
 		return nil, cfnerr("ValidationError", "StackName is required", http.StatusBadRequest)
 	}
-	stack, aerr := h.store.getStack(ctx, req.StackName)
+	stack, aerr := h.store.getStackByNameOrARN(ctx, req.StackName)
 	if aerr != nil || stack == nil {
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
@@ -468,10 +471,13 @@ func (h *Handler) createChangeSetTyped(ctx context.Context, req *createChangeSet
 
 	chsRegion := middleware.RegionFromContext(ctx, h.cfg.Region)
 
-	stack, _ := h.store.getStack(ctx, req.StackName)
+	// For CREATE type, the stack may not exist yet — create a placeholder.
+	// An ARN can never name a new stack, though: it is a handle to an
+	// existing one, so an unresolved ARN is "does not exist" even for CREATE.
+	stack, _ := h.store.getLiveStackByNameOrARN(ctx, req.StackName)
 	var stackID string
 	if stack == nil {
-		if changeSetType != "CREATE" {
+		if changeSetType != "CREATE" || isARN(req.StackName) {
 			return nil, cfnerr("ValidationError",
 				fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
 		}
@@ -497,10 +503,12 @@ func (h *Handler) createChangeSetTyped(ctx context.Context, req *createChangeSet
 	changes := computeChanges(tmpl, stack, changeSetType)
 
 	cs := &ChangeSet{
-		ChangeSetName:   req.ChangeSetName,
-		ChangeSetID:     csID,
-		StackID:         stackID,
-		StackName:       req.StackName,
+		ChangeSetName: req.ChangeSetName,
+		ChangeSetID:   csID,
+		StackID:       stackID,
+		// The resolved name, not the caller's reference — change sets are
+		// keyed by stack name, and the reference may have been the ARN.
+		StackName:       stack.StackName,
 		TemplateBody:    templateBody,
 		Parameters:      typedCollectParams(req.Parameters),
 		Tags:            typedCollectOptionalTags(req.Tags),
@@ -626,11 +634,16 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 }
 
 func (h *Handler) deleteChangeSetTyped(ctx context.Context, req *deleteChangeSetReq) (*struct{}, *protocol.AWSError) {
-	if req.ChangeSetName == "" || req.StackName == "" {
+	if req.ChangeSetName == "" || (req.StackName == "" && !isARN(req.ChangeSetName)) {
 		return nil, cfnerr("ValidationError", "StackName and ChangeSetName are required", http.StatusBadRequest)
 	}
 
-	_ = h.store.deleteChangeSet(ctx, req.StackName, req.ChangeSetName)
+	// Resolve first: change sets are keyed by stack name + change set name,
+	// and either field may be an ARN. Deleting a change set that does not
+	// exist stays a success, as on AWS.
+	if cs, aerr := h.store.getChangeSet(ctx, req.StackName, req.ChangeSetName); aerr == nil && cs != nil {
+		_ = h.store.deleteChangeSet(ctx, cs.StackName, cs.ChangeSetName)
+	}
 	return &struct{}{}, nil
 }
 
@@ -669,7 +682,7 @@ func (h *Handler) describeStackResourcesTyped(ctx context.Context, req *describe
 		return nil, cfnerr("ValidationError", "StackName is required", http.StatusBadRequest)
 	}
 
-	stack, aerr := h.store.getStack(ctx, req.StackName)
+	stack, aerr := h.store.getStackByNameOrARN(ctx, req.StackName)
 	if aerr != nil || stack == nil {
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
@@ -699,7 +712,7 @@ func (h *Handler) listStackResourcesTyped(ctx context.Context, req *listStackRes
 		return nil, cfnerr("ValidationError", "StackName is required", http.StatusBadRequest)
 	}
 
-	stack, aerr := h.store.getStack(ctx, req.StackName)
+	stack, aerr := h.store.getStackByNameOrARN(ctx, req.StackName)
 	if aerr != nil || stack == nil {
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
@@ -729,13 +742,15 @@ func (h *Handler) describeStackEventsTyped(ctx context.Context, req *describeSta
 		return nil, cfnerr("ValidationError", "StackName is required", http.StatusBadRequest)
 	}
 
-	stack, aerr := h.store.getStack(ctx, req.StackName)
+	stack, aerr := h.store.getStackByNameOrARN(ctx, req.StackName)
 	if aerr != nil || stack == nil {
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
 	}
 
-	allEvents, err := h.store.getStackEvents(ctx, req.StackName)
+	// Events are keyed by stack name — look up under the resolved name, the
+	// caller's reference may have been the ARN.
+	allEvents, err := h.store.getStackEvents(ctx, stack.StackName)
 	if err != nil {
 		return nil, cfnerr("InternalError", "failed to load stack events", http.StatusInternalServerError)
 	}
@@ -790,7 +805,7 @@ func (h *Handler) getTemplateSummaryTyped(ctx context.Context, req *getTemplateS
 	}
 
 	if templateBody == "" && req.StackName != "" {
-		stack, aerr := h.store.getStack(ctx, req.StackName)
+		stack, aerr := h.store.getStackByNameOrARN(ctx, req.StackName)
 		if aerr != nil || stack == nil {
 			return nil, cfnerr("ValidationError",
 				fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)

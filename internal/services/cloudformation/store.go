@@ -80,32 +80,46 @@ func (st *cfnStore) getStack(ctx context.Context, name string) (*Stack, *protoco
 	return &stack, nil
 }
 
-// getStackByNameOrARN resolves a stack by name, falling back to a scan for a
-// matching StackId when the caller passed an ARN.
+// getStackByNameOrARN resolves a stack reference the way AWS accepts them:
+// either the stack name or the unique stack ID (the ARN,
+// arn:aws:cloudformation:<region>:<account>:stack/<name>/<uuid>). Every
+// stack-scoped operation's StackName member takes both forms.
 //
-// Stacks are keyed by name, so the ARN path costs a scan — it is only taken
-// when the direct lookup misses and the input actually looks like an ARN, so
-// the common name path is unaffected. Only RollbackStack uses this today; the
-// other CloudFormation actions resolve by name only. Unifying them is a
-// separate change with its own compatibility surface.
+// Stacks are keyed by name and every StackID embeds the name it was minted
+// under, so an ARN resolves by extracting its name segment and verifying the
+// stored record's StackID matches the full ARN. The verification is what
+// keeps stale handles honest: recreating a name mints a fresh uuid, so an ARN
+// from the previous incarnation resolves to nothing rather than to the new
+// stack.
+//
+// DELETE_COMPLETE records are returned — read operations report a deleted
+// stack's final state. Callers that mutate must use getLiveStackByNameOrARN.
 func (st *cfnStore) getStackByNameOrARN(ctx context.Context, nameOrARN string) (*Stack, *protocol.AWSError) {
-	stack, aerr := st.getStack(ctx, nameOrARN)
-	if aerr != nil || stack != nil {
-		return stack, aerr
-	}
 	if !isARN(nameOrARN) {
+		return st.getStack(ctx, nameOrARN)
+	}
+	name := stackNameFromARN(nameOrARN)
+	if name == "" {
 		return nil, nil
 	}
-	stacks, aerr := st.listStacks(ctx)
-	if aerr != nil {
+	stack, aerr := st.getStack(ctx, name)
+	if aerr != nil || stack == nil || stack.StackID != nameOrARN {
 		return nil, aerr
 	}
-	for _, s := range stacks {
-		if s.StackID == nameOrARN {
-			return s, nil
-		}
+	return stack, nil
+}
+
+// getLiveStackByNameOrARN is getStackByNameOrARN for operations that act on
+// the stack rather than read it. A retained DELETE_COMPLETE record is not a
+// live stack: AWS reports "does not exist" when an update or change set
+// targets one, and a repeat DeleteStack must be a no-op instead of a second
+// provisioner run.
+func (st *cfnStore) getLiveStackByNameOrARN(ctx context.Context, nameOrARN string) (*Stack, *protocol.AWSError) {
+	stack, aerr := st.getStackByNameOrARN(ctx, nameOrARN)
+	if aerr != nil || stack == nil || stack.Status == StatusDeleteComplete {
+		return nil, aerr
 	}
-	return nil, nil
+	return stack, nil
 }
 
 func (st *cfnStore) listStacks(ctx context.Context) ([]*Stack, *protocol.AWSError) {
