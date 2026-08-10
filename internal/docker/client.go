@@ -286,6 +286,9 @@ type ContainerInspect struct {
 type ContainerNetwork struct {
 	NetworkID string `json:"NetworkID"`
 	IPAddress string `json:"IPAddress"`
+	// Gateway is the network's gateway address — on a bridge network, the
+	// address at which a container reaches services bound on the daemon host.
+	Gateway string `json:"Gateway"`
 }
 
 // HasOvercastLabels reports whether the container was created by Overcast with
@@ -496,9 +499,13 @@ func (d *Client) StartContainer(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("start container %s: %w", id, err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified {
-		return fmt.Errorf("start container %s: status %d", id, resp.StatusCode)
+		// The body names the actual failure — a port already allocated, an OCI
+		// runtime error — and callers branch on it (see IsPortUnavailable), so
+		// a bare status code is not enough.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("start container %s: status %d: %s", id, resp.StatusCode, string(body))
 	}
 	return nil
 }
@@ -735,6 +742,19 @@ func (d *Client) GetContainerByName(ctx context.Context, name string) (*Containe
 // (e.g. container name already in use).
 func IsConflict(err error) bool {
 	return err != nil && strings.Contains(err.Error(), ": 409:")
+}
+
+// IsPortUnavailable reports whether a container create/start failure means the
+// requested host port could not be bound — someone else holds it. The two
+// phrasings are the daemon's own: "port is already allocated" when another
+// container holds it, "address already in use" when a host process does.
+func IsPortUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "port is already allocated") ||
+		strings.Contains(msg, "address already in use")
 }
 
 // IsNotFound reports whether an error is a Docker 404 Not Found response.

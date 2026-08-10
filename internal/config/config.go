@@ -454,6 +454,16 @@ type Config struct {
 	// Corresponds to env var ECS_KEEP_CONTAINERS. Default false.
 	ECSKeepContainers bool
 
+	// ECRRegistryPort is the host port the shared ECR registry container asks
+	// for. A fixed, well-known port keeps repositoryUri stable across restarts
+	// (repositories are persisted with it), gives daemon configuration such as
+	// insecure-registries something nameable, and matches the port LocalStack
+	// serves its registry on — worth real money for drop-in migration. When
+	// the port is taken the registry falls back to an ephemeral one rather
+	// than staying down. 0 skips straight to ephemeral.
+	// Corresponds to env var OVERCAST_ECR_REGISTRY_PORT. Default 4510.
+	ECRRegistryPort int
+
 	// RDSDockerSocket is the path to the Docker daemon socket used to manage
 	// RDS database containers. Defaults to the same value as LambdaDockerSocket.
 	RDSDockerSocket string
@@ -1334,6 +1344,9 @@ func Load() (*Config, error) {
 	cfg.ECSDockerSocket = envOr("ECS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
 	cfg.ECSNetwork = envOr("ECS_NETWORK", "overcast_ecs")
 	cfg.ECSKeepContainers = envBool("ECS_KEEP_CONTAINERS", false)
+
+	// ECR registry — see the field's comment for why the default is pinned.
+	cfg.ECRRegistryPort = envInt("OVERCAST_ECR_REGISTRY_PORT", 4510)
 
 	// RDS container runtime — defaults fall back to Lambda socket
 	cfg.RDSDockerSocket = envOr("RDS_DOCKER_SOCKET", cfg.LambdaDockerSocket)

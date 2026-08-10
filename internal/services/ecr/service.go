@@ -125,6 +125,12 @@ type Service struct {
 	registryInitOnce  sync.Once
 	registryReady     chan struct{}
 	registryStopping  bool
+	// registryClientBases are candidate base URLs at which this process might
+	// reach the registry over HTTP; registryClientBase is the probed winner.
+	// Distinct from the daemon-facing address in repositoryUri: which of them
+	// answers depends on where Overcast itself runs. See registryBaseURL.
+	registryClientBases []string
+	registryClientBase  string
 }
 
 // InitBus wires the event bus for ECR lifecycle events.
@@ -495,10 +501,14 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 	if hostPort <= 0 || strings.TrimSpace(password) == "" {
 		return nil
 	}
+	base := s.registryBaseURL(ctx, password)
+	if base == "" {
+		return nil
+	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	repoPath := fmt.Sprintf("%s/%s", s.accountID(), repoName)
-	tagsURL := fmt.Sprintf("http://127.0.0.1:%d/v2/%s/tags/list", hostPort, repoPath)
+	tagsURL := fmt.Sprintf("%s/v2/%s/tags/list", base, repoPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tagsURL, nil)
 	if err != nil {
 		return err
@@ -526,7 +536,7 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 		if strings.TrimSpace(tag) == "" {
 			continue
 		}
-		manifestURL := fmt.Sprintf("http://127.0.0.1:%d/v2/%s/manifests/%s", hostPort, repoPath, tag)
+		manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", base, repoPath, tag)
 		manifestReq, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 		if err != nil {
 			continue
@@ -1417,7 +1427,6 @@ func (s *Service) initRegistryDocker() {
 	}
 	s.registryMu.Unlock()
 
-	var containerID string
 	if info != nil {
 		if !info.HasOvercastLabels(serviceName, "registry") {
 			s.log.Warn("existing ecr registry container is not overcast-managed", zap.String("container", ecrRegistryContainerName))
@@ -1427,60 +1436,22 @@ func (s *Service) initRegistryDocker() {
 		_ = s.docker.RemoveContainerForce(info.ID)
 	}
 
-	req := &docker.CreateContainerRequest{
-		ContainerConfig: &docker.ContainerConfig{
-			Image: ecrRegistryImage,
-			ExposedPorts: map[string]struct{}{
-				ecrRegistryPortKey: {},
-			},
-			Env: []string{
-				"REGISTRY_AUTH=htpasswd",
-				"REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm",
-				"REGISTRY_AUTH_HTPASSWD_PATH=" + ecrRegistryHTPasswdPath,
-			},
-			Labels: docker.ManagedLabels(serviceName, "registry"),
-		},
-		HostConfig: &docker.HostConfig{AutoRemove: true,
-			PortBindings: map[string][]docker.PortBinding{
-				ecrRegistryPortKey: {{HostIP: "0.0.0.0"}},
-			},
-		},
+	// A fixed, well-known port first — stable repositoryUri across restarts and
+	// a nameable address for daemon configuration — falling back to an
+	// ephemeral one when something else holds it, because a registry on an
+	// unexpected port beats no registry at all.
+	requested := ""
+	if s.cfg.ECRRegistryPort > 0 {
+		requested = strconv.Itoa(s.cfg.ECRRegistryPort)
 	}
-
-	containerID, err = s.createRegistryContainer(context.Background(), req)
+	containerID, inspect, err := s.startRegistry(context.Background(), htpasswd, requested)
+	if err != nil && requested != "" && docker.IsPortUnavailable(err) {
+		s.log.Warn("ECR registry port is taken; falling back to an ephemeral port — repositoryUri will not be stable across restarts",
+			zap.String("port", requested), zap.Error(err))
+		containerID, inspect, err = s.startRegistry(context.Background(), htpasswd, "")
+	}
 	if err != nil {
-		s.log.Warn("failed to create ECR registry container", zap.Error(err))
-		return
-	}
-
-	s.registryMu.Lock()
-	if s.registryStopping {
-		s.registryMu.Unlock()
-		_ = s.docker.StopContainer(context.Background(), containerID, 3)
-		_ = s.docker.RemoveContainerForce(containerID)
-		return
-	}
-	s.registryMu.Unlock()
-
-	// The credentials are copied in rather than bind-mounted. A bind source is
-	// resolved by the daemon, not by us, so a dockerized Overcast would name a
-	// path inside its own filesystem that the host does not have — Docker then
-	// creates an empty directory there and the registry starts with no usable
-	// htpasswd file. Same reason function code and the CA bundle travel this way.
-	if err := s.docker.CopyToContainer(context.Background(), containerID, "/", bytes.NewReader(htpasswd)); err != nil {
-		s.log.Warn("failed to install ECR registry credentials", zap.Error(err))
-		_ = s.docker.RemoveContainerForce(containerID)
-		return
-	}
-
-	if err := s.docker.StartContainer(context.Background(), containerID); err != nil {
 		s.log.Warn("failed to start ECR registry container", zap.Error(err))
-		_ = s.docker.RemoveContainerForce(containerID)
-		return
-	}
-	inspect, err := s.docker.InspectContainer(context.Background(), containerID)
-	if err != nil {
-		s.log.Warn("failed to inspect started ECR registry container", zap.Error(err))
 		return
 	}
 
@@ -1505,7 +1476,160 @@ func (s *Service) initRegistryDocker() {
 	}
 	s.registryContainer = containerID
 	s.registryHostPort = hostPort
+	s.registryClientBases = registryClientCandidates(hostPort, inspect)
 	s.registryMu.Unlock()
+
+	s.verifyDaemonCanReachRegistry(hostPort)
+}
+
+// startRegistry creates and starts the registry container publishing its port
+// on hostPort ("" for daemon-assigned), returning the started container's
+// inspect result. The container that failed to start is removed before the
+// error is returned, so a port-unavailable failure can be retried under the
+// same name.
+func (s *Service) startRegistry(ctx context.Context, htpasswd []byte, hostPort string) (string, *docker.ContainerInspect, error) {
+	req := &docker.CreateContainerRequest{
+		ContainerConfig: &docker.ContainerConfig{
+			Image: ecrRegistryImage,
+			ExposedPorts: map[string]struct{}{
+				ecrRegistryPortKey: {},
+			},
+			Env: []string{
+				"REGISTRY_AUTH=htpasswd",
+				"REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm",
+				"REGISTRY_AUTH_HTPASSWD_PATH=" + ecrRegistryHTPasswdPath,
+			},
+			Labels: docker.ManagedLabels(serviceName, "registry"),
+		},
+		HostConfig: &docker.HostConfig{AutoRemove: true,
+			PortBindings: map[string][]docker.PortBinding{
+				// No HostIP. An explicit "0.0.0.0" restricts the binding to
+				// IPv4, and Docker Desktop's port forwarding does not wire an
+				// ephemeral v4-only binding into the VM the daemon runs in —
+				// the daemon then cannot reach its own registry at localhost,
+				// so every push and every task-image pull dies on a dial.
+				// Leaving it empty binds dual-stack, which both the VM
+				// forwarding and native Linux serve correctly. Measured, not
+				// theorised: see docs/services/ecr.md § Limitations.
+				ecrRegistryPortKey: {{HostPort: hostPort}},
+			},
+		},
+	}
+
+	containerID, err := s.createRegistryContainer(ctx, req)
+	if err != nil {
+		return "", nil, fmt.Errorf("create: %w", err)
+	}
+
+	s.registryMu.Lock()
+	stopping := s.registryStopping
+	s.registryMu.Unlock()
+	if stopping {
+		_ = s.docker.StopContainer(ctx, containerID, 3)
+		_ = s.docker.RemoveContainerForce(containerID)
+		return "", nil, fmt.Errorf("registry is stopping")
+	}
+
+	// The credentials are copied in rather than bind-mounted. A bind source is
+	// resolved by the daemon, not by us, so a dockerized Overcast would name a
+	// path inside its own filesystem that the host does not have — Docker then
+	// creates an empty directory there and the registry starts with no usable
+	// htpasswd file. Same reason function code and the CA bundle travel this way.
+	if err := s.docker.CopyToContainer(ctx, containerID, "/", bytes.NewReader(htpasswd)); err != nil {
+		_ = s.docker.RemoveContainerForce(containerID)
+		return "", nil, fmt.Errorf("install credentials: %w", err)
+	}
+
+	if err := s.docker.StartContainer(ctx, containerID); err != nil {
+		_ = s.docker.RemoveContainerForce(containerID)
+		return "", nil, fmt.Errorf("start: %w", err)
+	}
+	inspect, err := s.docker.InspectContainer(ctx, containerID)
+	if err != nil {
+		return "", nil, fmt.Errorf("inspect: %w", err)
+	}
+	return containerID, inspect, nil
+}
+
+// verifyDaemonCanReachRegistry asks the daemon — the party that performs every
+// push, pull and login — to contact the registry at the address repositoryUri
+// advertises. An answer of any kind, including an authorization refusal,
+// proves the path; only a transport failure is worth a warning. This turns
+// "the daemon cannot dial the registry" into one actionable startup log line
+// instead of a CannotPullContainerError buried in a later task launch.
+func (s *Service) verifyDaemonCanReachRegistry(hostPort int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ref := fmt.Sprintf("localhost:%d/overcast/connectivity-probe:none", hostPort)
+	err := s.docker.DistributionInspect(ctx, ref)
+	if err == nil || !docker.RegistryUnreachable(err) {
+		return
+	}
+	s.log.Warn("the Docker daemon cannot reach the ECR registry it just published; "+
+		"docker push to the emulated ECR and ECS/Lambda pulls of its images will fail. "+
+		"If the daemon is remote or its published ports are not on its loopback, set "+
+		"OVERCAST_ECR_REGISTRY_PORT and add the registry to the daemon's insecure-registries.",
+		zap.Int("port", hostPort), zap.Error(err))
+}
+
+// registryBaseURL returns the base URL at which this process reaches the
+// registry, probing the candidates recorded at registry start on first use and
+// caching the winner. "localhost is network-namespace local": the loopback
+// address in repositoryUri is the daemon's, and when Overcast runs in a
+// container of that daemon its own 127.0.0.1 is somewhere else entirely — the
+// registry is then reachable at its container address or through the bridge
+// gateway instead. Probing is the only honest way to pick, and a failed probe
+// is retried on the next call rather than cached: the registry may simply not
+// be answering yet.
+func (s *Service) registryBaseURL(ctx context.Context, password string) string {
+	s.registryMu.Lock()
+	base := s.registryClientBase
+	candidates := s.registryClientBases
+	s.registryMu.Unlock()
+	if base != "" {
+		return base
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	for _, candidate := range candidates {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, candidate+"/v2/", nil)
+		if err != nil {
+			continue
+		}
+		req.SetBasicAuth(ecrRegistryUser, password)
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		// Any HTTP answer proves the path; 401 just means wrong credentials,
+		// which is not this function's question.
+		if resp.StatusCode < http.StatusInternalServerError {
+			s.registryMu.Lock()
+			s.registryClientBase = candidate
+			s.registryMu.Unlock()
+			return candidate
+		}
+	}
+	return ""
+}
+
+// registryClientCandidates lists base URLs at which Overcast itself might
+// reach the registry, most likely first. Which one answers depends on where
+// Overcast runs — loopback when it shares the daemon's host, the registry
+// container's own address or the bridge gateway when Overcast is itself a
+// container — and cannot be decided statically, so the caller probes them.
+func registryClientCandidates(hostPort int, inspect *docker.ContainerInspect) []string {
+	candidates := []string{fmt.Sprintf("http://127.0.0.1:%d", hostPort)}
+	for _, network := range inspect.NetworkSettings.Networks {
+		if network.IPAddress != "" {
+			candidates = append(candidates, "http://"+network.IPAddress+":5000")
+		}
+		if network.Gateway != "" {
+			candidates = append(candidates, fmt.Sprintf("http://%s:%d", network.Gateway, hostPort))
+		}
+	}
+	return candidates
 }
 
 // createRegistryContainer creates the shared registry container, waiting out a

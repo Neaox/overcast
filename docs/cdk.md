@@ -169,10 +169,14 @@ Overcast recognises that address as its own and pulls from the registry it
 serves, so the task runs the image the deploy published. See
 [ECR § Running an image from here](./services/ecr.md#running-an-image-from-here).
 
-The daemon must be able to reach the registry's published port at the hostname
-Overcast advertises. On Docker Desktop, whose daemon runs in a VM with its own
-`localhost`, a `localhost` registry endpoint cannot be reached and asset
-publishing fails at `docker push`.
+The registry publishes on a fixed port (`4510` by default, see
+[ECR § Repository URI](./services/ecr.md#repository-uri)) reachable at
+`localhost` from the Docker daemon's own vantage — which is the vantage that
+matters, because `docker push` and every image pull are performed by the
+daemon, not by the client that asked. This works out of the box on native
+Linux and on Docker Desktop; only a remote daemon or a non-loopback
+`OVERCAST_HOSTNAME` needs an `insecure-registries` entry, and Overcast verifies
+the path at registry startup and logs the remediation if it is broken.
 
 ### Nested stack TemplateURL must be reachable
 

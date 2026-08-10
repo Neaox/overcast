@@ -28,14 +28,31 @@ Repositories are assigned a URI on the registry Overcast serves:
 <hostname>:<registryPort>/<accountId>/<repositoryName>
 ```
 
-For example, `localhost:32768/000000000000/my-app`. The port is the one the
-shared registry container published, not the API port — this URI is what a
-`docker push` targets, so it has to name the registry rather than the emulator.
-Without Docker there is no registry, and the URI falls back to the API base URL.
+For example, `localhost:4510/000000000000/my-app`. The port is the registry
+container's, not the API port — this URI is what a `docker push` targets, so it
+has to name the registry rather than the emulator. The registry asks for a
+fixed port (`OVERCAST_ECR_REGISTRY_PORT`, default `4510`, the same port
+LocalStack serves its registry on) so the URI is stable across restarts; if
+something else holds that port the registry falls back to an ephemeral one and
+says so in the log. Without Docker there is no registry, and the URI falls back
+to the API base URL.
 
 `proxyEndpoint` from `GetAuthorizationToken` names the same address, and
 `Fn::GetAtt Repo.RepositoryUri` returns this value rather than an
 `amazonaws.com` one.
+
+The address is chosen for the party that actually dials it. `docker push`,
+`docker pull` and `docker login` are all performed by the Docker daemon, never
+by the CLI that requested them, so `localhost` here means the daemon's own
+loopback — which is correct on native Linux and on Docker Desktop alike, and
+regardless of where the client runs. Docker also trusts loopback registries
+with plain HTTP automatically, so no `insecure-registries` configuration is
+needed. At startup the registry's reachability is verified from the daemon's
+own vantage (the Engine's distribution-inspect endpoint, which makes the daemon
+contact the registry); if the daemon cannot reach it — a remote daemon, or a
+proxy arrangement that does not loop published ports back — one warning names
+the problem and the remediation instead of every later push and pull failing on
+its own.
 
 ## Authorization token
 
@@ -54,14 +71,11 @@ credentials `GetAuthorizationToken` returns. See
 
 ## Limitations
 
-- Push/pull via `docker push` / `docker pull` requires Docker daemon support. The
-  registry speaks plain HTTP, which a daemon accepts for `localhost` without
-  configuration; any other hostname needs an `insecure-registries` daemon entry.
-- The daemon has to be able to reach the registry's published port at the
-  hostname Overcast advertises. That is the ordinary case on Linux, where the
-  daemon is on the host it publishes to. On Docker Desktop the daemon runs in a
-  VM whose `localhost` is not the host's, so pushes and pulls to a
-  `localhost:{port}` registry endpoint cannot connect.
+- Push/pull via `docker push` / `docker pull` requires Docker daemon support.
+  The registry speaks plain HTTP, which the daemon accepts for a loopback
+  registry without configuration; only a setup that advertises the registry on
+  a non-loopback hostname (`OVERCAST_HOSTNAME` pointing at a remote Overcast)
+  needs an `insecure-registries` daemon entry for `<hostname>:<registryPort>`.
 - Images live in the registry container, which is removed on shutdown, so a
   restart starts empty — repository metadata persists, image content does not.
 - Image content/layers are not stored in Overcast state; read APIs persist manifest metadata derived from `PutImage` calls and from manifests pushed into the local registry.
