@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -366,6 +367,27 @@ func TestClassifyRuntimeLogLine_extensionPrefix(t *testing.T) {
 	// Then: it is delivered to Logs API extension subscribers without the wrapper prefix.
 	if typ != "extension" || record != "extension ready" {
 		t.Fatalf("type=%q record=%q", typ, record)
+	}
+}
+
+// AWS names a Lambda log stream after the date and the execution environment's
+// GUID: YYYY/MM/DD/[$LATEST] followed by 32 hex characters, as in
+// 2019/07/12/[$LATEST]312c2d81e2e64af58dbe557754f9aa13. Anything shorter fails
+// a caller matching stream names against that shape.
+func TestLambdaLogStreamName_matchesAWSShape(t *testing.T) {
+	shape := regexp.MustCompile(`^\d{4}/\d{2}/\d{2}/\[\$LATEST\][0-9a-f]{32}$`)
+	clk := clock.NewMock()
+	clk.Set(time.Date(2026, 8, 10, 2, 27, 36, 0, time.UTC))
+
+	for name, got := range map[string]string{
+		"container runtime": lambdaLogStreamName(clk),
+		"node runtime":      newNodeRuntime(clk, zap.NewNop()).lambdaLogStreamName(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !shape.MatchString(got) {
+				t.Errorf("log stream name %q does not match %v", got, shape)
+			}
+		})
 	}
 }
 

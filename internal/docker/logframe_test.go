@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -227,4 +228,131 @@ func TestDemuxReader_doesNotAllocatePerRead(t *testing.T) {
 	if allocs != 0 {
 		t.Errorf("allocations per run = %v, want 0", allocs)
 	}
+}
+
+// Docker splits any log message longer than 16 KiB into separate frames, and
+// with timestamps=true it stamps *every* frame, not every message. The
+// continuation stamps land in the middle of the caller's line, which is how a
+// serialized error object ends up with an RFC3339Nano timestamp spliced through
+// the middle of a number. NewLogDemuxReader is the reader that drops them.
+func TestLogDemuxReader_dropsContinuationTimestamps(t *testing.T) {
+	const (
+		head = "2026-08-10T02:27:36.830921293Z "
+		cont = "2026-08-10T02:27:36.830921294Z "
+	)
+	first := strings.Repeat("A", 16384)
+	rest := strings.Repeat("B", 4000)
+
+	raw := bytes.Join([][]byte{
+		stdout(head + first),
+		stdout(cont + rest + "\n"),
+	}, nil)
+
+	got, err := io.ReadAll(NewLogDemuxReader(bytes.NewReader(raw)))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want := head + first + rest + "\n"
+	if string(got) != want {
+		if idx := strings.Index(string(got[len(head):]), "2026-08-10T"); idx >= 0 {
+			t.Fatalf("continuation timestamp survived at byte %d of the message", idx)
+		}
+		t.Fatalf("output = %d bytes, want %d", len(got), len(want))
+	}
+}
+
+// A timestamp at the head of a frame that begins a *new* line is the message's
+// own, and dropping it would cost the log event its time.
+func TestLogDemuxReader_keepsPerMessageTimestamps(t *testing.T) {
+	raw := bytes.Join([][]byte{
+		stdout("2026-08-10T02:27:36.000000001Z first\n"),
+		stderr("2026-08-10T02:27:36.000000002Z second\n"),
+		stdout("2026-08-10T02:27:36.000000003Z third\n"),
+	}, nil)
+	want := "2026-08-10T02:27:36.000000001Z first\n" +
+		"2026-08-10T02:27:36.000000002Z second\n" +
+		"2026-08-10T02:27:36.000000003Z third\n"
+
+	if got := readAllLogDemuxed(t, raw); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// A continuation frame whose payload merely looks textual must survive intact:
+// only a well-formed RFC3339Nano stamp followed by a space is Docker's, and
+// anything else is the container's own bytes.
+func TestLogDemuxReader_keepsNonTimestampContinuation(t *testing.T) {
+	raw := bytes.Join([][]byte{
+		stdout("2026-08-10T02:27:36.000000001Z start-of-line"),
+		stdout("not-a-timestamp rest-of-line\n"),
+	}, nil)
+	want := "2026-08-10T02:27:36.000000001Z start-of-linenot-a-timestamp rest-of-line\n"
+
+	if got := readAllLogDemuxed(t, raw); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// The plain reader is used where Docker was not asked for timestamps (ECS), and
+// must keep passing every byte through untouched.
+func TestDemuxReader_doesNotStripTimestamps(t *testing.T) {
+	raw := bytes.Join([][]byte{
+		stdout("2026-08-10T02:27:36.000000001Z head"),
+		stdout("2026-08-10T02:27:36.000000002Z tail\n"),
+	}, nil)
+	want := "2026-08-10T02:27:36.000000001Z head2026-08-10T02:27:36.000000002Z tail\n"
+
+	if got := readAllDemuxed(t, raw); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// A stream that dies part-way through a continuation frame's timestamp still
+// holds the newest bytes of the log, which is the part someone reading it wants
+// most. They come out first; the error follows on the next read.
+func TestLogDemuxReader_failedContinuationDrainsBeforeError(t *testing.T) {
+	errBroken := errors.New("connection reset")
+	raw := bytes.Join([][]byte{
+		stdout("2026-08-10T02:27:36.000000001Z head"),
+		stdout("tail-of-line\n"),
+	}, nil)
+
+	r := NewLogDemuxReader(&failAfterReader{r: bytes.NewReader(raw), after: len(raw) - 6, err: errBroken})
+
+	got, err := io.ReadAll(r)
+	if !errors.Is(err, errBroken) {
+		t.Fatalf("error = %v, want %v", err, errBroken)
+	}
+	if want := "2026-08-10T02:27:36.000000001Z headtail-of"; string(got) != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+// failAfterReader serves r until after bytes have been read, then fails.
+type failAfterReader struct {
+	r     io.Reader
+	after int
+	err   error
+	n     int
+}
+
+func (f *failAfterReader) Read(p []byte) (int, error) {
+	if f.n >= f.after {
+		return 0, f.err
+	}
+	if len(p) > f.after-f.n {
+		p = p[:f.after-f.n]
+	}
+	n, err := f.r.Read(p)
+	f.n += n
+	return n, err
+}
+
+func readAllLogDemuxed(t *testing.T, raw []byte) string {
+	t.Helper()
+	got, err := io.ReadAll(NewLogDemuxReader(bytes.NewReader(raw)))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return string(got)
 }

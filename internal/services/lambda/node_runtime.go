@@ -32,10 +32,12 @@ func newNodeRuntime(clk clock.Clock, logger *zap.Logger) *NodeRuntime {
 }
 
 // lambdaLogStreamName returns an AWS-style log stream name for a new container
-// instance. Format: YYYY/MM/DD/[$LATEST]<26-char lowercase hex>.
+// instance. The suffix is the execution environment's GUID, so 32 hex
+// characters — see lambdaLogStreamName in container_runtime.go.
+// Format: YYYY/MM/DD/[$LATEST]<32-char lowercase hex>.
 func (rt *NodeRuntime) lambdaLogStreamName() string {
 	date := rt.clk.Now().UTC().Format("2006/01/02")
-	var b [13]byte
+	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return date + "/[$LATEST]" + hex.EncodeToString(b[:])
 }
