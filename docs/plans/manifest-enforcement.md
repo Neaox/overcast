@@ -171,8 +171,27 @@ operation is dispatched from — so all three are deleted:
   the routes;
 - `internal/services/eks/capabilities_inventory_test.go`'s 50-case
   route-to-operation switch;
+- `internal/services/ses/capabilities_inventory_test.go`, whose `restOnlyOps`
+  allowlist named five of SESv2's eight REST-routed operations and had been
+  missing the three tag ones since they were added — they passed only because
+  their rows carried `DocOnly`, which is the flag doing duty as an exemption
+  exactly as #863 describes. Widening the list was the wrong fix, and so was
+  deriving it by reflection: a handler method's name is not an operation name
+  (`GetSendStatistics` dispatches to `GetSendStatisticsStub`), so a
+  reflected list demands a capability row for a method that is not an
+  operation. Both directions the test really checked are capgen's, verified
+  against this package before deleting it — a capability row with no dispatch
+  reports `ORPHAN ses/…`, and an `initOps` key with no row reports
+  `MISSING ses/…`. capgen runs over every service rather than the thirteen that
+  happen to have this file;
 - capgen's `parseRESTOperations` and its "REST-routed; not detectable" ORPHAN
   line, printed twenty times a run while asserting nothing.
+
+**Twelve sibling `capabilities_inventory_test.go` files remain**, in the
+action-dispatch services. They are now redundant with capgen's cross-check for
+the same reason SES's was, but they are not wrong and nothing in this change
+breaks them, so removing them is a follow-up rather than a sweep bolted onto
+this one.
 
 ## Point 6 — `detectService` is a justified second source, `detectOperation` is not one
 
