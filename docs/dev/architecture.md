@@ -4,10 +4,15 @@
 > hold in your head, and links to the detailed docs for each one. Read it once
 > end to end; after that, use it as a map.
 >
-> **Who this is for:** developers who use AWS but have never looked at what an
-> AWS SDK call is on the wire, and who know nothing about Overcast. No prior
-> knowledge of the codebase is assumed. Prior knowledge of *AWS as a product* —
-> what S3, Lambda and DynamoDB are for — is.
+> **Who this is for:** developers who use AWS and want to know how Overcast
+> works underneath. It assumes you have used AWS and can program; it assumes
+> nothing about the codebase, and nothing about any particular AWS service —
+> plenty of people deploy to AWS daily without having written an IAM policy or a
+> CloudFormation template.
+>
+> It also does not assume you have looked at what an SDK call is on the wire.
+> [§2](#2-what-an-aws-sdk-call-actually-is) covers that, and is the one section
+> to skip if you already have.
 
 ---
 
@@ -160,19 +165,21 @@ Full treatment: [docs/dev/manual-testing.md](./manual-testing.md).
 
 ### What's in the body? — wire protocols
 
-Here is the part most AWS users have never had to think about.
+Here is the part you may never have had to think about, even using AWS daily.
 
 A **wire protocol** is the convention for encoding *which operation you are
 calling* and *what arguments you are passing* into an HTTP request — and for
 encoding the response and any error coming back. It is not a network protocol
 like TCP or HTTP itself; it sits on top of HTTP. Think of it as the calling
-convention.
+convention. The term is AWS's own, via Smithy, its interface definition
+language: see [Smithy's wire protocol selection
+guide](https://smithy.io/2.0/guides/wire-protocol-selection.html) for the
+specification.
 
-AWS does not have one. It has several, because services built in different
-eras adopted whatever was current at the time, and AWS keeps old services
-working forever. The ones Overcast deals with:
-
-Listed oldest first, because the order is the point:
+AWS does not have one wire protocol. It has several, because services built in
+different eras adopted whatever was current at the time, and AWS keeps old
+services working forever. Listed oldest first, because the order turns out to
+be the point:
 
 | Protocol | Roughly when it was the default for new services | How the operation is named | Body format | Used by |
 |---|---|---|---|---|
@@ -670,11 +677,10 @@ Some of these are principled and permanent; others are simply undone.
   AWS publishes machine-readable models for every operation, and Overcast
   already ingests them for routing and `501`s ([§4](#4-the-request-path)) —
   but not for producing types. Generating them from the same source is designed
-  and sequenced (Track 3 of
-  [docs/plans/level2-codegen.md](../plans/level2-codegen.md)) but not started,
-  tracked as [#756](https://github.com/Neaox/overcast/issues/756). Until it
-  happens, every struct and every tag is typed by hand, which is exactly where a
-  wrong member name comes from.
+  and sequenced but not started, tracked as
+  [#756](https://github.com/Neaox/overcast/issues/756). Until it happens, every
+  struct and every tag is typed by hand, which is exactly where a wrong member
+  name comes from.
 
 - **Migration to the typed pattern is incomplete — and in one case deliberately
   reversed.** Many services carry both a typed registry and an older
@@ -690,9 +696,10 @@ Some of these are principled and permanent; others are simply undone.
 If you are adding a service, use the typed pattern; if you are reading an old
 one, expect to find both.
 
-**Further reading:** [docs/dev/smithy.md](./smithy.md);
-[docs/plans/level2-codegen.md](../plans/level2-codegen.md) for the migration
-state and where it is going.
+**Further reading:** [docs/dev/smithy.md](./smithy.md) for protocol
+identification and the codec interfaces;
+[#756](https://github.com/Neaox/overcast/issues/756) for where the migration is
+going.
 
 ---
 
