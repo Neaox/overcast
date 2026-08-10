@@ -147,6 +147,10 @@ type Service struct {
 	registryInitOnce  sync.Once
 	registryReady     chan struct{}
 	registryStopping  bool
+	// probeTimeout overrides registryAnswerTimeout for the port sweep. Set only
+	// by tests, which would otherwise wait out the real deadline to reach the
+	// nothing-answered path.
+	probeTimeout time.Duration
 	// registryClientBases are candidate base URLs at which this process might
 	// reach the registry over HTTP; registryClientBase is the probed winner.
 	// Distinct from the daemon-facing address in repositoryUri: which of them
@@ -1491,9 +1495,10 @@ func (s *Service) initRegistryDocker() {
 	// ports, and which family "localhost" dials is the daemon's business —
 	// a port verified from Overcast's own vantage still produced
 	// `docker login … dial tcp [::1]:<v4port>: connection refused` on CI.
-	// DistributionInspect makes the daemon itself dial, exactly as login
-	// does, so the port it answers on is the one that is true.
-	hostPort, reachable := s.selectDaemonReachablePort(hostPorts)
+	// The probe makes the daemon itself dial, exactly as login does, and
+	// carries our password so the port it settles on is one that answers as
+	// *our* registry rather than as a sibling instance's.
+	hostPort, reachable := s.selectDaemonReachablePort(hostPorts, password)
 	if !reachable {
 		s.log.Warn("the Docker daemon cannot reach the ECR registry it just published; "+
 			"docker push to the emulated ECR and ECS/Lambda pulls of its images will fail. "+
@@ -1542,27 +1547,61 @@ func publishedHostPorts(inspect *docker.ContainerInspect) []int {
 }
 
 // selectDaemonReachablePort asks the daemon to contact the registry at
-// "localhost:<port>" for each candidate and returns the first port it answers
-// on — an authorization refusal is an answer. The whole sweep retries while
-// the registry process is still booting (a transport failure during boot says
-// nothing about the port), bounded so a wedged container cannot hang startup.
-// When nothing answers within the deadline the first candidate is returned
-// with reachable=false: Overcast's own registry access may still work, and a
-// wrong-but-stated port beats no registry at all.
-func (s *Service) selectDaemonReachablePort(ports []int) (port int, reachable bool) {
-	deadline := time.Now().Add(registryAnswerTimeout)
+// "localhost:<port>" for each candidate, carrying this instance's credentials,
+// and returns the first port that answers as *our* registry. The whole sweep
+// retries while the registry process is still booting (a transport failure
+// during boot says nothing about the port), bounded so a wedged container
+// cannot hang startup. When nothing answers within the deadline the first
+// candidate is returned with reachable=false: Overcast's own registry access
+// may still work, and a wrong-but-stated port beats no registry at all.
+//
+// The credentials are what make this an identity check rather than a liveness
+// one. Two Overcast instances sharing a daemon can have their ephemeral
+// dual-stack publishes interleave — A on v4 :32768 / v6 :32770, B on v4 :32769
+// / v6 :32768 — and an anonymous probe of :32768 reaches B over IPv6, is
+// refused exactly as A's own registry would refuse it, and A advertises a port
+// serving B. Every token A then issues fails against B's htpasswd, as an
+// authentication error carrying a valid-looking token. Offering our password
+// separates the two: our registry accepts it and reports the probe repository
+// missing, a sibling's rejects it.
+func (s *Service) selectDaemonReachablePort(ports []int, password string) (port int, reachable bool) {
+	deadline := time.Now().Add(s.registryProbeTimeout())
 	for time.Now().Before(deadline) {
 		for _, candidate := range ports {
+			address := fmt.Sprintf("localhost:%d", candidate)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			err := s.docker.DistributionInspect(ctx, fmt.Sprintf("localhost:%d/overcast/connectivity-probe:none", candidate))
+			err := s.docker.DistributionInspectWithAuth(ctx,
+				address+"/overcast/connectivity-probe:none",
+				&docker.RegistryAuth{
+					Username:      ecrRegistryUser,
+					Password:      password,
+					ServerAddress: address,
+				})
 			cancel()
-			if err == nil || !docker.RegistryUnreachable(err) {
+			switch {
+			case docker.RegistryRejectedCredentials(err):
+				// Something is listening and it is not ours — or ours is not up
+				// yet and a stranger holds the port. Either way this port must
+				// not be advertised; keep sweeping until the deadline.
+				continue
+			case err == nil || !docker.RegistryUnreachable(err):
+				// Answered, and let us in: our registry, missing repository.
 				return candidate, true
 			}
 		}
 		time.Sleep(registryAnswerBackoff)
 	}
 	return ports[0], false
+}
+
+// registryProbeTimeout bounds the port sweep. Indirected so a test can drive
+// the exhausted-deadline path without waiting out the real one; zero means the
+// production value.
+func (s *Service) registryProbeTimeout() time.Duration {
+	if s.probeTimeout > 0 {
+		return s.probeTimeout
+	}
+	return registryAnswerTimeout
 }
 
 // awaitRegistryAnswering polls the registry until it answers HTTP on any of
