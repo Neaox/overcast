@@ -301,6 +301,59 @@ describe("failedResource", () => {
       failedResource([{ LogicalResourceId: "Bucket", ResourceStatus: "CREATE_COMPLETE" }]),
     ).toBe(undefined)
   })
+
+  it("reports the most recent failure, not the one listed first", () => {
+    const found = failedResource([
+      {
+        LogicalResourceId: "Queue",
+        ResourceStatus: "CREATE_FAILED",
+        ResourceStatusReason: "queue name already in use",
+        LastUpdatedTimestamp: new Date("2026-08-01T10:00:00Z"),
+      },
+      {
+        LogicalResourceId: "Table",
+        ResourceStatus: "CREATE_FAILED",
+        ResourceStatusReason: "table already exists",
+        LastUpdatedTimestamp: new Date("2026-08-02T10:00:00Z"),
+      },
+    ])
+    expect(found).toEqual({ logicalId: "Table", reason: "table already exists" })
+  })
+
+  it("keeps the first failure of an operation when timestamps tie", () => {
+    const stamp = new Date("2026-08-02T10:00:00Z")
+    const found = failedResource([
+      {
+        LogicalResourceId: "Queue",
+        ResourceStatus: "CREATE_FAILED",
+        ResourceStatusReason: "queue name already in use",
+        LastUpdatedTimestamp: stamp,
+      },
+      {
+        LogicalResourceId: "Table",
+        ResourceStatus: "CREATE_FAILED",
+        ResourceStatusReason: "table already exists",
+        LastUpdatedTimestamp: stamp,
+      },
+    ])
+    expect(found).toEqual({ logicalId: "Queue", reason: "queue name already in use" })
+  })
+
+  it("falls back to list order when no resource carries a timestamp", () => {
+    const found = failedResource([
+      {
+        LogicalResourceId: "Queue",
+        ResourceStatus: "CREATE_FAILED",
+        ResourceStatusReason: "queue name already in use",
+      },
+      {
+        LogicalResourceId: "Table",
+        ResourceStatus: "CREATE_FAILED",
+        ResourceStatusReason: "table already exists",
+      },
+    ])
+    expect(found).toEqual({ logicalId: "Queue", reason: "queue name already in use" })
+  })
 })
 
 describe("formatStatus", () => {

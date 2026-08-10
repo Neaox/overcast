@@ -170,26 +170,53 @@ export interface FailedResource {
 }
 
 /**
+ * The fields of a stack resource {@link failedResource} reads.
+ *
+ * `LastUpdatedTimestamp` is optional here although `StackResourceSummary`
+ * declares it required-but-nullable: the function orders by it when it is there
+ * and falls back to list order when it is not, so a caller — or a test — with
+ * nothing to stamp does not have to invent one.
+ */
+type FailedResourceCandidate = Pick<
+  StackResourceSummary,
+  "LogicalResourceId" | "ResourceStatus" | "ResourceStatusReason"
+> &
+  Partial<Pick<StackResourceSummary, "LastUpdatedTimestamp">>
+
+/**
  * Finds the resource that actually failed.
  *
- * CloudFormation clears `StackStatusReason` once a rollback reaches its
- * terminal state, so a `ROLLBACK_COMPLETE` stack carries no stack-level reason
- * at all. The reason survives on the resource that failed and on the event
- * timeline, which is where the UI has to go to answer "why".
+ * Overcast clears `StackStatusReason` once a rollback reaches its terminal
+ * state, so a `ROLLBACK_COMPLETE` stack carries no stack-level reason at all.
+ * The reason survives on the resource that failed and on the event timeline,
+ * which is where the UI has to go to answer "why". Real CloudFormation is
+ * believed to keep a summary reason there instead, naming the resources that
+ * failed — see #823, which would make this fallback unnecessary.
  *
- * CloudFormation stops at the first failure on each provisioning path, so the
- * first match in template order is the one that started it.
+ * The most recently stamped failure wins, because the question the banner
+ * answers is why *this* deployment failed. A stack deployed more than once can
+ * be holding a record from an earlier attempt — that is a server-side bug where
+ * it happens, but the banner reads whatever the API returns and a stack
+ * persisted before the fix still carries one, so scanning in list order sooner
+ * or later reports a reason that has already been superseded.
+ *
+ * Ties go to the earlier entry: CloudFormation stops at the first failure on
+ * each provisioning path, so among resources that failed in the same operation
+ * the first in template order is the one that started it.
  */
 export function failedResource(
-  resources: readonly Pick<
-    StackResourceSummary,
-    "LogicalResourceId" | "ResourceStatus" | "ResourceStatusReason"
-  >[],
+  resources: readonly FailedResourceCandidate[],
 ): FailedResource | undefined {
+  let found: FailedResource | undefined
+  let foundAt = -Infinity
   for (const r of resources) {
-    if (r.ResourceStatusReason && (r.ResourceStatus ?? "").endsWith("_FAILED")) {
-      return { logicalId: r.LogicalResourceId ?? "", reason: r.ResourceStatusReason }
-    }
+    if (!r.ResourceStatusReason || !(r.ResourceStatus ?? "").endsWith("_FAILED")) continue
+    // An absent timestamp cannot be ordered against anything, so it only wins
+    // when nothing else has claimed the slot.
+    const at = r.LastUpdatedTimestamp?.getTime() ?? -Infinity
+    if (found && at <= foundAt) continue
+    found = { logicalId: r.LogicalResourceId ?? "", reason: r.ResourceStatusReason }
+    foundAt = at
   }
-  return undefined
+  return found
 }

@@ -161,6 +161,60 @@ func TestDeleteStackTyped_recordsHopsForTheResourcesItTearsDown(t *testing.T) {
 	}
 }
 
+// ---- ExecuteChangeSet ------------------------------------------------------
+
+// Re-creating a stack that already failed once starts by dropping the previous
+// generation's resource records, and the work that follows is the whole point of
+// the deploy: it must still be dispatched under the originating request's
+// recorder, so the second attempt's hops are traceable exactly like the first's.
+func TestExecuteChangeSet_recreateRecordsHopsForTheResourcesItProvisions(t *testing.T) {
+	// Given: a stack left in ROLLBACK_COMPLETE by a create that failed, and a
+	// CREATE change set against it being traced
+	router := &recordingRouter{}
+	h, st := newTracedTestHandler(t, router)
+	seedStack(t, st, "redeployed", StatusRollbackComplete, StackResource{
+		LogicalID:    "Queue",
+		Type:         "AWS::SQS::Queue",
+		Status:       ResourceCreateFailed,
+		StatusReason: "queue name already in use",
+	})
+	rec := newTestRecorder("redeploy-req-1")
+	const templateBody = `{"Resources":{"Queue":{"Type":"AWS::SQS::Queue","Properties":{"QueueName":"orders"}}}}`
+
+	// When: the change set is created and executed
+	for _, call := range []struct {
+		action string
+		params map[string]string
+	}{
+		{"CreateChangeSet", map[string]string{
+			"StackName": "redeployed", "ChangeSetName": "cs-1",
+			"ChangeSetType": "CREATE", "TemplateBody": templateBody,
+		}},
+		{"ExecuteChangeSet", map[string]string{
+			"StackName": "redeployed", "ChangeSetName": "cs-1",
+		}},
+	} {
+		w := httptest.NewRecorder()
+		h.dispatch(w, tracedRequest(cfnPost(call.action, call.params), rec))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200; body: %s", call.action, w.Code, w.Body.String())
+		}
+	}
+
+	// Then: provisioning the queue is recorded as a hop on the originating
+	// request's trace
+	hops := rec.Entry().Hops
+	if len(hops) != 1 {
+		t.Fatalf("hops = %d (%v), want 1", len(hops), hopTargets(hops))
+	}
+	if hops[0].Service != "sqs" || hops[0].Operation != "CreateQueue" {
+		t.Errorf("hop = %s/%s, want sqs/CreateQueue", hops[0].Service, hops[0].Operation)
+	}
+	if hops[0].CallerService != "cloudformation" {
+		t.Errorf("hop CallerService = %q, want cloudformation", hops[0].CallerService)
+	}
+}
+
 // ---- RollbackStack ---------------------------------------------------------
 
 func TestRollbackStack_recordsHopsForTheResourcesItRetires(t *testing.T) {
