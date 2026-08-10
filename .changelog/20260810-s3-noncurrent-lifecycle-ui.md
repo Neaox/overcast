@@ -1,0 +1,2 @@
+* [web/s3] lifecycle rules that act on version history are no longer drawn as rules with no actions. NoncurrentVersionExpiration, NoncurrentVersionTransition and ExpiredObjectDeleteMarker were dropped on the way into the console, so a versioned bucket whose entire retention policy is one of them showed a rule that appeared to do nothing
++ [web/s3] an expiry hint on noncurrent version rows, counted the way the sweeper counts it — from the moment the version's successor was written, and skipping the newest versions a rule's `NewerNoncurrentVersions` retains

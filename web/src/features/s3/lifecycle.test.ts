@@ -6,6 +6,7 @@ import {
   describeLifecycleFilter,
   describeLifecycleActions,
   rulePrefix,
+  withNoncurrentPositions,
 } from "./lifecycle"
 import type { S3LifecycleRule } from "@/types"
 
@@ -15,6 +16,7 @@ function rule(partial: Partial<S3LifecycleRule>): S3LifecycleRule {
     status: "Enabled",
     filter: {},
     transitions: [],
+    noncurrentVersionTransitions: [],
     ...partial,
   }
 }
@@ -131,6 +133,91 @@ describe("estimateExpiry", () => {
   })
 })
 
+describe("estimateExpiry > noncurrent versions", () => {
+  /** The version itself is old; it only stopped being current on 1 March. */
+  const version = {
+    key: "logs/app.log",
+    size: 100,
+    lastModified: "2026-01-01T00:00:00Z",
+    noncurrent: { since: "2026-03-01T15:04:05Z", rank: 0 },
+  }
+
+  it("counts the days from when the version stopped being current", () => {
+    const got = estimateExpiry(
+      [rule({ noncurrentVersionExpiration: { noncurrentDays: 1 } })],
+      version,
+    )
+    expect(got.kind === "expires" && got.date.toISOString()).toBe("2026-03-03T00:00:00.000Z")
+  })
+
+  it("is not expired by the rule's current-version Expiration action", () => {
+    // That action adds a delete marker to the current version; it never
+    // touches the history underneath it.
+    expect(estimateExpiry([rule({ expirationDays: 1 })], version)).toEqual({ kind: "none" })
+  })
+
+  it("keeps the newest versions a rule asks it to retain", () => {
+    const retainThree = rule({
+      noncurrentVersionExpiration: { noncurrentDays: 1, newerNoncurrentVersions: 3 },
+    })
+    expect(
+      estimateExpiry([retainThree], { ...version, noncurrent: { ...version.noncurrent, rank: 2 } }),
+    ).toEqual({
+      kind: "none",
+    })
+    expect(
+      estimateExpiry([retainThree], { ...version, noncurrent: { ...version.noncurrent, rank: 3 } })
+        .kind,
+    ).toBe("expires")
+  })
+
+  it("does not report a retained version as an unknowable tag rule", () => {
+    const got = estimateExpiry(
+      [
+        rule({
+          filter: { tag: { key: "temp", value: "yes" } },
+          noncurrentVersionExpiration: { noncurrentDays: 1, newerNoncurrentVersions: 3 },
+        }),
+      ],
+      version,
+    )
+    expect(got).toEqual({ kind: "none" })
+  })
+
+  it("leaves a current version alone when only noncurrent actions are set", () => {
+    expect(
+      estimateExpiry([rule({ noncurrentVersionExpiration: { noncurrentDays: 1 } })], object),
+    ).toEqual({ kind: "none" })
+  })
+})
+
+describe("withNoncurrentPositions", () => {
+  const listing = [
+    { key: "a.txt", lastModified: "2026-03-03T00:00:00Z" },
+    { key: "a.txt", lastModified: "2026-03-02T00:00:00Z" },
+    { key: "a.txt", lastModified: "2026-03-01T00:00:00Z" },
+    { key: "b.txt", lastModified: "2026-02-01T00:00:00Z" },
+  ]
+
+  it("leaves the current version of each key without a position", () => {
+    const positions = withNoncurrentPositions(listing).map((v) => v.noncurrent)
+    expect(positions[0]).toBeUndefined()
+    expect(positions[3]).toBeUndefined()
+  })
+
+  it("dates each noncurrent version from its successor rather than itself", () => {
+    const positions = withNoncurrentPositions(listing)
+    expect(positions[1].noncurrent?.since).toBe("2026-03-03T00:00:00Z")
+    expect(positions[2].noncurrent?.since).toBe("2026-03-02T00:00:00Z")
+  })
+
+  it("ranks the noncurrent versions of a key from the newest", () => {
+    const positions = withNoncurrentPositions(listing)
+    expect(positions[1].noncurrent?.rank).toBe(0)
+    expect(positions[2].noncurrent?.rank).toBe(1)
+  })
+})
+
 describe("formatExpiryDistance", () => {
   const now = new Date("2026-03-01T00:00:00Z")
 
@@ -188,6 +275,38 @@ describe("describeLifecycleActions", () => {
 
   it("returns nothing for a rule with no actions", () => {
     expect(describeLifecycleActions(rule({}))).toEqual([])
+  })
+
+  it("describes a rule whose only action is on the version history", () => {
+    // A versioned bucket's whole retention policy can be this one action, and
+    // a rule showing no actions at all reads as a rule that does nothing.
+    expect(
+      describeLifecycleActions(rule({ noncurrentVersionExpiration: { noncurrentDays: 30 } })),
+    ).toEqual(["Expire noncurrent versions after 30 days"])
+  })
+
+  it("says how many noncurrent versions are retained regardless of age", () => {
+    expect(
+      describeLifecycleActions(
+        rule({ noncurrentVersionExpiration: { noncurrentDays: 30, newerNoncurrentVersions: 3 } }),
+      ),
+    ).toEqual(["Expire noncurrent versions after 30 days, keeping the 3 newest"])
+  })
+
+  it("describes a noncurrent version transition", () => {
+    expect(
+      describeLifecycleActions(
+        rule({
+          noncurrentVersionTransitions: [{ noncurrentDays: 10, storageClass: "GLACIER" }],
+        }),
+      ),
+    ).toEqual(["Mark noncurrent versions GLACIER after 10 days"])
+  })
+
+  it("describes the delete-marker cleanup action, which carries no age", () => {
+    expect(describeLifecycleActions(rule({ expiredObjectDeleteMarker: true }))).toEqual([
+      "Remove expired delete markers",
+    ])
   })
 })
 

@@ -70,7 +70,12 @@ import { s3CopyFormats } from "@/features/s3/copy-formats"
 import { useToast } from "@/components/ui/toast"
 import { RawStateLink } from "@/features/debug/raw-state-link"
 import { formatBytes, formatDate, formatStorageClass } from "@/lib/format"
-import { estimateExpiry, formatExpiryDistance } from "@/features/s3/lifecycle"
+import {
+  estimateExpiry,
+  formatExpiryDistance,
+  type NoncurrentPosition,
+  type LifecycleCandidate,
+} from "@/features/s3/lifecycle"
 import { BucketTabs } from "./bucket-tabs"
 import { cn } from "@/lib/utils"
 import { ObjectPreviewDialog } from "./object-preview-dialog"
@@ -595,6 +600,8 @@ export function BucketDetail() {
                           name={item.name}
                           nameSlices={highlightSlices(item.name, term, nameOffset)}
                           version={item.version}
+                          noncurrent={item.noncurrent}
+                          rules={lifecycleRules}
                           onInspect={() => setMetaTarget(item.version.key)}
                           onDelete={() => setDeleteVersionTarget(item.version)}
                         />
@@ -847,12 +854,19 @@ export function BucketDetail() {
  * distinction a tombstone and a key that was never there look identical, which
  * is exactly the question the version view exists to answer. Noncurrent
  * versions are dimmed so the current one stands out in a long history.
+ *
+ * The expiry hint is shown for noncurrent versions only. A current version in a
+ * versioned bucket is not deleted when its Expiration rule fires — it gets a
+ * delete marker — so an "expires" badge there would say the wrong thing; the
+ * object list, which is the view of current versions, carries that hint already.
  */
 function VersionRow({
   bucket,
   name,
   nameSlices,
   version,
+  noncurrent,
+  rules,
   onInspect,
   onDelete,
 }: {
@@ -861,6 +875,8 @@ function VersionRow({
   name: string
   nameSlices: NameSlice[]
   version: S3ObjectVersion
+  noncurrent?: NoncurrentPosition
+  rules: S3LifecycleRule[]
   onInspect: () => void
   onDelete: () => void
 }) {
@@ -911,6 +927,17 @@ function VersionRow({
           {!version.isDeleteMarker && version.storageClass !== "STANDARD" && (
             <Badge variant="default">{formatStorageClass(version.storageClass)}</Badge>
           )}
+          {noncurrent && (
+            <ExpiryBadge
+              rules={rules}
+              object={{
+                key: version.key,
+                size: version.size,
+                lastModified: version.lastModified,
+                noncurrent,
+              }}
+            />
+          )}
         </div>
       </TableCell>
       <TableCell className="px-1">
@@ -955,21 +982,20 @@ function VersionRow({
  * fields. A listing carries no object tags, so a tag-filtered rule cannot be
  * decided here and says so rather than guessing; the object inspector shows
  * the server's authoritative x-amz-expiration instead.
+ *
+ * A candidate carrying a `noncurrent` position is judged against the rules'
+ * NoncurrentVersionExpiration action instead, on the clock that started when
+ * its successor was written.
  */
-function ExpiryBadge({
-  rules,
-  object,
-}: {
-  rules: S3LifecycleRule[]
-  object: { key: string; size: number; lastModified: string }
-}) {
+function ExpiryBadge({ rules, object }: { rules: S3LifecycleRule[]; object: LifecycleCandidate }) {
   if (rules.length === 0) return null
   const estimate = estimateExpiry(rules, object)
+  const noun = object.noncurrent ? "version" : "object"
 
   if (estimate.kind === "none") return null
   if (estimate.kind === "unknown") {
     return (
-      <Badge variant="default" title="A tag-filtered lifecycle rule may expire this object">
+      <Badge variant="default" title={`A tag-filtered lifecycle rule may expire this ${noun}`}>
         <Timer className="mr-1 h-3 w-3" />
         tag rule
       </Badge>
@@ -978,7 +1004,7 @@ function ExpiryBadge({
   return (
     <Badge
       variant="warning"
-      title={`Lifecycle rule "${estimate.ruleId}" expires this object at ${estimate.date.toUTCString()}`}
+      title={`Lifecycle rule "${estimate.ruleId}" expires this ${noun} at ${estimate.date.toUTCString()}`}
     >
       <Timer className="mr-1 h-3 w-3" />
       expires {formatExpiryDistance(estimate.date)}

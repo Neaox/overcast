@@ -94,6 +94,25 @@ export interface S3LifecycleTransition {
   storageClass: string
 }
 
+/**
+ * Permanently removes versions that have been noncurrent for `noncurrentDays`.
+ *
+ * `newerNoncurrentVersions` is how many newer noncurrent versions must sit
+ * above one before it is eligible, so it reads as "keep this many". A version's
+ * clock starts when its successor was written, not when it was written itself.
+ */
+export interface S3LifecycleNoncurrentExpiration {
+  noncurrentDays: number
+  newerNoncurrentVersions?: number
+}
+
+/** Marks noncurrent versions with a storage class, on the same clock. */
+export interface S3LifecycleNoncurrentTransition {
+  noncurrentDays: number
+  newerNoncurrentVersions?: number
+  storageClass: string
+}
+
 export interface S3LifecycleRule {
   id: string
   status: "Enabled" | "Disabled"
@@ -102,7 +121,21 @@ export interface S3LifecycleRule {
   filter?: S3LifecycleFilter
   expirationDays?: number
   expirationDate?: string
+  /**
+   * The third, mutually exclusive form of Expiration: it removes a delete
+   * marker that is the only thing left under its key, rather than expiring
+   * anything by age. Carries no days or date, which is why it needs its own
+   * field to be visible at all.
+   */
+  expiredObjectDeleteMarker?: boolean
   transitions: S3LifecycleTransition[]
+  /**
+   * Version-history actions. They are the whole retention policy of many
+   * versioned buckets, so a rule carrying only these is not a rule with no
+   * actions.
+   */
+  noncurrentVersionExpiration?: S3LifecycleNoncurrentExpiration
+  noncurrentVersionTransitions: S3LifecycleNoncurrentTransition[]
   abortIncompleteMultipartUploadDays?: number
 }
 

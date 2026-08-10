@@ -67,7 +67,15 @@ function toLifecycleFilter(filter?: LifecycleRuleFilter): S3LifecycleFilter | un
   }
 }
 
-function toLifecycleRule(rule: LifecycleRule, index: number): S3LifecycleRule {
+/**
+ * Maps one wire lifecycle rule to the shape the UI renders.
+ *
+ * Every action AWS can put on a rule has to survive this, including the
+ * version-history ones: a versioned bucket's whole retention policy is often
+ * NoncurrentVersionExpiration alone, and a rule that arrives here with its
+ * actions dropped is drawn as a rule that does nothing.
+ */
+export function toLifecycleRule(rule: LifecycleRule, index: number): S3LifecycleRule {
   return {
     id: rule.ID ?? `rule-${index + 1}`,
     status: rule.Status === "Disabled" ? "Disabled" : "Enabled",
@@ -75,11 +83,28 @@ function toLifecycleRule(rule: LifecycleRule, index: number): S3LifecycleRule {
     filter: toLifecycleFilter(rule.Filter),
     expirationDays: rule.Expiration?.Days,
     expirationDate: rule.Expiration?.Date?.toISOString(),
+    expiredObjectDeleteMarker: rule.Expiration?.ExpiredObjectDeleteMarker,
     transitions: (rule.Transitions ?? []).map((t) => ({
       days: t.Days,
       date: t.Date?.toISOString(),
       storageClass: t.StorageClass ?? "",
     })),
+    // NoncurrentDays is the one field the action cannot do without, so a
+    // response missing it is dropped rather than shown as "after undefined".
+    noncurrentVersionExpiration:
+      rule.NoncurrentVersionExpiration?.NoncurrentDays !== undefined
+        ? {
+            noncurrentDays: rule.NoncurrentVersionExpiration.NoncurrentDays,
+            newerNoncurrentVersions: rule.NoncurrentVersionExpiration.NewerNoncurrentVersions,
+          }
+        : undefined,
+    noncurrentVersionTransitions: (rule.NoncurrentVersionTransitions ?? [])
+      .filter((t) => t.NoncurrentDays !== undefined)
+      .map((t) => ({
+        noncurrentDays: t.NoncurrentDays as number,
+        newerNoncurrentVersions: t.NewerNoncurrentVersions,
+        storageClass: t.StorageClass ?? "",
+      })),
     abortIncompleteMultipartUploadDays: rule.AbortIncompleteMultipartUpload?.DaysAfterInitiation,
   }
 }

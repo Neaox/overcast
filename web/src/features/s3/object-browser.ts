@@ -15,6 +15,7 @@
  */
 
 import type { S3Object, S3ObjectVersion, S3Prefix } from "@/types"
+import { withNoncurrentPositions, type NoncurrentPosition } from "@/features/s3/lifecycle"
 
 // ─── Sort ──────────────────────────────────────────────────────────────────
 
@@ -139,6 +140,13 @@ export interface VersionRow {
   type: "version"
   name: string
   version: S3ObjectVersion
+  /**
+   * Where the version sits in its key's history, for noncurrent lifecycle
+   * actions. Absent for a current version. Read off the whole listing before
+   * any filtering or sorting: a row the term hides is still the version that
+   * displaced the one below it.
+   */
+  noncurrent?: NoncurrentPosition
 }
 
 export type BrowserRow = PrefixRow | ObjectRow | VersionRow
@@ -192,9 +200,13 @@ export function buildRows({
 
   const entries: (ObjectRow | VersionRow)[] = []
   if (versions) {
-    for (const v of versions) {
-      const name = relative(v.key)
-      if (matchesTerm(name, term, from)) entries.push({ type: "version", name, version: v })
+    // Positions come from the listing as S3 ordered it, before the term
+    // removes rows and before the sort moves them.
+    for (const { version, noncurrent } of withNoncurrentPositions(versions)) {
+      const name = relative(version.key)
+      if (matchesTerm(name, term, from)) {
+        entries.push({ type: "version", name, version, noncurrent })
+      }
     }
   } else {
     for (const o of objects ?? []) {
