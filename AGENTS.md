@@ -30,6 +30,8 @@ opencode and Claude Code both discover them without prompting.
 - `bug-fix`: Use for diagnosing and fixing bugs with reproducing tests and full verification.
 - `code-review`: Use for PR/code reviews, AWS parity checks, regression risk, performance, leaks, DRY/SOLID, and maintainability.
 - `commit`: Use for clean commit creation, staging review, and commit-message hygiene.
+- `documentation-audit`: Use for keeping documentation true — verifying counts, configuration references, behavioural claims and plan-doc statuses against the code, and reporting what has drifted.
+- `documentation-writing`: Use for writing readable documentation — what the reader can be assumed to know, how to structure and pace it, which claims you can make, and how to explain a mechanism or a limitation.
 - `git-worktrees`: Use for every mutating task so each agent works in an isolated, task-owned worktree.
 - `github-issue-lifecycle`: Use for creating, triaging, updating, linking, and closing GitHub issues.
 - `issue-coordination`: Use before putting more than one writer on the repo — selecting a batch of issues and deciding whether the pieces run in parallel, need a scope fence, or must be stacked.
