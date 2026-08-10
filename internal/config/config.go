@@ -1000,15 +1000,33 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_SIGV4_VALIDATE            false
 //	OVERCAST_ENFORCE_IAM              false
 //	OVERCAST_ENFORCE_APIGATEWAY_THROTTLE false
+//	OVERCAST_PROTOCOL_STRICT           false   (true = 415 on a protocol a service does not
+//	                                           declare, instead of attempting the decode anyway)
 //	OVERCAST_CFN_SYNC_WAIT_MS          1000
+//	OVERCAST_STEPFUNCTIONS_EXECUTION_TIMEOUT 15m (runaway guard on one execution, not a request
+//	                                           timeout; values below 1s are raised to 1s)
 //	OVERCAST_LOG_LEVEL                 info    (trace | debug | info | warn | error)
 //	OVERCAST_SHUTDOWN_TIMEOUT          5s
-//	OVERCAST_LAMBDA_NODE_BIN           node
 //	OVERCAST_LAMBDA_HOT_RELOAD         false
 //	OVERCAST_DEBUG                     false
+//	OVERCAST_DEBUG_TRACE_BUFFER        1000    (request-trace ring buffer; only read when
+//	                                           OVERCAST_DEBUG is on)
 //	OVERCAST_TLS                       ""    (auto = mint from the local overcast CA; serves API + web UI over HTTPS/h2)
 //	OVERCAST_TLS_CERT                  ""
 //	OVERCAST_TLS_KEY                   ""
+//	OVERCAST_DNS                       true    (resolver serving the split-horizon names to the
+//	                                           containers Overcast starts; failing to bind is not fatal)
+//	OVERCAST_DNS_PORT                  53      (Docker's --dns cannot express a port, so anything
+//	                                           other than 53 is only useful for tests)
+//	OVERCAST_EC2_VPC_STRATEGY          shared  (shared | strict | remapped; strict and remapped fall
+//	                                           back to shared with a startup warning, netns is rejected)
+//	OVERCAST_ECR_REGISTRY_PORT         4510    (host port the shared registry container asks for;
+//	                                           0, or a port already taken, falls back to ephemeral)
+//	LAMBDA_DOCKER_SOCKET               (platform default) /var/run/docker.sock on Linux/macOS,
+//	                                           npipe:////./pipe/docker_engine on Windows. Every
+//	                                           per-service socket override below must address the
+//	                                           same daemon.
+//	LAMBDA_RUNTIME_API_PORT            9001    (port containers call back on for the Runtime API)
 //	LAMBDA_DOCKER_MAX_CONCURRENT_STARTS (auto) derived from Docker host CPUs: clamp(NCPU/2, 2, 8);
 //	                                           4 when Docker /info is unavailable
 //	LAMBDA_MAX_INSTANCES               (auto)  derived from Docker host memory:
@@ -1017,9 +1035,20 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	LAMBDA_MAX_MEMORY_MB               (auto)  aggregate Σ MemorySize budget for live containers, in MB;
 //	                                           derived as MemTotal*0.65; unlimited when /info is unavailable
 //	LAMBDA_MAX_WARM_INSTANCES          10
+//	LAMBDA_SEED_RUNTIME_IMAGES         false (true = pre-pull every managed runtime image at
+//	                                           startup, instead of lazily on first use)
 //	LAMBDA_INIT_TIMEOUT_SECONDS       10
 //	LAMBDA_KEEP_CONTAINERS             false (true = keep stopped containers after expiry/delete)
+//	LAMBDA_TAR_CACHE_MB                256   (in-memory cache of pre-built cold-start code and
+//	                                           layer tars; 0 disables it)
+//	LAMBDA_PROACTIVE_INIT              false (true = pre-initialize one execution environment once
+//	                                           a function's configuration settles)
 //	LAMBDA_FETCH_REMOTE_LAYERS         false (true = download missing layers from real AWS)
+//	LAMBDA_LAYER_CACHE_DIR             <OVERCAST_DATA_DIR>/layers (where layer zips are looked up
+//	                                           and cached, named {sha256(arn)}.zip)
+//	LAMBDA_REMOTE_AWS_ACCESS_KEY_ID    ""    (credentials for LAMBDA_FETCH_REMOTE_LAYERS)
+//	LAMBDA_REMOTE_AWS_SECRET_ACCESS_KEY ""
+//	LAMBDA_REMOTE_AWS_SESSION_TOKEN    ""    (optional)
 //	OVERCAST_NETWORK                   overcast (the data plane every container Overcast starts
 //	                                           shares, unless the resource names a VPC, in which
 //	                                           case it joins that VPC's network. The control plane
