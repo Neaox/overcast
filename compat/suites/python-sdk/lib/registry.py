@@ -105,6 +105,10 @@ def build_groups_from_registry(
         for rt in _topo_sort(rg["tests"]):
             name: str = rt["name"]
             registry_op = rt.get("op")  # str, None (absent), or null (JSON null)
+            # Carried onto every TestCase below, skips included: the harness
+            # gate reads it to cascade a failed prerequisite into a skip, and a
+            # test skipped for its own reason still blocks its dependents.
+            depends: list[str] = rt.get("depends") or []
 
             # op: JSON null → False (suppress doc link)
             #     string     → override
@@ -118,7 +122,7 @@ def build_groups_from_registry(
 
             # Static registry skip
             if rt.get("skip"):
-                tests.append(TestCase(name=name, fn=_noop, op=op, skip=rt["skip"]))
+                tests.append(TestCase(name=name, fn=_noop, op=op, skip=rt["skip"], depends=depends))
                 continue
 
             # Capability gate
@@ -126,7 +130,7 @@ def build_groups_from_registry(
             missing = [c for c in required_caps if c not in caps]
             if missing:
                 reason = f"requires {', '.join(missing)} (not available in this environment)"
-                tests.append(TestCase(name=name, fn=_noop, op=op, skip=reason))
+                tests.append(TestCase(name=name, fn=_noop, op=op, skip=reason, depends=depends))
                 continue
 
             # Impl lookup — look up by group-qualified key ("groupName:testName")
@@ -141,7 +145,7 @@ def build_groups_from_registry(
             has_impl = qualified_key in impls or (bare_usable and name in impls)
             if not has_impl:
                 tests.append(TestCase(
-                    name=name, fn=_noop, op=op,
+                    name=name, fn=_noop, op=op, depends=depends,
                     skip=f"not yet implemented in {suite} test suite",
                 ))
                 continue
@@ -150,12 +154,12 @@ def build_groups_from_registry(
             if fn is None:
                 # Explicitly registered as None → SDK does not expose this.
                 tests.append(TestCase(
-                    name=name, fn=_noop, op=op,
+                    name=name, fn=_noop, op=op, depends=depends,
                     na="not yet supported by the AWS Python SDK (boto3)",
                 ))
                 continue
 
-            tests.append(TestCase(name=name, fn=fn, op=op))
+            tests.append(TestCase(name=name, fn=fn, op=op, depends=depends))
 
         group = TestGroup(
             suite=suite,

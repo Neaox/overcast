@@ -32,6 +32,9 @@ type TestCase struct {
 	// Use this when the AWS SDK client does not yet expose this operation.
 	// NA results are excluded from pass-rate calculations.
 	NA string
+	// Depends names tests in the SAME group that must have passed before this
+	// one runs. RunGroup skips the test when any of them failed or was skipped.
+	Depends []string
 }
 
 // TestGroup is a collection of related tests with optional setup/teardown.
@@ -177,6 +180,12 @@ type GroupResult struct {
 func RunGroup(ctx context.Context, group TestGroup, t *TestContext) GroupResult {
 	var res GroupResult
 
+	// Tests that did not pass, so a test declaring one of them as a dependency
+	// is skipped rather than run against a prerequisite that never happened.
+	// "na" and cancelled are deliberately absent: neither says the resource a
+	// dependent needs is missing.
+	failedOrSkipped := map[string]bool{}
+
 	// Setup phase
 	if group.Setup != nil {
 		if err := group.Setup(ctx, t); err != nil {
@@ -230,7 +239,36 @@ func RunGroup(ctx context.Context, group TestGroup, t *TestContext) GroupResult 
 				Error:      tc.Skip,
 			})
 			res.Skipped++
+			failedOrSkipped[tc.Name] = true
 			continue
+		}
+
+		// Dependency gate — skip if any declared dependency failed or was skipped.
+		// Without it a single broken prerequisite reports as a cascade of
+		// unrelated failures, and "dependency failed: X" is what tells a reader
+		// the cause is elsewhere in the group.
+		if len(tc.Depends) > 0 {
+			var failedDeps []string
+			for _, dep := range tc.Depends {
+				if failedOrSkipped[dep] {
+					failedDeps = append(failedDeps, dep)
+				}
+			}
+			if len(failedDeps) > 0 {
+				emit(testResultEvent{
+					Event:      "test_result",
+					Suite:      group.Suite,
+					Service:    group.Service,
+					Group:      group.Name,
+					Test:       tc.Name,
+					Status:     "skip",
+					DurationMs: 0,
+					Error:      fmt.Sprintf("dependency failed: %s", strings.Join(failedDeps, ", ")),
+				})
+				res.Skipped++
+				failedOrSkipped[tc.Name] = true
+				continue
+			}
 		}
 
 		start := time.Now()
@@ -254,10 +292,12 @@ func RunGroup(ctx context.Context, group TestGroup, t *TestContext) GroupResult 
 			ev.Status = "unimplemented"
 			ev.Error = err.Error()
 			res.Unimplemented++
+			failedOrSkipped[tc.Name] = true
 		default:
 			ev.Status = "fail"
 			ev.Error = err.Error()
 			res.Failed++
+			failedOrSkipped[tc.Name] = true
 		}
 
 		emit(ev)

@@ -145,7 +145,7 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 			}
 
 			if rt.Skip != "" {
-				tests = append(tests, harness.TestCase{Name: rt.Name, Fn: _noop, Op: op, Skip: rt.Skip})
+				tests = append(tests, harness.TestCase{Name: rt.Name, Fn: _noop, Op: op, Skip: rt.Skip, Depends: rt.Depends})
 				continue
 			}
 
@@ -158,7 +158,7 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 			}
 			if len(missing) > 0 {
 				reason := fmt.Sprintf("requires %v (not available in this environment)", missing)
-				tests = append(tests, harness.TestCase{Name: rt.Name, Fn: _noop, Op: op, Skip: reason})
+				tests = append(tests, harness.TestCase{Name: rt.Name, Fn: _noop, Op: op, Skip: reason, Depends: rt.Depends})
 				continue
 			}
 
@@ -177,7 +177,8 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 			if !ok {
 				tests = append(tests, harness.TestCase{
 					Name: rt.Name, Fn: _noop, Op: op,
-					Skip: fmt.Sprintf("not yet implemented in %s test suite", opts.Suite),
+					Skip:    fmt.Sprintf("not yet implemented in %s test suite", opts.Suite),
+					Depends: rt.Depends,
 				})
 				continue
 			}
@@ -186,12 +187,13 @@ func BuildGroups(reg *Registry, impls ImplMap, opts BuildGroupsOptions) []harnes
 				// yet expose this operation.  Emit as N/A, not as a suite gap.
 				tests = append(tests, harness.TestCase{
 					Name: rt.Name, Fn: _noop, Op: op,
-					NA: "not yet supported by the AWS Go SDK v2",
+					NA:      "not yet supported by the AWS Go SDK v2",
+					Depends: rt.Depends,
 				})
 				continue
 			}
 
-			tests = append(tests, harness.TestCase{Name: rt.Name, Fn: fn, Op: op})
+			tests = append(tests, harness.TestCase{Name: rt.Name, Fn: fn, Op: op, Depends: rt.Depends})
 		}
 
 		g := harness.TestGroup{
