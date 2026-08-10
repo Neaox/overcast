@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -31,9 +33,15 @@ const (
 	maxAcceptBackoff = 500 * time.Millisecond
 
 	// ephemeralBindAttempts bounds the search for a port free on both UDP and
-	// TCP when the caller asked for any port. Collisions are rare, so a handful
-	// of tries is plenty and failing loudly beats looping.
-	ephemeralBindAttempts = 10
+	// TCP when the caller asked for any port. Every attempt after the first
+	// draws independently, so the odds compound: even where a fifth of the
+	// dynamic range is unusable, twenty draws miss it about once in 10^14.
+	ephemeralBindAttempts = 20
+
+	// The IANA dynamic range, which is also Windows' default. Candidates are
+	// drawn from it once the kernel's own choice has been refused.
+	firstDynamicPort = 49152
+	dynamicPortCount = 65536 - firstDynamicPort
 )
 
 // Server answers A queries for a Zone and relays everything else to a
@@ -52,6 +60,11 @@ type Server struct {
 	fwd  Forwarder
 
 	locator Locator
+
+	// listenTCP is net.Listen, replaced only by tests so the ephemeral-port
+	// search can be driven without depending on which ports this machine
+	// happens to have free.
+	listenTCP func(network, address string) (net.Listener, error)
 
 	mu  sync.Mutex
 	udp *net.UDPConn
@@ -103,7 +116,7 @@ func peerAddr(addr net.Addr) netip.Addr {
 // rather than answered — never forged, because a client caches a synthetic
 // NXDOMAIN as proof the name does not exist.
 func NewServer(addr string, zone *Zone, fwd Forwarder) *Server {
-	return &Server{addr: addr, zone: zone, fwd: fwd, locator: &KernelLocator{}}
+	return &Server{addr: addr, zone: zone, fwd: fwd, locator: &KernelLocator{}, listenTCP: net.Listen}
 }
 
 // WithLocator replaces how the server picks the address it answers with. The
@@ -122,33 +135,67 @@ func (s *Server) Listen() error {
 	if err != nil {
 		return fmt.Errorf("dns: resolve %s: %w", s.addr, err)
 	}
-	// The same port is needed on both protocols. When the caller named one that
-	// is all there is to it, but for an ephemeral port the two must be acquired
-	// together — UDP and TCP port spaces are independent, so a port the kernel
-	// hands out for UDP may already be taken for TCP. Retry instead of failing,
-	// which is what makes ":0" dependable.
-	attempts := 1
-	if udpAddr.Port == 0 {
-		attempts = ephemeralBindAttempts
+	if udpAddr.Port != 0 {
+		return s.listenOn(udpAddr)
 	}
+
+	// One port is needed on both protocols and the two port spaces are
+	// independent, so an ephemeral port is taken on one side and matched on the
+	// other. The first attempt lets the kernel choose, which is the polite path
+	// and the only one taken on a machine with nothing reserved.
+	//
+	// After that it probes named candidates instead, because on Windows the
+	// kernel's choice is the problem. Hyper-V and WinNAT reserve contiguous
+	// blocks of the dynamic range, 100-400 ports wide and different for each
+	// protocol (`netsh interface ipv4 show excludedportrange protocol=tcp`),
+	// and a bind inside one fails with WSAEACCES rather than "address in use".
+	// The allocator hands out ports in sequence, so once it is inside a block
+	// every consecutive retry is inside it too — a ten-attempt search failed on
+	// 127.0.0.1:63774, inside the reserved 63683-63782, and widening it to a
+	// hundred consecutive ports still failed inside the 400-wide 62652-63051.
+	// Consecutive ports share a block; independently drawn ones do not, which
+	// is what makes the retry budget mean something.
 	var lastErr error
-	for range attempts {
-		udp, err := net.ListenUDP("udp", udpAddr)
-		if err != nil {
-			return fmt.Errorf("dns: listen udp %s: %w", s.addr, err)
+	for attempt := range ephemeralBindAttempts {
+		port := 0
+		if attempt > 0 {
+			port = firstDynamicPort + rand.IntN(dynamicPortCount)
 		}
-		bound := udp.LocalAddr().(*net.UDPAddr)
-		tcp, err := net.Listen("tcp", net.JoinHostPort(bound.IP.String(), fmt.Sprint(bound.Port)))
+		tcp, err := s.listenTCP("tcp", net.JoinHostPort(udpAddr.IP.String(), strconv.Itoa(port)))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		bound := tcp.Addr().(*net.TCPAddr)
+		udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: udpAddr.IP, Port: bound.Port, Zone: udpAddr.Zone})
 		if err == nil {
 			s.mu.Lock()
 			s.udp, s.tcp = udp, tcp
 			s.mu.Unlock()
 			return nil
 		}
-		_ = udp.Close()
+		_ = tcp.Close()
 		lastErr = err
 	}
-	return fmt.Errorf("dns: listen tcp %s: %w", s.addr, lastErr)
+	return fmt.Errorf("dns: listen %s: no port free on both protocols in %d attempts: %w", s.addr, ephemeralBindAttempts, lastErr)
+}
+
+// listenOn binds both sockets on a port the caller named, where there is
+// nothing to search for and a failure is the caller's to hear about.
+func (s *Server) listenOn(udpAddr *net.UDPAddr) error {
+	udp, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return fmt.Errorf("dns: listen udp %s: %w", s.addr, err)
+	}
+	tcp, err := s.listenTCP("tcp", net.JoinHostPort(udpAddr.IP.String(), strconv.Itoa(udpAddr.Port)))
+	if err != nil {
+		_ = udp.Close()
+		return fmt.Errorf("dns: listen tcp %s: %w", s.addr, err)
+	}
+	s.mu.Lock()
+	s.udp, s.tcp = udp, tcp
+	s.mu.Unlock()
+	return nil
 }
 
 // UDPAddr and TCPAddr report the bound addresses, or "" before Listen.
