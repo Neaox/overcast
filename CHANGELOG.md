@@ -96,6 +96,10 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web/s3] a Versioning panel on the bucket Configuration tab, which is the first way to enable or suspend versioning from the console rather than through the API. The state was already reported there; only the control was missing. Suspending says what it actually does — new writes are stored with version id `null`, and every version already stored is kept, which is not the same as turning versioning off
 
+- [ec2] each region seeds a default VPC on first use, with a default subnet per availability zone, an attached internet gateway, a main route table carrying the default route, and a default security group — `DescribeVpcs --filters Name=isDefault,Values=true` and CDK's `Vpc.fromLookup(isDefault: true)` previously found nothing. Its backing network is the shared data plane, so "no VPC" and "the default VPC" are the same place; `DeleteVpc` on it removes the record and leaves the network, and an internet-gateway change on it is ignored rather than recreating the network under every running container
+
+- [eks] a live-mode cluster's API server carries DNS aliases on the shared data plane. The endpoint `DescribeCluster` returns is still the published host port, so this is groundwork rather than a complete path
+
 ### Changed
 
 - **BREAKING** [docker] `overcast-slim` has no SQLite, so a volume mounted at `/data` no longer gives it persistent storage: `auto` resolves to memory, and `hybrid` and `persistent` refuse to start. This is what the image was always documented to do — it only appeared to persist because the wrong binary was shipped
@@ -107,6 +111,11 @@ can be applied mechanically rather than reconstructed from memory.
 
 - **BREAKING** [scheduler] `UpdateSchedule` replaces the whole schedule, as AWS does. An optional member the caller leaves out of the request — `Description`, `ScheduleExpressionTimezone`, `State`, `StartDate`, `EndDate`, or anything inside `Target` — ends up unset, where it used to keep its stored value; the schedule keeps its name, group, ARN and `CreationDate`
   migration: send the whole schedule, not just the parts you are changing — read it with `GetSchedule`, change what you mean to change, and send the result back
+
+- **BREAKING** [config] `LAMBDA_NETWORK`, `ECS_NETWORK`, `RDS_NETWORK`, `ELASTICACHE_NETWORK`, `MSK_NETWORK`, `EKS_NETWORK` and `EFS_NETWORK` are replaced by a single `OVERCAST_NETWORK` (default `overcast`). Every container Overcast starts now shares one data plane instead of one network per emulator service, which is what made cross-service reachability a per-service bug; the seven per-service networks are removed at startup once nothing is attached to them
+  migration: unset the old variables. If you set one to a custom value, set `OVERCAST_NETWORK` to it instead; if you joined a compose service to `overcast_lambda` or another per-service network, join `overcast` instead.
+
+- [lambda/ecs] containers are created on a control plane that carries the Runtime API and the emulator endpoint, separately from the data plane they reach other resources on — the split a VPC needs in order to restrict one without severing the other
 
 ### Fixed
 
@@ -188,7 +197,17 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [elasticache] the support matrix no longer advertises `DescribeCacheEngineVersions` and `RebootCacheCluster` as supported — both are routed to a NotImplemented stub and always answer 501, so they are marked Unsupported until they are emulated
 
+- [elasticache] a cache node is reachable from an ECS task, and under every hostname its endpoint could have been minted with — previously it was attached only to the Lambda network and registered only the configured name, so an ECS task resolving it reached Overcast on the Redis port and hung rather than failing (#872)
+
 - [ses] `CreateEmailIdentity` is served at `POST /v2/email/identities`, the binding AWS models, so the SDKs and `aws sesv2 create-email-identity` reach it instead of an error. It was registered under `PUT`, which no client sends, leaving the operation — and the inline `Tags` it applies at creation — unreachable. The `PUT` binding is gone; AWS never had one.
+
+- [ec2] `DescribeVpcs` honours `VpcId.N` and the `vpc-id` and `isDefault` filters, and reports `isDefault` from the record instead of always `false` — CDK's VPC lookup treats the response as already filtered and needs exactly one VPC back, so an unfiltered response would break `Vpc.fromLookup` for anyone holding more than one VPC
+
+- [efs] NFS mount-target exports are resolvable by name from sibling containers, not only by container address
+
+- [eks] a live-mode cluster's endpoint aliases use the cluster's own region rather than the configured default, so a cluster created in another region resolves
+
+- [msk] `GetBootstrapBrokers` returns an address the caller can actually dial: a resolvable broker hostname on 9092 for a sibling container, the published port for the host. It previously returned `OVERCAST_HOSTNAME:hostPort` to everyone, which inside any container resolves to Overcast — a process that serves no Kafka
 
 ### Removed
 
