@@ -163,13 +163,14 @@ func TestDeleteStackTyped_recordsHopsForTheResourcesItTearsDown(t *testing.T) {
 
 // ---- ExecuteChangeSet ------------------------------------------------------
 
-// Re-creating a stack that already failed once starts by dropping the previous
-// generation's resource records, and the work that follows is the whole point of
-// the deploy: it must still be dispatched under the originating request's
-// recorder, so the second attempt's hops are traceable exactly like the first's.
+// Re-deploying a stack that already failed once means deleting it first — a
+// create over the failed stack itself is AlreadyExistsException — and the work
+// that follows is the whole point of the deploy: it must still be dispatched
+// under the originating request's recorder, so the second attempt's hops are
+// traceable exactly like the first's.
 func TestExecuteChangeSet_recreateRecordsHopsForTheResourcesItProvisions(t *testing.T) {
-	// Given: a stack left in ROLLBACK_COMPLETE by a create that failed, and a
-	// CREATE change set against it being traced
+	// Given: a stack left in ROLLBACK_COMPLETE by a create that failed, and the
+	// CDK's delete-then-redeploy of it being traced
 	router := &recordingRouter{}
 	h, st := newTracedTestHandler(t, router)
 	seedStack(t, st, "redeployed", StatusRollbackComplete, StackResource{
@@ -181,11 +182,12 @@ func TestExecuteChangeSet_recreateRecordsHopsForTheResourcesItProvisions(t *test
 	rec := newTestRecorder("redeploy-req-1")
 	const templateBody = `{"Resources":{"Queue":{"Type":"AWS::SQS::Queue","Properties":{"QueueName":"orders"}}}}`
 
-	// When: the change set is created and executed
+	// When: the failed stack is deleted, then the change set is created and executed
 	for _, call := range []struct {
 		action string
 		params map[string]string
 	}{
+		{"DeleteStack", map[string]string{"StackName": "redeployed"}},
 		{"CreateChangeSet", map[string]string{
 			"StackName": "redeployed", "ChangeSetName": "cs-1",
 			"ChangeSetType": "CREATE", "TemplateBody": templateBody,

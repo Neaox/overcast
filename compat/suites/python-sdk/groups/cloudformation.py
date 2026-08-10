@@ -119,10 +119,22 @@ def DeleteStack(ctx: TestContext) -> None:
 
 
 def UpdateStack(ctx: TestContext) -> None:
+    """Update the stack, once it has finished being created.
+
+    create_stack is asynchronous — it returns a StackId with the stack still
+    CREATE_IN_PROGRESS — and CloudFormation refuses an update to a stack that is
+    mid-operation, so updating straight after creating is a race the suite would
+    lose against real AWS as readily as against Overcast. The java-sdk suite
+    waits the same way.
+    """
     cfn = _cfn(ctx)
     stack_name = ctx.get("cfn_stack_name")
     if not stack_name:
         raise AssertionError("UpdateStack: no stack from CreateStack")
+    cfn.get_waiter("stack_create_complete").wait(
+        StackName=stack_name,
+        WaiterConfig={"Delay": 1, "MaxAttempts": 60},
+    )
     tpl = json.dumps({
         "AWSTemplateFormatVersion": "2010-09-09",
         "Resources": {

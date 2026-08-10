@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/Neaox/overcast-compat-go-sdk/internal/clients"
 	"github.com/Neaox/overcast-compat-go-sdk/internal/harness"
@@ -145,10 +146,20 @@ func (g *cfnGroup) ListStacks(ctx context.Context, t *harness.TestContext) error
 	return nil
 }
 
+// UpdateStack waits for the create to finish before updating. CreateStack is
+// asynchronous — it returns a StackId with the stack still CREATE_IN_PROGRESS —
+// and CloudFormation refuses an update to a stack that is mid-operation, so
+// updating straight after creating is a race the suite would lose against real
+// AWS as readily as against Overcast. The java-sdk suite waits the same way.
 func (g *cfnGroup) UpdateStack(ctx context.Context, t *harness.TestContext) error {
 	stackName := t.GetString("cfn_stack_name")
 	if stackName == "" {
 		return fmt.Errorf("UpdateStack: no stack from CreateStack")
+	}
+	if err := cloudformation.NewStackCreateCompleteWaiter(g.cl()).Wait(ctx,
+		&cloudformation.DescribeStacksInput{StackName: aws.String(stackName)},
+		60*time.Second); err != nil {
+		return fmt.Errorf("UpdateStack: waiting for %s to finish creating: %w", stackName, err)
 	}
 	tpl, _ := json.Marshal(map[string]interface{}{
 		"AWSTemplateFormatVersion": "2010-09-09",
