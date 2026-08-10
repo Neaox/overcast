@@ -508,12 +508,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	ecsSvc.SetTargetRegistrar(elbv2Svc)
 	ecsSvc.SetSecretResolvers(smSvc, ssmSvc)
 	efsSvc.SetSubnetZoneResolver(ec2Svc)
-	// ECS → ECR: a task definition's image may name this account's ECR
-	// registry — the shape CDK synthesises for a container asset — which is a
-	// real AWS address the bytes are not at. ECR maps it onto the registry it
-	// serves, and supplies that registry's credentials. Wired before the Docker
-	// probe below, which is where the puller that uses it is built.
+	// ECS/Lambda → ECR: a task definition's image, or a PackageType=Image
+	// function's ImageUri, may name this account's ECR registry — the shape CDK
+	// synthesises for a container asset — which is a real AWS address the bytes
+	// are not at. ECR maps it onto the registry it serves, and supplies that
+	// registry's credentials. Wired before the Docker probe below, which is
+	// where the pullers that use it are built.
 	ecsSvc.SetImageResolver(ecrSvc)
+	lambdaSvc.SetImageResolver(ecrSvc)
 	// ECS/RDS → EC2: resolve subnet-backed launches against VPC network state.
 	ecsSvc.SetVPCResolver(ec2Svc)
 	rdsSvc.SetVPCResolver(ec2Svc)

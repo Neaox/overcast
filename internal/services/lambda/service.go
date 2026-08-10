@@ -458,12 +458,13 @@ type Service struct {
 	dockerRetryInterval time.Duration
 	// mu protects the fields below, which are written by initDockerRuntime.
 	mu               sync.Mutex
-	bus              *events.Bus       // set by InitBus; read by initDockerRuntime
-	runtimeAPI       *RuntimeAPIServer // nil until Docker init completes
-	docker           *docker.Client    // nil until Docker init completes
-	containerRuntime *ContainerRuntime // nil until Docker init completes
-	pool             *InstancePool     // nil until Docker init completes
-	proactive        *proactiveIniter  // nil until Docker init completes
+	imageResolver    docker.ImageResolver // set by SetImageResolver; read when the container runtime is built
+	bus              *events.Bus          // set by InitBus; read by initDockerRuntime
+	runtimeAPI       *RuntimeAPIServer    // nil until Docker init completes
+	docker           *docker.Client       // nil until Docker init completes
+	containerRuntime *ContainerRuntime    // nil until Docker init completes
+	pool             *InstancePool        // nil until Docker init completes
+	proactive        *proactiveIniter     // nil until Docker init completes
 	// triggerSources are other services that can attest a function is wired
 	// to traffic (API Gateway integrations, AppSync data sources). Queried
 	// only at proactive-init settle time.
@@ -632,6 +633,23 @@ func (s *Service) SetEFSResolver(r EFSVolumeResolver) {
 	s.mu.Unlock()
 	if cr != nil {
 		cr.SetEFSResolver(r)
+	}
+}
+
+// SetImageResolver wires the registry resolver used when a PackageType=Image
+// function's ImageUri names a registry Overcast serves rather than a public
+// one — a container image built and pushed by CDK, whose reference points at
+// real AWS. Implemented by the ECR service.
+//
+// Callable before or after the Docker probe builds the container runtime: the
+// resolver is recorded here and applied to every runtime built afterwards.
+func (s *Service) SetImageResolver(r docker.ImageResolver) {
+	s.mu.Lock()
+	s.imageResolver = r
+	cr := s.containerRuntime
+	s.mu.Unlock()
+	if cr != nil {
+		cr.SetImageResolver(r)
 	}
 }
 
@@ -873,6 +891,17 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		containerRuntime.SetEFSResolver(r)
 	}
 
+	// Wire the registry resolver if SetImageResolver was already called. The
+	// router always calls it first — this runtime is built from a background
+	// Docker probe — but the runtime is also rebuilt by the re-probe loop, so
+	// the resolver has to be re-applied rather than assumed still attached.
+	s.mu.Lock()
+	images := s.imageResolver
+	s.mu.Unlock()
+	if images != nil {
+		containerRuntime.SetImageResolver(images)
+	}
+
 	// Atomically upgrade to ContainerRuntime. NodeRuntime stays as fallback.
 	pool := NewInstancePool(containerRuntime, log, clk, limits.pool)
 	// Keep the instance tracker in step with the containers that actually exist.
@@ -1003,7 +1032,7 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 				zap.Error(err))
 			continue
 		}
-		pullErr := cr.ensureImage(ctx, pullGeneration.image, pullGeneration.platform)
+		pullErr := cr.ensureImage(ctx, cr.resolveImage(ctx, pullGeneration.image), pullGeneration.platform)
 		if pullErr != nil {
 			s.log.Warn("seed pull failed for persisted function",
 				zap.String("function", fn.Name),

@@ -159,14 +159,14 @@ degrades gracefully to a stub physical ID so the stack can still deploy.
 
 ### Container assets are served from Overcast's own registry
 
-A `DockerImageAsset` — an ECS `ContainerImage.fromAsset`, or any construct that
-builds an image — is published to the ECR repository `cdk bootstrap` created,
-which is a `registry:2` container Overcast starts and authenticates. CDK then
-writes the image into the template as
-`{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}`, built from
+A `DockerImageAsset` — an ECS `ContainerImage.fromAsset`, a Lambda
+`DockerImageFunction`, or any construct that builds an image — is published to
+the ECR repository `cdk bootstrap` created, which is a `registry:2` container
+Overcast starts and authenticates. CDK then writes the image into the template
+as `{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}`, built from
 `AWS::AccountId` and `AWS::Region` rather than read back from the repository.
 Overcast recognises that address as its own and pulls from the registry it
-serves, so the task runs the image the deploy published. See
+serves, so the task or function runs the image the deploy published. See
 [ECR § Running an image from here](./services/ecr.md#running-an-image-from-here).
 
 The registry publishes on a fixed port (`4510` by default, see

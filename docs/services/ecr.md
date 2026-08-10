@@ -66,8 +66,11 @@ for authenticated calls against the local registry endpoint. Token expiry is 12 
 ECS resolves a task definition image addressed as
 `{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}` — the form CDK
 synthesises for a container asset — to this registry, and pulls it with the same
-credentials `GetAuthorizationToken` returns. See
-[ECS § Images published to the emulated ECR](./ecs.md#images-published-to-the-emulated-ecr).
+credentials `GetAuthorizationToken` returns. Lambda does the same for a
+`PackageType=Image` function whose `Code.ImageUri` has that shape. See
+[ECS § Images published to the emulated ECR](./ecs.md#images-published-to-the-emulated-ecr)
+and
+[Lambda § Container images published to the emulated ECR](./lambda.md#container-images-published-to-the-emulated-ecr).
 
 ## Limitations
 

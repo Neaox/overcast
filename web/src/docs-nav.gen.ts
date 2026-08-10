@@ -3498,6 +3498,11 @@ export const DOCS_NAV = [
         "id": "execution-coverage"
       },
       {
+        "depth": 3,
+        "text": "Container images published to the emulated ECR",
+        "id": "container-images-published-to-the-emulated-ecr"
+      },
+      {
         "depth": 2,
         "text": "Concurrency and execution environments",
         "id": "concurrency-and-execution-environments"
