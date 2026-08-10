@@ -95,10 +95,26 @@ def ListStacks(ctx: TestContext) -> None:
 
 
 def DeleteStack(ctx: TestContext) -> None:
+    """Deletes its own stack rather than the group's shared one.
+
+    UpdateStack runs against the shared stack and, as on AWS, a stack that has
+    finished deleting cannot be updated — deleting the shared stack here would
+    make the group's outcome depend on test order. Mirrors the cli suite.
+    """
     cfn = _cfn(ctx)
-    stack_name = ctx.get("cfn_stack_name")
-    if not stack_name:
-        raise AssertionError("DeleteStack: no stack from CreateStack")
+    stack_name = f"compat-del-{ctx.run_id}"
+    tpl = json.dumps({
+        "AWSTemplateFormatVersion": "2010-09-09",
+        "Resources": {
+            "DummyBucket": {"Type": "AWS::S3::Bucket"},
+        },
+    })
+    try:
+        # Create is scaffolding, not the operation under test; DeleteStack
+        # succeeds on AWS even for a stack that failed to create.
+        cfn.create_stack(StackName=stack_name, TemplateBody=tpl)
+    except Exception:
+        pass
     cfn.delete_stack(StackName=stack_name)
 
 

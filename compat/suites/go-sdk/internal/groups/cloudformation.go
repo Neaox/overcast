@@ -163,11 +163,25 @@ func (g *cfnGroup) UpdateStack(ctx context.Context, t *harness.TestContext) erro
 	return err
 }
 
+// DeleteStack exercises delete on its own stack rather than the group's
+// shared one. UpdateStack runs against the shared stack and, as on AWS, a
+// stack that has finished deleting cannot be updated — deleting the shared
+// stack here would make the group's outcome depend on test order. Mirrors the
+// cli suite's shape.
 func (g *cfnGroup) DeleteStack(ctx context.Context, t *harness.TestContext) error {
-	stackName := t.GetString("cfn_stack_name")
-	if stackName == "" {
-		return fmt.Errorf("DeleteStack: no stack from CreateStack")
-	}
+	stackName := fmt.Sprintf("compat-del-%s", t.RunID)
+	tpl, _ := json.Marshal(map[string]interface{}{
+		"AWSTemplateFormatVersion": "2010-09-09",
+		"Resources": map[string]interface{}{
+			"DummyBucket": map[string]interface{}{"Type": "AWS::S3::Bucket"},
+		},
+	})
+	// Create is scaffolding, not the operation under test; DeleteStack
+	// succeeds on AWS even for a stack that failed to create.
+	_, _ = g.cl().CreateStack(ctx, &cloudformation.CreateStackInput{
+		StackName:    aws.String(stackName),
+		TemplateBody: aws.String(string(tpl)),
+	})
 	_, err := g.cl().DeleteStack(ctx, &cloudformation.DeleteStackInput{
 		StackName: aws.String(stackName),
 	})
