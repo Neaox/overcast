@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -46,6 +47,21 @@ const (
 	// defaultOvercastImage is the container used when no native binary is
 	// available. Matches scripts/run-test-instance.sh.
 	defaultOvercastImage = "ghcr.io/neaox/overcast:alpha"
+
+	// dockerSocketPath is where a Unix Docker socket lives, on the host and
+	// inside the container both. The container side is not configurable: it is
+	// the emulator's own compiled-in default (internal/config), so mounting
+	// anywhere else would need the instance reconfigured to match.
+	dockerSocketPath = "/var/run/docker.sock"
+
+	// dockerReadyTimeout bounds the wait for a managed instance to say whether
+	// it found a Docker daemon. The emulator's probe retries five times with a
+	// 2s dial timeout and a growing backoff (internal/docker.Probe), so a
+	// definite "no" takes about fifteen seconds to arrive; a "yes" arrives
+	// almost immediately. Only the "no" path spends the whole budget, and it
+	// buys the difference between one accurate line at startup and five
+	// Lambda suites failing later for a reason none of them can name.
+	dockerReadyTimeout = 30 * time.Second
 
 	// loopbackHost is where a managed instance listens — published there for a
 	// container, bound there for a native binary — and the address every port
@@ -242,6 +258,16 @@ type overcastOptions struct {
 	// something if there is nothing better", and chooseOvercastArtifact turns
 	// on it.
 	ImageRequested bool
+	// MountDockerSocket bind-mounts the host's Docker socket into a managed
+	// container, which is what lets the emulator inside start containers of
+	// its own — Lambda execution environments above all. It has no effect on
+	// the binary path, where the instance is already on the host and uses the
+	// host's daemon directly.
+	MountDockerSocket bool
+	// DockerSocket is the host path of that socket. Empty means
+	// dockerSocketPath; COMPAT_DOCKER_SOCK overrides it, spelled the same way
+	// as in compat/docker-compose.yml.
+	DockerSocket string
 	// PortBase is where the port scan starts.
 	PortBase int
 	// WithUI serves the emulator's own web UI on a second free port.
@@ -266,6 +292,16 @@ type managedOvercast struct {
 	// binary or image — the mode alone is the same word whether the image was
 	// the release candidate the caller asked for or the compiled-in default.
 	Artifact overcastArtifact
+	// NoDocker is empty when the instance reported a reachable Docker daemon,
+	// and otherwise says in one sentence why it has none. It is read from the
+	// instance's own /_health rather than inferred, so it is the same answer
+	// the Lambda tests are about to get.
+	NoDocker string
+	// DockerIsEnvironmental says the machine, not the emulator, is why
+	// NoDocker is set: there was no socket to mount, or no daemon on this host
+	// at all. It is the difference between a test that cannot run here and a
+	// test that should have run and did not — see dockerVerdict.
+	DockerIsEnvironmental bool
 	// Stop terminates the instance. Safe to call more than once.
 	Stop func()
 }
@@ -290,6 +326,9 @@ func startOvercast(ctx context.Context, opts overcastOptions) (*managedOvercast,
 	}
 	if opts.Host == "" {
 		opts.Host = "localhost"
+	}
+	if opts.DockerSocket == "" {
+		opts.DockerSocket = dockerSocketPath
 	}
 
 	// Decide what to run before touching any ports, so a caller who named an
@@ -318,6 +357,20 @@ func startOvercast(ctx context.Context, opts overcastOptions) (*managedOvercast,
 		logf("%s", artifact.Ignored)
 	}
 
+	// Decide the socket before the ports too, and say so before anything is
+	// started: a run that cannot invoke a Lambda should announce that at the
+	// top, not twenty minutes in through five suites' worth of failures that
+	// read like the emulator is broken (issue #867).
+	socket, socketWhyNot := "", ""
+	if artifact.Mode == overcastModeDocker {
+		socket, socketWhyNot = resolveDockerSocket(opts.MountDockerSocket, opts.DockerSocket)
+		if socket != "" {
+			logf("mounting the Docker socket %s, so the instance can run Lambda and ECS containers", socket)
+		} else {
+			logf("NOT mounting the Docker socket: %s", socketWhyNot)
+		}
+	}
+
 	apiPort, uiPort := 0, 0
 	if opts.WithUI {
 		apiPort, uiPort, err = freePortPair(opts.PortBase)
@@ -328,10 +381,194 @@ func startOvercast(ctx context.Context, opts overcastOptions) (*managedOvercast,
 		return nil, err
 	}
 
+	var oc *managedOvercast
 	if artifact.Mode == overcastModeBinary {
-		return startOvercastBinary(ctx, artifact, apiPort, uiPort, opts, logf)
+		oc, err = startOvercastBinary(ctx, artifact, apiPort, uiPort, opts, logf)
+	} else {
+		oc, err = startOvercastContainer(ctx, artifact, apiPort, uiPort, socket, opts, logf)
 	}
-	return startOvercastContainer(ctx, artifact, apiPort, uiPort, opts, logf)
+	if err != nil {
+		return nil, err
+	}
+	oc.NoDocker, oc.DockerIsEnvironmental = dockerVerdict(ctx, oc.Endpoint, socket, socketWhyNot, logf)
+	return oc, nil
+}
+
+// resolveDockerSocket decides what to bind-mount into a managed container,
+// returning either a host path or the reason there is not one. Both are
+// caller-facing: the reason is printed, and it is also what tells a machine
+// that cannot run containers apart from an emulator that will not.
+//
+// The existence check is Linux-only on purpose. There, the daemon shares this
+// filesystem, so a missing path means a missing socket — and bind-mounting a
+// source that does not exist does not fail, it silently creates an empty
+// *directory*, on the host as well as in the container. The container then has
+// a directory where its socket should be and the emulator reports Docker
+// unavailable, which is the confusing failure this function exists to replace,
+// plus a root-owned stray left at /var/run/docker.sock that a later daemon
+// start would trip over.
+//
+// On Windows and macOS the same check would be wrong: Docker Desktop resolves
+// a bind source inside its own Linux VM, where /var/run/docker.sock exists
+// whatever the host filesystem looks like. So the mount is attempted
+// unconditionally there and judged afterwards, by asking the instance — see
+// dockerVerdict, which is the authority on every platform anyway.
+func resolveDockerSocket(mount bool, path string) (socket, whyNot string) {
+	if !mount {
+		return "", "--mount-docker-socket=false"
+	}
+	if path == "" {
+		path = dockerSocketPath
+	}
+	if runtime.GOOS == "linux" {
+		info, err := os.Stat(path)
+		switch {
+		case err != nil:
+			return "", fmt.Sprintf("%s does not exist on this host "+
+				"(set COMPAT_DOCKER_SOCK if the socket is somewhere else)", path)
+		case info.Mode()&os.ModeSocket == 0:
+			return "", fmt.Sprintf("%s is not a socket "+
+				"(set COMPAT_DOCKER_SOCK if the socket is somewhere else)", path)
+		}
+	}
+	return path, ""
+}
+
+// instanceDocker is the part of /_health that says whether the instance found
+// a Docker daemon. Services is empty until the emulator's probe has finished,
+// which is what tells "not yet" apart from "no" — see internal/docker.Tracker.
+type instanceDocker struct {
+	Docker *struct {
+		Available bool `json:"available"`
+		// Only the length of Services is read — the emulator publishes one
+		// entry per Docker-backed service once it has probed, and none before
+		// — so the elements are deliberately empty.
+		Services []struct{} `json:"services"`
+	} `json:"docker"`
+}
+
+// dockerVerdict asks a freshly started instance whether it can reach a Docker
+// daemon, and returns an empty reason when it can.
+//
+// The second return value is the load-bearing one: whether the *machine* is
+// why. Compat acts on that by skipping the Docker-dependent tests, and it must
+// only ever do so on evidence, because a skip that is really a product failure
+// is the blindspot compat/AGENTS.md § "Docker-dependent tests are first-class"
+// was written about — a green run over an emulator answering from its stub.
+//
+// So the line is drawn at what compat itself did:
+//
+//   - There was no socket to mount, or no daemon on this host at all. The
+//     environment cannot run these tests. Skipping is the honest report.
+//   - The socket was mounted, or the host daemon is up and the instance is a
+//     native binary sharing it — and the instance still says no. Compat gave
+//     it everything it needed, so this is the emulator's answer and the tests
+//     must be allowed to fail on it. Naming the cause here is what stops that
+//     failure being mistaken for a broken Lambda.
+func dockerVerdict(
+	ctx context.Context,
+	endpoint, socket, socketWhyNot string,
+	logf func(string, ...any),
+) (noDocker string, environmental bool) {
+	switch dockerReported(ctx, endpoint, dockerReadyTimeout) {
+	case dockerStateAvailable:
+		return "", false
+	case dockerStateUnknown:
+		// The instance never said. Guessing either way would be worse than
+		// saying so: an unwarranted skip hides a real failure, an unwarranted
+		// failure blames the emulator for this machine.
+		logf("could not tell whether the instance has Docker (no answer from /_health within %s); "+
+			"Docker-dependent tests will run and report whatever they find", dockerReadyTimeout)
+		return "", false
+	}
+
+	// The host probe is only asked for when the answer can still change the
+	// verdict: with nothing mounted, the environment is already the reason.
+	if socketWhyNot != "" {
+		return dockerBlame(socket, socketWhyNot, false)
+	}
+	return dockerBlame(socket, socketWhyNot, hostDockerDaemonReachable(ctx))
+}
+
+// dockerBlame is the whole of the decision dockerVerdict documents, with the
+// evidence already gathered: what compat mounted (or why it did not), and
+// whether this machine has a daemon at all.
+func dockerBlame(socket, socketWhyNot string, hostHasDaemon bool) (noDocker string, environmental bool) {
+	if socketWhyNot != "" {
+		return "the Docker socket was not mounted: " + socketWhyNot, true
+	}
+	if !hostHasDaemon {
+		return "there is no reachable Docker daemon on this machine", true
+	}
+	if socket != "" {
+		return fmt.Sprintf(
+			"the instance reports no Docker daemon even though %s was mounted at %s — "+
+				"check the socket's permissions, and the image's entrypoint",
+			socket, dockerSocketPath), false
+	}
+	return "the instance reports no Docker daemon, though this machine has one", false
+}
+
+// dockerState is what an instance says about its own Docker access.
+type dockerState int
+
+const (
+	// dockerStateUnknown means no answer arrived before the deadline.
+	dockerStateUnknown dockerState = iota
+	dockerStateAvailable
+	dockerStateUnavailable
+)
+
+// dockerReported polls /_health until the instance's Docker probe has
+// finished. A probe that has not run yet reports available=false with no
+// services, which is indistinguishable from a real "no" at a single glance and
+// is why this waits for the services list rather than reading the flag once.
+func dockerReported(ctx context.Context, endpoint string, timeout time.Duration) dockerState {
+	deadline := time.Now().Add(timeout)
+	client := &http.Client{Timeout: 2 * time.Second}
+	url := strings.TrimSuffix(endpoint, "/") + "/_health"
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return dockerStateUnknown
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			var health instanceDocker
+			decodeErr := json.NewDecoder(resp.Body).Decode(&health)
+			_ = resp.Body.Close()
+			switch {
+			case decodeErr != nil:
+			case health.Docker == nil:
+				// No Docker-backed service is configured at all, so there is
+				// nothing to report and nothing to skip.
+				return dockerStateUnknown
+			case health.Docker.Available:
+				return dockerStateAvailable
+			case len(health.Docker.Services) > 0:
+				return dockerStateUnavailable
+			}
+		}
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			return dockerStateUnknown
+		}
+		select {
+		case <-ctx.Done():
+			return dockerStateUnknown
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// hostDockerDaemonReachable reports whether this machine has a Docker daemon
+// answering. `docker version` talks to the daemon — unlike `docker info`'s
+// client half, or a LookPath, both of which succeed with the daemon stopped.
+func hostDockerDaemonReachable(ctx context.Context) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, "docker", "version", "--format", "{{.Server.Os}}")
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 // artifactRequest separates what the caller asked for from what this machine
@@ -527,11 +764,27 @@ func startOvercastBinary(
 // dockerRunArgs builds the argv for a managed emulator container. Ports are
 // published on loopback (see loopbackHost) and, when gateway is non-empty, on
 // that address as well.
-func dockerRunArgs(apiPort, uiPort int, image, logLevel, gateway string) []string {
+//
+// socket, when non-empty, is the host Docker socket to bind-mount. Lambda and
+// ECS start containers of their own through it, so without it the emulator
+// inside can only answer from its metadata-only path and every Lambda invoke
+// fails — which is what an --overcast-image run did until issue #867.
+//
+// The mount is a plain bind, exactly as compat/docker-compose.yml and
+// scripts/run-test-instance.sh --mount-docker-socket do it, and deliberately
+// nothing else: no --group-add, no chgrp. The image's entrypoint reads the
+// socket's gid at its own start and joins that group itself. The compose file
+// carries the scar from the alternative — a chgrp of the shared socket, landing
+// after the emulator had already derived the gid, revoked its access and failed
+// nineteen Lambda tests nowhere near the cause.
+func dockerRunArgs(apiPort, uiPort int, image, logLevel, gateway, socket string) []string {
 	argv := []string{"run", "-d", "--rm"}
 	argv = append(argv, publishArgs(apiPort, reservedAPIPort, gateway)...)
 	if uiPort != 0 {
 		argv = append(argv, publishArgs(uiPort, reservedUIPort, gateway)...)
+	}
+	if socket != "" {
+		argv = append(argv, "-v", socket+":"+dockerSocketPath)
 	}
 	argv = append(argv,
 		"-e", "OVERCAST_STATE=memory",
@@ -609,6 +862,7 @@ func startOvercastContainer(
 	ctx context.Context,
 	artifact overcastArtifact,
 	apiPort, uiPort int,
+	socket string,
 	opts overcastOptions,
 	logf func(string, ...any),
 ) (*managedOvercast, error) {
@@ -617,9 +871,10 @@ func startOvercastContainer(
 	logf("starting Overcast (%s) on %s", image, endpoint)
 
 	gateway := dockerBridgeGateway(ctx, apiPort, uiPort)
-	argv := dockerRunArgs(apiPort, uiPort, image, opts.LogLevel, gateway)
+	argv := dockerRunArgs(apiPort, uiPort, image, opts.LogLevel, gateway, socket)
 
-	// MSYS_NO_PATHCONV stops Git Bash mangling the -p arguments into paths.
+	// MSYS_NO_PATHCONV stops Git Bash mangling the -p and -v arguments into
+	// paths.
 	cmd := exec.CommandContext(ctx, "docker", argv...)
 	cmd.Env = append(os.Environ(), "MSYS_NO_PATHCONV=1")
 	cmd.Stderr = os.Stderr

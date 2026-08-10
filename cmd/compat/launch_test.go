@@ -6,6 +6,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -135,7 +138,7 @@ func TestDockerRunArgsPublishesToLoopbackOnly(t *testing.T) {
 	// Then: every mapping is bound to 127.0.0.1. A bare "<host>:<container>"
 	// mapping binds every interface, which puts an unauthenticated emulator on
 	// whatever network the machine is attached to.
-	argv := dockerRunArgs(4570, 4571, "ghcr.io/neaox/overcast:alpha", "warn", "")
+	argv := dockerRunArgs(4570, 4571, "ghcr.io/neaox/overcast:alpha", "warn", "", "")
 	want := []string{
 		"127.0.0.1:4570:" + strconv.Itoa(reservedAPIPort),
 		"127.0.0.1:4571:" + strconv.Itoa(reservedUIPort),
@@ -149,7 +152,7 @@ func TestDockerRunArgsOmitsUIPublishWhenDisabled(t *testing.T) {
 	// Given: a managed instance whose own web UI is disabled (the default)
 	// When: the docker argv is built
 	// Then: only the API port is published, so nothing can bind the user's 4567
-	argv := dockerRunArgs(4570, 0, "img", "warn", "")
+	argv := dockerRunArgs(4570, 0, "img", "warn", "", "")
 	want := []string{"127.0.0.1:4570:" + strconv.Itoa(reservedAPIPort)}
 	if got := publishMappings(argv); !slices.Equal(got, want) {
 		t.Errorf("dockerRunArgs published %v, want %v", got, want)
@@ -163,7 +166,7 @@ func TestDockerRunArgsAddsBridgeGatewayPublish(t *testing.T) {
 	// what "host.docker.internal:host-gateway" resolves to on native Linux —
 	// compat/suites/rust-sdk/run.sh reaches the emulator that way, and a
 	// loopback-only publish is invisible to it.
-	argv := dockerRunArgs(4570, 4571, "img", "warn", "172.17.0.1")
+	argv := dockerRunArgs(4570, 4571, "img", "warn", "172.17.0.1", "")
 	want := []string{
 		"127.0.0.1:4570:" + strconv.Itoa(reservedAPIPort),
 		"172.17.0.1:4570:" + strconv.Itoa(reservedAPIPort),
@@ -180,7 +183,7 @@ func TestDockerRunArgsCarriesImageAndEnvironment(t *testing.T) {
 	// When: the docker argv is built
 	// Then: the image is the last argument (so nothing is mistaken for a flag)
 	// and the instance is told to keep its state in memory
-	argv := dockerRunArgs(4570, 0, "ghcr.io/neaox/overcast:alpha", "debug", "")
+	argv := dockerRunArgs(4570, 0, "ghcr.io/neaox/overcast:alpha", "debug", "", "")
 	if last := argv[len(argv)-1]; last != "ghcr.io/neaox/overcast:alpha" {
 		t.Errorf("dockerRunArgs ended with %q, want the image", last)
 	}
@@ -644,5 +647,266 @@ func TestBrowserCommandIsNonEmpty(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(argv, " "), "http://localhost:7777") {
 		t.Fatalf("browserCommand argv does not mention the URL: %v", argv)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The Docker socket a managed container needs to run Lambda (issue #867)
+// ---------------------------------------------------------------------------
+
+func TestDockerRunArgsMountsTheDockerSocket(t *testing.T) {
+	// Given: a host socket to mount
+	// When: the docker argv is built
+	// Then: it is bind-mounted at the path the emulator looks for, and nothing
+	// else is done about it — no --group-add, no chgrp. The image's entrypoint
+	// joins the socket's group itself, and compat/docker-compose.yml records
+	// what changing the socket from outside cost the last time it was tried.
+	argv := dockerRunArgs(4570, 0, "img", "warn", "", "/var/run/docker.sock")
+	if !slices.Contains(argv, "-v") {
+		t.Fatalf("dockerRunArgs argv %v has no bind mount", argv)
+	}
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "-v /var/run/docker.sock:"+dockerSocketPath) {
+		t.Errorf("dockerRunArgs argv %v does not mount the socket at %s", argv, dockerSocketPath)
+	}
+	if strings.Contains(joined, "--group-add") {
+		t.Errorf("dockerRunArgs argv %v adds a group; the image's entrypoint derives it", argv)
+	}
+	if last := argv[len(argv)-1]; last != "img" {
+		t.Errorf("dockerRunArgs ended with %q, want the image last", last)
+	}
+}
+
+func TestDockerRunArgsOmitsTheMountWhenThereIsNoSocket(t *testing.T) {
+	// Given: no socket to mount
+	// When: the docker argv is built
+	// Then: there is no -v at all, rather than a mount of the empty string
+	argv := dockerRunArgs(4570, 0, "img", "warn", "", "")
+	if slices.Contains(argv, "-v") {
+		t.Errorf("dockerRunArgs argv %v mounts something with no socket configured", argv)
+	}
+}
+
+func TestResolveDockerSocketRefusesWhenTheFlagIsOff(t *testing.T) {
+	// Given: --mount-docker-socket=false
+	// When: the socket is resolved
+	// Then: nothing is mounted, and the reason names the flag — so the banner
+	// says the caller asked for this, not that the machine cannot manage it
+	socket, whyNot := resolveDockerSocket(false, "/var/run/docker.sock")
+	if socket != "" {
+		t.Errorf("resolveDockerSocket mounted %q with the flag off", socket)
+	}
+	if !strings.Contains(whyNot, "--mount-docker-socket") {
+		t.Errorf("reason %q does not name the flag", whyNot)
+	}
+}
+
+func TestResolveDockerSocketDefaultsToTheStandardPath(t *testing.T) {
+	// Given: no explicit path
+	// When: the socket is resolved on a platform where the daemon's filesystem
+	// is not this one, so there is nothing to check the path against
+	// Then: the standard path is used and the mount is attempted; whether it
+	// worked is settled afterwards by asking the instance
+	if runtime.GOOS == "linux" {
+		t.Skip("Linux checks that the path exists; covered by the tests below")
+	}
+	socket, whyNot := resolveDockerSocket(true, "")
+	if socket != dockerSocketPath {
+		t.Errorf("resolveDockerSocket(true, %q) = %q, %q; want %q", "", socket, whyNot, dockerSocketPath)
+	}
+}
+
+func TestResolveDockerSocketRefusesAMissingPathOnLinux(t *testing.T) {
+	// Given: a socket path that does not exist, on the one platform where the
+	// daemon shares this filesystem and so the absence is conclusive
+	// When: the socket is resolved
+	// Then: nothing is mounted. Docker would not have failed — it would have
+	// created an empty directory at that path, on the host as well as in the
+	// container, leaving a stray behind and a Lambda failure that names
+	// nothing.
+	if runtime.GOOS != "linux" {
+		t.Skip("the existence check is Linux-only; see resolveDockerSocket")
+	}
+	missing := filepath.Join(t.TempDir(), "docker.sock")
+	socket, whyNot := resolveDockerSocket(true, missing)
+	if socket != "" {
+		t.Errorf("resolveDockerSocket mounted %q, which does not exist", socket)
+	}
+	if !strings.Contains(whyNot, missing) || !strings.Contains(whyNot, "COMPAT_DOCKER_SOCK") {
+		t.Errorf("reason %q should name the path and how to change it", whyNot)
+	}
+}
+
+func TestResolveDockerSocketRefusesANonSocketOnLinux(t *testing.T) {
+	// Given: a path that exists but is a plain file
+	// When: the socket is resolved
+	// Then: it is refused rather than mounted — a regular file at the target
+	// is the same dead end as a directory
+	if runtime.GOOS != "linux" {
+		t.Skip("the existence check is Linux-only; see resolveDockerSocket")
+	}
+	path := filepath.Join(t.TempDir(), "docker.sock")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	socket, whyNot := resolveDockerSocket(true, path)
+	if socket != "" {
+		t.Errorf("resolveDockerSocket mounted %q, which is not a socket", socket)
+	}
+	if !strings.Contains(whyNot, "not a socket") {
+		t.Errorf("reason %q should say the path is not a socket", whyNot)
+	}
+}
+
+func TestResolveDockerSocketAcceptsARealSocketOnLinux(t *testing.T) {
+	// Given: an actual Unix socket
+	// When: it is resolved
+	// Then: it is mounted, with no reason to report
+	if runtime.GOOS != "linux" {
+		t.Skip("the existence check is Linux-only; see resolveDockerSocket")
+	}
+	path := filepath.Join(t.TempDir(), "docker.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen on %s: %v", path, err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	socket, whyNot := resolveDockerSocket(true, path)
+	if socket != path || whyNot != "" {
+		t.Errorf("resolveDockerSocket(%q) = %q, %q; want it mounted", path, socket, whyNot)
+	}
+}
+
+// healthWithDocker serves /_health with a fixed body.
+func healthWithDocker(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_health" {
+			t.Errorf("polled %q, want /_health", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestDockerReportedWaitsForTheProbeToFinish(t *testing.T) {
+	// Given: an instance whose Docker probe has not run yet, which it reports
+	// as available=false with no services at all
+	// When: the launcher asks
+	// Then: it keeps asking rather than reading the flag once and calling it a
+	// no. The emulator's probe retries for about fifteen seconds before it has
+	// an answer, and every poll until then looks exactly like a failure.
+	var polls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&polls, 1) < 3 {
+			fmt.Fprint(w, `{"docker":{"available":false,"services":[]}}`)
+			return
+		}
+		fmt.Fprint(w, `{"docker":{"available":true,"services":[{"service":"lambda","connected":true}]}}`)
+	}))
+	defer srv.Close()
+
+	if got := dockerReported(context.Background(), srv.URL, 10*time.Second); got != dockerStateAvailable {
+		t.Fatalf("dockerReported = %v after %d polls, want available", got, atomic.LoadInt32(&polls))
+	}
+}
+
+func TestDockerReportedIsUnavailableOnceTheProbeHasRun(t *testing.T) {
+	// Given: an instance that has probed and found nothing
+	// When: the launcher asks
+	// Then: that is a definite no — which is what the skip decision turns on,
+	// so it must not be reachable before the probe has actually reported
+	srv := healthWithDocker(t,
+		`{"docker":{"available":false,"services":[{"service":"lambda","connected":false}]}}`)
+	if got := dockerReported(context.Background(), srv.URL, 10*time.Second); got != dockerStateUnavailable {
+		t.Fatalf("dockerReported = %v, want unavailable", got)
+	}
+}
+
+func TestDockerReportedIsUnknownWithoutADockerSection(t *testing.T) {
+	// Given: an instance with no Docker-backed service configured at all, so
+	// /_health omits the section
+	// When: the launcher asks
+	// Then: the answer is "unknown", and it comes back at once — there is
+	// nothing to report and nothing to skip, and polling for an answer that
+	// cannot arrive would stall every such run for the full timeout
+	srv := healthWithDocker(t, `{"status":"ok"}`)
+	start := time.Now()
+	if got := dockerReported(context.Background(), srv.URL, 10*time.Second); got != dockerStateUnknown {
+		t.Fatalf("dockerReported = %v, want unknown", got)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("dockerReported waited %s for an answer that cannot change", elapsed)
+	}
+}
+
+func TestDockerReportedGivesUpAtTheDeadline(t *testing.T) {
+	// Given: an instance that never finishes probing
+	// When: the launcher asks
+	// Then: it stops at the deadline with "unknown" rather than hanging, and
+	// unknown is acted on by doing nothing in either direction
+	srv := healthWithDocker(t, `{"docker":{"available":false,"services":[]}}`)
+	if got := dockerReported(context.Background(), srv.URL, 300*time.Millisecond); got != dockerStateUnknown {
+		t.Fatalf("dockerReported = %v, want unknown", got)
+	}
+}
+
+func TestDockerBlameHoldsTheEnvironmentResponsibleForAnUnmountedSocket(t *testing.T) {
+	// Given: compat could not mount a socket
+	// When: the instance reports no Docker
+	// Then: the machine is the reason, which is what licenses a skip — and the
+	// reason carries the detail, so the banner says which machine problem
+	noDocker, environmental := dockerBlame("", "/var/run/docker.sock does not exist on this host", false)
+	if !environmental {
+		t.Error("an unmounted socket should be blamed on the environment")
+	}
+	if !strings.Contains(noDocker, "does not exist on this host") {
+		t.Errorf("reason %q drops the detail of why nothing was mounted", noDocker)
+	}
+}
+
+func TestDockerBlameHoldsTheEnvironmentResponsibleWithNoDaemonAtAll(t *testing.T) {
+	// Given: an instance on a machine with no daemon running
+	// When: it reports no Docker
+	// Then: environmental again — there was never anything for it to reach
+	noDocker, environmental := dockerBlame("", "", false)
+	if !environmental {
+		t.Error("no daemon on the machine should be blamed on the environment")
+	}
+	if noDocker == "" {
+		t.Error("dockerBlame gave no reason")
+	}
+}
+
+func TestDockerBlameHoldsTheInstanceResponsibleWhenTheSocketWasMounted(t *testing.T) {
+	// Given: compat mounted the socket and the host daemon is up
+	// When: the instance still says it has no Docker
+	// Then: this is NOT environmental. Compat gave it everything it needed, so
+	// the Docker-dependent tests must be allowed to run and fail: skipping
+	// here is the green-over-a-stub blindspot compat/AGENTS.md was written
+	// about.
+	noDocker, environmental := dockerBlame("/var/run/docker.sock", "", true)
+	if environmental {
+		t.Error("a mounted socket plus a live daemon is not an environment failure")
+	}
+	if !strings.Contains(noDocker, "/var/run/docker.sock") {
+		t.Errorf("reason %q should name the socket that was mounted", noDocker)
+	}
+}
+
+func TestDockerBlameHoldsTheInstanceResponsibleOnTheBinaryPath(t *testing.T) {
+	// Given: a native binary instance — nothing to mount — on a machine whose
+	// daemon is up and which it therefore already shares
+	// When: it reports no Docker
+	// Then: not environmental either, by the same reasoning as the mount case
+	noDocker, environmental := dockerBlame("", "", true)
+	if environmental {
+		t.Error("a live host daemon the instance shares is not an environment failure")
+	}
+	if noDocker == "" {
+		t.Error("dockerBlame gave no reason")
 	}
 }
