@@ -322,6 +322,8 @@ func (c coverage) String() string {
 		return "a route broader than the modeled binding"
 	case coverageExact:
 		return "an exact route"
+	case coverageNone:
+		return "nothing"
 	default:
 		return "nothing"
 	}
