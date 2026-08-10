@@ -121,20 +121,23 @@ func (r *StackResource) shouldRetainOnDelete() bool {
 	return false
 }
 
-// existsServiceSide reports whether this resource was actually created, and so
-// whether a rollback has to delete it.
+// existsServiceSide reports whether a real resource stands behind this record:
+// the stack created and named something, and has not since torn it down. It is
+// what a rollback asks before deleting, and what an update asks before treating
+// the record as a resource it can diff against and change in place.
 //
-// CREATE_FAILED counts when the resource carries a physical ID. A create that
-// failed outright never named anything and leaves the ID empty; one that failed
-// to stabilize — an RDS instance whose database never came up, an ECS service
-// whose tasks never started — was created and named first, and only then failed
-// to become usable. Skipping those left a real database behind under a name
-// that nothing in the stack still recorded.
+// The physical ID answers the first half, and CREATE_FAILED counts when it is
+// set. A create that failed outright never named anything and leaves the ID
+// empty; one that failed to stabilize — an RDS instance whose database never
+// came up, an ECS service whose tasks never started — was created and named
+// first, and only then failed to become usable. Skipping those left a real
+// database behind under a name that nothing in the stack still recorded.
+//
+// DELETE_COMPLETE answers the second half. A create rollback records what it
+// deleted rather than dropping it from the list, so the record outlives the
+// resource and keeps its physical ID.
 func (r *StackResource) existsServiceSide() bool {
-	if r.PhysicalID == "" {
-		return false
-	}
-	return r.Status == ResourceCreateComplete || r.Status == ResourceCreateFailed
+	return r.PhysicalID != "" && r.Status != ResourceDeleteComplete
 }
 
 // shouldRetainOnReplace reports whether an UpdateStack replacement should

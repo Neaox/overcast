@@ -206,6 +206,19 @@ func (p *provisioner) provisionStackResources(stack *Stack, tmpl *Template) {
 
 func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Stack, tmpl *Template) {
 	log := p.log.WithRecorder(ctx)
+
+	// A create builds the stack from nothing, so it owns the whole resource
+	// list and output set rather than adding to what is there. Only CreateStack
+	// gets that for free, by constructing a fresh record; ExecuteChangeSet
+	// provisions a CREATE change set over the stored one, which for a stack
+	// being deployed a second time still describes the attempt that failed. Left
+	// in place, those records are appended to rather than replaced — so the
+	// stack ends up owning two entries per logical ID, and DescribeStackResources
+	// answers with the older one, reporting the previous run's failure reason
+	// over the reason this run actually failed for.
+	stack.Resources = nil
+	stack.Outputs = nil
+
 	rCtx := p.buildResolveContext(stack, tmpl)
 
 	// Emit the initial stack CREATE_IN_PROGRESS event (the handler already
@@ -391,10 +404,20 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 		props, recordedProps, refErr := p.resolveProperties(res, rCtx)
 		propsHash := hashResourceProperties(res.Type, recordedProps, stack.Tags)
 
-		if old, ok := existing[logicalID]; ok && old.Type == res.Type {
-			// Same logical ID and type. Diff the resolved properties and
-			// either skip (no change), update in-place (handler supports it),
-			// or fall back to delete + create (handler doesn't).
+		// Same logical ID and type, with a resource still behind the record.
+		// That last part is what makes the record a prior state worth diffing:
+		// a create that failed before naming anything, or one a rollback has
+		// since deleted, leaves a record the stack no longer has a resource for,
+		// and it belongs on the create branch below. Treated as existing it was
+		// compared against a resource that is not there — and because a failed
+		// create records no property hash, resourcePropertiesMatch read that as
+		// "unchanged" and skipped it — so a redeploy silently declined to
+		// provision the resource and carried the failed attempt's status and
+		// reason forward as if they still described something.
+		if old, ok := existing[logicalID]; ok && old.Type == res.Type && old.existsServiceSide() {
+			// Diff the resolved properties and either skip (no change), update
+			// in-place (handler supports it), or fall back to delete + create
+			// (handler doesn't).
 			rCtx.Resources[logicalID] = old.PhysicalID
 			if old.Attributes != nil {
 				if rCtx.Attributes == nil {
@@ -580,6 +603,14 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 		logicalID := stack.Resources[i].LogicalID
 		old, stillToDelete := existing[logicalID]
 		if !stillToDelete {
+			continue
+		}
+		if !old.existsServiceSide() {
+			// Nothing stands behind the record — a create that failed before
+			// naming anything, or one a rollback already deleted. Deleting by an
+			// empty physical ID would report a teardown that never happened, and
+			// deleting by the ID of an already-deleted resource would tear down
+			// whatever the loop above has just re-created under the same name.
 			continue
 		}
 		if old.shouldRetainOnDelete() {
@@ -1382,7 +1413,13 @@ func (p *provisioner) rollbackUpdate(ctx context.Context, stack *Stack, attempte
 			continue
 		}
 
-		if old, wasExisting := previous[r.LogicalID]; wasExisting {
+		// Present in the pre-update list *and* backed by a resource then. A
+		// record the update inherited with nothing behind it — a create that had
+		// failed before naming anything, or one an earlier rollback deleted — is
+		// a resource this update created from scratch, whatever the map says, so
+		// it belongs in the delete pass below. Reading membership alone left it
+		// standing while the restored list disowned it.
+		if old, wasExisting := previous[r.LogicalID]; wasExisting && old.existsServiceSide() {
 			if dirtyUpdates[r.LogicalID] {
 				rollbackFailed = true
 				rollbackErr = errors.Join(rollbackErr, fmt.Errorf(
