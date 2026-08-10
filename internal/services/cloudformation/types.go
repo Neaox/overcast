@@ -279,23 +279,25 @@ const (
 // rule CreateChangeSet did not — see #806 for the same shape in CloudWatch.
 
 // stackStableStatuses are the states AWS calls a stack's "last known stable
-// state": the exact set an update may start from, because each one is a
-// generation that completed and so is something an update rollback can return
-// to.
+// state": every generation that completed, and so something an update rollback
+// can return to. An update may always start from one of them.
 //
 // https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_RollbackStack.html
 //
 // ROLLBACK_COMPLETE is pointedly absent: a create that rolled back never
 // reached CREATE_COMPLETE, so there is nothing to update onto and nothing for
 // a failed update to unwind to — such a stack can only be deleted and created
-// again. The *_FAILED states are absent for the same reason and are the
-// business of RollbackStack (see rollbackPathFor), and the in-progress states
-// because an operation is already running.
+// again. The in-progress states are absent because an operation is already
+// running, and UPDATE_ROLLBACK_FAILED because AWS names it as the one failed
+// status a change set may not even be created against.
 //
-// The web console keeps its own copy of this set in
-// web/src/features/cloudformation/utils.ts; TestStackStableStatuses_matchWebConsole
-// fails if the two drift, since a console that offers an update the server
-// refuses is worse than either rule alone.
+// This is not the whole answer for an update, though — see canUpdateStackFrom
+// for the CREATE_FAILED / UPDATE_FAILED carve-out, which this list has no way
+// to express because it depends on the request rather than the status.
+//
+// The web console keeps a copy of this set in
+// web/src/features/cloudformation/utils.ts, and
+// TestStackStableStatuses_matchWebConsole holds the two together.
 var stackStableStatuses = map[string]bool{
 	StatusCreateComplete:         true,
 	StatusUpdateComplete:         true,
@@ -304,10 +306,33 @@ var stackStableStatuses = map[string]bool{
 	StatusImportRollbackComplete: true,
 }
 
-// canUpdateStackFrom reports whether a stack in the given status has a last
-// known stable state, and so can be updated.
-func canUpdateStackFrom(status string) bool {
-	return stackStableStatuses[status]
+// canUpdateStackFrom reports whether an update may start from the given status,
+// given whether the update preserves successfully provisioned resources —
+// UpdateStack's DisableRollback, the API spelling of the console's "Preserve
+// successfully provisioned resources" and the CLI's --disable-rollback.
+//
+// A stable status is always updatable. CREATE_FAILED and UPDATE_FAILED are
+// updatable *only* with that option, which is AWS's documented remediation
+// path: a failed operation that preserved its resources is resumed by fixing
+// the template and re-running the update with the option set, and the failed
+// resources are retried rather than the whole stack being unwound.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stack-failure-options.html
+//
+//	"When you update a stack that's in a FAILED state, you must select
+//	Preserve successfully provisioned resources for the Stack failure
+//	options to continue updating your stack."
+//
+// So an update from a FAILED status without the option is still refused —
+// AWS requires the option, and a stack left FAILED without it has resources
+// in a state the plain update path cannot reason about. ROLLBACK_COMPLETE is
+// refused either way: it is not one of the two statuses the carve-out names,
+// and it is the case #822 exists for.
+func canUpdateStackFrom(status string, preserveOnFailure bool) bool {
+	if stackStableStatuses[status] {
+		return true
+	}
+	return preserveOnFailure && (status == StatusCreateFailed || status == StatusUpdateFailed)
 }
 
 // stackStableStatusList returns the stable statuses in sorted order, for tests
@@ -359,6 +384,21 @@ func changeSetCreateTargetTaken(status string) bool {
 // IMPORT rides with UPDATE, as it does everywhere else in these handlers
 // (computeChanges included): it edits an existing stack, so it needs the same
 // last known stable state an update does.
+//
+// The update arm passes preserveOnFailure unconditionally, where UpdateStack
+// passes its own DisableRollback. That is AWS's rule for change sets rather
+// than a shortcut: the preserve option is chosen when the change set is
+// *executed* (`execute-change-set --disable-rollback`), not when it is created,
+// so creating one against a failed stack is allowed on its own —
+//
+//	"You can initiate a change set for a stack with a status of CREATE_FAILED
+//	or UPDATE_FAILED, but not for a status of UPDATE_ROLLBACK_FAILED."
+//	https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stack-failure-options.html
+//
+// — and UPDATE_ROLLBACK_FAILED, the status that note excludes, is refused by
+// the stable set anyway. Overcast does not model ExecuteChangeSet's own
+// DisableRollback parameter; the stack keeps the setting from the operation
+// that failed, which is what its provisioning then honours.
 func changeSetTargetError(stack *Stack, changeSetType string) *protocol.AWSError {
 	if changeSetType == "CREATE" {
 		if changeSetCreateTargetTaken(stack.Status) {
@@ -366,7 +406,7 @@ func changeSetTargetError(stack *Stack, changeSetType string) *protocol.AWSError
 		}
 		return nil
 	}
-	if !canUpdateStackFrom(stack.Status) {
+	if !canUpdateStackFrom(stack.Status, true) {
 		return stackNotUpdatableErr(stack)
 	}
 	return nil

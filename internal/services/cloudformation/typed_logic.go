@@ -306,7 +306,14 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 		return nil, cfnerr("ValidationError",
 			fmt.Sprintf("Stack [%s] does not exist", req.StackName), http.StatusBadRequest)
 	}
-	if !canUpdateStackFrom(stack.Status) {
+	// DisableRollback is read before the status guard rather than with the
+	// rest of the request, because the guard's answer depends on it: it is
+	// what allows an update to resume a CREATE_FAILED or UPDATE_FAILED stack.
+	disableRollback, aerr := parseDisableRollback(req.DisableRollback)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if !canUpdateStackFrom(stack.Status, disableRollback) {
 		return nil, stackNotUpdatableErr(stack)
 	}
 	previous := captureStackGeneration(stack)
@@ -326,11 +333,6 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 	tmpl, err := parseTemplate(templateBody)
 	if err != nil {
 		return nil, cfnerr("ValidationError", err.Error(), http.StatusBadRequest)
-	}
-
-	disableRollback, aerr := parseDisableRollback(req.DisableRollback)
-	if aerr != nil {
-		return nil, aerr
 	}
 
 	params := typedCollectParams(req.Parameters)

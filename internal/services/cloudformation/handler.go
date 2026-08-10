@@ -226,7 +226,15 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Stack [%s] does not exist", stackName), http.StatusBadRequest)
 		return
 	}
-	if !canUpdateStackFrom(stack.Status) {
+	// DisableRollback is read before the status guard rather than with the
+	// rest of the request, because the guard's answer depends on it: it is
+	// what allows an update to resume a CREATE_FAILED or UPDATE_FAILED stack.
+	disableRollback, aerr := parseDisableRollback(r.FormValue("DisableRollback"))
+	if aerr != nil {
+		protocol.WriteQueryXMLError(w, r, aerr)
+		return
+	}
+	if !canUpdateStackFrom(stack.Status, disableRollback) {
 		protocol.WriteQueryXMLError(w, r, stackNotUpdatableErr(stack))
 		return
 	}
@@ -241,12 +249,6 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := parseTemplate(templateBody)
 	if err != nil {
 		writeCFNError(w, r, "ValidationError", err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	disableRollback, aerr := parseDisableRollback(r.FormValue("DisableRollback"))
-	if aerr != nil {
-		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
 

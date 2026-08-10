@@ -157,10 +157,21 @@ func (g *cfnCliGroup) ListStacks(_ context.Context, t *harness.TestContext) erro
 	return nil
 }
 
+// UpdateStack waits for the create to finish before updating. create-stack is
+// asynchronous — it returns a StackId with the stack still CREATE_IN_PROGRESS —
+// and CloudFormation refuses an update to a stack that is mid-operation, so
+// updating straight after creating is a race the suite would lose against real
+// AWS as readily as against Overcast. The java-sdk suite waits the same way.
 func (g *cfnCliGroup) UpdateStack(_ context.Context, t *harness.TestContext) error {
 	stackName := t.GetString("cfn_stack_name")
 	if stackName == "" {
 		return fmt.Errorf("UpdateStack: no stack from CreateStack")
+	}
+	if err := awscli.Run(t.Endpoint, t.Region,
+		"cloudformation", "wait", "stack-create-complete",
+		"--stack-name", stackName,
+	); err != nil {
+		return fmt.Errorf("UpdateStack: waiting for %s to finish creating: %w", stackName, err)
 	}
 	_, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"cloudformation", "update-stack",

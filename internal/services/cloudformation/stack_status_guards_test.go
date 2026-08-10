@@ -3,11 +3,13 @@ package cloudformation
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/Neaox/overcast/internal/protocol"
@@ -43,6 +45,9 @@ type statusGuardArgs struct {
 	stackName     string
 	changeSetName string
 	changeSetType string
+	// disableRollback is UpdateStack's "preserve successfully provisioned
+	// resources", which decides whether a FAILED stack may be updated.
+	disableRollback bool
 }
 
 func statusGuardFromQuery(rec *httptest.ResponseRecorder) statusGuardResult {
@@ -134,16 +139,18 @@ var statusGuardUpdateStackPaths = []statusGuardPath{
 		t.Helper()
 		rec := httptest.NewRecorder()
 		h.dispatch(rec, cfnPost("UpdateStack", map[string]string{
-			"StackName":    args.stackName,
-			"TemplateBody": statusGuardTemplate,
+			"StackName":       args.stackName,
+			"TemplateBody":    statusGuardTemplate,
+			"DisableRollback": strconv.FormatBool(args.disableRollback),
 		}))
 		return statusGuardFromQuery(rec)
 	}},
 	{name: "typed", call: func(t *testing.T, h *Handler, args statusGuardArgs) statusGuardResult {
 		t.Helper()
 		_, aerr := h.updateStackTyped(context.Background(), &updateStackReq{
-			StackName:    args.stackName,
-			TemplateBody: statusGuardTemplate,
+			StackName:       args.stackName,
+			TemplateBody:    statusGuardTemplate,
+			DisableRollback: strconv.FormatBool(args.disableRollback),
 		})
 		return statusGuardFromTyped(aerr)
 	}},
@@ -485,6 +492,110 @@ func TestUpdateStack_fromStableStatus_accepted(t *testing.T) {
 	}
 }
 
+// AWS's remediation path for a failed operation that preserved its resources:
+// fix the template, re-run the update with "preserve successfully provisioned
+// resources", and the failed resources are retried instead of the whole stack
+// being unwound. The option is required, so the same update without it is
+// still refused.
+//
+// https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stack-failure-options.html
+func TestUpdateStack_fromFailedStatus_needsDisableRollback(t *testing.T) {
+	for _, status := range []string{StatusCreateFailed, StatusUpdateFailed} {
+		for _, path := range statusGuardUpdateStackPaths {
+			t.Run(status+"/withDisableRollback/"+path.name, func(t *testing.T) {
+				// Given: a stack whose operation failed with its resources preserved
+				h, st := newRollbackTestHandler(t)
+				seedStack(t, st, "resumable", status)
+
+				// When: the update sets DisableRollback
+				got := path.call(t, h, statusGuardArgs{stackName: "resumable", disableRollback: true})
+
+				// Then: it is accepted and the retry runs
+				if !got.accepted {
+					t.Fatalf("UpdateStack from %s with DisableRollback rejected: %s: %s", status, got.code, got.message)
+				}
+				if now := statusGuardStackStatus(t, st, "resumable"); now != StatusUpdateComplete {
+					t.Errorf("stack status = %q, want UPDATE_COMPLETE", now)
+				}
+			})
+
+			t.Run(status+"/withoutDisableRollback/"+path.name, func(t *testing.T) {
+				// Given: the same stack
+				h, st := newRollbackTestHandler(t)
+				stack := seedStack(t, st, "resumable", status)
+
+				// When: the update omits the option AWS requires
+				got := path.call(t, h, statusGuardArgs{stackName: "resumable"})
+
+				// Then: it is refused, and the stack is left as it was
+				if got.accepted {
+					t.Fatalf("UpdateStack from %s was accepted without DisableRollback", status)
+				}
+				want := "Stack:" + stack.StackID + " is in " + status + " state and can not be updated."
+				if got.code != "ValidationError" || got.message != want {
+					t.Errorf("error = %s: %q, want ValidationError: %q", got.code, got.message, want)
+				}
+				if now := statusGuardStackStatus(t, st, "resumable"); now != status {
+					t.Errorf("stack status = %q, want %q", now, status)
+				}
+			})
+		}
+	}
+}
+
+// The carve-out is for the two FAILED statuses only. ROLLBACK_COMPLETE is what
+// #822 exists for: the create never completed, so there is nothing to preserve
+// and nothing to resume, whatever the request asks for.
+func TestUpdateStack_fromRollbackComplete_refusedWithOrWithoutDisableRollback(t *testing.T) {
+	for _, preserve := range []bool{false, true} {
+		for _, path := range statusGuardUpdateStackPaths {
+			t.Run(fmt.Sprintf("disableRollback=%t/%s", preserve, path.name), func(t *testing.T) {
+				// Given: a stack whose create rolled back
+				h, st := newRollbackTestHandler(t)
+				stack := seedStack(t, st, "rolled-back", StatusRollbackComplete)
+
+				// When: it is updated, with and without the preserve option
+				got := path.call(t, h, statusGuardArgs{stackName: "rolled-back", disableRollback: preserve})
+
+				// Then: refused either way
+				if got.accepted {
+					t.Fatalf("UpdateStack from ROLLBACK_COMPLETE was accepted with DisableRollback=%t", preserve)
+				}
+				want := "Stack:" + stack.StackID + " is in ROLLBACK_COMPLETE state and can not be updated."
+				if got.code != "ValidationError" || got.message != want {
+					t.Errorf("error = %s: %q, want ValidationError: %q", got.code, got.message, want)
+				}
+			})
+		}
+	}
+}
+
+// A change set may be created against a failed stack without any flag: the
+// preserve option belongs to ExecuteChangeSet, not to CreateChangeSet.
+func TestCreateChangeSet_updateTypeFromFailedStatus_accepted(t *testing.T) {
+	for _, status := range []string{StatusCreateFailed, StatusUpdateFailed} {
+		for _, path := range statusGuardCreateChangeSetPaths {
+			t.Run(status+"/"+path.name, func(t *testing.T) {
+				// Given: a stack left failed with its resources preserved
+				h, st := newRollbackTestHandler(t)
+				seedStack(t, st, "resumable", status)
+
+				// When: an UPDATE change set is created against it
+				got := path.call(t, h, statusGuardArgs{
+					stackName:     "resumable",
+					changeSetName: "retry",
+					changeSetType: "UPDATE",
+				})
+
+				// Then: it is accepted
+				if !got.accepted {
+					t.Fatalf("CreateChangeSet(UPDATE) rejected against a %s stack: %s: %s", status, got.code, got.message)
+				}
+			})
+		}
+	}
+}
+
 func TestCreateChangeSet_updateTypeFromUnstableStatus_validationError(t *testing.T) {
 	for _, path := range statusGuardCreateChangeSetPaths {
 		t.Run(path.name, func(t *testing.T) {
@@ -547,7 +658,7 @@ func TestExecuteChangeSet_updateTypeFromUnstableStatus_validationError(t *testin
 	}
 }
 
-// ── The server's stable set and the web console's must not drift ───────────
+// ── The console must not offer an update the server refuses ────────────────
 
 // statusGuardWebUtils is the web console's copy of the same rule. The two are
 // separate languages with no shared source of truth, so the only thing that
@@ -558,7 +669,18 @@ var statusGuardStableSetRE = regexp.MustCompile(`(?s)const STABLE_STATUSES = new
 
 var statusGuardQuotedRE = regexp.MustCompile(`"([A-Z_]+)"`)
 
-func TestStackStableStatuses_matchWebConsole(t *testing.T) {
+// The relationship asserted is containment, not equality: every status whose
+// Update button the console offers must be one the server accepts
+// unconditionally.
+//
+// Equality would be the wrong test in one direction. The server also accepts
+// CREATE_FAILED and UPDATE_FAILED when the request preserves successfully
+// provisioned resources, and the console's update form has no such control —
+// so the console being the smaller set is correct, and widening it to match
+// would offer a button whose request the server would refuse. What must never
+// happen is the other direction: a status the console offers that the server
+// rejects out of hand.
+func TestStackStableStatuses_webConsoleOffersNoUpdateTheServerRefuses(t *testing.T) {
 	// Given: the web console's STABLE_STATUSES set
 	src, err := os.ReadFile(statusGuardWebUtils)
 	if err != nil {
@@ -572,19 +694,17 @@ func TestStackStableStatuses_matchWebConsole(t *testing.T) {
 	for _, m := range statusGuardQuotedRE.FindAllSubmatch(block[1], -1) {
 		web = append(web, string(m[1]))
 	}
-
-	// When: it is compared with the set the server accepts an update from
-	server := stackStableStatusList()
-	sort.Strings(web)
-	sort.Strings(server)
-
-	// Then: they agree, or the console promises something the server refuses
-	if len(web) != len(server) {
-		t.Fatalf("stable statuses differ:\n  server: %v\n  web:    %v", server, web)
+	if len(web) == 0 {
+		t.Fatalf("parsed no statuses out of STABLE_STATUSES in %s", statusGuardWebUtils)
 	}
-	for i := range web {
-		if web[i] != server[i] {
-			t.Fatalf("stable statuses differ:\n  server: %v\n  web:    %v", server, web)
+	sort.Strings(web)
+
+	// When/Then: every one of them is a status the server updates from without
+	// the caller having to ask for anything else
+	for _, status := range web {
+		if !canUpdateStackFrom(status, false) {
+			t.Errorf("the console offers Update for %q, which the server refuses; server accepts %v",
+				status, stackStableStatusList())
 		}
 	}
 }
