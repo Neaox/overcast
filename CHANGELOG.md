@@ -184,6 +184,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [web/s3] the version column shows the end of a version id rather than the start, so two versions of one key can be told apart. Overcast mints ids with the timestamp leading, so versions written moments apart share their first characters — three versions of one key all rendered as the same eight characters followed by an ellipsis
 
+- [elasticache] the support matrix no longer advertises `DescribeCacheEngineVersions` and `RebootCacheCluster` as supported — both are routed to a NotImplemented stub and always answer 501, so they are marked Unsupported until they are emulated
+
 ### Removed
 
 - **BREAKING** [scheduler] the emulator-only `/_scheduler/*` path prefix
