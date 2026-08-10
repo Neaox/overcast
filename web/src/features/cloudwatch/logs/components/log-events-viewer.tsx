@@ -542,7 +542,14 @@ export function LogEventsViewer({ groupName, streamName }: Props) {
                           {formatLogTime(evt.timestamp)}
                         </div>
                         {!streamName && (
-                          <div className="flex w-44 shrink-0 items-start px-1 pt-1.5 font-mono text-[10px] text-fg-muted">
+                          // Truncated, not just narrow: a Lambda stream name is
+                          // wider than `w-44` at this size and the column has no
+                          // overflow of its own, so it used to spill across the
+                          // message — over the level badge first.
+                          <div
+                            className="w-44 shrink-0 truncate px-1 pt-1.5 font-mono text-[10px] text-fg-muted"
+                            title={evt.logStreamName}
+                          >
                             {evt.logStreamName}
                           </div>
                         )}
