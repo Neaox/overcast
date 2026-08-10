@@ -62,6 +62,43 @@ func TestModeledBindings_areServedWhereAWSBindsThem(t *testing.T) {
 	// Then: only the bindings the ledger already accounts for are unserved,
 	// and every ledger entry is still needed.
 	assertLedger(t, unserved)
+	assertUnreachableRowsDoNotClaimSupport(t, unserved)
+}
+
+// assertUnreachableRowsDoNotClaimSupport is #864's fourth enforcement point,
+// tied to the third so it cannot drift: StatusSupported has to mean reachable.
+//
+// The support matrix is what a user consults to find out whether Overcast can
+// do a thing. A ✅ against an operation no SDK can call is worse than a ❌,
+// because it is acted on. #861 found ElastiCache advertising two operations
+// that always answered 501, and #862 found SESv2 advertising one that answered
+// 405 to every client — and in both cases the emulator's own records said so
+// plainly enough for a machine to have caught it.
+//
+// The honest grades for an unserved row are WIP (it exists but is known
+// incorrect) or Unsupported (it answers 501). Supported and Inert both promise
+// the caller gets through.
+func assertUnreachableRowsDoNotClaimSupport(t *testing.T, unserved []bindingFault) {
+	t.Helper()
+
+	var overclaimed []string
+	for _, fault := range unserved {
+		switch fault.cap.Status {
+		case capabilities.StatusSupported, capabilities.StatusInert:
+			overclaimed = append(overclaimed, fmt.Sprintf("%s declares %s but %s is unserved (%s)",
+				fault.key(), fault.cap.Status, fault.want, unservedBindings[fault.key()]))
+		case capabilities.StatusUnsupported, capabilities.StatusWIP, capabilities.StatusPartial:
+			// Unsupported rows never reach here, and WIP and Partial both
+			// already tell the reader not to rely on the operation.
+		}
+	}
+	sort.Strings(overclaimed)
+
+	if len(overclaimed) > 0 {
+		t.Errorf("%d operation(s) advertise support for a binding no client can reach:\n\t%s\n\n"+
+			"Register the modeled route, or declare the row WIP or Unsupported. A ✅ in the support matrix is "+
+			"read as a promise that the call works.", len(overclaimed), strings.Join(overclaimed, "\n\t"))
+	}
 }
 
 // TestWeaklyServedBindings_areRecorded names every operation whose only proof

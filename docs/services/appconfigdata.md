@@ -65,10 +65,10 @@ are by default).
 
 ## Summary
 
-| Category         | ✅ Supported |
-| ---------------- | ------------ |
-| Sessions         | 2            |
-| Response headers | 1            |
+| Category         | ✅ Supported | 🚧 WIP |
+| ---------------- | ------------ | ------ |
+| Sessions         |              | 2      |
+| Response headers | 1            |        |
 
 ---
 
@@ -76,10 +76,10 @@ are by default).
 
 ### Sessions
 
-| Operation                   | Status       | Notes                                                                     | AWS Docs                                                                                                               |
-| --------------------------- | ------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `StartConfigurationSession` | ✅ Supported | Starts a polling session; returns `InitialConfigurationToken`             | [docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_StartConfigurationSession.html) |
-| `GetLatestConfiguration`    | ✅ Supported | Returns current config content; empty body when unchanged since last poll | [docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)    |
+| Operation                   | Status | Notes                                                                                                                                                  | AWS Docs                                                                                                               |
+| --------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `StartConfigurationSession` | 🚧 WIP | Starts a polling session; returns `InitialConfigurationToken`; Overcast does not serve the binding AWS models, so no SDK reaches it (#855)             | [docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_StartConfigurationSession.html) |
+| `GetLatestConfiguration`    | 🚧 WIP | Returns current config content; empty body when unchanged since last poll; Overcast does not serve the binding AWS models, so no SDK reaches it (#855) | [docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)    |
 
 ### Response headers
 

@@ -36,6 +36,19 @@ var unservedBindings = map[string]string{
 	// #854 — the whole AppConfig surface is served under /_appconfig. Worst of
 	// the set: POST /applications is silently answered by AppRegistry, which
 	// returns a servicecatalog ARN with 200 rather than a 501.
+	//
+	// These twelve are the only rows in this ledger whose modeled binding does
+	// not answer a clean 501 to a correctly signed request. Every other
+	// unserved binding falls through to restFallback, which asks the generated
+	// registry who owns the path and answers NotImplemented — the emulator
+	// being honest about a gap. AppConfig's do not, because AppRegistry
+	// registers r.Route("/applications", …) (internal/services/appregistry/
+	// service.go:80), and a chi sub-router owns its whole subtree: a path it
+	// does not match hits *its* NotFound, never the parent's "/*". So a client
+	// calling AppConfig gets a bare 404 with no AWS error body at all.
+	//
+	// The general rule, worth knowing before adding a prefix route: the 501
+	// fallback only protects paths no other service has claimed.
 	"appconfig/CreateConfigurationProfile":       "#854",
 	"appconfig/CreateEnvironment":                "#854",
 	"appconfig/CreateHostedConfigurationVersion": "#854",

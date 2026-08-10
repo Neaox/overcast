@@ -119,6 +119,7 @@ func main() {
 		if *checkModel {
 			failures += checkCapabilitiesInManifest(caps)
 			failures += checkDocOnlyRowsAreNotDispatched(svc, svcDir, caps)
+			failures += checkNotesBindingsMatchTheModel(caps)
 		}
 
 		if *check {
@@ -313,6 +314,77 @@ var capabilityManifestExemptions = map[string]string{
 
 func capabilityManifestExemption(cap CapabilityDecl) string {
 	return capabilityManifestExemptions[cap.Service+"/"+cap.Operation]
+}
+
+// notesBindingPattern matches an HTTP binding written inside a capability's
+// Notes — "`PUT /v2/email/identities`", "`GET /2021-01-01/domain`". Notes are
+// rendered verbatim into docs/services/*.md, so this is the form in which the
+// published support matrix makes a claim about where an operation lives.
+var notesBindingPattern = regexp.MustCompile(`\b(GET|PUT|POST|PATCH|DELETE|HEAD)\s+(/[^\s` + "`" + `,;)]*)`)
+
+// checkNotesBindingsMatchTheModel holds a capability's prose to the same model
+// its routes are held to.
+//
+// #864's fifth enforcement point asks that generated docs cannot claim a path
+// Overcast does not serve. Today docs/services/*.md is generated from the
+// declarations, and the declarations are typed by hand — so SESv2's
+// CreateEmailIdentity published "`PUT /v2/email/identities`" for 33 releases,
+// which was an accurate description of the emulator's route and the wrong
+// answer about AWS. Anyone reading the matrix to find out where to send a
+// request was told the one thing that would not work.
+//
+// Only the method and path are checked, and only when a Note states one. A
+// Note is free to say anything else; what it may not do is name a binding AWS
+// does not use.
+func checkNotesBindingsMatchTheModel(caps []CapabilityDecl) int {
+	violations := 0
+	for _, cap := range caps {
+		match := notesBindingPattern.FindStringSubmatch(cap.Notes)
+		if match == nil {
+			continue
+		}
+		method, path := match[1], match[2]
+
+		matched := false
+		var bindings []string
+		for _, op := range awsapi.Operations(cap.Service, modeledOperationName(cap)) {
+			if op.URI == "" {
+				continue
+			}
+			bindings = append(bindings, op.HTTPMethod+" "+op.URI)
+			if op.HTTPMethod == method && comparablePath(op.URI) == comparablePath(path) {
+				matched = true
+				break
+			}
+		}
+		if matched || len(bindings) == 0 {
+			continue
+		}
+		sort.Strings(bindings)
+		fmt.Printf("NOTES_BINDING_MISMATCH %s/%s  (Notes say %s %s; AWS models %s — correct the note, and check the route it describes)\n",
+			cap.Service, cap.Operation, method, path, strings.Join(bindings, ", "))
+		violations++
+	}
+	return violations
+}
+
+// pathLabel matches a URI template's parameter, on either side of the
+// comparison — the model's {ResourceArn} and a note's shorter {arn}.
+var pathLabel = regexp.MustCompile(`\{[^}]*\}`)
+
+// comparablePath reduces a URI to what a note and a model row have to agree
+// on: the sequence of literal segments and the positions of the parameters
+// between them.
+//
+// A parameter's name carries no meaning here — a note is free to write {arn}
+// where the model writes {resourceArn} — and a note that goes on to spell out
+// the query parameters an operation takes is documenting the operation, not
+// contradicting its binding.
+func comparablePath(uri string) string {
+	if i := strings.IndexByte(uri, '?'); i >= 0 {
+		uri = uri[:i]
+	}
+	return strings.TrimSuffix(pathLabel.ReplaceAllString(uri, "{}"), "/")
 }
 
 // checkDocOnlyRowsAreNotDispatched turns DocOnly from an exemption into a

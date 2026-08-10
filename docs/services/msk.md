@@ -31,12 +31,12 @@ and status transitions immediately.
 
 ## Summary
 
-| Category       | ✅ Supported | ❌ Unsupported |
-| -------------- | ------------ | -------------- |
-| Clusters       | 7            | 13             |
-| Configurations | 5            |                |
-| Kafka versions | 1            |                |
-| Tagging        | 3            |                |
+| Category       | ✅ Supported | 🚧 WIP | ❌ Unsupported |
+| -------------- | ------------ | ------ | -------------- |
+| Clusters       | 5            | 2      | 13             |
+| Configurations | 5            |        |                |
+| Kafka versions | 1            |        |                |
+| Tagging        | 3            |        |                |
 
 ---
 
@@ -44,28 +44,28 @@ and status transitions immediately.
 
 ### Clusters
 
-| Operation                      | Status         | Notes                                                                                                    | AWS Docs                                                                                            |
-| ------------------------------ | -------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `CreateCluster`                | ✅ Supported   | Docker-backed (Redpanda); async CREATING→ACTIVE via TCP health check; port auto-alloc from MSK_PORT_BASE | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_CreateCluster.html)                |
-| `DescribeCluster`              | ✅ Supported   | Look up cluster by ARN                                                                                   | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DescribeCluster.html)              |
-| `ListClusters`                 | ✅ Supported   | List all clusters; optional `clusterNameFilter` query param                                              | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_ListClusters.html)                 |
-| `DeleteCluster`                | ✅ Supported   | Sets state to "DELETING"; stops and removes Docker container asynchronously                              | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DeleteCluster.html)                |
-| `GetBootstrapBrokers`          | ✅ Supported   | Returns `bootstrapBrokerString` with allocated host:port when Docker container is running                | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_GetBootstrapBrokers.html)          |
-| `CreateClusterV2`              | ✅ Supported   | PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE         | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_CreateClusterV2.html)              |
-| `DescribeClusterV2`            | ✅ Supported   | Returns v2 shape with `clusterType` and `provisioned`/`serverless` sub-object                            | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DescribeClusterV2.html)            |
-| `UpdateBrokerCount`            | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateBrokerCount.html)            |
-| `UpdateBrokerStorage`          | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateBrokerStorage.html)          |
-| `UpdateBrokerType`             | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateBrokerType.html)             |
-| `UpdateMonitoring`             | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateMonitoring.html)             |
-| `UpdateSecurity`               | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateSecurity.html)               |
-| `RebootBroker`                 | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_RebootBroker.html)                 |
-| `BatchAssociateScramSecret`    | ❌ Unsupported | SCRAM authentication - not implemented                                                                   | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_BatchAssociateScramSecret.html)    |
-| `BatchDisassociateScramSecret` | ❌ Unsupported | SCRAM authentication - not implemented                                                                   | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_BatchDisassociateScramSecret.html) |
-| `ListScramSecrets`             | ❌ Unsupported | SCRAM authentication - not implemented                                                                   | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_ListScramSecrets.html)             |
-| `CreateVpcConnection`          | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_CreateVpcConnection.html)          |
-| `DeleteVpcConnection`          | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DeleteVpcConnection.html)          |
-| `DescribeVpcConnection`        | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DescribeVpcConnection.html)        |
-| `ListVpcConnections`           | ❌ Unsupported | stub; returns 501                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_ListVpcConnections.html)           |
+| Operation                      | Status         | Notes                                                                                                                                                                         | AWS Docs                                                                                            |
+| ------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `CreateCluster`                | ✅ Supported   | Docker-backed (Redpanda); async CREATING→ACTIVE via TCP health check; port auto-alloc from MSK_PORT_BASE                                                                      | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_CreateCluster.html)                |
+| `DescribeCluster`              | ✅ Supported   | Look up cluster by ARN                                                                                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DescribeCluster.html)              |
+| `ListClusters`                 | ✅ Supported   | List all clusters; optional `clusterNameFilter` query param                                                                                                                   | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_ListClusters.html)                 |
+| `DeleteCluster`                | ✅ Supported   | Sets state to "DELETING"; stops and removes Docker container asynchronously                                                                                                   | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DeleteCluster.html)                |
+| `GetBootstrapBrokers`          | ✅ Supported   | Returns `bootstrapBrokerString` with allocated host:port when Docker container is running                                                                                     | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_GetBootstrapBrokers.html)          |
+| `CreateClusterV2`              | 🚧 WIP         | PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE; Overcast does not serve the binding AWS models, so no SDK reaches it (#859) | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_CreateClusterV2.html)              |
+| `DescribeClusterV2`            | 🚧 WIP         | Returns v2 shape with `clusterType` and `provisioned`/`serverless` sub-object; Overcast does not serve the binding AWS models, so no SDK reaches it (#859)                    | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DescribeClusterV2.html)            |
+| `UpdateBrokerCount`            | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateBrokerCount.html)            |
+| `UpdateBrokerStorage`          | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateBrokerStorage.html)          |
+| `UpdateBrokerType`             | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateBrokerType.html)             |
+| `UpdateMonitoring`             | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateMonitoring.html)             |
+| `UpdateSecurity`               | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_UpdateSecurity.html)               |
+| `RebootBroker`                 | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_RebootBroker.html)                 |
+| `BatchAssociateScramSecret`    | ❌ Unsupported | SCRAM authentication - not implemented                                                                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_BatchAssociateScramSecret.html)    |
+| `BatchDisassociateScramSecret` | ❌ Unsupported | SCRAM authentication - not implemented                                                                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_BatchDisassociateScramSecret.html) |
+| `ListScramSecrets`             | ❌ Unsupported | SCRAM authentication - not implemented                                                                                                                                        | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_ListScramSecrets.html)             |
+| `CreateVpcConnection`          | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_CreateVpcConnection.html)          |
+| `DeleteVpcConnection`          | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DeleteVpcConnection.html)          |
+| `DescribeVpcConnection`        | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_DescribeVpcConnection.html)        |
+| `ListVpcConnections`           | ❌ Unsupported | stub; returns 501                                                                                                                                                             | [docs](https://docs.aws.amazon.com/msk/latest/developerguide/API_ListVpcConnections.html)           |
 
 ### Configurations
 

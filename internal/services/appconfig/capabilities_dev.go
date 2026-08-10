@@ -18,33 +18,33 @@ func init() {
 
 		// Environments
 		capabilities.Capability{Service: "appconfig", Operation: "CreateEnvironment", Category: "Environments",
-			Status: capabilities.StatusSupported, Notes: "Creates an environment for an application"},
+			Status: capabilities.StatusWIP, Notes: "Creates an environment for an application; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "GetEnvironment", Category: "Environments",
-			Status: capabilities.StatusSupported, Notes: "Returns environment details"},
+			Status: capabilities.StatusWIP, Notes: "Returns environment details; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "ListEnvironments", Category: "Environments",
-			Status: capabilities.StatusSupported, Notes: "Lists environments for an application"},
+			Status: capabilities.StatusWIP, Notes: "Lists environments for an application; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "DeleteEnvironment", Category: "Environments",
-			Status: capabilities.StatusSupported, Notes: "Deletes an environment"},
+			Status: capabilities.StatusWIP, Notes: "Deletes an environment; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 
 		// Configuration Profiles
 		capabilities.Capability{Service: "appconfig", Operation: "CreateConfigurationProfile", Category: "Configuration Profiles",
-			Status: capabilities.StatusSupported, Notes: "Creates a configuration profile"},
+			Status: capabilities.StatusWIP, Notes: "Creates a configuration profile; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "GetConfigurationProfile", Category: "Configuration Profiles",
-			Status: capabilities.StatusSupported, Notes: "Returns configuration profile details"},
+			Status: capabilities.StatusWIP, Notes: "Returns configuration profile details; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "ListConfigurationProfiles", Category: "Configuration Profiles",
-			Status: capabilities.StatusSupported, Notes: "Lists configuration profiles"},
+			Status: capabilities.StatusWIP, Notes: "Lists configuration profiles; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "DeleteConfigurationProfile", Category: "Configuration Profiles",
-			Status: capabilities.StatusSupported, Notes: "Deletes a configuration profile"},
+			Status: capabilities.StatusWIP, Notes: "Deletes a configuration profile; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 
 		// Hosted Configuration Versions
 		capabilities.Capability{Service: "appconfig", Operation: "CreateHostedConfigurationVersion", Category: "Hosted Configuration Versions",
-			Status: capabilities.StatusSupported, Notes: "Stores configuration content against a profile; `VersionNumber` auto-increments, `ContentType` defaults to `application/octet-stream`, and content over 1 MB is rejected with `BadRequestException`"},
+			Status: capabilities.StatusWIP, Notes: "Stores configuration content against a profile; `VersionNumber` auto-increments, `ContentType` defaults to `application/octet-stream`, and content over 1 MB is rejected with `BadRequestException`; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "GetHostedConfigurationVersion", Category: "Hosted Configuration Versions",
-			Status: capabilities.StatusSupported, Notes: "Returns the raw content as the response body with the `AppConfig-*` metadata headers"},
+			Status: capabilities.StatusWIP, Notes: "Returns the raw content as the response body with the `AppConfig-*` metadata headers; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "ListHostedConfigurationVersions", Category: "Hosted Configuration Versions",
-			Status: capabilities.StatusSupported, Notes: "Returns version metadata without content; no pagination (`NextToken` never returned)"},
+			Status: capabilities.StatusWIP, Notes: "Returns version metadata without content; no pagination (`NextToken` never returned); Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 		capabilities.Capability{Service: "appconfig", Operation: "DeleteHostedConfigurationVersion", Category: "Hosted Configuration Versions",
-			Status: capabilities.StatusSupported, Notes: "Deletes a single version; other versions of the profile are untouched"},
+			Status: capabilities.StatusWIP, Notes: "Deletes a single version; other versions of the profile are untouched; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"},
 
 		// Tags
 		capabilities.Capability{Service: "appconfig", Operation: "TagResource", Category: "Tags",
