@@ -151,9 +151,8 @@ func (s *Service) pollK3sReady(ctx context.Context, region string, cluster *Clus
 		return
 	}
 
-	pollEndpoint := "https://127.0.0.1:" + hostPort
 	clusterEndpoint := "https://" + s.cfg.ExternalHostname() + ":" + hostPort
-	readyzURL := pollEndpoint + "/readyz"
+	readyzURL := s.readyzURL(ctx, containerID, hostPort)
 
 	//nolint:gosec // intentional: local dev only, k3s uses self-signed cert
 	tlsClient := &http.Client{
@@ -187,6 +186,25 @@ func (s *Service) pollK3sReady(ctx context.Context, region string, cluster *Clus
 	}
 	s.failLiveCluster(ctx, region, cluster.Name, issueClusterUnreachable,
 		fmt.Errorf("the k3s API server did not answer %s within %s", readyzURL, pollTimeout))
+}
+
+// k3sAPIPort is the port the control plane listens on inside its container.
+const k3sAPIPort = "6443"
+
+// readyzURL is the readiness URL *Overcast itself* dials: the container's own
+// address on 6443 when Overcast runs beside it, else loopback and the
+// published port.
+//
+// Not the endpoint a client is handed — DescribeCluster still answers with the
+// published host port. Overcast in a container cannot reach that port: inside
+// its own network namespace 127.0.0.1 is itself, so the probe was refused and
+// a perfectly healthy control plane never left CREATING. This is the lookup
+// RDS, ElastiCache, MSK and EFS already health-check through.
+func (s *Service) readyzURL(ctx context.Context, containerID, hostPort string) string {
+	if addr := dataplane.ContainerAddr(ctx, s.docker, s.cfg, containerID); addr != "" {
+		return "https://" + addr + ":" + k3sAPIPort + "/readyz"
+	}
+	return "https://127.0.0.1:" + hostPort + "/readyz"
 }
 
 // AWS ClusterIssueCode values DescribeCluster's health.issues carry. Overcast
@@ -444,7 +462,7 @@ func (s *Service) reconcileReadyLiveCluster(ctx context.Context, region string, 
 		return cluster
 	}
 
-	readyzURL := "https://127.0.0.1:" + hostPort + "/readyz"
+	readyzURL := s.readyzURL(ctx, runtime.containerID, hostPort)
 	//nolint:gosec // intentional: local dev only, k3s uses self-signed cert
 	tlsClient := &http.Client{
 		Timeout: 5 * time.Second,
