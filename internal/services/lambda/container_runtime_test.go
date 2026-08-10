@@ -226,7 +226,8 @@ func TestContainerRuntimeEnsureImage_pullsRequestedPlatformWhenCachedTagDiffers(
 	runtime := &ContainerRuntime{docker: docker.NewClient("tcp://"+server.Listener.Addr().String(), zap.NewNop()), logger: zap.NewNop()}
 
 	// When: Lambda ensures the amd64 variant.
-	err := runtime.ensureImage(context.Background(), "public.ecr.aws/lambda/nodejs:22", "linux/amd64")
+	ctx := context.Background()
+	err := runtime.ensureImage(ctx, runtime.resolveImage(ctx, "public.ecr.aws/lambda/nodejs:22"), "linux/amd64")
 
 	// Then: it does not trust the wrong-architecture cached tag and pulls amd64.
 	if err != nil {

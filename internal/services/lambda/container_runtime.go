@@ -52,21 +52,22 @@ type ContainerRuntime struct {
 	gc               *docker.GC // async container cleanup with retries
 	runtimeAPI       *RuntimeAPIServer
 	logger           *zap.Logger
-	network          string                             // Docker network name
-	overcastEndpoint string                             // http://host:port — AWS_ENDPOINT_URL for containers
-	endpoint         *containerendpoint.Mapper          // rewrites resource URLs and /etc/hosts for sibling containers
-	pullOnce         sync.Map                           // image name → *sync.Once — ensures each image is pulled only once
-	logWriter        events.LogWriter                   // nil until InitLogWriter is called
-	bus              atomic.Pointer[events.Bus]         // nil until SetBus is called
-	exitNotify       *exitNotifier                      // routes Docker watcher die events to per-container channels
-	vpcResolver      atomic.Pointer[VPCNetworkResolver] // resolves subnet → VPC → Docker network
-	efsResolver      atomic.Pointer[EFSVolumeResolver]  // resolves EFS access point → Docker volume
-	layerFetcher     LayerContentFetcher                // resolves a layer ARN to zip bytes for /opt injection
-	remoteFetcher    *RemoteLayerFetcher                // optional — fetches layers from real AWS
-	codeFetcher      CodeFetcher                        // populates fn.CodeZip at cold start; nil in tests
-	tarCache         *tarCache                          // pre-built code/layer tars; nil = disabled
-	imageVerified    sync.Map                           // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
-	coldStartSem     chan struct{}                      // bounds concurrent container creation/INIT bursts
+	network          string                               // Docker network name
+	overcastEndpoint string                               // http://host:port — AWS_ENDPOINT_URL for containers
+	endpoint         *containerendpoint.Mapper            // rewrites resource URLs and /etc/hosts for sibling containers
+	pullOnce         sync.Map                             // image name → *sync.Once — ensures each image is pulled only once
+	logWriter        events.LogWriter                     // nil until InitLogWriter is called
+	bus              atomic.Pointer[events.Bus]           // nil until SetBus is called
+	images           atomic.Pointer[docker.ImageResolver] // nil until SetImageResolver is called
+	exitNotify       *exitNotifier                        // routes Docker watcher die events to per-container channels
+	vpcResolver      atomic.Pointer[VPCNetworkResolver]   // resolves subnet → VPC → Docker network
+	efsResolver      atomic.Pointer[EFSVolumeResolver]    // resolves EFS access point → Docker volume
+	layerFetcher     LayerContentFetcher                  // resolves a layer ARN to zip bytes for /opt injection
+	remoteFetcher    *RemoteLayerFetcher                  // optional — fetches layers from real AWS
+	codeFetcher      CodeFetcher                          // populates fn.CodeZip at cold start; nil in tests
+	tarCache         *tarCache                            // pre-built code/layer tars; nil = disabled
+	imageVerified    sync.Map                             // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
+	coldStartSem     chan struct{}                        // bounds concurrent container creation/INIT bursts
 
 	// initBurst tracks containers that are still in the INIT phase with burst
 	// CPU. Keyed by function ARN → {containerID, steadyStateCPUs}.
@@ -82,6 +83,15 @@ func (cr *ContainerRuntime) SetLogWriter(lw events.LogWriter) { cr.logWriter = l
 // SetBus wires the event bus so image pull progress events are published.
 // Safe to call at any time; picked up by the next ensureImage call.
 func (cr *ContainerRuntime) SetBus(b *events.Bus) { cr.bus.Store(b) }
+
+// SetImageResolver wires the registry resolver used when a function's image
+// names a registry Overcast serves rather than a public one — a container
+// image built and pushed by CDK, whose ImageUri points at real AWS.
+// Implemented by the ECR service. Safe to call at any time; picked up by the
+// next pull.
+func (cr *ContainerRuntime) SetImageResolver(r docker.ImageResolver) {
+	cr.images.Store(&r)
+}
 
 // SetVPCResolver wires the EC2 VPC resolver for connecting Lambda containers
 // to VPC Docker networks.
@@ -308,6 +318,31 @@ func imageForFunction(fn *Function) (string, error) {
 	return image, nil
 }
 
+// imageRef pairs the image reference a function was deployed with — what the
+// user asked for, and what every message about it must name — with the
+// reference this daemon can actually fetch and run it as. The two differ only
+// for an image in a registry Overcast serves: a CDK container asset's ImageUri
+// addresses real AWS, while the bytes are in the local ECR registry.
+type imageRef struct {
+	requested string
+	resolved  docker.ImageReference
+}
+
+// rewritten reports whether resolution moved the reference, which is what
+// makes an error or a log line need to name both.
+func (r imageRef) rewritten() bool { return r.resolved.Ref != r.requested }
+
+// resolveImage maps image onto the reference this daemon can fetch. Without a
+// resolver — and for every reference a resolver does not serve — the image is
+// taken at face value, which is right for the public Lambda base images.
+func (cr *ContainerRuntime) resolveImage(ctx context.Context, image string) imageRef {
+	ref := imageRef{requested: image, resolved: docker.ImageReference{Ref: image}}
+	if rp := cr.images.Load(); rp != nil {
+		ref.resolved = (*rp).ResolveImage(ctx, image)
+	}
+	return ref
+}
+
 // PrewarmFunction starts a background pull of fn's Docker image so the
 // first Invoke doesn't pay the cold-pull cost on the request path. Safe to
 // call from CreateFunction — if the image is already cached or in flight,
@@ -324,7 +359,8 @@ func (cr *ContainerRuntime) PrewarmFunction(fn *Function, onReady func(err error
 	}
 	platform := dockerPlatformForLambdaArchitectures(fn.Architectures)
 	go func() {
-		pullErr := cr.ensureImage(context.Background(), image, platform)
+		ctx := context.Background()
+		pullErr := cr.ensureImage(ctx, cr.resolveImage(ctx, image), platform)
 		if onReady != nil {
 			onReady(pullErr)
 		}
@@ -399,16 +435,21 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 	}
 	platform := dockerPlatformForLambdaArchitectures(fn.Architectures)
 
+	// Resolve once, here: an image in a registry Overcast serves is fetched —
+	// and run — under the reference that registry answers to, while progress
+	// and errors keep naming the one the function was deployed with.
+	ref := cr.resolveImage(ctx, image)
+
 	// Ensure the image is present (lazy, once per image). Once verified, later
 	// acquires skip this daemon round trip entirely; the create-time
 	// missing-image retry below covers an image removed behind our back.
-	pullKey := imagePullKey(image, platform)
+	pullKey := imagePullKey(ref.resolved.Ref, platform)
 	if _, verified := cr.imageVerified.Load(pullKey); !verified {
-		exists, _ := cr.docker.ImageMatchesPlatform(ctx, image, platform)
+		exists, _ := cr.docker.ImageMatchesPlatform(ctx, ref.resolved.Ref, platform)
 		if !exists {
 			progress("Pulling image " + image)
 		}
-		if err := cr.ensureImage(ctx, image, platform); err != nil {
+		if err := cr.ensureImage(ctx, ref, platform); err != nil {
 			return nil, fmt.Errorf("pull image: %w", err)
 		}
 		if !exists {
@@ -560,7 +601,10 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 
 	progress("Creating container")
 	ccfg := &docker.ContainerConfig{
-		Image:  image,
+		// The resolved reference, not the requested one: the daemon stored the
+		// bytes under that name, so creating from the original would fail with
+		// "No such image" straight after a pull that worked.
+		Image:  ref.resolved.Ref,
 		Env:    env,
 		Labels: docker.ManagedLabels("lambda", fn.Name),
 	}
@@ -609,7 +653,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		cr.pullOnce.Delete(pullKey)
 		cr.logger.Info("lambda image missing at container create — re-pulling",
 			zap.String("image", image), zap.String("function", fn.Name))
-		if pullErr := cr.ensureImage(ctx, image, platform); pullErr == nil {
+		if pullErr := cr.ensureImage(ctx, ref, platform); pullErr == nil {
 			cr.imageVerified.Store(pullKey, struct{}{})
 			id, err = cr.docker.CreateContainer(ctx, containerName, req)
 		}
@@ -946,7 +990,11 @@ func (cr *ContainerRuntime) SeedImages() {
 		go func() {
 			for image := range jobs {
 				start := cr.clk.Now()
-				err := cr.ensureImage(context.Background(), image, dockerPlatformForLambdaArchitectures(nil))
+				// Seeded images are the fixed public Lambda base images; a
+				// resolver has nothing to say about them, but going through the
+				// same path keeps one way of pulling.
+				ctx := context.Background()
+				err := cr.ensureImage(ctx, cr.resolveImage(ctx, image), dockerPlatformForLambdaArchitectures(nil))
 				if err != nil {
 					cr.logger.Warn("seed pull failed",
 						zap.String("image", image),
@@ -976,20 +1024,30 @@ func imagePullKey(image, platform string) string {
 	return image + "@" + platform
 }
 
-func (cr *ContainerRuntime) ensureImage(ctx context.Context, image, platform string) error {
+// ensureImage pulls ref unless the daemon already holds it. It works entirely
+// in the resolved reference — that is the name the daemon knows the image by,
+// so it is what the presence check, the pull and the sync.Once key must all
+// use. Everything a user reads names the requested reference instead.
+func (cr *ContainerRuntime) ensureImage(ctx context.Context, ref imageRef, platform string) error {
+	image := ref.requested
+
 	// Check if already pulled.
-	exists, err := cr.docker.ImageMatchesPlatform(ctx, image, platform)
+	exists, err := cr.docker.ImageMatchesPlatform(ctx, ref.resolved.Ref, platform)
 	if err == nil && exists {
 		return nil
 	}
 
 	// Use sync.Once per image+platform to avoid concurrent pulls while still
 	// allowing arm64 and x86_64 variants of the same Lambda tag to be requested.
-	pullKey := imagePullKey(image, platform)
+	pullKey := imagePullKey(ref.resolved.Ref, platform)
 	once, _ := cr.pullOnce.LoadOrStore(pullKey, &sync.Once{})
 	var pullErr error
 	once.(*sync.Once).Do(func() {
-		cr.logger.Info("pulling Lambda image (first use)", zap.String("image", image), zap.String("platform", platform))
+		fields := []zap.Field{zap.String("image", image), zap.String("platform", platform)}
+		if ref.rewritten() {
+			fields = append(fields, zap.String("served_as", ref.resolved.Ref))
+		}
+		cr.logger.Info("pulling Lambda image (first use)", fields...)
 		// Capture bus and clock once; either may be nil in tests or before wiring.
 		bus := cr.bus.Load()
 		clk := cr.clk
@@ -1005,8 +1063,17 @@ func (cr *ContainerRuntime) ensureImage(ctx context.Context, image, platform str
 		if clk != nil {
 			startTime = clk.Now()
 		}
-		pullErr = cr.docker.PullImageForPlatform(ctx, image, platform)
+		pullErr = cr.docker.PullImageWithOptions(ctx, ref.resolved.Ref, docker.PullOptions{
+			Platform: platform,
+			Auth:     ref.resolved.Auth,
+		})
 		if pullErr != nil {
+			// The failure reaches a user as a function's StateReason, so it has
+			// to name the image they deployed as well as the one it was fetched
+			// as — neither alone explains what happened.
+			if ref.rewritten() {
+				pullErr = fmt.Errorf("pull image %s, served here as %s: %w", image, ref.resolved.Ref, pullErr)
+			}
 			// Reset so we retry on next call.
 			cr.pullOnce.Delete(pullKey)
 		}

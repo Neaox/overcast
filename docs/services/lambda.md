@@ -154,6 +154,28 @@ gigabytes of end-of-life images.
 with each runtime's `supported`, `deprecated`, `createBlocked` and
 `updateBlocked` flags.
 
+### Container images published to the emulated ECR
+
+A `PackageType=Image` function names its image with `Code.ImageUri`. When that
+URI addresses this account's ECR registry —
+`{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}`, which is what CDK
+synthesises for a `DockerImageFunction`, from `AWS::AccountId` and
+`AWS::Region` rather than from the repository it pushed to — Overcast pulls the
+image from the registry it actually serves, with the credentials
+`ecr:GetAuthorizationToken` issues, and runs the container from that reference.
+Pulling the URI as written would leave the machine, reach real AWS's wildcard
+ECR domain, and be refused anonymously while the bytes sit in the local
+registry.
+
+Any other image is pulled exactly as written: a public image keeps its meaning,
+and another registry is never offered these credentials. The function still
+reports `Code.ImageUri` as it was deployed — the rewrite decides where the bytes
+come from, not what was deployed. If the registry is not running (Docker
+unavailable, so nothing could have been pushed to it either) the reference is
+left alone rather than pointed at a registry that cannot answer.
+
+See [ECR § Running an image from here](./ecr.md#running-an-image-from-here).
+
 ---
 
 ## Concurrency and execution environments
