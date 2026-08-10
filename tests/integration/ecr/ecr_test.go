@@ -105,24 +105,68 @@ func runDockerCommandEventually(t *testing.T, args ...string) string {
 	return ""
 }
 
-func waitForManagedRegistry(t *testing.T, dc *docker.Client) *docker.ContainerInspect {
+// findManagedRegistries returns every running registry container Overcast
+// manages, by label. Registries carry per-claim names (a port or random
+// suffix), so labels — not a well-known name — are how one is recognised.
+func findManagedRegistries(t *testing.T, dc *docker.Client) []docker.ContainerSummary {
+	t.Helper()
+	summaries, err := dc.ListContainers(t.Context(), "ecr")
+	if err != nil {
+		t.Fatalf("list ecr containers: %v", err)
+	}
+	registries := summaries[:0]
+	for _, c := range summaries {
+		if c.Labels[docker.LabelResourceID] == "registry" && c.State == "running" {
+			registries = append(registries, c)
+		}
+	}
+	return registries
+}
+
+// registryIDSet snapshots the IDs of the managed registries currently running,
+// so a test can later tell its own server's registry from a sibling's.
+func registryIDSet(t *testing.T, dc *docker.Client) map[string]bool {
+	t.Helper()
+	ids := map[string]bool{}
+	for _, c := range findManagedRegistries(t, dc) {
+		ids[c.ID] = true
+	}
+	return ids
+}
+
+// newRegistriesSince returns the managed registries not in before.
+func newRegistriesSince(t *testing.T, dc *docker.Client, before map[string]bool) []docker.ContainerSummary {
+	t.Helper()
+	var fresh []docker.ContainerSummary
+	for _, c := range findManagedRegistries(t, dc) {
+		if !before[c.ID] {
+			fresh = append(fresh, c)
+		}
+	}
+	return fresh
+}
+
+// waitForNewManagedRegistry polls until a managed registry not in before is
+// running, and returns its inspect result.
+func waitForNewManagedRegistry(t *testing.T, dc *docker.Client, before map[string]bool) *docker.ContainerInspect {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
-	var lastErr error
 	for time.Now().Before(deadline) {
-		info, err := dc.GetContainerByName(t.Context(), "overcast-ecr-registry")
-		if err != nil {
-			lastErr = err
-		} else if info != nil && info.HasOvercastLabels("ecr", "registry") {
-			return info
+		for _, c := range newRegistriesSince(t, dc, before) {
+			info, err := dc.InspectContainer(t.Context(), c.ID)
+			if err == nil && info != nil {
+				return info
+			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if lastErr != nil {
-		t.Fatalf("inspect managed registry: %v", lastErr)
-	}
-	t.Fatalf("expected shared ECR registry container to be created")
+	t.Fatalf("expected a new managed ECR registry container to be created")
 	return nil
+}
+
+func waitForManagedRegistry(t *testing.T, dc *docker.Client) *docker.ContainerInspect {
+	t.Helper()
+	return waitForNewManagedRegistry(t, dc, nil)
 }
 
 //nolint:unused // Kept for Docker CLI tests that need stdin.
@@ -828,21 +872,17 @@ func TestDescribeImageScanFindings_imageNotFound(t *testing.T) {
 func TestGetAuthorizationToken_withDocker_lazyStartsSharedRegistry(t *testing.T) {
 	dc := skipWithoutDocker(t)
 
-	if existing, _ := dc.GetContainerByName(t.Context(), "overcast-ecr-registry"); existing != nil && existing.HasOvercastLabels("ecr", "registry") {
-		_ = dc.RemoveContainer(t.Context(), existing.ID, true)
-	}
+	// Registries existing before the server are other processes' — parallel
+	// test packages share this daemon — so "lazy" is proven by a NEW registry
+	// appearing only after the first auth call, not by global absence.
+	before := registryIDSet(t, dc)
 
 	srv := helpers.NewTestServer(t,
 		helpers.WithHostname("overcast"),
 		helpers.WithLambdaDocker(),
 	)
-
-	before, err := dc.GetContainerByName(t.Context(), "overcast-ecr-registry")
-	if err != nil {
-		t.Fatalf("inspect before auth call: %v", err)
-	}
-	if before != nil && before.HasOvercastLabels("ecr", "registry") {
-		t.Fatalf("expected no managed ECR registry container before first auth call")
+	if fresh := newRegistriesSince(t, dc, before); len(fresh) != 0 {
+		t.Fatalf("expected no managed ECR registry before the first auth call, found %d", len(fresh))
 	}
 
 	resp := ecrCall(t, srv, "GetAuthorizationToken", map[string]any{})
@@ -861,15 +901,11 @@ func TestGetAuthorizationToken_withDocker_lazyStartsSharedRegistry(t *testing.T)
 		t.Fatalf("expected hostname-aware proxy endpoint, got %q", proxy)
 	}
 
-	waitForManagedRegistry(t, dc)
+	waitForNewManagedRegistry(t, dc, before)
 }
 
 func TestGetAuthorizationToken_withDocker_tokenAuthenticatesRegistry(t *testing.T) {
 	dc := skipWithoutDocker(t)
-
-	if existing, _ := dc.GetContainerByName(t.Context(), "overcast-ecr-registry"); existing != nil && existing.HasOvercastLabels("ecr", "registry") {
-		_ = dc.RemoveContainer(t.Context(), existing.ID, true)
-	}
 
 	srv := helpers.NewTestServer(t,
 		helpers.WithLambdaDocker(),
@@ -1041,24 +1077,34 @@ func TestECR_withDocker_pushListGetAndPullRoundTrip(t *testing.T) {
 func TestECR_withDocker_registryContainerRemovedOnServerShutdown(t *testing.T) {
 	dc := skipWithoutDocker(t)
 
+	// The server's own registry is the one whose removal is asserted; a
+	// sibling process's registry on this daemon must survive our shutdown,
+	// so the assertion tracks the container this server created, by ID.
+	before := registryIDSet(t, dc)
+	var ownID string
+
 	// Register the final assertion first so it runs after helper server cleanup.
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		var lastID string
 		for {
-			info, err := dc.GetContainerByName(ctx, "overcast-ecr-registry")
+			summaries, err := dc.ListContainers(ctx, "ecr")
 			if err != nil {
-				t.Fatalf("lookup ecr registry container after shutdown: %v", err)
+				t.Fatalf("list ecr containers after shutdown: %v", err)
 			}
-			if info == nil || !info.HasOvercastLabels("ecr", "registry") {
+			present := false
+			for _, c := range summaries {
+				if c.ID == ownID {
+					present = true
+				}
+			}
+			if !present {
 				return
 			}
-			lastID = info.ID
 			select {
 			case <-ctx.Done():
-				t.Fatalf("expected ecr registry container to be removed on shutdown, still present: id=%s", lastID)
+				t.Fatalf("expected ecr registry container to be removed on shutdown, still present: id=%s", ownID)
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
@@ -1075,23 +1121,7 @@ func TestECR_withDocker_registryContainerRemovedOnServerShutdown(t *testing.T) {
 	}
 
 	// Registry container is started in a background goroutine — poll until ready.
-	const pollTimeout = 60 * time.Second
-	const pollInterval = 200 * time.Millisecond
-	pollCtx, cancel := context.WithTimeout(t.Context(), pollTimeout)
-	defer cancel()
-	var info *docker.ContainerInspect
-	for {
-		var err error
-		info, err = dc.GetContainerByName(pollCtx, "overcast-ecr-registry")
-		if err == nil && info != nil && info.HasOvercastLabels("ecr", "registry") {
-			break
-		}
-		select {
-		case <-pollCtx.Done():
-			t.Fatalf("timed out waiting for ECR registry container after %v", pollTimeout)
-		case <-time.After(pollInterval):
-		}
-	}
+	ownID = waitForNewManagedRegistry(t, dc, before).ID
 }
 
 // ---- RPC v2 CBOR tests ----

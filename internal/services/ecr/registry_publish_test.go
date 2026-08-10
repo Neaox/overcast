@@ -84,7 +84,7 @@ func TestStartRegistry_publishesDualStackOnTheConfiguredPort(t *testing.T) {
 	s := newPublishService(t, d, 4510)
 
 	// When: the registry is started.
-	_, inspect, err := s.startRegistry(context.Background(), []byte("htpasswd"), "4510")
+	_, inspect, err := s.startRegistry(context.Background(), ecrRegistryNamePrefix+"-4510", []byte("htpasswd"), "4510")
 	if err != nil {
 		t.Fatalf("startRegistry: %v", err)
 	}
@@ -114,11 +114,11 @@ func TestInitRegistry_fallsBackToAnEphemeralPortWhenTheFixedOneIsTaken(t *testin
 
 	// When: the registry is started the way initRegistryDocker does — fixed
 	// port first, ephemeral on port exhaustion.
-	_, _, err := s.startRegistry(context.Background(), []byte("htpasswd"), "4510")
+	_, _, err := s.startRegistry(context.Background(), ecrRegistryNamePrefix+"-4510", []byte("htpasswd"), "4510")
 	if err == nil || !docker.IsPortUnavailable(err) {
 		t.Fatalf("expected a port-unavailable error, got %v", err)
 	}
-	_, _, err = s.startRegistry(context.Background(), []byte("htpasswd"), "")
+	_, _, err = s.startRegistry(context.Background(), ephemeralRegistryName(), []byte("htpasswd"), "")
 
 	// Then: the retry publishes an ephemeral dual-stack binding and starts —
 	// a registry on an unexpected port beats no registry at all.

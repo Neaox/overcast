@@ -62,7 +62,7 @@ func TestCreateRegistryContainer_waitsOutAPredecessorsName(t *testing.T) {
 	s, creates := registryDaemon(t, 2)
 
 	// When: the registry container is created.
-	id, err := s.createRegistryContainer(context.Background(), &docker.CreateContainerRequest{
+	id, err := s.createRegistryContainer(context.Background(), ecrRegistryNamePrefix+"-4510", &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{Image: ecrRegistryImage},
 	})
 
@@ -94,7 +94,7 @@ func TestCreateRegistryContainer_nonConflictFailsImmediately(t *testing.T) {
 	}
 
 	// When: the registry container is created.
-	_, err := s.createRegistryContainer(context.Background(), &docker.CreateContainerRequest{
+	_, err := s.createRegistryContainer(context.Background(), ecrRegistryNamePrefix+"-4510", &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{Image: ecrRegistryImage},
 	})
 

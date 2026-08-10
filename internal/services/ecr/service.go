@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,9 +50,21 @@ import (
 const serviceName = "ecr"
 
 const (
-	ecrRegistryContainerName = "overcast-ecr-registry"
-	ecrRegistryImage         = "registry:2"
-	ecrRegistryPortKey       = "5000/tcp"
+	// ecrRegistryNamePrefix is the base of every registry container name. The
+	// full name is per-claim — "overcast-ecr-registry-4510" for a fixed port,
+	// "overcast-ecr-registry-<random>" for an ephemeral one — because the name
+	// is the unit of contention on a shared daemon. A singleton name meant any
+	// two Overcast processes (or two test servers in parallel test packages)
+	// each removed the other's registry on startup, killing pushes mid-flight
+	// with connection resets. A fixed port is an exclusive slot, so replacing
+	// whatever holds its name is legitimate predecessor reaping; an ephemeral
+	// registry contends with nobody and gets a name nobody else will claim.
+	ecrRegistryNamePrefix = "overcast-ecr-registry"
+	// ecrRegistryResource is the LabelResourceID carried by every registry
+	// container, the stable way to recognise one regardless of its name.
+	ecrRegistryResource = "registry"
+	ecrRegistryImage    = "registry:2"
+	ecrRegistryPortKey  = "5000/tcp"
 	// ecrRegistryHTPasswdPath is where the registry container reads its
 	// credentials from; the file is copied in at create time.
 	ecrRegistryHTPasswdPath = "/auth/htpasswd"
@@ -59,6 +72,10 @@ const (
 	// a predecessor's name to be released — 5s at the retry interval below.
 	registryCreateAttempts = 20
 	registryCreateBackoff  = 250 * time.Millisecond
+	// registryAnswerTimeout bounds how long a started registry container gets
+	// to begin answering HTTP before startup gives up on it.
+	registryAnswerTimeout = 30 * time.Second
+	registryAnswerBackoff = 200 * time.Millisecond
 )
 
 // ─── Store namespaces ─────────────────────────────────────────────────────────
@@ -120,6 +137,7 @@ type Service struct {
 	puller            *docker.ImagePuller
 	registryMu        sync.Mutex
 	registryContainer string
+	registryName      string
 	registryHostPort  int
 	registryPassword  string
 	registryInitOnce  sync.Once
@@ -1408,12 +1426,6 @@ func (s *Service) initRegistryDocker() {
 		pullCancel()
 	}
 
-	info, err := s.docker.GetContainerByName(context.Background(), ecrRegistryContainerName)
-	if err != nil {
-		s.log.Warn("failed to inspect ECR registry container", zap.Error(err))
-		return
-	}
-
 	htpasswd, err := htpasswdArchive(password)
 	if err != nil {
 		s.log.Warn("failed to build ECR registry credentials", zap.Error(err))
@@ -1427,28 +1439,38 @@ func (s *Service) initRegistryDocker() {
 	}
 	s.registryMu.Unlock()
 
-	if info != nil {
-		if !info.HasOvercastLabels(serviceName, "registry") {
-			s.log.Warn("existing ecr registry container is not overcast-managed", zap.String("container", ecrRegistryContainerName))
-			return
-		}
-		_ = s.docker.StopContainer(context.Background(), info.ID, 3)
-		_ = s.docker.RemoveContainerForce(info.ID)
-	}
+	// Sweep registries that are certainly dead before claiming anything: a
+	// crashed predecessor's exited container, and any container still on the
+	// pre-suffix singleton name. A RUNNING registry under a unique name is
+	// deliberately not touched — it may belong to a live sibling process on
+	// the same daemon, and removing a stranger's registry kills their pushes
+	// mid-flight with connection resets.
+	s.reapDeadRegistries(context.Background())
 
-	// A fixed, well-known port first — stable repositoryUri across restarts and
-	// a nameable address for daemon configuration — falling back to an
+	// A fixed, well-known port first — stable repositoryUri across restarts
+	// and a nameable address for daemon configuration — falling back to an
 	// ephemeral one when something else holds it, because a registry on an
-	// unexpected port beats no registry at all.
-	requested := ""
+	// unexpected port beats no registry at all. The fixed port's name is
+	// derived from the port: that slot is exclusive, so whatever holds the
+	// name is a predecessor to replace. The ephemeral name is random: it
+	// contends with nobody.
+	var containerID string
+	var inspect *docker.ContainerInspect
 	if s.cfg.ECRRegistryPort > 0 {
-		requested = strconv.Itoa(s.cfg.ECRRegistryPort)
+		port := strconv.Itoa(s.cfg.ECRRegistryPort)
+		name := ecrRegistryNamePrefix + "-" + port
+		s.replaceRegistryHolder(context.Background(), name)
+		containerID, inspect, err = s.startRegistry(context.Background(), name, htpasswd, port)
+		if err != nil && docker.IsPortUnavailable(err) {
+			s.log.Warn("ECR registry port is taken; falling back to an ephemeral port — repositoryUri will not be stable across restarts",
+				zap.String("port", port), zap.Error(err))
+			err = errRetryEphemeral
+		}
+	} else {
+		err = errRetryEphemeral
 	}
-	containerID, inspect, err := s.startRegistry(context.Background(), htpasswd, requested)
-	if err != nil && requested != "" && docker.IsPortUnavailable(err) {
-		s.log.Warn("ECR registry port is taken; falling back to an ephemeral port — repositoryUri will not be stable across restarts",
-			zap.String("port", requested), zap.Error(err))
-		containerID, inspect, err = s.startRegistry(context.Background(), htpasswd, "")
+	if errors.Is(err, errRetryEphemeral) {
+		containerID, inspect, err = s.startRegistry(context.Background(), ephemeralRegistryName(), htpasswd, "")
 	}
 	if err != nil {
 		s.log.Warn("failed to start ECR registry container", zap.Error(err))
@@ -1475,19 +1497,104 @@ func (s *Service) initRegistryDocker() {
 		return
 	}
 	s.registryContainer = containerID
+	s.registryName = strings.TrimPrefix(inspect.Name, "/")
 	s.registryHostPort = hostPort
 	s.registryClientBases = registryClientCandidates(hostPort, inspect)
 	s.registryMu.Unlock()
 
+	// Only now, with an answering registry, is "ready" allowed to mean ready:
+	// waitRegistryReady gates GetAuthorizationToken and repositoryUri minting,
+	// and a token handed out before the registry process accepts connections
+	// turns into `docker login` dying on an EOF. Container start is not
+	// process listening; the gap is real on a loaded machine.
+	if !s.awaitRegistryAnswering(password) {
+		s.log.Warn("ECR registry container started but never answered /v2/",
+			zap.Int("port", hostPort))
+		return
+	}
+
 	s.verifyDaemonCanReachRegistry(hostPort)
 }
 
-// startRegistry creates and starts the registry container publishing its port
-// on hostPort ("" for daemon-assigned), returning the started container's
-// inspect result. The container that failed to start is removed before the
-// error is returned, so a port-unavailable failure can be retried under the
-// same name.
-func (s *Service) startRegistry(ctx context.Context, htpasswd []byte, hostPort string) (string, *docker.ContainerInspect, error) {
+// awaitRegistryAnswering polls the registry until it answers HTTP on any of
+// the addresses this process can reach it at, bounded so a wedged container
+// cannot hang startup.
+func (s *Service) awaitRegistryAnswering(password string) bool {
+	deadline := time.Now().Add(registryAnswerTimeout)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		base := s.registryBaseURL(ctx, password)
+		cancel()
+		if base != "" {
+			return true
+		}
+		time.Sleep(registryAnswerBackoff)
+	}
+	return false
+}
+
+// errRetryEphemeral routes registry startup to the ephemeral-port attempt —
+// either because no fixed port is configured or because the fixed one is held.
+var errRetryEphemeral = errors.New("retry with an ephemeral port")
+
+// ephemeralRegistryName mints a container name no other process will claim.
+func ephemeralRegistryName() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		// Fall back to a clock-derived suffix; uniqueness within one daemon is
+		// all that is asked of it.
+		return fmt.Sprintf("%s-%d", ecrRegistryNamePrefix, time.Now().UnixNano())
+	}
+	return ecrRegistryNamePrefix + "-" + hex.EncodeToString(b)
+}
+
+// reapDeadRegistries removes registry containers that cannot be serving
+// anyone: exited ones, and any still on the pre-suffix singleton name (an
+// older Overcast's registry, which the names in use now would otherwise never
+// reclaim). Running registries under unique names are left alone — they may
+// be a live sibling's.
+func (s *Service) reapDeadRegistries(ctx context.Context) {
+	if legacy, err := s.docker.GetContainerByName(ctx, ecrRegistryNamePrefix); err == nil && legacy != nil {
+		if legacy.HasOvercastLabels(serviceName, ecrRegistryResource) {
+			_ = s.docker.StopContainer(ctx, legacy.ID, 3)
+			_ = s.docker.RemoveContainerForce(legacy.ID)
+		}
+	}
+	summaries, err := s.docker.ListContainers(ctx, serviceName)
+	if err != nil {
+		return
+	}
+	for _, c := range summaries {
+		if c.Labels[docker.LabelResourceID] == ecrRegistryResource && c.State != "running" {
+			_ = s.docker.RemoveContainerForce(c.ID)
+		}
+	}
+}
+
+// replaceRegistryHolder removes whatever Overcast-managed registry holds name.
+// Only the fixed-port claim calls this: that name is derived from the port,
+// the port is an exclusive resource, and so its holder is by definition a
+// predecessor (possibly still running after an unclean shutdown, with an
+// htpasswd no current token matches) rather than a peaceful neighbour.
+func (s *Service) replaceRegistryHolder(ctx context.Context, name string) {
+	info, err := s.docker.GetContainerByName(ctx, name)
+	if err != nil || info == nil {
+		return
+	}
+	if !info.HasOvercastLabels(serviceName, ecrRegistryResource) {
+		s.log.Warn("existing ecr registry container is not overcast-managed", zap.String("container", name))
+		return
+	}
+	_ = s.docker.StopContainer(ctx, info.ID, 3)
+	_ = s.docker.RemoveContainerForce(info.ID)
+}
+
+// startRegistry creates and starts the registry container under name,
+// publishing its port on hostPort ("" for daemon-assigned), returning the
+// started container's inspect result. The container that failed to start is
+// removed before the error is returned, so a port-unavailable failure can be
+// retried under a fresh claim.
+func (s *Service) startRegistry(ctx context.Context, name string, htpasswd []byte, hostPort string) (string, *docker.ContainerInspect, error) {
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
 			Image: ecrRegistryImage,
@@ -1499,7 +1606,7 @@ func (s *Service) startRegistry(ctx context.Context, htpasswd []byte, hostPort s
 				"REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm",
 				"REGISTRY_AUTH_HTPASSWD_PATH=" + ecrRegistryHTPasswdPath,
 			},
-			Labels: docker.ManagedLabels(serviceName, "registry"),
+			Labels: docker.ManagedLabels(serviceName, ecrRegistryResource),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
 			PortBindings: map[string][]docker.PortBinding{
@@ -1516,7 +1623,7 @@ func (s *Service) startRegistry(ctx context.Context, htpasswd []byte, hostPort s
 		},
 	}
 
-	containerID, err := s.createRegistryContainer(ctx, req)
+	containerID, err := s.createRegistryContainer(ctx, name, req)
 	if err != nil {
 		return "", nil, fmt.Errorf("create: %w", err)
 	}
@@ -1632,27 +1739,28 @@ func registryClientCandidates(hostPort int, inspect *docker.ContainerInspect) []
 	return candidates
 }
 
-// createRegistryContainer creates the shared registry container, waiting out a
-// name still held by a predecessor.
+// createRegistryContainer creates the registry container under name, waiting
+// out a name still held by a predecessor.
 //
 // Docker keeps a container's name reserved until removal completes, and
 // removal is asynchronous — the container disappears from inspect before the
-// name is free. A previous process's registry being reaped therefore answers
-// the create with 409 Conflict for a moment. Failing on that left the registry
-// down for the lifetime of the process, which means every `docker push` to the
-// emulated ECR refused and every task launched from an image in it failed.
-func (s *Service) createRegistryContainer(ctx context.Context, req *docker.CreateContainerRequest) (string, error) {
+// name is free. A predecessor being reaped therefore answers the create with
+// 409 Conflict for a moment. Failing on that left the registry down for the
+// lifetime of the process, which means every `docker push` to the emulated ECR
+// refused and every task launched from an image in it failed. Only the
+// fixed-port name can meet this; an ephemeral claim's name is freshly random.
+func (s *Service) createRegistryContainer(ctx context.Context, name string, req *docker.CreateContainerRequest) (string, error) {
 	// Real elapsed time, not the injected clock: this waits on the Docker
 	// daemon, which a test's mock clock does not move.
 	for attempt := 0; ; attempt++ {
-		id, err := s.docker.CreateContainer(ctx, ecrRegistryContainerName, req)
+		id, err := s.docker.CreateContainer(ctx, name, req)
 		if err == nil || !docker.IsConflict(err) || attempt >= registryCreateAttempts {
 			return id, err
 		}
 		// A conflicting container that is still around is one we are entitled
 		// to replace; one already on its way out just needs a moment.
-		if info, inspectErr := s.docker.GetContainerByName(ctx, ecrRegistryContainerName); inspectErr == nil && info != nil {
-			if !info.HasOvercastLabels(serviceName, "registry") {
+		if info, inspectErr := s.docker.GetContainerByName(ctx, name); inspectErr == nil && info != nil {
+			if !info.HasOvercastLabels(serviceName, ecrRegistryResource) {
 				return "", err
 			}
 			_ = s.docker.StopContainer(ctx, info.ID, 3)
@@ -1703,7 +1811,8 @@ func htpasswdArchive(password string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Stop tears down the shared registry container on server shutdown.
+// Stop tears down this process's registry container on server shutdown. Only
+// its own: another process's registry on the same daemon is none of ours.
 func (s *Service) Stop(ctx context.Context) {
 	if s.docker == nil {
 		return
@@ -1712,6 +1821,7 @@ func (s *Service) Stop(ctx context.Context) {
 	s.registryMu.Lock()
 	s.registryStopping = true
 	containerID := s.registryContainer
+	name := s.registryName
 	ready := s.registryReady
 	s.registryMu.Unlock()
 	if ready != nil {
@@ -1723,20 +1833,25 @@ func (s *Service) Stop(ctx context.Context) {
 		if s.registryContainer != "" {
 			containerID = s.registryContainer
 		}
+		name = s.registryName
 		s.registryMu.Unlock()
 	}
-	if containerID == "" {
-		info, err := s.docker.GetContainerByName(ctx, ecrRegistryContainerName)
-		if err != nil || info == nil || !info.HasOvercastLabels(serviceName, "registry") {
+	if containerID == "" && name == "" {
+		// Init never claimed anything; the only slot that could still hold a
+		// container of ours is the configured fixed port's name.
+		if s.cfg == nil || s.cfg.ECRRegistryPort <= 0 {
 			return
 		}
-		containerID = info.ID
+		name = ecrRegistryNamePrefix + "-" + strconv.Itoa(s.cfg.ECRRegistryPort)
 	}
 
-	s.removeRegistryContainer(containerID)
+	s.removeRegistryContainer(containerID, name)
 }
 
-func (s *Service) removeRegistryContainer(containerID string) {
+// removeRegistryContainer stops and removes the named registry container,
+// polling until the daemon agrees it is gone — removal is asynchronous, and
+// "stopped" is not "removed" while AutoRemove is still working.
+func (s *Service) removeRegistryContainer(containerID, name string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -1746,8 +1861,11 @@ func (s *Service) removeRegistryContainer(containerID string) {
 			_ = s.docker.RemoveContainerForce(containerID)
 		}
 
-		info, err := s.docker.GetContainerByName(ctx, ecrRegistryContainerName)
-		if err == nil && (info == nil || !info.HasOvercastLabels(serviceName, "registry")) {
+		if name == "" {
+			return
+		}
+		info, err := s.docker.GetContainerByName(ctx, name)
+		if err == nil && (info == nil || !info.HasOvercastLabels(serviceName, ecrRegistryResource)) {
 			return
 		}
 		if err == nil && info != nil {
