@@ -1,0 +1,1 @@
+* [lambda] an invoke that asks for a log tail (`X-Amz-Log-Type: Tail`) carries the function's own output, not only the START / END / REPORT lines. A warm invocation arriving while the log reader was still working through the previous one's output was reported as a function that had printed nothing, and answered with a tail missing its `console.log`

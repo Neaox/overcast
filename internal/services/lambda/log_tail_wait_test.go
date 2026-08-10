@@ -35,15 +35,25 @@ func (noopLogWriter) WriteLogEvents(context.Context, string, string, []events.Lo
 }
 
 // newTailWaitInstance returns the minimum containerInstance waitForScannerIdle
-// touches: a clock, and the atomics streamLogs would be updating.
+// touches: a clock, and the atomics streamLogs would be updating. Its reader
+// starts parked in a Read on the Docker stream, which is where a reader that
+// has caught up spends all of its time.
 func newTailWaitInstance(clk clock.Clock) *containerInstance {
-	return &containerInstance{
+	ci := &containerInstance{
 		id:        "cafebabe1234deadbeef",
 		logger:    zap.NewNop(),
 		clk:       clk,
 		logWriter: noopLogWriter{},
 	}
+	readerParks(ci)
+	return ci
 }
+
+// readerParks and readerWorks move the instance between the two states
+// logReadTracker.Read moves it between: blocked in a Read on the Docker log
+// stream, and away from it, doing something with what a Read returned.
+func readerParks(ci *containerInstance) { ci.logParkedAt.Store(ci.clk.Now().UnixNano()) }
+func readerWorks(ci *containerInstance) { ci.logParkedAt.Store(logReaderBetweenReads) }
 
 // deliverBytes does to the instance what logReadTracker does the instant Docker
 // hands over bytes, and nothing more. That is the whole point of having it: a
@@ -236,6 +246,55 @@ func TestWaitForScannerIdle_partialLineIsNotIdle(t *testing.T) {
 	}
 	if elapsed < 15*time.Millisecond {
 		t.Errorf("wait returned after %v, before the line was assembled at 15ms", elapsed)
+	}
+}
+
+// TestWaitForScannerIdle_readerThatHasNotAskedDockerIsNotSilence is the
+// regression test for issue #873: the warm invocation of a two-invocation
+// sequence returns a tail holding START / END / REPORT and nothing else.
+//
+// "Docker has handed over nothing" is the emulator's only evidence that the
+// handler printed nothing, and it is worth nothing at all while the reader is
+// between Reads. Having just delivered the previous invocation's line it is
+// somewhere in the loop that takes it back to the Docker stream — through the
+// line reader, a channel, the batching select, the tail append — and it is not
+// going to hear about the next line until it gets there. On an idle machine
+// that is microseconds and the distinction never shows; on a CI runner with the
+// whole suite on it, it is tens of milliseconds, and the wait was spending its
+// entire first-read grace inside it and then reporting the function silent.
+//
+// The two invocations in TestInvoke_logTail are back to back, so the second one
+// starts inside exactly that window. That is why it is the warm one that fails.
+func TestWaitForScannerIdle_readerThatHasNotAskedDockerIsNotSilence(t *testing.T) {
+	// Given: an invocation that starts while the reader is away from the stream,
+	// still working through what the previous one printed.
+	mock := clock.NewMock()
+	mock.Set(time.Unix(1_700_000_000, 0))
+	ci := newTailWaitInstance(mock)
+	deliverLine(ci, "output from the previous invocation")
+	readerWorks(ci)
+	mark := ci.beginTail()
+
+	// When: the reader gets back to Docker 40 ms later — well past the 25 ms
+	// first-read grace — and this invocation's line is sitting there waiting.
+	start := mock.Now()
+	back := false
+	advanceUntilDone(t, mock, 0, func() { ci.waitForScannerIdle(mark) }, func() {
+		if !back && mock.Now().Sub(start) >= 40*time.Millisecond {
+			readerParks(ci)
+			deliverLine(ci, "hello from invocation two")
+			back = true
+		}
+	})
+	elapsed := mock.Now().Sub(start)
+
+	// Then: the wait was still there for it. Nothing about a reader that has not
+	// asked Docker a question says the function had no answer to give.
+	if !strings.Contains(tailContents(ci), "hello from invocation two") {
+		t.Errorf("tail is missing this invocation's output: %q", tailContents(ci))
+	}
+	if elapsed < 40*time.Millisecond {
+		t.Errorf("wait returned after %v — it read the reader's own backlog as the function's silence", elapsed)
 	}
 }
 
