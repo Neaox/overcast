@@ -27,14 +27,26 @@ function s3(c: {
  * Streams the S3 object body directly to the client — the AWS SDK returns a
  * SdkStream which is a Web ReadableStream, so we pass it straight through
  * to Hono's response with no intermediate buffering.
+ *
+ * `?versionId=` addresses one stored revision rather than the current one, and
+ * is forwarded exactly as sent — `null` included, that being the literal
+ * version id every object written to an unversioned bucket carries. An absent
+ * parameter is `undefined` and the SDK omits it, which is how "current" is
+ * asked for. S3's two refusals — `MethodNotAllowed` for a delete marker's own
+ * id, `NoSuchVersion` for one that does not exist — reach the caller unaltered,
+ * `apiErrorHandler` translating the SDK exception back into its own status and
+ * error code.
  */
 s3Routes.get("/buckets/:bucket/objects/:key{.+}/download", async (c) => {
   const { s3: client } = s3(c)
   const bucket = c.req.param("bucket")
   const key = decodeURIComponent(c.req.param("key"))
+  const versionId = c.req.query("versionId")
 
   const range = c.req.header("range") ?? undefined
-  const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: range }))
+  const res = await client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key, Range: range, VersionId: versionId }),
+  )
 
   if (!res.Body) return c.json({ error: "Empty body returned from S3" }, 500)
 
@@ -51,6 +63,9 @@ s3Routes.get("/buckets/:bucket/objects/:key{.+}/download", async (c) => {
   if (res.AcceptRanges) headers.set("Accept-Ranges", res.AcceptRanges)
   if (res.ETag) headers.set("ETag", res.ETag)
   if (res.LastModified) headers.set("Last-Modified", res.LastModified.toUTCString())
+  // Echoed so a caller can confirm which revision it actually got, rather than
+  // having to trust that the id it asked for is the one that was served.
+  if (res.VersionId) headers.set("x-amz-version-id", res.VersionId)
 
   return new Response(stream, { status: res.ContentRange ? 206 : 200, headers })
 })

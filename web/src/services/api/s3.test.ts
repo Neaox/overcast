@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { LifecycleRule } from "@aws-sdk/client-s3"
 
-import { toLifecycleRule } from "./s3"
+import { s3, toLifecycleRule } from "./s3"
 
 describe("toLifecycleRule", () => {
   it("carries a rule whose only action is on the version history", () => {
@@ -59,5 +59,38 @@ describe("toLifecycleRule", () => {
 
   it("names an unnamed rule by its position, as the rule list keys on the id", () => {
     expect(toLifecycleRule({ Status: "Enabled" }, 2).id).toBe("rule-3")
+  })
+})
+
+/** The query string of a BFF download URL, which is where the version lives. */
+function query(url: string): URLSearchParams {
+  return new URL(url, "http://console.test").searchParams
+}
+
+describe("s3.getObjectDownloadUrl", () => {
+  it("omits versionId when the caller named no version", () => {
+    expect(query(s3.getObjectDownloadUrl("b", "report.csv")).has("versionId")).toBe(false)
+  })
+
+  it("addresses the named version rather than the key", () => {
+    expect(query(s3.getObjectDownloadUrl("b", "report.csv", "v2")).get("versionId")).toBe("v2")
+  })
+
+  it('forwards "null", the version id of an object stored while unversioned', () => {
+    // The bug this guards against is treating the id as falsy: "null" is a real
+    // version id, and dropping it would silently fetch the current version.
+    expect(query(s3.getObjectDownloadUrl("b", "report.csv", "null")).get("versionId")).toBe("null")
+  })
+
+  it("forwards an empty version id rather than discarding it", () => {
+    // An empty string is not a version the emulator can serve, but turning it
+    // into "whichever is current" hides the mistake behind a plausible answer.
+    expect(query(s3.getObjectDownloadUrl("b", "report.csv", "")).get("versionId")).toBe("")
+  })
+
+  it("keeps the endpoint parameters alongside the version", () => {
+    const params = query(s3.getObjectDownloadUrl("b", "report.csv", "v2"))
+    expect(params.get("x-overcast-endpoint")).toBe("http://localhost:4566")
+    expect(params.get("versionId")).toBe("v2")
   })
 })

@@ -302,8 +302,14 @@ export const s3 = {
     return { ok: true }
   },
 
-  getObjectMetadata: async (bucket: string, key: string): Promise<S3ObjectMetadata> => {
-    const res = await awsClients.s3().send(new HeadObjectCommand({ Bucket: bucket, Key: key }))
+  getObjectMetadata: async (
+    bucket: string,
+    key: string,
+    versionId?: string,
+  ): Promise<S3ObjectMetadata> => {
+    const res = await awsClients
+      .s3()
+      .send(new HeadObjectCommand({ Bucket: bucket, Key: key, VersionId: versionId }))
     return {
       contentType: res.ContentType ?? "application/octet-stream",
       contentLength: res.ContentLength ?? 0,
@@ -315,22 +321,38 @@ export const s3 = {
     }
   },
 
-  /** Returns a URL to stream the object via the BFF — for <a> download links. */
-  getObjectDownloadUrl: (bucket: string, key: string): string => {
+  /**
+   * Returns a URL to stream the object via the BFF — for <a> download links.
+   *
+   * `versionId` addresses one stored revision instead of whatever is current.
+   * It is forwarded whenever it is supplied, `"null"` included: that is a real
+   * version id — the one carried by every object written while the bucket was
+   * unversioned or suspended — so it is tested for presence, not truthiness.
+   * Dropping it as falsy would silently re-address the request at the current
+   * version, which is the bug this parameter exists to fix.
+   */
+  getObjectDownloadUrl: (bucket: string, key: string, versionId?: string): string => {
     const endpoint = endpointResolver.get()
     const params = new URLSearchParams(endpointHeaders(endpoint))
+    if (versionId !== undefined) params.set("versionId", versionId)
     return `${API_BASE}/s3/buckets/${encodeURIComponent(bucket)}/objects/${encodeURIComponent(key)}/download?${params}`
   },
 
   getObjectText: async (
     bucket: string,
     key: string,
+    versionId?: string,
     limitBytes = 1024 * 1024,
   ): Promise<{ text: string; truncated: boolean }> => {
-    const res = await fetch(s3.getObjectDownloadUrl(bucket, key), {
+    const res = await fetch(s3.getObjectDownloadUrl(bucket, key, versionId), {
       headers: { Range: `bytes=0-${limitBytes - 1}` },
     })
-    if (!res.ok) throw new Error(`Preview failed: HTTP ${res.status}`)
+    // The status is carried on the error rather than only formatted into its
+    // message: a version-addressed read fails in ways worth telling apart, and
+    // `describeObjectReadError` reads it back to say which one happened.
+    if (!res.ok) {
+      throw Object.assign(new Error(`Preview failed: HTTP ${res.status}`), { status: res.status })
+    }
     return { text: await res.text(), truncated: res.status === 206 }
   },
 
