@@ -263,7 +263,8 @@ Consequences worth knowing before they look like bugs:
   container, `localhost` is the container) and remains the one configuration that silently
   breaks container callers.
 
-The full design and per-service analysis: `docs/plans/client-facing-url-minting.md`.
+How this is implemented, and which caller each address is minted for, is in
+[docs/dev/networking.md](./dev/networking.md#5-the-addresses-overcast-hands-back).
 
 ---
 
