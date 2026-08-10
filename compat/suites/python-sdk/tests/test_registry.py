@@ -128,6 +128,147 @@ class BuildGroupsResolution(unittest.TestCase):
         self.assertFalse(_find(groups, "iam-users", "CreateUser").skip)
 
 
+def _order(groups, group_name):
+    """Names of a built group's tests, in run order."""
+    for g in groups:
+        if g.name == group_name:
+            return [tc.name for tc in g.tests]
+    raise AssertionError(f"group {group_name!r} not built")
+
+
+def _all_impls(registry):
+    """A passing impl for every registry test, so ordering is observed on real
+    test cases rather than auto-skips."""
+    return {
+        f"{rg['name']}:{rt['name']}": _noop
+        for rg in registry["groups"]
+        for rt in rg["tests"]
+    }
+
+
+class DependencyOrdering(unittest.TestCase):
+    """A group runs in `depends` order, not registry file order.
+
+    `cloudformation-stacks` listed DeleteStack before the UpdateStack it depends
+    on, so this suite deleted the shared stack and then updated it, while the cli
+    and node-js suites — which already sort — did not. One registry, a different
+    order per language.
+    """
+
+    def test_dependency_runs_before_its_dependent(self):
+        registry = {
+            "groups": [
+                {
+                    "service": "cloudformation",
+                    "name": "stacks",
+                    "tests": [
+                        {"name": "CreateStack"},
+                        {"name": "DeleteStack", "depends": ["UpdateStack"]},
+                        {"name": "ValidateTemplate"},
+                        {"name": "UpdateStack", "depends": ["CreateStack"]},
+                    ],
+                }
+            ]
+        }
+        order = _order(
+            build_groups_from_registry(registry, _all_impls(registry), "python-sdk"),
+            "stacks",
+        )
+        self.assertLess(order.index("UpdateStack"), order.index("DeleteStack"), order)
+        self.assertLess(order.index("CreateStack"), order.index("UpdateStack"), order)
+
+    def test_declaration_order_kept_within_a_depth(self):
+        # Sorting must reorder only what the edges require; a group that is free
+        # to rearrange run to run makes a failure hard to reproduce.
+        registry = {
+            "groups": [
+                {
+                    "service": "s3",
+                    "name": "s3-crud",
+                    "tests": [
+                        {"name": "CreateBucket"},
+                        {"name": "PutObject", "depends": ["CreateBucket"]},
+                        {"name": "GetObject", "depends": ["PutObject"]},
+                        {"name": "ListObjects", "depends": ["PutObject"]},
+                    ],
+                }
+            ]
+        }
+        order = _order(
+            build_groups_from_registry(registry, _all_impls(registry), "python-sdk"),
+            "s3-crud",
+        )
+        self.assertEqual(
+            order, ["CreateBucket", "PutObject", "GetObject", "ListObjects"]
+        )
+
+    def test_cycle_neither_hangs_nor_drops_tests(self):
+        # A cycle is a registry bug, but the sort must still emit every test once.
+        registry = {
+            "groups": [
+                {
+                    "service": "sqs",
+                    "name": "cyclic",
+                    "tests": [
+                        {"name": "A", "depends": ["B"]},
+                        {"name": "B", "depends": ["A"]},
+                        {"name": "C"},
+                    ],
+                }
+            ]
+        }
+        order = _order(
+            build_groups_from_registry(registry, _all_impls(registry), "python-sdk"),
+            "cyclic",
+        )
+        self.assertEqual(sorted(order), ["A", "B", "C"], order)
+
+    def test_unknown_dependency_drops_nothing(self):
+        # Only same-group edges order a run, per the registry schema; a stale
+        # name must not silently remove the test or its dependent.
+        registry = {
+            "groups": [
+                {
+                    "service": "sqs",
+                    "name": "queues",
+                    "tests": [
+                        {"name": "CreateQueue"},
+                        {
+                            "name": "SendMessage",
+                            "depends": ["CreateQueue", "NotInThisGroup"],
+                        },
+                    ],
+                }
+            ]
+        }
+        order = _order(
+            build_groups_from_registry(registry, _all_impls(registry), "python-sdk"),
+            "queues",
+        )
+        self.assertEqual(order, ["CreateQueue", "SendMessage"])
+
+    def test_real_registry_builds_in_dependency_order(self):
+        # The registry the suites actually run must sort the same way here as it
+        # does in the cli and node-js suites.
+        registry = load_registry()
+        groups = build_groups_from_registry(
+            registry, _all_impls(registry), "python-sdk"
+        )
+        declared = {
+            rg["name"]: {rt["name"]: rt.get("depends") or [] for rt in rg["tests"]}
+            for rg in registry["groups"]
+        }
+        for group in groups:
+            ran: set[str] = set()
+            for tc in group.tests:
+                for dep in declared[group.name].get(tc.name, []):
+                    if dep in declared[group.name] and dep not in ran:
+                        self.fail(
+                            f"{group.name}: {tc.name} runs before its dependency {dep}"
+                        )
+                ran.add(tc.name)
+
+
 class OwnerTracking(unittest.TestCase):
     def test_owners_and_ambiguity(self):
         self.assertIn("ListUsers", ambiguous_test_names(TWO_GROUPS_ONE_NAME))

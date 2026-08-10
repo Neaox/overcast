@@ -31,6 +31,45 @@ def load_registry() -> dict:
 _noop: TestFn = lambda ctx: None
 
 
+def _topo_sort(tests: list[dict]) -> list[dict]:
+    """
+    Topologically sort tests within a group using their ``depends`` edges.
+
+    Tests with no dependencies come first; tests whose deps are all resolved come
+    next.  Falls back to the registry declaration order for tests at the same
+    dependency depth, so the sort reorders only what the edges require.
+
+    Registry file order is not authoritative on its own: ``cloudformation-stacks``
+    listed DeleteStack before the UpdateStack it depends on, and this suite ran it
+    that way — deleting the shared stack and then updating it — while the cli and
+    node-js suites, which already sorted, did not. Same registry, a different
+    order per language. Kept identical to the cli, node-js, Go, Java, .NET and
+    Rust sorts.
+    """
+    by_name = {t["name"]: t for t in tests}
+    sorted_tests: list[dict] = []
+    visited: set[str] = set()
+    visiting: set[str] = set()  # cycle detection
+
+    def visit(t: dict) -> None:
+        name = t["name"]
+        if name in visited or name in visiting:
+            return  # already placed, or a cycle — break it
+        visiting.add(name)
+        for dep in t.get("depends") or []:
+            # Only same-group edges order a run; an unknown name is ignored
+            # rather than treated as a missing test.
+            if dep in by_name:
+                visit(by_name[dep])
+        visiting.discard(name)
+        visited.add(name)
+        sorted_tests.append(t)
+
+    for t in tests:
+        visit(t)
+    return sorted_tests
+
+
 def build_groups_from_registry(
     registry: dict,
     impls: ImplMap,
@@ -61,7 +100,9 @@ def build_groups_from_registry(
             continue
         tests: list[TestCase] = []
 
-        for rt in rg["tests"]:
+        # Topologically sort tests by their declared dependencies so that
+        # prerequisites always execute before the tests that need them.
+        for rt in _topo_sort(rg["tests"]):
             name: str = rt["name"]
             registry_op = rt.get("op")  # str, None (absent), or null (JSON null)
 
