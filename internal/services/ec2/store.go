@@ -27,6 +27,7 @@ const (
 	nsNatGateways           = "ec2:nat-gateways"
 	nsNetworkInterfaces     = "ec2:network-interfaces"
 	nsVpcEndpoints          = "ec2:vpc-endpoints"
+	nsDefaultVPC            = "ec2:default-vpc"
 	nsVPCIPTranslations     = "ec2:vpc-ip-translations"
 	nsVPCIPTranslationsReal = "ec2:vpc-ip-translations-real"
 )

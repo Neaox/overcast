@@ -5,7 +5,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/lifecycle"
@@ -570,25 +570,10 @@ func (h *Handler) addInstanceToCluster(ctx context.Context, clusterID, instanceI
 // endpoint stays the AWS-shaped hostname and is rendered per caller on the way
 // out (endpoint.go); this pair is for health checks only.
 func (h *Handler) setContainerDialTarget(ctx context.Context, inst *DBInstance, ecfg engineEnv) {
-	network := h.network()
-
-	// When overcast itself runs inside Docker, reach the DB over the network
-	// they share.
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		// Attach overcast's container to the RDS network (idempotent).
-		hostname, _ := os.Hostname()
-		if hostname != "" {
-			_ = h.docker.ConnectNetwork(ctx, network, hostname)
-		}
-
-		info, err := h.docker.InspectContainer(ctx, inst.DockerContainerID)
-		if err == nil {
-			if ep, ok := info.NetworkSettings.Networks[network]; ok && ep.IPAddress != "" {
-				inst.DialAddress = ep.IPAddress
-				inst.DialPort = ecfg.ContainerPort
-				return
-			}
-		}
+	if addr := dataplane.ContainerAddr(ctx, h.docker, h.cfg, inst.DockerContainerID); addr != "" {
+		inst.DialAddress = addr
+		inst.DialPort = ecfg.ContainerPort
+		return
 	}
 
 	// Native mode — use host port binding on localhost.
@@ -674,7 +659,20 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 
 		inst.DockerContainerID = existing.ID
 		inst.HostPort = hostPort
-		h.connectToComputeNetworks(ctx, existing.ID, aliases)
+		// Re-attach: a container adopted from an earlier run may predate the
+		// current plane layout, or have been minted under a hostname the
+		// configuration no longer lists. Attaching is idempotent.
+		if placement, err := dataplane.PlaceInVPC(ctx, h.vpcResolver, inst.VpcID); err != nil {
+			h.log.Warn("RDS: reused container could not be placed in its VPC",
+				zap.String("instance", inst.DBInstanceIdentifier), zap.Error(err))
+		} else {
+			placement.Aliases = aliases
+			if err := dataplane.AttachAdopted(ctx, h.docker, h.cfg, existing.ID, placement); err != nil {
+				h.log.Warn("RDS: reused container could not join the data plane — "+
+					"its endpoint name will not resolve for sibling containers",
+					zap.String("instance", inst.DBInstanceIdentifier), zap.Error(err))
+			}
+		}
 		h.setContainerDialTarget(ctx, inst, ecfg)
 		return nil
 	}
@@ -695,11 +693,13 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		return fmt.Errorf("pull image: %w", err)
 	}
 
-	// Create network (idempotent).
-	network := h.network()
-	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
-		h.log.Warn("RDS: failed to create network (may already exist)",
-			zap.String("network", network), zap.Error(err))
+	// Resolve the plane before anything is created: a VPC that cannot take
+	// containers should fail here, not after an image pull and a port
+	// reservation that then have to be unwound.
+	placement, err := dataplane.PlaceInVPC(ctx, h.vpcResolver, inst.VpcID)
+	if err != nil {
+		h.store.releasePort(ctx, hostPort) //nolint:errcheck
+		return fmt.Errorf("RDS %s: %w", inst.DBInstanceIdentifier, err)
 	}
 
 	// Build engine-specific env vars. MySQL 8 gets an entrypoint-safe temporary
@@ -743,16 +743,12 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		// impossible by deleting it the moment it exits. DeleteDBInstance owns
 		// removal instead, via the GC.
 		HostConfig: &docker.HostConfig{
-			NetworkMode: network,
+			NetworkMode: dataplane.Primary(h.cfg),
 			PortBindings: map[string][]docker.PortBinding{
 				containerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
 			},
 		},
-		NetworkingConfig: &docker.NetworkingConfig{
-			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {Aliases: aliases},
-			},
-		},
+		NetworkingConfig: dataplane.PrimaryEndpoints(h.cfg),
 	}
 
 	// The puller retries once when the image was removed behind our back
@@ -785,42 +781,24 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		}
 	}
 
+	// Join the data plane before starting: the engine is reachable by name from
+	// the moment it accepts connections, with no window in which a caller
+	// resolves the endpoint and finds nothing there.
+	placement.Aliases = aliases
+	if err := dataplane.Attach(ctx, h.docker, h.cfg, containerID, placement); err != nil {
+		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+		return fmt.Errorf("RDS %s: %w", inst.DBInstanceIdentifier, err)
+	}
+
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 		return fmt.Errorf("start container: %w", err)
 	}
-	if h.vpcResolver != nil && inst.VpcID != "" {
-		status := h.vpcResolver.VPCNetworkStatus(ctx, inst.VpcID)
-		switch status {
-		case "", "ok", "shared", "remapped":
-			if netID := h.vpcResolver.DockerNetworkForVpc(ctx, inst.VpcID); netID != "" {
-				// Attach with the endpoint hostname as a DNS alias, as the
-				// Lambda-network attachment below does. Without the alias the
-				// instance is reachable on the VPC network but not resolvable
-				// on it, so anything else in the VPC — an ECS task, most often
-				// — gets Overcast's own address for the endpoint name and
-				// connects to a port nothing is listening on.
-				if err := h.docker.ConnectNetworkWithAliases(ctx, netID, containerID, aliases); err != nil {
-					h.docker.RemoveContainerForce(containerID) //nolint:errcheck
-					h.store.releasePort(ctx, hostPort)         //nolint:errcheck
-					return fmt.Errorf("connect container to VPC network %s: %w", netID, err)
-				}
-			}
-		case "conflict", "unbacked":
-			h.docker.RemoveContainerForce(containerID) //nolint:errcheck
-			h.store.releasePort(ctx, hostPort)         //nolint:errcheck
-			return fmt.Errorf("RDS VPC %s is not launchable (network status=%s)", inst.VpcID, status)
-		default:
-			h.docker.RemoveContainerForce(containerID) //nolint:errcheck
-			h.store.releasePort(ctx, hostPort)         //nolint:errcheck
-			return fmt.Errorf("RDS VPC %s is not launchable (network status=%s)", inst.VpcID, status)
-		}
-	}
 
 	inst.DockerContainerID = containerID
 	inst.HostPort = hostPort
-	h.connectToComputeNetworks(ctx, containerID, aliases)
 	h.setContainerDialTarget(ctx, inst, ecfg)
 	return nil
 }
@@ -837,38 +815,6 @@ func (h *Handler) externalHostname() string {
 		return h.cfg.ExternalHostname()
 	}
 	return "localhost"
-}
-
-// connectToComputeNetworks attaches the DB container to the networks emulated
-// compute runs on, advertising the instance's endpoint hostname as a DNS alias
-// on each. That alias is what lets a Lambda function or an ECS task connect to
-// the endpoint name the API handed them: Docker's embedded resolver answers
-// from the aliases on the caller's own network before forwarding anything
-// upstream to Overcast.
-//
-// A task placed in a VPC reaches the instance over the VPC network instead —
-// see the aliased attachment in startDBContainer. This covers the rest: a task
-// or function with no VPC of its own.
-func (h *Handler) connectToComputeNetworks(ctx context.Context, containerID string, aliases []string) {
-	if h.cfg == nil || len(aliases) == 0 {
-		return
-	}
-	for _, network := range []string{h.cfg.LambdaNetwork, h.cfg.ECSNetwork} {
-		if network == "" || network == h.network() {
-			continue
-		}
-		if err := h.docker.ConnectNetworkWithAliases(ctx, network, containerID, aliases); err != nil {
-			h.log.Warn("RDS: failed to attach container to compute network for DNS aliases",
-				zap.String("network", network), zap.String("container", containerID), zap.Error(err))
-		}
-	}
-}
-
-func (h *Handler) network() string {
-	if h.cfg != nil && h.cfg.RDSNetwork != "" {
-		return h.cfg.RDSNetwork
-	}
-	return "overcast_rds"
 }
 
 // scheduleHealthCheck polls TCP connectivity to the DB container and transitions

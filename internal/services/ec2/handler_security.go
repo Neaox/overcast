@@ -411,6 +411,10 @@ func (h *Handler) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request)
 
 // DescribeSubnets returns subnets, optionally filtered.
 func (h *Handler) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
+	// The default VPC's subnets are part of what a lookup expects to find, and
+	// this is one of the reads that would observe their absence.
+	h.ensureDefaultVPCQuietly(r.Context())
+
 	// Parse SubnetId.N params.
 	filterIDs := parseIndexedParam(r, "SubnetId")
 	filterIDSet := make(map[string]bool, len(filterIDs))

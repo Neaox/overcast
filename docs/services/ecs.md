@@ -226,7 +226,7 @@ started, so a service replacing a crash-looping task repeats it every cycle.
 ## Task container networking
 
 When Docker is available, `RunTask` starts real containers on the
-`overcast_ecs` network (`ECS_NETWORK`). Those containers are siblings of
+shared data plane (`OVERCAST_NETWORK`). Those containers are siblings of
 Overcast, not children of it, so Overcast takes three steps to keep them able
 to call back into the emulator:
 

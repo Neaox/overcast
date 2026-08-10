@@ -291,7 +291,7 @@ func TestLiveModeCreateClusterStartsK3sContainer(t *testing.T) {
 			AccountID:       "000000000000",
 			EKSMode:         config.EKSModeLive,
 			EKSDockerSocket: endpoint,
-			EKSNetwork:      "overcast_eks",
+			Network:         "overcast_eks",
 		},
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
@@ -403,7 +403,7 @@ func TestLiveModeCreateClusterReusesStoppedManagedContainerOnConflict(t *testing
 			AccountID:       "000000000000",
 			EKSMode:         config.EKSModeLive,
 			EKSDockerSocket: endpoint,
-			EKSNetwork:      "overcast_eks",
+			Network:         "overcast_eks",
 		},
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
@@ -508,7 +508,7 @@ func TestLiveModeClusterTransitionsToACTIVE(t *testing.T) {
 			Hostname:        "overcast.local",
 			EKSMode:         config.EKSModeLive,
 			EKSDockerSocket: endpoint,
-			EKSNetwork:      "overcast_eks",
+			Network:         "overcast_eks",
 		},
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)

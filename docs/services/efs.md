@@ -115,7 +115,7 @@ Where to mount from:
 | Client | Address |
 | --- | --- |
 | The Docker host | `localhost:<published port>` (`DescribeMountTargets` does not report it — read it from `docker ps`) |
-| A sibling container | The export container's IP on `EFS_NETWORK` (default `overcast_efs`) |
+| A sibling container | The mount target's DNS name on the shared data plane (`OVERCAST_NETWORK`), or the export container's address there |
 
 Pseudo-paths follow the file system's access points: `/` is the volume root,
 and `/<AccessPointId>` is that access point's root directory, squashed onto
@@ -143,7 +143,7 @@ client's business — the server side needs only the one capability above.
 | `OVERCAST_EFS_NFS` | `false` | Opt into exports (needs live mode, which is the default) |
 | `EFS_NFS_PORT_BASE` | `22049` | First host port considered for publishing 2049 |
 | `EFS_NFS_IMAGE` | digest-pinned NFS-Ganesha | Override the export image |
-| `EFS_NETWORK` | `overcast_efs` | Docker network the export containers join |
+| `OVERCAST_NETWORK` | `overcast` | Docker network the export containers join, shared with every other container Overcast starts |
 
 ## CloudFormation
 

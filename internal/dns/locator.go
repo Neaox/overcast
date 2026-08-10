@@ -13,11 +13,11 @@ const maxLocatorCache = 1024
 
 // Locator reports which of Overcast's own addresses is reachable from a peer.
 //
-// It exists because Overcast is attached to more than one Docker network by
-// default — overcast_lambda and overcast_ecs — and therefore has more than one
-// address. A container on one network cannot reach Overcast's address on
-// another, so the right answer to "where is localhost.overcast.sh" depends on
-// who is asking.
+// It exists because Overcast is attached to more than one Docker network — the
+// control plane, the default data plane, and a network per VPC it has work in —
+// and therefore has more than one address. A container on one network cannot
+// reach Overcast's address on another, so the right answer to "where is
+// localhost.overcast.sh" depends on who is asking.
 type Locator interface {
 	// AddrFor returns Overcast's address as seen from peer, or the zero Addr
 	// when it cannot be determined.

@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
@@ -19,6 +19,10 @@ import (
 )
 
 const redpandaImage = "docker.redpanda.com/redpandadata/redpanda"
+
+// kafkaPort is the broker port inside the data plane — what a sibling
+// container dials, and what AWS would have returned.
+const kafkaPort = 9092
 
 // ── Container lifecycle ───────────────────────────────────────────────────────
 
@@ -30,7 +34,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	clusterUUID := arnSuffix(clusterARN)
 	containerName := "overcast-msk-" + clusterUUID
 	containerPort := "9092/tcp"
-	network := h.cfg.MSKNetwork
+	aliases := h.clusterEndpointAliases(clusterARN)
 
 	// Check for existing container (post-restart reuse).
 	if existing, err := h.docker.GetContainerByName(ctx, containerName); err == nil && existing != nil {
@@ -60,8 +64,15 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 				return fmt.Errorf("start existing container: %w", err)
 			}
 		}
+		// Re-attach: a container adopted from an earlier run predates the
+		// current alias set. Attaching is idempotent.
+		if err := dataplane.AttachAdopted(ctx, h.docker, h.cfg, existing.ID, dataplane.Placement{Aliases: aliases}); err != nil {
+			h.log.Warn("MSK: reused container could not join the data plane — "+
+				"its bootstrap name will not resolve for sibling containers",
+				zap.String("cluster", clusterARN), zap.Error(err))
+		}
 		h.setClusterEndpoint(ctx, clusterARN, existing.ID, hostPort)
-		addr, port := h.clusterEndpointAddr(ctx, existing.ID, hostPort, network)
+		addr, port := h.clusterEndpointAddr(ctx, existing.ID, hostPort)
 		h.scheduleHealthCheck(clusterARN, addr, port)
 		return nil
 	}
@@ -76,12 +87,6 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	if err := h.puller.Ensure(ctx, redpandaImage); err != nil {
 		h.store.releasePort(ctx, hostPort) //nolint:errcheck
 		return fmt.Errorf("pull image: %w", err)
-	}
-
-	// Ensure Docker network exists.
-	if _, err := h.docker.CreateNetwork(ctx, network); err != nil {
-		h.log.Warn("MSK: failed to create network (may already exist)",
-			zap.String("network", network), zap.Error(err))
 	}
 
 	req := &docker.CreateContainerRequest{
@@ -100,16 +105,12 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 			Labels:       docker.ManagedLabels(serviceName, clusterARN),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
-			NetworkMode: network,
+			NetworkMode: dataplane.Primary(h.cfg),
 			PortBindings: map[string][]docker.PortBinding{
 				containerPort: {{HostIP: "0.0.0.0", HostPort: strconv.Itoa(hostPort)}},
 			},
 		},
-		NetworkingConfig: &docker.NetworkingConfig{
-			EndpointsConfig: map[string]*docker.EndpointSettings{
-				network: {},
-			},
-		},
+		NetworkingConfig: dataplane.PrimaryEndpoints(h.cfg),
 	}
 
 	containerID, err := h.docker.CreateContainer(ctx, containerName, req)
@@ -124,6 +125,14 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 		return fmt.Errorf("create container: %w", err)
 	}
 
+	// Join the data plane before starting, so the bootstrap name resolves from
+	// the moment the broker accepts connections.
+	if err := dataplane.Attach(ctx, h.docker, h.cfg, containerID, dataplane.Placement{Aliases: aliases}); err != nil {
+		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+		return fmt.Errorf("MSK %s: %w", clusterARN, err)
+	}
+
 	if err := h.docker.StartContainer(ctx, containerID); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
@@ -131,7 +140,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	}
 
 	h.setClusterEndpoint(ctx, clusterARN, containerID, hostPort)
-	addr, port := h.clusterEndpointAddr(ctx, containerID, hostPort, network)
+	addr, port := h.clusterEndpointAddr(ctx, containerID, hostPort)
 	h.scheduleHealthCheck(clusterARN, addr, port)
 	return nil
 }
@@ -178,23 +187,50 @@ func (h *Handler) teardownOrphanedContainer(ctx context.Context, clusterARN, con
 	}
 }
 
-// clusterEndpointAddr returns the address and port to health-check.
-// Inside Docker: uses container IP on port 9092.
-// Outside Docker: uses 127.0.0.1 + hostPort.
-func (h *Handler) clusterEndpointAddr(ctx context.Context, containerID string, hostPort int, network string) (string, int) {
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		hostname, _ := os.Hostname()
-		if hostname != "" {
-			_ = h.docker.ConnectNetwork(ctx, network, hostname)
-		}
-		info, err := h.docker.InspectContainer(ctx, containerID)
-		if err == nil {
-			if ep, ok := info.NetworkSettings.Networks[network]; ok && ep.IPAddress != "" {
-				return ep.IPAddress, 9092
-			}
-		}
+// clusterEndpointAddr returns the address and port Overcast health-checks the
+// broker on: the container's own address and 9092 when Overcast runs beside
+// it, else loopback and the published port.
+func (h *Handler) clusterEndpointAddr(ctx context.Context, containerID string, hostPort int) (string, int) {
+	if addr := dataplane.ContainerAddr(ctx, h.docker, h.cfg, containerID); addr != "" {
+		return addr, kafkaPort
 	}
 	return "127.0.0.1", hostPort
+}
+
+// clusterEndpointAliases is the set of DNS names a broker container answers to
+// on the data plane — the bootstrap host under every base Overcast could mint
+// it on. Without these a consumer resolving the bootstrap name reaches
+// Overcast, which serves no Kafka, and the connection is refused on a port
+// nothing listens on.
+func (h *Handler) clusterEndpointAliases(clusterARN string) []string {
+	name := clusterNameFromARN(clusterARN)
+	if name == "" {
+		return nil
+	}
+	region := serviceutil.ARNRegion(clusterARN)
+	return dataplane.Hostnames(h.cfg, func(base string) string {
+		return bootstrapHostname(name, region, base)
+	})
+}
+
+// bootstrapHostname builds the DNS name for a cluster's bootstrap brokers on
+// base. AWS's shape is
+// `b-{n}.{cluster}.{hash}.c{n}.kafka.{region}.amazonaws.com`; Overcast mints
+// the same grammar with the per-broker prefix and account-specific hash
+// dropped, since one container serves the whole cluster.
+func bootstrapHostname(name, region, base string) string {
+	return name + "." + region + ".kafka." + base
+}
+
+// clusterNameFromARN returns the cluster name from
+// `arn:aws:kafka:{region}:{account}:cluster/{name}/{uuid}` — the segment
+// between the final two slashes.
+func clusterNameFromARN(arn string) string {
+	parts := strings.Split(arn, "/")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[len(parts)-2]
 }
 
 // cleanupClusterContainer releases the port reservation for an MSK cluster.
@@ -277,8 +313,7 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 	}
 	switch cluster.State {
 	case "FAILED", "STARTING", "CREATING":
-		network := h.cfg.MSKNetwork
-		addr, port := h.clusterEndpointAddr(ctx, cluster.DockerContainerID, cluster.HostPort, network)
+		addr, port := h.clusterEndpointAddr(ctx, cluster.DockerContainerID, cluster.HostPort)
 		h.scheduleHealthCheck(p.ResourceID, addr, port)
 	}
 }
@@ -306,7 +341,6 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		}
 		rctx := middleware.ContextWithRegion(ctx, rc.Region)
 		c := byResource[cluster.ClusterArn]
-		network := h.cfg.MSKNetwork
 		switch {
 		case c == nil:
 			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" {
@@ -315,7 +349,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 					zap.String("cluster", cluster.ClusterArn))
 			}
 		case c.State == "running":
-			addr, port := h.clusterEndpointAddr(rctx, cluster.DockerContainerID, cluster.HostPort, network)
+			addr, port := h.clusterEndpointAddr(rctx, cluster.DockerContainerID, cluster.HostPort)
 			if cluster.State == "CREATING" || cluster.State == "STARTING" || cluster.State == "FAILED" || cluster.State == "ACTIVE" {
 				h.scheduleHealthCheck(cluster.ClusterArn, addr, port)
 				h.log.Info("reconcile: MSK container running — scheduling health check",

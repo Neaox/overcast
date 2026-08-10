@@ -1330,15 +1330,11 @@ func TestLoad_eksDockerDefaults(t *testing.T) {
 	if cfg.EKSDockerSocket != "tcp://dind:2375" {
 		t.Fatalf("EKSDockerSocket: expected tcp://dind:2375, got %q", cfg.EKSDockerSocket)
 	}
-	if cfg.EKSNetwork != "overcast_eks" {
-		t.Fatalf("EKSNetwork: expected overcast_eks, got %q", cfg.EKSNetwork)
-	}
 }
 
 func TestLoad_eksDockerOverrides(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("EKS_DOCKER_SOCKET", "tcp://eksdind:2375")
-	t.Setenv("EKS_NETWORK", "custom_eks")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -1347,8 +1343,39 @@ func TestLoad_eksDockerOverrides(t *testing.T) {
 	if cfg.EKSDockerSocket != "tcp://eksdind:2375" {
 		t.Fatalf("EKSDockerSocket: expected tcp://eksdind:2375, got %q", cfg.EKSDockerSocket)
 	}
-	if cfg.EKSNetwork != "custom_eks" {
-		t.Fatalf("EKSNetwork: expected custom_eks, got %q", cfg.EKSNetwork)
+}
+
+// Every container Overcast starts shares two networks rather than one per
+// service, so there is one knob and the control plane is derived from it —
+// there is no way to configure half a pair. See internal/dataplane.
+func TestLoad_networkPlanes(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Network != "overcast" {
+		t.Fatalf("Network: expected overcast, got %q", cfg.Network)
+	}
+	if got := cfg.ControlNetwork(); got != "overcast_control" {
+		t.Fatalf("ControlNetwork: expected overcast_control, got %q", got)
+	}
+}
+
+func TestLoad_networkPlanesOverride(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OVERCAST_NETWORK", "acme")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Network != "acme" {
+		t.Fatalf("Network: expected acme, got %q", cfg.Network)
+	}
+	if got := cfg.ControlNetwork(); got != "acme_control" {
+		t.Fatalf("ControlNetwork: expected acme_control, got %q", got)
 	}
 }
 

@@ -33,6 +33,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/containerendpoint"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
@@ -699,7 +700,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 // dockerProbeFunc is docker.Probe's signature, indirected through a Service
 // field so tests can drive the re-probe loop without a daemon.
-type dockerProbeFunc func(socketPath, network string, logger *zap.Logger) (*docker.ProbeResult, error)
+type dockerProbeFunc func(socketPath string, networks []string, logger *zap.Logger) (*docker.ProbeResult, error)
 
 // dockerRetryInterval is how long the Lambda service waits between attempts
 // when Docker was not reachable at startup. Starting the emulator before Docker
@@ -730,7 +731,7 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		return
 	}
 
-	result, probeErr := s.probe(cfg.LambdaDockerSocket, cfg.LambdaNetwork, log)
+	result, probeErr := s.probe(cfg.LambdaDockerSocket, dataplane.Networks(cfg, dataplane.Placement{}), log)
 	if probeErr != nil {
 		s.log.Warn("Docker not available — using stub runtime for now; re-probing in the background",
 			zap.String("socket", cfg.LambdaDockerSocket),
@@ -764,7 +765,7 @@ func (s *Service) awaitDockerProbe(cfg *config.Config, clk clock.Clock, log *zap
 		case <-t.C:
 		}
 
-		result, err := s.probe(cfg.LambdaDockerSocket, cfg.LambdaNetwork, log)
+		result, err := s.probe(cfg.LambdaDockerSocket, dataplane.Networks(cfg, dataplane.Placement{}), log)
 		if err != nil {
 			log.Debug("lambda: Docker still not available",
 				zap.String("socket", cfg.LambdaDockerSocket), zap.Error(err))
@@ -1341,5 +1342,5 @@ func runtimeAPIListen(cfg *config.Config, dc *docker.Client, logger *zap.Logger)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	return containerendpoint.ResolveListen(ctx, dc, cfg.LambdaNetwork, logger)
+	return containerendpoint.ResolveListen(ctx, dc, dataplane.Primary(cfg), logger)
 }
