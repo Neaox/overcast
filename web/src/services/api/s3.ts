@@ -8,6 +8,7 @@ import {
   ListObjectsV2Command,
   ListObjectVersionsCommand,
   GetBucketVersioningCommand,
+  PutBucketVersioningCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
@@ -147,6 +148,23 @@ export const s3 = {
   getBucketVersioning: async (bucket: string): Promise<S3VersioningStatus> => {
     const res = await awsClients.s3().send(new GetBucketVersioningCommand({ Bucket: bucket }))
     return res.Status ?? ""
+  },
+
+  /**
+   * Sets the bucket's versioning state.
+   *
+   * There is no third value: S3 has no way back to the never-versioned state,
+   * so `Suspended` is as close to "off" as a bucket that has been versioned
+   * ever gets — and it keeps every version already stored.
+   */
+  putBucketVersioning: async (bucket: string, status: "Enabled" | "Suspended") => {
+    await awsClients.s3().send(
+      new PutBucketVersioningCommand({
+        Bucket: bucket,
+        VersioningConfiguration: { Status: status },
+      }),
+    )
+    return { ok: true }
   },
 
   headBucket: async (name: string) => {

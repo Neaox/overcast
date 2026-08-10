@@ -228,6 +228,20 @@ export function deleteByPrefixMutationOptions(bucket: string) {
   })
 }
 
+/**
+ * Turns version history on, or suspends it.
+ *
+ * Both directions invalidate the object and version listings as well as the
+ * status itself: what a listing means changes with the state, and a suspended
+ * bucket keeps serving the history it already has.
+ */
+export function putBucketVersioningMutationOptions(bucket: string) {
+  return mutationOptions({
+    mutationKey: [...s3Keys.versioning(), bucket, "put"] as const,
+    mutationFn: (status: "Enabled" | "Suspended") => s3.putBucketVersioning(bucket, status),
+  })
+}
+
 export function putBucketNotificationMutationOptions(bucket: string) {
   return mutationOptions({
     mutationKey: [...s3Keys.notification(), bucket, "put"] as const,
