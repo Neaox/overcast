@@ -80,7 +80,7 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [scheduler] `ListSchedules` and `ListScheduleGroups` honour `MaxResults`, `NextToken` and `NamePrefix`, and `ListSchedules` also filters on `State`; a `NextToken` that cannot be decoded gets a `ValidationException` in place of a silent restart at the first page
 
-- [ses] SESv2 resource tagging: `TagResource`, `UntagResource` and `ListTagsForResource` on `/v2/email/tags`, for email identities. `GetEmailIdentity` reports the tags, and deleting an identity drops them. Note that `CreateEmailIdentity` itself is still `501`, so an identity has to be created through the v1 `VerifyEmailIdentity` before it can be tagged; the inline `Tags` member of `CreateEmailIdentity` is implemented but not yet reachable
+- [ses] SESv2 resource tagging: `TagResource`, `UntagResource` and `ListTagsForResource` on `/v2/email/tags`, for email identities. `CreateEmailIdentity` applies inline `Tags` at creation, `GetEmailIdentity` reports them, and deleting an identity drops them
 
 - [sns] `CreateTopic` applies inline `Tags` at creation, as AWS does; a repeat idempotent call leaves an existing topic's tags untouched
 
