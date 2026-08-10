@@ -31,6 +31,7 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -87,6 +88,13 @@ var (
 	overcastImage     = flag.String("overcast-image", envOr("OVERCAST_COMPAT_IMAGE", defaultOvercastImage), "Run this container image; naming one selects the container even when a local binary exists. Unset, it is only the fallback for when no binary is found")
 	overcastUI        = flag.Bool("overcast-ui", false, "Also expose the managed instance's own web UI on a free port")
 	overcastTimeout   = flag.Int("overcast-timeout", 60, "Seconds to wait for the managed instance to become healthy")
+	// On by default because a compat run without it cannot invoke a Lambda,
+	// and a flag defaulting off would have to be remembered by everyone
+	// testing a release candidate. It is a flag at all — rather than
+	// unconditional — because mounting the socket hands the emulator control
+	// of this machine's Docker daemon, and a grant that large should be
+	// visible in --help and refusable in one word.
+	mountDockerSocket = flag.Bool("mount-docker-socket", true, "Bind-mount the host Docker socket into a managed container, so the instance can run Lambda and ECS containers (COMPAT_DOCKER_SOCK overrides the host path)")
 	portBase          = flag.Int("port-base", defaultPortBase, "First port considered when scanning for free ports (never 4566/4567)")
 	uiDev             = flag.Bool("ui-dev", false, "Serve the dashboard UI from Vite with hot reloading instead of the embedded build")
 	uiDir             = flag.String("ui-dir", "", "Serve the dashboard UI from this directory instead of the build embedded in the binary")
@@ -168,6 +176,56 @@ func warnUnusedArtifactFlags(endpointURL string) {
 		"compat: WARNING: %s is ignored (%s, so compat is not starting Overcast); "+
 			"the suites run against whatever is already serving %s\n",
 		named, why, endpointURL)
+}
+
+// skipDockerEnv is the suites' own opt-out: a suite that sees it drops the
+// "docker" capability, so every test the registry marks `requires: [docker]`
+// is reported as a skip rather than run. compat/docker-compose.yml and the CI
+// workflow both decide it for themselves, and this never overrides a value
+// somebody set — which is also what keeps the automatic skip below out of CI,
+// where the endpoint is pinned and no instance is managed at all.
+const skipDockerEnv = "OVERCAST_COMPAT_SKIP_DOCKER"
+
+// announceNoDocker reports a managed instance that cannot start containers,
+// once, at the top of the run — and, when the machine is the reason, tells the
+// suites not to run the tests that need one.
+//
+// Before this existed, an --overcast-image run with no socket mounted reached
+// the end and reported five failures across four suites, every one of them
+// reading as a broken Lambda (issue #867). The environment was the fault, and
+// nothing said so until somebody read the emulator's own error text.
+//
+// The skip is confined to the environmental case on purpose: see dockerVerdict
+// in launch.go for where that line is drawn and why moving it would recreate
+// the blindspot compat/AGENTS.md warns about.
+func announceNoDocker(w io.Writer, noDocker string, environmental bool) {
+	if noDocker == "" {
+		return
+	}
+	fmt.Fprintf(w, "compat: WARNING: the managed instance cannot run containers — %s\n", noDocker)
+	if !environmental {
+		fmt.Fprintf(w,
+			"compat: the Docker-dependent tests (Lambda invocation above all) will run and "+
+				"fail; compat gave the instance what it needed, so the failures are its answer\n")
+		return
+	}
+	if existing, set := os.LookupEnv(skipDockerEnv); set {
+		if existing != "1" {
+			fmt.Fprintf(w,
+				"compat: leaving %s=%s as you set it, so the Docker-dependent tests will "+
+					"run and fail for want of a daemon\n", skipDockerEnv, existing)
+		}
+		return
+	}
+	if err := os.Setenv(skipDockerEnv, "1"); err != nil {
+		fmt.Fprintf(w, "compat: could not set %s: %v\n", skipDockerEnv, err)
+		return
+	}
+	fmt.Fprintf(w,
+		"compat: skipping the tests that need a daemon (%s=1) — this machine cannot run "+
+			"them, and failing them would blame Overcast for that. Set %s=0 to run them "+
+			"anyway. The cli suite decides for itself and is not covered.\n",
+		skipDockerEnv, skipDockerEnv)
 }
 
 func main() {
@@ -351,16 +409,18 @@ func run() int {
 	managed := shouldStartOvercast(*startOvercastMode, endpointPinned())
 	if managed {
 		oc, err := startOvercast(ctx, overcastOptions{
-			Host:           *overcastHost,
-			Bin:            *overcastBin,
-			BinRequested:   binRequested(),
-			Image:          *overcastImage,
-			ImageRequested: imageRequested(),
-			PortBase:       *portBase,
-			WithUI:         *overcastUI,
-			Timeout:        time.Duration(*overcastTimeout) * time.Second,
-			LogLevel:       envOr("OVERCAST_LOG_LEVEL", "warn"),
-			Logf:           func(f string, a ...any) { fmt.Fprintf(os.Stderr, "compat: "+f+"\n", a...) },
+			Host:              *overcastHost,
+			Bin:               *overcastBin,
+			BinRequested:      binRequested(),
+			Image:             *overcastImage,
+			ImageRequested:    imageRequested(),
+			PortBase:          *portBase,
+			WithUI:            *overcastUI,
+			MountDockerSocket: *mountDockerSocket,
+			DockerSocket:      os.Getenv("COMPAT_DOCKER_SOCK"),
+			Timeout:           time.Duration(*overcastTimeout) * time.Second,
+			LogLevel:          envOr("OVERCAST_LOG_LEVEL", "warn"),
+			Logf:              func(f string, a ...any) { fmt.Fprintf(os.Stderr, "compat: "+f+"\n", a...) },
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "compat: %v\n", err)
@@ -376,6 +436,7 @@ func run() int {
 		if oc.UIURL != "" {
 			fmt.Fprintf(os.Stderr, "compat: Overcast web UI at %s\n", oc.UIURL)
 		}
+		announceNoDocker(os.Stderr, oc.NoDocker, oc.DockerIsEnvironmental)
 	}
 	if endpointURL == "" {
 		// --start-overcast=never with no endpoint: target the developer's own

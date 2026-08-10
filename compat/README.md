@@ -134,11 +134,25 @@ are cached on the host daemon afterwards and start in seconds.
 | `--overcast-image` | `ghcr.io/neaox/overcast:alpha` | Image to run. **Naming one selects the container**, even when a local binary exists; left unset, it is only the fallback for when no binary is found |
 | `--overcast-host` | `localhost` | Hostname the suites use — e.g. `localhost.overcast.sh` for virtual-host-style S3 |
 | `--overcast-ui` | off | Also expose the managed instance's own web UI |
+| `--mount-docker-socket` | **on** | Bind-mount the host Docker socket into a managed container, which is what lets the instance run Lambda and ECS containers. `COMPAT_DOCKER_SOCK` sets the host path |
 | `--build-ui` | off | Build the dashboard UI before serving it |
 | `--ui-dir` | — | Serve the dashboard UI from a directory instead of the embedded build |
 
 A managed instance runs with `OVERCAST_STATE=memory` and its own web UI
 disabled, so it leaves nothing behind.
+
+A managed instance gets the host Docker socket, because Lambda and ECS start
+containers through it and without one every Lambda invoke fails
+([#867](https://github.com/Neaox/overcast/issues/867)). Compat then asks the
+instance's own `/_health` whether it found a daemon, and says so once at
+startup if it did not. When the *machine* is the reason — nothing to mount, or
+no daemon here at all — the tests that need one are skipped
+(`OVERCAST_COMPAT_SKIP_DOCKER=1`), because they cannot run here and reporting
+them as failures blames the emulator for it. When compat mounted the socket and
+the instance still reports no daemon, they are left to fail: that answer is the
+emulator's own. Either way an `OVERCAST_COMPAT_SKIP_DOCKER` you set yourself is
+left alone, which is how the compose file and CI keep deciding it for
+themselves.
 
 For GitHub Actions, a dedicated workflow is provided at
 `.github/workflows/compat.yml`. It runs on every push to `main`, every PR to

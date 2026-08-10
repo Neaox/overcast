@@ -816,6 +816,17 @@ daemon. **Never set it in CI**: skipping those tests hid the emulator's Lambda
 stub behind a green check, which is exactly the blindspot this policy exists to
 prevent.
 
+A managed instance — one compat starts itself, not an endpoint you pinned —
+gets the host Docker socket bind-mounted (`--mount-docker-socket`, on by
+default). Compat then reads the instance's own `/_health` and, when the
+*machine* is why there is no daemon (nothing to mount, or none running here),
+sets `OVERCAST_COMPAT_SKIP_DOCKER=1` itself and says so once at startup. That
+automatic skip is deliberately confined: it never fires for a pinned endpoint,
+so CI and the compose file are untouched, it never overwrites a value you set,
+and it never fires when compat mounted the socket and the instance *still*
+reports no daemon — that answer is the emulator's, and its tests are left to
+fail. Widening any of those three would rebuild the blindspot above.
+
 ### How failures reach you
 
 The aggregate job renders one report three ways, all from
