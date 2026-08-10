@@ -677,11 +677,10 @@ Some of these are principled and permanent; others are simply undone.
   AWS publishes machine-readable models for every operation, and Overcast
   already ingests them for routing and `501`s ([§4](#4-the-request-path)) —
   but not for producing types. Generating them from the same source is designed
-  and sequenced (Track 3 of
-  [docs/plans/level2-codegen.md](../plans/level2-codegen.md)) but not started,
-  tracked as [#756](https://github.com/Neaox/overcast/issues/756). Until it
-  happens, every struct and every tag is typed by hand, which is exactly where a
-  wrong member name comes from.
+  and sequenced but not started, tracked as
+  [#756](https://github.com/Neaox/overcast/issues/756). Until it happens, every
+  struct and every tag is typed by hand, which is exactly where a wrong member
+  name comes from.
 
 - **Migration to the typed pattern is incomplete — and in one case deliberately
   reversed.** Many services carry both a typed registry and an older
@@ -697,9 +696,10 @@ Some of these are principled and permanent; others are simply undone.
 If you are adding a service, use the typed pattern; if you are reading an old
 one, expect to find both.
 
-**Further reading:** [docs/dev/smithy.md](./smithy.md);
-[docs/plans/level2-codegen.md](../plans/level2-codegen.md) for the migration
-state and where it is going.
+**Further reading:** [docs/dev/smithy.md](./smithy.md) for protocol
+identification and the codec interfaces;
+[#756](https://github.com/Neaox/overcast/issues/756) for where the migration is
+going.
 
 ---
 
