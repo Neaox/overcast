@@ -106,6 +106,8 @@ func detectService(r *http.Request, body ...[]byte) string {
 		// shared with API Gateway, EKS and Pipes and is dispatched on the
 		// resource ARN (see router.go).
 		return "scheduler"
+	case isBedrockRuntimeInferencePath(r.URL.Path):
+		return "bedrock"
 	case r.URL.Path == "/_events":
 		return "events"
 	case r.URL.Path == "/_metrics":
@@ -186,6 +188,48 @@ func isLambdaAPIVersionPrefix(path string) bool {
 		strings.HasPrefix(path, "/2024-08-31/"),
 		strings.HasPrefix(path, "/2025-11-30/"),
 		strings.HasPrefix(path, "/2025-12-01/"):
+		return true
+	}
+	return false
+}
+
+// isBedrockRuntimeInferencePath reports whether a path is one of Bedrock
+// Runtime's per-model inference bindings, /model/{modelId}/<action>.
+//
+// This is the one entry in the switch above that matches a whole path shape
+// rather than a prefix, and the reason is what its first segment is. "model" is
+// an ordinary word and a perfectly legal S3 bucket name, and step 2 runs ahead
+// of the credential scope, so a prefix claim would take every object in a
+// bucket called "model" away from S3 with nothing left to correct it. Every
+// modeled bedrock-runtime URI under /model ends in one of the actions below, so
+// matching the last segment costs one comparison and collides only with an S3
+// key that happens to spell one.
+//
+// modelId is a non-greedy label but its value may be an ARN, whose separators
+// arrive percent-encoded on the wire and decoded in URL.Path — so the action is
+// taken from the end of the path rather than from a fixed segment count.
+//
+// The list is every action the pinned models bind under /model/{modelId}, not
+// only the two Overcast serves: an unrouted one still gets a protocol-correct
+// 501 from the generated registry, so labelling it bedrock is what actually
+// happened to it. Same reasoning as isLambdaAPIVersionPrefix.
+func isBedrockRuntimeInferencePath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/model/")
+	if !ok {
+		return false
+	}
+	separator := strings.LastIndexByte(rest, '/')
+	if separator <= 0 {
+		// No action segment, or an empty modelId before it.
+		return false
+	}
+	switch rest[separator+1:] {
+	case "invoke",
+		"invoke-with-response-stream",
+		"invoke-with-bidirectional-stream",
+		"converse",
+		"converse-stream",
+		"count-tokens":
 		return true
 	}
 	return false

@@ -8,10 +8,10 @@ func init() {
 	capabilities.Default.Register(
 		// Inference
 		capabilities.Capability{Service: "bedrock", Operation: "InvokeModel", Category: "Inference",
-			Status: capabilities.StatusWIP, Notes: "POST /model/{modelId}/invoke — invokes model; Overcast does not serve the binding AWS models, so no SDK reaches it (#857)",
+			Status: capabilities.StatusInert, Notes: "POST /model/{modelId}/invoke — accepted and answered 200; the required payload is not parsed and no model runs. The response body is an opaque blob whose format belongs to the model, which Overcast does not emulate, so it returns one self-describing field rather than any model family's shape",
 			DocsURL: "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html)"},
 		capabilities.Capability{Service: "bedrock", Operation: "Converse", Category: "Inference",
-			Status: capabilities.StatusWIP, Notes: "POST /model/{modelId}/converse — chat API; Overcast does not serve the binding AWS models, so no SDK reaches it (#857)",
+			Status: capabilities.StatusInert, Notes: "POST /model/{modelId}/converse — accepted and answered with a complete ConverseResponse, every @required member present; no inference runs, so the assistant text is canned and the token counts and latency are zero",
 			DocsURL: "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)"},
 	)
 }
