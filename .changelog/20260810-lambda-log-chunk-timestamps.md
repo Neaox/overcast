@@ -1,3 +1,0 @@
-* [lambda] a log line longer than 16 KiB reaches CloudWatch as the function wrote it, instead of with an RFC3339Nano timestamp spliced through the middle of it at every chunk boundary — Docker stamps each 16 KiB frame rather than each message, and reassembling the frames carried the continuation stamps into the line, cutting tokens of a serialized error object in half
-* [ecs] `awslogs` log lines longer than 16 KiB are reassembled the same way, having had the same stamps spliced into them
-* [lambda] a log stream is named with the 32 hex characters AWS uses for the execution environment GUID (`2026/08/10/[$LATEST]312c2d81e2e64af58dbe557754f9aa13`) rather than 26, which failed a caller matching stream names against AWS's shape

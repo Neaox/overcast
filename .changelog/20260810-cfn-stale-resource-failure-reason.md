@@ -1,3 +1,0 @@
-* [cloudformation] re-deploying a stack that failed replaces the previous attempt's resource records instead of adding to them — a second `cdk deploy` over a `ROLLBACK_COMPLETE` stack left two records per logical ID, so `DescribeStackResources` answered with the first run's failure reason rather than the reason this run actually failed for
-* [cloudformation] an update re-provisions a resource the stack no longer has behind a record — one whose create failed before naming anything, or one a rollback deleted — instead of matching it by logical ID, reading the missing property hash as "unchanged" and skipping it
-* [web] the stack page's failure banner reports the most recent failure rather than the first resource listed
