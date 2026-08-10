@@ -1,11 +1,14 @@
 # Container network topology — what should be able to reach what
 
-> Status: **phases 1–4 implemented** (§10). The two planes exist, every
+> Status: **phases 1–5 implemented** (§10). The two planes exist, every
 > container-backed service is on the shared `internal/dataplane` helper, #872 is
-> closed, and each region seeds a default VPC whose backing network *is* the
-> default data plane. Phases 5–6 (resolver guard, enforcement) are not started,
-> so **nothing is restricted yet** — every container still reaches every other,
-> which is the intended state until enforcement lands.
+> closed, each region seeds a default VPC whose backing network *is* the default
+> data plane, and the resolver refuses a data-plane name the caller cannot reach
+> instead of answering with Overcast's address. Phase 6 (enforcement) is not
+> started, so **nothing is restricted yet** — every container still reaches every
+> other, which is the intended state until enforcement lands. The guard is
+> therefore quiet in practice today; it exists so that when placement does start
+> to restrict, the connection it forbids fails by name rather than hanging.
 >
 > Three deviations from the plan as written, all recorded in place:
 >
@@ -14,13 +17,13 @@
 >    phase 6.
 > 2. **A VPC-placed resource keeps the default plane as well as its VPC network**
 >    (`dataplane.DataNetworks`). The "exactly one data plane" rule of §5 is the
->    target, not the current state: withdrawing the default plane now would
->    restrict reachability while the resolver guard that turns a forbidden
->    connection into a named error is still phase 5, so the failure would be the
->    hang of §2. Deleting the second entry in `DataNetworks` is the enforcement
->    change.
+>    target, not the current state — withdrawing the default plane is the
+>    restriction itself, and that is phase 6. The guard it was waiting on now
+>    exists, so the failure it produces is a named refusal rather than the hang
+>    of §2. Deleting the second entry in `DataNetworks` is the enforcement change.
 > 3. ElastiCache replication groups land on the default plane because the record
 >    carries no `CacheSubnetGroupName` (§10, phase 6 prerequisite).
+>
 > Scope: `internal/config/config.go`, `internal/router/router.go`,
 > `internal/docker/probe.go`, `internal/containerendpoint/`, `internal/dns/`,
 > `internal/services/{lambda,ecs,rds,elasticache,msk,efs,eks,ec2}/`,
@@ -309,10 +312,9 @@ Enforcement without a diagnostic is the worst of both worlds: the connection a
 VPC forbids is exactly the one that hangs, per §2, and the user's conclusion
 would be "Overcast is broken" rather than "this would not work on AWS either".
 
-So `internal/dns` learns the data-plane grammars (`*.rds.{base}`, `*.cfg.{base}`,
-…) and, for a name it recognises as a data-plane endpoint that the caller's own
-plane does not carry, refuses instead of answering with Overcast's address —
-with a log line naming both sides:
+So `internal/dns` stops answering with Overcast's address for a data-plane name
+the caller's own plane does not carry, and refuses instead — with a log line
+naming both sides:
 
 ```
 elasticache: cache-1.us-east-1.cfg.localhost.overcast.sh is in vpc-0abc; the
@@ -325,10 +327,35 @@ and it is the thing that makes enforcement worth having rather than merely
 faithful. It is also what converts every *future* instance of this bug class
 from an afternoon into a log line.
 
+**Refuse on positive identification, not on grammar (decision, 2026-08-11).**
+An earlier draft of this section had the resolver match data-plane *grammars* —
+`*.rds.{base}`, `*.cfg.{base}` — and refuse anything matching that it could not
+place. That is wrong, and would have broken S3.
+
+Those labels are ordinary words in a bucket name, and `docs/networking.md`
+§ Known AWS resource subdomains declines to register `rds`, `cache`, `kafka` and
+`es` as host-routed labels for exactly this reason: a bucket legitimately named
+`my.rds` is addressed virtual-hosted as `my.rds.localhost`, matches the grammar,
+and is not a data-plane endpoint at all. A grammar-matching guard would refuse
+it and break the bucket.
+
+So the guard refuses only what it can *positively* identify: a container is
+advertising this exact alias, on a plane the caller is not on. That is a fact
+read from Docker rather than a pattern inferred from a string, and it cannot
+misidentify a bucket — nothing advertises `my.rds.localhost` as an alias.
+
+The weaker case — a data-plane-shaped name with **no** container behind it
+anywhere — keeps answering as it does today, with a log line rather than a
+refusal. It covers "the RDS instance whose container failed", which is worth
+surfacing, but it cannot be told apart from an ordinary bucket with enough
+confidence to refuse.
+
 **Naming the caller (decision, 2026-08-11).** The resolver sees a source
 address, not a container. It resolves that address through Docker on the miss
-path — which container holds it on the plane the query arrived on — and reads
-the VPC from the labels Overcast already puts on every managed container.
+path — which container holds it, and which planes that container is on — and
+compares those against the planes carrying the alias. No VPC lookup is needed:
+"can the caller reach the target" is exactly "do they share a plane", which both
+sides' network membership answers directly.
 
 The alternative was a registry written by `dataplane.Attach`, avoiding a Docker
 call on the query path. Rejected because it is state that can drift, and it

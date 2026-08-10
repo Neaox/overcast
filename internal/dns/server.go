@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -52,6 +53,7 @@ type Server struct {
 	fwd  Forwarder
 
 	locator Locator
+	guard   atomic.Pointer[Guard]
 
 	mu  sync.Mutex
 	udp *net.UDPConn
@@ -238,7 +240,7 @@ func (s *Server) serveUDP(ctx context.Context, conn *net.UDPConn) {
 		query := buf[:n]
 		// The reply is built after the query in the same buffer, so answering
 		// costs no allocation at all.
-		reply, forward := s.respond(query, buf[n:n:len(buf)], peer.AddrPort().Addr().Unmap())
+		reply, forward := s.respond(ctx, query, buf[n:n:len(buf)], peer.AddrPort().Addr().Unmap())
 		if !forward {
 			if len(reply) > 0 {
 				_, _ = conn.WriteToUDP(reply, peer)
@@ -340,7 +342,7 @@ func (s *Server) handleTCP(ctx context.Context, conn net.Conn) {
 		}
 
 		query := buf[:n]
-		reply, forward := s.respond(query, buf[n:n:len(buf)], peer)
+		reply, forward := s.respond(ctx, query, buf[n:n:len(buf)], peer)
 		if forward {
 			fctx, cancel := context.WithTimeout(ctx, forwardTimeout)
 			resp, err := s.fwd.Forward(fctx, query)
@@ -372,7 +374,7 @@ func (s *Server) handleTCP(ctx context.Context, conn net.Conn) {
 // the name belongs to somebody else and must be relayed upstream; in that case
 // reply is nil. A nil reply with forward=false means the query was too
 // malformed to answer at all and should be dropped.
-func (s *Server) respond(query, dst []byte, peer netip.Addr) (reply []byte, forward bool) {
+func (s *Server) respond(ctx context.Context, query, dst []byte, peer netip.Addr) (reply []byte, forward bool) {
 	var scratch [maxNameLen]byte
 	q, ok := parseQuestion(query, scratch[:])
 	if !ok {
@@ -387,6 +389,15 @@ func (s *Server) respond(query, dst []byte, peer netip.Addr) (reply []byte, forw
 			return answer{rcode: rcodeRefused}.appendTo(dst, query, q), false
 		}
 		return nil, true
+	}
+
+	// The name is ours, so nothing upstream will be consulted — which is
+	// precisely why answering it wrongly hangs rather than fails. Give the
+	// guard the chance to say this names a container the caller cannot reach.
+	// The string conversion is the one allocation on this path and happens only
+	// when a guard is wired.
+	if s.loadGuard() != nil && s.refuseByGuard(ctx, string(trimTrailingDot(q.name)), peer) {
+		return answer{rcode: rcodeRefused}.appendTo(dst, query, q), false
 	}
 
 	addr := s.answerAddr(peer)

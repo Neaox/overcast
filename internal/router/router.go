@@ -22,6 +22,7 @@ import (
 	"github.com/Neaox/overcast/internal/awsapi"
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/domainregistry"
 	"github.com/Neaox/overcast/internal/events"
@@ -111,7 +112,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	cleanups = append(cleanups, smtpCancel)
 
 	// ---- Container-facing DNS resolver -------------------------------------
-	if stopDNS := startContainerDNS(cfg, logger); stopDNS != nil {
+	// The server is kept so the data-plane guard can be attached once Docker is
+	// probed, further down. Binding has to happen here, before any service is
+	// constructed, so cfg.DNSListening is settled before a container could be
+	// pointed at the resolver.
+	dnsServer, stopDNS := startContainerDNS(cfg, logger)
+	if stopDNS != nil {
 		cleanups = append(cleanups, stopDNS)
 	}
 
@@ -761,6 +767,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 			results := dockerSup.Probe(context.Background(), configs,
 				[]string{cfg.Network, cfg.ControlNetwork()})
+
+			// The resolver has been answering since before any of this ran, with
+			// no way to tell a reachable endpoint from an unreachable one. Now
+			// that a daemon is here, give it one — see internal/dataplane.Guard
+			// for why this is affordable on the query path.
+			if dnsServer != nil && len(results) > 0 {
+				dnsServer.SetGuard(dataplane.NewGuard(results[0].Client, logger))
+			}
 
 			// Wire each successful service and reconcile containers/networks.
 			for _, res := range results {
