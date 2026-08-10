@@ -92,9 +92,51 @@ and
   needs an `insecure-registries` daemon entry for `<hostname>:<registryPort>`.
 - Images live in the registry container, which is removed on shutdown, so a
   restart starts empty — repository metadata persists, image content does not.
+- A registry on an *ephemeral* port can outlive an Overcast that was killed
+  rather than shut down. See [Reclaiming a leaked registry
+  container](#reclaiming-a-leaked-registry-container).
 - Image content/layers are not stored in Overcast state; read APIs persist manifest metadata derived from `PutImage` calls and from manifests pushed into the local registry.
 - Replication and public-registry APIs are not implemented.
 - `DescribeImageScanFindings` is supported but always reports scanner-unavailable state with empty findings.
+
+## Reclaiming a leaked registry container
+
+Shutting Overcast down removes its registry container. Killing it — `SIGKILL`,
+a crash, a container runtime pulling the rug out — does not: the container runs
+with `AutoRemove`, which fires when the *registry* exits, not when its owner
+does. What is left behind is one container, one held port, and a registry whose
+password no running process knows. Nothing resolves to it and nothing pushes to
+it; the cost is the clutter.
+
+This is confined to registries on an ephemeral port, which is the fallback when
+`OVERCAST_ECR_REGISTRY_PORT` (default `4510`) is already held. A registry on the
+fixed port is named after that port, so the next start finds the name, knows its
+holder can only be a predecessor, and replaces it. An ephemeral registry's name
+is random precisely so that concurrent instances cannot collide over it, and
+that is what leaves nothing to key a reclaim on.
+
+Overcast does not reclaim these automatically, and the reason is worth stating.
+A *running* registry that Overcast does not own is indistinguishable from one a
+second Overcast instance is using right now: same image, same labels, same
+refusal of another instance's credentials. Removing a live sibling's registry
+mid-push is a real failure; leaving a dead one running is untidy. Any automatic
+sweep trades the second for a chance of the first, so Overcast declines to
+guess.
+
+An operator has one piece of information Overcast does not — whether any
+Overcast is running. With none running, every managed registry container is
+leaked:
+
+```bash
+docker ps --filter label=overcast.service=ecr
+```
+
+```bash
+docker rm -f $(docker ps -q --filter label=overcast.service=ecr)
+```
+
+Run those while an instance is up and you will take its registry with you, so
+check the first before running the second.
 
 <!-- BEGIN overcast:capabilities -->
 
