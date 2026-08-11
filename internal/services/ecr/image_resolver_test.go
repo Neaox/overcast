@@ -31,8 +31,10 @@ func resolverService(hostPort int, password string) *Service {
 		// rather than in anything this test is about.
 		log: serviceutil.NewServiceLogger(zap.NewNop(), serviceName),
 	}
-	s.registryHostPort = hostPort
 	s.registryPassword = password
+	// The address as startup records it, daemon-proved — the only way the
+	// registry's host and port are ever set.
+	s.adoptRegistryAddress(hostPort, true)
 	return s
 }
 

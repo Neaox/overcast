@@ -66,9 +66,7 @@ func TestDescribeRepositories_reportsTheRegistryTheRunActuallyHas(t *testing.T) 
 	}
 
 	// Given: a later run in which the registry is up on the fixed port.
-	s.registryMu.Lock()
-	s.registryHostPort = 4510
-	s.registryMu.Unlock()
+	s.adoptRegistryAddress(4510, true)
 
 	// When: the repository is read back, the way cdk-assets reads it before
 	// pushing.
@@ -80,7 +78,7 @@ func TestDescribeRepositories_reportsTheRegistryTheRunActuallyHas(t *testing.T) 
 	}
 
 	// Then: it names the registry, not the address of a run that is over.
-	want := "localhost.overcast.sh:4510/000000000000/cdk-hnb659fds-container-assets-000000000000-us-east-1"
+	want := "localhost:4510/000000000000/cdk-hnb659fds-container-assets-000000000000-us-east-1"
 	if got := described.Repositories[0].RepositoryUri; got != want {
 		t.Errorf("repositoryUri = %q, want %q — a push to the API port answers 405, not a registry", got, want)
 	}
@@ -94,9 +92,7 @@ func TestDescribeRepositories_unfilteredListReportsTheCurrentRegistry(t *testing
 	if _, aerr := s.createRepositoryTyped(ctx, &createRepositoryRequest{RepositoryName: "listed"}); aerr != nil {
 		t.Fatalf("CreateRepository: %v", aerr)
 	}
-	s.registryMu.Lock()
-	s.registryHostPort = 4510
-	s.registryMu.Unlock()
+	s.adoptRegistryAddress(4510, true)
 
 	// When: repositories are listed rather than named.
 	described, aerr := s.describeRepositoriesTyped(ctx, &describeRepositoriesRequest{})
@@ -109,7 +105,7 @@ func TestDescribeRepositories_unfilteredListReportsTheCurrentRegistry(t *testing
 	if len(described.Repositories) != 1 {
 		t.Fatalf("expected 1 repository, got %d", len(described.Repositories))
 	}
-	want := "localhost.overcast.sh:4510/000000000000/listed"
+	want := "localhost:4510/000000000000/listed"
 	if got := described.Repositories[0].RepositoryUri; got != want {
 		t.Errorf("listed repositoryUri = %q, want %q", got, want)
 	}
@@ -123,9 +119,7 @@ func TestDeleteRepository_reportsTheCurrentRegistry(t *testing.T) {
 	if _, aerr := s.createRepositoryTyped(ctx, &createRepositoryRequest{RepositoryName: "deleted"}); aerr != nil {
 		t.Fatalf("CreateRepository: %v", aerr)
 	}
-	s.registryMu.Lock()
-	s.registryHostPort = 4510
-	s.registryMu.Unlock()
+	s.adoptRegistryAddress(4510, true)
 
 	// When: it is deleted, which echoes the repository back.
 	deleted, aerr := s.deleteRepositoryTyped(ctx, &deleteRepositoryRequest{RepositoryName: "deleted"})
@@ -135,7 +129,7 @@ func TestDeleteRepository_reportsTheCurrentRegistry(t *testing.T) {
 
 	// Then: the echo agrees with every other answer about this repository. One
 	// address per run, whichever operation is asked.
-	want := "localhost.overcast.sh:4510/000000000000/deleted"
+	want := "localhost:4510/000000000000/deleted"
 	if got := deleted.Repository.RepositoryUri; got != want {
 		t.Errorf("deleted repositoryUri = %q, want %q", got, want)
 	}
@@ -148,9 +142,7 @@ func TestDescribeRepositories_leavesTheStoredRecordAlone(t *testing.T) {
 	if _, aerr := s.createRepositoryTyped(ctx, &createRepositoryRequest{RepositoryName: "untouched"}); aerr != nil {
 		t.Fatalf("CreateRepository: %v", aerr)
 	}
-	s.registryMu.Lock()
-	s.registryHostPort = 4510
-	s.registryMu.Unlock()
+	s.adoptRegistryAddress(4510, true)
 
 	// When: the repository is read.
 	if _, aerr := s.describeRepositoriesTyped(ctx, &describeRepositoriesRequest{RepositoryNames: []string{"untouched"}}); aerr != nil {

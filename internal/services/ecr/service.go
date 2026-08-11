@@ -80,6 +80,11 @@ const (
 	// critical path, so it is generous without being an outage of its own.
 	registryAnswerTimeout = 15 * time.Second
 	registryAnswerBackoff = 200 * time.Millisecond
+	// registryProbeHost is the host the startup probe asks the daemon to dial,
+	// and — when the daemon answers there — the host repositoryUri advertises.
+	// One constant for both, because a probe that proves one address while the
+	// advertisement names another proves nothing. See adoptRegistryAddress.
+	registryProbeHost = "localhost"
 )
 
 // ─── Store namespaces ─────────────────────────────────────────────────────────
@@ -156,9 +161,14 @@ type Service struct {
 	registryMu        sync.Mutex
 	registryContainer string
 	registryName      string
-	registryHostPort  int
-	registryPassword  string
-	registryInitOnce  sync.Once
+	// registryHost and registryHostPort are the address every client-facing
+	// registry address is built from. They are written together, by
+	// adoptRegistryAddress and nowhere else — a port without its host mints a
+	// hostless ":4510/…", which is not an address at all.
+	registryHost     string
+	registryHostPort int
+	registryPassword string
+	registryInitOnce sync.Once
 	// registrylessOnce keeps the "there is no registry" warning to one line per
 	// process: it is minted on every repository read, which the console polls.
 	registrylessOnce sync.Once
@@ -289,7 +299,7 @@ func (s *Service) registryEndpoint() string {
 	s.registryMu.Lock()
 	defer s.registryMu.Unlock()
 	if s.registryHostPort > 0 {
-		return fmt.Sprintf("http://%s:%d", s.cfg.ExternalHostname(), s.registryHostPort)
+		return fmt.Sprintf("http://%s:%d", s.registryHost, s.registryHostPort)
 	}
 	s.registrylessOnce.Do(func() {
 		s.log.Warn("no ECR registry is running, so repositoryUri and proxyEndpoint name Overcast's API port; "+
@@ -1758,9 +1768,9 @@ func (s *Service) initRegistryDocker() {
 	}
 	s.registryContainer = containerID
 	s.registryName = strings.TrimPrefix(inspect.Name, "/")
-	s.registryHostPort = hostPort
 	s.registryClientBases = registryClientCandidates(hostPort, inspect)
 	s.registryMu.Unlock()
+	s.adoptRegistryAddress(hostPort, reachable)
 
 	// Only now, with an answering registry, is "ready" allowed to mean ready:
 	// waitRegistryReady gates GetAuthorizationToken and repositoryUri minting,
@@ -1771,6 +1781,39 @@ func (s *Service) initRegistryDocker() {
 		s.log.Warn("ECR registry container started but never answered /v2/",
 			zap.Int("port", hostPort))
 	}
+}
+
+// adoptRegistryAddress records the address every client-facing ECR address is
+// then built from — repositoryUri, proxyEndpoint, and the reference an ECR
+// image resolves to. proved says whether the daemon answered on it.
+//
+// When it did, the host is the one the probe dialled, not the configured
+// hostname. Both name this machine, but only one of them is a demonstrated
+// fact, and Docker does not treat them alike: it trusts plain HTTP to
+// "localhost" without configuration and bypasses proxies for it, while
+// OVERCAST_HOSTNAME is an ordinary domain to a daemon even when it resolves to
+// loopback. On a machine with a proxy configured, advertising the domain sent
+// the push through Docker Desktop's proxy —
+//
+//	proxyconnect tcp: dial tcp 192.168.65.1:3128: i/o timeout
+//
+// — so it never reached a registry that was listening the whole time, on the
+// address startup had already proved. Advertise what was proved.
+//
+// When nothing was proved, "localhost" would be a guess about someone else's
+// machine — a remote daemon, or published ports that are not on its loopback —
+// so the configured hostname stands. That is the address the startup warning
+// tells the operator to add to the daemon's insecure-registries, and the two
+// must agree.
+func (s *Service) adoptRegistryAddress(hostPort int, proved bool) {
+	host := s.cfg.ExternalHostname()
+	if proved {
+		host = registryProbeHost
+	}
+	s.registryMu.Lock()
+	s.registryHost = host
+	s.registryHostPort = hostPort
+	s.registryMu.Unlock()
 }
 
 // publishedHostPorts returns the distinct host ports the registry's container
@@ -1810,7 +1853,7 @@ func (s *Service) selectDaemonReachablePort(ports []int, password string) (port 
 	deadline := time.Now().Add(s.registryProbeTimeout())
 	for time.Now().Before(deadline) {
 		for _, candidate := range ports {
-			address := fmt.Sprintf("localhost:%d", candidate)
+			address := fmt.Sprintf("%s:%d", registryProbeHost, candidate)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := s.docker.DistributionInspectWithAuth(ctx,
 				address+"/overcast/connectivity-probe:none",

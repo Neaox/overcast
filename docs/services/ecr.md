@@ -25,7 +25,7 @@ RPC v2 CBOR is also supported via the Smithy RPC path
 Repositories are assigned a URI on the registry Overcast serves:
 
 ```
-<hostname>:<registryPort>/<accountId>/<repositoryName>
+localhost:<registryPort>/<accountId>/<repositoryName>
 ```
 
 For example, `localhost:4510/000000000000/my-app`. The port is the registry
@@ -50,13 +50,24 @@ the fallback address, and reports the registry again once there is one.
 `Fn::GetAtt Repo.RepositoryUri` returns this value rather than an
 `amazonaws.com` one.
 
-The address is chosen for the party that actually dials it. `docker push`,
-`docker pull` and `docker login` are all performed by the Docker daemon, never
-by the CLI that requested them, so `localhost` here means the daemon's own
-loopback — which is correct on native Linux and on Docker Desktop alike, and
-regardless of where the client runs. Docker also trusts loopback registries
-with plain HTTP automatically, so no `insecure-registries` configuration is
-needed. At startup the registry's reachability is verified from the daemon's
+The host is `localhost` rather than `OVERCAST_HOSTNAME`, and deliberately so:
+it is the address startup proved. `docker push`, `docker pull` and `docker
+login` are all performed by the Docker daemon, never by the CLI that requested
+them, and startup picks the port by having the daemon dial `localhost:<port>`
+itself. Advertising anything else would be offering an address nobody checked.
+
+The two are not interchangeable even when they name the same machine. Docker
+trusts plain HTTP to `localhost` without configuration and bypasses proxies for
+it; a hostname such as `localhost.overcast.sh` is an ordinary domain to a
+daemon, so a machine with a proxy configured sends the push to the proxy —
+`proxyconnect tcp: dial tcp 192.168.65.1:3128: i/o timeout` on Docker Desktop —
+and it never reaches a registry that was listening the whole time.
+
+When the daemon cannot be shown to reach the registry, `localhost` would be a
+guess about someone else's machine, so `OVERCAST_HOSTNAME` stands: that is the
+remote-daemon case, and the address to add to its `insecure-registries`.
+
+At startup the registry's reachability is verified from the daemon's
 own vantage (the Engine's distribution-inspect endpoint, which makes the daemon
 contact the registry); if the daemon cannot reach it — a remote daemon, or a
 proxy arrangement that does not loop published ports back — one warning names
