@@ -35,6 +35,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	containerName := "overcast-msk-" + clusterUUID
 	containerPort := "9092/tcp"
 	aliases := h.clusterEndpointAliases(clusterARN)
+	vpcID := h.vpcForCluster(ctx, clusterARN)
 
 	// Check for existing container (post-restart reuse).
 	if existing, err := h.docker.GetContainerByName(ctx, containerName); err == nil && existing != nil {
@@ -65,8 +66,13 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 			}
 		}
 		// Re-attach: a container adopted from an earlier run predates the
-		// current alias set. Attaching is idempotent.
-		if err := dataplane.AttachAdopted(ctx, h.docker, h.cfg, existing.ID, dataplane.Placement{Aliases: aliases}); err != nil {
+		// current alias set, and predates VPC placement entirely — before this
+		// it was on the default plane whatever subnets the cluster named.
+		// Attaching is idempotent.
+		if placement, err := h.placementFor(ctx, vpcID, aliases); err != nil {
+			h.log.Warn("MSK: reused container could not be placed in its VPC",
+				zap.String("cluster", clusterARN), zap.Error(err))
+		} else if err := dataplane.AttachAdopted(ctx, h.docker, h.cfg, existing.ID, placement); err != nil {
 			h.log.Warn("MSK: reused container could not join the data plane — "+
 				"its bootstrap name will not resolve for sibling containers",
 				zap.String("cluster", clusterARN), zap.Error(err))
@@ -75,6 +81,14 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 		addr, port := h.clusterEndpointAddr(ctx, existing.ID, hostPort)
 		h.scheduleHealthCheck(clusterARN, addr, port)
 		return nil
+	}
+
+	// Resolve the plane before anything is acquired: a VPC that cannot take
+	// containers should fail here, not after a port reservation and an image
+	// pull that then have to be unwound.
+	placement, err := h.placementFor(ctx, vpcID, aliases)
+	if err != nil {
+		return fmt.Errorf("MSK %s: %w", clusterARN, err)
 	}
 
 	// Allocate a host port.
@@ -113,21 +127,21 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 		NetworkingConfig: dataplane.PrimaryEndpoints(h.cfg),
 	}
 
-	containerID, err := h.docker.CreateContainer(ctx, containerName, req)
-	if err != nil {
-		if docker.IsConflict(err) {
+	containerID, cerr := h.docker.CreateContainer(ctx, containerName, req)
+	if cerr != nil {
+		if docker.IsConflict(cerr) {
 			h.log.Warn("MSK: name conflict on create, retrying reuse",
 				zap.String("cluster", clusterARN))
 			h.store.releasePort(ctx, hostPort) //nolint:errcheck
 			return h.startClusterContainer(ctx, clusterARN)
 		}
 		h.store.releasePort(ctx, hostPort) //nolint:errcheck
-		return fmt.Errorf("create container: %w", err)
+		return fmt.Errorf("create container: %w", cerr)
 	}
 
 	// Join the data plane before starting, so the bootstrap name resolves from
 	// the moment the broker accepts connections.
-	if err := dataplane.Attach(ctx, h.docker, h.cfg, containerID, dataplane.Placement{Aliases: aliases}); err != nil {
+	if err := dataplane.Attach(ctx, h.docker, h.cfg, containerID, placement); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 		return fmt.Errorf("MSK %s: %w", clusterARN, err)
@@ -143,6 +157,57 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 	addr, port := h.clusterEndpointAddr(ctx, containerID, hostPort)
 	h.scheduleHealthCheck(clusterARN, addr, port)
 	return nil
+}
+
+// vpcForCluster returns the VPC an MSK cluster's brokers belong in, or "" for
+// the default data plane.
+//
+// On AWS there is no non-VPC MSK cluster: a provisioned cluster names client
+// subnets and its brokers live in the VPC those subnets belong to. Overcast
+// stored the subnets and never resolved them, so the broker container landed on
+// the default plane while a function or task created *in* the VPC landed on the
+// VPC's — which only worked while a VPC-placed resource kept the default plane
+// as well.
+//
+// A cluster whose record has already gone, whose subnets are absent or
+// synthetic, or that has no EC2 service to ask still resolves to "". That is
+// today's behaviour for those cases and it stays a working cluster, so it must
+// not become an error.
+func (h *Handler) vpcForCluster(ctx context.Context, clusterARN string) string {
+	cluster, aerr := h.store.getCluster(ctx, clusterARN)
+	if aerr != nil || cluster == nil {
+		return ""
+	}
+	return h.vpcForSubnets(ctx, cluster.BrokerNodeGroupInfo.ClientSubnets)
+}
+
+// vpcForSubnets resolves the first subnet that names a VPC, the same way RDS
+// and ElastiCache fill their own VPC field in.
+func (h *Handler) vpcForSubnets(ctx context.Context, subnetIDs []string) string {
+	if h.vpcResolver == nil {
+		return ""
+	}
+	for _, id := range subnetIDs {
+		if vpcID := h.vpcResolver.VpcIDForSubnet(ctx, id); vpcID != "" {
+			return vpcID
+		}
+	}
+	return ""
+}
+
+// placementFor turns a resolved VPC into the Placement the broker container
+// should take, carrying the bootstrap aliases onto whichever plane it lands on.
+func (h *Handler) placementFor(ctx context.Context, vpcID string, aliases []string) (dataplane.Placement, error) {
+	var resolver dataplane.VPCResolver
+	if h.vpcResolver != nil {
+		resolver = h.vpcResolver
+	}
+	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
+	if err != nil {
+		return placement, err
+	}
+	placement.Aliases = aliases
+	return placement, nil
 }
 
 // setClusterEndpoint stores the container ID and host port on the cluster,

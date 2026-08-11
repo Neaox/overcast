@@ -37,6 +37,17 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 	image := k3sImageForVersion(cluster.Version)
 	containerName := "overcast-eks-" + cluster.Name
 
+	// Resolve the plane before the image pull: a VPC that cannot take
+	// containers should fail the cluster here rather than silently landing its
+	// control plane on the default plane, where nothing inside the VPC could
+	// reach it.
+	placement, err := s.placementFor(ctx, s.vpcForCluster(ctx, cluster),
+		s.clusterEndpointAliases(region, cluster.Name))
+	if err != nil {
+		s.failLiveCluster(ctx, region, cluster.Name, issueConfigurationConflict, err)
+		return
+	}
+
 	// Pull first, deduplicated per process lifetime, as every other
 	// container-starting service does. Without it the create below is the
 	// first thing to touch the image, and a machine that does not already
@@ -99,8 +110,7 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 	// The control plane is reachable by name from sibling containers, so a task
 	// or function running kubectl against it resolves the same endpoint the API
 	// hands out. Non-fatal: the published host port still serves the host.
-	if err := dataplane.Attach(ctx, s.docker, s.cfg, containerID,
-		dataplane.Placement{Aliases: s.clusterEndpointAliases(region, cluster.Name)}); err != nil {
+	if err := dataplane.Attach(ctx, s.docker, s.cfg, containerID, placement); err != nil {
 		s.log.Warn("eks: cluster container could not join the data plane — "+
 			"its endpoint resolves only from the host",
 			zap.String("cluster", cluster.Name), zap.Error(err))
@@ -124,6 +134,85 @@ func (s *Service) clusterEndpointAliases(region, name string) []string {
 	return dataplane.Hostnames(s.cfg, func(base string) string {
 		return name + "." + region + ".eks." + base
 	})
+}
+
+// vpcForCluster returns the VPC an EKS control plane belongs in, or "" for the
+// default data plane.
+//
+// A cluster is created with resourcesVpcConfig.subnetIds and its control plane
+// lives in the VPC those subnets belong to, exactly as an RDS instance lives in
+// its subnet group's. Overcast stored the config verbatim and never resolved
+// it, so the k3s container landed on the default plane while a function or task
+// created *in* the VPC landed on the VPC's — which only worked while a
+// VPC-placed resource also kept the default plane.
+//
+// A cluster with no resourcesVpcConfig, no subnets, or subnets EC2 has no
+// record of still resolves to "". That is today's behaviour and a working
+// cluster, so it must not become an error.
+func (s *Service) vpcForCluster(ctx context.Context, cluster *Cluster) string {
+	if cluster == nil {
+		return ""
+	}
+	// AWS only *returns* vpcId in resourcesVpcConfig, but a caller that sends
+	// one is naming the answer the subnets would have resolved to.
+	if vpcID, ok := cluster.ResourcesVPCConfig["vpcId"].(string); ok && vpcID != "" {
+		return vpcID
+	}
+	return s.vpcForSubnets(ctx, clusterSubnetIDs(cluster.ResourcesVPCConfig))
+}
+
+// vpcForSubnets resolves the first subnet that names a VPC, the same way RDS
+// and ElastiCache fill their own VPC field in.
+func (s *Service) vpcForSubnets(ctx context.Context, subnetIDs []string) string {
+	if s.vpcResolver == nil {
+		return ""
+	}
+	for _, id := range subnetIDs {
+		if vpcID := s.vpcResolver.VpcIDForSubnet(ctx, id); vpcID != "" {
+			return vpcID
+		}
+	}
+	return ""
+}
+
+// clusterSubnetIDs reads subnetIds out of a stored resourcesVpcConfig.
+//
+// The record keeps the free-form map the API supplied, so the list arrives as
+// []any of strings after a JSON round-trip and as []string when a caller built
+// the record in process. Anything else is read as no subnets rather than an
+// error: a malformed field should leave the cluster on the default plane, not
+// refuse to start it.
+func clusterSubnetIDs(vpcConfig map[string]any) []string {
+	switch v := vpcConfig["subnetIds"].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if id, ok := item.(string); ok && id != "" {
+				out = append(out, id)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// placementFor turns a resolved VPC into the Placement the control-plane
+// container should take, carrying its endpoint aliases onto whichever plane it
+// lands on.
+func (s *Service) placementFor(ctx context.Context, vpcID string, aliases []string) (dataplane.Placement, error) {
+	var resolver dataplane.VPCResolver
+	if s.vpcResolver != nil {
+		resolver = s.vpcResolver
+	}
+	placement, err := dataplane.PlaceInVPC(ctx, resolver, vpcID)
+	if err != nil {
+		return placement, err
+	}
+	placement.Aliases = aliases
+	return placement, nil
 }
 
 // pollK3sReady polls the k3s API server host-mapped port until it responds,
