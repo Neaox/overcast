@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,8 +33,24 @@ func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	fd := newFakeDockerDaemon(t)
 	fd.release() // nothing here is about the start-vs-delete race the fake can stage
 
+	// Take the port before Overcast allocates it, and make it the base so the
+	// allocation lands on the one already held.
+	//
+	// The order matters and the other way round is a flake: allocatePort only
+	// scans its own store, so for a fresh store it returns portBase itself
+	// without ever asking the OS whether that port is free. Listening on the
+	// allocated port afterwards therefore fails with "address already in use"
+	// wherever something else holds it.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a port for the cache node: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	cachePort := ln.Addr().(*net.TCPAddr).Port
+
 	clk := clock.NewMock()
-	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, state.NewMemoryStore(), zap.NewNop(), clk)
+	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012", ElastiCachePortBase: cachePort},
+		state.NewMemoryStore(), zap.NewNop(), clk)
 	h := svc.handler
 	h.docker = docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop())
 	h.puller = docker.NewImagePuller(h.docker)
@@ -81,19 +96,13 @@ func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	if aerr != nil || started == nil {
 		t.Fatalf("getCacheCluster after start: %v", aerr)
 	}
-	if started.HostPort == 0 {
-		t.Fatal("no host port allocated: the container start did not complete")
-	}
-
 	// The health check promotes the cluster only once something answers on the
-	// published port — it is a real TCP dial, not a metadata flip. Overcast
-	// reserved this port in its own store rather than binding it, so the test
-	// stands up the listener the container would have been.
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(started.HostPort)))
-	if err != nil {
-		t.Fatalf("listen on the cluster's published port %d: %v", started.HostPort, err)
+	// published port — it is a real TCP dial, not a metadata flip — and the
+	// listener standing in for the cache node is the one reserved above.
+	if started.HostPort != cachePort {
+		t.Fatalf("cluster published port %d, want the reserved %d: nothing is listening there",
+			started.HostPort, cachePort)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
 
 	// Fire the 1s health check and wait for it: the mock clock runs the callback
 	// on a goroutine of its own, so advancing the clock alone leaves the read on
