@@ -311,6 +311,9 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 	// can look up the task.
 	resourceID := clusterName + "/" + taskID
 
+	// Every failure below belongs to the container being placed when it happens,
+	// and is returned naming it: the reason is recorded against that container
+	// alone, as ECS does, not against every container in the task.
 	for i, cd := range td.ContainerDefinitions {
 		image := cd.Image
 
@@ -318,7 +321,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		// image and the failure, so it is not wrapped again — this message
 		// reaches the user as a task's stoppedReason.
 		if err := h.puller.Ensure(ctx, image); err != nil {
-			return fmt.Errorf("ecs: %w", err)
+			return containerFailure(cd.Name, "ecs: %w", err)
 		}
 
 		// Build environment variables, including any resolved from Secrets
@@ -389,7 +392,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		// (docker rmi after the recorded pull) instead of failing until restart.
 		dockerID, err := h.puller.CreateContainerWithRetry(ctx, containerName, ccfg)
 		if err != nil {
-			return fmt.Errorf("ecs: create container %s: %w", cd.Name, err)
+			return containerFailure(cd.Name, "ecs: create container %s: %w", cd.Name, err)
 		}
 
 		// With TLS on, the task must trust the CA that minted Overcast's
@@ -401,7 +404,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		} else if caTar != nil {
 			if err := h.docker.CopyToContainer(ctx, dockerID, "/", bytes.NewReader(caTar)); err != nil {
 				_ = h.docker.RemoveContainerForce(dockerID)
-				return fmt.Errorf("ecs: inject CA bundle into %s: %w", cd.Name, err)
+				return containerFailure(cd.Name, "ecs: inject CA bundle into %s: %w", cd.Name, err)
 			}
 		}
 
@@ -416,12 +419,12 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		// address Docker assigned, which is not fixed until the container runs.
 		if err := dataplane.Attach(ctx, h.docker, h.cfg, dockerID, dataplane.Placement{}); err != nil {
 			_ = h.docker.RemoveContainerForce(dockerID)
-			return fmt.Errorf("ecs: container %s: %w", cd.Name, err)
+			return containerFailure(cd.Name, "ecs: container %s: %w", cd.Name, err)
 		}
 
 		if err := h.docker.StartContainer(ctx, dockerID); err != nil {
 			_ = h.docker.RemoveContainerForce(dockerID)
-			return fmt.Errorf("ecs: start container %s: %w", cd.Name, err)
+			return containerFailure(cd.Name, "ecs: start container %s: %w", cd.Name, err)
 		}
 		if placement.networkID != "" {
 			// Only the first container carries the task's ENI address. AWS gives
@@ -430,7 +433,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			// reports a single privateIPv4Address either way.
 			if err := h.attachTaskENI(ctx, task, placement, dockerID, i == 0); err != nil {
 				_ = h.docker.RemoveContainerForce(dockerID)
-				return fmt.Errorf("ecs: connect container %s to VPC network %s: %w", cd.Name, placement.networkID, err)
+				return containerFailure(cd.Name, "ecs: connect container %s to VPC network %s: %w", cd.Name, placement.networkID, err)
 			}
 		}
 
