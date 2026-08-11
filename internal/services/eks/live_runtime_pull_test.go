@@ -48,13 +48,18 @@ type fakeK3sDaemon struct {
 	// 6443/tcp — where the readiness poll dials the k3s API.
 	readyzPort string
 
+	// inspected closes when the daemon first serves the container inspect, so
+	// a test can act at the point a bootstrap has reached the readiness poll.
+	inspected     chan struct{}
+	inspectedOnce sync.Once
+
 	srv *httptest.Server
 }
 
 func newFakeK3sDaemon(t *testing.T) *fakeK3sDaemon {
 	t.Helper()
 
-	fd := &fakeK3sDaemon{images: map[string]bool{}}
+	fd := &fakeK3sDaemon{images: map[string]bool{}, inspected: make(chan struct{})}
 	fd.srv = httptest.NewServer(http.HandlerFunc(fd.serve))
 	t.Cleanup(fd.srv.Close)
 	return fd
@@ -117,6 +122,7 @@ func (fd *fakeK3sDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/containers/"+fakeK3sContainerID+"/json"):
+		fd.inspectedOnce.Do(func() { close(fd.inspected) })
 		fd.mu.Lock()
 		port := fd.readyzPort
 		fd.mu.Unlock()

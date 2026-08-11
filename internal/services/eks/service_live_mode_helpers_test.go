@@ -1,6 +1,7 @@
 package eks
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
@@ -25,6 +27,48 @@ func newLiveModeTestService() *Service {
 		&config.Config{Region: liveModeTestRegion, AccountID: "000000000000", EKSMode: config.EKSModeLive},
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
+}
+
+// suspendLiveBootstrap replaces the background bootstrap CreateCluster hands
+// off to with a stand-in that does nothing, so a test can assert on the record
+// CreateCluster just persisted instead of racing the goroutine.
+//
+// A bootstrap that cannot start a control plane moves the cluster to FAILED
+// (#895), so an assertion of CREATING made after CreateCluster returns is
+// otherwise decided by which of the two goroutines the scheduler runs first.
+// What the stand-in displaces is covered elsewhere, deterministically:
+// the hand-off itself by TestLiveModeCreateClusterStartsK3sContainer, and the
+// terminal states by the TestLiveCluster*ReachesTerminalState tests, which call
+// startLiveCluster synchronously.
+func suspendLiveBootstrap(t *testing.T, svc *Service) {
+	t.Helper()
+
+	svc.startLiveClusterHook = func(context.Context, string, *Cluster) {}
+}
+
+// createLiveCluster drives CreateCluster over its route, the way a client
+// reaches it — so the bootstrap hand-off happens too, unlike putCreatingCluster,
+// which only lays down the record CreateCluster would have written.
+func createLiveCluster(t *testing.T, svc *Service, name string) {
+	t.Helper()
+
+	r := chi.NewRouter()
+	svc.RegisterRoutes(r)
+
+	payload, err := json.Marshal(map[string]any{
+		"name":    name,
+		"roleArn": "arn:aws:iam::000000000000:role/eks-role",
+	})
+	if err != nil {
+		t.Fatalf("marshal create payload: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/clusters", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for live-mode create of %q, got %d body=%s", name, rec.Code, rec.Body.String())
+	}
 }
 
 func putLegacyMockCluster(t *testing.T, svc *Service) {
