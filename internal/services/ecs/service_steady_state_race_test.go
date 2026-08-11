@@ -1,9 +1,9 @@
 package ecs
 
-// service_steady_state_race_test.go — a service announces its steady state
+// service_steady_state_race_test.go â€” a service announces its steady state
 // whichever order its tasks happen to start in.
 //
-// A service is reconciled from each of its tasks: every task's PROVISIONING →
+// A service is reconciled from each of its tasks: every task's PROVISIONING â†’
 // RUNNING transition runs on its own scheduler goroutine and calls reconcile,
 // which reads the whole service record, recounts, and writes the whole record
 // back. Two tasks of one service starting together therefore both read before
@@ -12,13 +12,13 @@ package ecs
 // What that loses is the steady-state event. It is emitted on the edge into
 // steady state and never again, so a stale write that puts the service back
 // short of its desired count leaves it running at that count having never said
-// so — and a caller waiting on the event waiting forever. The persisted running
+// so â€” and a caller waiting on the event waiting forever. The persisted running
 // count goes stale with it; only the read path hides that, because
 // DescribeServices recomputes counts on its own copy.
 //
 // lockService is what holds this closed. deployment_failure_race_test.go covers
 // the same lock from the failure-count side; this covers the steady-state edge,
-// which is a separate victim of the same lost update — remove the lock and this
+// which is a separate victim of the same lost update â€” remove the lock and this
 // test fails while that one still needs its own reconcile loop to trip.
 //
 // This is the one ECS test that runs on a real clock, and it costs the 200ms a
@@ -26,6 +26,21 @@ package ecs
 // overlap, and the mock clock will not produce that dependably: it fires due
 // timers one at a time and sleeps a millisecond after each, which on an idle
 // machine is long enough for one callback to finish before the next begins.
+//
+// NOTE — its sensitivity to lockService is not currently demonstrated. The
+// header above claims the steady-state event is lost on every run with the lock
+// taken out; that was measured before #686 made the transition conditional on
+// Docker, and it no longer reproduces. Taking lockService out now leaves this
+// test passing (checked at 48 and at 200 services), most likely because placing
+// a task does real work against the daemon, so a service's transitions come due
+// staggered rather than together and the last writer sees the whole picture.
+//
+// It is kept, and kept running, because what it asserts is still true and worth
+// asserting: every service reaches its desired count and records having done so.
+// But it is not today a regression test for the lock. TestTaskDeathsCounted-
+// WhileReconciling covers that same lock from the failure-count side and does
+// still fail without it — verified — so the lock is not unguarded. Restoring
+// this one's sensitivity to the steady-state edge is worth a follow-up.
 
 import (
 	"context"
@@ -38,7 +53,6 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -54,10 +68,12 @@ const (
 )
 
 func TestServiceSteadyState_concurrentTaskTransitions(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: several services, each wanting several tasks
 	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	h := svc.handler
+	// Tasks only transition, and so only reconcile their service, when Docker
+	// is ready â€” without it no service ever reaches a steady state to race.
+	wireFakeDocker(t, h)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -92,7 +108,7 @@ func TestServiceSteadyState_concurrentTaskTransitions(t *testing.T) {
 	// Then: each service recorded reaching its desired count. Read the stored
 	// record rather than DescribeServices: the read path recomputes counts and
 	// rollout state on its own copy, so it reports a steady state the service
-	// never persisted — the event is the only durable evidence.
+	// never persisted â€” the event is the only durable evidence.
 	for i := 0; i < steadyStateServices; i++ {
 		name := fmt.Sprintf("s%d", i)
 		stored, aerr := h.store.getService(ctx, "c1", name)

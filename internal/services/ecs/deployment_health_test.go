@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 )
@@ -29,6 +28,7 @@ import (
 type crashLoopFixture struct {
 	h       *Handler
 	clk     *clock.Mock
+	fd      *fakeECSDockerDaemon
 	ctx     context.Context
 	cluster string
 	service string
@@ -38,7 +38,14 @@ type crashLoopFixture struct {
 // service, and settles the first task into RUNNING.
 func newCrashLoopService(t *testing.T, cluster, service string, deploymentCfg map[string]any) *crashLoopFixture {
 	t.Helper()
-	h, clk := newECSRegionTestHandler(t)
+	// Docker is wired to a fake daemon rather than skipped for want of a real
+	// one. A service's tasks only reach RUNNING when Docker is ready — the
+	// transition is scheduled nowhere else — so on a metadata-only handler
+	// there is no running task to crash and none of these tests reaches its
+	// subject. The container deaths themselves are still synthesised directly
+	// through the exit notifier by killTask; the daemon only has to place the
+	// tasks. See docker_fake_test.go.
+	h, clk, fd := newECSDockerTestHandler(t)
 	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
 
 	if w := postJSON(t, ctx, h.CreateCluster, map[string]any{"clusterName": cluster}); w.Code != 200 {
@@ -63,9 +70,16 @@ func newCrashLoopService(t *testing.T, cluster, service string, deploymentCfg ma
 		t.Fatalf("CreateService: HTTP %d: %s", w.Code, w.Body.String())
 	}
 
-	f := &crashLoopFixture{h: h, clk: clk, ctx: ctx, cluster: cluster, service: service}
+	f := &crashLoopFixture{h: h, clk: clk, fd: fd, ctx: ctx, cluster: cluster, service: service}
 	if !f.advanceUntil(5*time.Second, func() bool { return f.taskIsRunning("") }) {
 		t.Fatal("the service's first task never reached RUNNING")
+	}
+	// A RUNNING task must have a container behind it. Without this, a handler
+	// that silently went back to metadata-only would still place tasks and
+	// still settle them, and every test below would keep passing while
+	// exercising none of the Docker path these are about.
+	if f.fd.startedCount() == 0 {
+		t.Fatal("the service's task reached RUNNING with no container started for it")
 	}
 	return f
 }
@@ -244,7 +258,6 @@ func allEvents(svc *ecsService) string {
 // rolloutState COMPLETED, failedTasks 0, and a fresh "has reached a steady
 // state" event on every replacement.
 func TestCrashLoopingService_countsFailuresAndStopsClaimingSteadyState(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: a one-task service that has placed its first task
 	f := newCrashLoopService(t, "crash-cluster", "crash-svc", nil)
 
@@ -277,7 +290,6 @@ func TestCrashLoopingService_countsFailuresAndStopsClaimingSteadyState(t *testin
 
 // TestCrashLoopingService_reportsUnableToConsistentlyStartTasks covers defect 1.
 func TestCrashLoopingService_reportsUnableToConsistentlyStartTasks(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: a one-task service that has placed its first task
 	f := newCrashLoopService(t, "inconsistent-cluster", "inconsistent-svc", nil)
 
@@ -301,7 +313,6 @@ func TestCrashLoopingService_reportsUnableToConsistentlyStartTasks(t *testing.T)
 
 // TestCrashLoopingService_circuitBreakerTrips covers defect 2.
 func TestCrashLoopingService_circuitBreakerTrips(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: a one-task service that asked for a deployment circuit breaker
 	f := newCrashLoopService(t, "breaker-cluster", "breaker-svc", map[string]any{
 		"deploymentCircuitBreaker": map[string]any{"enable": true, "rollback": false},
@@ -338,7 +349,6 @@ func TestCrashLoopingService_circuitBreakerTrips(t *testing.T) {
 // TestCrashLoopingService_withoutCircuitBreakerStaysInProgress — with the
 // breaker off AWS keeps retrying and reports the failure through events alone.
 func TestCrashLoopingService_withoutCircuitBreakerStaysInProgress(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: a one-task service with no circuit breaker
 	f := newCrashLoopService(t, "nobreaker-cluster", "nobreaker-svc", nil)
 
@@ -365,7 +375,6 @@ func TestCrashLoopingService_withoutCircuitBreakerStaysInProgress(t *testing.T) 
 // stopped on purpose is not a failed task, and the container's die event must
 // not rewrite the stop code the scheduler already recorded.
 func TestServiceScaleDown_doesNotCountAsDeploymentFailure(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: a service running one task
 	f := newCrashLoopService(t, "scaledown-cluster", "scaledown-svc", nil)
 	taskID := f.runningTaskID(t)
@@ -413,7 +422,6 @@ func TestServiceScaleDown_doesNotCountAsDeploymentFailure(t *testing.T) {
 // service's task by hand does not reduce its desired count, so ECS replaces it;
 // and a task the caller stopped is not a task that failed.
 func TestStopTask_onAServiceTask_replacesItWithoutCountingAFailure(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: a service running one task
 	f := newCrashLoopService(t, "stoptask-cluster", "stoptask-svc", nil)
 	taskID := f.runningTaskID(t)
@@ -452,7 +460,6 @@ func TestStopTask_onAServiceTask_replacesItWithoutCountingAFailure(t *testing.T)
 // count is not a one-way door: a replacement that actually stays running
 // settles the service again and clears it, as AWS does at steady state.
 func TestCrashLoopingService_recoversWhenATaskStaysUp(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: a service that has already failed twice
 	f := newCrashLoopService(t, "recover-cluster", "recover-svc", nil)
 	f.crashOnce(t)
