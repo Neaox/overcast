@@ -32,7 +32,6 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -56,7 +55,6 @@ func (s *gatedTaskStore) Set(ctx context.Context, namespace, key, value string) 
 }
 
 func TestRunTask_runningTransitionScheduledAfterTheRecordLands(t *testing.T) {
-	docker.SkipWithoutDocker(t)
 	// Given: a handler whose first task write can be held open
 	gate := &gatedTaskStore{
 		Store:   state.NewMemoryStore(),
@@ -66,6 +64,11 @@ func TestRunTask_runningTransitionScheduledAfterTheRecordLands(t *testing.T) {
 	clk := clock.NewMock()
 	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, gate, zap.NewNop(), clk)
 	h := svc.handler
+	// The transition being ordered here is scheduled only when Docker is ready,
+	// so the race this test is about does not exist on a metadata-only handler.
+	// The containers start before the gated write, which is the point the
+	// assertion below inspects.
+	wireFakeDocker(t, h)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

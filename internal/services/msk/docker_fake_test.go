@@ -7,8 +7,9 @@ package msk
 // promotion is done by the health check, and only the Docker path schedules
 // one. Tests about that callback — region scoping in particular — therefore
 // cannot reach their subject on a metadata-only handler. They were gated with
-// docker.SkipWithoutDocker instead, which skips unconditionally (it dials an
-// empty socket path), so they stopped running entirely.
+// docker.SkipWithoutDocker instead — a helper that skipped unconditionally,
+// because it dialled an empty socket path — so they stopped running entirely.
+// That helper has since been deleted; nothing needs a real daemon any more.
 //
 // A real daemon is the wrong dependency for them: none is about containers, and
 // requiring one makes the tests unrunnable wherever there is no socket. Point a

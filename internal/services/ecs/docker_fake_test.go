@@ -6,8 +6,10 @@ package ecs
 // Since #686 a task is not transitioned to RUNNING unless Docker is wired, so
 // tests about the transition itself — region scoping, ordering, deployment
 // health — cannot reach their subject on a metadata-only handler. They were
-// gated with docker.SkipWithoutDocker instead, which skips unconditionally
-// (it dials an empty socket path), so they stopped running entirely.
+// gated with docker.SkipWithoutDocker instead — a helper that skipped
+// unconditionally, because it dialled an empty socket path — so they stopped
+// running entirely. That helper has since been deleted; nothing needs a real
+// daemon any more.
 //
 // A real daemon is the wrong dependency for them: none is about containers, and
 // requiring one makes the tests unrunnable wherever there is no socket. Point a
@@ -133,17 +135,27 @@ func containerIDFromPath(p string) string {
 // reaper, and starting its loop would only add traffic to the fake.
 func newECSDockerTestHandler(t *testing.T) (*Handler, *clock.Mock, *fakeECSDockerDaemon) {
 	t.Helper()
-	fd := newFakeECSDockerDaemon(t)
 	clk := clock.NewMock()
 	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, state.NewMemoryStore(), zap.NewNop(), clk)
 	h := svc.handler
-	h.docker = docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop())
-	h.puller = docker.NewImagePuller(h.docker)
-	h.dockerReady.Store(true)
+	fd := wireFakeDocker(t, h)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		h.scheduler.Stop(ctx)
 	})
 	return h, clk, fd
+}
+
+// wireFakeDocker points an already-built handler at a fake daemon, for the
+// tests that construct their own — a gated store, a real clock — and so cannot
+// take newECSDockerTestHandler wholesale. It wires the same three fields
+// Service.SetDocker does, minus the GC.
+func wireFakeDocker(t *testing.T, h *Handler) *fakeECSDockerDaemon {
+	t.Helper()
+	fd := newFakeECSDockerDaemon(t)
+	h.docker = docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop())
+	h.puller = docker.NewImagePuller(h.docker)
+	h.dockerReady.Store(true)
+	return fd
 }
