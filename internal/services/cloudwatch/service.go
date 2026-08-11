@@ -50,6 +50,7 @@ type MetricAlarm struct {
 	Namespace                          string      `json:"Namespace,omitempty"`
 	Statistic                          string      `json:"Statistic,omitempty"`
 	ExtendedStatistic                  string      `json:"ExtendedStatistic,omitempty"`
+	ThresholdMetricID                  string      `json:"ThresholdMetricId,omitempty"`
 	Dimensions                         []Dimension `json:"Dimensions,omitempty"`
 	Unit                               string      `json:"Unit,omitempty"`
 	Period                             int         `json:"Period,omitempty"`
@@ -69,6 +70,21 @@ type MetricAlarm struct {
 	StateUpdatedTimestamp              string      `json:"StateUpdatedTimestamp,omitempty"`
 	StateTransitionedTimestamp         string      `json:"StateTransitionedTimestamp,omitempty"`
 	AlarmConfigurationUpdatedTimestamp string      `json:"AlarmConfigurationUpdatedTimestamp,omitempty"`
+
+	// Metrics is the metric-math or multi-metric definition, stored verbatim so
+	// DescribeAlarms echoes back what was configured. Overcast does not compute
+	// it — see UnevaluatedReason.
+	Metrics []any `json:"Metrics,omitempty"`
+
+	// UnevaluatedReason says why the evaluator does not decide this alarm's
+	// state, and is empty for the alarms it does. It is Overcast's own field,
+	// not AWS's: an alarm the emulator cannot evaluate is still created, so
+	// that a deploy which merely describes one is not stopped by it, and this
+	// is what keeps "created" from being mistaken for "armed". It reaches a
+	// caller three ways — as this alarm's StateReason, as the
+	// x-overcast-alarm-evaluation response header, and as the
+	// ResourceStatusReason on the CloudFormation resource.
+	UnevaluatedReason string `json:"-"`
 
 	// ManualStateHoldUntil is when a SetAlarmState override stops being
 	// protected from the evaluator. Internal — see setAlarmStateHold.
@@ -997,10 +1013,12 @@ func (s *Service) putMetricAlarmJSON(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if _, aerr := s.storeAlarmFromInput(r, in, jsonTagCfg); aerr != nil {
+	alarm, aerr := s.storeAlarmFromInput(r, in, jsonTagCfg)
+	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	protocol.MarkLimitation(w, alarm.UnevaluatedReason)
 	writeJSONResult(w, r, struct{}{})
 }
 
@@ -1067,10 +1085,12 @@ func (s *Service) putMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
-	if _, aerr := s.storeAlarmFromInput(r, in, queryTagCfg); aerr != nil {
+	alarm, aerr := s.storeAlarmFromInput(r, in, queryTagCfg)
+	if aerr != nil {
 		protocol.WriteQueryXMLError(w, r, aerr)
 		return
 	}
+	protocol.MarkLimitation(w, alarm.UnevaluatedReason)
 	writeXMLResult(w, r, "PutMetricAlarm", "")
 }
 

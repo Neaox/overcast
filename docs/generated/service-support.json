@@ -7438,7 +7438,7 @@
           "operation": "PutMetricAlarm",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Creates or updates a single-metric alarm, which is then evaluated automatically (Threshold, ComparisonOperator, Period, EvaluationPeriods, DatapointsToAlarm, Dimensions, TreatMissingData). Metric-math/multi-metric alarms, anomaly detection (ThresholdMetricId) and extended statistics are refused with 501 rather than created un-evaluated. Tags are applied at creation only and validated against the same rules as TagResource, so a create carrying an invalid tag set fails rather than leaving an untagged alarm"
+          "notes": "Creates or updates a single-metric alarm, which is then evaluated automatically (Threshold, ComparisonOperator, Period, EvaluationPeriods, DatapointsToAlarm, Dimensions, TreatMissingData). Metric-math/multi-metric alarms, anomaly detection (ThresholdMetricId) and extended statistics are created but never evaluated, and say so in the alarm's StateReason and an x-overcast-emulation-limitation response header; PromQL alarms (EvaluationCriteria) are still refused with 501. Tags are applied at creation only and validated against the same rules as TagResource, so a create carrying an invalid tag set fails rather than leaving an untagged alarm"
         },
         {
           "operation": "PutMetricData",

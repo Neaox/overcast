@@ -290,6 +290,7 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 			PhysicalID:          physID,
 			Type:                res.Type,
 			Status:              ResourceCreateComplete,
+			StatusReason:        rCtx.EmulationLimitation,
 			Timestamp:           now,
 			Attributes:          rCtx.Attributes[logicalID],
 			PropertiesHash:      propsHash,
@@ -298,7 +299,10 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 			UpdateReplacePolicy: res.UpdateReplacePolicy,
 		})
 		rCtx.Resources[logicalID] = physID
-		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, "")
+		// The resource succeeded; the reason, when there is one, says what
+		// Overcast will not do with it. It rides the CREATE_COMPLETE event so a
+		// deploy shows it as the resource goes by, not only on a later describe.
+		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, rCtx.EmulationLimitation)
 		p.publishResourceEvent(ctx, events.CFNResourceProvisioned, stack.StackName, logicalID, res.Type, physID)
 		log.Debug("cfn: resource provisioned",
 			zap.String("stack", stack.StackName),
@@ -568,6 +572,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			PhysicalID:          physID,
 			Type:                res.Type,
 			Status:              ResourceCreateComplete,
+			StatusReason:        rCtx.EmulationLimitation,
 			Timestamp:           now,
 			Attributes:          rCtx.Attributes[logicalID],
 			PropertiesHash:      propsHash,
@@ -576,7 +581,10 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			UpdateReplacePolicy: res.UpdateReplacePolicy,
 		})
 		rCtx.Resources[logicalID] = physID
-		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, "")
+		// The resource succeeded; the reason, when there is one, says what
+		// Overcast will not do with it. It rides the CREATE_COMPLETE event so a
+		// deploy shows it as the resource goes by, not only on a later describe.
+		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, rCtx.EmulationLimitation)
 		p.publishResourceEvent(ctx, events.CFNResourceProvisioned, stack.StackName, logicalID, res.Type, physID)
 	}
 
@@ -830,6 +838,14 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 	// resolveContext.generatedName). Provisioning walks the dependency order
 	// one resource at a time, so a single field on the shared context is safe.
 	rCtx.LogicalID = logicalID
+
+	// Collect whatever the services report as inert while this resource is
+	// provisioned, for the caller to record as its status reason. Same
+	// single-field-on-a-shared-context reasoning as LogicalID above:
+	// provisioning walks the dependency order one resource at a time.
+	ctx, limitations := withLimitationCollector(ctx)
+	rCtx.EmulationLimitation = ""
+	defer func() { rCtx.EmulationLimitation = limitations.reason() }()
 
 	handler, ok := p.resolveHandler(res.Type)
 	if !ok {
@@ -2526,8 +2542,10 @@ func (c internalCall) do(ctx context.Context, router http.Handler) (*httptest.Re
 	recorder := trace.RecorderFromContext(ctx)
 	if recorder == nil {
 		router.ServeHTTP(rec, req)
+		noteLimitations(ctx, rec)
 		return rec, statusError(rec)
 	}
+	defer noteLimitations(ctx, rec)
 
 	childID := linkChildRequest(req, recorder)
 	start := time.Now()

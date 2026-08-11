@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
@@ -22,7 +23,7 @@ import (
 // docs/plans/full-emulation-priority.md §2.1 for alarms: an alarm shape the
 // evaluator cannot decide is refused with a 501 rather than created and left
 // sitting in INSUFFICIENT_DATA looking armed.
-func TestPutMetricAlarm_refusesConfigurationsItCannotEvaluate(t *testing.T) {
+func TestPutMetricAlarm_createsConfigurationsItCannotEvaluate(t *testing.T) {
 	cases := []struct {
 		name   string
 		params url.Values
@@ -45,6 +46,8 @@ func TestPutMetricAlarm_refusesConfigurationsItCannotEvaluate(t *testing.T) {
 				"Namespace":          {"TestNS"},
 				"MetricName":         {"TestMetric"},
 				"ThresholdMetricId":  {"ad1"},
+				"Statistic":          {"Average"},
+				"Period":             {"60"},
 				"ComparisonOperator": {"LessThanLowerOrGreaterThanUpperThreshold"},
 				"EvaluationPeriods":  {"1"},
 			},
@@ -69,6 +72,8 @@ func TestPutMetricAlarm_refusesConfigurationsItCannotEvaluate(t *testing.T) {
 				"Namespace":          {"TestNS"},
 				"MetricName":         {"TestMetric"},
 				"ComparisonOperator": {"GreaterThanUpperThreshold"},
+				"Statistic":          {"Average"},
+				"Threshold":          {"1"},
 				"EvaluationPeriods":  {"1"},
 				"Period":             {"60"},
 			},
@@ -84,18 +89,30 @@ func TestPutMetricAlarm_refusesConfigurationsItCannotEvaluate(t *testing.T) {
 			resp := cwCall(t, srv, "PutMetricAlarm", tc.params)
 			defer resp.Body.Close()
 
-			// Then: it is refused with a 501 that names itself as unsupported
-			helpers.AssertStatus(t, resp, http.StatusNotImplemented)
-			if got := resp.Header.Get("x-emulator-unsupported"); got != "true" {
-				t.Errorf("x-emulator-unsupported = %q, want true", got)
+			// Then: it is created. These were refused with a 501 until a CDK
+			// monitoring stack could not deploy for it: the refusal failed the
+			// CloudFormation resource, and with it the stack, over alarms whose
+			// only defect is that nothing here computes them.
+			helpers.AssertStatus(t, resp, http.StatusOK)
+
+			// And: the response says what will not be done with it, which is
+			// what the refusal was protecting and is now carried instead of it.
+			limitation := protocol.LimitationText(resp.Header)
+			if !strings.Contains(limitation, "does not evaluate") {
+				t.Errorf("%s = %q, want it to say the state is never computed",
+					protocol.EmulationLimitationHeader, limitation)
 			}
 
-			// And: the alarm was not created, so nothing looks armed
+			// And: the alarm exists, saying the same thing where its state is read,
+			// so nothing that looks at it mistakes it for armed.
 			list := cwCall(t, srv, "DescribeAlarms", nil)
 			defer list.Body.Close()
 			body := helpers.ReadBody(t, list)
-			if strings.Contains(body, tc.params.Get("AlarmName")) {
-				t.Errorf("refused alarm %q was still created: %s", tc.params.Get("AlarmName"), body)
+			if !strings.Contains(body, tc.params.Get("AlarmName")) {
+				t.Fatalf("alarm %q was not created: %s", tc.params.Get("AlarmName"), body)
+			}
+			if !strings.Contains(body, "does not evaluate") {
+				t.Errorf("alarm %q does not say its state is never computed: %s", tc.params.Get("AlarmName"), body)
 			}
 		})
 	}
@@ -205,7 +222,7 @@ func TestPutMetricAlarm_roundTripsFullConfiguration(t *testing.T) {
 // TestPutMetricAlarm_JSON_refusesMetricMath pins that the JSON protocol
 // applies the same §2.1 refusals as the Query protocol — the two must not
 // drift.
-func TestPutMetricAlarm_JSON_refusesMetricMath(t *testing.T) {
+func TestPutMetricAlarm_JSON_createsMetricMath(t *testing.T) {
 	// Given: an empty store
 	srv := helpers.NewTestServer(t)
 
@@ -219,10 +236,12 @@ func TestPutMetricAlarm_JSON_refusesMetricMath(t *testing.T) {
 	})
 	defer resp.Body.Close()
 
-	// Then: the same 501 comes back
-	helpers.AssertStatus(t, resp, http.StatusNotImplemented)
-	if got := resp.Header.Get("x-emulator-unsupported"); got != "true" {
-		t.Errorf("x-emulator-unsupported = %q, want true", got)
+	// Then: the same answer as the Query protocol gives — created, and saying
+	// what will not be done with it. The two protocols parse into one input
+	// precisely so this cannot drift between them.
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if got := protocol.LimitationText(resp.Header); !strings.Contains(got, "metric-math") {
+		t.Errorf("%s = %q, want it to name metric-math", protocol.EmulationLimitationHeader, got)
 	}
 }
 
