@@ -859,6 +859,44 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 	}
 
+	// ---- /applications service dispatch ------------------------------------
+	// AppConfig and Service Catalog AppRegistry both model the /applications
+	// tree, and the two overlap exactly where it hurts: POST /applications and
+	// GET|PATCH|DELETE /applications/{id} are modeled by both. In real AWS they
+	// are different hostnames; here they share one listener, so the main router
+	// owns the path and picks the owner from the SigV4 credential scope, as it
+	// already does for /v2/apis.
+	//
+	// AppRegistry is the fallback owner: it answered this path alone until #854,
+	// and unsigned callers (the web UI among them) must keep reaching it.
+	//
+	// Both sub-routers hand a path they do not serve back to the REST fallback
+	// rather than answering chi's bare 404. Without that, every modeled
+	// operation beneath /applications that Overcast does not implement — the
+	// deployment and experiment surfaces, among others — would 404 with no AWS
+	// error body at all. A chi sub-router owns its whole subtree, and that is
+	// the mechanism that made #854 silent in the first place.
+	{
+		applicationsFallback := restFallback(operationRegistry, s3Router)
+		var appconfigApps, appregistryApps chi.Router
+		if registeredForTest(cfg, "appconfig") {
+			appconfigApps = appconfigSvc.ApplicationsRouter()
+			delegateUnmatched(appconfigApps, applicationsFallback)
+		}
+		if registeredForTest(cfg, "appregistry") {
+			appregistryApps = appregistrySvc.ApplicationsRouter()
+			delegateUnmatched(appregistryApps, applicationsFallback)
+		}
+		dispatchMounts = recordDispatchMount(dispatchMounts, "/applications", "appconfig", appconfigApps)
+		dispatchMounts = recordDispatchFallback(dispatchMounts, "/applications", "appregistry", appregistryApps)
+		if appconfigApps != nil || appregistryApps != nil {
+			r.Route("/applications", func(sub chi.Router) {
+				sub.HandleFunc("/*", applicationsDispatch(appconfigApps, appregistryApps))
+				sub.HandleFunc("/", applicationsDispatch(appconfigApps, appregistryApps))
+			})
+		}
+	}
+
 	// ---- /v1/tags service dispatch -----------------------------------------
 	// AppSync and MSK both expose TagResource/UntagResource/ListTagsForResource
 	// at /v1/tags/{resourceArn}. Unlike /v2/apis above, the path here carries
@@ -889,11 +927,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	}
 
 	// ---- /tags service dispatch ---------------------------------------------
-	// Pipes, EKS, Scheduler and API Gateway (whose endpoint AppRegistry's SDK
-	// shares) all answer tag operations at /tags/{resourceArn}. Left to their own
-	// RegisterRoutes they race for the same chi patterns and the last
-	// registration silently wins, so the main router owns the path and
-	// dispatches on the ARN's service prefix, exactly like /v1/tags above.
+	// Pipes, EKS, Scheduler, AppConfig and API Gateway (whose endpoint
+	// AppRegistry's SDK shares) all answer tag operations at
+	// /tags/{resourceArn}. Left to their own RegisterRoutes they race for the
+	// same chi patterns and the last registration silently wins, so the main
+	// router owns the path and dispatches on the ARN's service prefix, exactly
+	// like /v1/tags above.
 	// API Gateway is the fallback owner: its ARN-keyed tag store historically
 	// answered every ARN no other service claims (AppRegistry among them),
 	// and that behavior is preserved.
@@ -913,6 +952,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 			routes := schedulerSvc.TagsRouter()
 			tagRouters["scheduler"] = routes
 			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "scheduler", routes)
+		}
+		if registeredForTest(cfg, "appconfig") {
+			routes := appconfigSvc.TagsRouter()
+			tagRouters["appconfig"] = routes
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "appconfig", routes)
 		}
 		var apigwTags http.Handler
 		if registeredForTest(cfg, "apigateway") {
@@ -1420,6 +1464,46 @@ func v2APIsDispatch(apigwRouter, appsyncRouter http.Handler) http.HandlerFunc {
 		// Neither service enabled — 404.
 		http.NotFound(w, r)
 	}
+}
+
+// applicationsDispatch returns a handler that dispatches /applications
+// requests to either AppConfig or Service Catalog AppRegistry, based on the
+// SigV4 credential scope service name.
+//
+// Only an "appconfig" scope reaches AppConfig. Everything else — AppRegistry's
+// own "servicecatalog" scope, an unparseable scope, and unsigned traffic such
+// as the web UI's — goes to AppRegistry, which owned this path outright before
+// #854 and must keep answering the callers it already had.
+func applicationsDispatch(appconfigRouter, appregistryRouter http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if middleware.ServiceFromCredential(r) == "appconfig" && appconfigRouter != nil {
+			appconfigRouter.ServeHTTP(w, r)
+			return
+		}
+		if appregistryRouter != nil {
+			appregistryRouter.ServeHTTP(w, r)
+			return
+		}
+		// Neither service enabled — 404.
+		http.NotFound(w, r)
+	}
+}
+
+// delegateUnmatched makes a dispatched sub-router hand requests it does not
+// serve back to the main router's REST fallback, instead of answering chi's
+// own bare 404 or 405.
+//
+// A chi sub-router owns its whole subtree: a path it does not match hits *its*
+// NotFound and never reaches the parent's "/*". That is why the modeled
+// AppConfig operations Overcast does not implement answered a bodiless 404
+// under AppRegistry's /applications rather than the generated registry's
+// protocol-correct 501 (docs/plans/manifest-enforcement.md records the fault).
+// MethodNotAllowed matters as much as NotFound: the model binds several
+// unimplemented operations to a method on a path that *is* registered, and chi
+// answers those 405.
+func delegateUnmatched(sub chi.Router, fallback http.HandlerFunc) {
+	sub.NotFound(fallback)
+	sub.MethodNotAllowed(fallback)
 }
 
 // tagsDispatch returns a handler that dispatches tag-route requests

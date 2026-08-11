@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
@@ -1221,6 +1222,48 @@ func (h *opensearchDomainHandler) Update(ctx context.Context, router http.Handle
 
 // ── AWS::AppConfig::Application ─────────────────────────────────────────────
 
+// appconfigApplicationsPath is AppConfig's modeled CreateApplication binding.
+// Every nested AppConfig resource hangs off an application beneath it.
+const appconfigApplicationsPath = "/applications"
+
+// internalAppConfigRequest dispatches an AppConfig REST request. It differs
+// from a bare internalRequest only by the SigV4 scope header, which the main
+// router needs to see to claim /applications for AppConfig rather than hand it
+// to Service Catalog AppRegistry, whose tree it shares (see #854). Without it a
+// stack that declares an AWS::AppConfig::Application would silently create an
+// AppRegistry one.
+func internalAppConfigRequest(ctx context.Context, router http.Handler, region, method, path string, body []byte) (*httptest.ResponseRecorder, error) {
+	contentType := ""
+	if body != nil {
+		contentType = "application/json"
+	}
+	return restCall("appconfig", region, method, path, contentType, body, http.Header{
+		"Authorization": []string{"AWS4-HMAC-SHA256 Credential=overcast/20250101/" + region + "/appconfig/aws4_request, SignedHeaders=host, Signature=overcast"},
+	}).do(ctx, router)
+}
+
+// appconfigRESTJSON dispatches an AppConfig REST call and decodes its response.
+func appconfigRESTJSON(ctx context.Context, router http.Handler, region, method, path, opName string, body map[string]any, out any) error {
+	var data []byte
+	if body != nil {
+		var err error
+		data, err = json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("%s: marshal request: %w", opName, err)
+		}
+	}
+	rec, err := internalAppConfigRequest(ctx, router, region, method, path, data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", opName, err)
+	}
+	if out != nil {
+		if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
+			return fmt.Errorf("%s: parse response: %w", opName, err)
+		}
+	}
+	return nil
+}
+
 type appconfigApplicationHandler struct{}
 
 func (h *appconfigApplicationHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -1234,17 +1277,13 @@ func (h *appconfigApplicationHandler) Create(ctx context.Context, router http.Ha
 		body["Description"] = desc
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "AppConfig.CreateApplication", body)
-	if err != nil {
-		return "", nil, fmt.Errorf("CreateApplication: %w", err)
-	}
-
 	var resp struct {
 		Id   string `json:"Id"`
 		Name string `json:"Name"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		return "", nil, fmt.Errorf("CreateApplication: parse response: %w", err)
+	if err := appconfigRESTJSON(ctx, router, rCtx.Region, http.MethodPost,
+		appconfigApplicationsPath, "CreateApplication", body, &resp); err != nil {
+		return "", nil, err
 	}
 
 	attrs := map[string]string{
@@ -1255,8 +1294,8 @@ func (h *appconfigApplicationHandler) Create(ctx context.Context, router http.Ha
 }
 
 func (h *appconfigApplicationHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{"ApplicationId": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AppConfig.DeleteApplication", body)
+	_, _ = internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		appconfigApplicationsPath+"/"+url.PathEscape(physicalID), nil)
 	return nil
 }
 
@@ -1272,24 +1311,19 @@ func (h *appconfigEnvironmentHandler) Create(ctx context.Context, router http.Ha
 	appID, _ := props["ApplicationId"].(string)
 	name, _ := props["Name"].(string)
 
-	body := map[string]any{
-		"ApplicationId": appID,
-		"Name":          name,
-	}
+	// ApplicationId is a path label on this binding, not a body member.
+	body := map[string]any{"Name": name}
 	if desc, _ := props["Description"].(string); desc != "" {
 		body["Description"] = desc
-	}
-
-	rec, err := internalJSON(ctx, router, rCtx.Region, "AppConfig.CreateEnvironment", body)
-	if err != nil {
-		return "", nil, fmt.Errorf("CreateEnvironment: %w", err)
 	}
 
 	var resp struct {
 		Id string `json:"Id"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		return "", nil, fmt.Errorf("CreateEnvironment: parse response: %w", err)
+	if err := appconfigRESTJSON(ctx, router, rCtx.Region, http.MethodPost,
+		appconfigApplicationsPath+"/"+url.PathEscape(appID)+"/environments",
+		"CreateEnvironment", body, &resp); err != nil {
+		return "", nil, err
 	}
 
 	physicalID := appID + "/" + resp.Id
@@ -1305,11 +1339,8 @@ func (h *appconfigEnvironmentHandler) Delete(ctx context.Context, router http.Ha
 	if len(parts) != 2 {
 		return nil
 	}
-	body := map[string]any{
-		"ApplicationId": parts[0],
-		"EnvironmentId": parts[1],
-	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AppConfig.DeleteEnvironment", body)
+	_, _ = internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		appconfigApplicationsPath+"/"+url.PathEscape(parts[0])+"/environments/"+url.PathEscape(parts[1]), nil)
 	return nil
 }
 
@@ -1326,22 +1357,19 @@ func (h *appconfigConfigurationProfileHandler) Create(ctx context.Context, route
 	name, _ := props["Name"].(string)
 	locationURI, _ := props["LocationUri"].(string)
 
+	// ApplicationId is a path label on this binding, not a body member.
 	body := map[string]any{
-		"ApplicationId": appID,
-		"Name":          name,
-		"LocationUri":   locationURI,
-	}
-
-	rec, err := internalJSON(ctx, router, rCtx.Region, "AppConfig.CreateConfigurationProfile", body)
-	if err != nil {
-		return "", nil, fmt.Errorf("CreateConfigurationProfile: %w", err)
+		"Name":        name,
+		"LocationUri": locationURI,
 	}
 
 	var resp struct {
 		Id string `json:"Id"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		return "", nil, fmt.Errorf("CreateConfigurationProfile: parse response: %w", err)
+	if err := appconfigRESTJSON(ctx, router, rCtx.Region, http.MethodPost,
+		appconfigApplicationsPath+"/"+url.PathEscape(appID)+"/configurationprofiles",
+		"CreateConfigurationProfile", body, &resp); err != nil {
+		return "", nil, err
 	}
 
 	physicalID := appID + "/" + resp.Id
@@ -1357,11 +1385,8 @@ func (h *appconfigConfigurationProfileHandler) Delete(ctx context.Context, route
 	if len(parts) != 2 {
 		return nil
 	}
-	body := map[string]any{
-		"ApplicationId":          parts[0],
-		"ConfigurationProfileId": parts[1],
-	}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AppConfig.DeleteConfigurationProfile", body)
+	_, _ = internalAppConfigRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		appconfigApplicationsPath+"/"+url.PathEscape(parts[0])+"/configurationprofiles/"+url.PathEscape(parts[1]), nil)
 	return nil
 }
 

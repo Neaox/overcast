@@ -115,12 +115,9 @@ The ledger opened at 43 rows, and 43 capability rows moved from Supported/Inert
 to WIP with it, because they were implemented, worked, and could not be called
 by any SDK. Rows leave as their fixes land, and the ratchet's second direction
 is what forces that — a ledger entry naming a binding that is now served fails
-the build. #860 took AppSync's two out onto `/v1/dataplane-evaluatecode` and
-`/v1/dataplane-evaluatetemplate`; #855 took AppConfig Data's two out onto
-`POST /configurationsessions` and `GET /configuration`, with the session token
-read from the `configuration_token` query member rather than a path segment;
-#858 took EKS's six out, four of which had been served on the wrong HTTP
-method; #859 took MSK's v2 pair out onto `/api/v2/clusters`.
+the build. #860 took AppSync's two out, #855 AppConfig Data's two, #858 EKS's
+six, #859 MSK's v2 pair, and #854 AppConfig's twelve — the last of which also
+stopped AppRegistry answering `POST /applications` for an `appconfig` caller.
 
 #862 is not in that table, and the reason is the ratchet earning its keep.
 `ses/V2CreateEmailIdentity` was in `unservedBindings` while this branch was
@@ -133,15 +130,21 @@ claiming a fault that no longer existed. #871 also left the eight SESv2 rows'
 
 ### Two findings from running the gates
 
-**AppConfig's twelve rows do not answer a clean 501.** Every other unserved
+**AppConfig's twelve rows did not answer a clean 501.** Every other unserved
 binding falls through to `restFallback`, which asks the generated registry who
-owns the path and answers `NotImplemented`. AppConfig's do not, because
-AppRegistry registers `r.Route("/applications", …)`
-(`internal/services/appregistry/service.go:80`) and a chi sub-router owns its
-whole subtree: a path it does not match hits *its* NotFound, never the parent's
-`/*`. A client calling AppConfig gets a bare 404 with no AWS error body.
+owns the path and answers `NotImplemented`. AppConfig's did not, because
+AppRegistry registered `r.Route("/applications", …)` and a chi sub-router owns
+its whole subtree: a path it does not match hits *its* NotFound, never the
+parent's `/*`. A client calling AppConfig got a bare 404 with no AWS error body.
 **The 501 fallback only protects paths no other service has claimed** — worth
 knowing before adding a prefix route.
+
+#854 fixed it by giving `/applications` to the main router, which dispatches on
+the SigV4 credential scope exactly as `/v2/apis` already did, and by having both
+sub-routers delegate `NotFound` and `MethodNotAllowed` to `restFallback`
+(`router.delegateUnmatched`). That second half is the general remedy for the
+sub-router problem, and is what any future dispatcher over a shared prefix
+should copy.
 
 **`restFallback`'s 501 is conditional on a correctly scoped request.** It
 requires the SigV4 credential scope to match the modeled signing name before
@@ -216,7 +219,9 @@ manifest. It is **deliberately** hand-written and the file says why
 manifest's ~1,950 single-owner root segments are almost all legal S3 bucket
 names, so deriving it would route S3 traffic to other services. Three entries
 are model-ambiguous (`/applications` is 8 services, `/v1/tags` is 12), and
-answering "" would fall through to S3.
+answering "" would fall through to S3. Two of those — `/v2/apis` and, since
+#854, `/applications` — are shared by services Overcast implements, so they
+read the credential scope first and fall back to the prefix's historical owner.
 
 This matters more than a routing table usually would: `detectService` picks the
 IAM action a policy is evaluated against and the error wire format, so it is

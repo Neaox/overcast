@@ -81,7 +81,6 @@ var registeredRouteClassification = map[string]string{
 	// several owners under them (/_overcast/cognito, /_overcast/inbox, …).
 	"/_":           "internal",
 	"/_apigateway": "internal",
-	"/_appconfig":  "internal",
 	"/_appsync":    "appsync",
 	"/_cloudfront": "cloudfront",
 	"/_cognito":    "cognito",
@@ -97,7 +96,9 @@ var registeredRouteClassification = map[string]string{
 	"/_rds":        "internal",
 	"/_topology":   "internal",
 
-	// Undated literals the prefix switch claims.
+	// Undated literals the prefix switch claims. /applications is shared by
+	// AppConfig and AppRegistry; unsigned it resolves to AppRegistry, which
+	// owned it outright before #854 and is what the web UI calls.
 	// MSK's v2 cluster API is the whole of /api: no other implemented service
 	// registers a route under that root segment.
 	"/api":          "msk",

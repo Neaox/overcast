@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1428,
+  "total_ops": 1429,
   "services": [
     {
       "service": "s3",
@@ -5825,14 +5825,14 @@
     {
       "service": "appconfig",
       "display_name": "AppConfig",
-      "total_ops": 19,
-      "implemented_ops": 19,
+      "total_ops": 20,
+      "implemented_ops": 20,
       "operations": [
         {
           "operation": "CreateApplication",
           "category": "Applications",
           "status": "✅ Supported",
-          "notes": "Creates an application"
+          "notes": "Creates an application; an inline `Tags` map is applied"
         },
         {
           "operation": "GetApplication",
@@ -5844,85 +5844,91 @@
           "operation": "ListApplications",
           "category": "Applications",
           "status": "✅ Supported",
-          "notes": "Lists all applications"
+          "notes": "Lists all applications, paginated by `max_results`/`next_token`"
+        },
+        {
+          "operation": "UpdateApplication",
+          "category": "Applications",
+          "status": "✅ Supported",
+          "notes": "Updates `Name` and `Description`; an omitted member leaves the stored value alone"
         },
         {
           "operation": "DeleteApplication",
           "category": "Applications",
           "status": "✅ Supported",
-          "notes": "Deletes an application"
+          "notes": "Deletes an application and its tags; environments and profiles beneath it are left in place"
         },
         {
           "operation": "CreateEnvironment",
           "category": "Environments",
-          "status": "🚧 WIP",
-          "notes": "Creates an environment for an application; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Creates an environment for an application; `State` is always `READY_FOR_DEPLOYMENT` because deployments are not emulated"
         },
         {
           "operation": "GetEnvironment",
           "category": "Environments",
-          "status": "🚧 WIP",
-          "notes": "Returns environment details; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Returns environment details"
         },
         {
           "operation": "ListEnvironments",
           "category": "Environments",
-          "status": "🚧 WIP",
-          "notes": "Lists environments for an application; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Lists environments for an application, paginated by `max_results`/`next_token`"
         },
         {
           "operation": "DeleteEnvironment",
           "category": "Environments",
-          "status": "🚧 WIP",
-          "notes": "Deletes an environment; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Deletes an environment and its tags; `x-amzn-deletion-protection-check` is ignored"
         },
         {
           "operation": "CreateConfigurationProfile",
           "category": "Configuration Profiles",
-          "status": "🚧 WIP",
-          "notes": "Creates a configuration profile; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Creates a configuration profile; `Name` and `LocationUri` are required and `Validators` are stored but never run"
         },
         {
           "operation": "GetConfigurationProfile",
           "category": "Configuration Profiles",
-          "status": "🚧 WIP",
-          "notes": "Returns configuration profile details; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Returns configuration profile details"
         },
         {
           "operation": "ListConfigurationProfiles",
           "category": "Configuration Profiles",
-          "status": "🚧 WIP",
-          "notes": "Lists configuration profiles; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Lists profile summaries, filtered by the `type` query parameter and paginated by `max_results`/`next_token`"
         },
         {
           "operation": "DeleteConfigurationProfile",
           "category": "Configuration Profiles",
-          "status": "🚧 WIP",
-          "notes": "Deletes a configuration profile; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Deletes a configuration profile and its tags; hosted versions beneath it are left in place"
         },
         {
           "operation": "CreateHostedConfigurationVersion",
           "category": "Hosted Configuration Versions",
-          "status": "🚧 WIP",
-          "notes": "Stores configuration content against a profile; `VersionNumber` auto-increments, `ContentType` defaults to `application/octet-stream`, and content over 1 MB is rejected with `BadRequestException`; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Stores the request payload against a profile; `VersionNumber` auto-increments, a stale `Latest-Version-Number` header is a `ConflictException`, and content over 1 MB is rejected with `PayloadTooLargeException`"
         },
         {
           "operation": "GetHostedConfigurationVersion",
           "category": "Hosted Configuration Versions",
-          "status": "🚧 WIP",
-          "notes": "Returns the raw content as the response body with the `AppConfig-*` metadata headers; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Returns the raw content as the response payload with the metadata in headers"
         },
         {
           "operation": "ListHostedConfigurationVersions",
           "category": "Hosted Configuration Versions",
-          "status": "🚧 WIP",
-          "notes": "Returns version metadata without content; no pagination (`NextToken` never returned); Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Returns version summaries newest first, filtered by the `version_label` query parameter and paginated by `max_results`/`next_token`"
         },
         {
           "operation": "DeleteHostedConfigurationVersion",
           "category": "Hosted Configuration Versions",
-          "status": "🚧 WIP",
-          "notes": "Deletes a single version; other versions of the profile are untouched; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
+          "status": "✅ Supported",
+          "notes": "Deletes a single version; other versions of the profile are untouched and version numbers are not reused"
         },
         {
           "operation": "TagResource",
@@ -5934,7 +5940,7 @@
           "operation": "UntagResource",
           "category": "Tags",
           "status": "✅ Supported",
-          "notes": "Removes tags by key from applications, environments, and configuration profiles"
+          "notes": "Removes tags by the `tagKeys` query parameter"
         },
         {
           "operation": "ListTagsForResource",

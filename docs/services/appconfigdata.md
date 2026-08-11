@@ -70,8 +70,12 @@ AWS omits it when there is none.
 Configuration content is stored through the AppConfig control-plane API:
 
 ```
-POST /_appconfig/applications/{app}/configurationprofiles/{profile}/hostedconfigurationversions
+POST /applications/{app}/configurationprofiles/{profile}/hostedconfigurationversions
 ```
+
+That request must carry an `appconfig` SigV4 credential scope: `/applications`
+is shared with Service Catalog AppRegistry — see
+[appconfig.md](./appconfig.md).
 
 AppConfigData reads that stored content — both services must be enabled (they
 are by default).
