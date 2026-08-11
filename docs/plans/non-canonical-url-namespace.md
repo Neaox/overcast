@@ -193,6 +193,42 @@ models no service under it, and S3 will not accept it as a bucket name.
 Fixed as phase 0, standalone, failing test first — both halves covered, the
 released one first.
 
+#### What phase 0 does *not* fix
+
+Removing the bypass closes the hole it opened: an unsigned request to any
+`/api` path is now refused, because `isSignedIAMRequest` runs ahead of action
+inference. The S3 half is enforced end to end — `requestIAMAction` names
+`s3:GetObject`/`s3:PutObject` for a bucket named `api`, so signed requests are
+evaluated too.
+
+MSK is weaker, for reasons that predate this work and are unchanged by it.
+Measured against `restOperation`:
+
+| Request | Inferred action |
+| --- | --- |
+| `GET`/`POST /api/v2/clusters` | `msk:ListClustersV2` / `msk:CreateClusterV2` |
+| `GET /api/v2/clusters/{arn}` (`DescribeClusterV2`) | none |
+| `GET /v1/clusters` under an SDK's `kafka` credential scope | none |
+
+Two separate defects sit behind that, both **out of scope here and worth their
+own issue**:
+
+1. **Fail-open on an unnamed operation.** `IAMEnforce` passes a signed request
+   through when `requestIAMAction` returns `""` — deliberate, documented, and
+   the right default for S3's sub-resource operations. It means
+   `DescribeClusterV2` and MSK's whole v1 surface are still not policy-checked
+   for a signed caller.
+2. **`kafka` vs `msk`.** The generated registry is keyed `msk`, so
+   `restOperation("kafka", …)` returns nothing — and `detectService` answers
+   `kafka` for any MSK path the prefix switch does not claim, because that is
+   what the SigV4 credential scope carries. `awsapiServiceKey` maps only
+   `logs` → `cloudwatch-logs`. Separately, the action Overcast *does* infer is
+   `msk:ListClustersV2`, while AWS's real IAM prefix for MSK is `kafka:`, so a
+   correctly-written policy would not match it.
+
+Neither is a namespace problem, and neither should hold this plan up. Both are
+recorded here because the audit is what surfaced them.
+
 ## 4. Design decisions
 
 ### 4.1 The Cognito collision, and why the shape is `/_overcast/<service>/<resource>/…`
