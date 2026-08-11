@@ -297,6 +297,12 @@ func (h *rdsDBInstanceHandler) Create(ctx context.Context, router http.Handler, 
 	if v, ok := props["MultiAZ"]; ok {
 		params["MultiAZ"] = cfnScalarString(v)
 	}
+	// The escape hatch that keeps a subnet-group instance reachable from the
+	// default plane. Dropping it here left the template's own opt-out with no
+	// effect, and the instance private with no way to say otherwise.
+	if v, ok := props["PubliclyAccessible"]; ok {
+		params["PubliclyAccessible"] = cfnScalarString(v)
+	}
 	// VPCSecurityGroups
 	if sgs, ok := props["VPCSecurityGroups"].([]any); ok {
 		for i, sg := range sgs {

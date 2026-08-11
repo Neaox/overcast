@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -57,7 +58,10 @@ type fakeRDS struct {
 	statuses  []string // status per Describe call; the last one repeats
 	describes int      // Describe calls served
 	gone      bool     // answer Describe with an empty result, as a deleted instance does
-	events    []string // DescribeEvents messages, oldest first
+	// createForm is the form of the last CreateDBInstance, for asserting which
+	// template properties actually reached the API.
+	createForm url.Values
+	events     []string // DescribeEvents messages, oldest first
 }
 
 // nextStatus returns the status this Describe call should report and records
@@ -92,6 +96,11 @@ func (f *fakeRDS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch action := r.Form.Get("Action"); action {
 	case "CreateDBInstance", "ModifyDBInstance":
 		id := r.Form.Get("DBInstanceIdentifier")
+		if action == "CreateDBInstance" {
+			f.mu.Lock()
+			f.createForm = r.Form
+			f.mu.Unlock()
+		}
 		fmt.Fprintf(w, `<%sResponse><%sResult><DBInstance>`+
 			`<DBInstanceIdentifier>%s</DBInstanceIdentifier>`+
 			`<DBInstanceStatus>creating</DBInstanceStatus>`+
@@ -322,6 +331,36 @@ func TestRDSDBInstanceUpdate_failureToSettleIsNotAnsweredByReplacement(t *testin
 	}
 	if outcome.PhysicalID != "appdb" || !outcome.UpdatedInPlace || outcome.Replaced() {
 		t.Errorf("failed update outcome = %+v, want applied in-place mutation", outcome)
+	}
+}
+
+// PubliclyAccessible is the template's own opt-out from a subnet group making
+// the instance private. Not forwarding it left a template that asked for a
+// reachable database with a private one and no way to say otherwise.
+func TestRDSDBInstanceCreate_forwardsPubliclyAccessible(t *testing.T) {
+	// Given: a template that puts the instance in a subnet group but asks for it
+	// to stay publicly accessible
+	f := &fakeRDS{}
+	p, rCtx := newRDSTestProvisioner(t, f)
+	props := rdsInstanceProps("appdb")
+	props["DBSubnetGroupName"] = "app-subnets"
+	props["PubliclyAccessible"] = true
+
+	// When: CloudFormation provisions it
+	if _, err := p.provisionResource(context.Background(), "Database",
+		TemplateResource{Type: "AWS::RDS::DBInstance"}, props, rCtx); err != nil {
+		t.Fatalf("provisionResource: %v", err)
+	}
+
+	// Then: RDS was told both
+	f.mu.Lock()
+	form := f.createForm
+	f.mu.Unlock()
+	if got := form.Get("PubliclyAccessible"); got != "true" {
+		t.Errorf("PubliclyAccessible = %q, want %q — the template's opt-out never reached RDS", got, "true")
+	}
+	if got := form.Get("DBSubnetGroupName"); got != "app-subnets" {
+		t.Errorf("DBSubnetGroupName = %q, want %q", got, "app-subnets")
 	}
 }
 

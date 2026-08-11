@@ -3986,6 +3986,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "What an Aurora member instance inherits",
+        "id": "what-an-aurora-member-instance-inherits"
+      },
+      {
+        "depth": 3,
         "text": "What a cluster records and what it enforces",
         "id": "what-a-cluster-records-and-what-it-enforces"
       },
