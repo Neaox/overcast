@@ -63,9 +63,20 @@ same-process target delivery.
   each rule's targets with their resolved type at `GET /_overcast/eventbridge/rule-targets`.
   Both are emulator-only console endpoints, not AWS APIs, and the outcome feed is a bounded
   in-memory ring that does not survive a restart.
-- **Scheduled ECS targets.** Rate and basic AWS cron expressions are evaluated by an
+- **Scheduled ECS targets.** Rate and AWS cron expressions are evaluated by an
   in-process clock-driven engine. ECS/Fargate targets call ECS `RunTask` with the
   configured target parameters.
+- **Cron expressions.** The full six-field AWS syntax is supported, shared with
+  EventBridge Scheduler: numbers, `,` lists, `-` ranges, `/` steps (including over a
+  range, `0-6/2`), the three-letter month and day names (`JAN`, `MON-FRI`,
+  case-insensitive), and the `L`, `LW`, `<day>W`, `<day>L` and `<day>#<n>` day
+  specifiers. Day-of-week is AWS's 1-7 from Sunday, not Go's 0-6 from Sunday, so `1`
+  is Sunday and `7` is Saturday.
+
+  `PutRule` refuses an expression it cannot honour rather than storing a rule that
+  would never fire, and the error names the expression and the field at fault. The
+  five-field Unix form is the common mistake and AWS refuses it too — every five
+  minutes is `cron(*/5 * * * ? *)`, not `cron(*/5 * * * *)`.
 - **Synthetic default bus.** `DescribeEventBus` returns a synthetic "default" bus even if one
   has not been explicitly created.
 - **CDK compatible management plane.** Sufficient for CDK deployments that create buses,
