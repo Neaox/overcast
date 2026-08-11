@@ -108,11 +108,47 @@ pull time with a 404 from the registry.
 
 For the same reason the image inventory follows the registry rather than
 accumulating. When a repository is read, Overcast reconciles it against the
-registry's manifests, and a record it created from an earlier push is dropped
-when the registry answers 404 for that manifest — which is what a restart
-leaves behind, since the registry's contents do not survive its container while
-the records are persisted. A record written by `PutImage` is left alone: it was
+registry's manifests: a manifest the registry serves is recorded, and a record
+Overcast created from an earlier push is dropped when the registry answers 404
+for it. Reconciliation runs in both directions, which is what makes the answer
+survivable — a restart that keeps the registry's storage (see
+[Persistence](#persistence)) but loses the in-memory records rediscovers them
+from the registry, and one that keeps the records but loses the storage drops
+them. A record written by `PutImage` is left alone in either direction: it was
 never in the registry, so the registry's silence says nothing about it.
+
+## Persistence
+
+Images pushed to the emulated ECR survive an Overcast restart. The registry
+container's storage (`/var/lib/registry`) is a named Docker volume,
+`overcast-ecr-registry-data-<port>`, labelled like every other resource Overcast
+manages. The container itself stays disposable — it still runs with
+`AutoRemove`, which reclaims only the *anonymous* volume it would otherwise
+have been given.
+
+This matters most under `cdk deploy`. cdk-assets asks `DescribeImages` for a
+container asset's content-hash tag and skips both the build and the push when it
+resolves, so a registry that came back empty made every deploy after a restart
+rebuild and re-upload assets that had not changed.
+
+Only the fixed-port claim (`OVERCAST_ECR_REGISTRY_PORT`, default `4510`) gets a
+volume, because only it has something stable to name one after. The ephemeral
+fallback's container name is deliberately random so that concurrent instances
+cannot collide over it, and its port is whatever the daemon had spare — a volume
+keyed to either would be a fresh orphan on every start that no later run could
+find, and one well-known name shared between them would put two registry
+processes on one filesystem, which corrupts it rather than sharing it. An
+ephemeral registry's contents still die with its container.
+
+Set `OVERCAST_ECR_REGISTRY_PERSIST=false` to go back to that behaviour on the
+fixed port too — worth doing when the volume itself is the problem, though
+discarding it is usually the shorter answer. See [Reclaiming the storage
+volume](#reclaiming-the-storage-volume).
+
+Repository metadata follows the state backend, not the volume, so a run on a
+backend that keeps nothing (`OVERCAST_STATE=memory`) comes back with no
+repositories even though the images are still there. Re-creating a repository is
+enough for them to reappear: the first read reconciles it against the registry.
 
 ## Running an image from here
 
@@ -132,11 +168,12 @@ and
   registry without configuration; only a setup that advertises the registry on
   a non-loopback hostname (`OVERCAST_HOSTNAME` pointing at a remote Overcast)
   needs an `insecure-registries` daemon entry for `<hostname>:<registryPort>`.
-- Images live in the registry container, which is removed on shutdown, so a
-  restart starts empty — repository metadata persists, image content does not.
-  The image records go with the content: the first read of a repository after a
-  restart drops the ones the new registry cannot serve, so a publisher is told
-  the truth and pushes again.
+- Image content lives in the registry's Docker volume, not in Overcast state, so
+  it is kept and reclaimed by Docker rather than by `OVERCAST_DATA_DIR`. Only
+  the fixed-port claim gets one; an ephemeral registry's images still die with
+  its container, and the first read of a repository afterwards drops the records
+  the new registry cannot serve, so a publisher is told the truth and pushes
+  again. See [Persistence](#persistence).
 - The fallback to an ephemeral port is a degraded mode, not an equivalent one.
   Measured on Docker Desktop 29.6.2 for Windows, the daemon reaches a fixed
   publish and not an ephemeral one — `docker login localhost:5099` succeeds
@@ -190,6 +227,34 @@ docker rm -f $(docker ps -q --filter label=overcast.service=ecr)
 
 Run those while an instance is up and you will take its registry with you, so
 check the first before running the second.
+
+## Reclaiming the storage volume
+
+The section above is about ephemeral-port containers; this one is about the
+fixed port's volume, and the two do not overlap. A volume is *not* removed with
+its container — being outlived by one is the whole point of it — so discarding
+the images means removing it deliberately. It carries the same
+`overcast.service=ecr` label the containers do:
+
+```bash
+docker volume ls --filter label=overcast.service=ecr
+```
+
+```bash
+docker volume rm overcast-ecr-registry-data-4510
+```
+
+**Removing the volume discards every image pushed to that registry.** Nothing
+warns you, and nothing rebuilds them: the next read of a repository reconciles
+against a registry that no longer has them and drops their records, so the next
+`cdk deploy` re-pushes its assets and anything that expected an image someone
+pushed by hand gets a 404 at pull time. Remove it when you want that — a corrupt
+volume, a stale image you cannot otherwise displace, or reclaiming the disk —
+not as routine cleanup.
+
+Unlike a leaked container, a volume left behind by a killed Overcast is not a
+problem to fix. It holds no port and runs no process; the next instance on the
+same fixed port picks it up and carries on with the images already in it.
 
 <!-- BEGIN overcast:capabilities -->
 

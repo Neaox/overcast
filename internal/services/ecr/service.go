@@ -69,6 +69,11 @@ const (
 	// ecrRegistryHTPasswdPath is where the registry container reads its
 	// credentials from; the file is copied in at create time.
 	ecrRegistryHTPasswdPath = "/auth/htpasswd"
+	// ecrRegistryStoragePath is where registry:2 keeps its blobs. The image
+	// declares it a VOLUME, so Docker mounts *something* there either way; the
+	// only question is whether it is an anonymous volume that AutoRemove reaps
+	// with the container or a named one that outlives it.
+	ecrRegistryStoragePath = "/var/lib/registry"
 	// registryCreateAttempts bounds how long createRegistryContainer waits for
 	// a predecessor's name to be released — 5s at the retry interval below.
 	registryCreateAttempts = 20
@@ -797,8 +802,10 @@ func (s *Service) registryTags(ctx context.Context, client *http.Client, base, r
 // forgetAllRegistryImages deletes every record this sweep created for a
 // repository the registry does not have. It is the one-request form of
 // forgetVanishedImages, for the case where no per-image question can change the
-// answer — and the common case, since a restarted Overcast meets an empty
-// registry with a full store.
+// answer: a repository nobody ever pushed to, one whose images were deleted out
+// from under Overcast, or a registry whose storage really did start empty —
+// which a fixed-port claim's no longer does, but the ephemeral fallback and an
+// OVERCAST_ECR_REGISTRY_PERSIST=false run still do.
 func (s *Service) forgetAllRegistryImages(ctx context.Context, region, repoName string) {
 	s.forgetImages(ctx, region, repoName, func(rec imageRecord) bool { return true })
 }
@@ -806,12 +813,14 @@ func (s *Service) forgetAllRegistryImages(ctx context.Context, region, repoName 
 // forgetVanishedImages deletes the records of images the registry has stopped
 // serving, given the digests just observed under a tag.
 //
-// The registry's contents do not survive its container — an AutoRemove
-// registry:2 with no volume — while these records are persisted, so an Overcast
-// restart leaves the store describing images that no longer exist anywhere. A
-// publisher that asks "is this already pushed?" is then told yes, skips the
-// push, and the task that runs the image fails at pull time with a 404 the
-// deploy gave no warning of.
+// The two can disagree in both directions and this closes one of them. A record
+// outliving its image — the registry's storage was thrown away, or a fixed-port
+// claim fell back to an ephemeral registry that never had the image — leaves a
+// publisher asking "is this already pushed?" told yes, skipping the push, and
+// the task that runs the image failing at pull time with a 404 the deploy gave
+// no warning of. The other direction needs nothing here: an image in the
+// registry that the store has forgotten is re-recorded by the sweep above,
+// which is how a fresh in-memory store rediscovers what the volume kept.
 //
 // Only two things are deleted: a record this sweep created (a caller's own
 // PutImage is not the registry's to revoke), and only when the registry answers
@@ -1946,6 +1955,11 @@ func (s *Service) reapLegacyRegistry(ctx context.Context) {
 // the port is an exclusive resource, and so its holder is by definition a
 // predecessor (possibly still running after an unclean shutdown, with an
 // htpasswd no current token matches) rather than a peaceful neighbour.
+//
+// It removes the container and nothing else. The predecessor's storage volume
+// is the successor's inheritance — deleting it here would leave a registry that
+// persists across restarts in every way except the one that matters. Same for
+// Stop: the container is this process's, the images in the volume are not.
 func (s *Service) replaceRegistryHolder(ctx context.Context, name string) {
 	info, err := s.docker.GetContainerByName(ctx, name)
 	if err != nil || info == nil {
@@ -1959,12 +1973,53 @@ func (s *Service) replaceRegistryHolder(ctx context.Context, name string) {
 	_ = s.docker.RemoveContainerForce(info.ID)
 }
 
+// registryVolumeName returns the named volume backing a registry claim's
+// storage, or "" for a claim that gets none.
+//
+// Only the fixed-port claim gets one, and the port is what names it. That claim
+// is an exclusive slot with a stable address, so the volume a successor should
+// inherit is unambiguous — it is the one the port names. An ephemeral claim has
+// neither half: its container name is deliberately random so concurrent
+// instances cannot collide over it, and its port is whatever the daemon had
+// spare. A volume named after either would be a fresh orphan on every start,
+// found again by no restart and reclaimable only by sweeping the label, so the
+// ephemeral fallback stays as it was — storage that dies with its container.
+//
+// A single well-known name for ephemeral claims would fix the finding and break
+// something worse: it is the *concurrent* case that drives an ephemeral port in
+// the first place, and two registry:2 processes writing one filesystem is how
+// the storage gets corrupted rather than shared.
+func (s *Service) registryVolumeName(hostPort string) string {
+	if hostPort == "" || s.cfg == nil || !s.cfg.ECRRegistryPersist {
+		return ""
+	}
+	return ecrRegistryNamePrefix + "-data-" + hostPort
+}
+
 // startRegistry creates and starts the registry container under name,
 // publishing its port on hostPort ("" for daemon-assigned), returning the
 // started container's inspect result. The container that failed to start is
 // removed before the error is returned, so a port-unavailable failure can be
 // retried under a fresh claim.
 func (s *Service) startRegistry(ctx context.Context, name string, htpasswd []byte, hostPort string) (string, *docker.ContainerInspect, error) {
+	var mounts []docker.Mount
+	if volume := s.registryVolumeName(hostPort); volume != "" {
+		// Best-effort, like every other Docker call on this path: a registry
+		// with anonymous storage is what every release before this one shipped,
+		// and it beats no registry at all. Create is idempotent by name, so the
+		// successor of a restart re-adopts the volume it already has.
+		if err := s.docker.CreateVolume(ctx, volume, docker.ManagedLabels(serviceName, ecrRegistryResource)); err != nil {
+			s.log.Warn("failed to create the ECR registry's storage volume — pushed images will not survive a restart",
+				zap.String("volume", volume), zap.Error(err))
+		} else {
+			mounts = []docker.Mount{{
+				Type:   "volume",
+				Source: volume,
+				Target: ecrRegistryStoragePath,
+			}}
+		}
+	}
+
 	req := &docker.CreateContainerRequest{
 		ContainerConfig: &docker.ContainerConfig{
 			Image: ecrRegistryImage,
@@ -1990,6 +2045,13 @@ func (s *Service) startRegistry(ctx context.Context, name string, htpasswd []byt
 				// theorised: see docs/services/ecr.md § Limitations.
 				ecrRegistryPortKey: {{HostPort: hostPort}},
 			},
+			// AutoRemove stays, and the volume is why it can. Docker's implicit
+			// removal passes v=1, but that only reaps *anonymous* volumes — the
+			// one registry:2's own VOLUME declaration would otherwise mint here.
+			// A named volume survives both that and an explicit force-remove,
+			// which is what lets the container be as disposable as it always
+			// was while its blobs are not.
+			Mounts: mounts,
 		},
 	}
 

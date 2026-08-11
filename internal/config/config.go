@@ -471,6 +471,24 @@ type Config struct {
 	// Corresponds to env var OVERCAST_ECR_REGISTRY_PORT. Default 4510.
 	ECRRegistryPort int
 
+	// ECRRegistryPersist backs the fixed-port registry container with a named
+	// Docker volume, so images pushed to the emulated ECR survive a restart.
+	// It applies to the fixed-port claim only: an ephemeral registry's address
+	// changes every run, and its container name is deliberately random, so
+	// there is nothing stable to key a volume on and a per-run one would leak
+	// forever.
+	//
+	// Persisting is the default because the alternative silently costs work.
+	// cdk-assets decides whether to build and push a container asset by asking
+	// DescribeImages for its content-hash tag, so a registry that starts empty
+	// makes every `cdk deploy` after a restart rebuild and re-push assets that
+	// never changed. Set this false to go back to a registry whose contents die
+	// with its container — worth doing when the volume itself is the problem
+	// (a corrupt one, or a CI runner that must start from nothing), which is
+	// otherwise a `docker volume rm` away.
+	// Corresponds to env var OVERCAST_ECR_REGISTRY_PERSIST. Default true.
+	ECRRegistryPersist bool
+
 	// RDSDockerSocket is the path to the Docker daemon socket used to manage
 	// RDS database containers. Defaults to the same value as LambdaDockerSocket.
 	RDSDockerSocket string
@@ -1023,6 +1041,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           back to shared with a startup warning, netns is rejected)
 //	OVERCAST_ECR_REGISTRY_PORT         4510    (host port the shared registry container asks for;
 //	                                           0, or a port already taken, falls back to ephemeral)
+//	OVERCAST_ECR_REGISTRY_PERSIST      true    (back the fixed-port registry with a named Docker
+//	                                           volume, so pushed images survive a restart)
 //	LAMBDA_DOCKER_SOCKET               (platform default) /var/run/docker.sock on Linux/macOS,
 //	                                           npipe:////./pipe/docker_engine on Windows. Every
 //	                                           per-service socket override below must address the
@@ -1386,6 +1406,7 @@ func Load() (*Config, error) {
 
 	// ECR registry — see the field's comment for why the default is pinned.
 	cfg.ECRRegistryPort = envInt("OVERCAST_ECR_REGISTRY_PORT", 4510)
+	cfg.ECRRegistryPersist = envBool("OVERCAST_ECR_REGISTRY_PERSIST", true)
 
 	// RDS container runtime — defaults fall back to Lambda socket
 	cfg.RDSDockerSocket = envOr("RDS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
