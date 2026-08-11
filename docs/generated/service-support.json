@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1427,
+  "total_ops": 1428,
   "services": [
     {
       "service": "s3",
@@ -8354,8 +8354,8 @@
     {
       "service": "msk",
       "display_name": "MSK",
-      "total_ops": 29,
-      "implemented_ops": 16,
+      "total_ops": 30,
+      "implemented_ops": 17,
       "operations": [
         {
           "operation": "CreateCluster",
@@ -8373,7 +8373,7 @@
           "operation": "ListClusters",
           "category": "Clusters",
           "status": "✅ Supported",
-          "notes": "List all clusters; optional `clusterNameFilter` query param"
+          "notes": "List all clusters; optional `clusterNameFilter` query param matches on the name prefix"
         },
         {
           "operation": "DeleteCluster",
@@ -8390,14 +8390,20 @@
         {
           "operation": "CreateClusterV2",
           "category": "Clusters",
-          "status": "🚧 WIP",
-          "notes": "PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE; Overcast does not serve the binding AWS models, so no SDK reaches it (#859)"
+          "status": "✅ Supported",
+          "notes": "PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE; rejects a request naming both or neither"
         },
         {
           "operation": "DescribeClusterV2",
           "category": "Clusters",
-          "status": "🚧 WIP",
-          "notes": "Returns v2 shape with `clusterType` and `provisioned`/`serverless` sub-object; Overcast does not serve the binding AWS models, so no SDK reaches it (#859)"
+          "status": "✅ Supported",
+          "notes": "Returns v2 shape with `clusterType` and `provisioned`/`serverless` sub-object"
+        },
+        {
+          "operation": "ListClustersV2",
+          "category": "Clusters",
+          "status": "✅ Supported",
+          "notes": "`clusterNameFilter` (prefix), `clusterTypeFilter`, `maxResults` and `nextToken` query params; page size capped at 100"
         },
         {
           "operation": "UpdateBrokerCount",

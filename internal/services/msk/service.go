@@ -1,9 +1,14 @@
 // Package msk provides emulation of Amazon MSK (Managed Streaming for Kafka).
 //
 // Implemented operations: CreateCluster, DescribeCluster, ListClusters,
-// DeleteCluster, GetBootstrapBrokers, CreateConfiguration, DescribeConfiguration,
-// ListConfigurations, DeleteConfiguration, ListKafkaVersions,
-// TagResource, UntagResource, ListTagsForResource.
+// DeleteCluster, GetBootstrapBrokers, CreateClusterV2, DescribeClusterV2,
+// ListClustersV2, CreateConfiguration, DescribeConfiguration,
+// ListConfigurations, DeleteConfiguration, UpdateClusterConfiguration,
+// ListKafkaVersions, TagResource, UntagResource, ListTagsForResource.
+//
+// MSK speaks restJson1 and nothing else — the pinned model gives every kafka
+// operation an @http binding and no target prefix — so the whole surface is
+// reached by method and path, with no X-Amz-Target dispatch.
 //
 // On CreateCluster, a real Redpanda container is started (same pattern as ElastiCache).
 // The cluster reaches "ACTIVE" state once the TCP health check succeeds.
@@ -30,8 +35,6 @@ import (
 	"github.com/Neaox/overcast/internal/lifecycle"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -303,67 +306,72 @@ func newHandler(cfg *config.Config, store *mskStore, log *serviceutil.ServiceLog
 type Service struct {
 	handler *Handler
 	log     *serviceutil.ServiceLogger
-	typedOp map[string]op.Operation
 }
 
 // New returns a configured MSK Service.
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock) *Service {
 	log := serviceutil.NewServiceLogger(logger, serviceName)
-	h := newHandler(cfg, newMSKStore(store, cfg.Region), log, clk)
-	s := &Service{
-		handler: h,
+	return &Service{
+		handler: newHandler(cfg, newMSKStore(store, cfg.Region), log, clk),
 		log:     log,
 	}
-	s.typedOp = s.typedOps()
-	return s
 }
 
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
 
-// TargetPrefix satisfies router.TargetDispatcher.
-func (s *Service) TargetPrefix() string { return "Kafka." }
-
-// Dispatch satisfies router.TargetDispatcher.
-func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if codec.Supports(s.SupportedProtocols(), c) {
-			if typed, ok := s.typedOp[opName]; ok {
-				typed.Invoke(w, r, c)
-				return
-			}
-		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
-}
+// Path prefixes MSK owns, in the shape the model binds them. The v2 cluster API
+// lives under /api/v2, not under /v2 — every v2 operation's URI in the pinned
+// kafka model carries that prefix.
+const (
+	clustersPath       = "/v1/clusters"
+	configurationsPath = "/v1/configurations"
+	kafkaVersionsPath  = "/v1/kafka-versions"
+	clustersV2Path     = "/api/v2/clusters"
+)
 
 // RegisterRoutes satisfies router.Service.
-//
-// ARNs in path parameters contain forward slashes. We use chi wildcard catch-all
-// routes (/*) and dispatch to specific handlers based on the path suffix.
 func (s *Service) RegisterRoutes(r chi.Router) {
-	r.Post("/v1/clusters", s.handler.createCluster)
-	r.Get("/v1/clusters", s.handler.listClusters)
-	r.Post("/v1/configurations", s.handler.createConfiguration)
-	r.Get("/v1/configurations", s.handler.listConfigurations)
-	r.Get("/v1/kafka-versions", s.handler.listKafkaVersions)
+	r.Post(clustersPath, s.handler.createCluster)
+	r.Get(clustersPath, s.handler.listClusters)
+	r.Post(configurationsPath, s.handler.createConfiguration)
+	r.Get(configurationsPath, s.handler.listConfigurations)
+	r.Get(kafkaVersionsPath, s.handler.listKafkaVersions)
 
-	// Cluster routes with ARN-in-path: dispatched via path suffix.
-	r.Get("/v1/clusters/*", s.handler.clusterGetDispatch)
-	r.Delete("/v1/clusters/*", s.handler.deleteCluster)
-	r.Put("/v1/clusters/*", s.handler.clusterPutDispatch)
+	// The v1 cluster subtree is served by three dispatch handlers that pick the
+	// operation out of the path themselves, because the ARN is followed by a
+	// sub-resource on some bindings (…/bootstrap-brokers, …/configuration) and
+	// a caller may send it with literal slashes. internal/router's
+	// weaklyServedBindings records what that costs.
+	r.Get(clustersPath+"/*", s.handler.clusterGetDispatch)
+	r.Delete(clustersPath+"/*", s.handler.deleteCluster)
+	r.Put(clustersPath+"/*", s.handler.clusterPutDispatch)
 
-	// V2 cluster API (provisioned + serverless)
-	r.Post("/v2/clusters", s.handler.createClusterV2)
-	r.Get("/v2/clusters/*", s.handler.describeClusterV2)
+	// V2 cluster API (provisioned + serverless). {clusterArn} is a non-greedy
+	// httpLabel, so the SDKs send the ARN percent-encoded into a single
+	// segment — see arnFromPath. A label rather than a subtree wildcard is what
+	// stops the v2 operations Overcast does not implement — ListClusterOperationsV2
+	// at …/{ClusterArn}/operations — reaching describeClusterV2, which strips
+	// nothing and would answer them "cluster not found": a plausible reply to a
+	// question nobody asked.
+	r.Post(clustersV2Path, s.handler.createClusterV2)
+	r.Get(clustersV2Path, s.handler.listClustersV2)
+	r.Get(clustersV2Path+"/{clusterArn}", s.handler.describeClusterV2)
 
 	// Configuration routes with ARN-in-path
-	r.Get("/v1/configurations/*", s.handler.describeConfiguration)
-	r.Delete("/v1/configurations/*", s.handler.deleteConfiguration)
+	r.Get(configurationsPath+"/*", s.handler.describeConfiguration)
+	r.Delete(configurationsPath+"/*", s.handler.deleteConfiguration)
 
 	// NOTE: /v1/tags routes are NOT registered here — see TagsRouter.
+}
+
+// PathPrefixes satisfies router.PathPrefixService: in a subset-registered
+// router these answer 501 rather than falling into S3's wildcard, where
+// /api/v2/clusters reads as the object v2/clusters in a bucket named api.
+// /v1/tags is deliberately absent — it is shared with the other taggable
+// services and mounted by the router, not by RegisterRoutes.
+func (s *Service) PathPrefixes() []string {
+	return []string{clustersPath, configurationsPath, kafkaVersionsPath, clustersV2Path}
 }
 
 // TagsRouter returns a chi.Router for the MSK tagging routes that live under

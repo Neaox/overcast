@@ -98,6 +98,9 @@ var registeredRouteClassification = map[string]string{
 	"/_topology":   "internal",
 
 	// Undated literals the prefix switch claims.
+	// MSK's v2 cluster API is the whole of /api: no other implemented service
+	// registers a route under that root segment.
+	"/api":          "msk",
 	"/apikeys":      "apigateway",
 	"/applications": "appregistry",
 	// AppConfig Data's two modeled bindings. detectService claims both
@@ -161,11 +164,10 @@ var registeredRouteClassification = map[string]string{
 	"/addons":           "s3",
 	"/cluster-versions": "s3",
 	"/clusters":         "s3",
-	//   MSK.
+	//   MSK's v1 surface. Its v2 surface is claimed above, under "/api".
 	"/v1/clusters":       "s3",
 	"/v1/configurations": "s3",
 	"/v1/kafka-versions": "s3",
-	"/v2/clusters":       "s3",
 	//   Smithy RPC v2 (/service/{service}/operation/{operation}); the dispatcher
 	//   reads the service from the path itself and delegates to S3 without a
 	//   Smithy-Protocol header, so the s3 label matches what happens.

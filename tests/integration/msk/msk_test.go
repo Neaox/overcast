@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,9 +90,10 @@ func TestCreateCluster_missingName(t *testing.T) {
 		"kafkaVersion": "3.5.1",
 	})
 
-	// Then: the response is 400 ValidationException
+	// Then: the response is 400 BadRequestException — the kafka model declares
+	// no ValidationException on any operation
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assertJSONError(t, resp, "ValidationException")
+	assertJSONError(t, resp, "BadRequestException")
 }
 
 // ── TestDescribeCluster ───────────────────────────────────────────────────────
@@ -447,14 +450,65 @@ func TestUntagResource_success(t *testing.T) {
 	assert.False(t, dropped, "tag 'Drop' should have been removed")
 }
 
-// ── TestCreateClusterV2 ───────────────────────────────────────────────────────
+// ── The v2 cluster API ────────────────────────────────────────────────────────
+//
+// Every request below goes to /api/v2/clusters, the URI the pinned kafka model
+// binds the v2 operations to, and addresses a cluster with the ARN percent-
+// encoded into one path segment — the wire form every AWS SDK produces for a
+// non-greedy httpLabel. Overcast served these at /v2/clusters until #859, where
+// no SDK could reach them.
+
+// clustersV2Path is the modeled base URI of the v2 cluster API.
+const clustersV2Path = "/api/v2/clusters"
+
+// v2ClusterPath addresses one cluster the way an SDK does: {ClusterArn} is a
+// non-greedy httpLabel, so the whole ARN is percent-encoded into a single path
+// segment.
+func v2ClusterPath(arn string) string {
+	return clustersV2Path + "/" + awsEscapeLabel(arn)
+}
+
+// awsEscapeLabel percent-encodes a value the way the AWS SDKs encode a
+// non-greedy httpLabel: everything outside RFC 3986's unreserved set, ':' and
+// '/' included. smithy-go's httpbinding.EscapePath is the reference
+// implementation; botocore's percent_encode and the JS SDK's
+// extendedEncodeURIComponent produce the same bytes.
+func awsEscapeLabel(v string) string {
+	var b strings.Builder
+	for i := 0; i < len(v); i++ {
+		switch c := v[i]; {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9',
+			c == '-', c == '.', c == '_', c == '~':
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
+}
+
+// kafkaScopedRequest is mskRequest carrying a SigV4 credential scope. Overcast
+// validates no signature, but the router's 501 fallback needs positive
+// evidence that a path it has no route for is not an S3 request, and the scope
+// must name the *model's* signing name (kafka) rather than Overcast's service
+// key (msk).
+func kafkaScopedRequest(t *testing.T, srv *helpers.TestServer, method, path string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, srv.URL+path, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization",
+		"AWS4-HMAC-SHA256 Credential=test/20240101/us-east-1/kafka/aws4_request, SignedHeaders=host, Signature=stub")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	return resp
+}
 
 func TestCreateClusterV2_provisioned_success(t *testing.T) {
 	// Given: a fresh MSK service
 	srv := helpers.NewTestServer(t)
 
 	// When: a V2 provisioned cluster creation request is made
-	resp := mskRequest(t, srv, http.MethodPost, "/v2/clusters", map[string]any{
+	resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
 		"clusterName": "v2-provisioned",
 		"provisioned": map[string]any{
 			"kafkaVersion":        "3.6.0",
@@ -479,7 +533,7 @@ func TestCreateClusterV2_serverless_success(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: a V2 serverless cluster creation request is made
-	resp := mskRequest(t, srv, http.MethodPost, "/v2/clusters", map[string]any{
+	resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
 		"clusterName": "v2-serverless",
 		"serverless":  map[string]any{},
 	})
@@ -490,6 +544,7 @@ func TestCreateClusterV2_serverless_success(t *testing.T) {
 	decodeJSON(t, resp, &result)
 	assert.Equal(t, "v2-serverless", result["clusterName"])
 	assert.Equal(t, "SERVERLESS", result["clusterType"])
+	assert.Equal(t, "ACTIVE", result["state"])
 	arn, _ := result["clusterArn"].(string)
 	assert.Contains(t, arn, "arn:aws:kafka:")
 }
@@ -499,13 +554,44 @@ func TestCreateClusterV2_missingName(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: a V2 cluster creation request without a name
-	resp := mskRequest(t, srv, http.MethodPost, "/v2/clusters", map[string]any{
+	resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
 		"provisioned": map[string]any{"kafkaVersion": "3.6.0"},
 	})
 
-	// Then: 400 ValidationException
+	// Then: 400 BadRequestException — the kafka model declares no
+	// ValidationException on any operation
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	assertJSONError(t, resp, "ValidationException")
+	assertJSONError(t, resp, "BadRequestException")
+}
+
+func TestCreateClusterV2_neitherProvisionedNorServerless(t *testing.T) {
+	// Given: a fresh MSK service
+	srv := helpers.NewTestServer(t)
+
+	// When: a V2 cluster creation request names neither cluster shape
+	resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-neither",
+	})
+
+	// Then: 400 rather than a silently-invented serverless cluster
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assertJSONError(t, resp, "BadRequestException")
+}
+
+func TestCreateClusterV2_bothProvisionedAndServerless(t *testing.T) {
+	// Given: a fresh MSK service
+	srv := helpers.NewTestServer(t)
+
+	// When: a V2 cluster creation request names both cluster shapes
+	resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-both",
+		"provisioned": map[string]any{"kafkaVersion": "3.6.0"},
+		"serverless":  map[string]any{},
+	})
+
+	// Then: 400 — the two members are mutually exclusive
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assertJSONError(t, resp, "BadRequestException")
 }
 
 // ── TestDescribeClusterV2 ─────────────────────────────────────────────────────
@@ -513,7 +599,7 @@ func TestCreateClusterV2_missingName(t *testing.T) {
 func TestDescribeClusterV2_provisioned(t *testing.T) {
 	// Given: a V2 provisioned cluster
 	srv := helpers.NewTestServer(t)
-	createResp := mskRequest(t, srv, http.MethodPost, "/v2/clusters", map[string]any{
+	createResp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
 		"clusterName": "v2-describe",
 		"provisioned": map[string]any{
 			"kafkaVersion":        "3.5.1",
@@ -526,7 +612,7 @@ func TestDescribeClusterV2_provisioned(t *testing.T) {
 	arn := created["clusterArn"].(string)
 
 	// When: described via V2
-	resp := mskRequest(t, srv, http.MethodGet, "/v2/clusters/"+arn, nil)
+	resp := mskRequest(t, srv, http.MethodGet, v2ClusterPath(arn), nil)
 
 	// Then: the response includes clusterType and provisioned sub-object
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -534,10 +620,36 @@ func TestDescribeClusterV2_provisioned(t *testing.T) {
 	decodeJSON(t, resp, &result)
 	info := result["clusterInfo"].(map[string]any)
 	assert.Equal(t, "v2-describe", info["clusterName"])
+	assert.Equal(t, arn, info["clusterArn"])
 	assert.Equal(t, "PROVISIONED", info["clusterType"])
 	provisioned, ok := info["provisioned"].(map[string]any)
 	require.True(t, ok, "provisioned field should be present")
 	assert.Equal(t, float64(2), provisioned["numberOfBrokerNodes"])
+}
+
+func TestDescribeClusterV2_describesAClusterCreatedThroughV1(t *testing.T) {
+	// Given: a cluster created through the v1 API
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":         "v1-then-v2",
+		"numberOfBrokerNodes": 1,
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: it is described through the v2 API
+	resp := mskRequest(t, srv, http.MethodGet, v2ClusterPath(arn), nil)
+
+	// Then: the two APIs agree — v1 creates provisioned clusters, and the v2
+	// shape says so even though the v1 record carries no clusterType
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	info := result["clusterInfo"].(map[string]any)
+	assert.Equal(t, arn, info["clusterArn"])
+	assert.Equal(t, "PROVISIONED", info["clusterType"])
 }
 
 func TestDescribeClusterV2_notFound(t *testing.T) {
@@ -545,11 +657,144 @@ func TestDescribeClusterV2_notFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: describe a non-existent cluster via V2
-	resp := mskRequest(t, srv, http.MethodGet, "/v2/clusters/arn:aws:kafka:us-east-1:000000000000:cluster/nope/abc123", nil)
+	resp := mskRequest(t, srv, http.MethodGet,
+		v2ClusterPath("arn:aws:kafka:us-east-1:000000000000:cluster/nope/abc123"), nil)
 
 	// Then: 404 NotFoundException
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	assertJSONError(t, resp, "NotFoundException")
+}
+
+func TestDescribeClusterV2_doesNotAnswerForASubResource(t *testing.T) {
+	// Given: a V2 cluster
+	srv := helpers.NewTestServer(t)
+	createResp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "v2-suboperations",
+		"serverless":  map[string]any{},
+	})
+	require.Equal(t, http.StatusOK, createResp.StatusCode)
+	var created map[string]any
+	decodeJSON(t, createResp, &created)
+	arn := created["clusterArn"].(string)
+
+	// When: ListClusterOperationsV2 — modeled beneath the same ARN at
+	// …/{ClusterArn}/operations, and not implemented — is called
+	resp := kafkaScopedRequest(t, srv, http.MethodGet, v2ClusterPath(arn)+"/operations")
+	defer resp.Body.Close() //nolint:errcheck
+
+	// Then: DescribeClusterV2 does not answer it. Binding {clusterArn} as a
+	// single label rather than a subtree wildcard is what makes that true: a
+	// wildcard would have handed the whole tail to describeClusterV2, which
+	// strips nothing and would report the cluster as not found — a plausible
+	// answer to a question nobody asked, the #854 shape.
+	assert.NotEqual(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "clusterInfo")
+	assert.NotContains(t, string(body), "NotFoundException")
+}
+
+// ── TestListClustersV2 ────────────────────────────────────────────────────────
+
+func TestListClustersV2_returnsBothClusterTypes(t *testing.T) {
+	// Given: one provisioned and one serverless cluster
+	srv := helpers.NewTestServer(t)
+	for _, body := range []map[string]any{
+		{"clusterName": "list-v2-prov", "provisioned": map[string]any{"numberOfBrokerNodes": 1}},
+		{"clusterName": "list-v2-srvless", "serverless": map[string]any{}},
+	} {
+		resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, body)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
+
+	// When: clusters are listed through the v2 API
+	resp := mskRequest(t, srv, http.MethodGet, clustersV2Path, nil)
+
+	// Then: both are returned in the v2 shape
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	list, _ := result["clusterInfoList"].([]any)
+	require.Len(t, list, 2)
+	types := map[string]bool{}
+	for _, item := range list {
+		types[item.(map[string]any)["clusterType"].(string)] = true
+	}
+	assert.True(t, types["PROVISIONED"], "provisioned cluster missing from clusterInfoList")
+	assert.True(t, types["SERVERLESS"], "serverless cluster missing from clusterInfoList")
+}
+
+func TestListClustersV2_filtersByQueryParameters(t *testing.T) {
+	// Given: three clusters with two name prefixes and both cluster types
+	srv := helpers.NewTestServer(t)
+	for _, body := range []map[string]any{
+		{"clusterName": "keep-one", "provisioned": map[string]any{"numberOfBrokerNodes": 1}},
+		{"clusterName": "keep-two", "serverless": map[string]any{}},
+		{"clusterName": "drop-one", "serverless": map[string]any{}},
+	} {
+		resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, body)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
+
+	// When: the filters are sent as query parameters, which is where AWS binds
+	// them — clusterNameFilter matches on the name prefix
+	resp := mskRequest(t, srv, http.MethodGet,
+		clustersV2Path+"?clusterNameFilter=keep&clusterTypeFilter=SERVERLESS", nil)
+
+	// Then: only the cluster matching both filters comes back
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var result map[string]any
+	decodeJSON(t, resp, &result)
+	list, _ := result["clusterInfoList"].([]any)
+	require.Len(t, list, 1)
+	assert.Equal(t, "keep-two", list[0].(map[string]any)["clusterName"])
+}
+
+func TestListClustersV2_paginatesWithMaxResultsAndNextToken(t *testing.T) {
+	// Given: three clusters
+	srv := helpers.NewTestServer(t)
+	for _, name := range []string{"page-a", "page-b", "page-c"} {
+		resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+			"clusterName": name,
+			"serverless":  map[string]any{},
+		})
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
+
+	// When: the first page is requested with maxResults=2
+	resp := mskRequest(t, srv, http.MethodGet, clustersV2Path+"?maxResults=2", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var first map[string]any
+	decodeJSON(t, resp, &first)
+	firstPage, _ := first["clusterInfoList"].([]any)
+	require.Len(t, firstPage, 2)
+	token, _ := first["nextToken"].(string)
+	require.NotEmpty(t, token, "a truncated page must carry a nextToken")
+
+	// Then: the token returns the remainder and the last page carries no token
+	resp = mskRequest(t, srv, http.MethodGet,
+		clustersV2Path+"?maxResults=2&nextToken="+url.QueryEscape(token), nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var second map[string]any
+	decodeJSON(t, resp, &second)
+	secondPage, _ := second["clusterInfoList"].([]any)
+	assert.Len(t, secondPage, 1)
+	assert.NotContains(t, second, "nextToken")
+}
+
+func TestListClustersV2_rejectsAnInvalidNextToken(t *testing.T) {
+	// Given: a fresh MSK service
+	srv := helpers.NewTestServer(t)
+
+	// When: a garbled continuation token is sent
+	resp := mskRequest(t, srv, http.MethodGet, clustersV2Path+"?nextToken=not-a-token", nil)
+
+	// Then: 400, rather than silently restarting from the first page
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assertJSONError(t, resp, "BadRequestException")
 }
 
 // ── TestUpdateClusterConfiguration ───────────────────────────────────────────

@@ -3743,7 +3743,7 @@ export const DOCS_NAV = [
     "path": "docs/services/msk.md",
     "href": "services/msk.md",
     "title": "MSK — Managed Streaming for Kafka",
-    "description": "MSK uses the REST JSON protocol. All endpoints are under /v1/.",
+    "description": "MSK uses the REST JSON protocol. The v1 endpoints are under /v1/ and the v2 cluster API under /api/v2/.",
     "section": "Service Reference",
     "tags": [
       "docs",

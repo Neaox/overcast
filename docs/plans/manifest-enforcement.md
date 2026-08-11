@@ -120,7 +120,7 @@ the build. #860 took AppSync's two out onto `/v1/dataplane-evaluatecode` and
 `POST /configurationsessions` and `GET /configuration`, with the session token
 read from the `configuration_token` query member rather than a path segment;
 #858 took EKS's six out, four of which had been served on the wrong HTTP
-method.
+method; #859 took MSK's v2 pair out onto `/api/v2/clusters`.
 
 #862 is not in that table, and the reason is the ratchet earning its keep.
 `ses/V2CreateEmailIdentity` was in `unservedBindings` while this branch was
