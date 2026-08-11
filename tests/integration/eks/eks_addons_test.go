@@ -178,7 +178,7 @@ func TestEKSUpdateAddon(t *testing.T) {
 	_ = mustCreateCluster(t, srv.URL, "addon-update-cluster", nil)
 	_ = mustCreateAddon(t, srv.URL, "addon-update-cluster", "vpc-cni", "v1.16.0-eksbuild.1")
 
-	updateResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/addon-update-cluster/addons/vpc-cni/updates", map[string]any{
+	updateResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/addon-update-cluster/addons/vpc-cni/update", map[string]any{
 		"addonVersion":        "v1.18.3-eksbuild.3",
 		"configurationValues": "{\"env\":{\"AWS_VPC_K8S_CNI_LOGLEVEL\":\"DEBUG\"}}",
 	})
@@ -224,7 +224,7 @@ func TestEKSUpdateAddon(t *testing.T) {
 func TestEKSDescribeAddonVersions(t *testing.T) {
 	srv := newEKSServer(t)
 
-	resp := eksCall(t, http.MethodGet, srv.URL+"/addons/vpc-cni/versions", nil)
+	resp := eksCall(t, http.MethodGet, srv.URL+"/addons/supported-versions?addonName=vpc-cni", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for vpc-cni versions, got %d", resp.StatusCode)
 	}
@@ -242,7 +242,7 @@ func TestEKSDescribeAddonVersions(t *testing.T) {
 		t.Fatalf("expected at least one version in addonVersions")
 	}
 
-	resp2 := eksCall(t, http.MethodGet, srv.URL+"/addons/my-custom-addon/versions", nil)
+	resp2 := eksCall(t, http.MethodGet, srv.URL+"/addons/supported-versions?addonName=my-custom-addon", nil)
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for unknown addon, got %d", resp2.StatusCode)
 	}
@@ -256,7 +256,7 @@ func TestEKSDescribeAddonVersions(t *testing.T) {
 func TestEKSDescribeAddonConfiguration(t *testing.T) {
 	srv := newEKSServer(t)
 
-	resp := eksCall(t, http.MethodGet, srv.URL+"/addons/vpc-cni/configuration", nil)
+	resp := eksCall(t, http.MethodGet, srv.URL+"/addons/configuration-schemas?addonName=vpc-cni&addonVersion=v1.18.3-eksbuild.3", nil)
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 200 for addon configuration, got %d body=%q", resp.StatusCode, string(raw))
@@ -273,7 +273,7 @@ func TestEKSDescribeAddonConfiguration(t *testing.T) {
 		t.Fatalf("expected configuration schema to include AWS_VPC_K8S_CNI_LOGLEVEL, got %q", schema)
 	}
 
-	unknown := eksCall(t, http.MethodGet, srv.URL+"/addons/unknown-addon/configuration", nil)
+	unknown := eksCall(t, http.MethodGet, srv.URL+"/addons/configuration-schemas?addonName=unknown-addon&addonVersion=v1.0.0", nil)
 	_ = expectResourceNotFound(t, unknown)
 }
 

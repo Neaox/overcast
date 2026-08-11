@@ -121,17 +121,11 @@ func (s *Service) typedOps() map[string]op.Operation {
 		"ListAccessPolicies": op.NewTyped[listAccessPoliciesRequest, listAccessPoliciesResponse](
 			"ListAccessPolicies", s.listAccessPoliciesTyped,
 		),
-		"DescribeAccessPolicy": op.NewTyped[describeAccessPolicyRequest, describeAccessPolicyResponse](
-			"DescribeAccessPolicy", s.describeAccessPolicyTyped,
-		),
 		"ListIdentityProviderConfigs": op.NewTyped[listIdentityProviderConfigsRequest, listIdentityProviderConfigsResponse](
 			"ListIdentityProviderConfigs", s.listIdentityProviderConfigsTyped,
 		),
 		"DescribeIdentityProviderConfig": op.NewTyped[describeIdentityProviderConfigRequest, describeIdentityProviderConfigResponse](
 			"DescribeIdentityProviderConfig", s.describeIdentityProviderConfigTyped,
-		),
-		"UpdateIdentityProviderConfig": op.NewTyped[updateIdentityProviderConfigRequest, updateIdentityProviderConfigResponse](
-			"UpdateIdentityProviderConfig", s.updateIdentityProviderConfigTyped,
 		),
 		"AssociateIdentityProviderConfig": op.NewTyped[associateIdentityProviderConfigRequest, associateIdentityProviderConfigResponse](
 			"AssociateIdentityProviderConfig", s.associateIdentityProviderConfigTyped,

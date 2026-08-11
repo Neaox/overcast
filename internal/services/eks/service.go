@@ -1,14 +1,10 @@
 // Package eks provides Amazon EKS control-plane emulation.
 //
-// Implemented operations (REST JSON):
-//   - POST   /clusters
-//   - GET    /clusters
-//   - GET    /clusters/{name}
-//   - POST   /clusters/{name}/updates
-//   - POST   /clusters/{name}/kubeconfig
-//   - DELETE /clusters/{name}
-//   - POST   /clusters/{name}/node-groups
-//   - GET    /clusters/{name}/node-groups
+// EKS is restJson1. Every route this package registers is the method and URI
+// the pinned model binds the operation to — run
+// `go run -tags dev ./cmd/capgen --routes --service eks` for the generated
+// skeleton, and see RegisterRoutes for the one endpoint that is deliberately
+// not an AWS operation.
 //
 // By default (`OVERCAST_EKS_MODE=mock`) the implementation is metadata-only.
 // In live mode (`OVERCAST_EKS_MODE=live`), CreateCluster starts a k3s
@@ -314,6 +310,23 @@ func (s *Service) Stop(ctx context.Context) {
 	}
 }
 
+// RegisterRoutes registers EKS at the bindings the pinned model gives it.
+//
+// Two conventions are worth knowing before editing this list:
+//
+//   - The model spells the cluster label {clusterName} on most operations and
+//     {name} on the older ones (DescribeCluster, DeleteCluster,
+//     UpdateClusterConfig, ListUpdates, UpdateClusterVersion, DescribeUpdate,
+//     CancelUpdate). A chi label's name is local, and mixing two names at one
+//     segment position puts two param nodes in the trie for the same path.
+//     Every cluster label here is therefore {name}; the path shape, which is
+//     what a client sends, is identical either way.
+//   - POST /clusters/{name}/kubeconfig is the one endpoint here that AWS does
+//     not model. `aws eks update-kubeconfig` is a CLI-side command that calls
+//     DescribeCluster and writes the file locally, so there is no API to be
+//     faithful to; Overcast serves the generated kubeconfig instead, and the
+//     capability row says so. It is not reachable by any SDK and is not meant
+//     to be.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Post("/clusters", s.createCluster)
 	r.Get("/clusters", s.listClusters)
@@ -327,11 +340,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/clusters/{name}/access-entries/{principalArn}/access-policies", s.listAssociatedAccessPolicies)
 	r.Delete("/clusters/{name}/access-entries/{principalArn}/access-policies/{policyArn}", s.disassociateAccessPolicy)
 	r.Get("/access-policies", s.listAccessPolicies)
-	r.Get("/access-policies/{name}", s.describeAccessPolicy)
 	r.Get("/cluster-versions", s.describeClusterVersions)
 	r.Get("/clusters/{name}/identity-provider-configs", s.listIdentityProviderConfigs)
-	r.Get("/clusters/{name}/identity-provider-configs/{configType}/{configName}", s.describeIdentityProviderConfig)
-	r.Post("/clusters/{name}/identity-provider-configs/{configType}/{configName}/update", s.updateIdentityProviderConfig)
+	r.Post("/clusters/{name}/identity-provider-configs/describe", s.describeIdentityProviderConfig)
 	r.Post("/clusters/{name}/identity-provider-configs/associate", s.associateIdentityProviderConfig)
 	r.Post("/clusters/{name}/identity-provider-configs/disassociate", s.disassociateIdentityProviderConfig)
 	r.Post("/clusters/{name}/pod-identity-associations", s.createPodIdentityAssociation)
@@ -341,14 +352,14 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Delete("/clusters/{name}/pod-identity-associations/{associationId}", s.deletePodIdentityAssociation)
 	r.Get("/clusters/{name}/updates", s.listUpdates)
 	r.Post("/clusters/{name}/updates", s.updateClusterVersion)
-	r.Get("/clusters/{name}/insights", s.listInsights)
+	r.Post("/clusters/{name}/insights", s.listInsights)
 	r.Get("/clusters/{name}/insights/{insightId}", s.describeInsight)
 	r.Post("/clusters/{name}/update-config", s.updateClusterConfig)
 	r.Get("/clusters/{name}/updates/{updateId}", s.describeUpdate)
 	r.Post("/clusters/{name}/kubeconfig", s.updateKubeconfig)
 	r.Delete("/clusters/{name}", s.deleteCluster)
 	r.Post("/clusters/{name}/node-groups", s.createNodegroup)
-	r.Post("/clusters/{name}/node-groups/{nodegroupName}/updates", s.updateNodegroupVersion)
+	r.Post("/clusters/{name}/node-groups/{nodegroupName}/update-version", s.updateNodegroupVersion)
 	r.Post("/clusters/{name}/node-groups/{nodegroupName}/update-config", s.updateNodegroupConfig)
 	r.Get("/clusters/{name}/node-groups", s.listNodegroups)
 	r.Get("/clusters/{name}/node-groups/{nodegroupName}", s.describeNodegroup)
@@ -363,10 +374,24 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Post("/clusters/{name}/addons", s.createAddon)
 	r.Get("/clusters/{name}/addons", s.listAddons)
 	r.Get("/clusters/{name}/addons/{addonName}", s.describeAddon)
-	r.Post("/clusters/{name}/addons/{addonName}/updates", s.updateAddon)
+	r.Post("/clusters/{name}/addons/{addonName}/update", s.updateAddon)
 	r.Delete("/clusters/{name}/addons/{addonName}", s.deleteAddon)
-	r.Get("/addons/{addonName}/versions", s.describeAddonVersions)
-	r.Get("/addons/{addonName}/configuration", s.describeAddonConfiguration)
+	// Both add-on catalog operations bind a fixed path and take the add-on name
+	// as an httpQuery member, so there is no label to read here.
+	r.Get("/addons/supported-versions", s.describeAddonVersions)
+	r.Get("/addons/configuration-schemas", s.describeAddonConfiguration)
+}
+
+// PathPrefixes satisfies router.PathPrefixService with the four root paths EKS
+// owns. They matter only to router tests that register a subset of services:
+// without them an excluded EKS would leave these paths to S3's wildcard and the
+// test would see a fallthrough no real run produces. They are deliberately not
+// added to detectService — see the note there on why claiming a root segment
+// costs a legal S3 bucket name, and
+// internal/middleware/detectservice_routes_test.go, which records EKS as
+// classified from the SigV4 credential scope instead.
+func (s *Service) PathPrefixes() []string {
+	return []string{"/clusters", "/addons", "/access-policies", "/cluster-versions"}
 }
 
 // TagsRouter returns a chi.Router for the EKS tagging routes that live under
@@ -397,12 +422,62 @@ func (s *Service) liveModeEnabled() bool {
 	return s.cfg != nil && s.cfg.EKSMode == config.EKSModeLive
 }
 
-func (s *Service) writeLiveModeNotImplemented(w http.ResponseWriter, r *http.Request) {
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
+// liveModeNotImplementedError is the mixed-mode refusal: a cluster created in
+// mock mode is not readable while OVERCAST_EKS_MODE=live.
+func liveModeNotImplementedError() *protocol.AWSError {
+	return &protocol.AWSError{
 		Code:       protocol.ErrNotImplemented.Code,
 		Message:    "Operation is unavailable for clusters created in mock mode while OVERCAST_EKS_MODE=live.",
 		HTTPStatus: http.StatusNotImplemented,
-	})
+	}
+}
+
+// invalidParameter builds EKS's modeled 400. Every operation in this package
+// binds InvalidParameterException; none binds AWS's generic MissingParameter,
+// so a missing required member is reported as this rather than through
+// serviceutil.RequireString.
+func invalidParameter(message string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidParameterException",
+		Message:    message,
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// missingRequiredMember names a member the model marks @required.
+func missingRequiredMember(member string) *protocol.AWSError {
+	return invalidParameter(member + " is required")
+}
+
+// invalidNextToken is the answer to a continuation token that does not decode.
+// Treating one as "start again from page one" hands the caller the whole item
+// set a second time, which SDK pagination reads as a legitimate page.
+func invalidNextToken() *protocol.AWSError {
+	return invalidParameter("The specified nextToken is not valid.")
+}
+
+func resourceNotFound(message string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceNotFoundException",
+		Message:    message,
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+// writeResult writes a handler core's result: the modeled error if there is
+// one, otherwise the response document with a 200.
+//
+// The REST handlers for the operations #858 re-bound decode the request from
+// its HTTP binding and then call the same core the typed dispatch path calls,
+// ending here. Every other operation in this package still has two
+// implementations of its logic — the handler and the *Typed function — which is
+// how updateAddonTyped came to be missing validation the REST handler had.
+func writeResult[T any](w http.ResponseWriter, r *http.Request, out *T, aerr *protocol.AWSError) {
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, out)
 }
 
 func (s *Service) writeLiveModeRequiresDocker(w http.ResponseWriter, r *http.Request) {
@@ -421,24 +496,30 @@ func (s *Service) isMockModeClusterRecord(cluster *Cluster) bool {
 }
 
 func (s *Service) requireAccessibleCluster(w http.ResponseWriter, r *http.Request, region, name string) (*Cluster, bool) {
-	cluster, found, err := s.getCluster(r.Context(), region, name)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return nil, false
-	}
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    "No cluster found for name: " + name,
-			HTTPStatus: http.StatusNotFound,
-		})
-		return nil, false
-	}
-	if s.liveModeEnabled() && s.isMockModeClusterRecord(cluster) {
-		s.writeLiveModeNotImplemented(w, r)
+	cluster, aerr := s.accessibleCluster(r.Context(), region, name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return nil, false
 	}
 	return cluster, true
+}
+
+// accessibleCluster loads a cluster and applies the mixed-mode rule: a record
+// created in mock mode is not readable while OVERCAST_EKS_MODE=live. Handler
+// cores shared between the REST and typed paths call this rather than
+// validateCluster, so the rule holds on both.
+func (s *Service) accessibleCluster(ctx context.Context, region, name string) (*Cluster, *protocol.AWSError) {
+	cluster, found, err := s.getCluster(ctx, region, name)
+	if err != nil {
+		return nil, protocol.ErrInternalError
+	}
+	if !found {
+		return nil, resourceNotFound("No cluster found for name: " + name)
+	}
+	if s.liveModeEnabled() && s.isMockModeClusterRecord(cluster) {
+		return nil, liveModeNotImplementedError()
+	}
+	return cluster, nil
 }
 
 // k3sImageForVersion maps a Kubernetes minor version string (e.g. "1.31") to a

@@ -141,7 +141,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | AppRegistry      | [appregistry.md](./services/appregistry.md)         | 22  | IaC/discovery-oriented stub   |
 | Backup           | [backup.md](./services/backup.md)                   | 9   | IaC/discovery-oriented stub   |
 | CloudTrail       | [cloudtrail.md](./services/cloudtrail.md)           | 12  | IaC/discovery-oriented stub   |
-| EKS              | [eks.md](./services/eks.md)                         | 52  | IaC/discovery-oriented stub   |
+| EKS              | [eks.md](./services/eks.md)                         | 50  | IaC/discovery-oriented stub   |
 | ELBv2            | [elb.md](./services/elb.md)                         | 18  | IaC/discovery-oriented stub   |
 | MSK              | [msk.md](./services/msk.md)                         | 29  | IaC/discovery-oriented stub   |
 | Organizations    | [organizations.md](./services/organizations.md)     | 1   | IaC/discovery-oriented stub   |

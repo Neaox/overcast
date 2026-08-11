@@ -204,7 +204,7 @@ func TestLiveModeNodegroupLifecycleAllowsLiveRecord(t *testing.T) {
 	}
 
 	updateVerPayload, _ := json.Marshal(map[string]any{"version": "1.32"})
-	updateVerReq := httptest.NewRequest(http.MethodPost, "/clusters/live-nodegroups/node-groups/ng-a/updates", bytes.NewReader(updateVerPayload))
+	updateVerReq := httptest.NewRequest(http.MethodPost, "/clusters/live-nodegroups/node-groups/ng-a/update-version", bytes.NewReader(updateVerPayload))
 	updateVerReq.Header.Set("Content-Type", "application/json")
 	updateVerRec := httptest.NewRecorder()
 	r.ServeHTTP(updateVerRec, updateVerReq)
@@ -272,7 +272,7 @@ func TestLiveModeAddonLifecycleAllowsLiveRecord(t *testing.T) {
 	updatePayload, _ := json.Marshal(map[string]any{
 		"addonVersion": "v1.11.2-eksbuild.1",
 	})
-	updateReq := httptest.NewRequest(http.MethodPost, "/clusters/live-addons/addons/coredns/updates", bytes.NewReader(updatePayload))
+	updateReq := httptest.NewRequest(http.MethodPost, "/clusters/live-addons/addons/coredns/update", bytes.NewReader(updatePayload))
 	updateReq.Header.Set("Content-Type", "application/json")
 	updateRec := httptest.NewRecorder()
 	r.ServeHTTP(updateRec, updateReq)
@@ -484,24 +484,18 @@ func TestLiveModeIdentityProviderLifecycleAllowsLiveRecord(t *testing.T) {
 		t.Fatalf("expected one identity provider config after associate, got %#v", listBody["identityProviderConfigs"])
 	}
 
-	describeReq := httptest.NewRequest(http.MethodGet, "/clusters/live-idp/identity-provider-configs/oidc/corp-oidc", nil)
+	describePayload, _ := json.Marshal(map[string]any{
+		"identityProviderConfig": map[string]any{
+			"type": "oidc",
+			"name": "corp-oidc",
+		},
+	})
+	describeReq := httptest.NewRequest(http.MethodPost, "/clusters/live-idp/identity-provider-configs/describe", bytes.NewReader(describePayload))
+	describeReq.Header.Set("Content-Type", "application/json")
 	describeRec := httptest.NewRecorder()
 	r.ServeHTTP(describeRec, describeReq)
 	if describeRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 describing identity provider config on live record, got %d body=%s", describeRec.Code, describeRec.Body.String())
-	}
-
-	updatePayload, _ := json.Marshal(map[string]any{
-		"oidc": map[string]any{
-			"groupsClaim": "groups",
-		},
-	})
-	updateReq := httptest.NewRequest(http.MethodPost, "/clusters/live-idp/identity-provider-configs/oidc/corp-oidc/update", bytes.NewReader(updatePayload))
-	updateReq.Header.Set("Content-Type", "application/json")
-	updateRec := httptest.NewRecorder()
-	r.ServeHTTP(updateRec, updateReq)
-	if updateRec.Code != http.StatusOK {
-		t.Fatalf("expected 200 updating identity provider config on live record, got %d body=%s", updateRec.Code, updateRec.Body.String())
 	}
 
 	disassociatePayload, _ := json.Marshal(map[string]any{

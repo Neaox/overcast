@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1429,
+  "total_ops": 1427,
   "services": [
     {
       "service": "s3",
@@ -7950,8 +7950,8 @@
     {
       "service": "eks",
       "display_name": "EKS",
-      "total_ops": 52,
-      "implemented_ops": 52,
+      "total_ops": 50,
+      "implemented_ops": 50,
       "operations": [
         {
           "operation": "CreateCluster",
@@ -8018,12 +8018,6 @@
           "notes": "Returns synthetic managed EKS access policy catalog"
         },
         {
-          "operation": "DescribeAccessPolicy",
-          "category": "Clusters",
-          "status": "✅ Supported",
-          "notes": "Returns synthetic managed EKS access policy details by name"
-        },
-        {
           "operation": "ListAssociatedAccessPolicies",
           "category": "Clusters",
           "status": "✅ Supported",
@@ -8044,14 +8038,8 @@
         {
           "operation": "DescribeIdentityProviderConfig",
           "category": "Clusters",
-          "status": "🚧 WIP",
-          "notes": "Returns stored identity provider config details by type/name with inline tags; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
-        },
-        {
-          "operation": "UpdateIdentityProviderConfig",
-          "category": "Clusters",
           "status": "✅ Supported",
-          "notes": "Updates stored identity provider config fields and records an update entry"
+          "notes": "Returns the stored OIDC config nested under identityProviderConfig.oidc, with its ARN, status and inline tags"
         },
         {
           "operation": "AssociateIdentityProviderConfig",
@@ -8104,8 +8092,8 @@
         {
           "operation": "ListInsights",
           "category": "Clusters",
-          "status": "🚧 WIP",
-          "notes": "Returns synthetic health/readiness insight summaries for a cluster; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
+          "status": "✅ Supported",
+          "notes": "Returns synthetic health/readiness insight summaries for a cluster; honours the modeled category/kubernetesVersion/status filter and maxResults/nextToken paging"
         },
         {
           "operation": "DescribeInsight",
@@ -8141,7 +8129,8 @@
           "operation": "UpdateKubeconfig",
           "category": "Helpers",
           "status": "✅ Supported",
-          "notes": "Returns generated kubeconfig YAML for mock clusters and ready live clusters (503 until live endpoint/CA are ready)"
+          "notes": "Emulator extension, not an AWS API operation — `aws eks update-kubeconfig` is a CLI-side command that calls DescribeCluster and writes the file locally, so no SDK calls this. Overcast returns the generated kubeconfig YAML instead (503 until a live cluster's endpoint/CA are ready)",
+          "docs_url": "[cli](https://docs.aws.amazon.com/cli/latest/reference/eks/update-kubeconfig.html)"
         },
         {
           "operation": "CreateNodegroup",
@@ -8152,8 +8141,8 @@
         {
           "operation": "UpdateNodegroupVersion",
           "category": "Nodegroups",
-          "status": "🚧 WIP",
-          "notes": "Updates stored nodegroup version metadata; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
+          "status": "✅ Supported",
+          "notes": "Updates stored nodegroup version, releaseVersion and launchTemplate; records an update entry. No body member is required, matching the model"
         },
         {
           "operation": "UpdateNodegroupConfig",
@@ -8238,8 +8227,8 @@
         {
           "operation": "UpdateAddon",
           "category": "Addons",
-          "status": "🚧 WIP",
-          "notes": "Updates stored add-on version/configuration and records an update entry; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
+          "status": "✅ Supported",
+          "notes": "Updates stored add-on version/configuration/service account role and records an update entry; resolveConflicts is echoed into the update's params but not enforced"
         },
         {
           "operation": "DeleteAddon",
@@ -8250,14 +8239,14 @@
         {
           "operation": "DescribeAddonConfiguration",
           "category": "Addons",
-          "status": "🚧 WIP",
-          "notes": "Returns synthetic configuration schema for core add-ons; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
+          "status": "✅ Supported",
+          "notes": "Returns the synthetic configuration schema for the requested add-on and version; both query members are required, and an uncatalogued version is a ResourceNotFoundException"
         },
         {
           "operation": "DescribeAddonVersions",
           "category": "Addons",
-          "status": "🚧 WIP",
-          "notes": "Returns synthetic version catalog for vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver; empty for unknown add-ons; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
+          "status": "✅ Supported",
+          "notes": "Returns the synthetic version catalog for vpc-cni, coredns, kube-proxy and aws-ebs-csi-driver, filtered by the addonName/kubernetesVersion/types/publishers/owners query members and paged by maxResults/nextToken"
         }
       ]
     },

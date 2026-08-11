@@ -121,64 +121,17 @@ func TestEKSDescribeIdentityProviderConfig(t *testing.T) {
 	_ = mustCreateCluster(t, srv.URL, "idp-describe-cluster", nil)
 	_ = mustAssociateIdentityProviderConfig(t, srv.URL, "idp-describe-cluster", "okta-main")
 
-	descResp := eksCall(t, http.MethodGet, srv.URL+"/clusters/idp-describe-cluster/identity-provider-configs/oidc/okta-main", nil)
-	if descResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for describe identity provider config, got %d", descResp.StatusCode)
+	oidc := mustDescribeIdentityProviderConfig(t, srv.URL, "idp-describe-cluster", "okta-main")
+	if oidc["identityProviderConfigName"] != "okta-main" {
+		t.Fatalf("expected identityProviderConfigName okta-main, got %v", oidc)
 	}
-	descBody := decodeBody(t, descResp)
-	cfg, ok := descBody["identityProviderConfig"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected identityProviderConfig in response, got %#v", descBody)
-	}
-	if cfg["type"] != "oidc" || cfg["name"] != "okta-main" {
-		t.Fatalf("expected oidc/okta-main config, got %v", cfg)
-	}
-	oidc, _ := cfg["oidc"].(map[string]any)
 	if oidc["issuerUrl"] != "https://idp.example.com" {
 		t.Fatalf("expected issuerUrl in oidc config, got %v", oidc)
 	}
 
-	missing := eksCall(t, http.MethodGet, srv.URL+"/clusters/idp-describe-cluster/identity-provider-configs/oidc/missing", nil)
+	missing := eksCall(t, http.MethodPost, srv.URL+"/clusters/idp-describe-cluster/identity-provider-configs/describe",
+		map[string]any{"identityProviderConfig": map[string]any{"type": "oidc", "name": "missing"}})
 	_ = expectResourceNotFound(t, missing)
-}
-
-func TestEKSUpdateIdentityProviderConfig(t *testing.T) {
-	srv := newEKSServer(t)
-
-	_ = mustCreateCluster(t, srv.URL, "idp-update-cluster", nil)
-	_ = mustAssociateIdentityProviderConfig(t, srv.URL, "idp-update-cluster", "okta-main")
-
-	updateResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/idp-update-cluster/identity-provider-configs/oidc/okta-main/update", map[string]any{
-		"oidc": map[string]any{
-			"issuerUrl":     "https://idp-v2.example.com",
-			"usernameClaim": "email",
-		},
-	})
-	if updateResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for update identity provider config, got %d", updateResp.StatusCode)
-	}
-	body := decodeBody(t, updateResp)
-	update, ok := body["update"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected update in response, got %#v", body)
-	}
-	if update["type"] != "UpdateIdentityProviderConfig" {
-		t.Fatalf("expected update type UpdateIdentityProviderConfig, got %v", update["type"])
-	}
-
-	descResp := eksCall(t, http.MethodGet, srv.URL+"/clusters/idp-update-cluster/identity-provider-configs/oidc/okta-main", nil)
-	if descResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for describe identity provider config, got %d", descResp.StatusCode)
-	}
-	descBody := decodeBody(t, descResp)
-	cfg, _ := descBody["identityProviderConfig"].(map[string]any)
-	oidc, _ := cfg["oidc"].(map[string]any)
-	if oidc["issuerUrl"] != "https://idp-v2.example.com" || oidc["usernameClaim"] != "email" {
-		t.Fatalf("expected updated oidc fields, got %v", oidc)
-	}
-	if oidc["groupsClaim"] != "groups" {
-		t.Fatalf("expected untouched groupsClaim to remain, got %v", oidc)
-	}
 }
 
 func TestEKSAssociateIdentityProviderConfigPersistsInlineTags(t *testing.T) {
@@ -204,11 +157,10 @@ func TestEKSAssociateIdentityProviderConfigPersistsInlineTags(t *testing.T) {
 		t.Fatalf("expected AssociateIdentityProviderConfig update type, got %#v", update["type"])
 	}
 
-	describeBody := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/clusters/idp-tags-cluster/identity-provider-configs/oidc/okta-tags", nil), http.StatusOK)
-	cfg, _ := describeBody["identityProviderConfig"].(map[string]any)
-	tags, _ := cfg["tags"].(map[string]any)
+	oidc := mustDescribeIdentityProviderConfig(t, srv.URL, "idp-tags-cluster", "okta-tags")
+	tags, _ := oidc["tags"].(map[string]any)
 	if len(tags) != 2 || tags["env"] != "dev" || tags["owner"] != "eks-team" {
-		t.Fatalf("expected inline tags in identity provider describe response, got %#v", cfg["tags"])
+		t.Fatalf("expected inline tags in identity provider describe response, got %#v", oidc["tags"])
 	}
 }
 
@@ -243,10 +195,9 @@ func TestEKSIdentityProviderTagsDoNotLeakAcrossClusterDeleteRecreate(t *testing.
 		},
 	}), http.StatusOK)
 
-	describeBody := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/clusters/idp-tags-cleanup-cluster/identity-provider-configs/oidc/okta-tags", nil), http.StatusOK)
-	cfg, _ := describeBody["identityProviderConfig"].(map[string]any)
-	tags, _ := cfg["tags"].(map[string]any)
+	oidc := mustDescribeIdentityProviderConfig(t, srv.URL, "idp-tags-cleanup-cluster", "okta-tags")
+	tags, _ := oidc["tags"].(map[string]any)
 	if len(tags) != 0 {
-		t.Fatalf("expected no leaked inline tags after cluster delete/recreate, got %#v", cfg["tags"])
+		t.Fatalf("expected no leaked inline tags after cluster delete/recreate, got %#v", oidc["tags"])
 	}
 }

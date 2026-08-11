@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -240,20 +241,63 @@ func (s *Service) describeUpdateTyped(ctx context.Context, req *describeUpdateRe
 
 // ─── Insights ─────────────────────────────────────────────────────────────────
 
+// listInsightsRequest mirrors ListInsightsRequest. Only clusterName is bound to
+// the URI; filter, maxResults and nextToken are body members on a POST, which
+// is why this operation has no query parsing.
 type listInsightsRequest struct {
-	ClusterName string `json:"name" cbor:"name"`
+	ClusterName string          `json:"name" cbor:"name"`
+	Filter      *insightsFilter `json:"filter" cbor:"filter"`
+	MaxResults  int             `json:"maxResults" cbor:"maxResults"`
+	NextToken   string          `json:"nextToken" cbor:"nextToken"`
+}
+
+type insightsFilter struct {
+	Categories         []string `json:"categories" cbor:"categories"`
+	KubernetesVersions []string `json:"kubernetesVersions" cbor:"kubernetesVersions"`
+	Statuses           []string `json:"statuses" cbor:"statuses"`
 }
 
 type listInsightsResponse struct {
-	Insights []map[string]any `json:"insights" cbor:"insights"`
+	Insights  []map[string]any `json:"insights" cbor:"insights"`
+	NextToken string           `json:"nextToken,omitempty" cbor:"nextToken,omitempty"`
 }
+
+// insightsPageOptions caps a page at the model's maxResults range (1-100).
+var insightsPageOptions = serviceutil.PaginateOptions{DefaultLimit: 100, MaxLimit: 100}
 
 func (s *Service) listInsightsTyped(ctx context.Context, req *listInsightsRequest) (*listInsightsResponse, *protocol.AWSError) {
 	region := middleware.RegionFromContext(ctx, s.cfg.Region)
-	if _, aerr := s.validateCluster(ctx, region, req.ClusterName); aerr != nil {
+	if _, aerr := s.accessibleCluster(ctx, region, req.ClusterName); aerr != nil {
 		return nil, aerr
 	}
-	return &listInsightsResponse{Insights: syntheticClusterInsights(req.ClusterName)}, nil
+
+	insights := make([]map[string]any, 0, 1)
+	for _, insight := range syntheticClusterInsights(req.ClusterName) {
+		if req.Filter.matches(insight) {
+			insights = append(insights, insight)
+		}
+	}
+
+	page, err := serviceutil.Paginate(insights, req.MaxResults, req.NextToken, insightsPageOptions)
+	if err != nil {
+		return nil, invalidNextToken()
+	}
+	return &listInsightsResponse{Insights: page.Items, NextToken: page.NextToken}, nil
+}
+
+// matches applies the modeled InsightsFilter. A nil filter, or one whose lists
+// are all empty, matches every insight.
+func (f *insightsFilter) matches(insight map[string]any) bool {
+	if f == nil {
+		return true
+	}
+	category, _ := insight["category"].(string)
+	kubernetesVersion, _ := insight["kubernetesVersion"].(string)
+	insightStatus, _ := insight["insightStatus"].(map[string]any)
+	status, _ := insightStatus["status"].(string)
+	return matchesFilter(f.Categories, category) &&
+		matchesFilter(f.KubernetesVersions, kubernetesVersion) &&
+		matchesFilter(f.Statuses, status)
 }
 
 type describeInsightRequest struct {
@@ -498,10 +542,18 @@ func (s *Service) deleteNodegroupTyped(ctx context.Context, req *deleteNodegroup
 	return &deleteNodegroupResponse{Nodegroup: ng}, nil
 }
 
+// updateNodegroupVersionRequest mirrors UpdateNodegroupVersionRequest.
+// clusterName and nodegroupName are httpLabels; none of the body members is
+// @required, so `aws eks update-nodegroup-version --release-version …` with no
+// --kubernetes-version is a legal call and is accepted here.
 type updateNodegroupVersionRequest struct {
-	ClusterName   string `json:"name" cbor:"name"`
-	NodegroupName string `json:"nodegroupName" cbor:"nodegroupName"`
-	Version       string `json:"version" cbor:"version"`
+	ClusterName        string         `json:"name" cbor:"name"`
+	NodegroupName      string         `json:"nodegroupName" cbor:"nodegroupName"`
+	Version            string         `json:"version" cbor:"version"`
+	ReleaseVersion     string         `json:"releaseVersion" cbor:"releaseVersion"`
+	LaunchTemplate     map[string]any `json:"launchTemplate" cbor:"launchTemplate"`
+	Force              bool           `json:"force" cbor:"force"`
+	ClientRequestToken string         `json:"clientRequestToken" cbor:"clientRequestToken"`
 }
 
 type updateNodegroupVersionResponse struct {
@@ -510,7 +562,7 @@ type updateNodegroupVersionResponse struct {
 
 func (s *Service) updateNodegroupVersionTyped(ctx context.Context, req *updateNodegroupVersionRequest) (*updateNodegroupVersionResponse, *protocol.AWSError) {
 	region := middleware.RegionFromContext(ctx, s.cfg.Region)
-	if _, aerr := s.validateCluster(ctx, region, req.ClusterName); aerr != nil {
+	if _, aerr := s.accessibleCluster(ctx, region, req.ClusterName); aerr != nil {
 		return nil, aerr
 	}
 	nodegroup, found, err := s.getNodegroup(ctx, region, req.ClusterName, req.NodegroupName)
@@ -518,21 +570,35 @@ func (s *Service) updateNodegroupVersionTyped(ctx context.Context, req *updateNo
 		return nil, protocol.ErrInternalError
 	}
 	if !found {
-		return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("No nodegroup found for name: %s", req.NodegroupName), HTTPStatus: 404}
+		return nil, resourceNotFound(fmt.Sprintf("No nodegroup found for name: %s", req.NodegroupName))
 	}
-	nodegroup.Version = req.Version
+
+	params := make([]map[string]any, 0, 4)
+	if req.Version != "" {
+		nodegroup.Version = req.Version
+		params = append(params, map[string]any{"type": "Version", "value": req.Version})
+	}
+	if req.ReleaseVersion != "" {
+		nodegroup.ReleaseVersion = req.ReleaseVersion
+		params = append(params, map[string]any{"type": "ReleaseVersion", "value": req.ReleaseVersion})
+	}
+	if len(req.LaunchTemplate) > 0 {
+		nodegroup.LaunchTemplate = req.LaunchTemplate
+		params = append(params, map[string]any{"type": "LaunchTemplateVersion", "value": req.LaunchTemplate["version"]})
+	}
+	params = append(params, map[string]any{"type": "NodegroupName", "value": req.NodegroupName})
+
 	if err := s.putNodegroup(ctx, region, nodegroup); err != nil {
 		return nil, protocol.ErrInternalError
 	}
 	update := &Update{
 		ID:     fmt.Sprintf("upd-ng-%s-%d", req.NodegroupName, s.clk.Now().UnixNano()),
 		Status: "Successful", Type: "VersionUpdate", CreatedAt: s.clk.Now(),
-		Params: []map[string]any{
-			{"type": "Version", "value": req.Version},
-			{"type": "NodegroupName", "value": req.NodegroupName},
-		},
+		Params: params,
 	}
-	_ = s.putUpdate(ctx, region, req.ClusterName, update)
+	if err := s.putUpdate(ctx, region, req.ClusterName, update); err != nil {
+		return nil, protocol.ErrInternalError
+	}
 	return &updateNodegroupVersionResponse{Update: update}, nil
 }
 
@@ -837,12 +903,18 @@ func (s *Service) deleteAddonTyped(ctx context.Context, req *deleteAddonRequest)
 	return &deleteAddonResponse{Addon: a}, nil
 }
 
+// updateAddonRequest mirrors UpdateAddonRequest. clusterName and addonName are
+// httpLabels; the rest are body members and none of them is @required, so an
+// update that changes nothing is accepted rather than rejected.
 type updateAddonRequest struct {
-	ClusterName           string `json:"name" cbor:"name"`
-	AddonName             string `json:"addonName" cbor:"addonName"`
-	AddonVersion          string `json:"addonVersion" cbor:"addonVersion"`
-	ConfigurationValues   string `json:"configurationValues" cbor:"configurationValues"`
-	ServiceAccountRoleArn string `json:"serviceAccountRoleArn" cbor:"serviceAccountRoleArn"`
+	ClusterName           string           `json:"name" cbor:"name"`
+	AddonName             string           `json:"addonName" cbor:"addonName"`
+	AddonVersion          string           `json:"addonVersion" cbor:"addonVersion"`
+	ConfigurationValues   string           `json:"configurationValues" cbor:"configurationValues"`
+	ServiceAccountRoleArn string           `json:"serviceAccountRoleArn" cbor:"serviceAccountRoleArn"`
+	ResolveConflicts      string           `json:"resolveConflicts" cbor:"resolveConflicts"`
+	ClientRequestToken    string           `json:"clientRequestToken" cbor:"clientRequestToken"`
+	PodIdentityAssoc      []map[string]any `json:"podIdentityAssociations" cbor:"podIdentityAssociations"`
 }
 
 type updateAddonResponse struct {
@@ -851,7 +923,7 @@ type updateAddonResponse struct {
 
 func (s *Service) updateAddonTyped(ctx context.Context, req *updateAddonRequest) (*updateAddonResponse, *protocol.AWSError) {
 	region := middleware.RegionFromContext(ctx, s.cfg.Region)
-	if _, aerr := s.validateCluster(ctx, region, req.ClusterName); aerr != nil {
+	if _, aerr := s.accessibleCluster(ctx, region, req.ClusterName); aerr != nil {
 		return nil, aerr
 	}
 	a, found, err := s.getAddon(ctx, region, req.ClusterName, req.AddonName)
@@ -859,7 +931,7 @@ func (s *Service) updateAddonTyped(ctx context.Context, req *updateAddonRequest)
 		return nil, protocol.ErrInternalError
 	}
 	if !found {
-		return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("No addon found for name: %s", req.AddonName), HTTPStatus: 404}
+		return nil, resourceNotFound(fmt.Sprintf("No addon found for name: %s", req.AddonName))
 	}
 	params := make([]map[string]any, 0, 4)
 	if req.AddonVersion != "" {
@@ -874,6 +946,9 @@ func (s *Service) updateAddonTyped(ctx context.Context, req *updateAddonRequest)
 		a.ServiceAccountRoleArn = req.ServiceAccountRoleArn
 		params = append(params, map[string]any{"type": "ServiceAccountRoleArn", "value": req.ServiceAccountRoleArn})
 	}
+	if req.ResolveConflicts != "" {
+		params = append(params, map[string]any{"type": "ResolveConflicts", "value": req.ResolveConflicts})
+	}
 	params = append(params, map[string]any{"type": "AddonName", "value": req.AddonName})
 	if err := s.putAddon(ctx, region, a); err != nil {
 		return nil, protocol.ErrInternalError
@@ -882,39 +957,113 @@ func (s *Service) updateAddonTyped(ctx context.Context, req *updateAddonRequest)
 		ID:     fmt.Sprintf("upd-addon-%s-%d", req.AddonName, s.clk.Now().UnixNano()),
 		Status: "Successful", Type: "AddonUpdate", CreatedAt: s.clk.Now(), Params: params,
 	}
-	_ = s.putUpdate(ctx, region, req.ClusterName, update)
+	if err := s.putUpdate(ctx, region, req.ClusterName, update); err != nil {
+		return nil, protocol.ErrInternalError
+	}
 	return &updateAddonResponse{Update: update}, nil
 }
 
+// describeAddonVersionsRequest mirrors DescribeAddonVersionsRequest, whose
+// every member is an httpQuery parameter on the fixed path
+// /addons/supported-versions.
 type describeAddonVersionsRequest struct {
-	AddonName string `json:"addonName" cbor:"addonName"`
+	KubernetesVersion string   `json:"kubernetesVersion" cbor:"kubernetesVersion"`
+	MaxResults        int      `json:"maxResults" cbor:"maxResults"`
+	NextToken         string   `json:"nextToken" cbor:"nextToken"`
+	AddonName         string   `json:"addonName" cbor:"addonName"`
+	Types             []string `json:"types" cbor:"types"`
+	Publishers        []string `json:"publishers" cbor:"publishers"`
+	Owners            []string `json:"owners" cbor:"owners"`
 }
 
 type describeAddonVersionsResponse struct {
-	Addons []any `json:"addons" cbor:"addons"`
+	Addons    []map[string]any `json:"addons" cbor:"addons"`
+	NextToken string           `json:"nextToken,omitempty" cbor:"nextToken,omitempty"`
 }
 
-func (s *Service) describeAddonVersionsTyped(ctx context.Context, req *describeAddonVersionsRequest) (*describeAddonVersionsResponse, *protocol.AWSError) {
-	versions := addonVersionCatalog[req.AddonName]
-	if len(versions) == 0 {
-		return &describeAddonVersionsResponse{Addons: []any{}}, nil
+// addonCatalogPageOptions caps a page at the model's maxResults range (1-100).
+// The default page size is not modeled, so the cap stands in for it; the
+// synthetic catalog is smaller than one page either way.
+var addonCatalogPageOptions = serviceutil.PaginateOptions{DefaultLimit: 100, MaxLimit: 100}
+
+func (s *Service) describeAddonVersionsTyped(_ context.Context, req *describeAddonVersionsRequest) (*describeAddonVersionsResponse, *protocol.AWSError) {
+	names := make([]string, 0, len(addonCatalog))
+	for name := range addonCatalog {
+		names = append(names, name)
 	}
-	versionEntries := make([]map[string]any, 0, len(versions))
-	for _, v := range versions {
-		versionEntries = append(versionEntries, map[string]any{
-			"addonVersion": v,
-			"compatibilities": []map[string]any{
-				{"clusterVersion": "1.30", "defaultVersion": v == versions[0]},
-				{"clusterVersion": "1.29", "defaultVersion": false},
-			},
+	sort.Strings(names)
+
+	addons := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		entry := addonCatalog[name]
+		if req.AddonName != "" && req.AddonName != name {
+			continue
+		}
+		if !matchesFilter(req.Types, entry.Type) ||
+			!matchesFilter(req.Publishers, entry.Publisher) ||
+			!matchesFilter(req.Owners, entry.Owner) {
+			continue
+		}
+		versions := addonVersionInfos(entry, req.KubernetesVersion)
+		if len(versions) == 0 {
+			continue
+		}
+		addons = append(addons, map[string]any{
+			"addonName":     name,
+			"type":          entry.Type,
+			"publisher":     entry.Publisher,
+			"owner":         entry.Owner,
+			"addonVersions": versions,
 		})
 	}
-	entry := map[string]any{"addonName": req.AddonName, "addonVersions": versionEntries}
-	return &describeAddonVersionsResponse{Addons: []any{entry}}, nil
+
+	page, err := serviceutil.Paginate(addons, req.MaxResults, req.NextToken, addonCatalogPageOptions)
+	if err != nil {
+		return nil, invalidNextToken()
+	}
+	return &describeAddonVersionsResponse{Addons: page.Items, NextToken: page.NextToken}, nil
 }
 
+// matchesFilter reports whether value passes a modeled list filter. An absent
+// filter matches everything, which is what AWS's optional list members mean.
+func matchesFilter(filter []string, value string) bool {
+	return len(filter) == 0 || slices.Contains(filter, value)
+}
+
+// addonVersionInfos builds the AddonVersionInfo list for one catalog entry,
+// dropping versions that are not compatible with kubernetesVersion when the
+// caller filtered on one.
+func addonVersionInfos(entry addonCatalogEntry, kubernetesVersion string) []map[string]any {
+	infos := make([]map[string]any, 0, len(entry.Versions))
+	for i, version := range entry.Versions {
+		compatibilities := make([]map[string]any, 0, len(addonCatalogClusterVersions))
+		for j, clusterVersion := range addonCatalogClusterVersions {
+			if kubernetesVersion != "" && kubernetesVersion != clusterVersion {
+				continue
+			}
+			compatibilities = append(compatibilities, map[string]any{
+				"clusterVersion": clusterVersion,
+				// Only the newest add-on version is the default, and only for
+				// the newest cluster version.
+				"defaultVersion": i == 0 && j == 0,
+			})
+		}
+		if len(compatibilities) == 0 {
+			continue
+		}
+		infos = append(infos, map[string]any{
+			"addonVersion":    version,
+			"compatibilities": compatibilities,
+		})
+	}
+	return infos
+}
+
+// describeAddonConfigurationRequest mirrors DescribeAddonConfigurationRequest.
+// Both members are @required httpQuery parameters.
 type describeAddonConfigurationRequest struct {
-	AddonName string `json:"addonName" cbor:"addonName"`
+	AddonName    string `json:"addonName" cbor:"addonName"`
+	AddonVersion string `json:"addonVersion" cbor:"addonVersion"`
 }
 
 type describeAddonConfigurationResponse struct {
@@ -923,13 +1072,19 @@ type describeAddonConfigurationResponse struct {
 	ConfigurationSchema string `json:"configurationSchema" cbor:"configurationSchema"`
 }
 
-func (s *Service) describeAddonConfigurationTyped(ctx context.Context, req *describeAddonConfigurationRequest) (*describeAddonConfigurationResponse, *protocol.AWSError) {
-	cfg, ok := addonConfigurationCatalog[req.AddonName]
-	if !ok {
-		return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("No addon configuration found for name: %s", req.AddonName), HTTPStatus: 404}
+func (s *Service) describeAddonConfigurationTyped(_ context.Context, req *describeAddonConfigurationRequest) (*describeAddonConfigurationResponse, *protocol.AWSError) {
+	if req.AddonName == "" {
+		return nil, missingRequiredMember("addonName")
+	}
+	if req.AddonVersion == "" {
+		return nil, missingRequiredMember("addonVersion")
+	}
+	entry, ok := addonCatalog[req.AddonName]
+	if !ok || !slices.Contains(entry.Versions, req.AddonVersion) {
+		return nil, resourceNotFound(fmt.Sprintf("No addon configuration found for addon %s version %s", req.AddonName, req.AddonVersion))
 	}
 	return &describeAddonConfigurationResponse{
-		AddonName: req.AddonName, AddonVersion: cfg.Version, ConfigurationSchema: cfg.Schema,
+		AddonName: req.AddonName, AddonVersion: req.AddonVersion, ConfigurationSchema: entry.Schema,
 	}, nil
 }
 
@@ -1202,23 +1357,6 @@ func (s *Service) listAccessPoliciesTyped(ctx context.Context, _ *listAccessPoli
 	return &listAccessPoliciesResponse{AccessPolicies: managedAccessPolicies()}, nil
 }
 
-type describeAccessPolicyRequest struct {
-	Name string `json:"name" cbor:"name"`
-}
-
-type describeAccessPolicyResponse struct {
-	AccessPolicy map[string]any `json:"accessPolicy" cbor:"accessPolicy"`
-}
-
-func (s *Service) describeAccessPolicyTyped(ctx context.Context, req *describeAccessPolicyRequest) (*describeAccessPolicyResponse, *protocol.AWSError) {
-	for _, policy := range managedAccessPolicies() {
-		if policy["name"] == req.Name {
-			return &describeAccessPolicyResponse{AccessPolicy: policy}, nil
-		}
-	}
-	return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("No access policy found for name: %s", req.Name), HTTPStatus: 404}
-}
-
 // ─── Identity Provider Configs ───────────────────────────────────────────────
 
 type listIdentityProviderConfigsRequest struct {
@@ -1251,77 +1389,80 @@ func (s *Service) listIdentityProviderConfigsTyped(ctx context.Context, req *lis
 	return &listIdentityProviderConfigsResponse{IdentityProviderConfigs: items}, nil
 }
 
+// describeIdentityProviderConfigRequest mirrors
+// DescribeIdentityProviderConfigRequest: clusterName is the only httpLabel, and
+// the config is identified by a @required body member with @required type and
+// name. Overcast took both as path segments on a GET until #858.
 type describeIdentityProviderConfigRequest struct {
-	ClusterName string `json:"name" cbor:"name"`
-	ConfigType  string `json:"configType" cbor:"configType"`
-	ConfigName  string `json:"configName" cbor:"configName"`
+	ClusterName            string                     `json:"name" cbor:"name"`
+	IdentityProviderConfig *identityProviderConfigRef `json:"identityProviderConfig" cbor:"identityProviderConfig"`
 }
 
+type identityProviderConfigRef struct {
+	Type string `json:"type" cbor:"type"`
+	Name string `json:"name" cbor:"name"`
+}
+
+// describeIdentityProviderConfigResponse is the modeled
+// IdentityProviderConfigResponse: the config is nested under the provider type,
+// not returned flat. Overcast returned its own stored record.
 type describeIdentityProviderConfigResponse struct {
-	IdentityProviderConfig *IdentityProviderConfig `json:"identityProviderConfig" cbor:"identityProviderConfig"`
+	IdentityProviderConfig identityProviderConfigResponse `json:"identityProviderConfig" cbor:"identityProviderConfig"`
+}
+
+type identityProviderConfigResponse struct {
+	OIDC map[string]any `json:"oidc,omitempty" cbor:"oidc,omitempty"`
 }
 
 func (s *Service) describeIdentityProviderConfigTyped(ctx context.Context, req *describeIdentityProviderConfigRequest) (*describeIdentityProviderConfigResponse, *protocol.AWSError) {
+	if req.IdentityProviderConfig == nil {
+		return nil, missingRequiredMember("identityProviderConfig")
+	}
+	if req.IdentityProviderConfig.Type == "" {
+		return nil, missingRequiredMember("identityProviderConfig.type")
+	}
+	if req.IdentityProviderConfig.Name == "" {
+		return nil, missingRequiredMember("identityProviderConfig.name")
+	}
+
+	configType, configName := req.IdentityProviderConfig.Type, req.IdentityProviderConfig.Name
 	region := middleware.RegionFromContext(ctx, s.cfg.Region)
-	if _, aerr := s.validateCluster(ctx, region, req.ClusterName); aerr != nil {
+	if _, aerr := s.accessibleCluster(ctx, region, req.ClusterName); aerr != nil {
 		return nil, aerr
 	}
-	cfg, found, err := s.getIdentityProviderConfig(ctx, region, req.ClusterName, req.ConfigType, req.ConfigName)
+	cfg, found, err := s.getIdentityProviderConfig(ctx, region, req.ClusterName, configType, configName)
 	if err != nil {
 		return nil, protocol.ErrInternalError
 	}
 	if !found {
-		return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("No identity provider config found for %s/%s", req.ConfigType, req.ConfigName), HTTPStatus: 404}
+		return nil, resourceNotFound(fmt.Sprintf("No identity provider config found for %s/%s", configType, configName))
 	}
-	cfg.Tags = s.readTagsForARN(ctx, s.identityProviderConfigARN(region, req.ClusterName, req.ConfigType, req.ConfigName))
-	return &describeIdentityProviderConfigResponse{IdentityProviderConfig: cfg}, nil
-}
 
-type updateIdentityProviderConfigRequest struct {
-	ClusterName string            `json:"name" cbor:"name"`
-	ConfigType  string            `json:"configType" cbor:"configType"`
-	ConfigName  string            `json:"configName" cbor:"configName"`
-	OIDC        map[string]any    `json:"oidc" cbor:"oidc"`
-	Tags        map[string]string `json:"tags" cbor:"tags"`
-}
-
-type updateIdentityProviderConfigResponse struct {
-	Update *Update `json:"update" cbor:"update"`
-}
-
-func (s *Service) updateIdentityProviderConfigTyped(ctx context.Context, req *updateIdentityProviderConfigRequest) (*updateIdentityProviderConfigResponse, *protocol.AWSError) {
-	region := middleware.RegionFromContext(ctx, s.cfg.Region)
-	if _, aerr := s.validateCluster(ctx, region, req.ClusterName); aerr != nil {
-		return nil, aerr
-	}
-	cfg, found, err := s.getIdentityProviderConfig(ctx, region, req.ClusterName, req.ConfigType, req.ConfigName)
-	if err != nil {
-		return nil, protocol.ErrInternalError
-	}
-	if !found {
-		return nil, &protocol.AWSError{Code: "ResourceNotFoundException", Message: fmt.Sprintf("No identity provider config found for %s/%s", req.ConfigType, req.ConfigName), HTTPStatus: 404}
-	}
-	if req.ConfigType == "oidc" && req.OIDC != nil {
-		if cfg.OIDC == nil {
-			cfg.OIDC = map[string]any{}
-		}
-		for k, v := range req.OIDC {
-			cfg.OIDC[k] = v
-		}
-	}
-	if err := s.putIdentityProviderConfig(ctx, region, cfg); err != nil {
-		return nil, protocol.ErrInternalError
-	}
-	update := &Update{
-		ID:     fmt.Sprintf("upd-idp-update-%s-%d", req.ConfigName, s.clk.Now().UnixNano()),
-		Status: "Successful", Type: "UpdateIdentityProviderConfig", CreatedAt: s.clk.Now(),
-		Params: []map[string]any{
-			{"type": "IdentityProviderConfigType", "value": req.ConfigType},
-			{"type": "IdentityProviderConfigName", "value": req.ConfigName},
+	arn := s.identityProviderConfigARN(region, req.ClusterName, configType, configName)
+	return &describeIdentityProviderConfigResponse{
+		IdentityProviderConfig: identityProviderConfigResponse{
+			OIDC: oidcIdentityProviderConfig(cfg, arn, s.readTagsForARN(ctx, arn)),
 		},
+	}, nil
+}
+
+// oidcIdentityProviderConfig builds the modeled OidcIdentityProviderConfig from
+// the stored record. The members the caller supplied at associate time
+// (identityProviderConfigName, issuerUrl, clientId, the claim mappings) are
+// echoed as stored; the rest are the ones AWS adds server-side.
+func oidcIdentityProviderConfig(cfg *IdentityProviderConfig, arn string, tags map[string]string) map[string]any {
+	oidc := make(map[string]any, len(cfg.OIDC)+4)
+	for key, value := range cfg.OIDC {
+		oidc[key] = value
 	}
-	_ = s.putUpdate(ctx, region, req.ClusterName, update)
-	return &updateIdentityProviderConfigResponse{Update: update}, nil
+	oidc["identityProviderConfigName"] = cfg.Name
+	oidc["identityProviderConfigArn"] = arn
+	oidc["clusterName"] = cfg.ClusterName
+	oidc["status"] = "ACTIVE"
+	if len(tags) > 0 {
+		oidc["tags"] = tags
+	}
+	return oidc
 }
 
 type associateIdentityProviderConfigRequest struct {

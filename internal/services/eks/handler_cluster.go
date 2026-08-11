@@ -167,15 +167,19 @@ func (s *Service) listUpdates(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"updateIds": ids})
 }
 
+// listInsights serves POST /clusters/{clusterName}/insights. AWS models a POST
+// because filter, maxResults and nextToken are body members; Overcast served a
+// GET, with none of them, until #858.
 func (s *Service) listInsights(w http.ResponseWriter, r *http.Request) {
-	clusterName := chi.URLParam(r, "name")
-	region := s.region(r)
-
-	if _, ok := s.requireAccessibleCluster(w, r, region, clusterName); !ok {
+	req := &listInsightsRequest{}
+	if !serviceutil.DecodeJSON(w, r, req) {
 		return
 	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"insights": syntheticClusterInsights(clusterName)})
+	// The label is applied after the body so a body member of the same name
+	// cannot displace the path the request was routed on.
+	req.ClusterName = chi.URLParam(r, "name")
+	out, aerr := s.listInsightsTyped(r.Context(), req)
+	writeResult(w, r, out, aerr)
 }
 
 func (s *Service) describeInsight(w http.ResponseWriter, r *http.Request) {

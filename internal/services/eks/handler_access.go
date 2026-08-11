@@ -409,23 +409,10 @@ func (s *Service) listAccessPolicies(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Service) describeAccessPolicy(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-
-	for _, policy := range managedAccessPolicies() {
-		if policy["name"] == name {
-			protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"accessPolicy": policy})
-			return
-		}
-	}
-
-	protocol.WriteJSONError(w, r, &protocol.AWSError{
-		Code:       "ResourceNotFoundException",
-		Message:    fmt.Sprintf("No access policy found for name: %s", name),
-		HTTPStatus: http.StatusNotFound,
-	})
-}
-
+// managedAccessPolicies is the synthetic catalog ListAccessPolicies answers
+// from. AWS models no per-policy describe — ListAccessPolicies returns the full
+// AccessPolicy for every entry — so the DescribeAccessPolicy that used to read
+// this table was serving an operation that does not exist (#861).
 func managedAccessPolicies() []map[string]any {
 	return []map[string]any{
 		{
