@@ -9,6 +9,7 @@ package ecs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -152,9 +153,43 @@ func (h *Handler) awsvpcAttachment(ctx context.Context, spec taskLaunchSpec, tas
 	}}
 }
 
+// containerStartFailure attributes a task start failure to the container that
+// caused it. Every failure raised while placing a task belongs to one container
+// definition, and the name has to survive the return from startTaskContainers
+// for markTaskFailedToStart to record it where AWS does.
+type containerStartFailure struct {
+	container string
+	err       error
+}
+
+func (e *containerStartFailure) Error() string { return e.err.Error() }
+func (e *containerStartFailure) Unwrap() error { return e.err }
+
+// containerFailure builds the error a container's start failure is reported as.
+func containerFailure(container, format string, args ...any) error {
+	return &containerStartFailure{container: container, err: fmt.Errorf(format, args...)}
+}
+
+// failedContainer names the container a start failure belongs to, or "" when
+// the failure cannot be attributed to one.
+func failedContainer(err error) string {
+	var cf *containerStartFailure
+	if errors.As(err, &cf) {
+		return cf.container
+	}
+	return ""
+}
+
 // markTaskFailedToStart records a task that could not be placed in the shape
 // AWS uses for one: STOPPED, never RUNNING, carrying the stopCode a caller
 // would switch on and a reason naming what actually went wrong.
+//
+// The reason is recorded on the one container that caused it. ECS attributes a
+// launch failure to the container it happened to — a task stopped because its
+// application image could not be pulled leaves its sidecars STOPPED with no
+// reason of their own. Copying the reason onto every container instead made an
+// X-Ray sidecar report a CannotPullContainerError against a CDK container-asset
+// image it never names, which reads as the sidecar's own image being wrong.
 func markTaskFailedToStart(task *Task, now int64, err error) {
 	reason := stoppedReasonFor(err)
 	task.LastStatus = "STOPPED"
@@ -163,9 +198,14 @@ func markTaskFailedToStart(task *Task, now int64, err error) {
 	task.StoppedReason = reason
 	task.StoppedAt = &now
 	task.StoppingAt = &now
+	// An unattributable failure is left to the task's own stoppedReason rather
+	// than blamed on a container that may not have caused it.
+	culprit := failedContainer(err)
 	for i := range task.Containers {
 		task.Containers[i].LastStatus = "STOPPED"
-		task.Containers[i].Reason = reason
+		if culprit != "" && task.Containers[i].Name == culprit {
+			task.Containers[i].Reason = reason
+		}
 	}
 }
 

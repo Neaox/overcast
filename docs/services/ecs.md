@@ -96,6 +96,13 @@ for the failure (`CannotPullContainerError`, `CannotStartContainerError`,
 metadata-only path — where a task goes `RUNNING` with nothing behind it — is
 reserved for Overcast running without a container runtime at all.
 
+The same reason is recorded on the **one container it belongs to**, as AWS
+records it. Every other container in the task is `STOPPED` with no `reason` of
+its own: they stopped because the task did, not because they failed. So a task
+definition whose application image cannot be pulled reports
+`CannotPullContainerError` against that container, and leaves a sidecar running
+an unrelated public image saying nothing about an image it does not run.
+
 For a service, each failed placement is recorded the way AWS records it:
 
 - a service event, `(service X) was unable to place a task. Reason: …`, readable
