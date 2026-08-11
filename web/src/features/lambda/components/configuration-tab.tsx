@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Trash2, Plus as PlusIcon } from "lucide-react"
+import { Link } from "@tanstack/react-router"
+import { AlertTriangle, ExternalLink, Trash2, Plus as PlusIcon } from "lucide-react"
 import { ArnLink, ArnText } from "@/components/ui/arn-link"
 import { useToast } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
@@ -671,18 +672,63 @@ function VpcConfigSection({ fn }: { fn: LambdaFunction }) {
         </div>
       ) : !hasVpc ? (
         <p className="text-xs text-fg-muted">
-          Not connected to a VPC. Edit to configure VPC networking.
+          Not connected to a VPC. Edit to configure VPC networking. In Overcast a function reaches
+          VPC resources either way — on AWS it could not.
         </p>
       ) : (
-        <DefinitionList>
-          <Definition label="VPC ID" value={fn.VpcConfig!.VpcId} />
-          <Definition label="Subnets" value={(fn.VpcConfig!.SubnetIds ?? []).join(", ")} />
-          <Definition
-            label="Security Groups"
-            value={(fn.VpcConfig!.SecurityGroupIds ?? []).join(", ")}
-          />
-        </DefinitionList>
+        <>
+          <VpcNotEnforcedNotice />
+          <DefinitionList>
+            <Definition label="VPC ID" value={fn.VpcConfig!.VpcId} />
+            <Definition label="Subnets" value={(fn.VpcConfig!.SubnetIds ?? []).join(", ")} />
+            <Definition
+              label="Security Groups"
+              value={(fn.VpcConfig!.SecurityGroupIds ?? []).join(", ")}
+            />
+          </DefinitionList>
+        </>
       )}
+    </div>
+  )
+}
+
+/**
+ * VpcNotEnforcedNotice explains the one way Lambda VPC configuration diverges
+ * from AWS here, which is the direction that makes a local test pass when the
+ * deployed function will fail.
+ *
+ * Shown only when a VPC is actually configured. That is when someone is relying
+ * on VPC semantics and stands to be misled; on the majority of functions, which
+ * never touch VPC config, an always-on warning would be noise with nothing to
+ * act on. The no-VPC case gets a single muted clause in its empty state
+ * instead, so the person about to add a config still learns before they do.
+ *
+ * Not rendered while editing: the editor is a form, and a warning competing
+ * with its controls is read as an error. It appears on save, which is when the
+ * configuration is real.
+ */
+function VpcNotEnforcedNotice() {
+  return (
+    <div className="mb-3 flex gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div>
+        <p className="font-semibold">Placement is real — isolation is not</p>
+        <p className="mt-1 text-fg-muted">
+          The container joins this VPC&apos;s Docker network and can reach what is in it. Overcast
+          does not restrict what else it reaches: resources outside the VPC, and the internet, stay
+          reachable where AWS would have no route. Security groups are stored and returned but never
+          applied.
+        </p>
+        <Link
+          to="/docs"
+          search={{ path: "networking.md" }}
+          hash="lambda-ecs-and-vpcs"
+          className="mt-2 inline-flex w-fit items-center gap-1 text-xs underline underline-offset-2"
+        >
+          What this means for your tests
+          <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
     </div>
   )
 }

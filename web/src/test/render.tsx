@@ -273,10 +273,15 @@ export function renderWithRouter(
     history: createMemoryHistory({ initialEntries: [initialEntry ?? path] }),
   })
 
+  // AllProviders rather than QueryClientProvider alone: a component that needs
+  // the router usually needs the rest of the app's context too, and a missing
+  // ToastContextProvider does not fail loudly — the component throws on first
+  // render and the test sees an empty document, which reads as "the thing I
+  // asserted on is absent" rather than "nothing rendered at all".
   const result = rtlRender(
-    <QueryClientProvider client={queryClient}>
+    <AllProviders queryClient={queryClient}>
       <RouterProvider router={router} />
-    </QueryClientProvider>,
+    </AllProviders>,
     rest,
   )
 
