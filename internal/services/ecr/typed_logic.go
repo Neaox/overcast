@@ -248,7 +248,6 @@ func (s *Service) createRepositoryTyped(ctx context.Context, req *createReposito
 			Code: "RepositoryAlreadyExistsException", Message: fmt.Sprintf("The repository with name '%s' already exists in the registry with id '%s'", req.RepositoryName, s.accountID()), HTTPStatus: http.StatusBadRequest,
 		}
 	}
-	_ = s.ensureRegistry(ctx)
 	mutability := req.ImageTagMutability
 	if mutability == "" {
 		mutability = "MUTABLE"
@@ -257,10 +256,10 @@ func (s *Service) createRepositoryTyped(ctx context.Context, req *createReposito
 		RepositoryArn:      s.repoARN(region, req.RepositoryName),
 		RegistryId:         s.accountID(),
 		RepositoryName:     req.RepositoryName,
-		RepositoryUri:      s.repoURI(region, req.RepositoryName),
 		CreatedAt:          float64(s.clk.Now().Unix()),
 		ImageTagMutability: mutability,
 	}
+	s.applyCurrentRepoURI(ctx, region, repo)
 	if err := s.saveRepo(ctx, region, repo); err != nil {
 		return nil, protocol.ErrInternalError
 	}
@@ -283,6 +282,7 @@ func (s *Service) describeRepositoriesTyped(ctx context.Context, req *describeRe
 			if !found {
 				return nil, s.errRepoNotFoundTyped(name)
 			}
+			s.applyCurrentRepoURI(ctx, region, repo)
 			repos = append(repos, repo)
 		}
 		return &describeRepositoriesResponse{Repositories: repos}, nil
@@ -297,6 +297,7 @@ func (s *Service) describeRepositoriesTyped(ctx context.Context, req *describeRe
 		if err := json.Unmarshal([]byte(kv.Value), &repo); err != nil {
 			continue
 		}
+		s.applyCurrentRepoURI(ctx, region, &repo)
 		repos = append(repos, &repo)
 	}
 	sort.Slice(repos, func(i, j int) bool {
@@ -314,6 +315,7 @@ func (s *Service) deleteRepositoryTyped(ctx context.Context, req *deleteReposito
 	if !found {
 		return nil, s.errRepoNotFoundTyped(req.RepositoryName)
 	}
+	s.applyCurrentRepoURI(ctx, region, repo)
 	key := serviceutil.RegionKey(region, req.RepositoryName)
 	if err := s.store.Delete(ctx, repoNamespace, key); err != nil {
 		return nil, protocol.ErrInternalError

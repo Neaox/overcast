@@ -1,11 +1,14 @@
 package helpers
 
 import (
+	"context"
 	"net"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/docker"
 )
@@ -53,6 +56,23 @@ func DockerLoginOrSkip(t *testing.T, proxy, user, password string) {
 		t.Skipf("docker daemon will not talk plain HTTP to %s: %s", proxy, strings.TrimSpace(msg))
 	}
 	t.Fatalf("docker login %s: %v\n%s", proxy, err, out)
+}
+
+// removeTestNetworks deletes the Docker networks a test server minted for
+// itself, best-effort: a daemon that never answered created none, and one that
+// still holds a container on a network refuses to remove it, which the next
+// run's sweep of exited containers resolves. Neither is worth failing a test
+// that has already made its assertions.
+func removeTestNetworks(names []string) {
+	dc := docker.NewClient(TestDockerSocket(), zap.NewNop())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		_ = dc.RemoveNetwork(ctx, name)
+	}
 }
 
 // SkipWithoutDocker calls t.Skip if Docker is not reachable. Use at the top of

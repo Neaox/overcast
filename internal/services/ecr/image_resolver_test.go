@@ -15,13 +15,22 @@ import (
 	"context"
 	"testing"
 
+	"go.uber.org/zap"
+
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // resolverService returns an ECR service standing in for one whose registry
 // container is up on hostPort with password as its htpasswd secret.
 func resolverService(hostPort int, password string) *Service {
-	s := &Service{cfg: &config.Config{Hostname: "localhost", Port: 4566, AccountID: "000000000000", Region: "ap-southeast-2"}}
+	s := &Service{
+		cfg: &config.Config{Hostname: "localhost", Port: 4566, AccountID: "000000000000", Region: "ap-southeast-2"},
+		// Every Service has a logger — the address helpers log when they have
+		// no registry to name, and a literal without one would panic there
+		// rather than in anything this test is about.
+		log: serviceutil.NewServiceLogger(zap.NewNop(), serviceName),
+	}
 	s.registryHostPort = hostPort
 	s.registryPassword = password
 	return s

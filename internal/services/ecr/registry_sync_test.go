@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"go.uber.org/zap"
@@ -51,6 +52,10 @@ type fakeRegistry struct {
 	// absent records whether the repository exists in the registry at all.
 	// A registry that has never been pushed to 404s the tag list.
 	absent bool
+	// manifestRequests counts every per-image question the sweep asked, so a
+	// test can hold the sweep to asking none when one request already settled
+	// the matter.
+	manifestRequests atomic.Int32
 }
 
 func (f *fakeRegistry) start(t *testing.T) string {
@@ -76,6 +81,7 @@ func (f *fakeRegistry) start(t *testing.T) string {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"name": syncRepo, "tags": names})
 		case strings.HasPrefix(r.URL.Path, prefix+"/manifests/"):
+			f.manifestRequests.Add(1)
 			ref := strings.TrimPrefix(r.URL.Path, prefix+"/manifests/")
 			digest, tagged := f.tags[ref]
 			if !tagged && (f.untagged[ref] || slicesContains(f.tags, ref)) {
@@ -201,6 +207,14 @@ func TestSyncRepoImages_dropsAnImageTheRegistryNoLongerHas(t *testing.T) {
 	// asset is published, and the push that would republish it never runs.
 	if got := storedTags(t, s); len(got) != 0 {
 		t.Fatalf("stored images = %v, want none — the registry no longer serves them", got)
+	}
+
+	// Then: it took one request to establish that, not one per image. A
+	// registry with no repository under the name has no manifest under it
+	// either, by tag or by digest, so there is nothing left to ask — and this
+	// is the restart case, where the store is at its fullest.
+	if got := reg.manifestRequests.Load(); got != 0 {
+		t.Errorf("manifest requests = %d, want 0 — the tag list already settled it", got)
 	}
 }
 

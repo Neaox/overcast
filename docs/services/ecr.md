@@ -32,10 +32,19 @@ For example, `localhost:4510/000000000000/my-app`. The port is the registry
 container's, not the API port — this URI is what a `docker push` targets, so it
 has to name the registry rather than the emulator. The registry asks for a
 fixed port (`OVERCAST_ECR_REGISTRY_PORT`, default `4510`, the same port
-LocalStack serves its registry on) so the URI is stable across restarts; if
-something else holds that port the registry falls back to an ephemeral one and
-says so in the log. Without Docker there is no registry, and the URI falls back
-to the API base URL.
+LocalStack serves its registry on) so the URI is normally the same from one run
+to the next; if something else holds that port the registry falls back to an
+ephemeral one and says so in the log. Without Docker there is no registry, and
+the URI falls back to the API base URL — a `docker push` there answers
+`405 Method Not Allowed`, because it is not a registry.
+
+The URI is re-minted from the running registry every time a repository is read,
+not stored with the repository. Repositories are persisted and the registry is
+not, so a URI frozen at `CreateRepository` is a fact about the run that created
+it: a `cdk bootstrap` performed before the registry was up would send every
+later deploy's `docker push` at the API port, for as long as the repository
+existed. It follows that a repository read while the registry is down reports
+the fallback address, and reports the registry again once there is one.
 
 `proxyEndpoint` from `GetAuthorizationToken` names the same address, and
 `Fn::GetAtt Repo.RepositoryUri` returns this value rather than an

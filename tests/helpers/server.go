@@ -70,6 +70,9 @@ type serverOptions struct {
 	store      state.Store       // nil means use default MemoryStore
 	initRunner *inithooks.Runner // nil means no init hooks
 	logger     *zap.Logger       // nil means silent (zap.NewNop)
+	// ownsNetworks marks a server whose Docker networks were minted for this
+	// test alone, so they are removed with it. See WithECSDocker.
+	ownsNetworks bool
 }
 
 // NewTestServer creates a started test server with sensible defaults.
@@ -160,6 +163,12 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		Store:  ms,
 		Config: so.cfg,
 		Clock:  so.mock,
+	}
+	// Registered first so it runs last: the networks cannot go until the
+	// containers on them have, which the server's own cleanup does.
+	if so.ownsNetworks {
+		networks := []string{so.cfg.Network, so.cfg.ControlNetwork()}
+		t.Cleanup(func() { removeTestNetworks(networks) })
 	}
 	// t.Cleanup runs in LIFO order: close the server first, then drain
 	// any in-flight async work (e.g. SNS fan-out goroutines).
@@ -296,11 +305,20 @@ func TestDockerSocket() string {
 // API surface and would pay a daemon round-trip for nothing.
 //
 // The network is named per test run because the containers are: two packages
-// running in parallel must not share, or race to remove, one another's.
+// running in parallel must not share, or race to remove, one another's. Being
+// per-run, they are also this server's to remove — see the cleanup in
+// NewTestServer. A Docker daemon has a finite address pool (Docker Desktop
+// subnets roughly thirty networks out of its default pools), so a suite that
+// mints a pair per test server and never removes them exhausts it after a few
+// dozen runs, and every later `docker network create` fails — which the
+// emulator reports as "Docker not available", leaving ECS metadata-only and
+// every container test failing for a reason that has nothing to do with the
+// code under test.
 func WithECSDocker() Option {
 	return func(so *serverOptions) {
 		so.cfg.ECSDockerSocket = TestDockerSocket()
 		so.cfg.Network = fmt.Sprintf("overcast_ecs_test_%d", time.Now().UnixNano())
+		so.ownsNetworks = true
 	}
 }
 

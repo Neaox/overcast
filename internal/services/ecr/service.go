@@ -159,8 +159,11 @@ type Service struct {
 	registryHostPort  int
 	registryPassword  string
 	registryInitOnce  sync.Once
-	registryReady     chan struct{}
-	registryStopping  bool
+	// registrylessOnce keeps the "there is no registry" warning to one line per
+	// process: it is minted on every repository read, which the console polls.
+	registrylessOnce sync.Once
+	registryReady    chan struct{}
+	registryStopping bool
 	// probeTimeout overrides registryAnswerTimeout for the port sweep. Set only
 	// by tests, which would otherwise wait out the real deadline to reach the
 	// nothing-answered path.
@@ -272,12 +275,29 @@ func (s *Service) region(r *http.Request) string {
 	return middleware.RegionFromContext(r.Context(), s.cfg.Region)
 }
 
+// registryEndpoint is the address every client-facing ECR address is built
+// from: repositoryUri, and proxyEndpoint from GetAuthorizationToken.
+//
+// With no registry there is nothing to name but Overcast's own API base, and
+// AWS's API has no way to answer "there is nowhere to push" — so the fallback
+// stands, and says so once in the log. It is not a registry: a `docker push`
+// at the API port reaches the router, falls through to S3 (the final fallback
+// for an unclaimed path) and comes back as `405 Method Not Allowed` from a
+// service that was asked for the OCI Distribution API, which Overcast does not
+// speak on this port and never will — the registry container does, on its own.
 func (s *Service) registryEndpoint() string {
 	s.registryMu.Lock()
 	defer s.registryMu.Unlock()
 	if s.registryHostPort > 0 {
 		return fmt.Sprintf("http://%s:%d", s.cfg.ExternalHostname(), s.registryHostPort)
 	}
+	s.registrylessOnce.Do(func() {
+		s.log.Warn("no ECR registry is running, so repositoryUri and proxyEndpoint name Overcast's API port; "+
+			"`docker push` there fails with 405 Method Not Allowed, and an ECS task or Lambda function built from a "+
+			"container asset cannot start. Overcast needs a reachable Docker daemon to run one — check the registry "+
+			"startup warnings above if it has one.",
+			zap.String("advertised", s.cfg.ExternalBaseURL()))
+	})
 	return s.cfg.ExternalBaseURL()
 }
 
@@ -310,6 +330,38 @@ func (s *Service) getRepo(ctx context.Context, region, name string) (*Repository
 		return nil, false, err
 	}
 	return &repo, true, nil
+}
+
+// applyCurrentRepoURI sets repo.RepositoryUri to the address of the registry
+// this process is serving. Every path that hands a Repository to a client calls
+// it; the stored value is a starting point, not the answer.
+//
+// The address is not a property of the repository. It is the registry
+// container's published port — the fixed one when it is free, an ephemeral one
+// when it is not, and, with no Docker at all, no registry and nothing to name
+// but Overcast's own API base. Repositories are persisted; the registry is not.
+// So the value written at CreateRepository is a fact about the run that created
+// it, and serving it later is serving an address that may no longer be anything.
+//
+// `cdk bootstrap` creates the container-asset repository once and every deploy
+// afterwards reads it back to decide where to push, which is how a bootstrap
+// that ran before the registry was up sent pushes at the API port for good:
+//
+//	unexpected status from POST request to
+//	http://…:4566/v2/…/blobs/uploads/: 405 Method Not Allowed
+//
+// while the pull side, resolving through the live registry rather than the
+// record, was reaching :4510 in the same deploy.
+//
+// Nothing is written back. A read that repaired the record would race
+// DeleteRepository and restore what it had just removed, and the record is not
+// what any client reads: the console and every SDK go through this API. The
+// store's copy is therefore left as the historical value it always was.
+func (s *Service) applyCurrentRepoURI(ctx context.Context, region string, repo *Repository) {
+	// The registry starts lazily, so a call that lands before it is up would
+	// otherwise mint the fallback address and hand out the API port.
+	_ = s.waitRegistryReady(ctx)
+	repo.RepositoryUri = s.repoURI(region, repo.RepositoryName)
 }
 
 func (s *Service) saveRepo(ctx context.Context, region string, repo *Repository) error {
@@ -364,10 +416,6 @@ func (s *Service) createRepository(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = existing
 
-	// Ensure the shared local registry endpoint is ready before computing
-	// repositoryUri; Docker clients use that value directly for push/pull.
-	_ = s.waitRegistryReady(r.Context())
-
 	mutability := req.ImageTagMutability
 	if mutability == "" {
 		mutability = "MUTABLE"
@@ -376,10 +424,10 @@ func (s *Service) createRepository(w http.ResponseWriter, r *http.Request) {
 		RepositoryArn:      s.repoARN(region, req.RepositoryName),
 		RegistryId:         s.accountID(),
 		RepositoryName:     req.RepositoryName,
-		RepositoryUri:      s.repoURI(region, req.RepositoryName),
 		CreatedAt:          float64(s.clk.Now().Unix()),
 		ImageTagMutability: mutability,
 	}
+	s.applyCurrentRepoURI(r.Context(), region, repo)
 	if err := s.saveRepo(r.Context(), region, repo); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
@@ -418,6 +466,7 @@ func (s *Service) describeRepositories(w http.ResponseWriter, r *http.Request) {
 				s.errRepoNotFound(w, r, name)
 				return
 			}
+			s.applyCurrentRepoURI(ctx, region, repo)
 			repos = append(repos, repo)
 		}
 		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"repositories": repos})
@@ -436,6 +485,7 @@ func (s *Service) describeRepositories(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal([]byte(kv.Value), &repo); err != nil {
 			continue
 		}
+		s.applyCurrentRepoURI(ctx, region, &repo)
 		repos = append(repos, &repo)
 	}
 	sort.Slice(repos, func(i, j int) bool {
@@ -465,6 +515,7 @@ func (s *Service) deleteRepository(w http.ResponseWriter, r *http.Request) {
 		s.errRepoNotFound(w, r, req.RepositoryName)
 		return
 	}
+	s.applyCurrentRepoURI(ctx, region, repo)
 
 	key := serviceutil.RegionKey(region, req.RepositoryName)
 	if err := s.store.Delete(ctx, repoNamespace, key); err != nil {
@@ -611,8 +662,17 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 	client := &http.Client{Timeout: 5 * time.Second}
 	repoPath := fmt.Sprintf("%s/%s", s.accountID(), repoName)
 
-	tags, known := s.registryTags(ctx, client, base, repoPath, password)
-	if !known {
+	tags, state := s.registryTags(ctx, client, base, repoPath, password)
+	if state == repoUnknown {
+		return nil
+	}
+	if state == repoAbsent {
+		// The registry has no repository under this name, so it holds no
+		// manifest under it either — including by digest. Every record this
+		// sweep created is stale, and none of them needs to be asked about
+		// individually. This is the restart case, and the whole point of
+		// answering it in one request rather than one per image.
+		s.forgetAllRegistryImages(ctx, region, repoName)
 		return nil
 	}
 
@@ -678,36 +738,59 @@ var registryManifestTypes = []string{
 	"application/vnd.oci.image.index.v1+json",
 }
 
-// registryTags lists the tags the registry serves for repoPath. known is false
-// when the sweep learned nothing — an unreachable registry, an error status, an
-// unreadable body — and the caller must then change nothing, because absence of
-// evidence is not evidence of absence. A 404 is an answer, not a failure: the
-// registry has no such repository, so it serves no tags.
-func (s *Service) registryTags(ctx context.Context, client *http.Client, base, repoPath, password string) (tags []string, known bool) {
+// repoRegistryState is what one look at the registry established about a
+// repository. The distinction that matters is between "not there" and "could
+// not tell", because only the first is grounds for deleting anything.
+type repoRegistryState int
+
+const (
+	// repoUnknown: the sweep learned nothing — an unreachable registry, an
+	// error status, an unreadable body. Absence of evidence is not evidence of
+	// absence, so the caller must change nothing.
+	repoUnknown repoRegistryState = iota
+	// repoAbsent: the registry has no repository under this name, and so no
+	// manifest under it by any tag or digest.
+	repoAbsent
+	// repoPresent: the registry served the repository's tag list.
+	repoPresent
+)
+
+// registryTags lists the tags the registry serves for repoPath, and what it
+// established about the repository itself. A 404 is an answer, not a failure.
+func (s *Service) registryTags(ctx context.Context, client *http.Client, base, repoPath, password string) ([]string, repoRegistryState) {
 	tagsURL := fmt.Sprintf("%s/v2/%s/tags/list", base, repoPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tagsURL, nil)
 	if err != nil {
-		return nil, false
+		return nil, repoUnknown
 	}
 	req.SetBasicAuth(ecrRegistryUser, password)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, false
+		return nil, repoUnknown
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, true
+		return nil, repoAbsent
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, false
+		return nil, repoUnknown
 	}
 	var tagsResp struct {
 		Tags []string `json:"tags"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
-		return nil, false
+		return nil, repoUnknown
 	}
-	return tagsResp.Tags, true
+	return tagsResp.Tags, repoPresent
+}
+
+// forgetAllRegistryImages deletes every record this sweep created for a
+// repository the registry does not have. It is the one-request form of
+// forgetVanishedImages, for the case where no per-image question can change the
+// answer — and the common case, since a restarted Overcast meets an empty
+// registry with a full store.
+func (s *Service) forgetAllRegistryImages(ctx context.Context, region, repoName string) {
+	s.forgetImages(ctx, region, repoName, func(rec imageRecord) bool { return true })
 }
 
 // forgetVanishedImages deletes the records of images the registry has stopped
@@ -726,6 +809,18 @@ func (s *Service) registryTags(ctx context.Context, client *http.Client, base, r
 // an image whose tag has moved to a newer push is still served by digest, and
 // real ECR keeps untagged images too.
 func (s *Service) forgetVanishedImages(ctx context.Context, client *http.Client, base, repoPath, password, region, repoName string, present map[string]bool) {
+	s.forgetImages(ctx, region, repoName, func(rec imageRecord) bool {
+		if present[rec.ImageId.ImageDigest] {
+			return false
+		}
+		return s.registryLacksManifest(ctx, client, base, repoPath, password, rec.ImageId.ImageDigest)
+	})
+}
+
+// forgetImages deletes the records this sweep created that vanished reports
+// gone. Records from PutImage are never offered to it: they were never in the
+// registry, so the registry's silence says nothing about them.
+func (s *Service) forgetImages(ctx context.Context, region, repoName string, vanished func(imageRecord) bool) {
 	kvs, err := s.store.Scan(ctx, imageNamespace, serviceutil.RegionKey(region, repoName+"/"))
 	if err != nil {
 		return
@@ -735,31 +830,36 @@ func (s *Service) forgetVanishedImages(ctx context.Context, client *http.Client,
 		if err := json.Unmarshal([]byte(kv.Value), &rec); err != nil {
 			continue
 		}
-		digest := rec.ImageId.ImageDigest
-		if !rec.FromRegistry || digest == "" || present[digest] {
-			continue
-		}
-		manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", base, repoPath, digest)
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, manifestURL, nil)
-		if err != nil {
-			continue
-		}
-		req.SetBasicAuth(ecrRegistryUser, password)
-		req.Header.Set("Accept", strings.Join(registryManifestTypes, ", "))
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound {
+		if !rec.FromRegistry || rec.ImageId.ImageDigest == "" || !vanished(rec) {
 			continue
 		}
 		if err := s.store.Delete(ctx, imageNamespace, kv.Key); err != nil {
 			s.log.Warn("failed to drop the record of an image the registry no longer serves",
-				zap.String("repository", repoName), zap.String("digest", digest), zap.Error(err))
+				zap.String("repository", repoName),
+				zap.String("digest", rec.ImageId.ImageDigest), zap.Error(err))
 		}
 	}
+}
+
+// registryLacksManifest reports whether the registry answers a definite 404 for
+// a manifest. Only that is grounds for deleting its record: an error, a refusal
+// or an unreachable registry all mean the question went unanswered, and the
+// record stays.
+func (s *Service) registryLacksManifest(ctx context.Context, client *http.Client, base, repoPath, password, digest string) bool {
+	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", base, repoPath, digest)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, manifestURL, nil)
+	if err != nil {
+		return false
+	}
+	req.SetBasicAuth(ecrRegistryUser, password)
+	req.Header.Set("Accept", strings.Join(registryManifestTypes, ", "))
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusNotFound
 }
 
 func (s *Service) listImages(w http.ResponseWriter, r *http.Request) {

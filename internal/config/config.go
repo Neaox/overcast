@@ -462,7 +462,8 @@ type Config struct {
 
 	// ECRRegistryPort is the host port the shared ECR registry container asks
 	// for. A fixed, well-known port keeps repositoryUri stable across restarts
-	// (repositories are persisted with it), gives daemon configuration such as
+	// (a repository re-mints it from the registry on every read, so it follows
+	// the port rather than fixing it), gives daemon configuration such as
 	// insecure-registries something nameable, and matches the port LocalStack
 	// serves its registry on — worth real money for drop-in migration. When
 	// the port is taken the registry falls back to an ephemeral one rather

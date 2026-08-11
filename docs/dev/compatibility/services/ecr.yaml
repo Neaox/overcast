@@ -10,6 +10,21 @@ capability_docs: docs/services/ecr.md
 operation_count_estimate: 20 supported
 current_support_level: Repository and image metadata control plane supported; Docker registry integration optional; scanning inert/not-scanned.
 operations:
+  DescribeRepositories:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeRepositories.html
+    scenarios:
+      repository_uri_after_a_registry_move:
+        status: fixed
+        evidence:
+          - internal/services/ecr/repository_uri_test.go
+        notes: >-
+          repositoryUri is re-minted from the running registry on every read rather than
+          served from the record. On AWS the address is immutable; here it is the registry
+          container's published port, and repositories outlive the registry — a repository
+          created before the registry was up otherwise advertised Overcast's API port
+          forever, where docker push answers 405.
   DescribeImages:
     status: fixed
     docs:
