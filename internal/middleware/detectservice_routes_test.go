@@ -83,7 +83,6 @@ var registeredRouteClassification = map[string]string{
 	"/_appconfig":     "internal",
 	"/_appconfigdata": "internal",
 	"/_appsync":       "appsync",
-	"/_bedrock":       "internal",
 	"/_cloudfront":    "cloudfront",
 	"/_cognito":       "cognito",
 	"/_ecs":           "ecs",
@@ -102,7 +101,11 @@ var registeredRouteClassification = map[string]string{
 	// Undated literals the prefix switch claims.
 	"/apikeys":      "apigateway",
 	"/applications": "appregistry",
-	"/restapis":     "apigateway",
+	// Bedrock Runtime's inference bindings. Claimed by the whole path shape
+	// rather than by the "/model" prefix, because that segment is also a legal
+	// S3 bucket name — see isBedrockRuntimeInferencePath.
+	"/model":    "bedrock",
+	"/restapis": "apigateway",
 	// EventBridge Scheduler serves both of these to unsigned callers as well as
 	// signed ones, and its own tag operations are reached through the shared
 	// /tags dispatcher rather than a prefix of its own.

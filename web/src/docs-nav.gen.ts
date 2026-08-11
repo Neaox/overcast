@@ -1765,7 +1765,7 @@ export const DOCS_NAV = [
     "path": "docs/services/bedrock.md",
     "href": "services/bedrock.md",
     "title": "Bedrock — Amazon Bedrock Runtime",
-    "description": "Amazon Bedrock Runtime uses the REST JSON protocol. Routes are served under the /_bedrock/ path prefix.",
+    "description": "Amazon Bedrock Runtime uses the REST JSON protocol, served at AWS's own /model/{modelId}/ inference paths. No model is invoked.",
     "section": "Service Reference",
     "tags": [
       "amazon",

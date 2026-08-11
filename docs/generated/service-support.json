@@ -7357,15 +7357,15 @@
         {
           "operation": "InvokeModel",
           "category": "Inference",
-          "status": "🚧 WIP",
-          "notes": "POST /model/{modelId}/invoke — invokes model; Overcast does not serve the binding AWS models, so no SDK reaches it (#857)",
+          "status": "🧊 Inert",
+          "notes": "POST /model/{modelId}/invoke — accepted and answered 200; the required payload is not parsed and no model runs. The response body is an opaque blob whose format belongs to the model, which Overcast does not emulate, so it returns one self-describing field rather than any model family's shape",
           "docs_url": "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html)"
         },
         {
           "operation": "Converse",
           "category": "Inference",
-          "status": "🚧 WIP",
-          "notes": "POST /model/{modelId}/converse — chat API; Overcast does not serve the binding AWS models, so no SDK reaches it (#857)",
+          "status": "🧊 Inert",
+          "notes": "POST /model/{modelId}/converse — accepted and answered with a complete ConverseResponse, every @required member present; no inference runs, so the assistant text is canned and the token counts and latency are zero",
           "docs_url": "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)"
         }
       ]

@@ -78,10 +78,6 @@ var unservedBindings = map[string]string{
 	"opensearch/ListTags":        "#856",
 	"opensearch/RemoveTags":      "#856",
 
-	// #857 — served under /_bedrock rather than /model/{modelId}/invoke.
-	"bedrock/Converse":    "#857",
-	"bedrock/InvokeModel": "#857",
-
 	// #858 — six hand-invented paths, four with the wrong HTTP method,
 	// written by hand next to a manifest that already had the answers.
 	"eks/DescribeAddonConfiguration":     "#858",
