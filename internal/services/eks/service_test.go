@@ -27,9 +27,13 @@ func TestLiveModeCreateClusterPersistsBootstrapRecord(t *testing.T) {
 		EKSDockerSocket: "/var/run/docker.sock",
 		Network:         "overcast_eks",
 	}
-	// Use an unreachable TCP endpoint so Docker calls fail fast without side-effects.
+	// Use an unreachable TCP endpoint so the Docker calls the describe path
+	// still makes fail fast without side-effects.
 	service := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	service.SetDocker(docker.NewClient("tcp://127.0.0.1:1", zap.NewNop()))
+	// This test is about the record CreateCluster persists before it hands off,
+	// so the hand-off must not run concurrently with the assertions below.
+	suspendLiveBootstrap(t, service)
 
 	r := chi.NewRouter()
 	service.RegisterRoutes(r)
@@ -98,9 +102,14 @@ func TestLiveModeDeleteClusterClearsRuntimeRegistry(t *testing.T) {
 		EKSDockerSocket: "/var/run/docker.sock",
 		Network:         "overcast_eks",
 	}
-	// Use an unreachable TCP endpoint so Docker calls fail fast without side-effects.
+	// Use an unreachable TCP endpoint so the Docker calls delete still makes
+	// fail fast without side-effects.
 	service := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	service.SetDocker(docker.NewClient("tcp://127.0.0.1:1", zap.NewNop()))
+	// The registry entry under test is written by CreateCluster itself. Leaving
+	// the real bootstrap running would let its failure path re-persist the
+	// cluster record it read just before DeleteCluster removed it.
+	suspendLiveBootstrap(t, service)
 
 	r := chi.NewRouter()
 	service.RegisterRoutes(r)

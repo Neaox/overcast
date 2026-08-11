@@ -1,7 +1,6 @@
 package eks
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -89,7 +88,14 @@ func (s *Service) createCluster(w http.ResponseWriter, r *http.Request) {
 		// the container launch below fails. The container ID is filled in
 		// once Docker create+start succeeds.
 		s.setLiveClusterRuntime(region, req.Name, &liveClusterRuntime{})
-		go s.startLiveCluster(context.Background(), region, cluster)
+		// s.liveCtx, not the request's: the bootstrap outlives this response,
+		// and Stop needs to be able to end it. Tracked on liveWg so Stop can
+		// wait for it — see Service.Stop.
+		s.liveWg.Add(1)
+		go func() {
+			defer s.liveWg.Done()
+			s.bootstrapLiveCluster(s.liveCtx, region, cluster)
+		}()
 	}
 
 	protocol.WriteJSON(w, r, http.StatusCreated, map[string]any{"cluster": cluster})

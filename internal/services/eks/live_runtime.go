@@ -21,6 +21,17 @@ func k3sImageForVersion(version string) string {
 	return "rancher/k3s:v" + version + ".3-k3s1"
 }
 
+// bootstrapLiveCluster is the entry point CreateCluster launches in its own
+// goroutine: the real bootstrap, or the stand-in a test installed in its place.
+// See startLiveClusterHook.
+func (s *Service) bootstrapLiveCluster(ctx context.Context, region string, cluster *Cluster) {
+	if hook := s.startLiveClusterHook; hook != nil {
+		hook(ctx, region, cluster)
+		return
+	}
+	s.startLiveCluster(ctx, region, cluster)
+}
+
 // startLiveCluster creates and starts a k3s control-plane container for the
 // given cluster. The caller must have already persisted the cluster record with
 // CREATING status. On success the live runtime registry is updated with the
@@ -180,6 +191,9 @@ func (s *Service) pollK3sReady(ctx context.Context, region string, cluster *Clus
 		}
 		select {
 		case <-ctx.Done():
+			// Shutdown. Returning quietly would leave the record CREATING for
+			// a bootstrap nothing will resume — see failLiveCluster.
+			s.failLiveCluster(ctx, region, cluster.Name, issueClusterUnreachable, ctx.Err())
 			return
 		case <-s.clk.After(pollInterval):
 		}
@@ -234,8 +248,23 @@ const (
 // way setClusterActiveWithEndpoint does — a DeleteCluster that already removed
 // the record leaves nothing to fail.
 func (s *Service) failLiveCluster(ctx context.Context, region, name, code string, reason error) {
+	// A bootstrap that shutdown cancelled did not fail on its own merits, but
+	// the record still needs a terminal answer: nothing resumes a bootstrap
+	// across a restart, and Stop removes the container it had got as far as
+	// starting, so CREATING would again be a status no one is coming to
+	// change. The daemon's words here would only be "context canceled".
+	if errors.Is(reason, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		code = issueInternalFailure
+		reason = errors.New("Overcast shut down while the cluster was still starting")
+	}
+
 	s.log.Warn("eks: cluster could not be started — marking it FAILED",
 		zap.String("cluster", name), zap.String("code", code), zap.Error(reason))
+
+	// Detached: on the shutdown path ctx is cancelled, and it is the reason
+	// this is being written. Reading and writing through it would drop the
+	// record update on any store that honours cancellation.
+	ctx = context.WithoutCancel(ctx)
 
 	existing, found, err := s.getCluster(ctx, region, name)
 	if err != nil || !found {

@@ -189,6 +189,33 @@ type Service struct {
 
 	liveMu       sync.Mutex
 	liveRuntimes map[string]*liveClusterRuntime
+
+	// liveCtx is the context cluster bootstraps run under; liveCancel ends
+	// them. A bootstrap outlives the request that started it, so it cannot
+	// use the request's context — but running it on context.Background() left
+	// Stop with no way to end one, and a bootstrap can sit in pollK3sReady
+	// for five minutes waiting on a control plane that never answers. Every
+	// service's Stop shares one shutdown budget, so that is not a wait Stop
+	// can simply take. Same shape as ElastiCache's bgCtx/bgCancel.
+	liveCtx    context.Context
+	liveCancel context.CancelFunc
+
+	// liveWg tracks in-flight bootstraps so Stop can wait for them to finish
+	// before it takes stock of what is running. A bootstrap registers its
+	// container on the way out, so draining the registry while one is still
+	// in flight leaves that container behind. Same shape as the dockerWg that
+	// RDS, ElastiCache and MSK track their container starts with.
+	liveWg sync.WaitGroup
+
+	// startLiveClusterHook, when non-nil, stands in for the background
+	// bootstrap CreateCluster hands off to. Always nil in production; set
+	// only by tests in this package that need the hand-off under their own
+	// control — either to assert on the record CreateCluster persisted, which
+	// the real bootstrap races (a bootstrap that cannot reach Docker now moves
+	// the cluster to the terminal FAILED state (#895), so "still CREATING"
+	// holds only until the goroutine is scheduled — see suspendLiveBootstrap),
+	// or to hold a bootstrap in flight while Stop runs.
+	startLiveClusterHook func(ctx context.Context, region string, cluster *Cluster)
 }
 
 type liveClusterRuntime struct {
@@ -204,6 +231,7 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		log:          serviceutil.NewServiceLogger(logger, serviceName),
 		liveRuntimes: make(map[string]*liveClusterRuntime),
 	}
+	s.liveCtx, s.liveCancel = context.WithCancel(context.Background())
 	s.typedOp = s.typedOps()
 	return s
 }
@@ -242,7 +270,24 @@ func (s *Service) SetDocker(dc *docker.Client) {
 // Stop satisfies router.Stopper. Live-mode cleanup is best-effort for both the
 // in-memory runtime registry and any persisted live clusters that need runtime
 // reconciliation after a process restart.
+//
+// In-flight bootstraps are ended and waited for first. Cleanup works from the
+// runtime registry, and a bootstrap only registers its container once it has
+// started it, so cleaning up while one is still running would tear down the
+// containers Stop knows about and leave that one behind. ctx bounds the wait,
+// so a bootstrap that will not end still cannot hold shutdown open.
 func (s *Service) Stop(ctx context.Context) {
+	s.liveCancel()
+	bootstrapsDone := make(chan struct{})
+	go func() {
+		s.liveWg.Wait()
+		close(bootstrapsDone)
+	}()
+	select {
+	case <-bootstrapsDone:
+	case <-ctx.Done():
+	}
+
 	s.reconcilePersistedLiveClusterRuntimes(ctx)
 	for _, runtime := range s.drainLiveClusterRuntimes() {
 		if err := s.cleanupLiveClusterRuntime(ctx, runtime); err != nil {
