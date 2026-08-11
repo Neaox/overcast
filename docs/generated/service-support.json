@@ -1876,14 +1876,14 @@
         {
           "operation": "EvaluateMappingTemplate",
           "category": "Execution \u0026 Evaluation",
-          "status": "🚧 WIP",
-          "notes": "Evaluates VTL mapping templates; Overcast does not serve the binding AWS models, so no SDK reaches it (#860)"
+          "status": "✅ Supported",
+          "notes": "Evaluates VTL mapping templates; logs and outErrors are not populated"
         },
         {
           "operation": "EvaluateCode",
           "category": "Execution \u0026 Evaluation",
-          "status": "🚧 WIP",
-          "notes": "Evaluates JavaScript resolver code; Overcast does not serve the binding AWS models, so no SDK reaches it (#860)"
+          "status": "✅ Supported",
+          "notes": "Evaluates APPSYNC_JS resolver code; outErrors is not populated"
         },
         {
           "operation": "GetItem",

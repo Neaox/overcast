@@ -114,11 +114,18 @@ var registeredRouteClassification = map[string]string{
 	"/usageplans":      "apigateway",
 	"/v1/apis":         "appsync",
 	"/v1/domainnames":  "appsync",
-	"/v1/mergedApis":   "appsync",
-	"/v1/pipes":        "pipes",
-	"/v1/sourceApis":   "appsync",
-	"/v1/tags":         "appsync",
-	"/v2/email":        "ses",
+	// AppSync's two API-independent evaluation endpoints (#860). They are
+	// claimed by the prefix switch rather than left to the credential scope
+	// because an unsigned POST to either is a plausible request — neither
+	// needs an API or any account state — and the fall-through would label it,
+	// and IAM-authorise it, as an s3 write to a bucket named v1.
+	"/v1/dataplane-evaluatecode":     "appsync",
+	"/v1/dataplane-evaluatetemplate": "appsync",
+	"/v1/mergedApis":                 "appsync",
+	"/v1/pipes":                      "pipes",
+	"/v1/sourceApis":                 "appsync",
+	"/v1/tags":                       "appsync",
+	"/v2/email":                      "ses",
 
 	// /v2/apis is shared by API Gateway v2 and AppSync, and is the one place the
 	// switch already consults the credential scope before answering. Unsigned it

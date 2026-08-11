@@ -87,12 +87,10 @@ var unservedBindings = map[string]string{
 	"msk/CreateClusterV2":   "#859",
 	"msk/DescribeClusterV2": "#859",
 
-	// #860 — the evaluation operations are API-independent in the model
-	// (/v1/dataplane-evaluatecode) and are served under /v1/apis/{apiId}/….
-	// The Event API channel namespaces are registered where AWS binds them and
-	// are not part of this fault.
-	"appsync/EvaluateCode":            "#860",
-	"appsync/EvaluateMappingTemplate": "#860",
+	// #860 is deliberately absent. AppSync's two evaluation operations were
+	// served under /v1/apis/{apiId}/… where the model binds them to the
+	// API-independent /v1/dataplane-evaluatecode and /v1/dataplane-evaluatetemplate;
+	// they are now registered there.
 
 	// #862 is deliberately absent. SESv2's CreateEmailIdentity was registered
 	// as PUT where AWS models POST, and #871 moved it while this branch was in

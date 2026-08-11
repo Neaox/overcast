@@ -14,7 +14,9 @@ tags:
 
 > AWS docs: [AppSync API Reference](https://docs.aws.amazon.com/appsync/latest/APIReference/Welcome.html)
 
-AppSync uses REST-JSON under the `/v1/apis` and `/v2/apis` path prefixes. Overcast implements
+AppSync uses REST-JSON under the `/v1/apis` and `/v2/apis` path prefixes, plus the two
+API-independent evaluation endpoints `POST /v1/dataplane-evaluatecode` and
+`POST /v1/dataplane-evaluatetemplate`. Overcast implements
 GraphQL API management, schema upload, API key CRUD, data source CRUD, function
 CRUD, resolver CRUD, types CRUD, tagging, and GraphQL query execution with full
 authentication (API_KEY, Cognito, OIDC, Lambda, IAM, multi-auth), NONE, HTTP,
@@ -103,6 +105,14 @@ API stacks, and Events API (v2) with channel namespace CRUD.
   checking (isNull, isString, isList, isMap, isNumber, isBoolean), null
   coalescing (defaultIfNull, defaultIfNullOrEmpty), util.matches, util.validate.
   ctx.env injected from EnvironmentVariables store.
+- **Evaluation endpoints.** `EvaluateCode` (`POST /v1/dataplane-evaluatecode`) and
+  `EvaluateMappingTemplate` (`POST /v1/dataplane-evaluatetemplate`) are
+  API-independent: they take no `apiId` and no API needs to exist. `context` is a
+  JSON **string**, as AWS models it, not an object. A fault in the evaluated code
+  or template comes back as HTTP 200 with an `error` member, matching the modeled
+  response. `evaluationResult`, `error`, `stash` and (for `EvaluateCode`) `logs`
+  are populated; `outErrors` is not, because neither evaluator collects
+  `util.appendError` output yet.
 - **Real-time subscriptions.** WebSocket endpoint at `/_appsync/{apiId}/realtime`
   using the AppSync real-time protocol: connection_init→connection_ack,
   start→start_ack, stop→complete, ka (30s keepalive). Mutations automatically
@@ -167,25 +177,25 @@ on every OS — see [networking.md](../networking.md).
 
 ## Summary
 
-| Category                     | ✅ Supported | 🚧 WIP |
-| ---------------------------- | ------------ | ------ |
-| GraphQL APIs                 | 5            |        |
-| Schemas                      | 3            |        |
-| API Keys                     | 4            |        |
-| Data Sources                 | 5            |        |
-| Functions                    | 5            |        |
-| Resolvers                    | 6            |        |
-| Tags                         | 3            |        |
-| Environment Variables        | 2            |        |
-| Domain Names                 | 5            |        |
-| API Associations             | 3            |        |
-| API Cache                    | 5            |        |
-| Types                        | 5            |        |
-| Merged APIs                  | 7            |        |
-| Events API                   | 5            |        |
-| Channel Namespaces           | 5            |        |
-| Execution & Evaluation       | 1            | 2      |
-| DynamoDB Resolver Operations | 11           |        |
+| Category                     | ✅ Supported |
+| ---------------------------- | ------------ |
+| GraphQL APIs                 | 5            |
+| Schemas                      | 3            |
+| API Keys                     | 4            |
+| Data Sources                 | 5            |
+| Functions                    | 5            |
+| Resolvers                    | 6            |
+| Tags                         | 3            |
+| Environment Variables        | 2            |
+| Domain Names                 | 5            |
+| API Associations             | 3            |
+| API Cache                    | 5            |
+| Types                        | 5            |
+| Merged APIs                  | 7            |
+| Events API                   | 5            |
+| Channel Namespaces           | 5            |
+| Execution & Evaluation       | 3            |
+| DynamoDB Resolver Operations | 11           |
 
 ---
 
@@ -336,11 +346,11 @@ on every OS — see [networking.md](../networking.md).
 
 ### Execution & Evaluation
 
-| Operation                 | Status       | Notes                                                                                                           | AWS Docs                                                                                         |
-| ------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ExecuteGraphQL`          | ✅ Supported | Executes a GraphQL operation against the API                                                                    | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_ExecuteGraphQL.html)          |
-| `EvaluateMappingTemplate` | 🚧 WIP       | Evaluates VTL mapping templates; Overcast does not serve the binding AWS models, so no SDK reaches it (#860)    | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateMappingTemplate.html) |
-| `EvaluateCode`            | 🚧 WIP       | Evaluates JavaScript resolver code; Overcast does not serve the binding AWS models, so no SDK reaches it (#860) | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateCode.html)            |
+| Operation                 | Status       | Notes                                                                 | AWS Docs                                                                                         |
+| ------------------------- | ------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ExecuteGraphQL`          | ✅ Supported | Executes a GraphQL operation against the API                          | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_ExecuteGraphQL.html)          |
+| `EvaluateMappingTemplate` | ✅ Supported | Evaluates VTL mapping templates; logs and outErrors are not populated | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateMappingTemplate.html) |
+| `EvaluateCode`            | ✅ Supported | Evaluates APPSYNC_JS resolver code; outErrors is not populated        | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateCode.html)            |
 
 ### DynamoDB Resolver Operations
 

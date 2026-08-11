@@ -21,7 +21,6 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -86,21 +85,16 @@ func (s *Service) InitDynamoDBInvoker(invoker events.DynamoDBInvoker) {
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
 
-func (s *Service) TargetPrefix() string { return "AppSync." }
-
-func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if codec.Supports(s.SupportedProtocols(), c) {
-			if typed, ok := s.handler.typedOp[opName]; ok {
-				r = r.WithContext(context.WithValue(r.Context(), requestBaseURLKey{}, serviceutil.ClientBaseURL(s.handler.cfg, r)))
-				typed.Invoke(w, r, c)
-				return
-			}
-		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
+// PathPrefixes satisfies router.PathPrefixService for the two data-plane
+// evaluation endpoints.
+//
+// It names only those two deliberately. AppSync's other prefixes are shared
+// with a service the main router dispatches between at request time — /v1/tags
+// with MSK, /v2/apis with API Gateway v2 — so claiming them here would answer
+// 501 for the other owner whenever AppSync is left out of a test subset. The
+// two paths below are AppSync's alone across the whole pinned corpus.
+func (s *Service) PathPrefixes() []string {
+	return []string{evaluateCodePath, evaluateMappingTemplatePath}
 }
 
 // RegisterRoutes satisfies router.Service.
@@ -192,9 +186,15 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 			// Merged API associations (listed via /v1/apis path)
 			r.Get("/sourceApiAssociations", h.ListSourceApiAssociations)
 
-			// Evaluation
-			r.Post("/evaluateMappingTemplate", h.EvaluateMappingTemplate)
-			r.Post("/evaluateCode", h.EvaluateCode)
+			// Catch-all for unmatched per-API sub-paths. The /v1/apis
+			// catch-all below cannot answer them: a chi sub-router owns its
+			// whole subtree, so a path {apiId} does not match hits *its*
+			// NotFound and comes back a bare 404 with no AWS error body —
+			// the fault docs/plans/manifest-enforcement.md records for
+			// AppConfig under AppRegistry's /applications.
+			r.HandleFunc("/*", func(w http.ResponseWriter, req *http.Request) {
+				protocol.NotImplementedJSON(w, req)
+			})
 		})
 
 		// Catch-all for any unmatched sub-paths.
@@ -202,6 +202,13 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 			protocol.NotImplementedJSON(w, req)
 		})
 	})
+
+	// ── Data-plane evaluation ────────────────────────────────────────────
+	// API-independent: no apiId in the path and none in the body, which is
+	// why these are absolute registrations rather than members of the
+	// /v1/apis subtree they used to sit in. See handler_evaluate.go.
+	r.Post(evaluateCodePath, h.EvaluateCode)
+	r.Post(evaluateMappingTemplatePath, h.EvaluateMappingTemplate)
 
 	// ── Merged API source associations ───────────────────────────────────
 	// SDK path: /v1/mergedApis/{mergedApiIdentifier}/sourceApiAssociations

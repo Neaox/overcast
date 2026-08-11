@@ -32,7 +32,6 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
@@ -48,8 +47,6 @@ type Handler struct {
 	log   *serviceutil.ServiceLogger
 	bus   *events.Bus
 	clk   clock.Clock
-
-	typedOp map[string]op.Operation
 
 	// schemaParser validates and parses uploaded SDL schemas.
 	sp *schemaParser
@@ -81,7 +78,7 @@ type cachedLambdaAuthorizerIdentity struct {
 }
 
 func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger, clk clock.Clock, sp *schemaParser) *Handler {
-	h := &Handler{
+	return &Handler{
 		cfg:             cfg,
 		store:           store,
 		log:             log,
@@ -92,8 +89,6 @@ func newHandler(cfg *config.Config, store *Store, log *serviceutil.ServiceLogger
 		subscriptions:   newSubscriptionManager(clk, log),
 		authorizerCache: make(map[string]cachedLambdaAuthorizerIdentity),
 	}
-	h.typedOp = h.typedOps()
-	return h
 }
 
 // publish emits an event if the bus is wired.
@@ -370,15 +365,6 @@ func (h *Handler) DeleteGraphqlApi(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, map[string]any{})
 }
 
-type requestBaseURLKey struct{}
-
-func (h *Handler) baseURLFromContext(ctx context.Context) string {
-	if base, ok := ctx.Value(requestBaseURLKey{}).(string); ok && base != "" {
-		return base
-	}
-	return h.cfg.ExternalBaseURL()
-}
-
 // graphQLDNS returns the hostname a client resolves to reach this API, minted
 // through the shared host-routed helper so it is a name this router accepts.
 // It replaces a hardcoded "amazonaws.com", which advertised a name that
@@ -393,12 +379,6 @@ func (h *Handler) baseURLFromContext(ctx context.Context) string {
 // a follow-up in docs/plans/host-routing-precedence.md.
 func (h *Handler) graphQLDNS(r *http.Request, apiID string) string {
 	return serviceutil.HostRoutedHostname(h.cfg, r, middleware.LabelAppSyncAPI, apiID, h.region(r))
-}
-
-// graphQLDNSFromBase is graphQLDNS for the typed handlers, which carry the
-// client base URL on the context rather than holding an *http.Request.
-func (h *Handler) graphQLDNSFromBase(baseURL, apiID, region string) string {
-	return serviceutil.HostRoutedHostnameFromBase(baseURL, middleware.LabelAppSyncAPI, apiID, region)
 }
 
 // localGraphQLURIs mints the executable GraphQL and realtime endpoints, in the
