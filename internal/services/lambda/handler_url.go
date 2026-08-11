@@ -211,9 +211,7 @@ func (h *Handler) CreateFunctionUrlConfig(w http.ResponseWriter, r *http.Request
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(h.functionUrlConfigToResponse(r, c))
+	protocol.WriteRESTJSON(w, r, http.StatusCreated, h.functionUrlConfigToResponse(r, c))
 }
 
 // GetFunctionUrlConfig handles GET /2021-10-31/functions/{name}/url.
@@ -235,9 +233,7 @@ func (h *Handler) GetFunctionUrlConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(h.functionUrlConfigToResponse(r, c))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, h.functionUrlConfigToResponse(r, c))
 }
 
 // UpdateFunctionUrlConfig handles PUT /2021-10-31/functions/{name}/url.
@@ -302,9 +298,7 @@ func (h *Handler) UpdateFunctionUrlConfig(w http.ResponseWriter, r *http.Request
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(h.functionUrlConfigToResponse(r, c))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, h.functionUrlConfigToResponse(r, c))
 }
 
 // DeleteFunctionUrlConfig handles DELETE /2021-10-31/functions/{name}/url.
@@ -387,9 +381,7 @@ func (h *Handler) ListFunctionUrlConfigs(w http.ResponseWriter, r *http.Request)
 		resp.FunctionUrlConfigs = append(resp.FunctionUrlConfigs, functionUrlConfigResponseWithName{h.functionUrlConfigToResponse(r, c)})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	protocol.WriteRESTJSON(w, r, http.StatusOK, resp)
 }
 
 // HostRouteRewrite adapts a Host-routed Lambda function URL invocation

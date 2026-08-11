@@ -170,9 +170,7 @@ func (h *Handler) CreateCodeSigningConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(codeSigningConfigEnvelope{CodeSigningConfig: csc})
+	protocol.WriteRESTJSON(w, r, http.StatusCreated, codeSigningConfigEnvelope{CodeSigningConfig: csc})
 }
 
 // codeSigningTimeFormat is the timestamp format AWS uses for LastModified on
@@ -201,9 +199,7 @@ func (h *Handler) GetCodeSigningConfig(w http.ResponseWriter, r *http.Request) {
 	if csc == nil {
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(codeSigningConfigEnvelope{CodeSigningConfig: csc})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, codeSigningConfigEnvelope{CodeSigningConfig: csc})
 }
 
 // UpdateCodeSigningConfig handles PUT /2020-04-22/code-signing-configs/{arn}.
@@ -241,9 +237,7 @@ func (h *Handler) UpdateCodeSigningConfig(w http.ResponseWriter, r *http.Request
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(codeSigningConfigEnvelope{CodeSigningConfig: csc})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, codeSigningConfigEnvelope{CodeSigningConfig: csc})
 }
 
 // DeleteCodeSigningConfig handles DELETE /2020-04-22/code-signing-configs/{arn}.
@@ -285,9 +279,7 @@ func (h *Handler) ListCodeSigningConfigs(w http.ResponseWriter, r *http.Request)
 	sort.Slice(configs, func(i, j int) bool {
 		return configs[i].CodeSigningConfigID < configs[j].CodeSigningConfigID
 	})
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listCodeSigningConfigsResponse{CodeSigningConfigs: configs})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listCodeSigningConfigsResponse{CodeSigningConfigs: configs})
 }
 
 // ListFunctionsByCodeSigningConfig handles
@@ -303,9 +295,7 @@ func (h *Handler) ListFunctionsByCodeSigningConfig(w http.ResponseWriter, r *htt
 		return
 	}
 	sort.Strings(arns)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listFunctionsByCodeSigningConfigResponse{FunctionArns: arns})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listFunctionsByCodeSigningConfigResponse{FunctionArns: arns})
 }
 
 // functionsUsingCodeSigningConfig returns the ARNs of functions referencing the

@@ -917,9 +917,7 @@ func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 		configs = append(configs, functionToConfig(fn))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listFunctionsResponse{Functions: configs})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listFunctionsResponse{Functions: configs})
 }
 
 // ListRuntimes handles GET /_lambda/runtimes (emulator-only). The catalog is
@@ -1273,9 +1271,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+	protocol.WriteRESTJSON(w, r, http.StatusCreated, functionToConfig(fn))
 }
 
 func (h *Handler) startFunctionPrewarm(fn *Function) bool {
@@ -1403,9 +1399,7 @@ func (h *Handler) functionForCodeSigning(w http.ResponseWriter, r *http.Request)
 }
 
 func writeCodeSigningConfig(w http.ResponseWriter, r *http.Request, arn, name string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(codeSigningConfigResponse{
+	protocol.WriteRESTJSON(w, r, http.StatusOK, codeSigningConfigResponse{
 		CodeSigningConfigArn: arn,
 		FunctionName:         name,
 	})
@@ -1544,9 +1538,7 @@ func (h *Handler) GetFunction(w http.ResponseWriter, r *http.Request) {
 		codeBlock.Location = fn.ImageUri
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(getFunctionResponse{
+	protocol.WriteRESTJSON(w, r, http.StatusOK, getFunctionResponse{
 		Configuration: *functionToConfig(fn),
 		Code:          codeBlock,
 		Tags:          fn.Tags,
@@ -1573,9 +1565,7 @@ func (h *Handler) GetFunctionConfiguration(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionToConfig(fn))
 }
 
 // UpdateFunctionCode handles PUT /2015-03-31/functions/{name}/code.
@@ -1703,9 +1693,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionToConfig(fn))
 }
 
 func validateUpdateFunctionCodeSource(packageType string, req updateFunctionCodeRequest) (*protocol.AWSError, bool) {
@@ -1975,9 +1963,7 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionToConfig(fn))
 }
 
 // retireExecutionEnvironment retires the warm execution environment for fn

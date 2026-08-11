@@ -75,6 +75,21 @@ func WriteAWSJSON(w http.ResponseWriter, r *http.Request, status int, v any, con
 	w.Write(body) //nolint:errcheck
 }
 
+// WriteRESTJSON serialises v as the successful response of a REST-JSON
+// service, whose content type is plain application/json rather than one of the
+// x-amz-json target protocols.
+//
+// It exists so a REST-JSON handler has somewhere to go other than encoding
+// straight onto the ResponseWriter. That shortcut is what left Lambda's whole
+// success surface without the x-amzn-RequestId header AWS answers every
+// operation with: the header is the write helpers' job (see
+// middleware.RequestID), so a handler that bypasses them silently opts out of
+// it, and no test noticed because every request-ID assertion in the suite was
+// on an error response, which does go through a helper.
+func WriteRESTJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
+	WriteAWSJSON(w, r, status, v, "application/json")
+}
+
 // WriteEmpty writes a response with no body and the standard request ID header.
 // Used for operations like DeleteObject which return 204 or an empty 200.
 func WriteEmpty(w http.ResponseWriter, r *http.Request, status int) {

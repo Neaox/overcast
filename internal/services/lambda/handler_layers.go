@@ -171,9 +171,7 @@ func (h *Handler) PublishLayerVersion(w http.ResponseWriter, r *http.Request) {
 
 	log.Debug("layer version published", zap.String("layer", layerName), zap.Int64("version", version))
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(layerToWireResponse(lv))
+	protocol.WriteRESTJSON(w, r, http.StatusCreated, layerToWireResponse(lv))
 }
 
 // GetLayerVersion handles GET /2015-03-31/layers/{layerName}/versions/{versionNumber}.
@@ -204,9 +202,7 @@ func (h *Handler) GetLayerVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(layerToWireResponse(lv))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, layerToWireResponse(lv))
 }
 
 // GetLayerVersionMetadata handles the emulator-only layer metadata endpoint used by the web UI.
@@ -271,9 +267,7 @@ func (h *Handler) ListLayerVersions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, layerToWireResponse(lv))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listLayerVersionsWireResponse{LayerVersions: out})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listLayerVersionsWireResponse{LayerVersions: out})
 }
 
 // ListLayers handles GET /2015-03-31/layers.
@@ -310,9 +304,7 @@ func (h *Handler) ListLayers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listLayersWireResponse{Layers: out})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listLayersWireResponse{Layers: out})
 }
 
 // DeleteLayerVersion handles DELETE /2015-03-31/layers/{layerName}/versions/{versionNumber}.

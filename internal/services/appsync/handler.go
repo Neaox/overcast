@@ -14,7 +14,6 @@ package appsync
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -112,13 +111,11 @@ func (h *Handler) regionCtx(ctx context.Context) string {
 }
 
 // writeJSON writes a JSON response with the correct AppSync content type.
-// AppSync uses application/json (not application/x-amz-json-1.0).
+// AppSync uses application/json (not application/x-amz-json-1.0), which is what
+// protocol.WriteRESTJSON is for — this stays as a name local callers already
+// use rather than as a second implementation of it.
 func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
-	reqID := protocol.RequestIDFromContext(r.Context())
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("x-amzn-requestid", reqID)
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	protocol.WriteRESTJSON(w, r, status, v)
 }
 
 func containsString(values []string, value string) bool {

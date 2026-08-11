@@ -175,9 +175,7 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionConcurrencyResponse{ReservedConcurrentExecutions: *req.ReservedConcurrentExecutions})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionConcurrencyResponse{ReservedConcurrentExecutions: *req.ReservedConcurrentExecutions})
 }
 
 // GetFunctionConcurrency handles GET /2019-09-30/functions/{name}/concurrency.
@@ -208,9 +206,7 @@ func (h *Handler) GetFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionConcurrencyResponse{
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionConcurrencyResponse{
 		ReservedConcurrentExecutions: *fn.ReservedConcurrency,
 	})
 }
@@ -332,9 +328,7 @@ func (h *Handler) PutProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 			zap.String("function", name))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(h.provisionedResponseFor(ctx, fn, cfg))
+	protocol.WriteRESTJSON(w, r, http.StatusAccepted, h.provisionedResponseFor(ctx, fn, cfg))
 }
 
 // DeleteProvisionedConcurrencyConfig handles DELETE /2015-03-31/functions/{name}/provisioned-concurrency.
@@ -423,9 +417,7 @@ func (h *Handler) ListProvisionedConcurrencyConfigs(w http.ResponseWriter, r *ht
 		))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listProvisionedConcurrencyConfigsResponse{
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listProvisionedConcurrencyConfigsResponse{
 		ProvisionedConcurrencyConfigs: out,
 	})
 }
@@ -471,7 +463,5 @@ func (h *Handler) GetProvisionedConcurrencyConfig(w http.ResponseWriter, r *http
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(h.provisionedResponseFor(ctx, fn, cfg))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, h.provisionedResponseFor(ctx, fn, cfg))
 }

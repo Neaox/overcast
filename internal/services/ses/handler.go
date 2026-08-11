@@ -569,17 +569,14 @@ func (h *Handler) V2GetEmailIdentity(w http.ResponseWriter, r *http.Request) {
 	if v.Type == "domain" {
 		iType = "DOMAIN"
 	}
-	w.Header().Set("Content-Type", "application/json")
 	// GetEmailIdentity's modeled output carries the identity's Tags.
-	if err := json.NewEncoder(w).Encode(map[string]any{
+	protocol.WriteRESTJSON(w, r, http.StatusOK, map[string]any{
 		"IdentityType":             iType,
 		"VerifiedForSendingStatus": true,
 		"VerificationStatus":       "SUCCESS",
 		"IdentityName":             v.Identity,
 		"Tags":                     sortedSESTags(v.Tags),
-	}); err != nil {
-		h.log.Error("ses: encode GetEmailIdentity response", zap.Error(err))
-	}
+	})
 }
 
 // V2DeleteEmailIdentity handles DELETE /v2/email/identities/{EmailIdentity}.
@@ -705,10 +702,7 @@ func (h *Handler) V2ListTagsForResource(w http.ResponseWriter, r *http.Request) 
 		writeV2JSONError(w, r, aerr)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{"Tags": sortedSESTags(tags)}); err != nil {
-		h.log.Error("ses: encode ListTagsForResource response", zap.Error(err))
-	}
+	protocol.WriteRESTJSON(w, r, http.StatusOK, map[string]any{"Tags": sortedSESTags(tags)})
 }
 
 // writeV2EmptyJSON writes SESv2's empty success body.

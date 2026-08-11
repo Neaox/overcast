@@ -299,9 +299,7 @@ func (h *Handler) CreateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		h.esmDelivery.Start(esm)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(esm)
+	protocol.WriteRESTJSON(w, r, http.StatusAccepted, esm)
 }
 
 // ListEventSourceMappings handles GET /2015-03-31/event-source-mappings.
@@ -328,9 +326,7 @@ func (h *Handler) ListEventSourceMappings(w http.ResponseWriter, r *http.Request
 		h.ensureEventSourceMappingARN(r, mapping)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listESMResponse{EventSourceMappings: mappings})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listESMResponse{EventSourceMappings: mappings})
 }
 
 // GetEventSourceMapping handles GET /2015-03-31/event-source-mappings/{uuid}.
@@ -347,9 +343,7 @@ func (h *Handler) GetEventSourceMapping(w http.ResponseWriter, r *http.Request) 
 	}
 	h.ensureEventSourceMappingARN(r, esm)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(esm)
+	protocol.WriteRESTJSON(w, r, http.StatusOK, esm)
 }
 
 // UpdateEventSourceMapping handles PUT /2015-03-31/event-source-mappings/{uuid}.
@@ -457,9 +451,7 @@ func (h *Handler) UpdateEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(esm)
+	protocol.WriteRESTJSON(w, r, http.StatusAccepted, esm)
 }
 
 func (h *Handler) ensureEventSourceMappingARN(r *http.Request, esm *EventSourceMapping) {
@@ -499,7 +491,5 @@ func (h *Handler) DeleteEventSourceMapping(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(esm)
+	protocol.WriteRESTJSON(w, r, http.StatusOK, esm)
 }
