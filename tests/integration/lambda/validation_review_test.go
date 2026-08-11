@@ -213,10 +213,10 @@ func TestUnsupportedFields_ExplicitNoOpValuesAreNotRequests(t *testing.T) {
 			// Every one of these is a still-gated member whose value means
 			// "leave it alone". (TracingConfig, EphemeralStorage and KMSKeyArn
 			// are no longer gated at all — they are stored and echoed, and
-			// tracing_storage_kms_test.go owns them.)
+			// tracing_storage_kms_test.go owns them; nor is DeadLetterConfig,
+			// which dead_letter_config_test.go owns.)
 			"Publish": false, "PublishTo": nil,
-			"DeadLetterConfig": map[string]any{}, "SnapStart": map[string]any{},
-			"DurableConfig": map[string]any{},
+			"SnapStart": map[string]any{}, "DurableConfig": map[string]any{},
 		})
 		defer resp.Body.Close()
 		helpers.AssertStatus(t, resp, http.StatusCreated)

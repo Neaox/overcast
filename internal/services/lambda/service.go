@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -36,6 +37,7 @@ import (
 	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -137,6 +139,11 @@ type InvokeResult struct {
 	LogGroupName string
 	// LogStreamName is the specific log stream produced by this invocation.
 	LogStreamName string
+	// RequestID is the invocation's Lambda request ID — the one the runtime
+	// handed the handler, and the one that appears in the function's own logs.
+	// Empty for a runtime that never reached the Runtime API (the Docker-less
+	// stub), and for a failure raised before the invocation was submitted.
+	RequestID string
 
 	// acquireFailed is true when rt.Acquire failed (Docker infrastructure
 	// issue: image pull, container create/start, IP assignment). Used by
@@ -255,6 +262,10 @@ type Function struct {
 	// Environment variables are stored in plaintext regardless — Overcast is
 	// not a security boundary — so this is association metadata only.
 	KMSKeyArn string `json:"kms_key_arn,omitempty"`
+	// DeadLetterTargetArn is the SQS queue or SNS topic an asynchronous
+	// invocation is sent to once it has failed, or "" for a function with no
+	// dead-letter queue. See dead_letter.go for what is delivered to it.
+	DeadLetterTargetArn string `json:"dead_letter_target_arn,omitempty"`
 }
 
 // functionImagePullGeneration identifies the exact deployment generation a
@@ -1087,15 +1098,24 @@ func (s *Service) seedPersistedFunctionImages(cr *ContainerRuntime) {
 	}
 }
 
+// InitRouter wires the root router so a dead-lettered failure can be delivered
+// to the SQS queue or SNS topic its ARN names — a function's
+// DeadLetterConfig.TargetArn, or an event-source mapping's
+// DestinationConfig.OnFailure.Destination. Called by the router after all
+// services are constructed.
+func (s *Service) InitRouter(router http.Handler) {
+	s.handler.setDeadLetterTargets(eventtarget.NewDispatcher(router, s.cfg.Region))
+}
+
 // InitESMDelivery wires SQS→Lambda and DynamoDB Streams→Lambda event delivery.
 // Called by the router after all services are constructed and the event bus is
 // available. receiver may be nil when the SQS service is not loaded.
-func (s *Service) InitESMDelivery(receiver events.MessageReceiver, enqueuer events.MessageEnqueuer, bus *events.Bus) {
+func (s *Service) InitESMDelivery(receiver events.MessageReceiver, bus *events.Bus) {
 	mgr := newESMDeliveryManager(
 		s.handler.esm,
 		s.invoker,
 		receiver,
-		enqueuer,
+		s.handler.deadLetterTargets,
 		bus,
 		s.log,
 		s.handler.clk,

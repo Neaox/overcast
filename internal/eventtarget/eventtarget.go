@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -192,6 +193,10 @@ type Request struct {
 	MessageDeduplicationID string
 	// Subject sets the SNS message subject. Optional.
 	Subject string
+	// MessageAttributes are the message attributes to send alongside the
+	// payload. Honoured by the SQS and SNS sinks — the two kinds AWS models
+	// message attributes on — and ignored by every other kind. Optional.
+	MessageAttributes map[string]MessageAttribute
 
 	// InvocationType selects how a Lambda target is invoked:
 	// InvocationRequestResponse waits for the result and turns a function error
@@ -204,6 +209,35 @@ type Request struct {
 	Source     string
 	DetailType string
 	Resources  []string
+}
+
+// MessageAttribute is one SQS or SNS message attribute. Both services model the
+// same shape — a data type naming how the value should be read, and the value
+// itself — and both spell the string form of it identically, so one type serves
+// the two sinks.
+//
+// Only the string form is carried. AWS's Binary and *.custom data types exist,
+// but no caller here produces one: an emulator sender that needs to say "this
+// is a number" says so with DataType "Number" and a decimal StringValue,
+// exactly as the SDKs do.
+type MessageAttribute struct {
+	// DataType is AWS's attribute data type — "String" or "Number".
+	DataType string
+	// StringValue is the attribute value.
+	StringValue string
+}
+
+// sortedAttributeNames returns the attribute names in a stable order, so a
+// delivery built from a map produces the same request every time. SQS's JSON
+// body does not care, but SNS's Query form numbers its entries, and an
+// unstable order there makes the request untestable and the wire log noise.
+func sortedAttributeNames(attrs map[string]MessageAttribute) []string {
+	names := make([]string, 0, len(attrs))
+	for name := range attrs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // busHopKey counts nested event-bus deliveries on a delivery's context.
@@ -315,6 +349,13 @@ func (d *Dispatcher) deliverSQS(ctx context.Context, req Request) error {
 	if req.MessageDeduplicationID != "" {
 		body["MessageDeduplicationId"] = req.MessageDeduplicationID
 	}
+	if len(req.MessageAttributes) > 0 {
+		attrs := make(map[string]any, len(req.MessageAttributes))
+		for name, attr := range req.MessageAttributes {
+			attrs[name] = map[string]any{"DataType": attr.DataType, "StringValue": attr.StringValue}
+		}
+		body["MessageAttributes"] = attrs
+	}
 	return d.InvokeJSONTarget(ctx, "AmazonSQS.SendMessage", body)
 }
 
@@ -348,6 +389,14 @@ func (d *Dispatcher) deliverSNS(ctx context.Context, req Request) error {
 	}
 	if req.Subject != "" {
 		form.Set("Subject", req.Subject)
+	}
+	// SNS's Query protocol numbers attribute entries from 1.
+	for i, name := range sortedAttributeNames(req.MessageAttributes) {
+		prefix := fmt.Sprintf("MessageAttributes.entry.%d.", i+1)
+		attr := req.MessageAttributes[name]
+		form.Set(prefix+"Name", name)
+		form.Set(prefix+"Value.DataType", attr.DataType)
+		form.Set(prefix+"Value.StringValue", attr.StringValue)
 	}
 	httpReq, err := d.newRequest(ctx, http.MethodPost, "/", []byte(form.Encode()))
 	if err != nil {

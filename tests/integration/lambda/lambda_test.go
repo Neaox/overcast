@@ -5176,10 +5176,11 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 	srv := helpers.NewTestServer(t)
 	// TracingConfig, EphemeralStorage and KMSKeyArn are deliberately absent:
 	// they are stored and echoed now, and covered by
-	// tracing_storage_kms_test.go. Everything still listed here would promise
-	// behaviour Overcast does not deliver — see CreateFunction's gate.
+	// tracing_storage_kms_test.go. DeadLetterConfig is absent for a stronger
+	// reason — it is implemented, and dead_letter_config_test.go owns it.
+	// Everything still listed here would promise behaviour Overcast does not
+	// deliver — see CreateFunction's gate.
 	createFunctionFields := map[string]any{
-		"DeadLetterConfig":       map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
 		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
 		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
 		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
@@ -5227,7 +5228,6 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 	var baselineConfig functionConfiguration
 	decodeJSON(t, baseline, &baselineConfig)
 	updateConfigurationFields := map[string]any{
-		"DeadLetterConfig":       map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
 		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
 		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
 		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},

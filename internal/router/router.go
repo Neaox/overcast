@@ -661,6 +661,9 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// EventBridge: wire bus for bus/rule lifecycle events.
 	ebSvc.InitBus(bus)
 	ebSvc.InitRouter(r)
+	// Lambda: wire the root router so a dead-lettered async invocation reaches
+	// its SQS queue or SNS topic over the same path an SDK client would take.
+	lambdaSvc.InitRouter(r)
 	// CloudWatch: wire alarm-action dispatch. Deliveries go back through the
 	// root router, so an alarm's SNS action takes exactly the path an SDK
 	// Publish would, and the state-change event goes onto the default event
@@ -801,11 +804,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}()
 	}
 	// SQS/DynamoDB Streams → Lambda via event source mappings.
-	var receiver events.MessageReceiver
-	var enqueuer events.MessageEnqueuer
-	receiver = sqsSvc.Receiver()
-	enqueuer = sqsSvc.Enqueuer()
-	lambdaSvc.InitESMDelivery(receiver, enqueuer, bus)
+	var receiver events.MessageReceiver = sqsSvc.Receiver()
+	lambdaSvc.InitESMDelivery(receiver, bus)
 
 	// Build goal tier map for enabled services.
 	enabledGoalTiers := make(map[string]string, len(enabledServiceNames))

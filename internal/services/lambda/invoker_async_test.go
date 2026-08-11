@@ -254,10 +254,11 @@ func TestInvokeEvent_reservedConcurrencyZeroDoesNotDeadLetter(t *testing.T) {
 	// When: a notification is delivered to it.
 	err := f.inv.InvokeEvent(context.Background(), f.fn.ARN, []byte(`{}`))
 
-	// Then: the event is still accepted. Overcast has no async retry or
-	// DeadLetterConfig yet, so the event is ultimately dropped — but it is
-	// dropped by Lambda, not bounced back to SNS to be dead-lettered against
-	// the subscription's RedrivePolicy.
+	// Then: the event is still accepted. What Lambda does with it afterwards —
+	// drop it, or send it to the function's own DeadLetterConfig target (see
+	// dead_letter_test.go) — is Lambda's business; what matters here is that it
+	// is not bounced back to SNS to be dead-lettered against the subscription's
+	// RedrivePolicy.
 	if err != nil {
 		t.Fatalf("InvokeEvent returned %v, want nil — a reserved-concurrency throttle is Lambda's to retry", err)
 	}
