@@ -45,7 +45,13 @@ import (
 //     action. Add the prefix to detectService.
 //   - The route is only ever reached by signed AWS SDK traffic. Then "s3" is
 //     the fall-through and the credential scope does the work. Record it here
-//     with a note saying so, and change nothing else.
+//     with a note saying so, and change nothing else — but check the scope
+//     really does the work, which is the sibling assertion in
+//     detectservice_signed_test.go rather than anything this table can say. It
+//     only works when the service's signing name maps to its service key, and
+//     for MSK and AppRegistry it did not: "s3" was recorded here as the benign
+//     fall-through while every signed request to those paths went unclassified
+//     and therefore unauthorized.
 //
 // Changing an existing entry is the louder signal: a path that used to be
 // classified as one service and is now another has moved which IAM action a
@@ -241,7 +247,10 @@ func TestDetectServiceClassifiesEveryRegisteredRouteFamily(t *testing.T) {
 	}
 }
 
-func classifyRegisteredRouteFamilies(t *testing.T) map[string]string {
+// newTestRouterRoutes builds the real router and returns it as something
+// chi.Walk can enumerate. Shared with the signed classification guard in
+// detectservice_signed_test.go, which walks the same routing table.
+func newTestRouterRoutes(t *testing.T) chi.Routes {
 	t.Helper()
 	cfg := &config.Config{
 		Host:      "127.0.0.1",
@@ -260,6 +269,12 @@ func classifyRegisteredRouteFamilies(t *testing.T) map[string]string {
 	if !ok {
 		t.Fatal("router.New did not return a chi.Routes")
 	}
+	return routes
+}
+
+func classifyRegisteredRouteFamilies(t *testing.T) map[string]string {
+	t.Helper()
+	routes := newTestRouterRoutes(t)
 
 	seen := map[string]map[string]bool{}
 	if err := chi.Walk(routes, func(_, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {

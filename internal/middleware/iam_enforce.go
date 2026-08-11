@@ -303,19 +303,27 @@ func denyIAMRequest(w http.ResponseWriter, r *http.Request, logger *zap.Logger, 
 	writeIAMAccessDenied(w, r)
 }
 
+// requestIAMAction names the IAM action a request invokes, as "<prefix>:<Op>".
+//
+// The prefix is AWS's IAM action prefix for the classified service, which is
+// not always Overcast's key for it: MSK is keyed "msk" and authorizes as
+// "kafka:", Step Functions as "states:", OpenSearch as "es:". The action is
+// evaluated against a policy the user wrote from the AWS documentation, so it
+// has to be the name that documentation gives — see iamActionPrefix.
 func requestIAMAction(r *http.Request) string {
 	svc := detectService(r)
 	if svc == "" || svc == "internal" || svc == "metrics" || svc == "events" {
 		return ""
 	}
+	prefix := iamActionPrefix(svc)
 	if svc == "lambda" {
 		if op := requestLambdaIAMOperation(r); op != "" {
-			return svc + ":" + op
+			return prefix + ":" + op
 		}
 	}
 
 	if action := strings.TrimSpace(r.URL.Query().Get("Action")); action != "" {
-		return svc + ":" + action
+		return prefix + ":" + action
 	}
 	if strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/x-www-form-urlencoded") {
 		// Preserving the body matters here: enforcement runs ahead of routing
@@ -324,7 +332,7 @@ func requestIAMAction(r *http.Request) string {
 		// enforcement is switched on.
 		_ = protocol.ParseFormPreservingBody(r)
 		if action := strings.TrimSpace(r.Form.Get("Action")); action != "" {
-			return svc + ":" + action
+			return prefix + ":" + action
 		}
 	}
 
@@ -334,12 +342,12 @@ func requestIAMAction(r *http.Request) string {
 			op = op[idx+1:]
 		}
 		if op != "" {
-			return svc + ":" + op
+			return prefix + ":" + op
 		}
 	}
 
 	if op := strings.TrimSpace(detectOperationForService(r, svc)); op != "" {
-		return svc + ":" + op
+		return prefix + ":" + op
 	}
 
 	return ""
@@ -1440,7 +1448,13 @@ func writeIAMAccessDenied(w http.ResponseWriter, r *http.Request) {
 			Message:    "Access Denied",
 			HTTPStatus: http.StatusForbidden,
 		})
-	case "sns", "iam", "sts", "ec2", "cloudformation", "rds", "ses", "cloudwatch", "acm", "kinesis", "kms", "ssm", "stepfunctions", "ecs", "ecr", "glue", "firehose", "athena", "elasticache", "msk", "waf", "shield", "autoscaling", "route53", "elbv2", "organizations":
+	// MSK is deliberately absent: it is a REST-JSON service and its handlers
+	// write JSON errors (internal/services/msk/handler.go), so a denial in the
+	// Query XML envelope is a shape no MSK client can parse. It was listed here
+	// and unreachable for most of MSK's surface, because a signed request was
+	// classified by its "kafka" signing name and fell to the default; naming
+	// the service correctly is what would have made the wrong envelope real.
+	case "sns", "iam", "sts", "ec2", "cloudformation", "rds", "ses", "cloudwatch", "acm", "kinesis", "kms", "ssm", "stepfunctions", "ecs", "ecr", "glue", "firehose", "athena", "elasticache", "waf", "shield", "autoscaling", "route53", "elbv2", "organizations":
 		protocol.WriteQueryXMLError(w, r, &protocol.AWSError{
 			Code:       "AccessDenied",
 			Message:    "User is not authorized to perform this action",

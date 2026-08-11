@@ -24,10 +24,16 @@ import (
 // An optional body parameter enables Query-protocol Action-param detection.
 //
 // What it answers is not only a log label. IAM enforcement builds the action it
-// authorises as "<service>:<operation>" (see requestIAMAction), the resource
-// resolvers below it branch on the same value, and region handling and the
-// trace badges read it too. A changed answer here changes which IAM action a
-// policy is evaluated against — treat it as behaviour, not presentation.
+// authorises from it (see requestIAMAction, which maps the answer to AWS's IAM
+// action prefix), the resource resolvers below it branch on the same value, and
+// region handling and the trace badges read it too. A changed answer here
+// changes which IAM action a policy is evaluated against — treat it as
+// behaviour, not presentation.
+//
+// Every one of those consumers wants an **Overcast service key**, which is one
+// of the three names a service has. serviceidentity.go holds the other two and
+// the mappings between them; the short version is that the answer here is never
+// a SigV4 signing name, even though step 3 reads one.
 //
 // The step 2 prefix switch is hand-written and stays that way deliberately. The
 // pinned Smithy models describe the same paths — every REST binding's URI, and
@@ -42,11 +48,17 @@ import (
 //     model trie safely only because addressesNonS3 gates it on positive
 //     non-S3 evidence from the credential scope — evidence that is by
 //     definition absent for the unsigned traffic step 2 exists to serve.
-//   - The credential scope cannot lead instead. serviceFromAuthCredential
-//     returns the SigV4 signing name, which is not this function's key for
-//     several implemented services: elasticfilesystem/efs, kafka/msk,
-//     servicecatalog/appregistry, states/stepfunctions. The "/2015-02-01/"
-//     entry below is the only reason EFS traffic is labelled efs at all.
+//   - The credential scope cannot lead instead, for the reason in the bullet
+//     above: it is absent from the unsigned traffic step 2 exists to serve.
+//     What it *can* now do is answer correctly when it is present. The scope
+//     carries the SigV4 signing name, which is not this function's key for
+//     several implemented services — elasticfilesystem/efs, kafka/msk,
+//     servicecatalog/appregistry, states/stepfunctions, monitoring/cloudwatch,
+//     elasticloadbalancing/elbv2 — and step 3 used to return it raw, so a
+//     signed request to any of their paths that step 2 does not claim was
+//     labelled with a name nothing downstream knows. serviceKeyForSigningName
+//     (serviceidentity.go) translates it; step 3 is why MSK's v1 surface no
+//     longer escapes IAM enforcement.
 //   - Three entries here are ambiguous in the models and would have to be given
 //     up. "/applications" is declared by eight modeled services, "/v1/tags" by
 //     twelve, "/2017-03-31/" by Lambda and Lambda MicroVMs. Answering "" for
@@ -59,9 +71,12 @@ import (
 //     That is a narrower rule than deriving the switch: it costs nothing for
 //     unsigned traffic and answers the signed case correctly.
 //
-// TestDetectServiceClassifiesEveryRegisteredRouteFamily covers what that
-// leaves open: it walks the real router and fails when a service registers a
-// path family the switch has never been told about.
+// Two tests cover what that leaves open, both by walking the real router.
+// TestDetectServiceClassifiesEveryRegisteredRouteFamily fails when a service
+// registers a path family the switch has never been told about, classifying
+// unsigned. TestDetectServiceClassifiesEverySignedRouteByItsSigningName signs
+// each route the way the pinned models say that binding is signed, which is the
+// case the switch does not decide and step 3 does.
 func detectService(r *http.Request, body ...[]byte) string {
 	// 1. X-Amz-Target — use the generated AWS operation registry for
 	// accurate service mapping across all JSON-protocol services.
@@ -159,7 +174,10 @@ func detectService(r *http.Request, body ...[]byte) string {
 		// classification it had before this route existed. AppConfig Data signs
 		// as "appconfig", which it shares with the AppConfig control plane;
 		// only AppConfig Data binds this path.
-		if svc := serviceFromAuthCredential(r); svc != "" && svc != "appconfig" {
+		// Translated to a service key, not returned raw: this arm answers with
+		// whatever the caller named, and every other branch of this function
+		// returns a key.
+		if svc := serviceKeyFromAuthCredential(r); svc != "" && svc != "appconfig" {
 			return svc
 		}
 		return "appconfigdata"
@@ -203,7 +221,7 @@ func detectService(r *http.Request, body ...[]byte) string {
 	// (IAM, STS, SNS, EC2, CloudFormation, RDS, …) where there is no
 	// X-Amz-Target header and no distinguishing URL path.
 	// Format: AWS4-HMAC-SHA256 Credential=AKID/DATE/REGION/SERVICE/aws4_request
-	if svc := serviceFromAuthCredential(r); svc != "" && svc != "s3" {
+	if svc := serviceKeyFromAuthCredential(r); svc != "" && svc != "s3" {
 		return svc
 	}
 
@@ -340,14 +358,28 @@ func internalService(path string) string {
 	}
 }
 
-// serviceFromAuthCredential extracts the service name from the SigV4
+// serviceFromAuthCredential extracts the SigV4 signing name from the
 // Authorization header's Credential scope component.
+//
+// The signing name is not this package's service key — see serviceidentity.go.
+// Callers that are classifying a request want serviceKeyFromAuthCredential;
+// this one is for the two places that compare the scope against a specific
+// service's own signing name, where the two happen to be equal and naming the
+// signing name is what makes the comparison readable.
 func serviceFromAuthCredential(r *http.Request) string {
 	parts := credentialScope(r)
 	if len(parts) >= 4 {
 		return parts[3]
 	}
 	return ""
+}
+
+// serviceKeyFromAuthCredential reads the credential scope and translates it to
+// an Overcast service key, which is what every consumer of detectService needs.
+// Returning the raw signing name is what left MSK's v1 surface and
+// AppRegistry's attribute groups unclassifiable, and with them unauthorized.
+func serviceKeyFromAuthCredential(r *http.Request) string {
+	return serviceKeyForSigningName(serviceFromAuthCredential(r))
 }
 
 // detectOperation infers the operation name from the request. It classifies
