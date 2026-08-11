@@ -119,6 +119,20 @@ type Image struct {
 	ImageManifestMediaType string          `json:"imageManifestMediaType,omitempty"`
 }
 
+// imageRecord is an Image as it is persisted: the image itself, plus how
+// Overcast came to know about it. The extra field is stored, never served —
+// responses are built from Image, and an unknown key is ignored when a record
+// is read back as one.
+//
+// Provenance is what makes the two sources reconcilable. An image observed in
+// the registry is the registry's to withdraw: when the manifest goes, so does
+// the record. An image registered through PutImage was never in the registry
+// to begin with, so the registry's silence about it says nothing.
+type imageRecord struct {
+	Image
+	FromRegistry bool `json:"overcastFromRegistry,omitempty"`
+}
+
 // Tag is a key/value tag.
 type Tag struct {
 	Key   string `json:"Key"`
@@ -507,6 +521,68 @@ func imageKey(region, repoName, digest string) string {
 	return serviceutil.RegionKey(region, repoName+"/"+digest)
 }
 
+// selectImages resolves the requested identifiers against a repository's
+// images, returning the matches in request order and the first identifier that
+// matched nothing. An empty request selects everything: nothing was asked for
+// by name, so nothing can be missing.
+func selectImages(images []Image, wanted []ImageIdentifier) ([]Image, *ImageIdentifier) {
+	if len(wanted) == 0 {
+		return images, nil
+	}
+	selected := make([]Image, 0, len(wanted))
+	for _, want := range wanted {
+		found := false
+		for _, img := range images {
+			if want.ImageDigest != "" && img.ImageId.ImageDigest == want.ImageDigest {
+				selected = append(selected, img)
+				found = true
+				break
+			}
+			if want.ImageTag != "" && img.ImageId.ImageTag == want.ImageTag {
+				selected = append(selected, img)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, &want
+		}
+	}
+	return selected, nil
+}
+
+// errImageNotFound is DescribeImages' answer to an identifier it cannot
+// resolve. It is an error rather than an omission from the list because
+// DescribeImages has no per-image failure channel — unlike BatchGetImage — so a
+// short list is indistinguishable from a complete one, and every client that
+// asks "is this image published?" reads a non-error as yes. cdk-assets is the
+// one that matters here: it calls DescribeImages for the asset's tag and
+// pushes only if the call throws ImageNotFoundException, so a 200 with no
+// details silently skips the push and the ECS task that runs the asset dies
+// with a 404 from the registry.
+//
+// Per the AWS ECR API Reference (DescribeImages § Errors): "The image requested
+// does not exist in the specified repository." Message shape as real ECR
+// renders it, absent fields as 'null':
+//
+//	The image with imageId {imageDigest:'null', imageTag:'latest'} does not
+//	exist within the repository with name 'app' in the registry with id '…'
+func (s *Service) errImageNotFound(repoName string, id ImageIdentifier) *protocol.AWSError {
+	quoted := func(v string) string {
+		if v == "" {
+			return "null"
+		}
+		return "'" + v + "'"
+	}
+	return &protocol.AWSError{
+		Code: "ImageNotFoundException",
+		Message: fmt.Sprintf(
+			"The image with imageId {imageDigest:%s, imageTag:%s} does not exist within the repository with name '%s' in the registry with id '%s'",
+			quoted(id.ImageDigest), quoted(id.ImageTag), repoName, s.accountID()),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
 func digestForManifest(manifest string) string {
 	sum := sha256.Sum256([]byte(manifest))
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -534,31 +610,14 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	repoPath := fmt.Sprintf("%s/%s", s.accountID(), repoName)
-	tagsURL := fmt.Sprintf("%s/v2/%s/tags/list", base, repoPath)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tagsURL, nil)
-	if err != nil {
-		return err
-	}
-	req.SetBasicAuth("AWS", password)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+
+	tags, known := s.registryTags(ctx, client, base, repoPath, password)
+	if !known {
 		return nil
 	}
 
-	var tagsResp struct {
-		Tags []string `json:"tags"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
-		return nil
-	}
-	for _, tag := range tagsResp.Tags {
+	present := make(map[string]bool, len(tags))
+	for _, tag := range tags {
 		if strings.TrimSpace(tag) == "" {
 			continue
 		}
@@ -567,13 +626,8 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 		if err != nil {
 			continue
 		}
-		manifestReq.SetBasicAuth("AWS", password)
-		manifestReq.Header.Set("Accept", strings.Join([]string{
-			"application/vnd.oci.image.manifest.v1+json",
-			"application/vnd.docker.distribution.manifest.v2+json",
-			"application/vnd.docker.distribution.manifest.list.v2+json",
-			"application/vnd.oci.image.index.v1+json",
-		}, ", "))
+		manifestReq.SetBasicAuth(ecrRegistryUser, password)
+		manifestReq.Header.Set("Accept", strings.Join(registryManifestTypes, ", "))
 		manifestResp, err := client.Do(manifestReq)
 		if err != nil {
 			continue
@@ -588,17 +642,21 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 		if digest == "" {
 			digest = digestForManifest(manifest)
 		}
-		img := Image{
-			RegistryId:             s.accountID(),
-			RepositoryName:         repoName,
-			ImageManifest:          manifest,
-			ImageManifestMediaType: manifestResp.Header.Get("Content-Type"),
-			ImageId: ImageIdentifier{
-				ImageDigest: digest,
-				ImageTag:    tag,
+		present[digest] = true
+		rec := imageRecord{
+			Image: Image{
+				RegistryId:             s.accountID(),
+				RepositoryName:         repoName,
+				ImageManifest:          manifest,
+				ImageManifestMediaType: manifestResp.Header.Get("Content-Type"),
+				ImageId: ImageIdentifier{
+					ImageDigest: digest,
+					ImageTag:    tag,
+				},
 			},
+			FromRegistry: true,
 		}
-		raw, err := json.Marshal(img)
+		raw, err := json.Marshal(rec)
 		if err != nil {
 			continue
 		}
@@ -606,7 +664,102 @@ func (s *Service) syncRepoImagesFromRegistry(ctx context.Context, region, repoNa
 			continue
 		}
 	}
+
+	s.forgetVanishedImages(ctx, client, base, repoPath, password, region, repoName, present)
 	return nil
+}
+
+// registryManifestTypes are the manifest media types the sweep will accept, so
+// the registry serves the manifest itself rather than converting it.
+var registryManifestTypes = []string{
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+	"application/vnd.docker.distribution.manifest.list.v2+json",
+	"application/vnd.oci.image.index.v1+json",
+}
+
+// registryTags lists the tags the registry serves for repoPath. known is false
+// when the sweep learned nothing — an unreachable registry, an error status, an
+// unreadable body — and the caller must then change nothing, because absence of
+// evidence is not evidence of absence. A 404 is an answer, not a failure: the
+// registry has no such repository, so it serves no tags.
+func (s *Service) registryTags(ctx context.Context, client *http.Client, base, repoPath, password string) (tags []string, known bool) {
+	tagsURL := fmt.Sprintf("%s/v2/%s/tags/list", base, repoPath)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tagsURL, nil)
+	if err != nil {
+		return nil, false
+	}
+	req.SetBasicAuth(ecrRegistryUser, password)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, true
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, false
+	}
+	var tagsResp struct {
+		Tags []string `json:"tags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tagsResp); err != nil {
+		return nil, false
+	}
+	return tagsResp.Tags, true
+}
+
+// forgetVanishedImages deletes the records of images the registry has stopped
+// serving, given the digests just observed under a tag.
+//
+// The registry's contents do not survive its container — an AutoRemove
+// registry:2 with no volume — while these records are persisted, so an Overcast
+// restart leaves the store describing images that no longer exist anywhere. A
+// publisher that asks "is this already pushed?" is then told yes, skips the
+// push, and the task that runs the image fails at pull time with a 404 the
+// deploy gave no warning of.
+//
+// Only two things are deleted: a record this sweep created (a caller's own
+// PutImage is not the registry's to revoke), and only when the registry answers
+// a definite 404 for its manifest. Absence from the tag list is not enough —
+// an image whose tag has moved to a newer push is still served by digest, and
+// real ECR keeps untagged images too.
+func (s *Service) forgetVanishedImages(ctx context.Context, client *http.Client, base, repoPath, password, region, repoName string, present map[string]bool) {
+	kvs, err := s.store.Scan(ctx, imageNamespace, serviceutil.RegionKey(region, repoName+"/"))
+	if err != nil {
+		return
+	}
+	for _, kv := range kvs {
+		var rec imageRecord
+		if err := json.Unmarshal([]byte(kv.Value), &rec); err != nil {
+			continue
+		}
+		digest := rec.ImageId.ImageDigest
+		if !rec.FromRegistry || digest == "" || present[digest] {
+			continue
+		}
+		manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", base, repoPath, digest)
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, manifestURL, nil)
+		if err != nil {
+			continue
+		}
+		req.SetBasicAuth(ecrRegistryUser, password)
+		req.Header.Set("Accept", strings.Join(registryManifestTypes, ", "))
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			continue
+		}
+		if err := s.store.Delete(ctx, imageNamespace, kv.Key); err != nil {
+			s.log.Warn("failed to drop the record of an image the registry no longer serves",
+				zap.String("repository", repoName), zap.String("digest", digest), zap.Error(err))
+		}
+	}
 }
 
 func (s *Service) listImages(w http.ResponseWriter, r *http.Request) {
@@ -687,21 +840,10 @@ func (s *Service) describeImages(w http.ResponseWriter, r *http.Request) {
 		images = append(images, img)
 	}
 
-	if len(req.ImageIds) > 0 {
-		filtered := make([]Image, 0, len(req.ImageIds))
-		for _, want := range req.ImageIds {
-			for _, img := range images {
-				if want.ImageDigest != "" && img.ImageId.ImageDigest == want.ImageDigest {
-					filtered = append(filtered, img)
-					break
-				}
-				if want.ImageTag != "" && img.ImageId.ImageTag == want.ImageTag {
-					filtered = append(filtered, img)
-					break
-				}
-			}
-		}
-		images = filtered
+	images, missing := selectImages(images, req.ImageIds)
+	if missing != nil {
+		protocol.WriteJSONError(w, r, s.errImageNotFound(req.RepositoryName, *missing))
+		return
 	}
 
 	sort.Slice(images, func(i, j int) bool {

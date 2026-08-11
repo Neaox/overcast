@@ -1,21 +1,55 @@
 service: ecr
-status: not_started
+status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-08-11
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/ecr]
 integration_tests: [tests/integration/ecr]
 capability_docs: docs/services/ecr.md
 operation_count_estimate: 20 supported
 current_support_level: Repository and image metadata control plane supported; Docker registry integration optional; scanning inert/not-scanned.
-operations: {}
+operations:
+  DescribeImages:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImages.html
+    scenarios:
+      requested_image_absent:
+        status: fixed
+        evidence:
+          - tests/integration/ecr/image_existence_test.go#TestDescribeImages_absentTagIsImageNotFound
+          - tests/integration/ecr/image_existence_test.go#TestDescribeImages_absentDigestIsImageNotFound
+          - tests/integration/ecr/image_existence_test.go#TestDescribeImages_oneAbsentIDFailsTheWholeRequest
+          - tests/integration/ecr/image_existence_test.go#TestDescribeImages_absentTagIsImageNotFoundOverCBOR
+        notes: >-
+          An imageIds entry that resolves to nothing raises ImageNotFoundException, in
+          both wire protocols, and one absent id fails the whole request — DescribeImages
+          has no per-image failure list. Previously 200 with a short list, which
+          cdk-assets reads as "already published"; every CDK container asset was
+          therefore skipped and the ECS task that ran it failed with a 404 at pull time.
+      no_image_ids_requested:
+        status: fixed
+        evidence:
+          - tests/integration/ecr/image_existence_test.go#TestDescribeImages_emptyRepositoryWithoutImageIDsIsEmpty
+        notes: An unfiltered describe of an empty repository is an empty list, not an error.
+      registry_reconciliation:
+        status: fixed
+        evidence:
+          - internal/services/ecr/registry_sync_test.go
+        notes: >-
+          Records built from the local registry's manifests are dropped when the registry
+          answers 404 for them — the state after a restart, since the registry container
+          keeps no volume. Records written by PutImage are not the registry's to revoke.
 findings:
-  fixed: []
+  fixed:
+    - DescribeImages answered an absent imageId with 200 and an empty list rather than ImageNotFoundException.
+    - Image records survived the registry that held the images, so absent images were reported present.
   remaining_gaps:
     - Downgrade or annotate Docker-dependent and scanner-unavailable behavior as partial/inert.
+    - ListImages and BatchGetImage are reconciled with the registry but have no equivalent scenario coverage.
   intentionally_partial: []
 handoff:
   start_with: [CreateRepository, PutImage, GetAuthorizationToken]
-  do_not_redo: []
+  do_not_redo: [DescribeImages]
   commands: [go test -count=1 ./internal/services/ecr/... ./tests/integration/ecr/...]

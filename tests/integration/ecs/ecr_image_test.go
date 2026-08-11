@@ -35,6 +35,9 @@ import (
 const (
 	cdkAssetRepository = "cdk-hnb659fds-container-assets-000000000000-us-east-1"
 	cdkAssetTag        = "610a3ca08b333a5ac4b8d23e4df2830ddffeac82"
+	// The second scenario publishes its own asset so the two tests cannot
+	// satisfy each other through the registry they share.
+	cdkPublishTag = "10fe2b8f652c7385af52e5854ae3be28485728678193bc08b5d5f29ef9b0b43a"
 )
 
 func TestRunTask_withDocker_pullsCDKContainerAssetFromTheServedRegistry(t *testing.T) {
@@ -47,6 +50,10 @@ func TestRunTask_withDocker_pullsCDKContainerAssetFromTheServedRegistry(t *testi
 		helpers.WithECSDocker(),
 		helpers.WithRegion("us-east-1"),
 		helpers.WithAccountID("000000000000"),
+		// A fixed port, as production runs: on Docker Desktop the daemon
+		// cannot reach an ephemeral publish, so the harness default would skip
+		// this test on the platform most users deploy from.
+		helpers.WithECRRegistryPort(helpers.ReserveTCPPort(t)),
 	)
 	// The probe that wires Docker into ECS runs in a goroutine started with the
 	// server, so RunTask below would otherwise race it. The registry setup that
@@ -60,7 +67,7 @@ func TestRunTask_withDocker_pullsCDKContainerAssetFromTheServedRegistry(t *testi
 	// Given: an image published to it exactly as cdk-assets publishes one —
 	// authenticate with the ECR token, then push to repositoryUri.
 	user, password, proxy := ecrAuthorization(t, srv)
-	dockerLoginOrSkip(t, proxy, user, password)
+	helpers.DockerLoginOrSkip(t, proxy, user, password)
 
 	pushed := repoURI + ":" + cdkAssetTag
 	runDocker(t, "tag", "registry:2", pushed)
@@ -168,6 +175,126 @@ func awaitTaskRunning(t *testing.T, srv *helpers.TestServer, cluster, taskArn st
 	}, "the task never reached RUNNING, so it was left at PROVISIONING with no containers started for it")
 }
 
+// TestRunTask_withDocker_runsAnAssetPublishedTheWayCDKPublishesOne is the whole
+// chain, from `cdk deploy`'s point of view: the publisher decides whether to
+// push by asking ECR whether the image is already there, and the task then has
+// to run whatever that decision left in the registry.
+//
+// The previous test pushes unconditionally, so it could only ever prove the
+// pull. It passed while every real deploy failed:
+//
+//	CannotPullContainerError: ecs: pull image 000000000000.dkr.ecr.…:<tag>,
+//	served here as localhost.overcast.sh:4510/000000000000/…:<tag>: status 404:
+//	{"message":"failed to resolve reference … : not found"}
+//
+// because DescribeImages answered the existence check with 200 and an empty
+// list, cdk-assets read that as "already published", and nothing was ever
+// pushed. The gap between the two tests is exactly the bug.
+func TestRunTask_withDocker_runsAnAssetPublishedTheWayCDKPublishesOne(t *testing.T) {
+	dc := skipWithoutDocker(t)
+
+	// Given: a bootstrapped container-asset repository and nothing in it.
+	srv := helpers.NewTestServer(t,
+		helpers.WithLambdaDocker(),
+		helpers.WithECSDocker(),
+		helpers.WithRegion("us-east-1"),
+		helpers.WithAccountID("000000000000"),
+		helpers.WithECRRegistryPort(helpers.ReserveTCPPort(t)),
+	)
+	waitForECSDocker(t, srv)
+	helpers.PullOrSkip(t, dc, "registry:2")
+	repoURI := createECRRepository(t, srv, cdkAssetRepository)
+
+	// When: the asset is published the way cdk-assets publishes one.
+	pushed := publishCDKContainerAsset(t, srv, cdkAssetRepository, repoURI, cdkPublishTag)
+
+	// Then: it was actually published. A publisher told the image is already
+	// there does not build, does not push, and reports success — the deploy
+	// looks clean right up until the task tries to pull.
+	if !pushed {
+		t.Fatal("the asset was never pushed: ECR reported it already published to a repository that had never been pushed to")
+	}
+
+	// Given: a task definition naming the image the way CDK writes it.
+	cdkImage := "000000000000.dkr.ecr.us-east-1.amazonaws.com/" + cdkAssetRepository + ":" + cdkPublishTag
+	create := ecsCall(t, srv, "CreateCluster", map[string]any{"clusterName": "cdk-publish-cluster"})
+	helpers.AssertStatus(t, create, http.StatusOK)
+	create.Body.Close()
+
+	reg := ecsCall(t, srv, "RegisterTaskDefinition", map[string]any{
+		"family": "cdk-published-task",
+		"containerDefinitions": []map[string]any{{
+			"name":       "app",
+			"image":      cdkImage,
+			"entryPoint": []string{"/bin/sh", "-c"},
+			"command":    []string{"sleep 60"},
+		}},
+	})
+	helpers.AssertStatus(t, reg, http.StatusOK)
+	reg.Body.Close()
+
+	// When: the task is placed.
+	run := ecsCall(t, srv, "RunTask", map[string]any{
+		"cluster":        "cdk-publish-cluster",
+		"taskDefinition": "cdk-published-task",
+	})
+	helpers.AssertStatus(t, run, http.StatusOK)
+	var out struct {
+		Tasks []struct {
+			TaskArn string `json:"taskArn"`
+		} `json:"tasks"`
+	}
+	helpers.DecodeJSON(t, run, &out)
+	run.Body.Close()
+
+	// Then: it reaches RUNNING. The bytes are where the publisher put them and
+	// where the task definition's name resolves to.
+	if len(out.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(out.Tasks))
+	}
+	awaitTaskRunning(t, srv, "cdk-publish-cluster", out.Tasks[0].TaskArn)
+}
+
+// publishCDKContainerAsset publishes an image to repoURI the way cdk-assets
+// does, and reports whether it pushed anything.
+//
+// The shape is cdk-assets' own (cdklabs/cdk-assets,
+// lib/private/handlers/container-images.ts): DescribeImages for the asset's
+// tag, and a push only if that call throws ImageNotFoundException. Any other
+// answer — including a 200 carrying no image details — means "already
+// published" and the whole build-and-push is skipped.
+func publishCDKContainerAsset(t *testing.T, srv *helpers.TestServer, repo, repoURI, tag string) (pushed bool) {
+	t.Helper()
+
+	resp := awsJSONCall(t, srv, "AmazonEC2ContainerRegistry_V20150921.DescribeImages", map[string]any{
+		"repositoryName": repo,
+		"imageIds":       []map[string]any{{"imageTag": tag}},
+	})
+	var describe struct {
+		Type string `json:"__type"`
+	}
+	helpers.DecodeJSON(t, resp, &describe)
+	status := resp.StatusCode
+	resp.Body.Close()
+	if status == http.StatusOK {
+		return false
+	}
+	if describe.Type != "ImageNotFoundException" {
+		t.Fatalf("DescribeImages failed with %d %s; cdk-assets rethrows anything that is not ImageNotFoundException", status, describe.Type)
+	}
+
+	user, password, proxy := ecrAuthorization(t, srv)
+	helpers.DockerLoginOrSkip(t, proxy, user, password)
+
+	image := repoURI + ":" + tag
+	runDocker(t, "tag", "registry:2", image)
+	runDocker(t, "push", image)
+	// Drop the local tag so the launch has to fetch the image from the registry
+	// rather than finding it already sitting in the daemon.
+	runDocker(t, "image", "rm", "-f", image)
+	return true
+}
+
 // createECRRepository creates repo and returns the repositoryUri ECR minted —
 // the address a push is meant to go to.
 func createECRRepository(t *testing.T, srv *helpers.TestServer, repo string) string {
@@ -235,27 +362,6 @@ func awsJSONCall(t *testing.T, srv *helpers.TestServer, target string, body map[
 		t.Fatalf("%s: %v", target, err)
 	}
 	return resp
-}
-
-// dockerLoginOrSkip authenticates the Docker CLI against the emulated registry,
-// skipping when the daemon refuses plain HTTP to it. That is a daemon
-// configuration this test cannot change and says nothing about Overcast — the
-// same gate the ECR push/pull round-trip test applies.
-func dockerLoginOrSkip(t *testing.T, proxy, user, password string) {
-	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "docker", "login", proxy, "-u", user, "--password-stdin")
-	cmd.Stdin = strings.NewReader(password + "\n")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return
-	}
-	msg := string(out)
-	if strings.Contains(msg, "server gave HTTP response to HTTPS client") ||
-		strings.Contains(msg, "https://") ||
-		strings.Contains(msg, "context deadline exceeded") {
-		t.Skipf("docker daemon will not talk plain HTTP to %s: %s", proxy, strings.TrimSpace(msg))
-	}
-	t.Fatalf("docker login %s: %v\n%s", proxy, err, out)
 }
 
 // runDocker runs a Docker CLI command, failing the test if it does not succeed.

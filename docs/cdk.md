@@ -169,6 +169,14 @@ Overcast recognises that address as its own and pulls from the registry it
 serves, so the task or function runs the image the deploy published. See
 [ECR § Running an image from here](./services/ecr.md#running-an-image-from-here).
 
+Before building anything, cdk-assets asks ECR whether the asset's tag is
+already published and skips the push if it is, so that answer has to be right
+or the deploy publishes nothing and fails at pull time instead. Overcast
+answers it from the registry rather than from memory of an earlier run — see
+[ECR § Asking whether an image is published](./services/ecr.md#asking-whether-an-image-is-published).
+A restarted Overcast has an empty registry, so the next deploy pushes its
+assets again; that is a rebuild of a few seconds, not a failure.
+
 The registry publishes on a fixed port (`4510` by default, see
 [ECR § Repository URI](./services/ecr.md#repository-uri)) reachable at
 `localhost` from the Docker daemon's own vantage — which is the vantage that

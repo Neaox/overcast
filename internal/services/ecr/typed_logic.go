@@ -402,21 +402,9 @@ func (s *Service) describeImagesTyped(ctx context.Context, req *imageIDSetReques
 		}
 		images = append(images, img)
 	}
-	if len(req.ImageIds) > 0 {
-		filtered := make([]Image, 0, len(req.ImageIds))
-		for _, want := range req.ImageIds {
-			for _, img := range images {
-				if want.ImageDigest != "" && img.ImageId.ImageDigest == want.ImageDigest {
-					filtered = append(filtered, img)
-					break
-				}
-				if want.ImageTag != "" && img.ImageId.ImageTag == want.ImageTag {
-					filtered = append(filtered, img)
-					break
-				}
-			}
-		}
-		images = filtered
+	images, missing := selectImages(images, req.ImageIds)
+	if missing != nil {
+		return nil, s.errImageNotFound(req.RepositoryName, *missing)
 	}
 	sort.Slice(images, func(i, j int) bool {
 		return images[i].ImageId.ImageDigest < images[j].ImageId.ImageDigest

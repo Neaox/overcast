@@ -1327,7 +1327,7 @@ func Load() (*Config, error) {
 	cfg.Network = envOr("OVERCAST_NETWORK", "overcast")
 
 	// Lambda container runtime
-	cfg.LambdaDockerSocket = envOr("LAMBDA_DOCKER_SOCKET", defaultDockerSocket)
+	cfg.LambdaDockerSocket = envOr("LAMBDA_DOCKER_SOCKET", DefaultDockerSocket())
 	cfg.LambdaRuntimeAPIPort = envInt("LAMBDA_RUNTIME_API_PORT", 9001)
 	// For the three derivable limits, 0 is a sentinel meaning "unset — derive
 	// from the Docker host when the Lambda runtime initialises" (see

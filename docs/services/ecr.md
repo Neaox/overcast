@@ -72,6 +72,28 @@ When Docker is available, the same password is provisioned into the lazy-started
 shared `registry:2` container via htpasswd auth, so the returned token can be used
 for authenticated calls against the local registry endpoint. Token expiry is 12 hours.
 
+## Asking whether an image is published
+
+`DescribeImages` answers an `imageIds` entry it cannot resolve with
+`ImageNotFoundException`, as real ECR does, rather than a 200 carrying a short
+list. Only a call that named no `imageIds` returns an empty list, because only
+a requested identifier can be missing.
+
+The distinction decides whether anything is ever pushed. cdk-assets — the
+publisher behind `cdk deploy` — treats *any* non-throwing `DescribeImages` as
+"already published" and skips building and pushing the asset, so an emulator
+that answers 200 for an absent tag reports a clean deploy over an empty
+repository, and the ECS service or Lambda function that runs the asset fails at
+pull time with a 404 from the registry.
+
+For the same reason the image inventory follows the registry rather than
+accumulating. When a repository is read, Overcast reconciles it against the
+registry's manifests, and a record it created from an earlier push is dropped
+when the registry answers 404 for that manifest — which is what a restart
+leaves behind, since the registry's contents do not survive its container while
+the records are persisted. A record written by `PutImage` is left alone: it was
+never in the registry, so the registry's silence says nothing about it.
+
 ## Running an image from here
 
 ECS resolves a task definition image addressed as
@@ -92,6 +114,17 @@ and
   needs an `insecure-registries` daemon entry for `<hostname>:<registryPort>`.
 - Images live in the registry container, which is removed on shutdown, so a
   restart starts empty — repository metadata persists, image content does not.
+  The image records go with the content: the first read of a repository after a
+  restart drops the ones the new registry cannot serve, so a publisher is told
+  the truth and pushes again.
+- The fallback to an ephemeral port is a degraded mode, not an equivalent one.
+  Measured on Docker Desktop 29.6.2 for Windows, the daemon reaches a fixed
+  publish and not an ephemeral one — `docker login localhost:5099` succeeds
+  where `docker login localhost:62154` times out on the same registry image,
+  though `docker port` reports both bindings as dual-stack. Overcast says so at
+  startup ("the Docker daemon cannot reach the ECR registry it just
+  published"); free `OVERCAST_ECR_REGISTRY_PORT`'s port, or point it at another
+  fixed one, rather than working around the pull failures downstream.
 - A registry on an *ephemeral* port can outlive an Overcast that was killed
   rather than shut down. See [Reclaiming a leaked registry
   container](#reclaiming-a-leaked-registry-container).
@@ -171,14 +204,14 @@ check the first before running the second.
 
 ### Images
 
-| Operation                   | Status       | Notes                                                                                                                 | AWS Docs                                                                                             |
-| --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `ListImages`                | ✅ Supported | Returns image IDs (tag + digest); reconciles local registry tags when Docker is available                             | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_ListImages.html)                |
-| `DescribeImages`            | ✅ Supported | Returns image detail objects (digest, tags, media type); reconciles local registry manifests when Docker is available | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImages.html)            |
-| `PutImage`                  | ✅ Supported | Stores an image manifest; generates a digest if none supplied                                                         | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_PutImage.html)                  |
-| `BatchGetImage`             | ✅ Supported | Fetches manifests by tag or digest                                                                                    | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_BatchGetImage.html)             |
-| `DescribeImageScanFindings` | ✅ Supported | Returns empty/not-scanned findings; no scan engine is emulated                                                        | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImageScanFindings.html) |
-| `BatchDeleteImage`          | ✅ Supported | Deletes images by tag or digest                                                                                       | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_BatchDeleteImage.html)          |
+| Operation                   | Status       | Notes                                                                                                                                                                                           | AWS Docs                                                                                             |
+| --------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `ListImages`                | ✅ Supported | Returns image IDs (tag + digest); reconciles local registry tags when Docker is available                                                                                                       | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_ListImages.html)                |
+| `DescribeImages`            | ✅ Supported | Returns image detail objects (digest, tags, media type); an imageIds entry that resolves to nothing raises ImageNotFoundException; reconciles local registry manifests when Docker is available | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImages.html)            |
+| `PutImage`                  | ✅ Supported | Stores an image manifest; generates a digest if none supplied                                                                                                                                   | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_PutImage.html)                  |
+| `BatchGetImage`             | ✅ Supported | Fetches manifests by tag or digest                                                                                                                                                              | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_BatchGetImage.html)             |
+| `DescribeImageScanFindings` | ✅ Supported | Returns empty/not-scanned findings; no scan engine is emulated                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImageScanFindings.html) |
+| `BatchDeleteImage`          | ✅ Supported | Deletes images by tag or digest                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_BatchDeleteImage.html)          |
 
 ### Policy
 
