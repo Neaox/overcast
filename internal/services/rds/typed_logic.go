@@ -200,20 +200,32 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		return nil, errInvalidParameterValue("Engine must be one of: mysql, postgres, mariadb, aurora-mysql, aurora-postgresql")
 	}
 
+	// An Aurora member instance carries no credentials of its own: they belong
+	// to the cluster, and RDS rejects CreateDBInstance if you pass them for a
+	// member. Requiring them here refused the shape CDK's rds.DatabaseCluster
+	// actually emits — DBClusterIdentifier and little else — so the canonical
+	// Aurora stack could not create its writer at all. What the member takes
+	// from the cluster instead is resolved below, once the cluster is read.
+	clusterID := req.DBClusterIdentifier
+
 	masterUser := req.MasterUsername
-	if masterUser == "" {
+	if masterUser == "" && clusterID == "" {
 		return nil, errInvalidParameterValue("MasterUsername is required")
 	}
 
 	masterPass := req.MasterUserPassword
-	if masterPass == "" {
+	if masterPass == "" && clusterID == "" {
 		return nil, errInvalidParameterValue("MasterUserPassword is required")
 	}
 	// Validated at create as well as on modify. Accepting a password here that
 	// ModifyDBInstance would refuse leaves an instance that can never change
-	// it, and RDS rejects it at this point too.
-	if aerr := validateMasterUserPassword(masterPass); aerr != nil {
-		return nil, aerr
+	// it, and RDS rejects it at this point too. A member instance that supplied
+	// none is exempt — there is nothing to validate, and the cluster's own
+	// password was checked when it was created.
+	if masterPass != "" {
+		if aerr := validateMasterUserPassword(masterPass); aerr != nil {
+			return nil, aerr
+		}
 	}
 
 	if _, aerr := h.store.getDBInstance(ctx, id); aerr == nil {
@@ -247,21 +259,45 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 
 	multiAZ := req.MultiAZ
 	dbName := req.DBName
-	clusterID := req.DBClusterIdentifier
 	dbSubnetGroupName := req.DBSubnetGroupName
 	vpcID := ""
 
+	if clusterID != "" {
+		cluster, aerr := h.store.getDBCluster(ctx, clusterID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		// An Aurora member instance inherits its cluster's subnet group, and so
+		// its VPC. AWS puts the subnet group on the cluster and the instances
+		// follow it — CDK's rds.DatabaseCluster emits AWS::RDS::DBInstance with
+		// a DBClusterIdentifier and no DBSubnetGroupName at all, which is the
+		// common shape rather than an unusual one.
+		//
+		// Reading only the instance's own field left the writer container on the
+		// default plane while a Lambda with the matching VpcConfig went into the
+		// VPC. That was invisible while placement was additive; once naming a VPC
+		// restricts, it is the cluster failing to answer its own application.
+		if dbSubnetGroupName == "" {
+			dbSubnetGroupName = cluster.DBSubnetGroupName
+		}
+		// Same inheritance for the credentials the member was not allowed to
+		// supply. The engine container needs a username and password to start,
+		// and the cluster's are the ones its members answer to.
+		if masterUser == "" {
+			masterUser = cluster.MasterUsername
+		}
+		if masterPass == "" {
+			masterPass = cluster.MasterUserPassword
+		}
+	}
+
 	// Resolved once, here, so the record always carries an explicit answer and
-	// nothing downstream has to re-derive it.
+	// nothing downstream has to re-derive it. It follows the *effective* subnet
+	// group, inherited or not: an Aurora instance in a cluster with a subnet
+	// group is as private as a standalone instance in the same group.
 	publiclyAccessible := defaultPubliclyAccessible(dbSubnetGroupName)
 	if req.PubliclyAccessible != nil {
 		publiclyAccessible = *req.PubliclyAccessible
-	}
-
-	if clusterID != "" {
-		if _, aerr := h.store.getDBCluster(ctx, clusterID); aerr != nil {
-			return nil, aerr
-		}
 	}
 	if dbSubnetGroupName != "" {
 		sg, aerr := h.store.getDBSubnetGroup(ctx, dbSubnetGroupName)
