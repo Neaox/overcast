@@ -433,6 +433,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// paths before delegating to these routes.
 	s3Router := chi.NewRouter()
 
+	// Sub-routers the main router picks at request time. See dispatchMount for
+	// why they have to be recorded rather than discovered by walking r.
+	var dispatchMounts []dispatchMount
+	dispatchMounts = recordDispatchMount(dispatchMounts, "", "s3", s3Router)
+
 	for _, svc := range allServices {
 		// Test-only isolation. nil in every production path — see
 		// config.TestOnlyServiceSubset for why this exists and why it is not
@@ -837,13 +842,15 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// the credential scope cannot be parsed, we fall back to API Gateway (the
 	// more commonly used service at this path).
 	{
-		var apigwV2Router, appsyncEventsRouter http.Handler
+		var apigwV2Router, appsyncEventsRouter chi.Router
 		if registeredForTest(cfg, "apigateway") {
 			apigwV2Router = apigwSvc.V2APIRouter()
 		}
 		if registeredForTest(cfg, "appsync") {
 			appsyncEventsRouter = appsyncSvc.EventsAPIRouter()
 		}
+		dispatchMounts = recordDispatchMount(dispatchMounts, "/v2/apis", "apigateway", apigwV2Router)
+		dispatchMounts = recordDispatchMount(dispatchMounts, "/v2/apis", "appsync", appsyncEventsRouter)
 		if apigwV2Router != nil || appsyncEventsRouter != nil {
 			r.Route("/v2/apis", func(sub chi.Router) {
 				sub.HandleFunc("/*", v2APIsDispatch(apigwV2Router, appsyncEventsRouter))
@@ -865,10 +872,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	{
 		tagRouters := map[string]http.Handler{}
 		if registeredForTest(cfg, "appsync") {
-			tagRouters["appsync"] = appsyncSvc.TagsRouter()
+			routes := appsyncSvc.TagsRouter()
+			tagRouters["appsync"] = routes
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/v1/tags", "appsync", routes)
 		}
 		if registeredForTest(cfg, "msk") {
-			tagRouters["kafka"] = mskSvc.TagsRouter()
+			routes := mskSvc.TagsRouter()
+			tagRouters["kafka"] = routes
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/v1/tags", "msk", routes)
 		}
 		if len(tagRouters) > 0 {
 			r.Route("/v1/tags", func(sub chi.Router) {
@@ -889,17 +900,25 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	{
 		tagRouters := map[string]http.Handler{}
 		if registeredForTest(cfg, "pipes") {
-			tagRouters["pipes"] = pipesSvc.TagsRouter()
+			routes := pipesSvc.TagsRouter()
+			tagRouters["pipes"] = routes
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "pipes", routes)
 		}
 		if registeredForTest(cfg, "eks") {
-			tagRouters["eks"] = eksSvc.TagsRouter()
+			routes := eksSvc.TagsRouter()
+			tagRouters["eks"] = routes
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "eks", routes)
 		}
 		if registeredForTest(cfg, "scheduler") {
-			tagRouters["scheduler"] = schedulerSvc.TagsRouter()
+			routes := schedulerSvc.TagsRouter()
+			tagRouters["scheduler"] = routes
+			dispatchMounts = recordDispatchMount(dispatchMounts, "/tags", "scheduler", routes)
 		}
 		var apigwTags http.Handler
 		if registeredForTest(cfg, "apigateway") {
-			apigwTags = apigwSvc.TagsRouter()
+			routes := apigwSvc.TagsRouter()
+			apigwTags = routes
+			dispatchMounts = recordDispatchFallback(dispatchMounts, "/tags", "apigateway", routes)
 		}
 		if len(tagRouters) > 0 || apigwTags != nil {
 			r.Route("/tags", func(sub chi.Router) {
@@ -945,7 +964,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		cleanups = append(cleanups, mon.Stop)
 	}
 
-	return r, preShutdown, func(ctx context.Context) {
+	return withDispatchMounts(r, dispatchMounts), preShutdown, func(ctx context.Context) {
 			// Stop background service resources (e.g. Runtime API long-poll server).
 			for _, st := range stoppers {
 				t0 := time.Now()

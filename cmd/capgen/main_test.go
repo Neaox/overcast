@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +27,178 @@ func TestCheckCapabilitiesInManifest_allowsDocOnlyAndRejectsUnknown(t *testing.T
 	// Then: only the undeclared AWS operation is rejected.
 	if violations != 1 {
 		t.Errorf("checkCapabilitiesInManifest() = %d violations, want 1", violations)
+	}
+}
+
+func TestModeledOperationName_resolvesDisplayNameToTheAWSName(t *testing.T) {
+	// Given: SESv2 rows, whose internal identifiers carry a V2 prefix to keep
+	// them apart from the v1 operations of the same name, and whose DisplayName
+	// records the AWS name — which is exactly what DisplayName is documented
+	// to be for.
+	caps := []CapabilityDecl{
+		{Service: "ses", Operation: "V2SendEmail", DisplayName: "SendEmail"},
+		{Service: "ses", Operation: "V2CreateEmailIdentity", DisplayName: "CreateEmailIdentity"},
+	}
+
+	// When: capgen validates them against the corpus.
+	violations := checkCapabilitiesInManifest(caps)
+
+	// Then: they resolve. Before this, they did not, and six SESv2 rows carried
+	// DocOnly to silence the resulting UNKNOWN_MODEL_OPERATION — which also
+	// removed them from every cross-check, and is how #862 stayed hidden.
+	if violations != 0 {
+		t.Errorf("checkCapabilitiesInManifest() = %d violations, want 0", violations)
+	}
+}
+
+func TestModeledOperationName_prosaicDisplayNameIsNotAnAWSName(t *testing.T) {
+	// Given: a DocOnly row whose DisplayName is prose describing a group of
+	// operations rather than naming one — the shape SES uses for "All other v2
+	// operations".
+	caps := []CapabilityDecl{
+		{Service: "ses", Operation: "V2Other", DisplayName: "All other v2 operations", DocOnly: true},
+	}
+
+	// When: capgen validates it against the corpus.
+	violations := checkCapabilitiesInManifest(caps)
+
+	// Then: DocOnly still exempts a genuinely non-dispatched row from the
+	// name check, so honouring DisplayName does not fail the rows the flag was
+	// designed for.
+	if violations != 0 {
+		t.Errorf("checkCapabilitiesInManifest() = %d violations, want 0", violations)
+	}
+}
+
+func TestCheckDocOnlyRowsAreNotDispatched_rejectsAnImplementedRow(t *testing.T) {
+	// Given: a DocOnly capability with an HTTP handler method of its own name,
+	// and one without. DocOnly's contract is "non-dispatched rows"; the first
+	// is dispatched and so the flag is a false claim.
+	svcDir := t.TempDir()
+	writeGoFile(t, svcDir, "handler.go", `package widget
+
+import "net/http"
+
+func (h *Handler) V2CreateEmailIdentity(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+`)
+	caps := []CapabilityDecl{
+		{Service: "widget", Operation: "V2CreateEmailIdentity", DocOnly: true},
+		{Service: "widget", Operation: "V2Other", DocOnly: true},
+		// Not DocOnly, so having a handler is exactly what is expected.
+		{Service: "widget", Operation: "V2CreateEmailIdentity"},
+	}
+
+	// When: capgen checks the DocOnly claims against the package.
+	violations := checkDocOnlyRowsAreNotDispatched("widget", svcDir, caps)
+
+	// Then: only the dispatched DocOnly row is rejected.
+	if violations != 1 {
+		t.Errorf("checkDocOnlyRowsAreNotDispatched() = %d violations, want 1", violations)
+	}
+}
+
+func TestCheckDocOnlyRowsAreNotDispatched_stubHandlerIsNotAnImplementation(t *testing.T) {
+	// Given: a DocOnly row whose only method returns 501. Documenting an
+	// unsupported operation that has an explicit stub is one of the three uses
+	// DocOnly's contract names.
+	svcDir := t.TempDir()
+	writeGoFile(t, svcDir, "handler_stubs.go", `package widget
+
+import "net/http"
+
+func (h *Handler) ArchiveWidget(w http.ResponseWriter, r *http.Request) {
+	protocol.NotImplementedJSON(w, r)
+}
+`)
+	caps := []CapabilityDecl{{Service: "widget", Operation: "ArchiveWidget", DocOnly: true}}
+
+	// When: capgen checks the DocOnly claims against the package.
+	violations := checkDocOnlyRowsAreNotDispatched("widget", svcDir, caps)
+
+	// Then: a 501 is not an implementation, so the flag stands.
+	if violations != 0 {
+		t.Errorf("checkDocOnlyRowsAreNotDispatched() = %d violations, want 0", violations)
+	}
+}
+
+func TestImplementedHandlerMethods_conditional501IsNotAStub(t *testing.T) {
+	// Given: a handler that implements its operation and refuses one
+	// unsupported case with a 501 — Lambda's CreateFunction shape — alongside a
+	// method whose whole body is the 501.
+	svcDir := t.TempDir()
+	writeGoFile(t, svcDir, "handler.go", `package widget
+
+import "net/http"
+
+func (h *Handler) CreateWidget(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Package-Type") == "Image" {
+		protocol.NotImplementedJSON(w, r)
+		return
+	}
+	h.create(w, r)
+}
+
+func (h *Handler) ArchiveWidget(w http.ResponseWriter, r *http.Request) {
+	protocol.NotImplementedJSON(w, r)
+}
+
+// Not a handler: the signature does not match, so it must not be offered as
+// evidence that an operation of this name is dispatched.
+func (h *Handler) DescribeWidget(id string) error { return nil }
+`)
+
+	// When: capgen reads the package's handler methods.
+	methods, err := implementedHandlerMethods(svcDir)
+	if err != nil {
+		t.Fatalf("implementedHandlerMethods() error = %v", err)
+	}
+
+	// Then: only the whole-body 501 is a stub, and the non-handler is absent.
+	if !methods["CreateWidget"] {
+		t.Error("CreateWidget = stub, want implemented: a 501 inside a branch is a refusal, not a stub")
+	}
+	if implemented, ok := methods["ArchiveWidget"]; !ok || implemented {
+		t.Errorf("ArchiveWidget = (%v, %v), want present and not implemented", implemented, ok)
+	}
+	if _, ok := methods["DescribeWidget"]; ok {
+		t.Error("DescribeWidget was reported as a handler method; its signature is not (ResponseWriter, *Request)")
+	}
+}
+
+func TestRouteSkeleton_bindsOperationsWhereTheModelDoes(t *testing.T) {
+	// Given: EKS, whose six hand-invented paths — four with the wrong HTTP
+	// method — were typed out beside a manifest that already had the answers
+	// (#858).
+	caps := []CapabilityDecl{{Service: "eks", Operation: "UpdateAddon", Status: "StatusWIP"}}
+
+	// When: the skeleton is generated from the model.
+	lines := strings.Join(routeSkeleton("eks", caps), "\n")
+
+	// Then: it gives the modeled method and path, not the registered ones —
+	// EKS serves UpdateAddon at POST /clusters/{name}/addons/{addonName}/updates.
+	want := `r.Post("/clusters/{clusterName}/addons/{addonName}/update", s.handler.UpdateAddon) // WIP`
+	if !strings.Contains(lines, want) {
+		t.Errorf("routeSkeleton() did not contain\n\t%s\ngot:\n%s", want, lines)
+	}
+	// And an operation with no capability row is offered, marked so the
+	// reader decides rather than the generator.
+	if !strings.Contains(lines, "s.handler.RegisterCluster) // not declared") {
+		t.Error("routeSkeleton() omitted an undeclared modeled operation; the skeleton is the model's whole REST surface")
+	}
+}
+
+func TestRouteSkeleton_nonRESTServiceHasNoBindings(t *testing.T) {
+	// Given: SQS, an AWS JSON API dispatched from X-Amz-Target rather than
+	// from a path.
+
+	// When: the skeleton is generated.
+	lines := routeSkeleton("sqs", nil)
+
+	// Then: it says so rather than emitting a route table that would be wrong.
+	if len(lines) != 1 || !strings.Contains(lines[0], "no REST bindings") {
+		t.Errorf("routeSkeleton() = %v, want a single explanatory line", lines)
 	}
 }
 
@@ -70,6 +243,35 @@ func TestCheckCompatRegistryServiceKeys_requiresCapabilityServiceKeys(t *testing
 	// Then: only the undeclared service key is rejected.
 	if violations != 1 {
 		t.Errorf("checkCompatRegistryServiceKeys() = %d violations, want 1", violations)
+	}
+}
+
+func TestCheckCompatRegistryServiceKeys_rejectsAnUnmodeledTestOperation(t *testing.T) {
+	// Given: compat tests naming the operation they exercise — one real, one a
+	// typo, one belonging to a different service, and one scenario test with no
+	// `op` at all, which is the shape most registry entries have.
+	root := t.TempDir()
+	writeCompatRegistry(t, root, `{
+	  "version": 1,
+	  "groups": [
+	    {"service": "s3", "name": "s3-objects", "tests": [
+	      {"name": "PutObjectMultipleKeys", "op": "PutObject"},
+	      {"name": "ListObjectsV2Delimiter"},
+	      {"name": "PutObjectTypo", "op": "PutObjcet"},
+	      {"name": "SendMessage", "op": "SendMessage"}
+	    ]}
+	  ]
+	}`)
+	caps := []CapabilityDecl{{Service: "s3", Operation: "PutObject"}}
+
+	// When: capgen validates the registry against the corpus.
+	violations := checkCompatRegistryServiceKeys(root, caps)
+
+	// Then: the typo and the other service's operation are rejected, and the
+	// scenario test without an `op` is left alone — a test name is a scenario
+	// name where it needs to be.
+	if violations != 2 {
+		t.Errorf("checkCompatRegistryServiceKeys() = %d violations, want 2", violations)
 	}
 }
 

@@ -176,9 +176,9 @@ func init() {
 		capabilities.Capability{Service: "appsync", Operation: "ExecuteGraphQL", Category: "Execution & Evaluation",
 			Status: capabilities.StatusSupported, Notes: "Executes a GraphQL operation against the API"},
 		capabilities.Capability{Service: "appsync", Operation: "EvaluateMappingTemplate", Category: "Execution & Evaluation",
-			Status: capabilities.StatusSupported, Notes: "Evaluates VTL mapping templates"},
+			Status: capabilities.StatusWIP, Notes: "Evaluates VTL mapping templates; Overcast does not serve the binding AWS models, so no SDK reaches it (#860)"},
 		capabilities.Capability{Service: "appsync", Operation: "EvaluateCode", Category: "Execution & Evaluation",
-			Status: capabilities.StatusSupported, Notes: "Evaluates JavaScript resolver code"},
+			Status: capabilities.StatusWIP, Notes: "Evaluates JavaScript resolver code; Overcast does not serve the binding AWS models, so no SDK reaches it (#860)"},
 
 		// DynamoDB Resolver Operations
 		capabilities.Capability{Service: "appsync", Operation: "GetItem", Category: "DynamoDB Resolver Operations",

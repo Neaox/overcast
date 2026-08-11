@@ -29,9 +29,9 @@ Amazon Bedrock Runtime uses the REST JSON protocol. Routes are served under the
 
 ## Summary
 
-| Category  | ✅ Supported |
-| --------- | ------------ |
-| Inference | 2            |
+| Category  | 🚧 WIP |
+| --------- | ------ |
+| Inference | 2      |
 
 ---
 
@@ -39,9 +39,9 @@ Amazon Bedrock Runtime uses the REST JSON protocol. Routes are served under the
 
 ### Inference
 
-| Operation     | Status       | Notes                                        | AWS Docs                                                                                     |
-| ------------- | ------------ | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `InvokeModel` | ✅ Supported | POST /model/{modelId}/invoke — invokes model | [docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html) |
-| `Converse`    | ✅ Supported | POST /model/{modelId}/converse — chat API    | [docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)    |
+| Operation     | Status | Notes                                                                                                                     | AWS Docs                                                                                     |
+| ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `InvokeModel` | 🚧 WIP | POST /model/{modelId}/invoke — invokes model; Overcast does not serve the binding AWS models, so no SDK reaches it (#857) | [docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html) |
+| `Converse`    | 🚧 WIP | POST /model/{modelId}/converse — chat API; Overcast does not serve the binding AWS models, so no SDK reaches it (#857)    | [docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)    |
 
 <!-- END overcast:capabilities -->

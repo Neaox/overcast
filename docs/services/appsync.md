@@ -167,25 +167,25 @@ on every OS — see [networking.md](../networking.md).
 
 ## Summary
 
-| Category                     | ✅ Supported |
-| ---------------------------- | ------------ |
-| GraphQL APIs                 | 5            |
-| Schemas                      | 3            |
-| API Keys                     | 4            |
-| Data Sources                 | 5            |
-| Functions                    | 5            |
-| Resolvers                    | 6            |
-| Tags                         | 3            |
-| Environment Variables        | 2            |
-| Domain Names                 | 5            |
-| API Associations             | 3            |
-| API Cache                    | 5            |
-| Types                        | 5            |
-| Merged APIs                  | 7            |
-| Events API                   | 5            |
-| Channel Namespaces           | 5            |
-| Execution & Evaluation       | 3            |
-| DynamoDB Resolver Operations | 11           |
+| Category                     | ✅ Supported | 🚧 WIP |
+| ---------------------------- | ------------ | ------ |
+| GraphQL APIs                 | 5            |        |
+| Schemas                      | 3            |        |
+| API Keys                     | 4            |        |
+| Data Sources                 | 5            |        |
+| Functions                    | 5            |        |
+| Resolvers                    | 6            |        |
+| Tags                         | 3            |        |
+| Environment Variables        | 2            |        |
+| Domain Names                 | 5            |        |
+| API Associations             | 3            |        |
+| API Cache                    | 5            |        |
+| Types                        | 5            |        |
+| Merged APIs                  | 7            |        |
+| Events API                   | 5            |        |
+| Channel Namespaces           | 5            |        |
+| Execution & Evaluation       | 1            | 2      |
+| DynamoDB Resolver Operations | 11           |        |
 
 ---
 
@@ -336,11 +336,11 @@ on every OS — see [networking.md](../networking.md).
 
 ### Execution & Evaluation
 
-| Operation                 | Status       | Notes                                        | AWS Docs                                                                                         |
-| ------------------------- | ------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ExecuteGraphQL`          | ✅ Supported | Executes a GraphQL operation against the API | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_ExecuteGraphQL.html)          |
-| `EvaluateMappingTemplate` | ✅ Supported | Evaluates VTL mapping templates              | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateMappingTemplate.html) |
-| `EvaluateCode`            | ✅ Supported | Evaluates JavaScript resolver code           | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateCode.html)            |
+| Operation                 | Status       | Notes                                                                                                           | AWS Docs                                                                                         |
+| ------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ExecuteGraphQL`          | ✅ Supported | Executes a GraphQL operation against the API                                                                    | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_ExecuteGraphQL.html)          |
+| `EvaluateMappingTemplate` | 🚧 WIP       | Evaluates VTL mapping templates; Overcast does not serve the binding AWS models, so no SDK reaches it (#860)    | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateMappingTemplate.html) |
+| `EvaluateCode`            | 🚧 WIP       | Evaluates JavaScript resolver code; Overcast does not serve the binding AWS models, so no SDK reaches it (#860) | [docs](https://docs.aws.amazon.com/appsync/latest/APIReference/API_EvaluateCode.html)            |
 
 ### DynamoDB Resolver Operations
 

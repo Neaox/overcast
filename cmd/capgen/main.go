@@ -65,14 +65,18 @@ func main() {
 		initCaps   = flag.Bool("init", false, "generate missing capabilities_dev.go files from detected handler ops")
 		writeDocs  = flag.Bool("write-docs", false, "regenerate sentinel-bracketed tables in docs/services/*.md")
 		initDocs   = flag.Bool("init-docs", false, "add sentinel markers to docs that don't have them yet")
+		routes     = flag.Bool("routes", false, "print the chi route skeleton the pinned model gives --service")
 		service    = flag.String("service", "", "limit to one service (all if empty)")
 	)
 	flag.Parse()
 
-	if !*check && !*checkModel && !*generate && !*writeDocs && !*initCaps && !*initDocs {
+	if !*check && !*checkModel && !*generate && !*writeDocs && !*initCaps && !*initDocs && !*routes {
 		flag.Usage()
-		fmt.Fprintln(os.Stderr, "\ncapgen: no action specified; use --check, --generate, --write-docs, --init, or --init-docs")
+		fmt.Fprintln(os.Stderr, "\ncapgen: no action specified; use --check, --check-model, --generate, --write-docs, --routes, --init, or --init-docs")
 		os.Exit(1)
+	}
+	if *routes && *service == "" {
+		fatalf("--routes needs --service: the skeleton is one service's modeled bindings")
 	}
 
 	root, err := findWorkspaceRoot(*workspace)
@@ -116,8 +120,14 @@ func main() {
 		}
 		allCaps = append(allCaps, caps...)
 
+		if *routes {
+			printRouteSkeleton(svc, caps)
+		}
+
 		if *checkModel {
 			failures += checkCapabilitiesInManifest(caps)
+			failures += checkDocOnlyRowsAreNotDispatched(svc, svcDir, caps)
+			failures += checkNotesBindingsMatchTheModel(caps)
 		}
 
 		if *check {
@@ -126,21 +136,15 @@ func main() {
 				fmt.Fprintf(os.Stderr, "capgen: %s: parse handlers: %v\n", svc, opsErr)
 				continue
 			}
-			restOps, restErr := parseRESTOperations(svcDir)
-			if restErr != nil {
-				fmt.Fprintf(os.Stderr, "capgen: %s: parse REST operations: %v\n", svc, restErr)
+			handlers, handlerErr := implementedHandlerMethods(svcDir)
+			if handlerErr != nil && !os.IsNotExist(handlerErr) {
+				fmt.Fprintf(os.Stderr, "capgen: %s: parse handler methods: %v\n", svc, handlerErr)
 				continue
 			}
-			if len(restOps) > 0 {
-				ops = mergeOperations(ops, restOps)
-				comprehensive = true
-			}
-			if len(ops) == 0 {
-				// No action-dispatch ops detected (likely a REST-routed service).
-				// Cross-check is not possible; skip silently.
+			if len(ops) == 0 && len(handlers) == 0 {
 				continue
 			}
-			failures += checkService(svc, ops, caps, comprehensive)
+			failures += checkService(svc, ops, handlers, caps, comprehensive)
 		}
 	}
 
@@ -263,11 +267,24 @@ func checkCapabilitiesInManifest(caps []CapabilityDecl) int {
 	return violations
 }
 
-// modeledOperationName records the one legacy naming convention that differs
-// mechanically from Smithy: API Gateway v2 operations are exposed by
-// api-gateway-v2 as CreateApi et al., while Overcast's established capability
-// names include V2 (CreateV2Api) to distinguish them from REST API operations.
+// modeledOperationName resolves a declaration's operation identifier to the
+// AWS operation name it stands for.
+//
+// DisplayName is consulted first because that is precisely what the field
+// documents itself as: "the internal operation identifier differs from the AWS
+// API name (e.g. V2SendEmail -> SendEmail)". Not reading it here left SESv2's
+// rows failing the name check, and six of them carried DocOnly to silence
+// that — which also removed them from every other cross-check, and is how a
+// route registered on the wrong HTTP method survived 33 releases (#862).
+//
+// API Gateway records the same idea structurally rather than in a field: v2
+// operations are modeled by apigatewayv2 as CreateApi et al., while Overcast's
+// established capability names carry V2 (CreateV2Api) to keep them apart from
+// the REST API operations.
 func modeledOperationName(cap CapabilityDecl) string {
+	if cap.DisplayName != "" {
+		return cap.DisplayName
+	}
 	if cap.Service == "apigateway" {
 		return strings.Replace(cap.Operation, "V2", "", 1)
 	}
@@ -305,6 +322,272 @@ var capabilityManifestExemptions = map[string]string{
 
 func capabilityManifestExemption(cap CapabilityDecl) string {
 	return capabilityManifestExemptions[cap.Service+"/"+cap.Operation]
+}
+
+// notesBindingPattern matches an HTTP binding written inside a capability's
+// Notes — "`PUT /v2/email/identities`", "`GET /2021-01-01/domain`". Notes are
+// rendered verbatim into docs/services/*.md, so this is the form in which the
+// published support matrix makes a claim about where an operation lives.
+var notesBindingPattern = regexp.MustCompile(`\b(GET|PUT|POST|PATCH|DELETE|HEAD)\s+(/[^\s` + "`" + `,;)]*)`)
+
+// checkNotesBindingsMatchTheModel holds a capability's prose to the same model
+// its routes are held to.
+//
+// #864's fifth enforcement point asks that generated docs cannot claim a path
+// Overcast does not serve. Today docs/services/*.md is generated from the
+// declarations, and the declarations are typed by hand — so SESv2's
+// CreateEmailIdentity published "`PUT /v2/email/identities`" for 33 releases,
+// which was an accurate description of the emulator's route and the wrong
+// answer about AWS. Anyone reading the matrix to find out where to send a
+// request was told the one thing that would not work.
+//
+// Only the method and path are checked, and only when a Note states one. A
+// Note is free to say anything else; what it may not do is name a binding AWS
+// does not use.
+func checkNotesBindingsMatchTheModel(caps []CapabilityDecl) int {
+	violations := 0
+	for _, cap := range caps {
+		match := notesBindingPattern.FindStringSubmatch(cap.Notes)
+		if match == nil {
+			continue
+		}
+		method, path := match[1], match[2]
+
+		matched := false
+		var bindings []string
+		for _, op := range awsapi.Operations(cap.Service, modeledOperationName(cap)) {
+			if op.URI == "" {
+				continue
+			}
+			bindings = append(bindings, op.HTTPMethod+" "+op.URI)
+			if op.HTTPMethod == method && comparablePath(op.URI) == comparablePath(path) {
+				matched = true
+				break
+			}
+		}
+		if matched || len(bindings) == 0 {
+			continue
+		}
+		sort.Strings(bindings)
+		fmt.Printf("NOTES_BINDING_MISMATCH %s/%s  (Notes say %s %s; AWS models %s — correct the note, and check the route it describes)\n",
+			cap.Service, cap.Operation, method, path, strings.Join(bindings, ", "))
+		violations++
+	}
+	return violations
+}
+
+// pathLabel matches a URI template's parameter, on either side of the
+// comparison — the model's {ResourceArn} and a note's shorter {arn}.
+var pathLabel = regexp.MustCompile(`\{[^}]*\}`)
+
+// comparablePath reduces a URI to what a note and a model row have to agree
+// on: the sequence of literal segments and the positions of the parameters
+// between them.
+//
+// A parameter's name carries no meaning here — a note is free to write {arn}
+// where the model writes {resourceArn} — and a note that goes on to spell out
+// the query parameters an operation takes is documenting the operation, not
+// contradicting its binding.
+func comparablePath(uri string) string {
+	if i := strings.IndexByte(uri, '?'); i >= 0 {
+		uri = uri[:i]
+	}
+	return strings.TrimSuffix(pathLabel.ReplaceAllString(uri, "{}"), "/")
+}
+
+// checkDocOnlyRowsAreNotDispatched turns DocOnly from an exemption into a
+// checkable claim.
+//
+// Its contract says the same thing three ways — "documentation metadata only",
+// "generic behavior, unsupported operations without explicit stubs, or other
+// non-dispatched rows" — and every clause means *not dispatched*. But because
+// the flag only ever suppressed checks, nothing tested the claim, and a row
+// that was dispatched could carry it and disappear from the cross-check, the
+// model gate and the reachability probe at once. SESv2's CreateEmailIdentity
+// did exactly that: DocOnly, a handler, a registered route, and the wrong HTTP
+// method on it for 33 releases (#862, #863).
+//
+// A handler method that only returns 501 is not an implementation — one of the
+// three uses the contract names is documenting an unsupported operation that
+// does have an explicit stub — so stubs leave the flag intact.
+func checkDocOnlyRowsAreNotDispatched(service, svcDir string, caps []CapabilityDecl) int {
+	implemented, err := implementedHandlerMethods(svcDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		fmt.Fprintf(os.Stderr, "capgen: %s: parse handler methods: %v\n", service, err)
+		return 1
+	}
+
+	violations := 0
+	for _, cap := range caps {
+		if !cap.DocOnly || !implemented[cap.Operation] {
+			continue
+		}
+		fmt.Printf("DOCONLY_DISPATCHED %s/%s  (DocOnly means non-dispatched, but a handler implements it — drop the flag and fix whatever it was hiding)\n",
+			service, cap.Operation)
+		violations++
+	}
+	return violations
+}
+
+// implementedHandlerMethods returns the names of methods in svcDir that take
+// (http.ResponseWriter, *http.Request) and do something other than answer 501.
+// A dispatched operation has one; a row documenting generic behavior does not.
+func implementedHandlerMethods(svcDir string) (map[string]bool, error) {
+	entries, err := os.ReadDir(svcDir)
+	if err != nil {
+		return nil, err
+	}
+
+	fset := token.NewFileSet()
+	methods := map[string]bool{}
+	for _, e := range entries {
+		if shouldSkipFile(e) {
+			continue
+		}
+		f, err := parseGoFile(fset, filepath.Join(svcDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			fd, ok := n.(*ast.FuncDecl)
+			if !ok || fd.Recv == nil || fd.Body == nil || !isHTTPHandlerSignature(fd.Type) {
+				return true
+			}
+			// A method name can appear in more than one build-tagged file;
+			// an implementation anywhere makes the operation dispatched.
+			methods[fd.Name.Name] = methods[fd.Name.Name] || !containsNotImplementedCall(fd.Body)
+			return true
+		})
+	}
+	return methods, nil
+}
+
+// isHTTPHandlerSignature reports whether a function takes exactly
+// (http.ResponseWriter, *http.Request) and returns nothing.
+func isHTTPHandlerSignature(ft *ast.FuncType) bool {
+	if ft.Results != nil && len(ft.Results.List) > 0 {
+		return false
+	}
+	params := ft.Params.List
+	// One field can declare both parameters ("w http.ResponseWriter" and
+	// "r *http.Request" are separate fields, but a signature is free to group).
+	var types []ast.Expr
+	for _, param := range params {
+		for range max(len(param.Names), 1) {
+			types = append(types, param.Type)
+		}
+	}
+	if len(types) != 2 {
+		return false
+	}
+	return isSelector(types[0], "http", "ResponseWriter") && isPointerToSelector(types[1], "http", "Request")
+}
+
+func isSelector(expr ast.Expr, pkg, name string) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	return ok && ident.Name == pkg
+}
+
+func isPointerToSelector(expr ast.Expr, pkg, name string) bool {
+	star, ok := expr.(*ast.StarExpr)
+	return ok && isSelector(star.X, pkg, name)
+}
+
+// printRouteSkeleton writes the chi route registrations a service's modeled
+// operations require, straight from the pinned manifest.
+//
+// #864's seventh point. EKS has six hand-invented paths, four of them with the
+// wrong HTTP method (#858), written by hand beside a file that already had the
+// right answers; the same is true of every service in the fault class. Nothing
+// stops the next one being typed out too unless there is something easier to
+// reach for than typing.
+//
+// Output goes to stdout for a human to paste and prune, rather than to a
+// generated file. A service does not implement every operation AWS models —
+// deciding which ones to serve is the work — but where it does serve one, the
+// method and URI are not a judgement call, and this is where they come from.
+func printRouteSkeleton(service string, caps []CapabilityDecl) {
+	for _, line := range routeSkeleton(service, caps) {
+		fmt.Println(line)
+	}
+}
+
+// routeSkeleton builds the skeleton's lines. It is separate from printing so a
+// test can assert that the methods and paths come from the model rather than
+// from whatever the service happens to register.
+func routeSkeleton(service string, caps []CapabilityDecl) []string {
+	declared := map[string]CapabilityDecl{}
+	for _, cap := range caps {
+		declared[modeledOperationName(cap)] = cap
+	}
+
+	type route struct{ method, uri, operation, status string }
+	var routes []route
+	seen := map[string]bool{}
+	awsapi.WalkOperations(func(op awsapi.Operation) bool {
+		if awsapi.ServiceKey(op.Service) != service || op.URI == "" {
+			return true
+		}
+		if op.Protocol != awsapi.ProtocolRESTJSON && op.Protocol != awsapi.ProtocolRESTXML {
+			return true
+		}
+		if seen[op.Name] {
+			return true
+		}
+		seen[op.Name] = true
+		status := "not declared"
+		if cap, ok := declared[op.Name]; ok {
+			status = strings.TrimPrefix(cap.Status, "Status")
+		}
+		routes = append(routes, route{method: op.HTTPMethod, uri: op.URI, operation: op.Name, status: status})
+		return true
+	})
+	if len(routes) == 0 {
+		return []string{fmt.Sprintf("// %s: the model declares no REST bindings for this service (it is an AWS JSON or Query API).", service)}
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].uri != routes[j].uri {
+			return routes[i].uri < routes[j].uri
+		}
+		return routes[i].method < routes[j].method
+	})
+
+	lines := []string{
+		fmt.Sprintf("// Route skeleton for %s, generated from internal/awsapi/manifest.gen.go.", service),
+		"// Delete the operations this service does not serve; do not edit the methods or paths.",
+		"func (s *Service) RegisterRoutes(r chi.Router) {",
+	}
+	for _, route := range routes {
+		lines = append(lines, fmt.Sprintf("\tr.%s(%q, s.handler.%s) // %s",
+			chiMethod(route.method), stripQueryBinding(route.uri), route.operation, route.status))
+	}
+	return append(lines, "}")
+}
+
+// chiMethod maps an HTTP method to chi's registration helper.
+func chiMethod(method string) string {
+	if method == "" {
+		return "HandleFunc"
+	}
+	return strings.ToUpper(method[:1]) + strings.ToLower(method[1:])
+}
+
+// stripQueryBinding drops the literal query a URI template may pin
+// (/apikeys?mode=import). chi routes on the path, so the handler has to branch
+// on the parameter; the skeleton leaves a comment-free path and the two
+// operations that share it appear as two lines, which is the prompt to look.
+func stripQueryBinding(uri string) string {
+	if i := strings.IndexByte(uri, '?'); i >= 0 {
+		return uri[:i]
+	}
+	return uri
 }
 
 // checkServiceKeysInManifest enforces that every service key — directory name
@@ -377,6 +660,10 @@ func checkCompatRegistryServiceKeys(root string, caps []CapabilityDecl) int {
 		Groups []struct {
 			Service string `json:"service"`
 			Name    string `json:"name"`
+			Tests   []struct {
+				Name string `json:"name"`
+				Op   string `json:"op"`
+			} `json:"tests"`
 		} `json:"groups"`
 	}
 	if err := json.Unmarshal(raw, &registry); err != nil {
@@ -392,15 +679,33 @@ func checkCompatRegistryServiceKeys(root string, caps []CapabilityDecl) int {
 	violations := 0
 	reported := map[string]bool{}
 	for _, group := range registry.Groups {
-		if capabilityKeys[group.Service] || compatRegistryServiceExemptions[group.Service] != "" {
+		if !capabilityKeys[group.Service] && compatRegistryServiceExemptions[group.Service] == "" {
+			if !reported[group.Service] {
+				reported[group.Service] = true
+				fmt.Printf("COMPAT_REGISTRY_UNKNOWN_SERVICE %s  (group %q; not a capability service key — fix the key or add an explicit exemption)\n", group.Service, group.Name)
+				violations++
+			}
 			continue
 		}
-		if reported[group.Service] {
-			continue
+		// A test's `op` is the registry's own statement of which AWS operation
+		// it exercises, and until now nothing read it. `--check-parity`
+		// measures the registry against a run of the registry — a uniformity
+		// check across the eight suites, not a coverage check — so a typo in
+		// an `op` detaches that test from the operation it claims to cover and
+		// nothing anywhere notices.
+		//
+		// Only `op` is validated. A test `name` is a scenario name where it
+		// needs to be (PutObjectMultipleKeys, ListObjectsV2Delimiter), so the
+		// schema makes `op` the field that names an operation; holding names
+		// to the model would reject the ones doing their job.
+		for _, test := range group.Tests {
+			if test.Op == "" || awsapi.HasOperation(group.Service, test.Op) {
+				continue
+			}
+			fmt.Printf("COMPAT_REGISTRY_UNKNOWN_OPERATION %s/%s  (group %q, test %q; AWS models no such operation for this service)\n",
+				group.Service, test.Op, group.Name, test.Name)
+			violations++
 		}
-		reported[group.Service] = true
-		fmt.Printf("COMPAT_REGISTRY_UNKNOWN_SERVICE %s  (group %q; not a capability service key — fix the key or add an explicit exemption)\n", group.Service, group.Name)
-		violations++
 	}
 	return violations
 }
@@ -664,16 +969,16 @@ func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 			if !isOperationSwitch(sw) {
 				return true
 			}
-			awsCases := collectAWSCasesFromSwitch(sw)
+			awsCases := collectAWSCasesFromSwitch(sw, stubMethods)
 			if len(awsCases) < 3 {
 				return true
 			}
-			for _, opName := range awsCases {
-				if _, exists := seen[opName]; exists {
+			for _, op := range awsCases {
+				if _, exists := seen[op.Name]; exists {
 					continue
 				}
-				seen[opName] = struct{}{}
-				ops = append(ops, Operation{Name: opName, IsStub: false})
+				seen[op.Name] = struct{}{}
+				ops = append(ops, op)
 			}
 			return true
 		})
@@ -681,85 +986,6 @@ func parseHandlerOps(svcDir string) ([]Operation, bool, error) {
 
 	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
 	return ops, hasMap, nil
-}
-
-func parseRESTOperations(svcDir string) ([]Operation, error) {
-	entries, err := os.ReadDir(svcDir)
-	if err != nil {
-		return nil, err
-	}
-	fset := token.NewFileSet()
-	seen := map[string]struct{}{}
-	var ops []Operation
-	for _, e := range entries {
-		if shouldSkipFile(e) {
-			continue
-		}
-		f, err := parseGoFile(fset, filepath.Join(svcDir, e.Name()))
-		if err != nil {
-			continue
-		}
-		stringConsts := collectFileStringConsts(f)
-		ast.Inspect(f, func(n ast.Node) bool {
-			cl, ok := n.(*ast.CompositeLit)
-			if !ok || !isRESTOperationLit(cl) {
-				return true
-			}
-			op := restOperationName(cl, stringConsts)
-			if op == "" {
-				return true
-			}
-			if _, exists := seen[op]; exists {
-				return true
-			}
-			seen[op] = struct{}{}
-			ops = append(ops, Operation{Name: op})
-			return true
-		})
-	}
-	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
-	return ops, nil
-}
-
-func isRESTOperationLit(cl *ast.CompositeLit) bool {
-	if id, ok := cl.Type.(*ast.Ident); ok {
-		return id.Name == "restOperation"
-	}
-	return restOperationName(cl, nil) != ""
-}
-
-func restOperationName(cl *ast.CompositeLit, consts map[string]string) string {
-	for _, elt := range cl.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		key, ok := kv.Key.(*ast.Ident)
-		if !ok || key.Name != "Operation" {
-			continue
-		}
-		return stringExpr(kv.Value, consts)
-	}
-	return ""
-}
-
-func mergeOperations(a, b []Operation) []Operation {
-	seen := make(map[string]Operation, len(a)+len(b))
-	for _, op := range a {
-		seen[op.Name] = op
-	}
-	for _, op := range b {
-		if existing, ok := seen[op.Name]; ok && existing.IsStub {
-			continue
-		}
-		seen[op.Name] = op
-	}
-	out := make([]Operation, 0, len(seen))
-	for _, op := range seen {
-		out = append(out, op)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
 }
 
 func isOperationSwitch(sw *ast.SwitchStmt) bool {
@@ -807,23 +1033,39 @@ func parseGoFile(fset *token.FileSet, path string) (*ast.File, error) {
 	return parser.ParseFile(fset, path, src, 0)
 }
 
+// containsNotImplementedCall reports whether a method's whole behaviour is to
+// answer 501 — the shape of a stub.
+//
+// Only top-level statements count. A NotImplemented call nested in an if or a
+// switch is a branch of a working handler, not a stub: Lambda's CreateFunction
+// implements the operation and refuses one unsupported package type that way,
+// and matching it anywhere in the body reported five working Lambda operations
+// as stubs declared Supported. "Directly calls" is what the rule always said;
+// this is it enforced.
 func containsNotImplementedCall(body *ast.BlockStmt) bool {
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+	for _, stmt := range body.List {
+		var expr ast.Expr
+		switch s := stmt.(type) {
+		case *ast.ExprStmt:
+			expr = s.X
+		case *ast.ReturnStmt:
+			if len(s.Results) != 1 {
+				continue
+			}
+			expr = s.Results[0]
+		default:
+			continue
+		}
+		call, ok := expr.(*ast.CallExpr)
 		if !ok {
-			return true
+			continue
 		}
 		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
+		if ok && strings.HasPrefix(sel.Sel.Name, "NotImplemented") {
 			return true
 		}
-		if strings.HasPrefix(sel.Sel.Name, "NotImplemented") {
-			found = true
-		}
-		return true
-	})
-	return found
+	}
+	return false
 }
 
 func isHandlerFuncMap(cl *ast.CompositeLit) bool {
@@ -889,8 +1131,18 @@ func typedOpIsStub(value ast.Expr, stubMethods map[string]struct{}) bool {
 	return false
 }
 
-func collectAWSCasesFromSwitch(sw *ast.SwitchStmt) []string {
-	var cases []string
+// collectAWSCasesFromSwitch returns the operations an action switch dispatches,
+// each marked according to whether the method its arm calls is a stub.
+//
+// The stub flag used to be hardcoded false here, so an operation dispatched
+// from a switch could never be reported as a 501 however plainly its handler
+// said so — while the same operation registered in a map or the typed registry
+// would be. That is why ElastiCache advertised DescribeCacheEngineVersions and
+// RebootCacheCluster as ✅ Supported while both answered 501 from
+// handler_stubs.go under a TODO, recorded in #861 and #864 as the
+// status-honesty gap.
+func collectAWSCasesFromSwitch(sw *ast.SwitchStmt, stubMethods map[string]struct{}) []Operation {
+	var cases []Operation
 	for _, s := range sw.Body.List {
 		cc, ok := s.(*ast.CaseClause)
 		if !ok || len(cc.List) == 0 {
@@ -902,10 +1154,33 @@ func collectAWSCasesFromSwitch(sw *ast.SwitchStmt) []string {
 		}
 		val := strings.Trim(lit.Value, `"`)
 		if isAWSOperation(val) && !isKnownNonOperationCase(val) {
-			cases = append(cases, val)
+			cases = append(cases, Operation{Name: val, IsStub: switchArmIsStub(cc, stubMethods)})
 		}
 	}
 	return cases
+}
+
+// switchArmIsStub reports whether a switch arm's only work is to call a method
+// that answers 501 — the `case "X": h.X(w, r)` shape every action switch uses.
+func switchArmIsStub(cc *ast.CaseClause, stubMethods map[string]struct{}) bool {
+	for _, stmt := range cc.Body {
+		expr, ok := stmt.(*ast.ExprStmt)
+		if !ok {
+			continue
+		}
+		call, ok := expr.X.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		if _, found := stubMethods[sel.Sel.Name]; found {
+			return true
+		}
+	}
+	return false
 }
 
 // aslChoiceOperators are the Amazon States Language Choice comparison
@@ -1126,7 +1401,26 @@ func boolLit(e ast.Expr) bool {
 // When comprehensive is false (ops detected only via switch-case, not map),
 // ORPHAN entries are printed as warnings but do not count as violations, because
 // REST-routed operations cannot be detected by static analysis.
-func checkService(service string, ops []Operation, caps []CapabilityDecl, comprehensive bool) int {
+// checkService cross-checks a service's capability declarations against the
+// operations its package actually dispatches.
+//
+// ops are the action-dispatch registrations parseHandlerOps finds — the map or
+// switch a Query or AWS-JSON service routes on. handlers are the
+// (http.ResponseWriter, *http.Request) methods on the package's types, keyed by
+// name and valued by whether they do more than answer 501. A REST-routed
+// operation appears only in the second: chi binds it by path, so there is no
+// action table to read.
+//
+// Reading the methods is what removed the last hand-maintained operation
+// inventory in the tree. AppSync used to carry an 85-row
+// rest_operations_dev.go listing method, path and operation for every REST
+// route so that capgen had something to cross-check — every field of it
+// already in the pinned manifest, and kept in step by a test asserting it
+// matched the routes. The manifest supplies the bindings, the router gate
+// (internal/router/modelbinding_dev_test.go) asserts the routes, and the
+// handler methods supply dispatch, so all three of those artefacts are now
+// derived rather than typed.
+func checkService(service string, ops []Operation, handlers map[string]bool, caps []CapabilityDecl, comprehensive bool) int {
 	capByOp := make(map[string]CapabilityDecl, len(caps))
 	for _, c := range caps {
 		capByOp[c.Operation] = c
@@ -1152,22 +1446,37 @@ func checkService(service string, ops []Operation, caps []CapabilityDecl, compre
 		}
 	}
 	for _, cap := range caps {
-		if cap.DocOnly {
+		if cap.DocOnly || cap.Status == "StatusUnsupported" {
 			continue
 		}
-		if cap.Status == "StatusUnsupported" {
+		if _, found := opByName[cap.Operation]; found {
 			continue
 		}
-		if _, found := opByName[cap.Operation]; !found {
-			if comprehensive {
-				fmt.Printf("ORPHAN     %s/%s  (in capabilities_dev.go but not in handler)\n",
-					service, cap.Operation)
+		implemented, hasHandler := handlers[cap.Operation]
+		switch {
+		case implemented:
+			// Dispatched by path rather than by action.
+		case hasHandler:
+			// The only method of that name answers 501, so the row's status
+			// describes an operation that cannot behave as advertised. ops
+			// carries the same rule for action-dispatched operations above.
+			if cap.Status != "StatusWIP" {
+				fmt.Printf("WRONG_STATUS %s/%s  (stub returns 501 but declared as %s)\n",
+					service, cap.Operation, cap.Status)
 				violations++
-			} else {
-				fmt.Printf("ORPHAN     %s/%s  (REST-routed; not detectable — skipping)\n",
-					service, cap.Operation)
 			}
+		case comprehensive:
+			fmt.Printf("ORPHAN     %s/%s  (in capabilities_dev.go but not in handler)\n",
+				service, cap.Operation)
+			violations++
 		}
+		// A row this pass cannot attribute is not reported. It used to print
+		// "REST-routed; not detectable — skipping" twenty times a run, which
+		// asserted nothing and trained the reader to scroll past capgen's
+		// output. It is not undetectable any more: a REST-bound operation is
+		// held to the method and URI the manifest gives it by
+		// TestModeledBindings_areServedWhereAWSBindsThem, which reads the real
+		// router rather than guessing from a handler's name.
 	}
 	return violations
 }

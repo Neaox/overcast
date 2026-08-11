@@ -54,6 +54,10 @@ type Operation struct {
 // build-tool validation helper rather than a router lookup: runtime routing
 // uses generated indexes, while capgen uses this complete corpus to catch
 // capability declarations that no longer map to AWS.
+//
+// It answers only "is this a real AWS operation name?". Use Operations when
+// the question is where AWS serves it — see that function's comment for why
+// the difference matters.
 func HasOperation(service, name string) bool {
 	for _, op := range manifest {
 		if overcastService(op.Service) == service && op.Name == name {
@@ -61,6 +65,29 @@ func HasOperation(service, name string) bool {
 		}
 	}
 	return false
+}
+
+// Operations returns every modeled binding an established Overcast service key
+// carries for the given AWS operation name, so a build tool can assert where
+// the operation is served rather than merely that it exists. A name-only check
+// cannot distinguish a route AWS models from one the emulator invented, which
+// is how ten services came to serve working implementations at paths and
+// methods no SDK sends (#864).
+//
+// The result is a slice because one Overcast key can resolve to several
+// modeled identities: "ses" answers for both SES v1 (Query) and SES v2
+// (REST-JSON), and "apigateway" for both API Gateway v1 and v2. Callers that
+// need one specific binding must select on Protocol or APIVersion.
+//
+// Returned values are copies; the corpus stays immutable.
+func Operations(service, name string) []Operation {
+	var out []Operation
+	for _, op := range manifest {
+		if overcastService(op.Service) == service && op.Name == name {
+			out = append(out, op)
+		}
+	}
+	return out
 }
 
 // WalkOperations visits immutable copies of every modeled operation. It is

@@ -48,14 +48,14 @@ EKS supports two modes:
 
 ## Summary
 
-| Category   | ✅ Supported |
-| ---------- | ------------ |
-| Clusters   | 31           |
-| Helpers    | 1            |
-| Nodegroups | 6            |
-| Fargate    | 4            |
-| Tags       | 3            |
-| Addons     | 7            |
+| Category   | ✅ Supported | 🚧 WIP |
+| ---------- | ------------ | ------ |
+| Clusters   | 29           | 2      |
+| Helpers    | 1            |        |
+| Nodegroups | 5            | 1      |
+| Fargate    | 4            |        |
+| Tags       | 3            |        |
+| Addons     | 4            | 3      |
 
 ---
 
@@ -80,7 +80,7 @@ EKS supports two modes:
 | `ListAssociatedAccessPolicies`       | ✅ Supported | Lists associated policy ARNs and access scopes for a stored access entry principal                                                                                 | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_ListAssociatedAccessPolicies.html)       |
 | `DisassociateAccessPolicy`           | ✅ Supported | Disassociates a policy ARN from a stored access entry principal                                                                                                    | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DisassociateAccessPolicy.html)           |
 | `ListIdentityProviderConfigs`        | ✅ Supported | Returns stored identity provider config summaries                                                                                                                  | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_ListIdentityProviderConfigs.html)        |
-| `DescribeIdentityProviderConfig`     | ✅ Supported | Returns stored identity provider config details by type/name with inline tags                                                                                      | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeIdentityProviderConfig.html)     |
+| `DescribeIdentityProviderConfig`     | 🚧 WIP       | Returns stored identity provider config details by type/name with inline tags; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)         | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeIdentityProviderConfig.html)     |
 | `UpdateIdentityProviderConfig`       | ✅ Supported | Updates stored identity provider config fields and records an update entry                                                                                         | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateIdentityProviderConfig.html)       |
 | `AssociateIdentityProviderConfig`    | ✅ Supported | Stores OIDC identity provider metadata, persists inline tags, and records an update entry                                                                          | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_AssociateIdentityProviderConfig.html)    |
 | `DisassociateIdentityProviderConfig` | ✅ Supported | Removes stored identity provider metadata, clears inline tags, and records an update entry                                                                         | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DisassociateIdentityProviderConfig.html) |
@@ -90,7 +90,7 @@ EKS supports two modes:
 | `UpdatePodIdentityAssociation`       | ✅ Supported | Updates stored pod identity association role ARN by association ID                                                                                                 | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdatePodIdentityAssociation.html)       |
 | `DeletePodIdentityAssociation`       | ✅ Supported | Deletes stored pod identity association metadata by association ID                                                                                                 | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DeletePodIdentityAssociation.html)       |
 | `ListUpdates`                        | ✅ Supported | Lists recorded update IDs for a cluster                                                                                                                            | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_ListUpdates.html)                        |
-| `ListInsights`                       | ✅ Supported | Returns synthetic health/readiness insight summaries for a cluster                                                                                                 | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_ListInsights.html)                       |
+| `ListInsights`                       | 🚧 WIP       | Returns synthetic health/readiness insight summaries for a cluster; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)                    | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_ListInsights.html)                       |
 | `DescribeInsight`                    | ✅ Supported | Returns synthetic health/readiness insight detail by insight ID                                                                                                    | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeInsight.html)                    |
 | `UpdateClusterConfig`                | ✅ Supported | Updates stored cluster logging, resourcesVpcConfig, and kubernetesNetworkConfig; records an update entry                                                           | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateClusterConfig.html)                |
 | `UpdateClusterVersion`               | ✅ Supported | Updates stored cluster version metadata                                                                                                                            | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateClusterVersion.html)               |
@@ -108,7 +108,7 @@ EKS supports two modes:
 | Operation                | Status       | Notes                                                                                                                                                                    | AWS Docs                                                                                    |
 | ------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | `CreateNodegroup`        | ✅ Supported | Stores full nodegroup metadata including instanceTypes, amiType, capacityType, diskSize, taints, labels, scalingConfig, updateConfig, launchTemplate, and releaseVersion | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_CreateNodegroup.html)        |
-| `UpdateNodegroupVersion` | ✅ Supported | Updates stored nodegroup version metadata                                                                                                                                | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateNodegroupVersion.html) |
+| `UpdateNodegroupVersion` | 🚧 WIP       | Updates stored nodegroup version metadata; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)                                                   | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateNodegroupVersion.html) |
 | `UpdateNodegroupConfig`  | ✅ Supported | Updates stored nodegroup labels, taints, scalingConfig, and updateConfig; records an update entry                                                                        | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateNodegroupConfig.html)  |
 | `DescribeNodegroup`      | ✅ Supported |                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeNodegroup.html)      |
 | `ListNodegroups`         | ✅ Supported |                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_ListNodegroups.html)         |
@@ -133,14 +133,14 @@ EKS supports two modes:
 
 ### Addons
 
-| Operation                    | Status       | Notes                                                                                                                       | AWS Docs                                                                                        |
-| ---------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `CreateAddon`                | ✅ Supported | Stores add-on metadata including addonVersion, configurationValues, and serviceAccountRoleArn; describe returns inline tags | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_CreateAddon.html)                |
-| `DescribeAddon`              | ✅ Supported |                                                                                                                             | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeAddon.html)              |
-| `ListAddons`                 | ✅ Supported |                                                                                                                             | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_ListAddons.html)                 |
-| `UpdateAddon`                | ✅ Supported | Updates stored add-on version/configuration and records an update entry                                                     | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateAddon.html)                |
-| `DeleteAddon`                | ✅ Supported | Removes add-on metadata                                                                                                     | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DeleteAddon.html)                |
-| `DescribeAddonConfiguration` | ✅ Supported | Returns synthetic configuration schema for core add-ons                                                                     | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeAddonConfiguration.html) |
-| `DescribeAddonVersions`      | ✅ Supported | Returns synthetic version catalog for vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver; empty for unknown add-ons           | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeAddonVersions.html)      |
+| Operation                    | Status       | Notes                                                                                                                                                                                          | AWS Docs                                                                                        |
+| ---------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `CreateAddon`                | ✅ Supported | Stores add-on metadata including addonVersion, configurationValues, and serviceAccountRoleArn; describe returns inline tags                                                                    | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_CreateAddon.html)                |
+| `DescribeAddon`              | ✅ Supported |                                                                                                                                                                                                | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeAddon.html)              |
+| `ListAddons`                 | ✅ Supported |                                                                                                                                                                                                | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_ListAddons.html)                 |
+| `UpdateAddon`                | 🚧 WIP       | Updates stored add-on version/configuration and records an update entry; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)                                           | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_UpdateAddon.html)                |
+| `DeleteAddon`                | ✅ Supported | Removes add-on metadata                                                                                                                                                                        | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DeleteAddon.html)                |
+| `DescribeAddonConfiguration` | 🚧 WIP       | Returns synthetic configuration schema for core add-ons; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)                                                           | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeAddonConfiguration.html) |
+| `DescribeAddonVersions`      | 🚧 WIP       | Returns synthetic version catalog for vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver; empty for unknown add-ons; Overcast does not serve the binding AWS models, so no SDK reaches it (#858) | [docs](https://docs.aws.amazon.com/eks/latest/APIReference/API_DescribeAddonVersions.html)      |
 
 <!-- END overcast:capabilities -->

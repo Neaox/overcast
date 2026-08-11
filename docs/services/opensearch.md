@@ -29,10 +29,10 @@ the `/_opensearch/` path prefix.
 
 ## Summary
 
-| Category | ✅ Supported |
-| -------- | ------------ |
-| Domains  | 5            |
-| Tags     | 3            |
+| Category | 🚧 WIP |
+| -------- | ------ |
+| Domains  | 5      |
+| Tags     | 3      |
 
 ---
 
@@ -40,20 +40,20 @@ the `/_opensearch/` path prefix.
 
 ### Domains
 
-| Operation         | Status       | Notes                                       | AWS Docs                                                                                            |
-| ----------------- | ------------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `CreateDomain`    | ✅ Supported | POST /domain — creates a domain             | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_CreateDomain.html)    |
-| `DescribeDomain`  | ✅ Supported | GET /domain/{name} — returns domain details | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_DescribeDomain.html)  |
-| `DescribeDomains` | ✅ Supported | POST /domain/describe — batch describe      | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_DescribeDomains.html) |
-| `ListDomainNames` | ✅ Supported | GET /domain — lists all domain names        | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_ListDomainNames.html) |
-| `DeleteDomain`    | ✅ Supported | DELETE /domain/{name} — deletes a domain    | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_DeleteDomain.html)    |
+| Operation         | Status | Notes                                                                                               | AWS Docs                                                                                            |
+| ----------------- | ------ | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `CreateDomain`    | 🚧 WIP | creates a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)       | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_CreateDomain.html)    |
+| `DescribeDomain`  | 🚧 WIP | returns domain details; Overcast does not serve the binding AWS models, so no SDK reaches it (#856) | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_DescribeDomain.html)  |
+| `DescribeDomains` | 🚧 WIP | batch describe; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)         | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_DescribeDomains.html) |
+| `ListDomainNames` | 🚧 WIP | lists all domain names; Overcast does not serve the binding AWS models, so no SDK reaches it (#856) | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_ListDomainNames.html) |
+| `DeleteDomain`    | 🚧 WIP | deletes a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)       | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_DeleteDomain.html)    |
 
 ### Tags
 
-| Operation    | Status       | Notes                               | AWS Docs                                                                                       |
-| ------------ | ------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `AddTags`    | ✅ Supported | POST /tags — adds tags to a domain  | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_AddTags.html)    |
-| `ListTags`   | ✅ Supported | GET /tags — lists tags for a domain | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_ListTags.html)   |
-| `RemoveTags` | ✅ Supported | POST /tags-removal — removes tags   | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_RemoveTags.html) |
+| Operation    | Status | Notes                                                                                                | AWS Docs                                                                                       |
+| ------------ | ------ | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `AddTags`    | 🚧 WIP | adds tags to a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)   | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_AddTags.html)    |
+| `ListTags`   | 🚧 WIP | lists tags for a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856) | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_ListTags.html)   |
+| `RemoveTags` | 🚧 WIP | removes tags; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)            | [docs](https://docs.aws.amazon.com/opensearch-service/latest/APIReference/API_RemoveTags.html) |
 
 <!-- END overcast:capabilities -->

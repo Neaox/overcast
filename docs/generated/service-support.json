@@ -1876,14 +1876,14 @@
         {
           "operation": "EvaluateMappingTemplate",
           "category": "Execution \u0026 Evaluation",
-          "status": "✅ Supported",
-          "notes": "Evaluates VTL mapping templates"
+          "status": "🚧 WIP",
+          "notes": "Evaluates VTL mapping templates; Overcast does not serve the binding AWS models, so no SDK reaches it (#860)"
         },
         {
           "operation": "EvaluateCode",
           "category": "Execution \u0026 Evaluation",
-          "status": "✅ Supported",
-          "notes": "Evaluates JavaScript resolver code"
+          "status": "🚧 WIP",
+          "notes": "Evaluates JavaScript resolver code; Overcast does not serve the binding AWS models, so no SDK reaches it (#860)"
         },
         {
           "operation": "GetItem",
@@ -5568,7 +5568,8 @@
         {
           "operation": "DescribeCacheEngineVersions",
           "category": "General",
-          "status": "❌ Unsupported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "DescribeCacheParameterGroups",
@@ -5627,7 +5628,8 @@
         {
           "operation": "RebootCacheCluster",
           "category": "General",
-          "status": "❌ Unsupported"
+          "status": "❌ Unsupported",
+          "notes": "stub; returns 501"
         },
         {
           "operation": "RemoveTagsFromResource",
@@ -5853,74 +5855,74 @@
         {
           "operation": "CreateEnvironment",
           "category": "Environments",
-          "status": "✅ Supported",
-          "notes": "Creates an environment for an application"
+          "status": "🚧 WIP",
+          "notes": "Creates an environment for an application; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "GetEnvironment",
           "category": "Environments",
-          "status": "✅ Supported",
-          "notes": "Returns environment details"
+          "status": "🚧 WIP",
+          "notes": "Returns environment details; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "ListEnvironments",
           "category": "Environments",
-          "status": "✅ Supported",
-          "notes": "Lists environments for an application"
+          "status": "🚧 WIP",
+          "notes": "Lists environments for an application; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "DeleteEnvironment",
           "category": "Environments",
-          "status": "✅ Supported",
-          "notes": "Deletes an environment"
+          "status": "🚧 WIP",
+          "notes": "Deletes an environment; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "CreateConfigurationProfile",
           "category": "Configuration Profiles",
-          "status": "✅ Supported",
-          "notes": "Creates a configuration profile"
+          "status": "🚧 WIP",
+          "notes": "Creates a configuration profile; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "GetConfigurationProfile",
           "category": "Configuration Profiles",
-          "status": "✅ Supported",
-          "notes": "Returns configuration profile details"
+          "status": "🚧 WIP",
+          "notes": "Returns configuration profile details; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "ListConfigurationProfiles",
           "category": "Configuration Profiles",
-          "status": "✅ Supported",
-          "notes": "Lists configuration profiles"
+          "status": "🚧 WIP",
+          "notes": "Lists configuration profiles; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "DeleteConfigurationProfile",
           "category": "Configuration Profiles",
-          "status": "✅ Supported",
-          "notes": "Deletes a configuration profile"
+          "status": "🚧 WIP",
+          "notes": "Deletes a configuration profile; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "CreateHostedConfigurationVersion",
           "category": "Hosted Configuration Versions",
-          "status": "✅ Supported",
-          "notes": "Stores configuration content against a profile; `VersionNumber` auto-increments, `ContentType` defaults to `application/octet-stream`, and content over 1 MB is rejected with `BadRequestException`"
+          "status": "🚧 WIP",
+          "notes": "Stores configuration content against a profile; `VersionNumber` auto-increments, `ContentType` defaults to `application/octet-stream`, and content over 1 MB is rejected with `BadRequestException`; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "GetHostedConfigurationVersion",
           "category": "Hosted Configuration Versions",
-          "status": "✅ Supported",
-          "notes": "Returns the raw content as the response body with the `AppConfig-*` metadata headers"
+          "status": "🚧 WIP",
+          "notes": "Returns the raw content as the response body with the `AppConfig-*` metadata headers; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "ListHostedConfigurationVersions",
           "category": "Hosted Configuration Versions",
-          "status": "✅ Supported",
-          "notes": "Returns version metadata without content; no pagination (`NextToken` never returned)"
+          "status": "🚧 WIP",
+          "notes": "Returns version metadata without content; no pagination (`NextToken` never returned); Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "DeleteHostedConfigurationVersion",
           "category": "Hosted Configuration Versions",
-          "status": "✅ Supported",
-          "notes": "Deletes a single version; other versions of the profile are untouched"
+          "status": "🚧 WIP",
+          "notes": "Deletes a single version; other versions of the profile are untouched; Overcast does not serve the binding AWS models, so no SDK reaches it (#854)"
         },
         {
           "operation": "TagResource",
@@ -5951,15 +5953,15 @@
         {
           "operation": "StartConfigurationSession",
           "category": "Sessions",
-          "status": "✅ Supported",
-          "notes": "Starts a polling session; returns `InitialConfigurationToken`",
+          "status": "🚧 WIP",
+          "notes": "Starts a polling session; returns `InitialConfigurationToken`; Overcast does not serve the binding AWS models, so no SDK reaches it (#855)",
           "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_StartConfigurationSession.html)"
         },
         {
           "operation": "GetLatestConfiguration",
           "category": "Sessions",
-          "status": "✅ Supported",
-          "notes": "Returns current config content; empty body when unchanged since last poll",
+          "status": "🚧 WIP",
+          "notes": "Returns current config content; empty body when unchanged since last poll; Overcast does not serve the binding AWS models, so no SDK reaches it (#855)",
           "docs_url": "[docs](https://docs.aws.amazon.com/appconfig/2021-11-11/APIReference/API_appconfigdata_GetLatestConfiguration.html)"
         },
         {
@@ -6564,64 +6566,56 @@
           "category": "SES v2 — Sending",
           "status": "✅ Supported",
           "notes": "`POST /v2/email/outbound-emails`; simple content",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html)"
         },
         {
           "operation": "V2CreateEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
           "notes": "`POST /v2/email/identities`; auto-verified; inline `Tags` applied at creation",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_CreateEmailIdentity.html)"
         },
         {
           "operation": "V2ListEmailIdentities",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
           "notes": "`GET /v2/email/identities`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListEmailIdentities.html)"
         },
         {
           "operation": "V2GetEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
           "notes": "`GET /v2/email/identities/{EmailIdentity}`; reports the identity's `Tags`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetEmailIdentity.html)"
         },
         {
           "operation": "V2DeleteEmailIdentity",
           "category": "SES v2 — Identities",
           "status": "✅ Supported",
           "notes": "`DELETE /v2/email/identities/{EmailIdentity}`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_DeleteEmailIdentity.html)"
         },
         {
           "operation": "V2TagResource",
           "category": "SES v2 — Tags",
           "status": "✅ Supported",
           "notes": "`POST /v2/email/tags`; email identity ARNs — configuration sets are not emulated",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_TagResource.html)"
         },
         {
           "operation": "V2UntagResource",
           "category": "SES v2 — Tags",
           "status": "✅ Supported",
           "notes": "`DELETE /v2/email/tags?ResourceArn=…\u0026TagKeys=…`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_UntagResource.html)"
         },
         {
           "operation": "V2ListTagsForResource",
           "category": "SES v2 — Tags",
           "status": "✅ Supported",
           "notes": "`GET /v2/email/tags?ResourceArn=…`",
-          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html)",
-          "doc_only": true
+          "docs_url": "[docs](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ListTagsForResource.html)"
         },
         {
           "operation": "V2Other",
@@ -7363,15 +7357,15 @@
         {
           "operation": "InvokeModel",
           "category": "Inference",
-          "status": "✅ Supported",
-          "notes": "POST /model/{modelId}/invoke — invokes model",
+          "status": "🚧 WIP",
+          "notes": "POST /model/{modelId}/invoke — invokes model; Overcast does not serve the binding AWS models, so no SDK reaches it (#857)",
           "docs_url": "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html)"
         },
         {
           "operation": "Converse",
           "category": "Inference",
-          "status": "✅ Supported",
-          "notes": "POST /model/{modelId}/converse — chat API",
+          "status": "🚧 WIP",
+          "notes": "POST /model/{modelId}/converse — chat API; Overcast does not serve the binding AWS models, so no SDK reaches it (#857)",
           "docs_url": "[docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)"
         }
       ]
@@ -7662,50 +7656,50 @@
         {
           "operation": "CreateDomain",
           "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "POST /domain — creates a domain"
+          "status": "🚧 WIP",
+          "notes": "creates a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
         },
         {
           "operation": "DescribeDomain",
           "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "GET /domain/{name} — returns domain details"
+          "status": "🚧 WIP",
+          "notes": "returns domain details; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
         },
         {
           "operation": "DescribeDomains",
           "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "POST /domain/describe — batch describe"
+          "status": "🚧 WIP",
+          "notes": "batch describe; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
         },
         {
           "operation": "ListDomainNames",
           "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "GET /domain — lists all domain names"
+          "status": "🚧 WIP",
+          "notes": "lists all domain names; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
         },
         {
           "operation": "DeleteDomain",
           "category": "Domains",
-          "status": "✅ Supported",
-          "notes": "DELETE /domain/{name} — deletes a domain"
+          "status": "🚧 WIP",
+          "notes": "deletes a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
         },
         {
           "operation": "AddTags",
           "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "POST /tags — adds tags to a domain"
+          "status": "🚧 WIP",
+          "notes": "adds tags to a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
         },
         {
           "operation": "ListTags",
           "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "GET /tags — lists tags for a domain"
+          "status": "🚧 WIP",
+          "notes": "lists tags for a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
         },
         {
           "operation": "RemoveTags",
           "category": "Tags",
-          "status": "✅ Supported",
-          "notes": "POST /tags-removal — removes tags"
+          "status": "🚧 WIP",
+          "notes": "removes tags; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
         }
       ]
     },
@@ -7856,39 +7850,48 @@
       "operations": [
         {
           "operation": "CreateBackupVault",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         },
         {
           "operation": "DeleteBackupVault",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         },
         {
           "operation": "DescribeBackupVault",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         },
         {
           "operation": "ListBackupVaults",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         },
         {
           "operation": "CreateBackupPlan",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         },
         {
           "operation": "DeleteBackupPlan",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         },
         {
           "operation": "GetBackupPlan",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         },
         {
           "operation": "ListBackupPlans",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         },
         {
           "operation": "UpdateBackupPlan",
-          "status": "🧊 Inert"
+          "status": "🚧 WIP",
+          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
         }
       ]
     },
@@ -8049,8 +8052,8 @@
         {
           "operation": "DescribeIdentityProviderConfig",
           "category": "Clusters",
-          "status": "✅ Supported",
-          "notes": "Returns stored identity provider config details by type/name with inline tags"
+          "status": "🚧 WIP",
+          "notes": "Returns stored identity provider config details by type/name with inline tags; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
         },
         {
           "operation": "UpdateIdentityProviderConfig",
@@ -8109,8 +8112,8 @@
         {
           "operation": "ListInsights",
           "category": "Clusters",
-          "status": "✅ Supported",
-          "notes": "Returns synthetic health/readiness insight summaries for a cluster"
+          "status": "🚧 WIP",
+          "notes": "Returns synthetic health/readiness insight summaries for a cluster; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
         },
         {
           "operation": "DescribeInsight",
@@ -8157,8 +8160,8 @@
         {
           "operation": "UpdateNodegroupVersion",
           "category": "Nodegroups",
-          "status": "✅ Supported",
-          "notes": "Updates stored nodegroup version metadata"
+          "status": "🚧 WIP",
+          "notes": "Updates stored nodegroup version metadata; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
         },
         {
           "operation": "UpdateNodegroupConfig",
@@ -8243,8 +8246,8 @@
         {
           "operation": "UpdateAddon",
           "category": "Addons",
-          "status": "✅ Supported",
-          "notes": "Updates stored add-on version/configuration and records an update entry"
+          "status": "🚧 WIP",
+          "notes": "Updates stored add-on version/configuration and records an update entry; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
         },
         {
           "operation": "DeleteAddon",
@@ -8255,14 +8258,14 @@
         {
           "operation": "DescribeAddonConfiguration",
           "category": "Addons",
-          "status": "✅ Supported",
-          "notes": "Returns synthetic configuration schema for core add-ons"
+          "status": "🚧 WIP",
+          "notes": "Returns synthetic configuration schema for core add-ons; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
         },
         {
           "operation": "DescribeAddonVersions",
           "category": "Addons",
-          "status": "✅ Supported",
-          "notes": "Returns synthetic version catalog for vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver; empty for unknown add-ons"
+          "status": "🚧 WIP",
+          "notes": "Returns synthetic version catalog for vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver; empty for unknown add-ons; Overcast does not serve the binding AWS models, so no SDK reaches it (#858)"
         }
       ]
     },
@@ -8406,14 +8409,14 @@
         {
           "operation": "CreateClusterV2",
           "category": "Clusters",
-          "status": "✅ Supported",
-          "notes": "PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE"
+          "status": "🚧 WIP",
+          "notes": "PROVISIONED: same Docker/Redpanda lifecycle as v1; SERVERLESS: metadata-only, immediately ACTIVE; Overcast does not serve the binding AWS models, so no SDK reaches it (#859)"
         },
         {
           "operation": "DescribeClusterV2",
           "category": "Clusters",
-          "status": "✅ Supported",
-          "notes": "Returns v2 shape with `clusterType` and `provisioned`/`serverless` sub-object"
+          "status": "🚧 WIP",
+          "notes": "Returns v2 shape with `clusterType` and `provisioned`/`serverless` sub-object; Overcast does not serve the binding AWS models, so no SDK reaches it (#859)"
         },
         {
           "operation": "UpdateBrokerCount",
