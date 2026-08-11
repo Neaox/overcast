@@ -1,5 +1,10 @@
 // Package opensearch_test contains integration tests for the OpenSearch emulator.
 //
+// Every request below is addressed at the binding the pinned AWS model gives
+// the operation (opensearch-2021-01-01), because that is the only address an
+// AWS SDK will ever use. #856: the whole service used to be served under an
+// Overcast-invented /_opensearch prefix, so none of these paths answered.
+//
 // Run: go test ./tests/integration/opensearch/...
 package opensearch_test
 
@@ -8,26 +13,44 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
-const osBasePath = "/_opensearch/domain"
+// The modeled bindings. ListDomainNames and the tag operations sit directly
+// under the API version prefix; the rest of the domain surface sits under
+// /opensearch. See internal/awsapi/manifest.gen.go.
+const (
+	pathDomains     = "/2021-01-01/opensearch/domain"
+	pathDomainInfo  = "/2021-01-01/opensearch/domain-info"
+	pathDomainNames = "/2021-01-01/domain"
+	pathTags        = "/2021-01-01/tags"
+	pathTagsRemoval = "/2021-01-01/tags-removal"
 
-// osDo performs an OpenSearch REST-JSON request.
-func osDo(t *testing.T, srv *helpers.TestServer, method, path string, body any) *http.Response {
+	defaultRegion = "us-east-1"
+)
+
+// osDo performs an OpenSearch REST-JSON request in region, signed the way an
+// SDK signs one: the credential scope names OpenSearch's signing name, "es".
+func osDo(t *testing.T, srv *helpers.TestServer, method, path, region string, body any) *http.Response {
 	t.Helper()
 	var rdr io.Reader
 	if body != nil {
-		b, err := json.Marshal(body)
+		raw, err := json.Marshal(body)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
-		rdr = bytes.NewReader(b)
+		rdr = bytes.NewReader(raw)
 	}
-	req, _ := http.NewRequest(method, srv.URL+path, rdr)
+	req, err := http.NewRequest(method, srv.URL+path, rdr)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization",
+		"AWS4-HMAC-SHA256 Credential=test/20260811/"+region+"/es/aws4_request, SignedHeaders=host, Signature=x")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
@@ -35,13 +58,26 @@ func osDo(t *testing.T, srv *helpers.TestServer, method, path string, body any) 
 	return resp
 }
 
-func createDomain(t *testing.T, srv *helpers.TestServer, name string) {
+// domainStatusOf decodes a CreateDomain/DescribeDomain/DeleteDomain response.
+func domainStatusOf(t *testing.T, resp *http.Response) map[string]any {
 	t.Helper()
-	resp := osDo(t, srv, http.MethodPost, osBasePath, map[string]any{
-		"DomainName": name,
-	})
+	var body struct {
+		DomainStatus map[string]any `json:"DomainStatus"`
+	}
+	helpers.DecodeJSON(t, resp, &body)
+	return body.DomainStatus
+}
+
+func createDomain(t *testing.T, srv *helpers.TestServer, name, engineVersion string) map[string]any {
+	t.Helper()
+	req := map[string]any{"DomainName": name}
+	if engineVersion != "" {
+		req["EngineVersion"] = engineVersion
+	}
+	resp := osDo(t, srv, http.MethodPost, pathDomains, defaultRegion, req)
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
+	return domainStatusOf(t, resp)
 }
 
 // ─── CreateDomain ─────────────────────────────────────────────────────────────
@@ -50,14 +86,56 @@ func TestCreateDomain_success(t *testing.T) {
 	// Given: an empty store
 	srv := helpers.NewTestServer(t)
 
-	// When: CreateDomain is called
-	resp := osDo(t, srv, http.MethodPost, osBasePath, map[string]any{
+	// When: CreateDomain is called at POST /2021-01-01/opensearch/domain
+	resp := osDo(t, srv, http.MethodPost, pathDomains, defaultRegion, map[string]any{
 		"DomainName": "test-domain",
 	})
 	defer resp.Body.Close()
 
-	// Then: 200 OK
+	// Then: the modeled DomainStatus comes back
 	helpers.AssertStatus(t, resp, http.StatusOK)
+	status := domainStatusOf(t, resp)
+	if got := status["DomainName"]; got != "test-domain" {
+		t.Errorf("DomainName = %v, want test-domain", got)
+	}
+	if got := status["ARN"]; got != "arn:aws:es:us-east-1:000000000000:domain/test-domain" {
+		t.Errorf("ARN = %v", got)
+	}
+	if got := status["EngineVersion"]; got != "OpenSearch_2.11" {
+		t.Errorf("EngineVersion = %v, want the OpenSearch default", got)
+	}
+	if got := status["Created"]; got != true {
+		t.Errorf("Created = %v, want true", got)
+	}
+}
+
+func TestCreateDomain_missingDomainName(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateDomain omits the required DomainName
+	resp := osDo(t, srv, http.MethodPost, pathDomains, defaultRegion, map[string]any{})
+	defer resp.Body.Close()
+
+	// Then: the modeled ValidationException
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ValidationException")
+}
+
+func TestCreateDomain_nameAlreadyInUse(t *testing.T) {
+	// Given: a domain exists
+	srv := helpers.NewTestServer(t)
+	createDomain(t, srv, "test-domain", "")
+
+	// When: the same name is created again
+	resp := osDo(t, srv, http.MethodPost, pathDomains, defaultRegion, map[string]any{
+		"DomainName": "test-domain",
+	})
+	defer resp.Body.Close()
+
+	// Then: ResourceAlreadyExistsException, which AWS answers with 409
+	helpers.AssertStatus(t, resp, http.StatusConflict)
+	helpers.AssertJSONError(t, resp, "ResourceAlreadyExistsException")
 }
 
 // ─── DescribeDomain ───────────────────────────────────────────────────────────
@@ -65,29 +143,44 @@ func TestCreateDomain_success(t *testing.T) {
 func TestDescribeDomain_success(t *testing.T) {
 	// Given: a domain exists
 	srv := helpers.NewTestServer(t)
-	createDomain(t, srv, "test-domain")
+	createDomain(t, srv, "test-domain", "")
 
-	// When: DescribeDomain is called
-	resp := osDo(t, srv, http.MethodGet, osBasePath+"/test-domain", nil)
+	// When: DescribeDomain is called at its modeled path
+	resp := osDo(t, srv, http.MethodGet, pathDomains+"/test-domain", defaultRegion, nil)
 	defer resp.Body.Close()
 
-	// Then: 200 with domain info
+	// Then: the stored domain comes back
 	helpers.AssertStatus(t, resp, http.StatusOK)
+	if got := domainStatusOf(t, resp)["DomainName"]; got != "test-domain" {
+		t.Errorf("DomainName = %v, want test-domain", got)
+	}
 }
 
-// ─── ListDomainNames ──────────────────────────────────────────────────────────
-
-func TestListDomainNames_success(t *testing.T) {
-	// Given: a domain exists
+func TestDescribeDomain_unknownDomain(t *testing.T) {
+	// Given: an empty store
 	srv := helpers.NewTestServer(t)
-	createDomain(t, srv, "test-domain")
 
-	// When: ListDomainNames is called
-	resp := osDo(t, srv, http.MethodGet, osBasePath, nil)
+	// When: an unknown domain is described
+	resp := osDo(t, srv, http.MethodGet, pathDomains+"/absent", defaultRegion, nil)
 	defer resp.Body.Close()
 
-	// Then: 200 with the domain in the list
-	helpers.AssertStatus(t, resp, http.StatusOK)
+	// Then: ResourceNotFoundException, which OpenSearch answers with 409
+	helpers.AssertStatus(t, resp, http.StatusConflict)
+	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
+}
+
+func TestDescribeDomain_otherRegion(t *testing.T) {
+	// Given: a domain created in us-east-1
+	srv := helpers.NewTestServer(t)
+	createDomain(t, srv, "test-domain", "")
+
+	// When: it is described in eu-west-1
+	resp := osDo(t, srv, http.MethodGet, pathDomains+"/test-domain", "eu-west-1", nil)
+	defer resp.Body.Close()
+
+	// Then: it is not there — domain names are unique per region, not globally
+	helpers.AssertStatus(t, resp, http.StatusConflict)
+	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 }
 
 // ─── DeleteDomain ─────────────────────────────────────────────────────────────
@@ -95,15 +188,255 @@ func TestListDomainNames_success(t *testing.T) {
 func TestDeleteDomain_success(t *testing.T) {
 	// Given: a domain exists
 	srv := helpers.NewTestServer(t)
-	createDomain(t, srv, "test-domain")
+	createDomain(t, srv, "test-domain", "")
 
 	// When: DeleteDomain is called
-	del := osDo(t, srv, http.MethodDelete, osBasePath+"/test-domain", nil)
+	del := osDo(t, srv, http.MethodDelete, pathDomains+"/test-domain", defaultRegion, nil)
 	defer del.Body.Close()
 	helpers.AssertStatus(t, del, http.StatusOK)
+	if got := domainStatusOf(t, del)["Deleted"]; got != true {
+		t.Errorf("Deleted = %v, want true", got)
+	}
 
-	// Then: describe returns 404
-	resp := osDo(t, srv, http.MethodGet, osBasePath+"/test-domain", nil)
+	// Then: describing it no longer finds it
+	resp := osDo(t, srv, http.MethodGet, pathDomains+"/test-domain", defaultRegion, nil)
 	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertStatus(t, resp, http.StatusConflict)
+}
+
+// ─── ListDomainNames ──────────────────────────────────────────────────────────
+
+func TestListDomainNames_success(t *testing.T) {
+	// Given: a domain exists
+	srv := helpers.NewTestServer(t)
+	createDomain(t, srv, "test-domain", "")
+
+	// When: ListDomainNames is called at GET /2021-01-01/domain — a different
+	// path from CreateDomain's, which shares its shape but not its prefix
+	resp := osDo(t, srv, http.MethodGet, pathDomainNames, defaultRegion, nil)
+	defer resp.Body.Close()
+
+	// Then: the domain is listed with its engine type
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var body struct {
+		DomainNames []struct {
+			DomainName string `json:"DomainName"`
+			EngineType string `json:"EngineType"`
+		} `json:"DomainNames"`
+	}
+	helpers.DecodeJSON(t, resp, &body)
+	if len(body.DomainNames) != 1 {
+		t.Fatalf("DomainNames = %+v, want one entry", body.DomainNames)
+	}
+	if body.DomainNames[0].DomainName != "test-domain" || body.DomainNames[0].EngineType != "OpenSearch" {
+		t.Errorf("DomainNames[0] = %+v", body.DomainNames[0])
+	}
+}
+
+func TestListDomainNames_engineTypeFilter(t *testing.T) {
+	// Given: one OpenSearch domain and one legacy Elasticsearch domain
+	srv := helpers.NewTestServer(t)
+	createDomain(t, srv, "search-domain", "OpenSearch_2.11")
+	createDomain(t, srv, "legacy-domain", "Elasticsearch_7.10")
+
+	// When: the list is filtered by the modeled engineType query parameter
+	resp := osDo(t, srv, http.MethodGet, pathDomainNames+"?engineType=Elasticsearch", defaultRegion, nil)
+	defer resp.Body.Close()
+
+	// Then: only the Elasticsearch domain is returned
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var body struct {
+		DomainNames []struct {
+			DomainName string `json:"DomainName"`
+			EngineType string `json:"EngineType"`
+		} `json:"DomainNames"`
+	}
+	helpers.DecodeJSON(t, resp, &body)
+	if len(body.DomainNames) != 1 || body.DomainNames[0].DomainName != "legacy-domain" {
+		t.Fatalf("DomainNames = %+v, want only legacy-domain", body.DomainNames)
+	}
+	if body.DomainNames[0].EngineType != "Elasticsearch" {
+		t.Errorf("EngineType = %q, want Elasticsearch", body.DomainNames[0].EngineType)
+	}
+}
+
+// ─── DescribeDomains ──────────────────────────────────────────────────────────
+
+func TestDescribeDomains_success(t *testing.T) {
+	// Given: one domain exists
+	srv := helpers.NewTestServer(t)
+	createDomain(t, srv, "test-domain", "")
+
+	// When: DescribeDomains is asked for it and for a name that does not exist
+	resp := osDo(t, srv, http.MethodPost, pathDomainInfo, defaultRegion, map[string]any{
+		"DomainNames": []string{"test-domain", "absent"},
+	})
+	defer resp.Body.Close()
+
+	// Then: only the domain that exists is listed; a missing name is omitted
+	// rather than raised, because AWS models no not-found error here
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var body struct {
+		DomainStatusList []struct {
+			DomainName string `json:"DomainName"`
+		} `json:"DomainStatusList"`
+	}
+	helpers.DecodeJSON(t, resp, &body)
+	if len(body.DomainStatusList) != 1 || body.DomainStatusList[0].DomainName != "test-domain" {
+		t.Fatalf("DomainStatusList = %+v", body.DomainStatusList)
+	}
+}
+
+func TestDescribeDomains_noDomainNames(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+
+	// When: DescribeDomains omits the required DomainNames
+	resp := osDo(t, srv, http.MethodPost, pathDomainInfo, defaultRegion, map[string]any{})
+	defer resp.Body.Close()
+
+	// Then: the modeled ValidationException
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ValidationException")
+}
+
+// ─── Tags ─────────────────────────────────────────────────────────────────────
+
+func TestListTags_arnIsAQueryParameter(t *testing.T) {
+	// Given: a domain with tags added through POST /2021-01-01/tags
+	srv := helpers.NewTestServer(t)
+	arn, _ := createDomain(t, srv, "test-domain", "")["ARN"].(string)
+
+	add := osDo(t, srv, http.MethodPost, pathTags, defaultRegion, map[string]any{
+		"ARN":     arn,
+		"TagList": []map[string]string{{"Key": "team", "Value": "search"}},
+	})
+	defer add.Body.Close()
+	helpers.AssertStatus(t, add, http.StatusOK)
+
+	// When: ListTags addresses the domain by the ?arn query parameter the model
+	// binds it to — not by a path segment and not in a body
+	resp := osDo(t, srv, http.MethodGet, pathTags+"?arn="+url.QueryEscape(arn), defaultRegion, nil)
+	defer resp.Body.Close()
+
+	// Then: the tag comes back
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var body struct {
+		TagList []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"TagList"`
+	}
+	helpers.DecodeJSON(t, resp, &body)
+	if len(body.TagList) != 1 || body.TagList[0].Key != "team" || body.TagList[0].Value != "search" {
+		t.Fatalf("TagList = %+v, want the tag added above", body.TagList)
+	}
+}
+
+func TestListTags_missingArn(t *testing.T) {
+	// Given: a running emulator
+	srv := helpers.NewTestServer(t)
+
+	// When: ListTags omits the required arn parameter
+	resp := osDo(t, srv, http.MethodGet, pathTags, defaultRegion, nil)
+	defer resp.Body.Close()
+
+	// Then: the modeled ValidationException
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "ValidationException")
+}
+
+func TestCreateDomain_inlineTagList(t *testing.T) {
+	// Given: a domain created with a TagList, as AWS accepts
+	srv := helpers.NewTestServer(t)
+	resp := osDo(t, srv, http.MethodPost, pathDomains, defaultRegion, map[string]any{
+		"DomainName": "test-domain",
+		"TagList":    []map[string]string{{"Key": "env", "Value": "dev"}},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	arn, _ := domainStatusOf(t, resp)["ARN"].(string)
+
+	// When: the tags are listed
+	tags := osDo(t, srv, http.MethodGet, pathTags+"?arn="+url.QueryEscape(arn), defaultRegion, nil)
+	defer tags.Body.Close()
+
+	// Then: the creation-time tag is there
+	helpers.AssertStatus(t, tags, http.StatusOK)
+	var body struct {
+		TagList []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"TagList"`
+	}
+	helpers.DecodeJSON(t, tags, &body)
+	if len(body.TagList) != 1 || body.TagList[0].Key != "env" {
+		t.Fatalf("TagList = %+v, want the inline tag", body.TagList)
+	}
+}
+
+func TestRemoveTags_success(t *testing.T) {
+	// Given: a domain with two tags
+	srv := helpers.NewTestServer(t)
+	arn, _ := createDomain(t, srv, "test-domain", "")["ARN"].(string)
+	add := osDo(t, srv, http.MethodPost, pathTags, defaultRegion, map[string]any{
+		"ARN": arn,
+		"TagList": []map[string]string{
+			{"Key": "team", "Value": "search"},
+			{"Key": "env", "Value": "dev"},
+		},
+	})
+	defer add.Body.Close()
+	helpers.AssertStatus(t, add, http.StatusOK)
+
+	// When: one key is removed through POST /2021-01-01/tags-removal
+	remove := osDo(t, srv, http.MethodPost, pathTagsRemoval, defaultRegion, map[string]any{
+		"ARN":     arn,
+		"TagKeys": []string{"env"},
+	})
+	defer remove.Body.Close()
+	helpers.AssertStatus(t, remove, http.StatusOK)
+
+	// Then: only the other tag remains
+	resp := osDo(t, srv, http.MethodGet, pathTags+"?arn="+url.QueryEscape(arn), defaultRegion, nil)
+	defer resp.Body.Close()
+	var body struct {
+		TagList []struct {
+			Key string `json:"Key"`
+		} `json:"TagList"`
+	}
+	helpers.DecodeJSON(t, resp, &body)
+	if len(body.TagList) != 1 || body.TagList[0].Key != "team" {
+		t.Fatalf("TagList = %+v, want only team", body.TagList)
+	}
+}
+
+func TestDeleteDomain_dropsItsTags(t *testing.T) {
+	// Given: a tagged domain
+	srv := helpers.NewTestServer(t)
+	arn, _ := createDomain(t, srv, "test-domain", "")["ARN"].(string)
+	add := osDo(t, srv, http.MethodPost, pathTags, defaultRegion, map[string]any{
+		"ARN":     arn,
+		"TagList": []map[string]string{{"Key": "team", "Value": "search"}},
+	})
+	defer add.Body.Close()
+	helpers.AssertStatus(t, add, http.StatusOK)
+
+	// When: the domain is deleted and recreated under the same name
+	del := osDo(t, srv, http.MethodDelete, pathDomains+"/test-domain", defaultRegion, nil)
+	defer del.Body.Close()
+	helpers.AssertStatus(t, del, http.StatusOK)
+	createDomain(t, srv, "test-domain", "")
+
+	// Then: the new domain does not inherit the old one's tags
+	resp := osDo(t, srv, http.MethodGet, pathTags+"?arn="+url.QueryEscape(arn), defaultRegion, nil)
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var body struct {
+		TagList []json.RawMessage `json:"TagList"`
+	}
+	helpers.DecodeJSON(t, resp, &body)
+	if len(body.TagList) != 0 {
+		t.Fatalf("TagList = %v, want none", body.TagList)
+	}
 }

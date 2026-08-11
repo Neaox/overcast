@@ -3800,7 +3800,7 @@ export const DOCS_NAV = [
     "path": "docs/services/opensearch.md",
     "href": "services/opensearch.md",
     "title": "OpenSearch — Amazon OpenSearch Service",
-    "description": "Amazon OpenSearch Service uses the REST JSON protocol. Routes are served under the /_opensearch/ path prefix.",
+    "description": "Amazon OpenSearch Service uses the REST JSON protocol, served under the /2021-01-01/ API version prefix.",
     "section": "Service Reference",
     "tags": [
       "amazon",

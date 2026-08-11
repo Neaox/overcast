@@ -2812,6 +2812,8 @@ func serviceFromPath(path string) string {
 		return "ses"
 	case strings.HasPrefix(path, "/2015-02-01/"):
 		return "efs"
+	case strings.HasPrefix(path, "/2021-01-01/"):
+		return "opensearch"
 	case strings.HasPrefix(path, "/applications"):
 		return "appregistry"
 	default:

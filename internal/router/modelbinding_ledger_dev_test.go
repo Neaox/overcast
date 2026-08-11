@@ -67,16 +67,9 @@ var unservedBindings = map[string]string{
 	"appconfigdata/GetLatestConfiguration":    "#855",
 	"appconfigdata/StartConfigurationSession": "#855",
 
-	// #856 — served under /_opensearch rather than the /2021-01-01 API version
-	// prefix every OpenSearch binding carries.
-	"opensearch/AddTags":         "#856",
-	"opensearch/CreateDomain":    "#856",
-	"opensearch/DeleteDomain":    "#856",
-	"opensearch/DescribeDomain":  "#856",
-	"opensearch/DescribeDomains": "#856",
-	"opensearch/ListDomainNames": "#856",
-	"opensearch/ListTags":        "#856",
-	"opensearch/RemoveTags":      "#856",
+	// #856 is deliberately absent. OpenSearch's eight operations were served
+	// under /_opensearch; they now answer on the /2021-01-01 bindings the
+	// model gives them, so the ledger must not still claim the fault.
 
 	// #858 — six hand-invented paths, four with the wrong HTTP method,
 	// written by hand next to a manifest that already had the answers.

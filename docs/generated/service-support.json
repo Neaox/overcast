@@ -7656,50 +7656,50 @@
         {
           "operation": "CreateDomain",
           "category": "Domains",
-          "status": "🚧 WIP",
-          "notes": "creates a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
+          "status": "✅ Supported",
+          "notes": "creates a domain, immediately active; inline `TagList` applied at creation; a repeat name in the same region is rejected"
         },
         {
           "operation": "DescribeDomain",
           "category": "Domains",
-          "status": "🚧 WIP",
-          "notes": "returns domain details; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
+          "status": "✅ Supported",
+          "notes": "returns the stored domain; only the members an inert domain can populate honestly"
         },
         {
           "operation": "DescribeDomains",
           "category": "Domains",
-          "status": "🚧 WIP",
-          "notes": "batch describe; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
+          "status": "✅ Supported",
+          "notes": "batch describe; a name that matches nothing is omitted from the list"
         },
         {
           "operation": "ListDomainNames",
           "category": "Domains",
-          "status": "🚧 WIP",
-          "notes": "lists all domain names; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
+          "status": "✅ Supported",
+          "notes": "lists the region's domains; the `engineType` filter is honoured, derived from each domain's `EngineVersion`"
         },
         {
           "operation": "DeleteDomain",
           "category": "Domains",
-          "status": "🚧 WIP",
-          "notes": "deletes a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
+          "status": "✅ Supported",
+          "notes": "deletes a domain and the tags attached to it"
         },
         {
           "operation": "AddTags",
           "category": "Tags",
-          "status": "🚧 WIP",
-          "notes": "adds tags to a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
+          "status": "✅ Supported",
+          "notes": "adds tags to a resource, addressed by ARN in the body"
         },
         {
           "operation": "ListTags",
           "category": "Tags",
-          "status": "🚧 WIP",
-          "notes": "lists tags for a domain; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
+          "status": "✅ Supported",
+          "notes": "lists tags for a resource, addressed by the `arn` query parameter"
         },
         {
           "operation": "RemoveTags",
           "category": "Tags",
-          "status": "🚧 WIP",
-          "notes": "removes tags; Overcast does not serve the binding AWS models, so no SDK reaches it (#856)"
+          "status": "✅ Supported",
+          "notes": "removes the named tag keys from a resource"
         }
       ]
     },
