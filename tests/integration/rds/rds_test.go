@@ -155,6 +155,7 @@ func TestCreateDBInstance_success(t *testing.T) {
 				AllocatedStorage     int    `xml:"AllocatedStorage"`
 				StorageType          string `xml:"StorageType"`
 				MultiAZ              bool   `xml:"MultiAZ"`
+				PubliclyAccessible   bool   `xml:"PubliclyAccessible"`
 				DBInstanceArn        string `xml:"DBInstanceArn"`
 				Endpoint             struct {
 					Address string `xml:"Address"`
@@ -176,6 +177,9 @@ func TestCreateDBInstance_success(t *testing.T) {
 	assert.Equal(t, 20, inst.AllocatedStorage)
 	assert.Equal(t, "gp2", inst.StorageType)
 	assert.Equal(t, false, inst.MultiAZ)
+	// No DB subnet group: the default VPC, which has an internet gateway, so
+	// AWS calls this public and so does Overcast.
+	assert.True(t, inst.PubliclyAccessible)
 	assert.Equal(t, 3306, inst.Endpoint.Port)
 	assert.Contains(t, inst.Endpoint.Address, "test-db")
 	assert.NotEmpty(t, inst.DBInstanceArn)
@@ -980,6 +984,91 @@ func TestModifyDBInstance_success(t *testing.T) {
 	require.Len(t, descResult.Result.DBInstances.Items, 1)
 	assert.Equal(t, "available", descResult.Result.DBInstances.Items[0].DBInstanceStatus)
 	assert.Equal(t, "db.r5.large", descResult.Result.DBInstances.Items[0].DBInstanceClass)
+}
+
+// PubliclyAccessible is what a user reaches for when a database inside a VPC
+// still has to be dialable from outside it, so it has to be settable at create,
+// reported on describe, and changeable afterwards — over the wire, through the
+// whole server, exactly as an SDK would drive it.
+func TestPubliclyAccessible_defaultsAndRoundTripsOverTheWire(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithMockClock())
+
+	sgResp := rdsQuery(t, srv, "CreateDBSubnetGroup", url.Values{
+		"DBSubnetGroupName":        []string{"private-subnets"},
+		"DBSubnetGroupDescription": []string{"a chosen placement"},
+		"SubnetIds.member.1":       []string{"subnet-11111111"},
+	})
+	sgResp.Body.Close()
+	helpers.AssertStatus(t, sgResp, http.StatusOK)
+
+	// A named subnet group is a chosen placement, and AWS makes that private
+	// unless asked otherwise.
+	resp := rdsQuery(t, srv, "CreateDBInstance", url.Values{
+		"DBInstanceIdentifier": []string{"pa-private"},
+		"Engine":               []string{"mysql"},
+		"MasterUsername":       []string{"admin"},
+		"MasterUserPassword":   []string{"Password1!"},
+		"DBSubnetGroupName":    []string{"private-subnets"},
+	})
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+
+	var created struct {
+		XMLName xml.Name `xml:"CreateDBInstanceResponse"`
+		Result  struct {
+			DBInstance struct {
+				PubliclyAccessible bool `xml:"PubliclyAccessible"`
+			} `xml:"DBInstance"`
+		} `xml:"CreateDBInstanceResult"`
+	}
+	decodeXML(t, resp, &created)
+	assert.False(t, created.Result.DBInstance.PubliclyAccessible,
+		"an instance in a named DB subnet group defaulted to public")
+
+	srv.Clock.Add(1 * time.Second)
+
+	// And the escape hatch: turn it back on, and it stays on.
+	modResp := rdsQuery(t, srv, "ModifyDBInstance", url.Values{
+		"DBInstanceIdentifier": []string{"pa-private"},
+		"PubliclyAccessible":   []string{"true"},
+	})
+	defer modResp.Body.Close()
+	helpers.AssertStatus(t, modResp, http.StatusOK)
+
+	var modified struct {
+		XMLName xml.Name `xml:"ModifyDBInstanceResponse"`
+		Result  struct {
+			DBInstance struct {
+				PubliclyAccessible bool `xml:"PubliclyAccessible"`
+			} `xml:"DBInstance"`
+		} `xml:"ModifyDBInstanceResult"`
+	}
+	decodeXML(t, modResp, &modified)
+	assert.True(t, modified.Result.DBInstance.PubliclyAccessible,
+		"ModifyDBInstance did not report the instance as publicly accessible")
+
+	srv.Clock.Add(1 * time.Second)
+
+	descResp := rdsQuery(t, srv, "DescribeDBInstances", url.Values{
+		"DBInstanceIdentifier": []string{"pa-private"},
+	})
+	defer descResp.Body.Close()
+	helpers.AssertStatus(t, descResp, http.StatusOK)
+
+	var described struct {
+		XMLName xml.Name `xml:"DescribeDBInstancesResponse"`
+		Result  struct {
+			DBInstances struct {
+				Items []struct {
+					PubliclyAccessible bool `xml:"PubliclyAccessible"`
+				} `xml:"DBInstance"`
+			} `xml:"DBInstances"`
+		} `xml:"DescribeDBInstancesResult"`
+	}
+	decodeXML(t, descResp, &described)
+	require.Len(t, described.Result.DBInstances.Items, 1)
+	assert.True(t, described.Result.DBInstances.Items[0].PubliclyAccessible,
+		"the modification did not survive to the next describe")
 }
 
 func TestModifyDBInstance_notFound(t *testing.T) {

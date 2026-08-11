@@ -77,6 +77,18 @@ type DBInstance struct {
 	DBClusterIdentifier string `json:"DBClusterIdentifier,omitempty"`
 	DBSubnetGroupName   string `json:"DBSubnetGroupName,omitempty"`
 	VpcID               string `json:"VpcId,omitempty"`
+	// PubliclyAccessible is whether the instance is meant to be reachable from
+	// outside the VPC it was placed in. CreateDBInstance always writes one and
+	// ModifyDBInstance can change it, so on a live record it is never nil.
+	//
+	// It is a pointer for the records that predate the field: those never
+	// answered the question, and decoding them to false would quietly declare
+	// every instance now running private — which, once VPC placement is
+	// enforced, is a database that stops answering after an upgrade nobody
+	// connected to it. Nil therefore means "unstated" and is resolved by the
+	// same rule a create would have used. Read it through
+	// PubliclyAccessibleOrDefault rather than dereferencing it.
+	PubliclyAccessible *bool `json:"PubliclyAccessible,omitempty"`
 	// LastLogs is a bounded tail of the container's own output, kept from the
 	// moment the container stopped answering. Docker discards a removed
 	// container's logs, and the whole reason anyone opens the logs of a
@@ -85,6 +97,42 @@ type DBInstance struct {
 	// maxRetainedLogBytes; LastLogsAt says when the copy was taken.
 	LastLogs   string `json:"LastLogs,omitempty"`
 	LastLogsAt string `json:"LastLogsAt,omitempty"`
+}
+
+// PubliclyAccessibleOrDefault reports whether the instance is meant to be
+// reachable from outside its VPC, deciding an unstated one exactly as
+// CreateDBInstance would have. Every reader — the wire, and anything that
+// decides where a container is attached — goes through here, so a stored nil
+// cannot mean one thing in a response and another in placement.
+func (i *DBInstance) PubliclyAccessibleOrDefault() bool {
+	if i.PubliclyAccessible != nil {
+		return *i.PubliclyAccessible
+	}
+	return defaultPubliclyAccessible(i.DBSubnetGroupName)
+}
+
+// defaultPubliclyAccessible decides a CreateDBInstance that did not say.
+//
+// AWS writes the rule in terms of internet gateways. An instance created
+// without a DBSubnetGroupName goes into the region's default VPC and is public
+// if that VPC has a gateway attached; an instance created into a named subnet
+// group is public only if those subnets sit in a VPC that has one.
+//
+// The first half resolves to "public" here and cannot resolve to anything
+// else: Overcast seeds its default VPC with an internet gateway and a default
+// route through it (internal/services/ec2/default_vpc.go), exactly as AWS
+// does. It is also what the emulator already does — an instance with no subnet
+// group runs on the default network and is dialable from the host — so the
+// default states the status quo rather than changing it under anyone.
+//
+// The second half is not answerable from RDS: nothing here can see whether a
+// subnet group's VPC has a gateway, and VPCNetworkResolver does not offer it.
+// So a named subnet group takes AWS's other documented outcome, private. That
+// is the commoner shape on AWS — a subnet group is usually built over private
+// subnets — and it is the safer half to be wrong about, because being wrong
+// is visible (the database does not answer) and the fix is the field itself.
+func defaultPubliclyAccessible(dbSubnetGroupName string) bool {
+	return dbSubnetGroupName == ""
 }
 
 // DBEvent is a stored RDS event — the channel AWS provides for "why did that
@@ -99,6 +147,12 @@ type DBEvent struct {
 }
 
 // DBCluster represents a stored Aurora DB cluster.
+//
+// It deliberately carries no PubliclyAccessible. On AWS that field belongs to
+// the instance: an Aurora cluster has no network placement of its own, and
+// CreateDBCluster only accepts it for Multi-AZ DB clusters, the non-Aurora
+// deployment. createDBClusterTyped refuses any engine outside auroraEngines,
+// so that shape cannot be created here, and the field stays on the members.
 type DBCluster struct {
 	DBClusterIdentifier string `json:"DBClusterIdentifier"`
 	DBClusterArn        string `json:"DBClusterArn"`

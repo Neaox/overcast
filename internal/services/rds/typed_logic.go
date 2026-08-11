@@ -27,6 +27,11 @@ type createDBInstanceReq struct {
 	DBName               string `json:"DBName"`
 	DBClusterIdentifier  string `json:"DBClusterIdentifier"`
 	DBSubnetGroupName    string `json:"DBSubnetGroupName"`
+	// PubliclyAccessible is a pointer because AWS's default for it is not
+	// false, it is "it depends" — see defaultPubliclyAccessible. A plain bool
+	// would make an omitted parameter indistinguishable from
+	// `PubliclyAccessible=false` and so make the default unreachable.
+	PubliclyAccessible *bool `json:"PubliclyAccessible"`
 }
 
 type describeDBInstancesReq struct {
@@ -58,8 +63,13 @@ type modifyDBInstanceReq struct {
 	// requests: absent leaves the instance alone, `MultiAZ=false` turns
 	// Multi-AZ off. A plain bool cannot tell them apart, which is why this
 	// operation used to ignore a request to disable Multi-AZ.
-	MultiAZ     *bool  `json:"MultiAZ"`
-	StorageType string `json:"StorageType"`
+	MultiAZ *bool `json:"MultiAZ"`
+	// PubliclyAccessible is a pointer for the same reason, and doubly so: this
+	// is the parameter someone sends to take a database back off the network,
+	// and `PubliclyAccessible=false` being read as "not sent" would leave them
+	// no way to do it.
+	PubliclyAccessible *bool  `json:"PubliclyAccessible"`
+	StorageType        string `json:"StorageType"`
 	// MasterUserPassword rotates the master password. Unlike every other field
 	// here it is not applied to the record alone — see password.go.
 	MasterUserPassword string `json:"MasterUserPassword"`
@@ -241,6 +251,13 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 	dbSubnetGroupName := req.DBSubnetGroupName
 	vpcID := ""
 
+	// Resolved once, here, so the record always carries an explicit answer and
+	// nothing downstream has to re-derive it.
+	publiclyAccessible := defaultPubliclyAccessible(dbSubnetGroupName)
+	if req.PubliclyAccessible != nil {
+		publiclyAccessible = *req.PubliclyAccessible
+	}
+
 	if clusterID != "" {
 		if _, aerr := h.store.getDBCluster(ctx, clusterID); aerr != nil {
 			return nil, aerr
@@ -298,6 +315,7 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		DBClusterIdentifier:  clusterID,
 		DBSubnetGroupName:    dbSubnetGroupName,
 		VpcID:                vpcID,
+		PubliclyAccessible:   &publiclyAccessible,
 	}
 
 	if aerr := h.store.putDBInstance(ctx, inst); aerr != nil {
@@ -612,6 +630,12 @@ func (h *Handler) modifyDBInstanceTyped(ctx context.Context, req *modifyDBInstan
 		}
 		if req.MultiAZ != nil {
 			inst.MultiAZ = *req.MultiAZ
+		}
+		if req.PubliclyAccessible != nil {
+			// Copied, not aliased: a record must not share a pointer with the
+			// request that set it.
+			pa := *req.PubliclyAccessible
+			inst.PubliclyAccessible = &pa
 		}
 		if req.StorageType != "" {
 			inst.StorageType = req.StorageType
