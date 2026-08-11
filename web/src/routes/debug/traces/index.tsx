@@ -203,7 +203,15 @@ function TracesPage() {
       <div className="flex flex-wrap items-stretch gap-2">
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-fg-muted" />
-          <Input className="pl-8" placeholder="Search by request ID, path, or service…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+          {/*
+            The placeholder is the only statement of what search covers, so it
+            has to keep up with the server: it matches request ID, path,
+            service, operation and the AWS error a request answered with. It
+            does not reach hop bodies or log lines — see
+            docs/plans/trace-deep-search.md — and promising those here would be
+            worse than the narrower promise it makes.
+          */}
+          <Input className="pl-8" placeholder="Search ID, path, service, operation, error…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </div>
         <CheckboxFilterDropdown {...serviceFilter} />
         <CheckboxFilterDropdown {...statusFilter} />

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // Entry is the complete trace of one HTTP request through the system.
@@ -459,6 +460,79 @@ func (r *Recorder) RequestID() string {
 		return ""
 	}
 	return r.requestID
+}
+
+// MatchesSearch reports whether the trace's short scalar fields contain
+// lowered, which the caller must already have lowercased — ListSummaries
+// compiles the query once and then asks this of every retained trace.
+//
+// These are the fields that cost nothing to search: each is a short string
+// already held on the recorder, so the whole check is one read lock and a
+// handful of substring tests, no matter how much the trace has recorded. That
+// is what keeps the list's 1 Hz poll cheap while a deploy is in flight.
+//
+// Bodies, log entries and hop errors are deliberately absent. Searching those
+// means scanning up to MaxHopBodyBytes per trace, which is not something a list
+// call can do inline; it is the deep search's job, and a test pins the
+// separation so it is changed on purpose rather than by accident.
+func (r *Recorder) MatchesSearch(lowered string) bool {
+	if r == nil {
+		return false
+	}
+	if lowered == "" {
+		return true
+	}
+	// Fixed at construction, so no lock is needed for these two.
+	if containsFold(r.requestID, lowered) || containsFold(r.path, lowered) {
+		return true
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return containsFold(r.entry.Service, lowered) ||
+		containsFold(r.entry.Operation, lowered) ||
+		containsFold(r.entry.AWSErrorCode, lowered) ||
+		containsFold(r.entry.AWSErrorMessage, lowered)
+}
+
+// containsFold reports whether field contains the already-lowercased query,
+// ignoring case. The query is lowered once per list call by compileFilter.
+//
+// The two guards before the fallback are what keep this off the allocator.
+// Lowering every field of every retained trace cost one allocation per field
+// per list call — a thousand of them on a full buffer, once a second while
+// someone types in the search box. A direct match settles a query typed in the
+// field's own case, and a field with no uppercase in it cannot match any
+// differently once lowered, which between them cover paths, request IDs and
+// service names. Only a mixed-case field that did not match outright — an
+// operation name, mostly — reaches the copy.
+func containsFold(field, lowered string) bool {
+	// Case folding never changes a string's byte length for the ASCII these
+	// fields hold, and a query longer than the field cannot be inside it. This
+	// is what keeps a query that matches nothing — every keystroke of a long
+	// one — off the allocator entirely.
+	if field == "" || len(lowered) > len(field) {
+		return false
+	}
+	if strings.Contains(field, lowered) {
+		return true
+	}
+	if !hasUpper(field) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(field), lowered)
+}
+
+// hasUpper reports whether s holds anything ToLower would change. Non-ASCII is
+// reported as upper so the answer is never wrong for a script this cannot
+// reason about byte-wise — the cost of being conservative is one allocation on
+// a field that was not going to match anyway.
+func hasUpper(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= 'A' && c <= 'Z' || c >= utf8.RuneSelf {
+			return true
+		}
+	}
+	return false
 }
 
 // HasHop reports whether this trace dispatched a hop carrying the given
