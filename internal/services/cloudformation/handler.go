@@ -142,6 +142,50 @@ func (h *Handler) stub(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedQueryXML(w, r)
 }
 
+// ── Stack operations ───────────────────────────────────────────────────────
+
+// stackOperationToken returns the ClientRequestToken for a stack operation:
+// callerToken, when the caller supplied one, and otherwise the request ID of
+// the call starting the operation.
+//
+// That fallback is the point. The CDK CLI and every SDK default send no token,
+// and the request ID is what the request's trace is filed under, so an event
+// carrying it names the request that produced it. Without something in this
+// field a stack failure is an orphan, and the only way back to the requests
+// behind it is to guess from timestamps across a deploy that issued thousands.
+//
+// Real CloudFormation does the same when an operation arrives without a token:
+// the console fills one in (Console-CreateStack-<uuid>) so its own event stream
+// stays attributable. The value is opaque to clients either way.
+//
+// It takes a context rather than a request because both of this service's
+// dispatch paths need it — the Query-protocol handlers in this file and the
+// typed operations in typed_logic.go, which see a decoded request and never an
+// *http.Request.
+func stackOperationToken(ctx context.Context, callerToken string) string {
+	if callerToken != "" {
+		return callerToken
+	}
+	return protocol.RequestIDFromContext(ctx)
+}
+
+// beginStackOperation moves stack into the in-progress status of the operation
+// that is starting, and stamps it with that operation's token.
+//
+// The token is per-operation, not per-stack, so it has to be reset at the same
+// moment as the status. Doing both here rather than at each entry point is what
+// stops an update from recording events that name the request behind the create
+// before it — a stale token is worse than none, because it points a reader at a
+// trace that has nothing to do with the failure they are chasing.
+//
+// A create builds its Stack from scratch and sets both fields in the literal
+// instead; there is no prior operation there to go stale.
+func beginStackOperation(ctx context.Context, stack *Stack, status, callerToken string) {
+	stack.Status = status
+	stack.StatusReason = "User Initiated"
+	stack.ClientRequestToken = stackOperationToken(ctx, callerToken)
+}
+
 // ── CreateStack ────────────────────────────────────────────────────────────
 
 func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
@@ -186,18 +230,19 @@ func (h *Handler) CreateStack(w http.ResponseWriter, r *http.Request) {
 	caps := collectCapabilities(r)
 
 	stack := &Stack{
-		StackName:       stackName,
-		StackID:         stackID,
-		Region:          region,
-		TemplateBody:    templateBody,
-		Parameters:      params,
-		Tags:            tags,
-		Capabilities:    caps,
-		RoleARN:         r.FormValue("RoleARN"),
-		DisableRollback: disableRollback,
-		Status:          StatusCreateInProgress,
-		StatusReason:    "User Initiated",
-		CreatedAt:       h.clk.Now(),
+		StackName:          stackName,
+		StackID:            stackID,
+		Region:             region,
+		TemplateBody:       templateBody,
+		Parameters:         params,
+		Tags:               tags,
+		Capabilities:       caps,
+		RoleARN:            r.FormValue("RoleARN"),
+		DisableRollback:    disableRollback,
+		Status:             StatusCreateInProgress,
+		StatusReason:       "User Initiated",
+		CreatedAt:          h.clk.Now(),
+		ClientRequestToken: stackOperationToken(r.Context(), r.FormValue("ClientRequestToken")),
 	}
 
 	if err := h.store.putStack(ctx, stack); err != nil {
@@ -262,8 +307,7 @@ func (h *Handler) UpdateStack(w http.ResponseWriter, r *http.Request) {
 
 	stack.DisableRollback = disableRollback
 	stack.TemplateBody = templateBody
-	stack.Status = StatusUpdateInProgress
-	stack.StatusReason = "User Initiated"
+	beginStackOperation(ctx, stack, StatusUpdateInProgress, r.FormValue("ClientRequestToken"))
 	now := h.clk.Now()
 	stack.UpdatedAt = &now
 
@@ -330,17 +374,15 @@ func (h *Handler) RollbackStack(w http.ResponseWriter, r *http.Request) {
 		stack.RoleARN = roleARN
 	}
 
-	// ClientRequestToken and RetainExceptOnCreate are accepted and ignored.
-	// The former only tags events for idempotent retries; the latter controls
-	// whether resources marked DeletionPolicy: Retain are still deleted when a
-	// create rolls back — which is already what rollbackCreate does.
+	// RetainExceptOnCreate is accepted and ignored: it controls whether
+	// resources marked DeletionPolicy: Retain are still deleted when a create
+	// rolls back — which is already what rollbackCreate does.
 
+	status := StatusUpdateRollbackInProgress
 	if createPath {
-		stack.Status = StatusRollbackInProgress
-	} else {
-		stack.Status = StatusUpdateRollbackInProgress
+		status = StatusRollbackInProgress
 	}
-	stack.StatusReason = "User Initiated"
+	beginStackOperation(ctx, stack, status, r.FormValue("ClientRequestToken"))
 	now := h.clk.Now()
 	stack.UpdatedAt = &now
 
@@ -373,8 +415,7 @@ func (h *Handler) DeleteStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stack.Status = StatusDeleteInProgress
-	stack.StatusReason = "User Initiated"
+	beginStackOperation(ctx, stack, StatusDeleteInProgress, r.FormValue("ClientRequestToken"))
 	if err := h.store.putStack(ctx, stack); err != nil {
 		writeCFNError(w, r, "InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 		return
@@ -660,13 +701,11 @@ func (h *Handler) ExecuteChangeSet(w http.ResponseWriter, r *http.Request) {
 	_ = h.store.putChangeSet(ctx, cs)
 
 	if cs.ChangeSetType == "CREATE" {
-		stack.Status = StatusCreateInProgress
-		stack.StatusReason = "User Initiated"
+		beginStackOperation(ctx, stack, StatusCreateInProgress, r.FormValue("ClientRequestToken"))
 		_ = h.store.putStack(ctx, stack)
 		h.prov.createStack(stack, tmpl, h.prov.completeChangeSet(cs), trace.RecorderFromContext(r.Context()))
 	} else {
-		stack.Status = StatusUpdateInProgress
-		stack.StatusReason = "User Initiated"
+		beginStackOperation(ctx, stack, StatusUpdateInProgress, r.FormValue("ClientRequestToken"))
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
@@ -848,17 +887,7 @@ func (h *Handler) DescribeStackEvents(w http.ResponseWriter, r *http.Request) {
 
 	eventsXML := make([]stackEventXML, 0, len(page.Items))
 	for _, e := range page.Items {
-		eventsXML = append(eventsXML, stackEventXML{
-			StackID:              e.StackID,
-			StackName:            e.StackName,
-			EventID:              e.EventID,
-			LogicalResourceID:    e.LogicalResourceID,
-			PhysicalResourceID:   e.PhysicalResourceID,
-			ResourceType:         e.ResourceType,
-			ResourceStatus:       e.ResourceStatus,
-			ResourceStatusReason: e.ResourceStatusReason,
-			Timestamp:            e.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z"),
-		})
+		eventsXML = append(eventsXML, newStackEventXML(e))
 	}
 
 	writeCFNResponse(w, r, "DescribeStackEventsResponse", "DescribeStackEventsResult",
@@ -1374,6 +1403,27 @@ type stackEventXML struct {
 	ResourceStatus       string `xml:"ResourceStatus"`
 	ResourceStatusReason string `xml:"ResourceStatusReason,omitempty"`
 	Timestamp            string `xml:"Timestamp"`
+	ClientRequestToken   string `xml:"ClientRequestToken,omitempty"`
+}
+
+// newStackEventXML projects a stored event onto the wire shape. Both
+// DescribeStackEvents implementations — the Query one in this file and the
+// typed one in typed_logic.go — go through it, so a field added to StackEvent
+// cannot reach one protocol and silently miss the other, which is what two
+// hand-maintained copies of the same mapping invite.
+func newStackEventXML(e StackEvent) stackEventXML {
+	return stackEventXML{
+		StackID:              e.StackID,
+		StackName:            e.StackName,
+		EventID:              e.EventID,
+		LogicalResourceID:    e.LogicalResourceID,
+		PhysicalResourceID:   e.PhysicalResourceID,
+		ResourceType:         e.ResourceType,
+		ResourceStatus:       e.ResourceStatus,
+		ResourceStatusReason: e.ResourceStatusReason,
+		Timestamp:            e.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z"),
+		ClientRequestToken:   e.ClientRequestToken,
+	}
 }
 
 type describeStackEventsResult struct {

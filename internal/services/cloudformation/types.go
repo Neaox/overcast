@@ -36,6 +36,13 @@ type Stack struct {
 	UpdatedAt       *time.Time        `json:"LastUpdatedTimestamp,omitempty"`
 	DeletedAt       *time.Time        `json:"DeletionTime,omitempty"`
 	Metadata        map[string]string `json:"Metadata,omitempty"`
+
+	// ClientRequestToken identifies the stack operation currently in flight,
+	// and is stamped onto every event that operation records. It belongs to
+	// the operation rather than to the stack, so each Create/Update/Delete
+	// overwrites it as it starts — see stackOperationToken for what it holds
+	// when the caller supplied none.
+	ClientRequestToken string `json:"ClientRequestToken,omitempty"`
 }
 
 // Parameter is a key-value pair for a stack parameter.
@@ -168,6 +175,12 @@ type StackEvent struct {
 	ResourceStatus       string    `json:"ResourceStatus"`
 	ResourceStatusReason string    `json:"ResourceStatusReason,omitempty"`
 	Timestamp            time.Time `json:"Timestamp"`
+	// ClientRequestToken is the token of the stack operation that produced
+	// this event, as on AWS. Overcast fills it with the request ID of the API
+	// call that started the operation when the caller supplied no token of
+	// their own, which is what makes an event traceable back to the request —
+	// see stackOperationToken.
+	ClientRequestToken string `json:"ClientRequestToken,omitempty"`
 }
 
 // ── Change Set ─────────────────────────────────────────────────────────────

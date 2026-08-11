@@ -17,28 +17,31 @@ import (
 // ── Request types (json tags used by codec.Decode for form mapping) ───
 
 type createStackReq struct {
-	StackName       string           `json:"StackName"`
-	TemplateBody    string           `json:"TemplateBody"`
-	TemplateURL     string           `json:"TemplateURL"`
-	RoleARN         string           `json:"RoleARN"`
-	DisableRollback string           `json:"DisableRollback"`
-	Parameters      []cfnParamMember `json:"Parameters"`
-	Tags            []cfnTagMember   `json:"Tags"`
-	Capabilities    []string         `json:"Capabilities"`
+	StackName          string           `json:"StackName"`
+	ClientRequestToken string           `json:"ClientRequestToken"`
+	TemplateBody       string           `json:"TemplateBody"`
+	TemplateURL        string           `json:"TemplateURL"`
+	RoleARN            string           `json:"RoleARN"`
+	DisableRollback    string           `json:"DisableRollback"`
+	Parameters         []cfnParamMember `json:"Parameters"`
+	Tags               []cfnTagMember   `json:"Tags"`
+	Capabilities       []string         `json:"Capabilities"`
 }
 
 type updateStackReq struct {
-	StackName       string           `json:"StackName"`
-	TemplateBody    string           `json:"TemplateBody"`
-	TemplateURL     string           `json:"TemplateURL"`
-	DisableRollback string           `json:"DisableRollback"`
-	Parameters      []cfnParamMember `json:"Parameters"`
-	Tags            *[]cfnTagMember  `json:"Tags"`
-	Capabilities    []string         `json:"Capabilities"`
+	StackName          string           `json:"StackName"`
+	ClientRequestToken string           `json:"ClientRequestToken"`
+	TemplateBody       string           `json:"TemplateBody"`
+	TemplateURL        string           `json:"TemplateURL"`
+	DisableRollback    string           `json:"DisableRollback"`
+	Parameters         []cfnParamMember `json:"Parameters"`
+	Tags               *[]cfnTagMember  `json:"Tags"`
+	Capabilities       []string         `json:"Capabilities"`
 }
 
 type deleteStackReq struct {
-	StackName string `json:"StackName"`
+	StackName          string `json:"StackName"`
+	ClientRequestToken string `json:"ClientRequestToken"`
 }
 
 type describeStacksReq struct {
@@ -70,8 +73,9 @@ type describeChangeSetReq struct {
 }
 
 type executeChangeSetReq struct {
-	StackName     string `json:"StackName"`
-	ChangeSetName string `json:"ChangeSetName"`
+	StackName          string `json:"StackName"`
+	ChangeSetName      string `json:"ChangeSetName"`
+	ClientRequestToken string `json:"ClientRequestToken"`
 }
 
 type deleteChangeSetReq struct {
@@ -269,18 +273,19 @@ func (h *Handler) createStackTyped(ctx context.Context, req *createStackReq) (*c
 	caps := req.Capabilities
 
 	stack := &Stack{
-		StackName:       req.StackName,
-		StackID:         stackID,
-		Region:          region,
-		TemplateBody:    templateBody,
-		Parameters:      params,
-		Tags:            tags,
-		Capabilities:    caps,
-		RoleARN:         req.RoleARN,
-		DisableRollback: disableRollback,
-		Status:          StatusCreateInProgress,
-		StatusReason:    "User Initiated",
-		CreatedAt:       h.clk.Now(),
+		StackName:          req.StackName,
+		StackID:            stackID,
+		Region:             region,
+		TemplateBody:       templateBody,
+		Parameters:         params,
+		Tags:               tags,
+		Capabilities:       caps,
+		RoleARN:            req.RoleARN,
+		DisableRollback:    disableRollback,
+		Status:             StatusCreateInProgress,
+		StatusReason:       "User Initiated",
+		CreatedAt:          h.clk.Now(),
+		ClientRequestToken: stackOperationToken(ctx, req.ClientRequestToken),
 	}
 
 	if err := h.store.putStack(ctx, stack); err != nil {
@@ -345,8 +350,7 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 
 	stack.DisableRollback = disableRollback
 	stack.TemplateBody = templateBody
-	stack.Status = StatusUpdateInProgress
-	stack.StatusReason = "User Initiated"
+	beginStackOperation(ctx, stack, StatusUpdateInProgress, req.ClientRequestToken)
 	now := h.clk.Now()
 	stack.UpdatedAt = &now
 
@@ -376,8 +380,7 @@ func (h *Handler) deleteStackTyped(ctx context.Context, req *deleteStackReq) (*s
 		return &struct{}{}, nil
 	}
 
-	stack.Status = StatusDeleteInProgress
-	stack.StatusReason = "User Initiated"
+	beginStackOperation(ctx, stack, StatusDeleteInProgress, req.ClientRequestToken)
 	if err := h.store.putStack(ctx, stack); err != nil {
 		return nil, cfnerr("InternalFailure", "failed to persist stack", http.StatusInternalServerError)
 	}
@@ -627,13 +630,11 @@ func (h *Handler) executeChangeSetTyped(ctx context.Context, req *executeChangeS
 	_ = h.store.putChangeSet(ctx, cs)
 
 	if cs.ChangeSetType == "CREATE" {
-		stack.Status = StatusCreateInProgress
-		stack.StatusReason = "User Initiated"
+		beginStackOperation(ctx, stack, StatusCreateInProgress, req.ClientRequestToken)
 		_ = h.store.putStack(ctx, stack)
 		h.prov.createStack(stack, tmpl, h.prov.completeChangeSet(cs), trace.RecorderFromContext(ctx))
 	} else {
-		stack.Status = StatusUpdateInProgress
-		stack.StatusReason = "User Initiated"
+		beginStackOperation(ctx, stack, StatusUpdateInProgress, req.ClientRequestToken)
 		now := h.clk.Now()
 		stack.UpdatedAt = &now
 		_ = h.store.putStack(ctx, stack)
@@ -783,17 +784,7 @@ func (h *Handler) describeStackEventsTyped(ctx context.Context, req *describeSta
 
 	eventsXML := make([]stackEventXML, 0, len(page.Items))
 	for _, e := range page.Items {
-		eventsXML = append(eventsXML, stackEventXML{
-			StackID:              e.StackID,
-			StackName:            e.StackName,
-			EventID:              e.EventID,
-			LogicalResourceID:    e.LogicalResourceID,
-			PhysicalResourceID:   e.PhysicalResourceID,
-			ResourceType:         e.ResourceType,
-			ResourceStatus:       e.ResourceStatus,
-			ResourceStatusReason: e.ResourceStatusReason,
-			Timestamp:            e.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z"),
-		})
+		eventsXML = append(eventsXML, newStackEventXML(e))
 	}
 
 	return &describeStackEventsResp{
