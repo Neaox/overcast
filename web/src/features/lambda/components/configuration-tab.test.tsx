@@ -87,7 +87,62 @@ describe("ConfigurationTab", () => {
       expect(screen.queryByText("Placement is real — isolation is not")).not.toBeInTheDocument()
     })
   })
+
+  // The dead-letter target is the only part of a function's asynchronous
+  // invocation config that Overcast lets you change, so the section shows it
+  // and says plainly that the retry policy is fixed — rather than offering
+  // fields the emulator would accept and ignore.
+  describe("the asynchronous invocation section", () => {
+    // The target renders as an ArnLink, which is a router link — so these two
+    // need the router harness rather than the bare query seeds.
+    it("shows the configured dead-letter target", async () => {
+      renderTab(TabWithDeadLetterQueue)
+      expect(
+        await screen.findByRole("heading", { name: "Asynchronous invocation" }),
+      ).toBeInTheDocument()
+      expect(screen.getByText("arn:aws:sqs:us-east-1:000000000000:orders-dlq")).toBeInTheDocument()
+    })
+
+    it("offers to remove the target only when there is one", async () => {
+      renderTab(TabWithDeadLetterQueue)
+      expect(await screen.findByRole("button", { name: "Remove DLQ" })).toBeInTheDocument()
+    })
+
+    it("has nothing to remove on a function without one", () => {
+      renderWithData(<ConfigurationTab fn={fn} />, baseSeeds)
+      expect(screen.getByRole("heading", { name: "Asynchronous invocation" })).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Remove DLQ" })).not.toBeInTheDocument()
+    })
+
+    it("says the retry policy is fixed, so nobody goes looking for the setting", () => {
+      renderWithData(<ConfigurationTab fn={fn} />, baseSeeds)
+      expect(screen.getByText(/not configurable/)).toBeInTheDocument()
+    })
+
+    // Without a target the retries still happen, so the note has to say what
+    // becomes of the event — "sent here" points at nothing on this function.
+    it("says the event is dropped when there is no target", () => {
+      renderWithData(<ConfigurationTab fn={fn} />, baseSeeds)
+      expect(screen.getByText(/the event is then dropped/)).toBeInTheDocument()
+    })
+
+    it("says the event is sent to the target when there is one", async () => {
+      renderTab(TabWithDeadLetterQueue)
+      expect(
+        await screen.findByText(/retried twice before the event is sent here/),
+      ).toBeInTheDocument()
+    })
+  })
 })
+
+const withDeadLetterQueue: LambdaFunction = {
+  ...fn,
+  DeadLetterConfig: { TargetArn: "arn:aws:sqs:us-east-1:000000000000:orders-dlq" },
+}
+
+function TabWithDeadLetterQueue() {
+  return <ConfigurationTab fn={withDeadLetterQueue} />
+}
 
 const withVpc: LambdaFunction = {
   ...fn,

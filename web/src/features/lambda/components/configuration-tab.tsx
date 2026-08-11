@@ -39,11 +39,140 @@ export function ConfigurationTab({ fn }: { fn: LambdaFunction }) {
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <GeneralConfigSection fn={fn} />
+      <AsyncInvokeSection fn={fn} />
       <LoggingConfigSection fn={fn} />
       <VpcConfigSection fn={fn} />
       <EnvVarsSection fn={fn} />
       <TagsSection fn={fn} />
       <LayersSection functionName={fn.FunctionName ?? ""} attachedLayers={fn.Layers ?? []} />
+    </div>
+  )
+}
+
+// ─── Asynchronous invocation section ───────────────────────────────────────
+
+/**
+ * The dead-letter target a failed asynchronous invocation is sent to.
+ *
+ * The retry policy that decides when the event gets there is stated in prose
+ * rather than offered as fields: the counts are AWS's defaults and the API that
+ * changes them — PutFunctionEventInvokeConfig — is not emulated, so an input
+ * here would be one the emulator accepts and ignores.
+ */
+function AsyncInvokeSection({ fn }: { fn: LambdaFunction }) {
+  const [editing, setEditing] = useState(false)
+  const savedTarget = fn.DeadLetterConfig?.TargetArn ?? ""
+  const [targetArn, setTargetArn] = useState(savedTarget)
+
+  const [prevFn, setPrevFn] = useState(fn)
+  if (fn !== prevFn) {
+    setPrevFn(fn)
+    if (!editing) setTargetArn(savedTarget)
+  }
+
+  const updateMut = useResourceMutation({
+    options: updateFunctionConfigurationMutationOptions(),
+    invalidateKeys: [lambdaKeys.functions()],
+    successTitle: "Asynchronous invocation saved",
+    errorTitle: "Save failed",
+    onSuccess: () => setEditing(false),
+  })
+
+  // An empty TargetArn is how AWS removes the association, so the same call
+  // serves Save and Remove.
+  const save = (arn: string) =>
+    updateMut.mutate({
+      FunctionName: fn.FunctionName,
+      DeadLetterConfig: { TargetArn: arn },
+    })
+
+  const trimmed = targetArn.trim()
+  const looksLikeQueueOrTopic =
+    trimmed === "" || trimmed.startsWith("arn:aws:sqs:") || trimmed.startsWith("arn:aws:sns:")
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-elevated p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="font-mono text-sm font-medium text-fg">Asynchronous invocation</h3>
+        {!editing ? (
+          <div className="flex gap-2">
+            {savedTarget && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-danger hover:text-danger"
+                onClick={() => save("")}
+                disabled={updateMut.isPending}
+              >
+                Remove DLQ
+              </Button>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setEditing(false)
+                setTargetArn(savedTarget)
+              }}
+              disabled={updateMut.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => save(trimmed)}
+              disabled={updateMut.isPending || !looksLikeQueueOrTopic}
+            >
+              {updateMut.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="flex flex-col gap-2">
+          <label className={cn(fieldLabel, "text-fg-muted")} htmlFor="dlq-target-arn">
+            Dead-letter queue ARN
+          </label>
+          <Input
+            id="dlq-target-arn"
+            value={targetArn}
+            onChange={(e) => setTargetArn(e.target.value)}
+            placeholder="arn:aws:sqs:us-east-1:000000000000:my-dlq"
+          />
+          <p className="text-xs text-fg-muted">
+            An SQS queue or SNS topic. Leave empty to remove the dead-letter queue.
+          </p>
+          {!looksLikeQueueOrTopic && (
+            <p className="text-xs text-danger">
+              Lambda only accepts an SQS queue or an SNS topic as a dead-letter target.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <DefinitionList>
+            <Definition
+              label="Dead-letter queue"
+              value={savedTarget ? <ArnLink arn={savedTarget} /> : null}
+              full
+            />
+          </DefinitionList>
+          <p className="text-xs text-fg-muted">
+            {savedTarget
+              ? "A failed invocation is retried twice before the event is sent here, matching AWS's defaults."
+              : "A failed invocation is retried twice, matching AWS's defaults. With no dead-letter queue the event is then dropped."}{" "}
+            The retry policy is not configurable — Overcast does not emulate
+            PutFunctionEventInvokeConfig.
+          </p>
+        </div>
+      )}
     </div>
   )
 }
