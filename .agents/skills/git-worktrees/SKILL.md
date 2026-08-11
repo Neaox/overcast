@@ -180,6 +180,11 @@ Fix any issues before starting work. You should see zero errors — worktrees st
 
 ### 5. Do Your Work
 
+**First: your shell does not start in your worktree.** See
+[Your working directory is not your worktree](#your-working-directory-is-not-your-worktree)
+— this is the one thing that has actually caused agents to write into each
+other's checkouts, and it defeats every other rule on this page.
+
 Work normally — edit files, write tests, build, iterate. The worktree is a fully independent checkout. All standard project workflows apply:
 
 ```bash
@@ -336,6 +341,67 @@ This is rarely needed — the default shared cache handles concurrent reads well
 
 ---
 
+## Your working directory is not your worktree
+
+Isolation is a property of the **checkout**, not of the process editing it. A
+sub-agent given its own worktree still runs its tools in whatever directory the
+session started in — usually the parent's worktree. Nothing enforces the
+one-writer-per-worktree rule at the filesystem level; it holds only if every
+path you touch actually points where you think.
+
+This is not theoretical. Three agents in a single batch of eight (2026-08-11)
+wrote or read outside their worktree. All three self-reported, and no work was
+lost, but the isolation did not catch any of them.
+
+### The two mechanisms
+
+**1. The shell starts elsewhere.** The Bash tool's working directory persists
+between calls, so one `cd` early does not protect a command that runs after
+something else has reset it. One agent ran an entire verification sweep against
+the parent's worktree and noticed only when `git commit` reported the wrong
+branch — one step short of committing another agent's work onto its own branch.
+
+**2. `Set-Location` and `cd` do not fix .NET or Python.** .NET keeps its own
+current directory, independent of PowerShell's. So a relative path passed to a
+.NET file API resolves against the parent's worktree *even after* `Set-Location`
+succeeds:
+
+```powershell
+Set-Location F:\path\to\my-worktree
+[IO.File]::WriteAllText("internal/services/x/service.go", $text)  # writes ELSEWHERE
+```
+
+That one silently edited a file in another agent's checkout. Python's
+`pathlib.Path("relative/path")` has the same trap via the process working
+directory, unless the interpreter inherited a `cd` in the same shell invocation.
+
+### Rules
+
+- **Prefix every command** with `cd <absolute worktree path>` (Bash) or
+  `Set-Location <absolute worktree path>` (PowerShell). Every command, not once
+  at the start.
+- **Prefer the Read / Edit / Write tools** for file content. They take absolute
+  paths and cannot be ambiguous.
+- **Never pass a relative path to a .NET or Python file API.** Absolute only —
+  or `os.chdir` first, in the same process.
+- **Run `git rev-parse --show-toplevel` and read the answer** before any
+  `git add`, `git commit`, `git rm` or `git checkout`. It costs nothing and it
+  is the check that caught two of the three incidents.
+- **The parent verifies its own tree afterwards.** After a sub-agent finishes,
+  run `git rev-parse HEAD`, `git status --porcelain` and a diff against the
+  remote in your own worktree before trusting anything it reports. Both writes
+  were caught by the agent that made them, not by the agent that owned the tree.
+
+### Write it into the brief
+
+A sub-agent cannot read this file before its first tool call. Every
+write-capable brief must state the absolute worktree path and these rules
+inline, and must ask the agent to report a suspected stray write plainly rather
+than quietly reverting it — the owner of the other tree needs to verify it, not
+be told it was handled.
+
+---
+
 ## Common Mistakes
 
 | Mistake                                             | Why it fails                                                              | Fix                                                                   |
@@ -348,6 +414,9 @@ This is rarely needed — the default shared cache handles concurrent reads well
 | Editing shared SQLite data dir                      | Corrupt or conflicting state                                              | Use `OVERCAST_STATE=memory` or unique `OVERCAST_DATA_DIR`             |
 | Sharing a worktree between write-capable agents     | Agents overwrite or commit one another's changes                         | Give every writer a unique branch and worktree                        |
 | Running `git stash` in a linked worktree            | The shared stash can be applied or dropped by another agent              | Make a temporary WIP commit or move the changes explicitly            |
+| Assuming a tool starts in your worktree             | Shell tools start in the parent session's directory, not the checkout    | Prefix every command with an absolute `cd` / `Set-Location`           |
+| Relative path in a .NET or Python file API          | .NET and Python keep their own cwd, unchanged by `Set-Location`          | Absolute paths only, or the Read/Edit/Write tools                     |
+| Trusting a sub-agent's "my tree is clean"           | Two stray writes were caught by the writer, never by the tree's owner    | Verify `git status --porcelain` and a remote diff in your own tree     |
 | Deleting a worktree with uncommitted work           | Work is lost                                                              | Retain it and report why cleanup is blocked                           |
 | Looking for a branch SHA after squash merge         | Squash merge creates a different commit on `main`                         | Verify the PR's `MERGED` state and `mergeCommit`                      |
 | Forgetting cleanup after integration                | Stale worktrees consume disk and confuse ownership                        | Remove it, delete the verified merged branch, and prune metadata      |
