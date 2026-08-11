@@ -70,16 +70,11 @@ var unservedBindings = map[string]string{
 	// ledger row naming a binding that is now served, which is the ratchet
 	// doing the job an exemption list cannot.
 
-	// #815 — Backup's Inert tier answers on invented paths.
-	"backup/CreateBackupPlan":    "#815",
-	"backup/CreateBackupVault":   "#815",
-	"backup/DeleteBackupPlan":    "#815",
-	"backup/DeleteBackupVault":   "#815",
-	"backup/DescribeBackupVault": "#815",
-	"backup/GetBackupPlan":       "#815",
-	"backup/ListBackupPlans":     "#815",
-	"backup/ListBackupVaults":    "#815",
-	"backup/UpdateBackupPlan":    "#815",
+	// #815 is deliberately absent too, and it was the largest entry here: all
+	// nine Backup operations, because the service registered no chi routes at
+	// all and dispatched off an invented `AWSBackup.` target prefix. They are
+	// now served at their modeled bindings under /backup-vaults and
+	// /backup/plans.
 }
 
 // weaklyServedBindings records the operations the router delivers without

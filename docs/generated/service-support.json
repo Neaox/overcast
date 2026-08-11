@@ -7848,48 +7848,48 @@
       "operations": [
         {
           "operation": "CreateBackupVault",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "⚠️ Partial",
+          "notes": "PUT /backup-vaults/{BackupVaultName}; `BackupVaultTags` is accepted and dropped — Backup has no tag operations yet (#815)"
         },
         {
           "operation": "DeleteBackupVault",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "✅ Supported",
+          "notes": "DELETE /backup-vaults/{BackupVaultName}; empty 200, the modeled Unit output"
         },
         {
           "operation": "DescribeBackupVault",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "⚠️ Partial",
+          "notes": "GET /backup-vaults/{BackupVaultName}; honours `backupVaultAccountId`. Vault lock and MPA approval are not emulated, so `Locked` is always false and the retention members are absent"
         },
         {
           "operation": "ListBackupVaults",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "⚠️ Partial",
+          "notes": "GET /backup-vaults; `vaultType`, `shared`, `maxResults` and `nextToken` query params. Every vault is a standard unshared vault, so `shared=true` lists none"
         },
         {
           "operation": "CreateBackupPlan",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "⚠️ Partial",
+          "notes": "PUT /backup/plans; `BackupPlanTags` is accepted and dropped (#815), and `AdvancedBackupSettings` is not stored or returned"
         },
         {
           "operation": "DeleteBackupPlan",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "✅ Supported",
+          "notes": "DELETE /backup/plans/{BackupPlanId}; returns the modeled id, ARN, VersionId and DeletionDate"
         },
         {
           "operation": "GetBackupPlan",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "⚠️ Partial",
+          "notes": "GET /backup/plans/{BackupPlanId}; only the current version is kept, so any other `versionId` is not found, and `MaxScheduledRunsPreview` yields no `ScheduledRunsPreview`"
         },
         {
           "operation": "ListBackupPlans",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "⚠️ Partial",
+          "notes": "GET /backup/plans; `maxResults` and `nextToken` query params. Plans are deleted outright rather than tombstoned, so `includeDeleted` adds nothing"
         },
         {
           "operation": "UpdateBackupPlan",
-          "status": "🚧 WIP",
-          "notes": "Overcast does not serve the binding AWS models, so no SDK reaches it (#815)"
+          "status": "⚠️ Partial",
+          "notes": "POST /backup/plans/{BackupPlanId}; mints a new VersionId per update. Prior versions are not retained and `AdvancedBackupSettings` is not stored"
         }
       ]
     },

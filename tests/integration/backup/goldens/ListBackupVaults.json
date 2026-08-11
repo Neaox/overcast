@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "application/x-amz-json-1.0"
   },
-  "body": "{\"BackupVaultList\":[{\"BackupVaultName\":\"golden-vault-a\",\"BackupVaultArn\":\"arn:aws:backup:us-east-1:000000000000:backup-vault:golden-vault-a\",\"CreationDate\":\"1970-01-01T00:00:00Z\",\"NumberOfRecoveryPoints\":0},{\"BackupVaultName\":\"golden-vault-b\",\"BackupVaultArn\":\"arn:aws:backup:us-east-1:000000000000:backup-vault:golden-vault-b\",\"CreationDate\":\"1970-01-01T00:00:00Z\",\"NumberOfRecoveryPoints\":0}]}"
+  "body": "{\"BackupVaultList\":[{\"BackupVaultName\":\"golden-vault-a\",\"BackupVaultArn\":\"arn:aws:backup:us-east-1:000000000000:backup-vault:golden-vault-a\",\"VaultType\":\"BACKUP_VAULT\",\"VaultState\":\"AVAILABLE\",\"CreationDate\":0,\"NumberOfRecoveryPoints\":0,\"Locked\":false},{\"BackupVaultName\":\"golden-vault-b\",\"BackupVaultArn\":\"arn:aws:backup:us-east-1:000000000000:backup-vault:golden-vault-b\",\"VaultType\":\"BACKUP_VAULT\",\"VaultState\":\"AVAILABLE\",\"CreationDate\":0,\"NumberOfRecoveryPoints\":0,\"Locked\":false}]}"
 }

@@ -332,6 +332,29 @@ func (h *cloudtrailTrailHandler) Update(ctx context.Context, router http.Handler
 
 // ── AWS::Backup::BackupVault ────────────────────────────────────────────────
 
+// backupVaultsPath and backupPlansPath are Backup's modeled collection
+// bindings. Vaults are addressed by name beneath the first and plans by id
+// beneath the second; both handlers return an ARN as the physical ID, so both
+// Deletes have to recover the identifier from it.
+const (
+	backupVaultsPath = "/backup-vaults"
+	backupPlansPath  = "/backup/plans"
+)
+
+// backupIDFromARN returns the identifier a Backup ARN's last segment carries —
+// the vault name in arn:…:backup-vault:<name>, the plan id in
+// arn:…:backup-plan:<id>.
+func backupIDFromARN(physicalID string) string {
+	id := physicalID
+	if i := strings.LastIndex(id, ":"); i >= 0 {
+		id = id[i+1:]
+	}
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		id = id[i+1:]
+	}
+	return id
+}
+
 type backupBackupVaultHandler struct{}
 
 func (h *backupBackupVaultHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
@@ -340,14 +363,20 @@ func (h *backupBackupVaultHandler) Create(ctx context.Context, router http.Handl
 		name = fmt.Sprintf("%s-vault", rCtx.StackName)
 	}
 
-	body := map[string]any{
-		"BackupVaultName": name,
-	}
+	// BackupVaultName is an httpLabel, so it goes in the path rather than the
+	// body. Its modeled pattern admits no character url.PathEscape would
+	// rewrite, but escaping keeps a name that violates it from forging a path.
+	body := map[string]any{}
 	if v, ok := props["EncryptionKeyArn"].(string); ok && v != "" {
 		body["EncryptionKeyArn"] = v
 	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", nil, fmt.Errorf("CreateBackupVault: %w", err)
+	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSBackup.CreateBackupVault", body)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut,
+		backupVaultsPath+"/"+url.PathEscape(name), "application/json", data)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateBackupVault: %w", err)
 	}
@@ -373,15 +402,8 @@ func (h *backupBackupVaultHandler) Create(ctx context.Context, router http.Handl
 }
 
 func (h *backupBackupVaultHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	name := physicalID
-	if idx := strings.LastIndex(physicalID, ":"); idx >= 0 {
-		name = physicalID[idx+1:]
-	}
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		name = name[idx+1:]
-	}
-	body := map[string]any{"BackupVaultName": name}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AWSBackup.DeleteBackupVault", body)
+	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		backupVaultsPath+"/"+url.PathEscape(backupIDFromARN(physicalID)), "", nil)
 	return nil
 }
 
@@ -407,11 +429,13 @@ type backupBackupPlanHandler struct{}
 
 func (h *backupBackupPlanHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	backupPlan, _ := props["BackupPlan"].(map[string]any)
-	body := map[string]any{
-		"BackupPlan": backupPlan,
+	data, err := json.Marshal(map[string]any{"BackupPlan": backupPlan})
+	if err != nil {
+		return "", nil, fmt.Errorf("CreateBackupPlan: %w", err)
 	}
 
-	rec, err := internalJSON(ctx, router, rCtx.Region, "AWSBackup.CreateBackupPlan", body)
+	rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodPut,
+		backupPlansPath, "application/json", data)
 	if err != nil {
 		return "", nil, fmt.Errorf("CreateBackupPlan: %w", err)
 	}
@@ -440,9 +464,14 @@ func (h *backupBackupPlanHandler) Create(ctx context.Context, router http.Handle
 	return arn, attrs, nil
 }
 
+// Delete addresses the plan by id. The physical ID is the ARN
+// (arn:…:backup-plan:<id>) and DeleteBackupPlan binds the id as a path label,
+// so the id comes from the ARN's last segment — sending the whole ARN as the
+// id, as this did before, never matched a plan and a stack delete left it
+// behind.
 func (h *backupBackupPlanHandler) Delete(ctx context.Context, router http.Handler, cfg *config.Config, physicalID string, rCtx *resolveContext) error {
-	body := map[string]any{"BackupPlanId": physicalID}
-	_, _ = internalJSON(ctx, router, rCtx.Region, "AWSBackup.DeleteBackupPlan", body)
+	_, _ = internalRequest(ctx, router, rCtx.Region, http.MethodDelete,
+		backupPlansPath+"/"+url.PathEscape(backupIDFromARN(physicalID)), "", nil)
 	return nil
 }
 
