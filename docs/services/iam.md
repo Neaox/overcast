@@ -172,8 +172,20 @@ When it is on:
   that entity's permissions boundary if it has one.
 - A request the policies do not allow is refused with the calling service's own
   `AccessDenied`-shaped error, in that service's wire format.
+- The action evaluated is `<prefix>:<Operation>`, where the operation is the one the request
+  invokes and the prefix is **the IAM action prefix AWS uses for that service** — so write
+  policies with the names the AWS documentation gives. Most services are called the same
+  thing throughout, but eight are not: MSK authorizes as `kafka:`, Step Functions as
+  `states:`, EFS as `elasticfilesystem:`, OpenSearch as `es:`, ELBv2 as
+  `elasticloadbalancing:`, Service Catalog AppRegistry as `servicecatalog:`, Cognito user
+  pools as `cognito-idp:`, and WAF as `wafv2:`.
 - Enforcement is **fail-closed**: an unsigned request, a policy that cannot be parsed, or a
   construct the evaluator does not implement all deny. The reason is logged at debug level.
+- The one exception is a request whose operation cannot be named, which is **not** gated. S3
+  reaches this routinely, because its sub-resource operations (`?tagging`, `?restore`,
+  `?legal-hold`, …) are identified by query parameters rather than by path. Denying them
+  would break ordinary S3 traffic the moment enforcement was switched on. The gap is logged
+  at debug level rather than passing silently.
 - Resource-based policies (S3 bucket policies, Lambda/SQS/SNS policies) are **not** consulted
   at request time yet — only identity policies are. The simulator accepts a resource policy
   explicitly, which is the way to test one today.

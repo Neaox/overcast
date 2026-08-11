@@ -614,7 +614,7 @@ func TestIAMEnforce_enabled_secretsManagerResourcePolicyDeniesNonMatchingSecretI
 
 func TestIAMEnforce_enabled_stepFunctionsResourcePolicyAllowsMatchingName(t *testing.T) {
 	st := state.NewMemoryStore()
-	seedIAMUserWithPolicies(t, st, "test", []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"stepfunctions:CreateStateMachine","Resource":"arn:aws:states:us-east-1:000000000000:stateMachine:allowed-sm"}]}`}, nil)
+	seedIAMUserWithPolicies(t, st, "test", []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"states:CreateStateMachine","Resource":"arn:aws:states:us-east-1:000000000000:stateMachine:allowed-sm"}]}`}, nil)
 
 	called := false
 	h := IAMEnforce(true, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -644,7 +644,7 @@ func TestIAMEnforce_enabled_stepFunctionsResourcePolicyAllowsMatchingName(t *tes
 
 func TestIAMEnforce_enabled_stepFunctionsResourcePolicyDeniesNonMatchingStateMachineArn(t *testing.T) {
 	st := state.NewMemoryStore()
-	seedIAMUserWithPolicies(t, st, "test", []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"stepfunctions:StartExecution","Resource":"arn:aws:states:us-east-1:000000000000:stateMachine:allowed-sm"}]}`}, nil)
+	seedIAMUserWithPolicies(t, st, "test", []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"states:StartExecution","Resource":"arn:aws:states:us-east-1:000000000000:stateMachine:allowed-sm"}]}`}, nil)
 
 	h := IAMEnforce(true, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

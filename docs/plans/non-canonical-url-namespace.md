@@ -201,8 +201,8 @@ inference. The S3 half is enforced end to end — `requestIAMAction` names
 `s3:GetObject`/`s3:PutObject` for a bucket named `api`, so signed requests are
 evaluated too.
 
-MSK is weaker, for reasons that predate this work and are unchanged by it.
-Measured against `restOperation`:
+MSK was weaker, for reasons that predate this work and were unchanged by it.
+Measured against `restOperation` at the time phase 0 landed:
 
 | Request | Inferred action |
 | --- | --- |
@@ -210,24 +210,64 @@ Measured against `restOperation`:
 | `GET /api/v2/clusters/{arn}` (`DescribeClusterV2`) | none |
 | `GET /v1/clusters` under an SDK's `kafka` credential scope | none |
 
-Two separate defects sit behind that, both **out of scope here and worth their
-own issue**:
+Three separate defects sat behind that, none of them a namespace problem. All
+are recorded here because the audit is what surfaced them.
 
-1. **Fail-open on an unnamed operation.** `IAMEnforce` passes a signed request
-   through when `requestIAMAction` returns `""` — deliberate, documented, and
-   the right default for S3's sub-resource operations. It means
-   `DescribeClusterV2` and MSK's whole v1 surface are still not policy-checked
-   for a signed caller.
-2. **`kafka` vs `msk`.** The generated registry is keyed `msk`, so
-   `restOperation("kafka", …)` returns nothing — and `detectService` answers
-   `kafka` for any MSK path the prefix switch does not claim, because that is
-   what the SigV4 credential scope carries. `awsapiServiceKey` maps only
-   `logs` → `cloudwatch-logs`. Separately, the action Overcast *does* infer is
-   `msk:ListClustersV2`, while AWS's real IAM prefix for MSK is `kafka:`, so a
-   correctly-written policy would not match it.
+1. **`kafka` vs `msk` — fixed separately, see below.** The generated registry is
+   keyed `msk`, so `restOperation("kafka", …)` returned nothing — and
+   `detectService` answered `kafka` for any MSK path the prefix switch does not
+   claim, because that is what the SigV4 credential scope carries. Separately,
+   the action Overcast *did* infer was `msk:ListClustersV2`, while AWS's real
+   IAM prefix for MSK is `kafka:`, so a correctly-written policy would not have
+   matched it.
+2. **Fail-open on an unnamed operation — still open, and now much narrower.**
+   `IAMEnforce` passes a signed request through when `requestIAMAction` returns
+   `""` — deliberate, documented, and the right default for S3's sub-resource
+   operations. With defect 1 fixed, MSK's v1 surface is named and policy-checked;
+   what still reaches this branch is any request whose operation cannot be named
+   at all, which is defect 3 for MSK and the S3 sub-resources everywhere else.
+3. **A non-greedy URI label cannot hold an ARN — still open.** This is what the
+   `DescribeClusterV2` row above measures, and it is unrelated to the other two.
+   The model binds it to `/api/v2/clusters/{ClusterArn}`, a non-greedy label, but
+   an MSK cluster ARN contains `/`. The SDK percent-encodes them; Go decodes
+   `r.URL.Path`, so by the time `restOperation` sees the path the ARN has become
+   three extra segments and the label cannot match. Passing `r.URL.EscapedPath()`
+   matches, verified:
 
-Neither is a namespace problem, and neither should hold this plan up. Both are
-recorded here because the audit is what surfaced them.
+   ```
+   /api/v2/clusters/arn:aws:kafka:…:cluster/demo/uuid-1        -> ""
+   /api/v2/clusters/arn%3Aaws%3Akafka%3A…%3Acluster%2Fdemo%2Fuuid-1 -> "DescribeClusterV2"
+   ```
+
+   It affects every modeled binding whose non-greedy label takes an ARN, not
+   only MSK's — the same class `isBedrockRuntimeInferencePath` already works
+   around in `detectService` — so the fix belongs in `restOperation` and needs
+   checking against every service, which is why it is not folded in here.
+
+#### Update: defect 1 fixed
+
+Both halves of `kafka` vs `msk` are fixed, along with the same defect in five
+other services the original note did not reach. `detectService` step 3 now maps
+the credential scope's signing name to an Overcast service key, and
+`requestIAMAction` builds the action from AWS's IAM action prefix rather than
+from Overcast's key. Both mappings are in
+[`internal/middleware/serviceidentity.go`](../../internal/middleware/serviceidentity.go);
+they are deliberately two mappings rather than one inverted, because CloudWatch
+signs as `monitoring` and authorizes as `cloudwatch:`.
+
+The audit's own framing turned out to understate it. The scope-to-key mismatch
+was live for AppRegistry's `/attribute-groups` as well as MSK's v1 surface, and
+for the two Query-protocol services whose signing name differs — CloudWatch and
+ELBv2 — where it cost them their resource resolvers rather than their action.
+The action-prefix half was live for ten services.
+
+The measured table above now reads:
+
+| Request | Inferred action |
+| --- | --- |
+| `GET`/`POST /api/v2/clusters` | `kafka:ListClustersV2` / `kafka:CreateClusterV2` |
+| `GET /api/v2/clusters/{arn}` (`DescribeClusterV2`) | none — defect 3 |
+| `GET /v1/clusters` under an SDK's `kafka` credential scope | `kafka:ListClusters` |
 
 ## 4. Design decisions
 

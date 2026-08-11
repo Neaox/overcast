@@ -103,3 +103,35 @@ func WalkOperations(visit func(Operation) bool) {
 
 // ServiceKey maps a modeled service identity to Overcast's established key.
 func ServiceKey(modelService string) string { return overcastService(modelService) }
+
+// WalkSigningNames visits each distinct (Overcast service key, SigV4 signing
+// name) pair the pinned models declare, stopping early if visit returns false.
+// A service key can appear more than once: "apigateway" answers for API Gateway
+// v1 and v2, and "bedrock" for the runtime and agent identities.
+//
+// The signing name is the service component of a SigV4 credential scope — what
+// an AWS SDK actually writes into the Authorization header — and it is the
+// third name a service has, alongside the modeled identity and the Overcast
+// key. Exposed because middleware has to translate a scope back to a key
+// before anything downstream can use it, and a hand-written table of which
+// names differ would be a copy of data the models already carry.
+//
+// Only REST bindings declare it in the generated indexes today, which is enough
+// for the classification path that needs it: the Query and JSON protocols carry
+// the operation in the request itself and are claimed before the scope is read.
+func WalkSigningNames(visit func(service, signingName string) bool) {
+	seen := make(map[[2]string]bool, len(restOperations))
+	for _, op := range restOperations {
+		if op.SigningName == "" || op.ModelService == "" {
+			continue
+		}
+		pair := [2]string{overcastService(op.ModelService), op.SigningName}
+		if seen[pair] {
+			continue
+		}
+		seen[pair] = true
+		if !visit(pair[0], pair[1]) {
+			return
+		}
+	}
+}
