@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
@@ -47,6 +48,11 @@ func TestRunTask_withDocker_pullsCDKContainerAssetFromTheServedRegistry(t *testi
 		helpers.WithRegion("us-east-1"),
 		helpers.WithAccountID("000000000000"),
 	)
+	// The probe that wires Docker into ECS runs in a goroutine started with the
+	// server, so RunTask below would otherwise race it. The registry setup that
+	// follows happens to be slow enough to hide that today — which is not a
+	// property this test should be resting on.
+	waitForECSDocker(t, srv)
 	helpers.PullOrSkip(t, dc, "registry:2")
 
 	repoURI := createECRRepository(t, srv, cdkAssetRepository)
@@ -91,10 +97,8 @@ func TestRunTask_withDocker_pullsCDKContainerAssetFromTheServedRegistry(t *testi
 	helpers.AssertStatus(t, run, http.StatusOK)
 	var out struct {
 		Tasks []struct {
-			LastStatus    string `json:"lastStatus"`
-			StopCode      string `json:"stopCode"`
-			StoppedReason string `json:"stoppedReason"`
-			Containers    []struct {
+			TaskArn    string `json:"taskArn"`
+			Containers []struct {
 				Image string `json:"image"`
 			} `json:"containers"`
 		} `json:"tasks"`
@@ -102,20 +106,66 @@ func TestRunTask_withDocker_pullsCDKContainerAssetFromTheServedRegistry(t *testi
 	helpers.DecodeJSON(t, run, &out)
 	run.Body.Close()
 
-	// Then: it is running, not stopped for want of a registry it can reach.
 	if len(out.Tasks) != 1 {
 		t.Fatalf("expected 1 task, got %d", len(out.Tasks))
 	}
 	task := out.Tasks[0]
-	if task.LastStatus == "STOPPED" {
-		t.Fatalf("task failed to start: stopCode=%s reason=%s", task.StopCode, task.StoppedReason)
-	}
+
+	// Then: it reaches RUNNING, rather than stopping for want of a registry it
+	// can reach.
+	//
+	// RUNNING is the assertion rather than "not STOPPED" because only a task
+	// with containers behind it gets there: the PROVISIONING → RUNNING
+	// transition is scheduled solely when Docker is wired, so a metadata-only
+	// placement sits at PROVISIONING for good — and would satisfy a
+	// "not STOPPED" check having started no container and pulled no image.
+	awaitTaskRunning(t, srv, "cdk-cluster", task.TaskArn)
 
 	// Then: the task still reports the image its definition asked for. The
 	// rewrite is how the bytes are fetched, not a change to what was deployed.
 	if got := task.Containers[0].Image; got != cdkImage {
 		t.Errorf("container image = %q, want the task definition's %q", got, cdkImage)
 	}
+}
+
+// awaitTaskRunning blocks until the task reports RUNNING.
+//
+// RunTask answers while the task is still PROVISIONING — the transition is
+// scheduled behind it — so the status in its response says nothing about
+// whether the containers started. A task that could not pull its image stops
+// rather than staying put, so STOPPED fails immediately with the reason ECS
+// recorded instead of waiting out the timeout and reporting only that RUNNING
+// never arrived.
+//
+// The cluster is required: DescribeTasks is cluster-scoped and falls back to
+// the default cluster when none is given, which is not where this task is. It
+// would report no tasks at all and the wait would time out having never
+// actually looked at the task.
+func awaitTaskRunning(t *testing.T, srv *helpers.TestServer, cluster, taskArn string) {
+	t.Helper()
+	helpers.Eventually(t, 60*time.Second, 100*time.Millisecond, func() bool {
+		resp := ecsCall(t, srv, "DescribeTasks", map[string]any{
+			"cluster": cluster,
+			"tasks":   []string{taskArn},
+		})
+		defer resp.Body.Close()
+		var out struct {
+			Tasks []struct {
+				LastStatus    string `json:"lastStatus"`
+				StopCode      string `json:"stopCode"`
+				StoppedReason string `json:"stoppedReason"`
+			} `json:"tasks"`
+		}
+		helpers.DecodeJSON(t, resp, &out)
+		if len(out.Tasks) != 1 {
+			return false
+		}
+		if out.Tasks[0].LastStatus == "STOPPED" {
+			t.Fatalf("task failed to start: stopCode=%s reason=%s",
+				out.Tasks[0].StopCode, out.Tasks[0].StoppedReason)
+		}
+		return out.Tasks[0].LastStatus == "RUNNING"
+	}, "the task never reached RUNNING, so it was left at PROVISIONING with no containers started for it")
 }
 
 // createECRRepository creates repo and returns the repositoryUri ECR minted —
