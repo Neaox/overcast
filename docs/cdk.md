@@ -174,8 +174,12 @@ already published and skips the push if it is, so that answer has to be right
 or the deploy publishes nothing and fails at pull time instead. Overcast
 answers it from the registry rather than from memory of an earlier run — see
 [ECR § Asking whether an image is published](./services/ecr.md#asking-whether-an-image-is-published).
-A restarted Overcast has an empty registry, so the next deploy pushes its
-assets again; that is a rebuild of a few seconds, not a failure.
+The registry's storage is a named Docker volume, so a restarted Overcast still
+has the assets the last deploy pushed and the next one skips rebuilding them —
+see [ECR § Persistence](./services/ecr.md#persistence). Two cases still re-push:
+a registry that fell back to an ephemeral port, and one started with
+`OVERCAST_ECR_REGISTRY_PERSIST=false`. That is a rebuild of a few seconds, not a
+failure.
 
 The registry publishes on a fixed port (`4510` by default, see
 [ECR § Repository URI](./services/ecr.md#repository-uri)) reachable at

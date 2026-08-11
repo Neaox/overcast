@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,29 @@ func removeTestNetworks(names []string) {
 		}
 		_ = dc.RemoveNetwork(ctx, name)
 	}
+}
+
+// removeTestRegistryVolume deletes the storage volume a fixed-port registry
+// claim created for this test server, best-effort and for the same reasons
+// removeTestNetworks is.
+//
+// The volume is the point of the fixed-port claim in production — a restart
+// there is meant to find the last run's images — and exactly the wrong thing to
+// keep in a suite, where every server takes a fresh reserved port. Left alone
+// the suite accumulates one volume per Docker-gated registry test, per run,
+// each with a port in its name that nothing will ever claim again.
+//
+// Force, because the registry container may still be on its way out: the
+// server's own cleanup removes it and Docker's removal is asynchronous, so an
+// unforced delete races the container's disappearance and loses.
+func removeTestRegistryVolume(port int) {
+	if port <= 0 {
+		return
+	}
+	dc := docker.NewClient(TestDockerSocket(), zap.NewNop())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = dc.RemoveVolume(ctx, "overcast-ecr-registry-data-"+strconv.Itoa(port), true)
 }
 
 // SkipWithoutDocker calls t.Skip if Docker is not reachable. Use at the top of

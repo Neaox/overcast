@@ -158,6 +158,14 @@ excludes (-tags nosqlite); falling back to memory) — set OVERCAST_STATE to ove
   tries to flush everything within a shutdown budget; even if that budget runs out,
   nothing is lost — the remaining writes replay from the pending log on the next start.
 
+**Bulk content is not in the state backend and is not covered by the list above.** S3
+object bodies are files under `OVERCAST_DATA_DIR`, and container images pushed to the
+emulated ECR are in a named Docker volume. Both are reclaimed by deleting them, not by
+changing `OVERCAST_STATE`. The ECR one is the case worth knowing: images survive a restart
+on any backend, including `memory`, because the first read of a repository reconciles it
+against the registry and rediscovers what is there — so re-creating a repository is enough
+to get its images back. See [ECR § Persistence](./services/ecr.md#persistence).
+
 **If the underlying SQLite file becomes unreadable or corrupt**, `persistent` and `hybrid`
 log a warning and — for `hybrid` only — keep serving reads and writes in a degraded,
 memory-only mode for the rest of that run rather than crashing; `/_health` reports this

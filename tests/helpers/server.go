@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,6 +38,29 @@ type TestServer struct {
 	// for real-clock servers it is nil.
 	// Use Clock.Add(d) to advance time without any real sleep.
 	Clock *clock.Mock
+
+	// shutdownOnce makes Shutdown and the registered t.Cleanup interchangeable:
+	// whichever runs first does the work, the other is a no-op.
+	shutdownOnce sync.Once
+	shutdown     func(context.Context)
+}
+
+// Shutdown stops the server now rather than at the end of the test: service
+// cleanup (which is what tears down Docker containers), then the HTTP listener.
+// It is idempotent and the registered t.Cleanup still runs, so a test that
+// calls it needs no other bookkeeping.
+//
+// Reach for it only when the *restart* is the subject — a second server has to
+// claim a resource the first one holds, and asserting on what survived means
+// the first must be gone while the test is still running. Everything else
+// should let t.Cleanup do this.
+func (ts *TestServer) Shutdown() {
+	ts.shutdownOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ts.shutdown(ctx)
+		ts.Server.Close()
+	})
 }
 
 // ExternalBase returns the base URL this server embeds in client-facing
@@ -73,6 +97,10 @@ type serverOptions struct {
 	// ownsNetworks marks a server whose Docker networks were minted for this
 	// test alone, so they are removed with it. See WithECSDocker.
 	ownsNetworks bool
+	// ownsRegistryVolume marks a server whose ECR registry claimed a port this
+	// test reserved, so the volume behind it is removed with the test. See
+	// WithECRRegistryPort.
+	ownsRegistryVolume bool
 }
 
 // NewTestServer creates a started test server with sensible defaults.
@@ -159,23 +187,29 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 	}
 
 	ts := &TestServer{
-		Server: srv,
-		Store:  ms,
-		Config: so.cfg,
-		Clock:  so.mock,
+		Server:   srv,
+		Store:    ms,
+		Config:   so.cfg,
+		Clock:    so.mock,
+		shutdown: cleanup,
 	}
-	// Registered first so it runs last: the networks cannot go until the
-	// containers on them have, which the server's own cleanup does.
+	// Registered first so they run last: neither the networks nor the registry
+	// volume can go until the containers holding them have, which the server's
+	// own cleanup does.
 	if so.ownsNetworks {
 		networks := []string{so.cfg.Network, so.cfg.ControlNetwork()}
 		t.Cleanup(func() { removeTestNetworks(networks) })
+	}
+	if so.ownsRegistryVolume {
+		port := so.cfg.ECRRegistryPort
+		t.Cleanup(func() { removeTestRegistryVolume(port) })
 	}
 	// t.Cleanup runs in LIFO order: close the server first, then drain
 	// any in-flight async work (e.g. SNS fan-out goroutines).
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		cleanup(ctx)
+		ts.shutdownOnce.Do(func() { cleanup(ctx) })
 	})
 	t.Cleanup(srv.Close)
 	return ts
@@ -340,9 +374,18 @@ func WithECSDocker() Option {
 // 4510 between tests: a fixed-port claim replaces whatever container already
 // holds its name, which is correct for a predecessor and fatal for a sibling
 // test package's live registry.
+//
+// The claim also brings a named storage volume, so the registry's images
+// survive its container — see docs/services/ecr.md § Persistence. That is the
+// production shape and the reason to test it, but a per-test port means the
+// volume would never be found again, so this server removes it on cleanup. A
+// test that wants a *restart* to find its images (one server down, a second
+// claiming the same port) gets that within its own lifetime; nothing survives
+// the test that reserved the port.
 func WithECRRegistryPort(port int) Option {
 	return func(so *serverOptions) {
 		so.cfg.ECRRegistryPort = port
+		so.ownsRegistryVolume = true
 	}
 }
 
@@ -473,13 +516,17 @@ func defaultTestConfig() *config.Config {
 		LambdaDockerSocket:   "",      // empty = skip Docker probe; use WithLambdaDocker() for container tests
 		Network:              "overcast",
 		LambdaRuntimeAPIPort: 0, // OS-assigned port — avoids conflicts when test packages run in parallel
-		ShutdownTimeout:      0,
-		SigV4Validate:        false,
-		Debug:                false,
-		SMTPMock:             false, // disabled by default; use WithSMTPMock() to enable
-		SMTPPort:             0,     // random when mock is enabled
-		SMTPFrom:             "overcast@localhost",
-		SMTPInboxMax:         500,
+		// Mirrors config.Load's default. It only bites once a test also asks for
+		// a fixed registry port, but leaving it false there would exercise a
+		// storage shape no user gets.
+		ECRRegistryPersist: true,
+		ShutdownTimeout:    0,
+		SigV4Validate:      false,
+		Debug:              false,
+		SMTPMock:           false, // disabled by default; use WithSMTPMock() to enable
+		SMTPPort:           0,     // random when mock is enabled
+		SMTPFrom:           "overcast@localhost",
+		SMTPInboxMax:       500,
 		// Step Functions runaway-execution guard. Executions run on their own
 		// goroutines, so this bounds the run, not the request. Kept short so a
 		// non-terminating definition fails a test fast rather than hanging.

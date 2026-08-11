@@ -2669,6 +2669,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Persistence",
+        "id": "persistence"
+      },
+      {
+        "depth": 2,
         "text": "Running an image from here",
         "id": "running-an-image-from-here"
       },
@@ -2681,6 +2686,11 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Reclaiming a leaked registry container",
         "id": "reclaiming-a-leaked-registry-container"
+      },
+      {
+        "depth": 2,
+        "text": "Reclaiming the storage volume",
+        "id": "reclaiming-the-storage-volume"
       },
       {
         "depth": 2,
