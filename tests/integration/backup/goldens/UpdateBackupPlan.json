@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "application/x-amz-json-1.0"
   },
-  "body": "{\"BackupPlanArn\":\"arn:aws:backup:us-east-1:000000000000:backup-plan:plan-0\",\"BackupPlanId\":\"plan-0\",\"VersionId\":\"v2\"}"
+  "body": "{\"BackupPlanId\":\"00000000-0000-0000-0000-000000000000\",\"BackupPlanArn\":\"arn:aws:backup:us-east-1:000000000000:backup-plan:00000000-0000-0000-0000-000000000000\",\"CreationDate\":0,\"VersionId\":\"v2\"}"
 }

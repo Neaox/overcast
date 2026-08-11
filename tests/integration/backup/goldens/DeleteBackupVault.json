@@ -1,7 +1,5 @@
 {
   "status": 200,
-  "headers": {
-    "Content-Type": "application/x-amz-json-1.0"
-  },
-  "body": "{\"BackupVaultArn\":\"arn:aws:backup:us-east-1:000000000000:backup-vault:golden-vault\",\"BackupVaultName\":\"golden-vault\",\"DeletionDate\":\"1970-01-01T00:00:00Z\"}"
+  "headers": {},
+  "body": ""
 }

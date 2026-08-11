@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "application/x-amz-json-1.0"
   },
-  "body": "{\"BackupVaultName\":\"golden-vault\",\"BackupVaultArn\":\"arn:aws:backup:us-east-1:000000000000:backup-vault:golden-vault\",\"CreationDate\":\"1970-01-01T00:00:00Z\",\"NumberOfRecoveryPoints\":0}"
+  "body": "{\"BackupVaultName\":\"golden-vault\",\"BackupVaultArn\":\"arn:aws:backup:us-east-1:000000000000:backup-vault:golden-vault\",\"VaultType\":\"BACKUP_VAULT\",\"VaultState\":\"AVAILABLE\",\"CreationDate\":0,\"NumberOfRecoveryPoints\":0,\"Locked\":false}"
 }

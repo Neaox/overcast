@@ -99,6 +99,16 @@ func detectService(r *http.Request, body ...[]byte) string {
 		// under /api/v2, so there is nothing for the credential scope to
 		// disambiguate.
 		return "msk"
+	case strings.HasPrefix(r.URL.Path, "/backup-vaults"),
+		strings.HasPrefix(r.URL.Path, "/backup/plans"):
+		// AWS Backup's two modeled subtrees. Both are claimed at their full
+		// prefix rather than at a "/backup" root, because "backup" is a legal
+		// S3 bucket name and this switch runs ahead of the credential scope:
+		// claiming the root would take every object in a bucket called backup
+		// away from S3. Claiming these two takes only the paths Backup's own
+		// routes already answer, so the label agrees with what happened to the
+		// request. No other modeled service binds a URI under either.
+		return "backup"
 	case strings.HasPrefix(r.URL.Path, "/v2/email/"):
 		return "ses"
 	case strings.HasPrefix(r.URL.Path, "/2020-05-31/"):

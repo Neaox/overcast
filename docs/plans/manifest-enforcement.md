@@ -116,8 +116,9 @@ to WIP with it, because they were implemented, worked, and could not be called
 by any SDK. Rows leave as their fixes land, and the ratchet's second direction
 is what forces that — a ledger entry naming a binding that is now served fails
 the build. #860 took AppSync's two out, #855 AppConfig Data's two, #858 EKS's
-six, #859 MSK's v2 pair, and #854 AppConfig's twelve — the last of which also
-stopped AppRegistry answering `POST /applications` for an `appconfig` caller.
+six, #859 MSK's v2 pair, #854 AppConfig's twelve — the last of which also
+stopped AppRegistry answering `POST /applications` for an `appconfig` caller —
+and #815 Backup's nine, a service that had registered no chi routes at all.
 
 #862 is not in that table, and the reason is the ratchet earning its keep.
 `ses/V2CreateEmailIdentity` was in `unservedBindings` while this branch was

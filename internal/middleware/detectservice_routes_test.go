@@ -104,6 +104,11 @@ var registeredRouteClassification = map[string]string{
 	"/api":          "msk",
 	"/apikeys":      "apigateway",
 	"/applications": "appregistry",
+	// AWS Backup's two modeled subtrees, /backup-vaults and /backup/plans. The
+	// second's family is "/backup", but detectService claims the longer prefixes
+	// rather than that root: "backup" is a legal S3 bucket name.
+	"/backup":        "backup",
+	"/backup-vaults": "backup",
 	// AppConfig Data's two modeled bindings. detectService claims both
 	// prefixes explicitly: they are root-level paths with no version
 	// segment, so nothing else identifies them before the credential scope.

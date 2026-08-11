@@ -17,21 +17,37 @@ Metadata-only AWS Backup implementation.
 
 ## Summary
 
-Supports backup-vault and backup-plan control-plane CRUD for local stack compatibility.
+Supports backup-vault and backup-plan control-plane CRUD for local stack
+compatibility. AWS Backup uses the REST JSON protocol, and Overcast serves it at
+AWS's own bindings, so SDK clients, CDK constructs and `aws backup …` work
+unmodified.
 
 ## Behavior Notes
 
-- No recovery points are created or stored.
-- No backup jobs, restore jobs, or scheduling workers are executed.
+- Routes are AWS's own bindings, in two subtrees rather than one prefix: vaults
+  under `/backup-vaults` (e.g. `PUT /backup-vaults/{BackupVaultName}`) and plans
+  under `/backup/plans`.
+- Vaults and plans are per-region, as on AWS: the same vault name in two regions
+  is two vaults.
+- No recovery points are created or stored, so a vault's
+  `NumberOfRecoveryPoints` is always zero.
+- No backup jobs, restore jobs, or scheduling workers are executed — a plan's
+  rules are stored and echoed back, never fired.
+- Tagging is not implemented: `BackupVaultTags` and `BackupPlanTags` are
+  accepted at creation and dropped, and there are no `TagResource`,
+  `UntagResource` or `ListTags` operations
+  ([#815](https://github.com/Neaox/overcast/issues/815)).
 - Designed to unblock IaC/API flows expecting vault and plan resources.
+- Operations that are not emulated return a JSON `501 Not Implemented` error
+  response.
 
 <!-- BEGIN overcast:capabilities -->
 
 ## Summary
 
-| Category   | 🚧 WIP |
-| ---------- | ------ |
-| Operations | 9      |
+| Category   | ✅ Supported | ⚠️ Partial |
+| ---------- | ------------ | ---------- |
+| Operations | 2            | 7          |
 
 ---
 
@@ -39,16 +55,16 @@ Supports backup-vault and backup-plan control-plane CRUD for local stack compati
 
 ### Operations
 
-| Operation             | Status | Notes                                                                       | AWS Docs                                                                                    |
-| --------------------- | ------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `CreateBackupVault`   | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_CreateBackupVault.html)   |
-| `DeleteBackupVault`   | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_DeleteBackupVault.html)   |
-| `DescribeBackupVault` | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_DescribeBackupVault.html) |
-| `ListBackupVaults`    | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_ListBackupVaults.html)    |
-| `CreateBackupPlan`    | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_CreateBackupPlan.html)    |
-| `DeleteBackupPlan`    | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_DeleteBackupPlan.html)    |
-| `GetBackupPlan`       | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_GetBackupPlan.html)       |
-| `ListBackupPlans`     | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_ListBackupPlans.html)     |
-| `UpdateBackupPlan`    | 🚧 WIP | Overcast does not serve the binding AWS models, so no SDK reaches it (#815) | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_UpdateBackupPlan.html)    |
+| Operation             | Status       | Notes                                                                                                                                                                                | AWS Docs                                                                                    |
+| --------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `CreateBackupVault`   | ⚠️ Partial   | PUT /backup-vaults/{BackupVaultName}; `BackupVaultTags` is accepted and dropped — Backup has no tag operations yet (#815)                                                            | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_CreateBackupVault.html)   |
+| `DeleteBackupVault`   | ✅ Supported | DELETE /backup-vaults/{BackupVaultName}; empty 200, the modeled Unit output                                                                                                          | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_DeleteBackupVault.html)   |
+| `DescribeBackupVault` | ⚠️ Partial   | GET /backup-vaults/{BackupVaultName}; honours `backupVaultAccountId`. Vault lock and MPA approval are not emulated, so `Locked` is always false and the retention members are absent | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_DescribeBackupVault.html) |
+| `ListBackupVaults`    | ⚠️ Partial   | GET /backup-vaults; `vaultType`, `shared`, `maxResults` and `nextToken` query params. Every vault is a standard unshared vault, so `shared=true` lists none                          | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_ListBackupVaults.html)    |
+| `CreateBackupPlan`    | ⚠️ Partial   | PUT /backup/plans; `BackupPlanTags` is accepted and dropped (#815), and `AdvancedBackupSettings` is not stored or returned                                                           | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_CreateBackupPlan.html)    |
+| `DeleteBackupPlan`    | ✅ Supported | DELETE /backup/plans/{BackupPlanId}; returns the modeled id, ARN, VersionId and DeletionDate                                                                                         | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_DeleteBackupPlan.html)    |
+| `GetBackupPlan`       | ⚠️ Partial   | GET /backup/plans/{BackupPlanId}; only the current version is kept, so any other `versionId` is not found, and `MaxScheduledRunsPreview` yields no `ScheduledRunsPreview`            | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_GetBackupPlan.html)       |
+| `ListBackupPlans`     | ⚠️ Partial   | GET /backup/plans; `maxResults` and `nextToken` query params. Plans are deleted outright rather than tombstoned, so `includeDeleted` adds nothing                                    | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_ListBackupPlans.html)     |
+| `UpdateBackupPlan`    | ⚠️ Partial   | POST /backup/plans/{BackupPlanId}; mints a new VersionId per update. Prior versions are not retained and `AdvancedBackupSettings` is not stored                                      | [docs](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_UpdateBackupPlan.html)    |
 
 <!-- END overcast:capabilities -->

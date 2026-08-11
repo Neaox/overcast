@@ -1,28 +1,25 @@
 // golden_test.go contains wire-byte golden tests for Backup — see
 // docs/plans/wire-byte-goldens.md for the harness design.
 //
-// Backup is one of the "switch-based five" hybrid services flagged in
-// docs/plans/level2-codegen.md §2 Debt D2 (backup, cognito, eventbridge,
-// organizations, transfer): JSON traffic always runs through
-// (*Service).dispatchLegacy's inline switch (internal/services/backup/service.go),
-// while CBOR runs the fully-typed twin registered in typed_ops.go. These
-// goldens pin the legacy switch's exact response bytes for every operation
-// so the P2 delegation sweep (level2-codegen.md §3 Track 2) can convert each
-// switch case into a decode-shim onto the typed implementation and prove
-// byte-identical output with this same, unmodified test.
+// The fixtures pin the bytes of Backup's REST-JSON responses at the bindings
+// the pinned model gives them (backup-2018-11-15). They were re-recorded by
+// #815, which moved the service onto those bindings: the previous fixtures
+// were recorded through an `X-Amz-Target: AWSBackup.*` dispatcher for a
+// namespace AWS does not have, and pinned CreationDate as an RFC 3339 string
+// where restJson1 binds an epoch-seconds number.
 //
-// Coverage — every Backup operation is deterministic under a mock clock: all
-// nine registered operations produce no UUIDs; the one non-clock-driven ID
-// (BackupPlanId, minted as fmt.Sprintf("plan-%d", clk.Now().UnixNano()) in
-// service.go) is fully reproducible as long as the mock clock's value at
-// each CreateBackupPlan call is fixed — this test file advances srv.Clock by
-// a fixed step between successive creates so two plans never collide on the
-// same nanosecond-derived ID. All ops covered:
+// Coverage — all nine implemented operations:
 //
 //	CreateBackupVault, DescribeBackupVault, ListBackupVaults, DeleteBackupVault,
 //	CreateBackupPlan, GetBackupPlan, ListBackupPlans, UpdateBackupPlan, DeleteBackupPlan
 //
 // No Backup operations are excluded.
+//
+// Determinism: every timestamp comes from the mock clock, and the one
+// remaining non-deterministic value — BackupPlanId, a UUID as it is on AWS —
+// is normalised out by normalisePlanIDs before comparison. Pinning a UUID
+// would make these fixtures unrecordable; pinning a clock-derived id, as this
+// file did before, made two plans created at one instant collide.
 //
 // Record: go test ./tests/integration/backup/ -run TestGolden -record
 // Assert: go test ./tests/integration/backup/ -run TestGolden
@@ -30,48 +27,31 @@ package backup_test
 
 import (
 	"net/http"
+	"regexp"
 	"testing"
-	"time"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
 const backupGoldenDir = "goldens"
 
-// backupCall (the X-Amz-Target JSON request helper for the legacy dispatch
-// path) and decodeMap are defined in backup_test.go and reused here.
+// backupDo, createVault, createPlan and decodeMap are defined in
+// backup_test.go and reused here.
 
-func createVault(t *testing.T, srv *helpers.TestServer, name string) {
-	t.Helper()
-	resp := backupCall(t, srv, "CreateBackupVault", map[string]any{"BackupVaultName": name})
-	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusOK)
-}
+// uuidPattern matches the BackupPlanId minted by CreateBackupPlan, wherever it
+// appears — on its own and inside BackupPlanArn.
+var uuidPattern = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
-// createPlan creates a backup plan and returns its BackupPlanId.
-func createPlan(t *testing.T, srv *helpers.TestServer, name string) string {
-	t.Helper()
-	resp := backupCall(t, srv, "CreateBackupPlan", map[string]any{
-		"BackupPlan": map[string]any{
-			"BackupPlanName": name,
-			"Rules": []map[string]any{
-				{"RuleName": "daily", "TargetBackupVaultName": "default"},
-			},
-		},
-	})
-	defer resp.Body.Close()
-	helpers.AssertStatus(t, resp, http.StatusOK)
-	var out struct {
-		BackupPlanId string `json:"BackupPlanId"`
-	}
-	helpers.DecodeJSON(t, resp, &out)
-	return out.BackupPlanId
+// normalisePlanIDs replaces every minted plan id with a fixed placeholder so
+// the fixture pins the shape of the response rather than the value of a UUID.
+func normalisePlanIDs(body []byte) []byte {
+	return uuidPattern.ReplaceAll(body, []byte("00000000-0000-0000-0000-000000000000"))
 }
 
 func TestGolden_CreateBackupVault(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 
-	resp := backupCall(t, srv, "CreateBackupVault", map[string]any{"BackupVaultName": "golden-vault"})
+	resp := backupDo(t, srv, http.MethodPut, pathVaults+"/golden-vault", defaultRegion, map[string]any{})
 	helpers.GoldenTest(t, backupGoldenDir, "CreateBackupVault", resp, nil)
 }
 
@@ -79,7 +59,7 @@ func TestGolden_DescribeBackupVault(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	createVault(t, srv, "golden-vault")
 
-	resp := backupCall(t, srv, "DescribeBackupVault", map[string]any{"BackupVaultName": "golden-vault"})
+	resp := backupDo(t, srv, http.MethodGet, pathVaults+"/golden-vault", defaultRegion, nil)
 	helpers.GoldenTest(t, backupGoldenDir, "DescribeBackupVault", resp, nil)
 }
 
@@ -88,7 +68,7 @@ func TestGolden_ListBackupVaults(t *testing.T) {
 	createVault(t, srv, "golden-vault-a")
 	createVault(t, srv, "golden-vault-b")
 
-	resp := backupCall(t, srv, "ListBackupVaults", map[string]any{})
+	resp := backupDo(t, srv, http.MethodGet, pathVaults, defaultRegion, nil)
 	helpers.GoldenTest(t, backupGoldenDir, "ListBackupVaults", resp, nil)
 }
 
@@ -96,14 +76,14 @@ func TestGolden_DeleteBackupVault(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	createVault(t, srv, "golden-vault")
 
-	resp := backupCall(t, srv, "DeleteBackupVault", map[string]any{"BackupVaultName": "golden-vault"})
+	resp := backupDo(t, srv, http.MethodDelete, pathVaults+"/golden-vault", defaultRegion, nil)
 	helpers.GoldenTest(t, backupGoldenDir, "DeleteBackupVault", resp, nil)
 }
 
 func TestGolden_CreateBackupPlan(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 
-	resp := backupCall(t, srv, "CreateBackupPlan", map[string]any{
+	resp := backupDo(t, srv, http.MethodPut, pathPlans, defaultRegion, map[string]any{
 		"BackupPlan": map[string]any{
 			"BackupPlanName": "golden-plan",
 			"Rules": []map[string]any{
@@ -111,36 +91,31 @@ func TestGolden_CreateBackupPlan(t *testing.T) {
 			},
 		},
 	})
-	helpers.GoldenTest(t, backupGoldenDir, "CreateBackupPlan", resp, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "CreateBackupPlan", resp, normalisePlanIDs)
 }
 
 func TestGolden_GetBackupPlan(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
-	planID := createPlan(t, srv, "golden-plan")
+	planID, _ := createPlan(t, srv, "golden-plan")["BackupPlanId"].(string)
 
-	resp := backupCall(t, srv, "GetBackupPlan", map[string]any{"BackupPlanId": planID})
-	helpers.GoldenTest(t, backupGoldenDir, "GetBackupPlan", resp, nil)
+	resp := backupDo(t, srv, http.MethodGet, pathPlans+"/"+planID, defaultRegion, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "GetBackupPlan", resp, normalisePlanIDs)
 }
 
 func TestGolden_ListBackupPlans(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
 	createPlan(t, srv, "golden-plan-a")
-	// Advance the mock clock so the second plan gets a distinct
-	// nanosecond-derived BackupPlanId (see file-level doc comment).
-	srv.Clock.Add(time.Second)
 	createPlan(t, srv, "golden-plan-b")
 
-	resp := backupCall(t, srv, "ListBackupPlans", map[string]any{})
-	helpers.GoldenTest(t, backupGoldenDir, "ListBackupPlans", resp, nil)
+	resp := backupDo(t, srv, http.MethodGet, pathPlans, defaultRegion, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "ListBackupPlans", resp, normalisePlanIDs)
 }
 
 func TestGolden_UpdateBackupPlan(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
-	planID := createPlan(t, srv, "golden-plan")
-	srv.Clock.Add(time.Second)
+	planID, _ := createPlan(t, srv, "golden-plan")["BackupPlanId"].(string)
 
-	resp := backupCall(t, srv, "UpdateBackupPlan", map[string]any{
-		"BackupPlanId": planID,
+	resp := backupDo(t, srv, http.MethodPost, pathPlans+"/"+planID, defaultRegion, map[string]any{
 		"BackupPlan": map[string]any{
 			"BackupPlanName": "golden-plan-renamed",
 			"Rules": []map[string]any{
@@ -148,13 +123,13 @@ func TestGolden_UpdateBackupPlan(t *testing.T) {
 			},
 		},
 	})
-	helpers.GoldenTest(t, backupGoldenDir, "UpdateBackupPlan", resp, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "UpdateBackupPlan", resp, normalisePlanIDs)
 }
 
 func TestGolden_DeleteBackupPlan(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithMockClock())
-	planID := createPlan(t, srv, "golden-plan")
+	planID, _ := createPlan(t, srv, "golden-plan")["BackupPlanId"].(string)
 
-	resp := backupCall(t, srv, "DeleteBackupPlan", map[string]any{"BackupPlanId": planID})
-	helpers.GoldenTest(t, backupGoldenDir, "DeleteBackupPlan", resp, nil)
+	resp := backupDo(t, srv, http.MethodDelete, pathPlans+"/"+planID, defaultRegion, nil)
+	helpers.GoldenTest(t, backupGoldenDir, "DeleteBackupPlan", resp, normalisePlanIDs)
 }

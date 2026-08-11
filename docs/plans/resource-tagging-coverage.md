@@ -68,7 +68,7 @@ Tier is the Overcast service tier. "Status" is Overcast's, verified in code.
 | `kinesis` | partial | Stream | `TagResource` / `UntagResource` / `ListTagsForResource` (ARN-based, alongside the older stream-name ops) | ~~partial~~ **closed** |
 | `ses` | partial | Email identity, configuration set | SESv2 `TagResource` / `UntagResource` / `ListTagsForResource` (`POST`/`DELETE`/`GET /v2/email/tags`) | ~~missing~~ **closed for identities**; configuration sets are not emulated |
 | `acm` | inert | Certificate | `TagResource` / `UntagResource` / `ListTagsForResource` (modern aliases of `AddTagsToCertificate` / `RemoveTagsFromCertificate` / `ListTagsForCertificate`) | ~~partial~~ **closed** |
-| `backup` | inert | Backup vault, backup plan | `TagResource` / `UntagResource` / `ListTags` | **missing — not filled**, see [`backup` is not reachable by a real SDK at all](#backup-is-not-reachable-by-a-real-sdk-at-all) |
+| `backup` | inert | Backup vault, backup plan | `TagResource` / `UntagResource` / `ListTags` | **missing — not filled**; the protocol blocker is gone since #815, the tagging is not done, see [`backup` was not reachable by a real SDK at all](#backup-was-not-reachable-by-a-real-sdk-at-all--since-fixed-and-the-gap-is-now-unblocked) |
 | `cloudtrail` | inert | Trail | `AddTags` / `RemoveTags` / `ListTags` | ~~missing~~ **closed** |
 | `iam` | inert | Managed policy | `TagPolicy` / `UntagPolicy` / `ListPolicyTags` | ~~missing~~ **closed** |
 | `iam` | inert | Instance profile | `TagInstanceProfile` / `UntagInstanceProfile` / `ListInstanceProfileTags` | ~~missing~~ **closed** |
@@ -103,7 +103,7 @@ all.
 | `acm` | inert | `RequestCertificate` | `Tags` | ~~missing~~ **closed** |
 | `athena` | inert | `CreateWorkGroup` | `Tags` | **missing** |
 | `appconfig` | inert | `CreateApplication`, `CreateEnvironment`, `CreateConfigurationProfile` | `Tags` | **missing** |
-| `backup` | inert | `CreateBackupVault`, `CreateBackupPlan` | `BackupVaultTags` / `BackupPlanTags` | **missing — not filled**, same reason as Axis A |
+| `backup` | inert | `CreateBackupVault`, `CreateBackupPlan` | `BackupVaultTags` / `BackupPlanTags` | **missing — not filled**, same as Axis A: unblocked by #815, still not done; both members are accepted and dropped |
 | `cloudtrail` | inert | `CreateTrail` | `TagsList` | ~~missing~~ **closed** |
 | `elbv2` | inert | `CreateLoadBalancer`, `CreateTargetGroup`, `CreateRule` | `Tags` | **missing** |
 | `eventbridge` | inert | `CreateEventBus`, `PutRule` | `Tags` | **missing** |
@@ -124,22 +124,42 @@ tag member on `CreateBucket`).
 
 ## Findings that are not tagging gaps but block them
 
-### `backup` is not reachable by a real SDK at all
+### `backup` was not reachable by a real SDK at all — since fixed, and the gap is now unblocked
 
 AWS Backup is a REST-JSON service: `PUT /backup-vaults/{name}`,
-`GET /tags/{ResourceArn}`, and so on. Overcast's `backup` service registers **no
-chi routes** (`RegisterRoutes` is empty) and is dispatched purely off
+`GET /tags/{ResourceArn}`, and so on. Overcast's `backup` service registered
+**no chi routes** (`RegisterRoutes` was empty) and was dispatched purely off
 `X-Amz-Target: AWSBackup.<Operation>`, a target prefix AWS Backup does not use.
-Nothing in `aws-sdk-*/service/backup` will ever reach it. Adding tagging in the
-existing `X-Amz-Target` style would produce operations that are equally
-unreachable, so the tagging gap here cannot be honestly closed without first
-re-binding the service to its modeled REST paths. That is a service-shaped
-change, not a tagging change, and is left out of this branch deliberately.
+Nothing in `aws-sdk-*/service/backup` would ever have reached it. Adding tagging
+in the existing `X-Amz-Target` style would have produced operations that were
+equally unreachable, so the tagging gap could not be honestly closed without
+first re-binding the service to its modeled REST paths. That is a
+service-shaped change, not a tagging change, and was left out of this branch
+deliberately.
+
+**#815 has since done it**: all nine operations are served under
+`/backup-vaults` and `/backup/plans`, and the target prefix is gone. The
+blocker in both axes is therefore lifted — but the tagging work itself is still
+outstanding, and #815 did not attempt it. What remains:
+
+- **Axis A** — `TagResource` (`POST /tags/{ResourceArn}`), `ListTags`
+  (`GET /tags/{ResourceArn}`) and `UntagResource` (`POST /untag/{ResourceArn}`).
+  Note the third: Backup unbinds tags at `/untag`, not with `DELETE /tags`, so
+  it is not simply another member of the shared `/tags` dispatcher. The first
+  two are, and must join it through a `TagsRouter()` recorded as a
+  `dispatchMount`, exactly as Scheduler's do — registering competing `/tags`
+  patterns from `RegisterRoutes` is what `internal/router/router.go`'s
+  ARN-dispatcher exists to prevent.
+- **Axis B** — `BackupVaultTags` on `CreateBackupVault` and `BackupPlanTags` on
+  `CreateBackupPlan`. Both members are accepted and dropped today, which the
+  capability rows and `docs/services/backup.md` say plainly.
 
 ### Duplicate legacy/typed tag handlers
 
-Services built on the `dispatchLegacy` + `typedOps` pair (`athena`, `backup`,
-`transfer`, `cloudtrail`, and others) implement each operation twice: once as an
+Services built on the `dispatchLegacy` + `typedOps` pair (`athena`, `transfer`,
+`cloudtrail`, and others — `backup` was one until #815 deleted its half, the
+pinned model giving AWS Backup no RPC binding to serve) implement each
+operation twice: once as an
 `http.HandlerFunc` for the JSON 1.0/1.1 path and once as a typed function for the
 Smithy RPCv2 CBOR path. For tag operations this is ~120 duplicated lines per
 service with the two copies free to drift. New tag operations added by this
@@ -220,7 +240,9 @@ deprecated `TagLogGroup` / `UntagLogGroup` / `ListTagsLogGroup`;
 `CreateLogGroup` already stores its inline tags, so the tags exist and are
 merely unreadable.
 
-**Axis A — one service, blocked.** `backup`, for the protocol reason above.
+**Axis A — one service, open.** `backup`. It was blocked for the protocol
+reason above; #815 removed the block and did not close the gap, so this is now
+ordinary tagging work with nothing in front of it.
 
 **Axis B — fourteen services.** Every one of these already has working tagging
 operations; what is missing is only the inline tags on the create call.

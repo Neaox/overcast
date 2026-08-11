@@ -2705,8 +2705,6 @@ func serviceFromTarget(target string) (service, operation string) {
 			service = "efs"
 		case strings.HasPrefix(prefix, "CertificateManager"):
 			service = "acm"
-		case strings.HasPrefix(prefix, "AWSBackup"):
-			service = "backup"
 		case strings.HasPrefix(prefix, "TransferService"):
 			service = "transfer"
 		case strings.HasPrefix(prefix, "AWSShield_"):
@@ -2816,6 +2814,8 @@ func serviceFromPath(path string) string {
 		return "opensearch"
 	case strings.HasPrefix(path, "/applications"):
 		return "appregistry"
+	case strings.HasPrefix(path, "/backup-vaults"), strings.HasPrefix(path, "/backup/plans"):
+		return "backup"
 	default:
 		return ""
 	}

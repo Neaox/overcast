@@ -3,5 +3,5 @@
   "headers": {
     "Content-Type": "application/x-amz-json-1.0"
   },
-  "body": "{\"BackupPlan\":{\"BackupPlanName\":\"golden-plan\",\"Rules\":[{\"RuleName\":\"daily\",\"TargetBackupVaultName\":\"default\"}]},\"BackupPlanArn\":\"arn:aws:backup:us-east-1:000000000000:backup-plan:plan-0\",\"BackupPlanId\":\"plan-0\",\"CreationDate\":\"1970-01-01T00:00:00Z\",\"VersionId\":\"v1\"}"
+  "body": "{\"BackupPlan\":{\"BackupPlanName\":\"golden-plan\",\"Rules\":[{\"RuleName\":\"daily\",\"TargetBackupVaultName\":\"default\"}]},\"BackupPlanId\":\"00000000-0000-0000-0000-000000000000\",\"BackupPlanArn\":\"arn:aws:backup:us-east-1:000000000000:backup-plan:00000000-0000-0000-0000-000000000000\",\"VersionId\":\"v1\",\"CreationDate\":0}"
 }
