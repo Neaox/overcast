@@ -238,105 +238,20 @@ func (s *Service) deletePodIdentityAssociation(w http.ResponseWriter, r *http.Re
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"association": assoc})
 }
 
+// describeIdentityProviderConfig serves
+// POST /clusters/{clusterName}/identity-provider-configs/describe. The config
+// is named by a body member, not by two path segments, and the response nests
+// it under its provider type.
 func (s *Service) describeIdentityProviderConfig(w http.ResponseWriter, r *http.Request) {
-	clusterName := chi.URLParam(r, "name")
-	configType := chi.URLParam(r, "configType")
-	configName := chi.URLParam(r, "configName")
-	region := s.region(r)
-	ctx := r.Context()
-
-	if _, ok := s.requireAccessibleCluster(w, r, region, clusterName); !ok {
+	req := &describeIdentityProviderConfigRequest{}
+	if !serviceutil.DecodeJSON(w, r, req) {
 		return
 	}
-
-	cfg, found, err := s.getIdentityProviderConfig(ctx, region, clusterName, configType, configName)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("No identity provider config found for %s/%s", configType, configName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	cfg.Tags = s.readTagsForARN(ctx, s.identityProviderConfigARN(region, clusterName, configType, configName))
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"identityProviderConfig": cfg})
-}
-
-func (s *Service) updateIdentityProviderConfig(w http.ResponseWriter, r *http.Request) {
-	clusterName := chi.URLParam(r, "name")
-	configType := chi.URLParam(r, "configType")
-	configName := chi.URLParam(r, "configName")
-	region := s.region(r)
-	ctx := r.Context()
-
-	if _, ok := s.requireAccessibleCluster(w, r, region, clusterName); !ok {
-		return
-	}
-
-	cfg, found, err := s.getIdentityProviderConfig(ctx, region, clusterName, configType, configName)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("No identity provider config found for %s/%s", configType, configName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	var req struct {
-		OIDC map[string]any    `json:"oidc"`
-		Tags map[string]string `json:"tags"`
-	}
-	if !serviceutil.DecodeJSON(w, r, &req) {
-		return
-	}
-	if configType == "oidc" {
-		if req.OIDC == nil {
-			protocol.WriteJSONError(w, r, &protocol.AWSError{
-				Code:       "InvalidParameterException",
-				Message:    "oidc update payload is required",
-				HTTPStatus: http.StatusBadRequest,
-			})
-			return
-		}
-		if cfg.OIDC == nil {
-			cfg.OIDC = map[string]any{}
-		}
-		for k, v := range req.OIDC {
-			cfg.OIDC[k] = v
-		}
-	}
-
-	if err := s.putIdentityProviderConfig(ctx, region, cfg); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	update := &Update{
-		ID:        fmt.Sprintf("upd-idp-update-%s-%d", configName, s.clk.Now().UnixNano()),
-		Status:    "Successful",
-		Type:      "UpdateIdentityProviderConfig",
-		CreatedAt: s.clk.Now(),
-		Params: []map[string]any{
-			{"type": "IdentityProviderConfigType", "value": configType},
-			{"type": "IdentityProviderConfigName", "value": configName},
-		},
-	}
-	if err := s.putUpdate(ctx, region, clusterName, update); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"update": update})
+	// The label is applied after the body so a body member of the same name
+	// cannot displace the path the request was routed on.
+	req.ClusterName = chi.URLParam(r, "name")
+	out, aerr := s.describeIdentityProviderConfigTyped(r.Context(), req)
+	writeResult(w, r, out, aerr)
 }
 
 func (s *Service) associateIdentityProviderConfig(w http.ResponseWriter, r *http.Request) {

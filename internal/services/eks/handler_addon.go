@@ -141,155 +141,98 @@ func (s *Service) deleteAddon(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"addon": a})
 }
 
+// updateAddon serves POST /clusters/{clusterName}/addons/{addonName}/update —
+// "update", not "updates", which is the whole of the #858 fault here.
 func (s *Service) updateAddon(w http.ResponseWriter, r *http.Request) {
-	clusterName := chi.URLParam(r, "name")
-	addonName := chi.URLParam(r, "addonName")
-	region := s.region(r)
-	ctx := r.Context()
-
-	if _, ok := s.requireAccessibleCluster(w, r, region, clusterName); !ok {
+	req := &updateAddonRequest{}
+	if !serviceutil.DecodeJSON(w, r, req) {
 		return
 	}
-
-	a, found, err := s.getAddon(ctx, region, clusterName, addonName)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("No addon found for name: %s", addonName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	var req struct {
-		AddonVersion          string `json:"addonVersion"`
-		ConfigurationValues   string `json:"configurationValues"`
-		ServiceAccountRoleArn string `json:"serviceAccountRoleArn"`
-	}
-	if !serviceutil.DecodeJSON(w, r, &req) {
-		return
-	}
-	if req.AddonVersion == "" && req.ConfigurationValues == "" && req.ServiceAccountRoleArn == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "InvalidParameterException",
-			Message:    "No addon changes requested",
-			HTTPStatus: http.StatusBadRequest,
-		})
-		return
-	}
-
-	params := make([]map[string]any, 0, 4)
-	if req.AddonVersion != "" {
-		a.AddonVersion = req.AddonVersion
-		params = append(params, map[string]any{"type": "AddonVersion", "value": req.AddonVersion})
-	}
-	if req.ConfigurationValues != "" {
-		a.ConfigurationValues = req.ConfigurationValues
-		params = append(params, map[string]any{"type": "ConfigurationValues", "value": "updated"})
-	}
-	if req.ServiceAccountRoleArn != "" {
-		a.ServiceAccountRoleArn = req.ServiceAccountRoleArn
-		params = append(params, map[string]any{"type": "ServiceAccountRoleArn", "value": req.ServiceAccountRoleArn})
-	}
-	params = append(params, map[string]any{"type": "AddonName", "value": addonName})
-
-	if err := s.putAddon(ctx, region, a); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	update := &Update{
-		ID:        fmt.Sprintf("upd-addon-%s-%d", addonName, s.clk.Now().UnixNano()),
-		Status:    "Successful",
-		Type:      "AddonUpdate",
-		CreatedAt: s.clk.Now(),
-		Params:    params,
-	}
-	if err := s.putUpdate(ctx, region, clusterName, update); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"update": update})
+	// The labels are applied after the body so a body member of the same name
+	// cannot displace the path the request was routed on.
+	req.ClusterName = chi.URLParam(r, "name")
+	req.AddonName = chi.URLParam(r, "addonName")
+	out, aerr := s.updateAddonTyped(r.Context(), req)
+	writeResult(w, r, out, aerr)
 }
 
-// addonVersionCatalog holds curated mock versions for the core EKS add-ons.
-// Unknown add-ons receive an empty list — callers must handle this gracefully.
-var addonVersionCatalog = map[string][]string{
-	"vpc-cni":            {"v1.18.3-eksbuild.3", "v1.18.2-eksbuild.1", "v1.17.1-eksbuild.1"},
-	"coredns":            {"v1.11.3-eksbuild.1", "v1.11.1-eksbuild.11", "v1.10.1-eksbuild.11"},
-	"kube-proxy":         {"v1.30.3-eksbuild.5", "v1.29.7-eksbuild.9", "v1.28.13-eksbuild.2"},
-	"aws-ebs-csi-driver": {"v1.35.0-eksbuild.1", "v1.34.0-eksbuild.1"},
+// addonCatalogEntry is one entry in the synthetic catalog of AWS-managed
+// add-ons that DescribeAddonVersions lists and DescribeAddonConfiguration
+// answers from.
+//
+// The two operations used to read separate tables, and the configuration table
+// carried a single version per add-on — so a caller asking for the schema of a
+// version DescribeAddonVersions had just advertised was answered with whatever
+// version that other table held. One table means the two can no longer
+// disagree.
+//
+// Type, Publisher and Owner are AWS's documented values for its own managed
+// add-ons; the pinned model describes the members, not their contents, so they
+// could not be read from it. They are here so the modeled `types`, `publishers`
+// and `owners` filters can be honoured rather than silently ignored.
+type addonCatalogEntry struct {
+	Type      string
+	Publisher string
+	Owner     string
+	// Versions is newest-first. The first entry is the default version.
+	Versions []string
+	// Schema is the configuration schema, which is synthetic and therefore the
+	// same for every version of an add-on.
+	Schema string
 }
 
-var addonConfigurationCatalog = map[string]struct {
-	Version string
-	Schema  string
-}{
+// addonCatalogClusterVersions are the Kubernetes versions every catalogued
+// add-on declares compatibility with. They gate the modeled kubernetesVersion
+// query filter.
+var addonCatalogClusterVersions = []string{"1.30", "1.29"}
+
+var addonCatalog = map[string]addonCatalogEntry{
 	"vpc-cni": {
-		Version: "v1.18.3-eksbuild.3",
-		Schema:  `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"env":{"type":"object","properties":{"AWS_VPC_K8S_CNI_LOGLEVEL":{"type":"string"}}}}}`,
+		Type: "networking", Publisher: "eks", Owner: "aws",
+		Versions: []string{"v1.18.3-eksbuild.3", "v1.18.2-eksbuild.1", "v1.17.1-eksbuild.1"},
+		Schema:   `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"env":{"type":"object","properties":{"AWS_VPC_K8S_CNI_LOGLEVEL":{"type":"string"}}}}}`,
 	},
 	"coredns": {
-		Version: "v1.11.3-eksbuild.1",
-		Schema:  `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"replicaCount":{"type":"integer"}}}`,
+		Type: "networking", Publisher: "eks", Owner: "aws",
+		Versions: []string{"v1.11.3-eksbuild.1", "v1.11.1-eksbuild.11", "v1.10.1-eksbuild.11"},
+		Schema:   `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"replicaCount":{"type":"integer"}}}`,
 	},
 	"kube-proxy": {
-		Version: "v1.30.3-eksbuild.5",
-		Schema:  `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"mode":{"type":"string"}}}`,
+		Type: "networking", Publisher: "eks", Owner: "aws",
+		Versions: []string{"v1.30.3-eksbuild.5", "v1.29.7-eksbuild.9", "v1.28.13-eksbuild.2"},
+		Schema:   `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"mode":{"type":"string"}}}`,
 	},
 	"aws-ebs-csi-driver": {
-		Version: "v1.35.0-eksbuild.1",
-		Schema:  `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"controller":{"type":"object"}}}`,
+		Type: "storage", Publisher: "eks", Owner: "aws",
+		Versions: []string{"v1.35.0-eksbuild.1", "v1.34.0-eksbuild.1"},
+		Schema:   `{"$schema":"http://json-schema.org/draft-06/schema#","type":"object","properties":{"controller":{"type":"object"}}}`,
 	},
 }
 
+// describeAddonVersions serves GET /addons/supported-versions. Every input is
+// an httpQuery member on a fixed path — the add-on name included, which is why
+// there is no chi label to read.
 func (s *Service) describeAddonVersions(w http.ResponseWriter, r *http.Request) {
-	addonName := chi.URLParam(r, "addonName")
-
-	versions := addonVersionCatalog[addonName]
-	if len(versions) == 0 {
-		protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"addons": []any{}})
-		return
-	}
-
-	versionEntries := make([]map[string]any, 0, len(versions))
-	for _, v := range versions {
-		versionEntries = append(versionEntries, map[string]any{
-			"addonVersion": v,
-			"compatibilities": []map[string]any{
-				{"clusterVersion": "1.30", "defaultVersion": v == versions[0]},
-				{"clusterVersion": "1.29", "defaultVersion": false},
-			},
-		})
-	}
-
-	entry := map[string]any{
-		"addonName":     addonName,
-		"addonVersions": versionEntries,
-	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"addons": []any{entry}})
+	query := r.URL.Query()
+	out, aerr := s.describeAddonVersionsTyped(r.Context(), &describeAddonVersionsRequest{
+		AddonName:         query.Get("addonName"),
+		KubernetesVersion: query.Get("kubernetesVersion"),
+		Types:             query["types"],
+		Publishers:        query["publishers"],
+		Owners:            query["owners"],
+		MaxResults:        serviceutil.QueryInt(r, "maxResults", 0),
+		NextToken:         query.Get("nextToken"),
+	})
+	writeResult(w, r, out, aerr)
 }
 
+// describeAddonConfiguration serves GET /addons/configuration-schemas.
+// addonName and addonVersion are both @required httpQuery members.
 func (s *Service) describeAddonConfiguration(w http.ResponseWriter, r *http.Request) {
-	addonName := chi.URLParam(r, "addonName")
-	cfg, ok := addonConfigurationCatalog[addonName]
-	if !ok {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("No addon configuration found for name: %s", addonName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"addonName":           addonName,
-		"addonVersion":        cfg.Version,
-		"configurationSchema": cfg.Schema,
+	query := r.URL.Query()
+	out, aerr := s.describeAddonConfigurationTyped(r.Context(), &describeAddonConfigurationRequest{
+		AddonName:    query.Get("addonName"),
+		AddonVersion: query.Get("addonVersion"),
 	})
+	writeResult(w, r, out, aerr)
 }

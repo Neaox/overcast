@@ -167,7 +167,8 @@ func TestLiveModeListInsightsBlocksMockRecord(t *testing.T) {
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodGet, "/clusters/"+legacyMockClusterName+"/insights", nil)
+	req := httptest.NewRequest(http.MethodPost, "/clusters/"+legacyMockClusterName+"/insights", bytes.NewReader([]byte("{}")))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

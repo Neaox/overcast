@@ -302,22 +302,20 @@ var capabilityOperationAliases = map[string]string{
 // emulator-internal operations or legacy operations that AWS no longer models.
 // Keep an explicit reason here rather than silently weakening the model gate.
 var capabilityManifestExemptions = map[string]string{
-	"apigateway/ExecuteRestAPI":        "emulator invoke-route helper, not an AWS control-plane operation",
-	"apigateway/ExecuteV2API":          "emulator invoke-route helper, not an AWS control-plane operation",
-	"apigateway/GetV2Integration":      "legacy local operation name; API Gateway v2 has no GetIntegration operation",
-	"apigateway/DeleteV2Integration":   "legacy local operation name; API Gateway v2 has no DeleteIntegration operation",
-	"apigateway/GetV2Authorizer":       "legacy local operation name; API Gateway v2 has no GetAuthorizer operation",
-	"apigateway/GetV2Authorizers":      "legacy local operation name; API Gateway v2 has no GetAuthorizers operation",
-	"apigateway/DeleteV2Authorizer":    "legacy local operation name; API Gateway v2 has no DeleteAuthorizer operation",
-	"apigateway/GetV2DomainNames":      "legacy local operation name; API Gateway v2 has no GetDomainNames operation",
-	"apigateway/DeleteV2DomainName":    "legacy local operation name; API Gateway v2 has no DeleteDomainName operation",
-	"apigateway/GetV2VpcLinks":         "legacy local operation name; API Gateway v2 has no GetVpcLinks operation",
-	"apigateway/DeleteV2VpcLink":       "legacy local operation name; API Gateway v2 has no DeleteVpcLink operation",
-	"appsync/ExecuteGraphQL":           "emulator GraphQL execution helper, not an AWS SDK operation",
-	"cloudfront/ProxyRequest":          "emulator proxy helper, not an AWS control-plane operation",
-	"eks/DescribeAccessPolicy":         "legacy local name; no corresponding EKS operation",
-	"eks/UpdateIdentityProviderConfig": "legacy local name; EKS models associate/disassociate instead",
-	"eks/UpdateKubeconfig":             "emulator convenience helper, not an AWS SDK operation",
+	"apigateway/ExecuteRestAPI":      "emulator invoke-route helper, not an AWS control-plane operation",
+	"apigateway/ExecuteV2API":        "emulator invoke-route helper, not an AWS control-plane operation",
+	"apigateway/GetV2Integration":    "legacy local operation name; API Gateway v2 has no GetIntegration operation",
+	"apigateway/DeleteV2Integration": "legacy local operation name; API Gateway v2 has no DeleteIntegration operation",
+	"apigateway/GetV2Authorizer":     "legacy local operation name; API Gateway v2 has no GetAuthorizer operation",
+	"apigateway/GetV2Authorizers":    "legacy local operation name; API Gateway v2 has no GetAuthorizers operation",
+	"apigateway/DeleteV2Authorizer":  "legacy local operation name; API Gateway v2 has no DeleteAuthorizer operation",
+	"apigateway/GetV2DomainNames":    "legacy local operation name; API Gateway v2 has no GetDomainNames operation",
+	"apigateway/DeleteV2DomainName":  "legacy local operation name; API Gateway v2 has no DeleteDomainName operation",
+	"apigateway/GetV2VpcLinks":       "legacy local operation name; API Gateway v2 has no GetVpcLinks operation",
+	"apigateway/DeleteV2VpcLink":     "legacy local operation name; API Gateway v2 has no DeleteVpcLink operation",
+	"appsync/ExecuteGraphQL":         "emulator GraphQL execution helper, not an AWS SDK operation",
+	"cloudfront/ProxyRequest":        "emulator proxy helper, not an AWS control-plane operation",
+	"eks/UpdateKubeconfig":           "emulator convenience helper, not an AWS SDK operation",
 }
 
 func capabilityManifestExemption(cap CapabilityDecl) string {

@@ -136,63 +136,21 @@ func (s *Service) describeNodegroup(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"nodegroup": nodegroup})
 }
 
+// updateNodegroupVersion serves
+// POST /clusters/{clusterName}/node-groups/{nodegroupName}/update-version.
+// Overcast served it at ".../updates", one character away from the cluster's
+// own ListUpdates/UpdateClusterVersion path and modeled nowhere.
 func (s *Service) updateNodegroupVersion(w http.ResponseWriter, r *http.Request) {
-	clusterName := chi.URLParam(r, "name")
-	nodegroupName := chi.URLParam(r, "nodegroupName")
-	region := s.region(r)
-	ctx := r.Context()
-
-	if _, ok := s.requireAccessibleCluster(w, r, region, clusterName); !ok {
+	req := &updateNodegroupVersionRequest{}
+	if !serviceutil.DecodeJSON(w, r, req) {
 		return
 	}
-
-	nodegroup, found, err := s.getNodegroup(ctx, region, clusterName, nodegroupName)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    fmt.Sprintf("No nodegroup found for name: %s", nodegroupName),
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
-	var req struct {
-		Version string `json:"version"`
-	}
-	if !serviceutil.DecodeJSON(w, r, &req) {
-		return
-	}
-	if !serviceutil.RequireString(w, r, req.Version, "version") {
-		return
-	}
-
-	nodegroup.Version = req.Version
-	if err := s.putNodegroup(ctx, region, nodegroup); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-	update := &Update{
-		ID:        fmt.Sprintf("upd-ng-%s-%d", nodegroupName, s.clk.Now().UnixNano()),
-		Status:    "Successful",
-		Type:      "VersionUpdate",
-		CreatedAt: s.clk.Now(),
-		Params: []map[string]any{
-			{"type": "Version", "value": req.Version},
-			{"type": "NodegroupName", "value": nodegroupName},
-		},
-	}
-	if err := s.putUpdate(ctx, region, clusterName, update); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
-		return
-	}
-
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
-		"update": update,
-	})
+	// The labels are applied after the body so a body member of the same name
+	// cannot displace the path the request was routed on.
+	req.ClusterName = chi.URLParam(r, "name")
+	req.NodegroupName = chi.URLParam(r, "nodegroupName")
+	out, aerr := s.updateNodegroupVersionTyped(r.Context(), req)
+	writeResult(w, r, out, aerr)
 }
 
 func (s *Service) updateNodegroupConfig(w http.ResponseWriter, r *http.Request) {

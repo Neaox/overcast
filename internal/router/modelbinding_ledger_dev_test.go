@@ -72,15 +72,6 @@ var unservedBindings = map[string]string{
 	// under /_opensearch; they now answer on the /2021-01-01 bindings the
 	// model gives them, so the ledger must not still claim the fault.
 
-	// #858 — six hand-invented paths, four with the wrong HTTP method,
-	// written by hand next to a manifest that already had the answers.
-	"eks/DescribeAddonConfiguration":     "#858",
-	"eks/DescribeAddonVersions":          "#858",
-	"eks/DescribeIdentityProviderConfig": "#858",
-	"eks/ListInsights":                   "#858",
-	"eks/UpdateAddon":                    "#858",
-	"eks/UpdateNodegroupVersion":         "#858",
-
 	// #859 — the v2 API is served at /v2/clusters where the model binds
 	// /api/v2/clusters. The v1 surface is reachable: it is claimed by
 	// /v1/clusters/* wildcards whose handlers parse the tail themselves, which

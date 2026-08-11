@@ -367,24 +367,32 @@ func TestEKSListAccessPolicies(t *testing.T) {
 	}
 }
 
-func TestEKSDescribeAccessPolicy(t *testing.T) {
+// TestEKSListAccessPoliciesReturnsTheWholePolicy covers what the deleted
+// DescribeAccessPolicy test used to: AWS models no per-policy describe, and
+// ListAccessPolicies is where a caller gets a policy's ARN (#861).
+func TestEKSListAccessPoliciesReturnsTheWholePolicy(t *testing.T) {
+	// Given: a running emulator
 	srv := newEKSServer(t)
 
-	resp := eksCall(t, http.MethodGet, srv.URL+"/access-policies/AmazonEKSViewPolicy", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for describe access policy, got %d", resp.StatusCode)
-	}
-	body := decodeBody(t, resp)
-	policy, _ := body["accessPolicy"].(map[string]any)
-	if policy["name"] != "AmazonEKSViewPolicy" {
-		t.Fatalf("expected policy name AmazonEKSViewPolicy, got %v", policy["name"])
-	}
-	if policy["arn"] != "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy" {
-		t.Fatalf("expected policy ARN for view policy, got %v", policy["arn"])
-	}
+	// When: the managed policies are listed
+	body := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/access-policies", nil), http.StatusOK)
 
-	missing := eksCall(t, http.MethodGet, srv.URL+"/access-policies/UnknownPolicy", nil)
-	_ = expectResourceNotFound(t, missing)
+	// Then: each entry carries the members AccessPolicy binds
+	items, _ := body["accessPolicies"].([]any)
+	found := false
+	for _, item := range items {
+		policy, _ := item.(map[string]any)
+		if policy["name"] != "AmazonEKSViewPolicy" {
+			continue
+		}
+		found = true
+		if policy["arn"] != "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy" {
+			t.Fatalf("expected policy ARN for view policy, got %v", policy["arn"])
+		}
+	}
+	if !found {
+		t.Fatalf("expected AmazonEKSViewPolicy in the catalog, got %v", items)
+	}
 }
 
 func TestEKSCreateAccessEntryPersistsInlineTags(t *testing.T) {

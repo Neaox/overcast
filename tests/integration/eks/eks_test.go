@@ -183,6 +183,24 @@ func mustAssociateIdentityProviderConfig(t *testing.T, baseURL, clusterName, con
 	return update
 }
 
+// mustDescribeIdentityProviderConfig returns the OidcIdentityProviderConfig the
+// modeled DescribeIdentityProviderConfig nests under
+// identityProviderConfig.oidc.
+func mustDescribeIdentityProviderConfig(t *testing.T, baseURL, clusterName, configName string) map[string]any {
+	t.Helper()
+	body := expectJSONStatus(t, eksCall(t, http.MethodPost, baseURL+"/clusters/"+clusterName+"/identity-provider-configs/describe",
+		map[string]any{"identityProviderConfig": map[string]any{"type": "oidc", "name": configName}}), http.StatusOK)
+	config, ok := body["identityProviderConfig"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected identityProviderConfig in describe response, got %#v", body)
+	}
+	oidc, ok := config["oidc"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected oidc in identityProviderConfig, got %#v", config)
+	}
+	return oidc
+}
+
 func mustAssociateAccessPolicy(t *testing.T, baseURL, clusterName, principalArn string, payload map[string]any) map[string]any {
 	t.Helper()
 	body := expectJSONStatus(t, eksCall(t, http.MethodPost, baseURL+"/clusters/"+clusterName+"/access-entries/"+url.PathEscape(principalArn)+"/access-policies", payload), http.StatusCreated)
@@ -348,7 +366,7 @@ func TestEKSLiveModeListInsightsReturnsNotImplemented(t *testing.T) {
 
 	_ = mustCreateCluster(t, mockSrv.URL, "live-list-insights-cluster", nil)
 
-	resp := eksCall(t, http.MethodGet, liveSrv.URL+"/clusters/live-list-insights-cluster/insights", nil)
+	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-list-insights-cluster/insights", map[string]any{})
 	expectStatus(t, resp, http.StatusNotImplemented)
 }
 
@@ -639,7 +657,8 @@ func TestEKSLiveModeDescribeIdentityProviderConfigReturnsNotImplemented(t *testi
 
 	_ = mustCreateCluster(t, mockSrv.URL, "live-describe-idp-config-cluster", nil)
 
-	resp := eksCall(t, http.MethodGet, liveSrv.URL+"/clusters/live-describe-idp-config-cluster/identity-provider-configs/oidc/oidc-primary", nil)
+	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-describe-idp-config-cluster/identity-provider-configs/describe",
+		map[string]any{"identityProviderConfig": map[string]any{"type": "oidc", "name": "oidc-primary"}})
 	expectStatus(t, resp, http.StatusNotImplemented)
 }
 
@@ -656,24 +675,6 @@ func TestEKSLiveModeAssociateIdentityProviderConfigReturnsNotImplemented(t *test
 	_ = mustCreateCluster(t, mockSrv.URL, "live-associate-idp-config-cluster", nil)
 
 	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-associate-idp-config-cluster/identity-provider-configs/associate", oidcConfigPayload("oidc-primary"))
-	expectStatus(t, resp, http.StatusNotImplemented)
-}
-
-func TestEKSLiveModeUpdateIdentityProviderConfigReturnsNotImplemented(t *testing.T) {
-	store := state.NewMemoryStore()
-	mockSrv := helpers.NewTestServer(t,
-		helpers.WithStore(store),
-	)
-	liveSrv := helpers.NewTestServer(t,
-		helpers.WithStore(store),
-		helpers.WithEKSMode(config.EKSModeLive),
-	)
-
-	_ = mustCreateCluster(t, mockSrv.URL, "live-update-idp-config-cluster", nil)
-
-	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-update-idp-config-cluster/identity-provider-configs/oidc/oidc-primary/update", map[string]any{
-		"oidc": map[string]any{"usernameClaim": "email"},
-	})
 	expectStatus(t, resp, http.StatusNotImplemented)
 }
 
@@ -916,7 +917,7 @@ func TestEKSLiveModeUpdateNodegroupVersionReturnsNotImplemented(t *testing.T) {
 
 	_ = mustCreateCluster(t, mockSrv.URL, "live-update-ng-version-cluster", nil)
 
-	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-update-ng-version-cluster/node-groups/ng-1/updates", map[string]any{
+	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-update-ng-version-cluster/node-groups/ng-1/update-version", map[string]any{
 		"version": "1.32",
 	})
 	expectStatus(t, resp, http.StatusNotImplemented)
@@ -952,7 +953,7 @@ func TestEKSLiveModeUpdateAddonReturnsNotImplemented(t *testing.T) {
 
 	_ = mustCreateCluster(t, mockSrv.URL, "live-update-addon-cluster", nil)
 
-	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-update-addon-cluster/addons/vpc-cni/updates", map[string]any{
+	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-update-addon-cluster/addons/vpc-cni/update", map[string]any{
 		"addonVersion": "v1.15.0",
 	})
 	expectStatus(t, resp, http.StatusNotImplemented)
@@ -1086,26 +1087,6 @@ func TestEKSLiveModeListAccessPoliciesStillWorks(t *testing.T) {
 	}
 }
 
-func TestEKSLiveModeDescribeAccessPolicyStillWorks(t *testing.T) {
-	srv := helpers.NewTestServer(t,
-		helpers.WithEKSMode(config.EKSModeLive),
-	)
-
-	body := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/access-policies/AmazonEKSClusterAdminPolicy", nil), http.StatusOK)
-	policy, _ := body["accessPolicy"].(map[string]any)
-	if policy["name"] != "AmazonEKSClusterAdminPolicy" {
-		t.Fatalf("expected policy name AmazonEKSClusterAdminPolicy, got %#v", policy)
-	}
-}
-
-func TestEKSLiveModeDescribeAccessPolicyMissingStillReturnsNotFound(t *testing.T) {
-	srv := helpers.NewTestServer(t,
-		helpers.WithEKSMode(config.EKSModeLive),
-	)
-
-	_ = expectResourceNotFound(t, eksCall(t, http.MethodGet, srv.URL+"/access-policies/DoesNotExist", nil))
-}
-
 func TestEKSLiveModeDescribeClusterVersionsStillWorks(t *testing.T) {
 	srv := helpers.NewTestServer(t,
 		helpers.WithEKSMode(config.EKSModeLive),
@@ -1123,7 +1104,7 @@ func TestEKSLiveModeDescribeAddonVersionsStillWorks(t *testing.T) {
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
-	body := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/addons/vpc-cni/versions", nil), http.StatusOK)
+	body := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/addons/supported-versions?addonName=vpc-cni", nil), http.StatusOK)
 	addons, _ := body["addons"].([]any)
 	if len(addons) == 0 {
 		t.Fatalf("expected at least one addon catalog entry in live mode, got %v", body["addons"])
@@ -1135,7 +1116,7 @@ func TestEKSLiveModeDescribeAddonVersionsUnknownStillReturnsEmpty(t *testing.T) 
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
-	body := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/addons/does-not-exist/versions", nil), http.StatusOK)
+	body := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/addons/supported-versions?addonName=does-not-exist", nil), http.StatusOK)
 	addons, _ := body["addons"].([]any)
 	if len(addons) != 0 {
 		t.Fatalf("expected empty addon catalog for unknown addon in live mode, got %v", body["addons"])
@@ -1147,7 +1128,7 @@ func TestEKSLiveModeDescribeAddonConfigurationStillWorks(t *testing.T) {
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
-	body := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/addons/vpc-cni/configuration", nil), http.StatusOK)
+	body := expectJSONStatus(t, eksCall(t, http.MethodGet, srv.URL+"/addons/configuration-schemas?addonName=vpc-cni&addonVersion=v1.18.3-eksbuild.3", nil), http.StatusOK)
 	if body["addonName"] != "vpc-cni" {
 		t.Fatalf("expected addonName vpc-cni in live mode, got %#v", body)
 	}
@@ -1161,7 +1142,7 @@ func TestEKSLiveModeDescribeAddonConfigurationMissingStillReturnsNotFound(t *tes
 		helpers.WithEKSMode(config.EKSModeLive),
 	)
 
-	_ = expectResourceNotFound(t, eksCall(t, http.MethodGet, srv.URL+"/addons/does-not-exist/configuration", nil))
+	_ = expectResourceNotFound(t, eksCall(t, http.MethodGet, srv.URL+"/addons/configuration-schemas?addonName=does-not-exist&addonVersion=v1.0.0", nil))
 }
 
 func TestEKSLiveModeListTagsForLegacyMockNodegroupReturnsNotImplemented(t *testing.T) {
@@ -1830,7 +1811,7 @@ func TestEKSInsights(t *testing.T) {
 
 	_ = mustCreateCluster(t, srv.URL, "insights-cluster", nil)
 
-	listResp := eksCall(t, http.MethodGet, srv.URL+"/clusters/insights-cluster/insights", nil)
+	listResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/insights-cluster/insights", map[string]any{})
 	if listResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for list insights, got %d", listResp.StatusCode)
 	}
@@ -1856,7 +1837,7 @@ func TestEKSInsights(t *testing.T) {
 	}
 
 	_ = expectResourceNotFound(t, eksCall(t, http.MethodGet, srv.URL+"/clusters/insights-cluster/insights/missing-id", nil))
-	_ = expectResourceNotFound(t, eksCall(t, http.MethodGet, srv.URL+"/clusters/no-cluster/insights", nil))
+	_ = expectResourceNotFound(t, eksCall(t, http.MethodPost, srv.URL+"/clusters/no-cluster/insights", map[string]any{}))
 }
 
 func TestEKSNodegroupLifecycle(t *testing.T) {
@@ -1987,7 +1968,7 @@ func TestEKSUpdateNodegroupVersion(t *testing.T) {
 	_ = mustCreateCluster(t, srv.URL, "demo-cluster", nil)
 	_ = mustCreateNodegroup(t, srv.URL, "demo-cluster", "workers-a", []string{"subnet-1", "subnet-2"})
 
-	updateResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/demo-cluster/node-groups/workers-a/updates", map[string]any{
+	updateResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/demo-cluster/node-groups/workers-a/update-version", map[string]any{
 		"version": "1.32",
 	})
 	if updateResp.StatusCode != http.StatusOK {
@@ -2134,7 +2115,7 @@ func TestEKSDescribeUpdate_afterNodegroupUpdate(t *testing.T) {
 	_ = mustCreateCluster(t, srv.URL, "demo-cluster", nil)
 	_ = mustCreateNodegroup(t, srv.URL, "demo-cluster", "workers-a", []string{"subnet-1", "subnet-2"})
 
-	updateResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/demo-cluster/node-groups/workers-a/updates", map[string]any{
+	updateResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/demo-cluster/node-groups/workers-a/update-version", map[string]any{
 		"version": "1.32",
 	})
 	if updateResp.StatusCode != http.StatusOK {
