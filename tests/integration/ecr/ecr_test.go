@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -894,8 +895,19 @@ func TestGetAuthorizationToken_withDocker_lazyStartsSharedRegistry(t *testing.T)
 	if proxy == "" {
 		t.Fatalf("missing proxyEndpoint")
 	}
-	if !bytes.Contains([]byte(proxy), []byte("http://overcast:")) {
-		t.Fatalf("expected hostname-aware proxy endpoint, got %q", proxy)
+	// Which host the endpoint names is settled by the daemon-reachability
+	// probe — "localhost" when the daemon answered there, the configured
+	// hostname when it could not be shown to — and this test cannot say which
+	// happened without re-running the probe. So it pins what it is actually
+	// about: a registry exists, and the endpoint names it rather than the
+	// emulator, whose port is what GetAuthorizationToken falls back to when
+	// there is no registry at all. Both branches of the host rule are covered
+	// deterministically in internal/services/ecr/registry_advertised_host_test.go.
+	if !strings.HasPrefix(proxy, "http://") {
+		t.Fatalf("proxyEndpoint is not an http endpoint: %q", proxy)
+	}
+	if strings.HasSuffix(proxy, fmt.Sprintf(":%d", srv.Config.Port)) {
+		t.Fatalf("proxyEndpoint names the emulator's API port rather than the registry: %q", proxy)
 	}
 
 	waitForNewManagedRegistry(t, dc, before)
