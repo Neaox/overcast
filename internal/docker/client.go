@@ -289,6 +289,11 @@ type ContainerNetwork struct {
 	// Gateway is the network's gateway address — on a bridge network, the
 	// address at which a container reaches services bound on the daemon host.
 	Gateway string `json:"Gateway"`
+	// Aliases are the DNS names this container answers to on this network,
+	// which is how a resource's endpoint hostname is advertised. Docker returns
+	// them per endpoint, so the same container can carry different names on
+	// different networks.
+	Aliases []string `json:"Aliases"`
 }
 
 // HasOvercastLabels reports whether the container was created by Overcast with
