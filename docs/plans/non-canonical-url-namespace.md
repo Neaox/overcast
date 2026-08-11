@@ -160,21 +160,38 @@ binary on a separate listener, so it has no collision to avoid. **Decided:
 move it to `/_overcast/health` anyway.** One convention beats two, and the
 cost is a one-line change plus its probe. Rides along in phase 2.
 
-### 3.1 Bug found while auditing the predicates
+### 3.1 Bug found while auditing the predicates — **fixed, phase 0**
 
-`shouldBypassIAM` ([iam_enforce.go:1401](../../internal/middleware/iam_enforce.go))
-bypasses IAM enforcement for `/_*` **and** for `/api` + `/api/`. That second
-arm was written for the console BFF — but on the AWS listener, `/api/v2/clusters`
-is **MSK's modeled v2 cluster API** ([msk/service.go:330](../../internal/services/msk/service.go),
-landed in #894). Every MSK v2 operation currently skips IAM enforcement
-entirely.
+`shouldBypassIAM` ([iam_enforce.go](../../internal/middleware/iam_enforce.go))
+bypassed IAM enforcement for `/_*` **and** for `/api` + `/api/`. That second
+arm was written for the console BFF, which has never passed through this
+middleware: `IAMEnforce` is wired once, on the AWS mux
+([router.go:169](../../internal/router/router.go)), and the UI is a separate
+listener with its own handler ([cmd_serve.go:264](../../cmd/overcast/cmd_serve.go)).
 
-This predates the namespace work and is independently fixable — the `/api`
-arm simply does not belong on this listener — but it is the clearest possible
-argument for the gate in §5: a prefix bypass written against a path space
-nobody owned became a security hole the moment AWS modeled a service there.
-**Recommend fixing it first, as a standalone PR with its own test**, rather
-than folding it into phase 1.
+It exempted two real things, and the second is the one the audit went looking
+for:
+
+- **An S3 bucket named `api`.** Three characters, all lowercase — a legal
+  bucket name. With `OVERCAST_ENFORCE_IAM=true`, every object request against
+  it reached the S3 fallback with no policy evaluated. This shipped in every
+  release that has had IAM enforcement.
+- **MSK's v2 cluster API**, once #894 bound it to `/api/v2/clusters`
+  ([msk/service.go:330](../../internal/services/msk/service.go)) — the path the
+  pinned kafka model gives it. `CreateClusterV2`, `ListClustersV2` and
+  `DescribeClusterV2`: unsigned, unauthorized, 200. Unreleased at the time of
+  writing; its fragment is still unconsumed in `.changelog/`.
+
+Both are the same arm, and together they sharpen the argument for the gate in
+§5 past what the MSK half alone showed. A prefix bypass written against path
+space nobody owned was **already wrong before AWS modeled anything there** —
+S3's fallback owns everything unclaimed, so an unreserved prefix is not empty,
+it is S3's. `/_` is safe only because S3 bucket names cannot begin with an
+underscore. Adding a prefix to this predicate therefore asserts two things: AWS
+models no service under it, and S3 will not accept it as a bucket name.
+
+Fixed as phase 0, standalone, failing test first — both halves covered, the
+released one first.
 
 ## 4. Design decisions
 
@@ -333,7 +350,7 @@ One PR per phase; Go, web, docs and tests in the same commit.
 
 | # | Content | Why here |
 | --- | --- | --- |
-| **0** | Fix the `/api` IAM bypass (§3.1). Standalone, failing test first. | Independent of the move, and a live hole. |
+| **0** | ✅ **Done.** Fix the `/api` IAM bypass (§3.1). Standalone, failing test first. | Independent of the move, and a live hole. |
 | **1** | Gate 9 (§5) landed **with every current violation in `nonManifestRoutes`**, plus `router.InternalPrefix`. No routes move. | The rule is enforced from day one; every later phase shrinks the ratchet instead of racing it. |
 | **2** | Router roots: `/_health`, `/_metrics`, `/_topology`, `/_/info`, `/_events`, `/_internal/domains/watch`, plus `overcast-mcp`'s own `/_health`. Predicates, web, 4 healthchecks, `cmd/compat/launch.go`. | Highest-traffic, lowest-risk: no minted URLs. |
 | **3** | `/_debug/*` → `/_overcast/debug/*`; `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
@@ -358,5 +375,6 @@ because it is the phase most worth reverting alone if it goes wrong.
 | `_user_request_` | Permanent documented exception, with the reason in the allowlist string (§3, violation 2). |
 | Aliases / deprecation window | None. Alpha; clean break, one breaking-change fragment (§4.4). |
 
-No open questions remain. The next action is phase 0 — the `/api` IAM bypass
-(§3.1) — which is independent of everything else here.
+No open questions remain. Phase 0 (the `/api` IAM bypass, §3.1) is done; the
+next action is phase 1, landing gate 9 with today's violations pre-loaded in
+`nonManifestRoutes` so no route moves before the rule is enforced.

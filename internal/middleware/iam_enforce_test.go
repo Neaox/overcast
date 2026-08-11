@@ -120,6 +120,55 @@ func TestIAMEnforce_enabled_bypassesInternalRoutes(t *testing.T) {
 	}
 }
 
+// TestIAMEnforce_enabled_deniesUnsignedRequestsUnderAPIPrefix pins the boundary
+// the bypass is allowed to cover. shouldBypassIAM exempted "/api" and "/api/*"
+// from the day the file was written, for a console BFF that has never been
+// behind this middleware — IAMEnforce is wired once, at router.go's AWS mux,
+// and the UI is a separate listener with its own handler (cmd_serve.go).
+//
+// Both subtests below are that one arm, and the order they are written in is
+// the order the hole opened:
+//
+//   - "api" is a legal S3 bucket name (3 chars, lowercase), so from the first
+//     release with IAM enforcement, every object request against a bucket of
+//     that name reached the S3 fallback with no policy evaluated.
+//   - #894 then bound MSK's v2 cluster API to /api/v2/clusters, the path the
+//     pinned kafka model gives it, and every v2 operation joined it.
+//
+// The general lesson outlasts the fix: a prefix bypass written against path
+// space nobody owned was already wrong, and got worse when AWS turned out to
+// model a service there. "/_" is reserved because S3 bucket names cannot begin
+// with an underscore. "/api" was reserved by nothing.
+func TestIAMEnforce_enabled_deniesUnsignedRequestsUnderAPIPrefix(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "s3 bucket named api", path: "/api/some-key"},
+		{name: "msk v2 cluster api", path: "/api/v2/clusters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			h := IAMEnforce(true, state.NewMemoryStore(), zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+
+			h.ServeHTTP(rec, req)
+
+			if called {
+				t.Fatalf("unsigned request to %s reached the handler: /api/* still bypasses IAM enforcement", tc.path)
+			}
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+			}
+		})
+	}
+}
+
 func TestIAMEnforce_enabled_allowsSignedRequestWithMatchingPolicy(t *testing.T) {
 	st := state.NewMemoryStore()
 	seedIAMUserWithPolicies(t, st, "test", []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sqs:CreateQueue","Resource":"*"}]}`}, nil)
