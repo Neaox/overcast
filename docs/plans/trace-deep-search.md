@@ -1,6 +1,6 @@
 # Trace search — finding a request by what it says, not just what it is
 
-> **Status:** Phase 1 is complete (`internal/trace`: `Recorder.MatchesSearch`, benchmarked). Phases 2 and 3 are unstarted and are the reason this document exists.
+> **Status:** Phase 1 complete (`Recorder.MatchesSearch`, benchmarked). **Phase 2 complete** — `Buffer.DeepSearch`, `GET /_debug/traces/search`, and the bff proxy, with the scan budgeted, resumable and cancellable as designed below. Phase 3 (the UI) is the remaining piece.
 > **Scope:** `internal/trace/`, `internal/router/debug.go`, `internal/bff/bff.go`, `web/src/routes/debug/traces/`.
 > **Audience:** any contributor or agent. Read [CONTRIBUTING.md](../../CONTRIBUTING.md) and [AGENTS.md](../../AGENTS.md) first; all their rules apply.
 
@@ -45,7 +45,7 @@ Implementation notes worth keeping:
 
 ---
 
-## Phase 2 — the deep scan
+## Phase 2 — the deep scan ✅ done
 
 ### 2.1 Not a job. A paginated read.
 

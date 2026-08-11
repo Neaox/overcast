@@ -134,6 +134,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/debug/trace/{requestId}/events", handleDebugTraceEvents)
 	r.Get("/api/debug/traces", handleDebugTraces)
 	r.Get("/api/debug/traces/count", handleDebugTraceCount)
+	r.Get("/api/debug/traces/search", handleDebugTraceSearch)
 	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_lambda/runtimes"))
 	r.Get("/api/lambda/instances", handleLambdaInstances)
 	r.Get("/api/lambda/functions/{name}/source", handleLambdaSourceGet)
@@ -409,6 +410,19 @@ func handleDebugTraces(w http.ResponseWriter, r *http.Request) {
 
 func handleDebugTraceCount(w http.ResponseWriter, r *http.Request) {
 	proxyDebugJSON(w, r, "/_debug/traces/count")
+}
+
+// handleDebugTraceSearch proxies the deep scan of trace bodies, hop errors and
+// log entries.
+//
+// It is the one debug proxy where cancellation is load-bearing: the scan on the
+// far side runs for as long as its budget allows, and an abandoned search has
+// to stop rather than run to completion for a result nobody will read.
+// proxyDebugJSON passes r.Context() to the upstream call, so a browser that
+// aborts the fetch closes this connection, which cancels that context, which
+// ends the scan.
+func handleDebugTraceSearch(w http.ResponseWriter, r *http.Request) {
+	proxyDebugJSON(w, r, "/_debug/traces/search")
 }
 
 // proxyDebugJSON proxies a debug endpoint, forwarding query params and

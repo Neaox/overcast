@@ -557,6 +557,17 @@ func (r *Recorder) Summary() Summary {
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	return r.summaryLocked()
+}
+
+// summaryLocked is Summary for a caller that already holds the read lock.
+//
+// sync.RWMutex is not reentrant in any way worth relying on: a second RLock
+// taken while a writer is queued between the two deadlocks. Deep search's
+// snapshot needs the summary from inside its own read lock, so the body lives
+// here and Summary is the locking wrapper.
+// Callers must hold r.mu.
+func (r *Recorder) summaryLocked() Summary {
 	return Summary{
 		RequestID:  r.requestID,
 		Timestamp:  r.timestamp,
