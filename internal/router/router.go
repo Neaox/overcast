@@ -526,6 +526,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	ecsSvc.SetVPCResolver(ec2Svc)
 	rdsSvc.SetVPCResolver(ec2Svc)
 	elasticacheSvc.SetVPCResolver(ec2Svc)
+	// MSK/EKS → EC2: the same, for the subnets a cluster is created with. On
+	// AWS there is no non-VPC MSK cluster, so a broker container that stayed on
+	// the default plane could not be reached by a function in the VPC that
+	// created it.
+	mskSvc.SetVPCResolver(ec2Svc)
+	eksSvc.SetVPCResolver(ec2Svc)
 	// SNS: wire lifecycle/publish events for topology / UI.
 	snsSvc.InitBus(bus)
 	// SNS → SQS: wire enqueuer for Publish fan-out (and subscription DLQs).

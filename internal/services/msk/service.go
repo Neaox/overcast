@@ -24,6 +24,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/lifecycle"
@@ -271,9 +272,19 @@ type Handler struct {
 	puller      *docker.ImagePuller
 	gc          *docker.GC
 	dockerWg    sync.WaitGroup
+	vpcResolver VPCNetworkResolver
 
 	// One writer at a time per record — see locks.go.
 	clusterLocks serviceutil.RecordLocks
+}
+
+// VPCNetworkResolver resolves a cluster's client subnets back to EC2 VPC
+// network state. Implemented by the EC2 service; nil when EC2 is not enabled,
+// which leaves every cluster on the default data plane.
+type VPCNetworkResolver interface {
+	dataplane.VPCResolver
+	// VpcIDForSubnet returns the VPC ID that owns the given subnet.
+	VpcIDForSubnet(ctx context.Context, subnetID string) string
 }
 
 func newHandler(cfg *config.Config, store *mskStore, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
@@ -374,6 +385,16 @@ func (s *Service) InitBus(bus *events.Bus) {
 	bus.Subscribe(events.DockerContainerDied, s.handler.handleContainerEvent)
 	bus.Subscribe(events.DockerContainerStopped, s.handler.handleContainerEvent)
 	bus.Subscribe(events.DockerContainerStarted, s.handler.handleContainerStarted)
+}
+
+// SetVPCResolver wires the EC2 VPC resolver, so a cluster whose client subnets
+// name a VPC has its brokers placed on that VPC's network rather than the
+// default plane.
+//
+// On AWS every provisioned cluster names client subnets, so this is the normal
+// case and not a corner one.
+func (s *Service) SetVPCResolver(r VPCNetworkResolver) {
+	s.handler.vpcResolver = r
 }
 
 // SetDocker wires the Docker client for MSK container management and starts
