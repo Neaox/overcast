@@ -35,25 +35,6 @@ func appsyncPost(t *testing.T, srv *helpers.TestServer, path string, body map[st
 	return resp
 }
 
-func appsyncJSONCall(t *testing.T, srv *helpers.TestServer, operation string, body map[string]any) *http.Response {
-	t.Helper()
-	b, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("marshal body: %v", err)
-	}
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(b))
-	if err != nil {
-		t.Fatalf("appsyncJSONCall request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
-	req.Header.Set("X-Amz-Target", "AppSync."+operation)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("appsyncJSONCall %s: %v", operation, err)
-	}
-	return resp
-}
-
 func appsyncPut(t *testing.T, srv *helpers.TestServer, path string, body map[string]any) *http.Response {
 	t.Helper()
 	b, err := json.Marshal(body)
@@ -248,13 +229,13 @@ func TestListGraphqlApis_configuredHostname(t *testing.T) {
 	}
 }
 
-func TestCreateGraphqlApi_jsonProtocolTags(t *testing.T) {
+func TestCreateGraphqlApi_inlineTags(t *testing.T) {
 	// Given: an empty store
 	srv := helpers.NewTestServer(t)
 
-	// When: CreateGraphqlApi is called through the AWS JSON protocol with tags
-	resp := appsyncJSONCall(t, srv, "CreateGraphqlApi", map[string]any{
-		"name":               "json-protocol-tags",
+	// When: CreateGraphqlApi is called with tags in the request body
+	resp := appsyncPost(t, srv, "/v1/apis", map[string]any{
+		"name":               "inline-tags",
 		"authenticationType": "API_KEY",
 		"tags":               map[string]string{"env": "test", "team": "guides"},
 	})
@@ -276,13 +257,13 @@ func TestCreateGraphqlApi_jsonProtocolTags(t *testing.T) {
 	}
 }
 
-func TestCreateGraphqlApi_jsonProtocolOwnerContactTooLong(t *testing.T) {
+func TestCreateGraphqlApi_ownerContactTooLong(t *testing.T) {
 	// Given: an empty store
 	srv := helpers.NewTestServer(t)
 
-	// When: CreateGraphqlApi is called through AWS JSON with ownerContact beyond AWS's limit
-	resp := appsyncJSONCall(t, srv, "CreateGraphqlApi", map[string]any{
-		"name":               "json-owner-contact-too-long",
+	// When: CreateGraphqlApi is called with ownerContact beyond AWS's limit
+	resp := appsyncPost(t, srv, "/v1/apis", map[string]any{
+		"name":               "owner-contact-too-long",
 		"authenticationType": "API_KEY",
 		"ownerContact":       strings.Repeat("a", 257),
 	})
@@ -561,14 +542,13 @@ func TestUpdateGraphqlApi_invalidAuthenticationType(t *testing.T) {
 	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
 
-func TestUpdateGraphqlApi_jsonProtocolMissingName(t *testing.T) {
+func TestUpdateGraphqlApi_missingName(t *testing.T) {
 	// Given: an existing API
 	srv := helpers.NewTestServer(t)
 	apiID, _ := createTestAPI(t, srv)
 
-	// When: UpdateGraphqlApi is called through AWS JSON without the required name
-	resp := appsyncJSONCall(t, srv, "UpdateGraphqlApi", map[string]any{
-		"apiId":              apiID,
+	// When: UpdateGraphqlApi is called without the required name
+	resp := appsyncPost(t, srv, "/v1/apis/"+apiID, map[string]any{
 		"authenticationType": "API_KEY",
 	})
 	defer resp.Body.Close()
@@ -1550,23 +1530,6 @@ func TestTagResource_invalidTagPatterns(t *testing.T) {
 			helpers.AssertJSONError(t, resp, "BadRequestException")
 		})
 	}
-}
-
-func TestTagResource_jsonProtocolInvalidTagPattern(t *testing.T) {
-	// Given: an existing API
-	srv := helpers.NewTestServer(t)
-	_, arn := createTestAPI(t, srv)
-
-	// When: TagResource is called through AWS JSON with an invalid tag key pattern
-	resp := appsyncJSONCall(t, srv, "TagResource", map[string]any{
-		"resourceArn": arn,
-		"tags":        map[string]string{"bad@key": "x"},
-	})
-	defer resp.Body.Close()
-
-	// Then: AppSync rejects the invalid tag with a modeled BadRequestException
-	helpers.AssertStatus(t, resp, http.StatusBadRequest)
-	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
 
 // ─── Environment Variables ────────────────────────────────────────────────────
@@ -3943,48 +3906,9 @@ func TestAppSyncJS_stashPropagation(t *testing.T) {
 	}
 }
 
-func TestAppSyncJS_evaluateCode(t *testing.T) {
-	// Given: an API
-	srv := helpers.NewTestServer(t)
-	apiID, _ := createTestAPI(t, srv)
-
-	// When: call EvaluateCode API
-	runtime, _ := json.Marshal(map[string]any{"name": "APPSYNC_JS", "runtimeVersion": "1.0.0"})
-	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateCode", map[string]any{
-		"code": `
-			export function request(ctx) {
-				return { value: ctx.arguments.x * 2 };
-			}
-			export function response(ctx) {
-				return ctx.result;
-			}
-		`,
-		"context": map[string]any{
-			"arguments": map[string]any{"x": 21},
-		},
-		"function": "request",
-		"runtime":  json.RawMessage(runtime),
-	})
-	defer resp.Body.Close()
-
-	// Then: should get the evaluation result
-	helpers.AssertStatus(t, resp, http.StatusOK)
-	var result struct {
-		EvaluationResult string `json:"evaluationResult"`
-	}
-	helpers.DecodeJSON(t, resp, &result)
-	if result.EvaluationResult == "" {
-		t.Fatal("expected non-empty evaluationResult")
-	}
-	// Parse the result — should be {"value": 42}
-	var evalResult map[string]any
-	if err := json.Unmarshal([]byte(result.EvaluationResult), &evalResult); err != nil {
-		t.Fatalf("failed to parse evaluationResult: %v", err)
-	}
-	if evalResult["value"] != float64(42) {
-		t.Errorf("expected value=42, got %v", evalResult["value"])
-	}
-}
+// EvaluateCode's own coverage lives in evaluate_test.go, at the binding AWS
+// models. The test that stood here drove POST /v1/apis/{apiId}/evaluateCode
+// with `context` as an object, which is neither the path nor the shape.
 
 func TestStubs_return501(t *testing.T) {
 	srv := helpers.NewTestServer(t)
@@ -4220,13 +4144,13 @@ func TestVTL_foreachDirective(t *testing.T) {
 }
 
 func TestVTL_utilFunctions(t *testing.T) {
-	// Given: an API for evaluating VTL templates via EvaluateMappingTemplate
+	// Given: a server. EvaluateMappingTemplate is API-independent, so these
+	// exercise the VTL evaluator without an API to attach to.
 	srv := helpers.NewTestServer(t)
-	apiID, _ := createTestAPI(t, srv)
 
 	// Test $util.toJson
 	t.Run("toJson", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `$util.toJson($context.arguments)`,
 			"context":  `{"arguments":{"name":"test","count":42}}`,
 		})
@@ -4243,7 +4167,7 @@ func TestVTL_utilFunctions(t *testing.T) {
 
 	// Test $util.autoId (returns a UUID)
 	t.Run("autoId", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `$util.autoId()`,
 			"context":  `{}`,
 		})
@@ -4261,7 +4185,7 @@ func TestVTL_utilFunctions(t *testing.T) {
 
 	// Test $util.isNull
 	t.Run("isNull", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `#if($util.isNull($context.arguments.missing))null_detected#end`,
 			"context":  `{"arguments":{}}`,
 		})
@@ -4278,7 +4202,7 @@ func TestVTL_utilFunctions(t *testing.T) {
 
 	// Test $util.parseJson
 	t.Run("parseJson", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `#set($obj = $util.parseJson('{"key":"value"}'))$obj.key`,
 			"context":  `{}`,
 		})
@@ -4295,7 +4219,7 @@ func TestVTL_utilFunctions(t *testing.T) {
 
 	// Test $util.time.nowISO8601()
 	t.Run("timeNowISO8601", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `$util.time.nowISO8601()`,
 			"context":  `{}`,
 		})
@@ -4311,38 +4235,9 @@ func TestVTL_utilFunctions(t *testing.T) {
 	})
 }
 
-func TestVTL_evaluateMappingTemplate(t *testing.T) {
-	// Given: an API
-	srv := helpers.NewTestServer(t)
-	apiID, _ := createTestAPI(t, srv)
-
-	// When: call EvaluateMappingTemplate API with a VTL template
-	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
-		"template": `{ "result": "$context.arguments.name is $context.arguments.age years old" }`,
-		"context":  `{"arguments":{"name":"Alice","age":30}}`,
-	})
-	defer resp.Body.Close()
-
-	// Then: should get the evaluation result
-	helpers.AssertStatus(t, resp, http.StatusOK)
-	var result struct {
-		EvaluationResult string `json:"evaluationResult"`
-	}
-	helpers.DecodeJSON(t, resp, &result)
-	if result.EvaluationResult == "" {
-		t.Fatal("expected non-empty evaluationResult")
-	}
-
-	// Parse the result — should be valid JSON with interpolated values
-	var evalResult map[string]any
-	if err := json.Unmarshal([]byte(result.EvaluationResult), &evalResult); err != nil {
-		t.Fatalf("failed to parse evaluationResult as JSON: %v (raw: %q)", err, result.EvaluationResult)
-	}
-	expected := "Alice is 30 years old"
-	if evalResult["result"] != expected {
-		t.Errorf("expected result=%q, got %v", expected, evalResult["result"])
-	}
-}
+// EvaluateMappingTemplate's own coverage lives in evaluate_test.go, at the
+// binding AWS models. The test that stood here drove
+// POST /v1/apis/{apiId}/evaluateMappingTemplate.
 
 func TestVTL_pipelineResolver(t *testing.T) {
 	// Given: a PIPELINE resolver where VTL functions share state via $context.stash
@@ -4480,14 +4375,12 @@ func TestAppSyncJS_envVars(t *testing.T) {
 // ─── APPSYNC_JS expanded util functions ──────────────────────────────────────
 
 func TestAppSyncJS_utilExpanded(t *testing.T) {
-	// Given: an API with the EvaluateCode endpoint
+	// Given: a server. EvaluateCode is API-independent, so these exercise the
+	// APPSYNC_JS runtime without an API to attach to.
 	srv := helpers.NewTestServer(t)
-	apiID, _ := createTestAPI(t, srv)
-
-	runtime, _ := json.Marshal(map[string]any{"name": "APPSYNC_JS", "runtimeVersion": "1.0.0"})
 
 	// Test util.isNull, util.isString, util.defaultIfNull, util.matches.
-	resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateCode", map[string]any{
+	resp := appsyncPost(t, srv, evaluateCodePath, map[string]any{
 		"code": `
 			export function request(ctx) {
 				return {
@@ -4515,9 +4408,9 @@ func TestAppSyncJS_utilExpanded(t *testing.T) {
 				};
 			}
 		`,
-		"context":  map[string]any{},
+		"context":  `{}`,
 		"function": "request",
-		"runtime":  json.RawMessage(runtime),
+		"runtime":  appsyncRuntime(),
 	})
 	defer resp.Body.Close()
 
@@ -5135,11 +5028,10 @@ func TestGetIntrospectionSchema_jsonFormat(t *testing.T) {
 // TestVTL_utilTransform exercises $util.transform VTL utilities.
 func TestVTL_utilTransform(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	apiID, _ := createTestAPI(t, srv)
 
 	// $util.transform.toDynamoDBFilterExpression
 	t.Run("toDynamoDBFilterExpression", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `#set($filter = {"name": {"eq": "Alice"}})$util.transform.toDynamoDBFilterExpression($filter)`,
 			"context":  `{}`,
 		})
@@ -5173,7 +5065,7 @@ func TestVTL_utilTransform(t *testing.T) {
 
 	// $util.transform.toDynamoDBConditionExpression
 	t.Run("toDynamoDBConditionExpression", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `#set($cond = {"id": {"eq": "123"}})$util.transform.toDynamoDBConditionExpression($cond)`,
 			"context":  `{}`,
 		})
@@ -5196,10 +5088,9 @@ func TestVTL_utilTransform(t *testing.T) {
 // TestVTL_utilHttp exercises $util.http VTL utilities.
 func TestVTL_utilHttp(t *testing.T) {
 	srv := helpers.NewTestServer(t)
-	apiID, _ := createTestAPI(t, srv)
 
 	t.Run("encodeUrl", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `$util.http.encodeUrl("hello world & more")`,
 			"context":  `{}`,
 		})
@@ -5215,7 +5106,7 @@ func TestVTL_utilHttp(t *testing.T) {
 	})
 
 	t.Run("decodeUrl", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `$util.http.decodeUrl("hello+world+%26+more")`,
 			"context":  `{}`,
 		})
@@ -5231,7 +5122,7 @@ func TestVTL_utilHttp(t *testing.T) {
 	})
 
 	t.Run("copyHeaders", func(t *testing.T) {
-		resp := appsyncPost(t, srv, "/v1/apis/"+apiID+"/evaluateMappingTemplate", map[string]any{
+		resp := appsyncPost(t, srv, evaluateTemplatePath, map[string]any{
 			"template": `#set($h = $util.http.copyHeaders($context.request.headers))$util.toJson($h)`,
 			"context":  `{"request":{"headers":{"x-custom":"value"}}}`,
 		})

@@ -1354,45 +1354,6 @@ func (h *Handler) resolveFunctionJS(r *http.Request, api *GraphqlAPI, fn *Functi
 	return parsed, nil
 }
 
-// ─── EvaluateCode API ────────────────────────────────────────────────────────
-
-// EvaluateCode handles POST /v1/apis/{apiId}/evaluateCode.
-func (h *Handler) EvaluateCode(w http.ResponseWriter, r *http.Request) {
-	if h.jsEvaluator == nil {
-		protocol.NotImplementedJSON(w, r)
-		return
-	}
-
-	var req struct {
-		Code     string          `json:"code"`
-		Context  map[string]any  `json:"context"`
-		Function string          `json:"function"`
-		Runtime  json.RawMessage `json:"runtime"`
-	}
-	if !serviceutil.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	if req.Code == "" {
-		protocol.WriteJSONError(w, r, badRequestError("code is required"))
-		return
-	}
-	if req.Function == "" {
-		req.Function = "request"
-	}
-	if req.Context == nil {
-		req.Context = map[string]any{}
-	}
-
-	result, err := h.jsEvaluator.Evaluate(req.Code, req.Function, req.Context)
-	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
-		return
-	}
-
-	writeJSON(w, r, http.StatusOK, result)
-}
-
 // ─── VTL Resolver Execution ──────────────────────────────────────────────────
 
 // buildVTLContext builds the $context map for VTL template evaluation.
@@ -1585,58 +1546,6 @@ func (h *Handler) resolveFunctionVTL(r *http.Request, api *GraphqlAPI, fn *Funct
 	}
 
 	return dsResult, nil
-}
-
-// ─── EvaluateMappingTemplate API ─────────────────────────────────────────────
-
-// EvaluateMappingTemplate handles POST /v1/apis/{apiId}/evaluateMappingTemplate.
-func (h *Handler) EvaluateMappingTemplate(w http.ResponseWriter, r *http.Request) {
-	if h.vtlEvaluator == nil {
-		protocol.NotImplementedJSON(w, r)
-		return
-	}
-
-	var req struct {
-		Template string `json:"template"`
-		Context  string `json:"context"`
-	}
-	if !serviceutil.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	if req.Template == "" {
-		protocol.WriteJSONError(w, r, badRequestError("template is required"))
-		return
-	}
-
-	// Parse the context JSON string into a map.
-	ctxMap := map[string]any{}
-	if req.Context != "" {
-		if err := json.Unmarshal([]byte(req.Context), &ctxMap); err != nil {
-			protocol.WriteJSONError(w, r, badRequestError("invalid context JSON: "+err.Error()))
-			return
-		}
-	}
-
-	result, err := h.vtlEvaluator.Evaluate(req.Template, ctxMap)
-	if err != nil {
-		if vtlErr, ok := err.(*vtlError); ok {
-			writeJSON(w, r, http.StatusOK, &EvaluationResult{
-				EvaluationResult: "",
-				Error:            &EvaluationError{Message: vtlErr.Message},
-			})
-			return
-		}
-		writeJSON(w, r, http.StatusOK, &EvaluationResult{
-			EvaluationResult: "",
-			Error:            &EvaluationError{Message: err.Error()},
-		})
-		return
-	}
-
-	writeJSON(w, r, http.StatusOK, &EvaluationResult{
-		EvaluationResult: result,
-	})
 }
 
 // resolveNoneTemplate handles NONE data sources — the requestMappingTemplate payload

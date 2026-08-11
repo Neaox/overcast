@@ -78,7 +78,12 @@ func detectService(r *http.Request, body ...[]byte) string {
 		strings.HasPrefix(r.URL.Path, "/v1/tags"),
 		strings.HasPrefix(r.URL.Path, "/v1/domainnames"),
 		strings.HasPrefix(r.URL.Path, "/v1/mergedApis"),
-		strings.HasPrefix(r.URL.Path, "/v1/sourceApis"):
+		strings.HasPrefix(r.URL.Path, "/v1/sourceApis"),
+		// The two API-independent evaluation endpoints (#860). No other
+		// modeled service binds a /v1/dataplane- path, and without this
+		// entry an unsigned POST there is labelled — and IAM-authorised —
+		// as s3, because step 2 runs ahead of the credential scope.
+		strings.HasPrefix(r.URL.Path, "/v1/dataplane-"):
 		return "appsync"
 	case strings.HasPrefix(r.URL.Path, "/v2/email/"):
 		return "ses"

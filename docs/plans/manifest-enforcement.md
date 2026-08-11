@@ -102,12 +102,16 @@ establish AWS fidelity from the pinned model rather than by assumption — and
 
 | Ledger | Rows | Owners |
 | --- | --- | --- |
-| `unservedBindings` | 43 | #815, #854, #855, #856, #857, #858, #859, #860 |
+| `unservedBindings` | 41 | #815, #854, #855, #856, #857, #858, #859 |
 | `weaklyServedBindings` | 8 | not faults; the gate's honest margin |
 | `protocolAsymmetries` | 1 | #886 |
 
 43 capability rows moved from Supported/Inert to WIP, because they are
-implemented, work, and cannot be called by any SDK.
+implemented, work, and cannot be called by any SDK. Two of them — AppSync's
+`EvaluateCode` and `EvaluateMappingTemplate` — are back to Supported: #860
+moved them onto `/v1/dataplane-evaluatecode` and `/v1/dataplane-evaluatetemplate`,
+and the ratchet's second direction is what required the ledger rows to go with
+them.
 
 #862 is not in that table, and the reason is the ratchet earning its keep.
 `ses/V2CreateEmailIdentity` was in `unservedBindings` while this branch was
