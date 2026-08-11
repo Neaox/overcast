@@ -495,7 +495,7 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 		h.dockerWg.Add(1)
 		go func() {
 			defer h.dockerWg.Done()
-			bgCtx := middleware.ContextWithRegion(context.Background(), region)
+			bgCtx := middleware.ContextWithRegion(h.bgCtx, region)
 			got, aerr := h.store.getCacheCluster(bgCtx, clusterID)
 			if aerr != nil || got == nil {
 				return
@@ -655,7 +655,7 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 		h.dockerWg.Add(1)
 		go func() {
 			defer h.dockerWg.Done()
-			bgCtx := middleware.ContextWithRegion(context.Background(), region)
+			bgCtx := middleware.ContextWithRegion(h.bgCtx, region)
 			got, aerr := h.store.getReplicationGroup(bgCtx, rgID)
 			if aerr != nil || got == nil {
 				return

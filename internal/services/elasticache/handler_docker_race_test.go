@@ -121,6 +121,15 @@ func newFakeDockerDaemon(t *testing.T) *fakeDockerDaemon {
 // the code paths under test fall back to direct docker calls.
 func newDockerTestHandler(t *testing.T, fd *fakeDockerDaemon) *Handler {
 	t.Helper()
+
+	_, h := newDockerTestService(t, fd)
+	return h
+}
+
+// newDockerTestService is newDockerTestHandler for a test that needs the
+// Service as well — Stop lives there, not on Handler.
+func newDockerTestService(t *testing.T, fd *fakeDockerDaemon) (*Service, *Handler) {
+	t.Helper()
 	cfg := &config.Config{Region: "us-east-1", AccountID: "123456789012"}
 	s := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	h := s.handler
@@ -133,7 +142,7 @@ func newDockerTestHandler(t *testing.T, fd *fakeDockerDaemon) *Handler {
 		h.scheduler.Stop(ctx)
 		h.dockerWg.Wait()
 	})
-	return h
+	return s, h
 }
 
 func waitStarted(t *testing.T, fd *fakeDockerDaemon) {

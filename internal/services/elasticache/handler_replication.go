@@ -171,7 +171,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 		h.dockerWg.Add(1)
 		go func() {
 			defer h.dockerWg.Done()
-			bgCtx := middleware.ContextWithRegion(context.Background(), region)
+			bgCtx := middleware.ContextWithRegion(h.bgCtx, region)
 			got, aerr := h.store.getReplicationGroup(bgCtx, rgID)
 			if aerr != nil || got == nil {
 				return

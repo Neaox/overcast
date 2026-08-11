@@ -100,8 +100,18 @@ func (s *Service) OwnsVersion(version string) bool { return version == awsapi.Ve
 func (s *Service) Stop(ctx context.Context) {
 	s.handler.scheduler.Stop(ctx)
 
-	// Wait for any in-flight container-start goroutines so they don't access
-	// the Docker daemon after it's been torn down.
+	// Cancel bgCtx before waiting, not after. It is what the container-start
+	// goroutines run on as well as what the GC remove loop exits on, so
+	// cancelling it after the wait — as this did — could never shorten one: a
+	// start against a daemon that does not answer was ended only by the Docker
+	// client's own 30s response-header timeout, spending that out of a budget
+	// this shares with every other service's Stop.
+	s.handler.bgCancel()
+
+	// Then wait for those goroutines, so none is still talking to the daemon
+	// when the GC sweeps below. One cancelled part-way through may leave a
+	// container it never recorded; DrainAndSweep's final label-based sweep is
+	// what reclaims it, as it does for any other orphan.
 	done := make(chan struct{})
 	go func() {
 		s.handler.dockerWg.Wait()
@@ -111,9 +121,6 @@ func (s *Service) Stop(ctx context.Context) {
 	case <-done:
 	case <-ctx.Done():
 	}
-
-	// Cancel bgCtx so the GC remove loop exits.
-	s.handler.bgCancel()
 
 	if s.handler.gc != nil {
 		s.handler.gc.DrainAndSweep(ctx, serviceName)

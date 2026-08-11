@@ -186,7 +186,7 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 		h.dockerWg.Add(1)
 		go func(cacheName string) {
 			defer h.dockerWg.Done()
-			bgCtx := middleware.ContextWithRegion(context.Background(), region)
+			bgCtx := middleware.ContextWithRegion(h.bgCtx, region)
 			got, aerr := h.store.getServerlessCache(bgCtx, cacheName)
 			if aerr != nil || got == nil {
 				return
