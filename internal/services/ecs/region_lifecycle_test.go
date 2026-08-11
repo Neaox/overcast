@@ -20,7 +20,6 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
@@ -53,8 +52,11 @@ func postJSON(t *testing.T, ctx context.Context, fn http.HandlerFunc, body any) 
 }
 
 func TestTaskTransition_nonDefaultRegion(t *testing.T) {
-	docker.SkipWithoutDocker(t)
-	h, clk := newECSRegionTestHandler(t)
+	// Docker is wired to a fake daemon rather than skipped for want of a real
+	// one: the PROVISIONING → RUNNING transition this test is about is only
+	// scheduled when Docker is ready, so a metadata-only handler never reaches
+	// the subject. See docker_fake_test.go.
+	h, clk, fd := newECSDockerTestHandler(t)
 	ctx := middleware.ContextWithRegion(context.Background(), "eu-west-1")
 
 	if w := postJSON(t, ctx, h.CreateCluster, map[string]any{"clusterName": "c1"}); w.Code != 200 {
@@ -91,6 +93,13 @@ func TestTaskTransition_nonDefaultRegion(t *testing.T) {
 	}
 	if got.LastStatus != "RUNNING" {
 		t.Fatalf("task status = %q, want %q (PROVISIONING → RUNNING no-oped)", got.LastStatus, "RUNNING")
+	}
+
+	// A task reporting RUNNING must have a container behind it — otherwise the
+	// handler was metadata-only and the transition proved nothing about the
+	// region-scoped callback.
+	if n := fd.startedCount(); n != 1 {
+		t.Fatalf("containers started = %d, want 1: the task reported RUNNING without one behind it", n)
 	}
 }
 

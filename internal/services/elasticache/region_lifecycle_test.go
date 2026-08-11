@@ -8,9 +8,11 @@ package elasticache
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,14 +27,24 @@ import (
 )
 
 func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
-	docker.SkipWithoutDocker(t)
+	// Docker is wired to the package's fake daemon rather than skipped for want
+	// of a real one. Since #686 the creating → available transition only happens
+	// on the Docker path — the health check schedules it, and nothing schedules
+	// it otherwise — so a metadata-only handler never reaches the subject.
+	fd := newFakeDockerDaemon(t)
+	fd.release() // nothing here is about the start-vs-delete race the fake can stage
+
 	clk := clock.NewMock()
 	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012"}, state.NewMemoryStore(), zap.NewNop(), clk)
 	h := svc.handler
+	h.docker = docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop())
+	h.puller = docker.NewImagePuller(h.docker)
+	h.dockerReady.Store(true)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		h.scheduler.Stop(ctx)
+		h.dockerWg.Wait()
 	})
 	ctx := middleware.ContextWithRegion(context.Background(), "eu-west-1")
 	const id = "eu-redis"
@@ -60,10 +72,33 @@ func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
 		t.Fatal("cluster unexpectedly visible under the default region")
 	}
 
-	// Fire the 0-delay creating → available transition and wait for it: the
-	// mock clock runs the callback on a goroutine of its own, so advancing the
-	// clock alone leaves the read on the next line racing it.
-	h.scheduler.AdvanceAndSettle(clk, time.Millisecond)
+	// The container start runs on a background goroutine, and it is what
+	// schedules the health check that promotes the cluster. Wait for it before
+	// touching the clock, or there is no health check to fire yet.
+	h.dockerWg.Wait()
+
+	started, aerr := h.store.getCacheCluster(ctx, id)
+	if aerr != nil || started == nil {
+		t.Fatalf("getCacheCluster after start: %v", aerr)
+	}
+	if started.HostPort == 0 {
+		t.Fatal("no host port allocated: the container start did not complete")
+	}
+
+	// The health check promotes the cluster only once something answers on the
+	// published port — it is a real TCP dial, not a metadata flip. Overcast
+	// reserved this port in its own store rather than binding it, so the test
+	// stands up the listener the container would have been.
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(started.HostPort)))
+	if err != nil {
+		t.Fatalf("listen on the cluster's published port %d: %v", started.HostPort, err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	// Fire the 1s health check and wait for it: the mock clock runs the callback
+	// on a goroutine of its own, so advancing the clock alone leaves the read on
+	// the next line racing it.
+	h.scheduler.AdvanceAndSettle(clk, 2*time.Second)
 	got, aerr := h.store.getCacheCluster(ctx, id)
 	if aerr != nil {
 		t.Fatalf("getCacheCluster: %s", aerr.Message)
