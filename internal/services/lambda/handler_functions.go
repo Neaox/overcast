@@ -2699,13 +2699,83 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 	bgCtx := middleware.ContextWithRegion(context.Background(), region)
 	ctx := bgCtx
 
+	for attempt := 1; ; attempt++ {
+		outcome := h.invokeAsyncOnce(ctx, fn, rt, payload)
+		if outcome.succeeded {
+			return
+		}
+		if !outcome.retryable || attempt >= asyncInvokeAttempts {
+			h.deadLetterAsyncFailure(bgCtx, fn, payload, outcome.requestID, outcome.errorMessage, attempt)
+			return
+		}
+		h.log.Debug("invokeAsync: retrying a failed event",
+			zap.String("function", fn.Name),
+			zap.Int("attempt", attempt),
+			zap.Int("of", asyncInvokeAttempts),
+			zap.String("error", outcome.errorMessage))
+		select {
+		case <-h.clk.After(asyncRetryBackoff(attempt)):
+		case <-ctx.Done():
+			h.deadLetterAsyncFailure(bgCtx, fn, payload, outcome.requestID, outcome.errorMessage, attempt)
+			return
+		}
+	}
+}
+
+// asyncInvokeAttempts is how many times an InvocationType=Event invocation is
+// run in total before its event is dead-lettered: AWS's default of the initial
+// attempt plus two retries.
+//
+// It is not configurable, because the API that configures it is not
+// implemented: MaximumRetryAttempts belongs to PutFunctionEventInvokeConfig,
+// and a function with no event-invoke config gets AWS's default — which is what
+// every function here has.
+const asyncInvokeAttempts = 3
+
+// asyncRetryBackoff is how long to wait before the given attempt's retry.
+//
+// AWS: "the retry interval increases exponentially from 1 second after the
+// first attempt to a maximum of 5 minutes"
+// (https://docs.aws.amazon.com/lambda/latest/dg/invocation-retries.html). With
+// only two retries the ceiling is never approached, so the real intervals are
+// AWS's own — one second, then two — rather than the compressed stand-in
+// EventBridge and Pipes need for their much longer schedules. It runs on the
+// injected clock, so a test drives it rather than waiting it out.
+func asyncRetryBackoff(attempt int) time.Duration {
+	return time.Duration(1<<(attempt-1)) * time.Second
+}
+
+// asyncInvokeOutcome is what one attempt of an asynchronous invocation did.
+// requestID and errorMessage describe the failure and feed the dead-letter
+// message's attributes; both are empty on success.
+type asyncInvokeOutcome struct {
+	succeeded bool
+	// retryable is false for a failure AWS would not retry either. The one
+	// that matters is a concurrency throttle that outlived acquireForAsync's
+	// own back-off: AWS documents a function reserved to zero as sending
+	// events to the dead-letter queue "without any retries".
+	retryable    bool
+	requestID    string
+	errorMessage string
+}
+
+// invokeAsyncOnce runs a single attempt: acquire an execution environment, wait
+// for it to initialise, invoke the handler.
+//
+// Each attempt acquires its own environment and is tracked as its own
+// invocation, which is what AWS does — a retry is a fresh invocation with its
+// own request ID, not a resumption of the last one.
+func (h *Handler) invokeAsyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte) asyncInvokeOutcome {
 	inv := h.tracker.Begin(fn.Name, payload)
 	inst, err := h.acquireForAsync(ctx, fn, rt)
 	if err != nil {
 		inv.Abandon(err.Error())
 		h.log.Error("invokeAsync: acquire instance", zap.String("function", fn.Name), zap.Error(err))
-		h.deadLetterAsyncFailure(bgCtx, fn, payload, "", err.Error())
-		return
+		// A throttle that survived acquireForAsync's retries is the
+		// reserved-concurrency case and is not retried again; anything else is
+		// a Docker hiccup, which the synchronous path also retries.
+		_, throttled := asThrottle(err)
+		return asyncInvokeOutcome{retryable: !throttled, errorMessage: err.Error()}
 	}
 	inv.Bind(inst)
 	inv.Ready()
@@ -2713,8 +2783,7 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 		rt.Release(ctx, inst, false)
 		inv.Abandon(err.Error())
 		h.log.Error("invokeAsync: runtime init", zap.String("function", fn.Name), zap.Error(err))
-		h.deadLetterAsyncFailure(bgCtx, fn, payload, "", err.Error())
-		return
+		return asyncInvokeOutcome{retryable: true, errorMessage: err.Error()}
 	}
 	inv.Running()
 
@@ -2742,24 +2811,23 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 		if errors.As(invokeErr, &timeout) {
 			requestID = timeout.RequestID
 		}
-		h.deadLetterAsyncFailure(bgCtx, fn, payload, requestID, invokeErr.Error())
-		return
+		return asyncInvokeOutcome{retryable: true, requestID: requestID, errorMessage: invokeErr.Error()}
 	}
 	if result != nil && result.FunctionError != "" {
 		h.log.Debug("invokeAsync: function error", zap.String("function", fn.Name), zap.String("function_error", result.FunctionError))
-		h.deadLetterAsyncFailure(bgCtx, fn, payload, result.RequestID, invocationFailureReasonFromResult(result))
+		return asyncInvokeOutcome{
+			retryable:    true,
+			requestID:    result.RequestID,
+			errorMessage: invocationFailureReasonFromResult(result),
+		}
 	}
+	return asyncInvokeOutcome{succeeded: true}
 }
 
 // deadLetterAsyncFailure sends a failed asynchronous invocation to the
-// function's DeadLetterConfig target, if it has one.
-//
-// AWS reaches here after the event "fails all processing attempts". Overcast
-// makes one attempt rather than AWS's three — asynchronous retry is a separate
-// gap, recorded in docs/services/lambda.md — so the event arrives sooner than
-// it would on AWS. It arrives with the same body and the same attributes, and
-// nothing in a dead-letter message reports the attempt count, so what a
-// consumer reads is what it would read on AWS.
+// function's DeadLetterConfig target, if it has one. attempts is how many times
+// the event was run, for the log line — a dead-letter message itself carries no
+// attempt count, which is why AWS's on-failure destinations exist.
 //
 // Every failure that gets here is one the Invoke API answers 200 for: a handled
 // error, an unhandled crash, a timeout, and — in this emulator only — a cold
@@ -2770,7 +2838,7 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 // Failure to deliver is logged and dropped, as on AWS: "If Lambda can't send a
 // message to the dead-letter queue, it deletes the event". There is no caller
 // left to tell — the invocation answered 202 long ago.
-func (h *Handler) deadLetterAsyncFailure(ctx context.Context, fn *Function, payload []byte, requestID, errorMessage string) {
+func (h *Handler) deadLetterAsyncFailure(ctx context.Context, fn *Function, payload []byte, requestID, errorMessage string, attempts int) {
 	if fn.DeadLetterTargetArn == "" {
 		return
 	}
@@ -2793,7 +2861,8 @@ func (h *Handler) deadLetterAsyncFailure(ctx context.Context, fn *Function, payl
 	h.log.Warn("invokeAsync: failed event sent to the dead-letter target",
 		zap.String("function", fn.Name),
 		zap.String("target", fn.DeadLetterTargetArn),
-		zap.String("request_id", requestID))
+		zap.String("request_id", requestID),
+		zap.Int("attempts", attempts))
 }
 
 // ─── SSE Invoke (emulator-only) ───────────────────────────────────────────────

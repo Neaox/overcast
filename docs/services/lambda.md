@@ -33,18 +33,24 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 
 ## Known limitations
 
-- **Async invocation is not retried before it is dead-lettered.** A handler that
-  raises on an `InvocationType: Event` invocation gets one attempt here, where
-  AWS makes three (the initial one plus two retries). What happens after that
-  attempt fails does match AWS: if the function has a `DeadLetterConfig`, the
-  original event is sent to the target SQS queue or SNS topic carrying the
-  `RequestID`, `ErrorCode` and `ErrorMessage` message attributes AWS documents.
-  A dead-letter message reports no attempt count, so a consumer reads exactly
-  what it would read on AWS — only sooner. Without a `DeadLetterConfig` the
-  failure reaches the function's logs and nothing else. All of this applies
-  equally to events arriving from S3 notifications, EventBridge and Scheduler
-  targets, and SNS `lambda` subscriptions — all of which share the same async
+- **Asynchronous invocation retries are AWS's, but the retry policy is not
+  configurable.** An `InvocationType: Event` invocation whose function returns
+  an error is run up to two more times, one second after the first attempt and
+  two after the second, matching AWS's default and its documented exponential
+  interval. When the last attempt fails, a function with a `DeadLetterConfig`
+  gets the original event on the target SQS queue or SNS topic, carrying the
+  `RequestID`, `ErrorCode` and `ErrorMessage` message attributes AWS documents;
+  without one the failure reaches the function's logs and nothing else. What is
+  missing is `PutFunctionEventInvokeConfig`, so `MaximumRetryAttempts` and
+  `MaximumEventAgeInSeconds` cannot be changed from AWS's defaults, and an event
+  is never aged out — only the attempt count ends a retry here. All of this
+  applies equally to events arriving from S3 notifications, EventBridge and
+  Scheduler targets, and SNS `lambda` subscriptions, which share the same async
   path.
+  - A function throttled by its own reserved concurrency is the documented
+    exception and is not retried by this loop: AWS sends those events to the
+    dead-letter queue "without any retries", and Overcast does the same once the
+    invocation has waited out its concurrency back-off.
 - `PutFunctionEventInvokeConfig` on-failure and on-success **destinations** are
   still not applied outside event source mappings. A destination is a different
   feature from a dead-letter queue: it receives the invocation record envelope,
@@ -925,11 +931,11 @@ the only way to read them back.
 
 ### Invocation
 
-| Operation                  | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | AWS Docs                                                                               |
-| -------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `Invoke`                   | ✅ Supported   | Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation that fails is delivered to the function's DeadLetterConfig target, though it is not retried first as AWS retries twice | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)                   |
-| `InvokeAsync`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeAsync.html)              |
-| `InvokeWithResponseStream` | ✅ Supported   | Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only                                                                                                                                                                                                                                                                                                                                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeWithResponseStream.html) |
+| Operation                  | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | AWS Docs                                                                               |
+| -------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `Invoke`                   | ✅ Supported   | Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried twice (1s then 2s, AWS's default) and then delivered to the function's DeadLetterConfig target; the retry policy itself is not configurable because PutFunctionEventInvokeConfig is not implemented | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)                   |
+| `InvokeAsync`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeAsync.html)              |
+| `InvokeWithResponseStream` | ✅ Supported   | Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeWithResponseStream.html) |
 
 ### Aliases & versions
 

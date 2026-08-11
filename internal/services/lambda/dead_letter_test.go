@@ -17,10 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,25 +83,60 @@ func (rec *deliveryRecorder) awaitDelivery(t *testing.T) recordedDelivery {
 // ---- Fake runtimes ---------------------------------------------------------
 
 // failingRuntime hands out instances whose handler always raises, the shape of
-// a function that fails every asynchronous invocation.
-type failingRuntime struct{ requestID string }
+// a function that fails every asynchronous invocation. failUntil, when set,
+// makes only the first n invocations fail so a retry can be seen to succeed.
+type failingRuntime struct {
+	requestID string
+	failUntil int
+
+	mu      sync.Mutex
+	invokes int
+}
 
 func (r *failingRuntime) CanHandle(string) bool { return true }
 func (r *failingRuntime) Acquire(_ context.Context, fn *Function) (RuntimeInstance, error) {
-	return &failingInstance{poolTestInstance: newPoolTestInstance(fn.Name), requestID: r.requestID}, nil
+	return &failingInstance{poolTestInstance: newPoolTestInstance(fn.Name), rt: r}, nil
 }
 func (r *failingRuntime) Release(context.Context, RuntimeInstance, bool) {}
 
+// nextOutcome records an invocation and reports whether it should fail.
+func (r *failingRuntime) nextOutcome() (attempt int, fail bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.invokes++
+	if r.failUntil == 0 {
+		return r.invokes, true
+	}
+	return r.invokes, r.invokes <= r.failUntil
+}
+
+func (r *failingRuntime) invokeCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.invokes
+}
+
 type failingInstance struct {
 	*poolTestInstance
-	requestID string
+	rt *failingRuntime
 }
 
 func (i *failingInstance) Invoke(context.Context, []byte, InvokeOptions) (*InvokeResult, error) {
+	attempt, fail := i.rt.nextOutcome()
+	if !fail {
+		return &InvokeResult{StatusCode: 200, RequestID: i.rt.requestID, Payload: []byte(`"ok"`)}, nil
+	}
+	// Each attempt is its own invocation on AWS, with its own request ID. The
+	// configured one is used for the attempt that ends up dead-lettered so the
+	// test can name the value it expects on the message.
+	requestID := fmt.Sprintf("%s-attempt-%d", i.rt.requestID, attempt)
+	if attempt == asyncInvokeAttempts {
+		requestID = i.rt.requestID
+	}
 	return &InvokeResult{
 		StatusCode:    200,
 		FunctionError: "Unhandled",
-		RequestID:     i.requestID,
+		RequestID:     requestID,
 		Payload:       []byte(`{"errorMessage":"boom","errorType":"Error"}`),
 	}, nil
 }
@@ -156,14 +193,38 @@ func newDeadLetterFixture(t *testing.T, rt Runtime, targetARN string) *deadLette
 // invokeAsyncAndDrain runs one asynchronous invocation and waits for Lambda's
 // async machinery to finish with it, so a test can assert on what did *not*
 // happen without sleeping.
+//
+// A failing event is retried twice before it is dead-lettered, and the wait
+// between attempts is on the injected clock, so the drain has to drive that
+// clock or it never comes due. Advancing in a loop removes any ordering
+// assumption: the retry registers its timer only after the attempt before it
+// has failed, and an Add with nothing pending simply does nothing.
 func (f *deadLetterFixture) invokeAsyncAndDrain(t *testing.T, event string) {
 	t.Helper()
 	if err := f.inv.InvokeEvent(context.Background(), f.fn.ARN, []byte(event)); err != nil {
 		t.Fatalf("InvokeEvent returned %v, want nil — the event must be accepted", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	f.h.StopAsync(ctx)
+
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		f.h.StopAsync(ctx)
+	}()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		select {
+		case <-drained:
+			return
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the asynchronous invocation to drain")
+		}
+		f.clk.Add(asyncRetryBackoff(asyncInvokeAttempts))
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -222,6 +283,51 @@ func TestInvokeAsync_functionErrorIsDeadLetteredToTheSNSTarget(t *testing.T) {
 	attrs := snsAttributes(delivery)
 	assertAttribute(t, attrs, "RequestID", "String", "sns-req-id")
 	assertAttribute(t, attrs, "ErrorCode", "Number", "200")
+}
+
+func TestInvokeAsync_failedEventIsRetriedTwiceBeforeItIsDeadLettered(t *testing.T) {
+	// Given: a function that always fails, with a dead-letter queue. AWS runs
+	// an asynchronous invocation "up to two more times" when the function
+	// returns an error, so a DLQ that fills on the first failure is reporting a
+	// permanent failure the function has not yet had.
+	rt := &failingRuntime{requestID: "retried-req"}
+	f := newDeadLetterFixture(t, rt, testDLQARN)
+
+	// When: it is invoked asynchronously.
+	f.invokeAsyncAndDrain(t, testDLQEvent)
+
+	// Then: the handler ran three times — the initial attempt plus two retries.
+	// The literal is AWS's documented default rather than asyncInvokeAttempts:
+	// asserting against the constant would make the test agree with whatever
+	// the code happens to say, which is the one thing it must not do.
+	const awsAsyncAttempts = 3
+	if got := rt.invokeCount(); got != awsAsyncAttempts {
+		t.Errorf("handler ran %d time(s), want %d (the initial attempt plus AWS's two retries)", got, awsAsyncAttempts)
+	}
+
+	// And: exactly one event reached the queue, carrying the last attempt's
+	// request ID. Three attempts must not become three dead-letter messages.
+	delivery := f.router.awaitDelivery(t)
+	attrs := sqsAttributes(t, delivery)
+	assertAttribute(t, attrs, "RequestID", "String", "retried-req")
+	assertNoDelivery(t, f)
+}
+
+func TestInvokeAsync_eventThatSucceedsOnARetryIsNotDeadLettered(t *testing.T) {
+	// Given: a function that fails once and then succeeds — a cold-start
+	// flake, or a dependency that was briefly unavailable.
+	rt := &failingRuntime{requestID: "recovered-req", failUntil: 1}
+	f := newDeadLetterFixture(t, rt, testDLQARN)
+
+	// When: it is invoked asynchronously.
+	f.invokeAsyncAndDrain(t, testDLQEvent)
+
+	// Then: the retry ran and succeeded, so nothing was dead-lettered. Retrying
+	// is only worth doing if a recovery stops the delivery.
+	if got := rt.invokeCount(); got != 2 {
+		t.Errorf("handler ran %d time(s), want 2 (one failure then a successful retry)", got)
+	}
+	assertNoDelivery(t, f)
 }
 
 func TestInvokeAsync_invocationThatNeverRanIsDeadLetteredToo(t *testing.T) {

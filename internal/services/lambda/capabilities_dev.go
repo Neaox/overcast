@@ -52,7 +52,7 @@ func init() {
 
 		// Invocation
 		capabilities.Capability{Service: "lambda", Operation: "Invoke", Category: "Invocation",
-			Status: capabilities.StatusSupported, Notes: "Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation that fails is delivered to the function's DeadLetterConfig target, though it is not retried first as AWS retries twice"},
+			Status: capabilities.StatusSupported, Notes: "Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried twice (1s then 2s, AWS's default) and then delivered to the function's DeadLetterConfig target; the retry policy itself is not configurable because PutFunctionEventInvokeConfig is not implemented"},
 		capabilities.Capability{Service: "lambda", Operation: "InvokeAsync", Category: "Invocation",
 			Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "lambda", Operation: "InvokeWithResponseStream", Category: "Invocation",
