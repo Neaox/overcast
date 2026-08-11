@@ -45,6 +45,10 @@ def _lambda(ctx: TestContext):
     return make_clients(ctx.endpoint, ctx.region).lambda_
 
 
+def _sqs(ctx: TestContext):
+    return make_clients(ctx.endpoint, ctx.region).sqs
+
+
 def _logs(ctx: TestContext):
     return make_clients(ctx.endpoint, ctx.region).logs
 
@@ -88,11 +92,26 @@ def setup_lambda_crud(ctx: TestContext) -> None:
     )
     ctx["lambda_fn_name"] = fn_name
 
+    # A real queue, so UpdateFunctionConfiguration's DeadLetterConfig names a
+    # target that exists rather than a plausible-looking string.
+    sqs = _sqs(ctx)
+    queue_url = sqs.create_queue(QueueName=f"{ctx.run_id}-fn-dlq")["QueueUrl"]
+    ctx["lambda_dlq_url"] = queue_url
+    ctx["lambda_dlq_arn"] = sqs.get_queue_attributes(
+        QueueUrl=queue_url, AttributeNames=["QueueArn"]
+    )["Attributes"]["QueueArn"]
+
 
 def teardown_lambda_crud(ctx: TestContext) -> None:
     fn_name = ctx.get("lambda_fn_name")
     if fn_name:
         _delete_fn_and_logs(ctx, fn_name)
+    queue_url = ctx.get("lambda_dlq_url")
+    if queue_url:
+        try:
+            _sqs(ctx).delete_queue(QueueUrl=queue_url)
+        except Exception:
+            pass
 
 
 def CreateFunction(ctx: TestContext) -> None:
@@ -150,14 +169,30 @@ exports.handler = async (event) => ({ statusCode: 200, body: 'updated' });
 def UpdateFunctionConfiguration(ctx: TestContext) -> None:
     lmb = _lambda(ctx)
     name = ctx["lambda_fn_name"]
-    lmb.update_function_configuration(
+    dlq_arn = ctx["lambda_dlq_arn"]
+    # DeadLetterConfig rides along because it is the member that used to answer
+    # 501 here, which failed every `cdk deploy` of a function with a DLQ. The
+    # response is checked as well as the later read: an update that answers 200
+    # and drops the property is the same bug wearing a better status code.
+    updated = lmb.update_function_configuration(
         FunctionName=name,
         Description="updated by compat test",
         MemorySize=256,
+        DeadLetterConfig={"TargetArn": dlq_arn},
     )
+    if updated.get("DeadLetterConfig", {}).get("TargetArn") != dlq_arn:
+        raise AssertionError(
+            f"UpdateFunctionConfiguration: expected DeadLetterConfig.TargetArn={dlq_arn}, "
+            f"got {updated.get('DeadLetterConfig')}"
+        )
     resp = lmb.get_function_configuration(FunctionName=name)
     if resp.get("MemorySize") != 256:
         raise AssertionError(f"UpdateFunctionConfiguration: expected MemorySize=256, got {resp.get('MemorySize')}")
+    if resp.get("DeadLetterConfig", {}).get("TargetArn") != dlq_arn:
+        raise AssertionError(
+            f"UpdateFunctionConfiguration: expected the stored DeadLetterConfig.TargetArn={dlq_arn}, "
+            f"got {resp.get('DeadLetterConfig')}"
+        )
 
 
 def DeleteFunction(ctx: TestContext) -> None:

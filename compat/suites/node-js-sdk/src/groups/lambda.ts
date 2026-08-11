@@ -17,6 +17,7 @@ import {
   ListFunctionsCommand,
   UpdateFunctionCodeCommand,
   UpdateFunctionConfigurationCommand,
+  GetFunctionConfigurationCommand,
   InvokeCommand,
   InvokeWithResponseStreamCommand,
   CreateAliasCommand,
@@ -35,6 +36,11 @@ import {
   type FunctionConfiguration,
 } from "@aws-sdk/client-lambda";
 import { DeleteLogGroupCommand } from "@aws-sdk/client-cloudwatch-logs";
+import {
+  CreateQueueCommand,
+  DeleteQueueCommand,
+  GetQueueAttributesCommand,
+} from "@aws-sdk/client-sqs";
 import { makeClients } from "../lib/clients.ts";
 import type { TestGroup } from "../lib/harness.ts";
 import * as assert from "node:assert/strict";
@@ -165,20 +171,63 @@ export function makeLambdaGroups(suite: string): TestGroup[] {
         {
           name: "UpdateFunctionConfiguration",
           fn: async (ctx) => {
-            const { lambda } = makeClients(ctx);
-            const resp = await lambda.send(
-              new UpdateFunctionConfigurationCommand({
-                FunctionName: `${ctx.runId}-fn`,
-                Timeout: 30,
-                MemorySize: 256,
-                Environment: { Variables: { LOG_LEVEL: "debug" } },
-              }),
+            const { lambda, sqs } = makeClients(ctx);
+            // A real queue, so DeadLetterConfig names a target that exists
+            // rather than a plausible-looking string.
+            const queueName = `${ctx.runId}-fn-dlq`;
+            const { QueueUrl } = await sqs.send(
+              new CreateQueueCommand({ QueueName: queueName }),
             );
-            assert.strictEqual(
-              resp.Timeout,
-              30,
-              `UpdateFunctionConfiguration: expected Timeout=30, got ${resp.Timeout}`,
-            );
+            try {
+              const { Attributes } = await sqs.send(
+                new GetQueueAttributesCommand({
+                  QueueUrl,
+                  AttributeNames: ["QueueArn"],
+                }),
+              );
+              const dlqArn = Attributes?.QueueArn;
+              assert.ok(dlqArn, "UpdateFunctionConfiguration: queue has no ARN");
+
+              // DeadLetterConfig rides along because it is the member that used
+              // to answer 501 here, which failed every `cdk deploy` of a
+              // function with a DLQ. Both the response and a later read are
+              // checked: an update that answers 200 and drops the property is
+              // the same bug wearing a better status code.
+              const resp = await lambda.send(
+                new UpdateFunctionConfigurationCommand({
+                  FunctionName: `${ctx.runId}-fn`,
+                  Timeout: 30,
+                  MemorySize: 256,
+                  Environment: { Variables: { LOG_LEVEL: "debug" } },
+                  DeadLetterConfig: { TargetArn: dlqArn },
+                }),
+              );
+              assert.strictEqual(
+                resp.Timeout,
+                30,
+                `UpdateFunctionConfiguration: expected Timeout=30, got ${resp.Timeout}`,
+              );
+              assert.strictEqual(
+                resp.DeadLetterConfig?.TargetArn,
+                dlqArn,
+                `UpdateFunctionConfiguration: expected DeadLetterConfig.TargetArn=${dlqArn}, got ${resp.DeadLetterConfig?.TargetArn}`,
+              );
+
+              const fetched = await lambda.send(
+                new GetFunctionConfigurationCommand({
+                  FunctionName: `${ctx.runId}-fn`,
+                }),
+              );
+              assert.strictEqual(
+                fetched.DeadLetterConfig?.TargetArn,
+                dlqArn,
+                `UpdateFunctionConfiguration: expected the stored DeadLetterConfig.TargetArn=${dlqArn}, got ${fetched.DeadLetterConfig?.TargetArn}`,
+              );
+            } finally {
+              await sqs
+                .send(new DeleteQueueCommand({ QueueUrl }))
+                .catch(() => {});
+            }
           },
         },
         {

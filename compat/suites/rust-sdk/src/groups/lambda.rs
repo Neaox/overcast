@@ -153,27 +153,103 @@ impl ServiceGroup for LambdaGroup {
                     let name = format!("{}-fn", ctx.run_id.as_ref());
                     let mut env_vars = HashMap::new();
                     env_vars.insert("LOG_LEVEL".to_string(), "debug".to_string());
-                    let response = clients
-                        .lambda()
-                        .update_function_configuration()
-                        .function_name(&name)
-                        .timeout(30)
-                        .memory_size(256)
-                        .environment(
-                            aws_sdk_lambda::types::Environment::builder()
-                                .set_variables(Some(env_vars))
-                                .build(),
-                        )
+
+                    // A real queue, so DeadLetterConfig names a target that
+                    // exists rather than a plausible-looking string.
+                    let queue_name = format!("{}-fn-dlq", ctx.run_id.as_ref());
+                    let queue_url = clients
+                        .sqs()
+                        .create_queue()
+                        .queue_name(&queue_name)
                         .send()
                         .await
-                        .map_err(crate::harness::sdk_error)?;
-                    if response.timeout().unwrap_or_default() != 30 {
-                        return Err(format!(
-                            "UpdateFunctionConfiguration: expected Timeout=30, got {}",
-                            response.timeout().unwrap_or_default()
-                        ));
+                        .map_err(crate::harness::sdk_error)?
+                        .queue_url()
+                        .unwrap_or_default()
+                        .to_string();
+                    let dlq_arn = clients
+                        .sqs()
+                        .get_queue_attributes()
+                        .queue_url(&queue_url)
+                        .attribute_names(aws_sdk_sqs::types::QueueAttributeName::QueueArn)
+                        .send()
+                        .await
+                        .map_err(crate::harness::sdk_error)?
+                        .attributes()
+                        .and_then(|a| a.get(&aws_sdk_sqs::types::QueueAttributeName::QueueArn))
+                        .cloned()
+                        .unwrap_or_default();
+                    if dlq_arn.is_empty() {
+                        return Err("UpdateFunctionConfiguration: queue has no ARN".to_string());
                     }
-                    Ok(())
+
+                    // DeadLetterConfig rides along because it is the member that
+                    // used to answer 501 here, which failed every `cdk deploy`
+                    // of a function with a DLQ. Both the response and a later
+                    // read are checked: an update that answers 200 and drops the
+                    // property is the same bug wearing a better status code.
+                    let result = async {
+                        let response = clients
+                            .lambda()
+                            .update_function_configuration()
+                            .function_name(&name)
+                            .timeout(30)
+                            .memory_size(256)
+                            .environment(
+                                aws_sdk_lambda::types::Environment::builder()
+                                    .set_variables(Some(env_vars))
+                                    .build(),
+                            )
+                            .dead_letter_config(
+                                aws_sdk_lambda::types::DeadLetterConfig::builder()
+                                    .target_arn(&dlq_arn)
+                                    .build(),
+                            )
+                            .send()
+                            .await
+                            .map_err(crate::harness::sdk_error)?;
+                        if response.timeout().unwrap_or_default() != 30 {
+                            return Err(format!(
+                                "UpdateFunctionConfiguration: expected Timeout=30, got {}",
+                                response.timeout().unwrap_or_default()
+                            ));
+                        }
+                        let echoed = response
+                            .dead_letter_config()
+                            .and_then(|d| d.target_arn())
+                            .unwrap_or_default();
+                        if echoed != dlq_arn {
+                            return Err(format!(
+                                "UpdateFunctionConfiguration: expected DeadLetterConfig.TargetArn={dlq_arn}, got {echoed}"
+                            ));
+                        }
+                        let fetched = clients
+                            .lambda()
+                            .get_function_configuration()
+                            .function_name(&name)
+                            .send()
+                            .await
+                            .map_err(crate::harness::sdk_error)?;
+                        let stored = fetched
+                            .dead_letter_config()
+                            .and_then(|d| d.target_arn())
+                            .unwrap_or_default();
+                        if stored != dlq_arn {
+                            return Err(format!(
+                                "UpdateFunctionConfiguration: expected the stored DeadLetterConfig.TargetArn={dlq_arn}, got {stored}"
+                            ));
+                        }
+                        Ok(())
+                    }
+                    .await;
+
+                    let _ = clients
+                        .sqs()
+                        .delete_queue()
+                        .queue_url(&queue_url)
+                        .send()
+                        .await;
+                    result
                 })
             }),
         );

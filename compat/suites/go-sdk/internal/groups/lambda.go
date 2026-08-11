@@ -15,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 const _lambdaRoleARN = "arn:aws:iam::000000000000:role/lambda-role"
@@ -136,12 +138,32 @@ func (g *lambdaGroup) setupCrud(ctx context.Context, t *harness.TestContext) err
 		return err
 	}
 	t.Set("lambda_fn_name", name)
+
+	// A real queue, so UpdateFunctionConfiguration's DeadLetterConfig names a
+	// target that exists rather than a plausible-looking string.
+	queue := fmt.Sprintf("%s-fn-dlq", t.RunID)
+	created, err := g.c.SQS().CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String(queue)})
+	if err != nil {
+		return err
+	}
+	t.Set("lambda_dlq_url", aws.ToString(created.QueueUrl))
+	attrs, err := g.c.SQS().GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       created.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameQueueArn},
+	})
+	if err != nil {
+		return err
+	}
+	t.Set("lambda_dlq_arn", attrs.Attributes[string(sqstypes.QueueAttributeNameQueueArn)])
 	return nil
 }
 
 func (g *lambdaGroup) teardownCrud(ctx context.Context, t *harness.TestContext) error {
 	if name := t.GetString("lambda_fn_name"); name != "" {
 		g.deleteFunc(ctx, name)
+	}
+	if url := t.GetString("lambda_dlq_url"); url != "" {
+		g.c.SQS().DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(url)}) //nolint:errcheck
 	}
 	return nil
 }
@@ -209,11 +231,38 @@ func (g *lambdaGroup) UpdateFunctionCode(ctx context.Context, t *harness.TestCon
 
 func (g *lambdaGroup) UpdateFunctionConfiguration(ctx context.Context, t *harness.TestContext) error {
 	name := t.GetString("lambda_fn_name")
-	_, err := g.client().UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
-		FunctionName: aws.String(name),
-		Timeout:      aws.Int32(10),
+	dlqARN := t.GetString("lambda_dlq_arn")
+	// DeadLetterConfig rides along because it is the member that used to answer
+	// 501 here, which failed every `cdk deploy` of a function with a DLQ. The
+	// response is checked rather than just the error: an update that returns
+	// 200 and drops the property is the same bug wearing a better status code.
+	resp, err := g.client().UpdateFunctionConfiguration(ctx, &lambda.UpdateFunctionConfigurationInput{
+		FunctionName:     aws.String(name),
+		Timeout:          aws.Int32(10),
+		DeadLetterConfig: &lambdatypes.DeadLetterConfig{TargetArn: aws.String(dlqARN)},
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if got := aws.ToInt32(resp.Timeout); got != 10 {
+		return fmt.Errorf("UpdateFunctionConfiguration: Timeout = %d, want 10", got)
+	}
+	if resp.DeadLetterConfig == nil || aws.ToString(resp.DeadLetterConfig.TargetArn) != dlqARN {
+		return fmt.Errorf("UpdateFunctionConfiguration: DeadLetterConfig = %v, want TargetArn %s",
+			resp.DeadLetterConfig, dlqARN)
+	}
+	// And it is stored, not merely echoed.
+	fetched, err := g.client().GetFunctionConfiguration(ctx, &lambda.GetFunctionConfigurationInput{
+		FunctionName: aws.String(name),
+	})
+	if err != nil {
+		return err
+	}
+	if fetched.DeadLetterConfig == nil || aws.ToString(fetched.DeadLetterConfig.TargetArn) != dlqARN {
+		return fmt.Errorf("GetFunctionConfiguration after update: DeadLetterConfig = %v, want TargetArn %s",
+			fetched.DeadLetterConfig, dlqARN)
+	}
+	return nil
 }
 
 func (g *lambdaGroup) DeleteFunction(ctx context.Context, t *harness.TestContext) error {
