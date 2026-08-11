@@ -109,16 +109,26 @@ func TestNextRateFire_missingLastFire(t *testing.T) {
 	}
 }
 
-func TestMatchCronDay_awsSunday(t *testing.T) {
-	// Given: AWS cron day-of-week 1 means Sunday.
-	sunday := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+func TestNextRuleFire_awsSunday(t *testing.T) {
+	// Given: a Saturday, and AWS cron day-of-week 1, which means Sunday.
+	saturday := time.Date(2026, 7, 18, 0, 0, 0, 0, time.UTC)
 
-	// When/Then: Sunday matches 1 and not 7.
-	if !matchCronDay("?", "1", sunday) {
-		t.Fatal("expected AWS day-of-week 1 to match Sunday")
+	// When: the rule's next firing is computed.
+	next, err := nextRuleFire("cron(0 0 ? * 1 *)", time.Time{}, saturday)
+	if err != nil {
+		t.Fatalf("nextRuleFire: %v", err)
 	}
-	if matchCronDay("?", "7", sunday) {
-		t.Fatal("did not expect AWS day-of-week 7 to match Sunday")
+
+	// Then: it lands on Sunday. Day-of-week 7 is Saturday, not Sunday.
+	if got := next.Weekday(); got != time.Sunday {
+		t.Fatalf("day-of-week 1 fired on %s, want Sunday", got)
+	}
+	next, err = nextRuleFire("cron(0 0 ? * 7 *)", time.Time{}, saturday)
+	if err != nil {
+		t.Fatalf("nextRuleFire: %v", err)
+	}
+	if got := next.Weekday(); got != time.Saturday {
+		t.Fatalf("day-of-week 7 fired on %s, want Saturday", got)
 	}
 }
 

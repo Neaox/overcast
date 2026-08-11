@@ -75,9 +75,13 @@ func TestNextFireTime(t *testing.T) {
 
 		// cron — day-of-month and day-of-week
 		{name: "cron day of month", expr: "cron(0 0 15 * ? *)", want: "2026-08-15T00:00:00Z"},
-		{name: "cron day of week", expr: "cron(30 9 ? * 1 *)", want: "2026-08-10T09:30:00Z"},
+		// AWS numbers the days of the week 1-7 from Sunday, so 1 is Sunday and
+		// 5 is Thursday. These expectations used to be a day early each: the
+		// parser read the field as Go's time.Weekday, where 1 is Monday.
+		{name: "cron day of week", expr: "cron(30 9 ? * 1 *)", want: "2026-08-16T09:30:00Z"},
+		{name: "cron day of week by name", expr: "cron(30 9 ? * MON *)", want: "2026-08-10T09:30:00Z"},
 		{name: "cron with both day fields set matches either",
-			expr: "cron(0 0 1 * 5 *)", want: "2026-08-14T00:00:00Z"},
+			expr: "cron(0 0 1 * 5 *)", want: "2026-08-13T00:00:00Z"},
 
 		// cron — the sparse ones
 		{name: "cron monthly", expr: "cron(0 0 1 * ? *)", want: "2026-09-01T00:00:00Z"},

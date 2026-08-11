@@ -25,29 +25,49 @@ RPC v2 CBOR is also supported via the Smithy RPC path
 Repositories are assigned a URI on the registry Overcast serves:
 
 ```
-<hostname>:<registryPort>/<accountId>/<repositoryName>
+localhost:<registryPort>/<accountId>/<repositoryName>
 ```
 
 For example, `localhost:4510/000000000000/my-app`. The port is the registry
 container's, not the API port — this URI is what a `docker push` targets, so it
 has to name the registry rather than the emulator. The registry asks for a
 fixed port (`OVERCAST_ECR_REGISTRY_PORT`, default `4510`, the same port
-LocalStack serves its registry on) so the URI is stable across restarts; if
-something else holds that port the registry falls back to an ephemeral one and
-says so in the log. Without Docker there is no registry, and the URI falls back
-to the API base URL.
+LocalStack serves its registry on) so the URI is normally the same from one run
+to the next; if something else holds that port the registry falls back to an
+ephemeral one and says so in the log. Without Docker there is no registry, and
+the URI falls back to the API base URL — a `docker push` there answers
+`405 Method Not Allowed`, because it is not a registry.
+
+The URI is re-minted from the running registry every time a repository is read,
+not stored with the repository. Repositories are persisted and the registry is
+not, so a URI frozen at `CreateRepository` is a fact about the run that created
+it: a `cdk bootstrap` performed before the registry was up would send every
+later deploy's `docker push` at the API port, for as long as the repository
+existed. It follows that a repository read while the registry is down reports
+the fallback address, and reports the registry again once there is one.
 
 `proxyEndpoint` from `GetAuthorizationToken` names the same address, and
 `Fn::GetAtt Repo.RepositoryUri` returns this value rather than an
 `amazonaws.com` one.
 
-The address is chosen for the party that actually dials it. `docker push`,
-`docker pull` and `docker login` are all performed by the Docker daemon, never
-by the CLI that requested them, so `localhost` here means the daemon's own
-loopback — which is correct on native Linux and on Docker Desktop alike, and
-regardless of where the client runs. Docker also trusts loopback registries
-with plain HTTP automatically, so no `insecure-registries` configuration is
-needed. At startup the registry's reachability is verified from the daemon's
+The host is `localhost` rather than `OVERCAST_HOSTNAME`, and deliberately so:
+it is the address startup proved. `docker push`, `docker pull` and `docker
+login` are all performed by the Docker daemon, never by the CLI that requested
+them, and startup picks the port by having the daemon dial `localhost:<port>`
+itself. Advertising anything else would be offering an address nobody checked.
+
+The two are not interchangeable even when they name the same machine. Docker
+trusts plain HTTP to `localhost` without configuration and bypasses proxies for
+it; a hostname such as `localhost.overcast.sh` is an ordinary domain to a
+daemon, so a machine with a proxy configured sends the push to the proxy —
+`proxyconnect tcp: dial tcp 192.168.65.1:3128: i/o timeout` on Docker Desktop —
+and it never reaches a registry that was listening the whole time.
+
+When the daemon cannot be shown to reach the registry, `localhost` would be a
+guess about someone else's machine, so `OVERCAST_HOSTNAME` stands: that is the
+remote-daemon case, and the address to add to its `insecure-registries`.
+
+At startup the registry's reachability is verified from the daemon's
 own vantage (the Engine's distribution-inspect endpoint, which makes the daemon
 contact the registry); if the daemon cannot reach it — a remote daemon, or a
 proxy arrangement that does not loop published ports back — one warning names
@@ -72,6 +92,28 @@ When Docker is available, the same password is provisioned into the lazy-started
 shared `registry:2` container via htpasswd auth, so the returned token can be used
 for authenticated calls against the local registry endpoint. Token expiry is 12 hours.
 
+## Asking whether an image is published
+
+`DescribeImages` answers an `imageIds` entry it cannot resolve with
+`ImageNotFoundException`, as real ECR does, rather than a 200 carrying a short
+list. Only a call that named no `imageIds` returns an empty list, because only
+a requested identifier can be missing.
+
+The distinction decides whether anything is ever pushed. cdk-assets — the
+publisher behind `cdk deploy` — treats *any* non-throwing `DescribeImages` as
+"already published" and skips building and pushing the asset, so an emulator
+that answers 200 for an absent tag reports a clean deploy over an empty
+repository, and the ECS service or Lambda function that runs the asset fails at
+pull time with a 404 from the registry.
+
+For the same reason the image inventory follows the registry rather than
+accumulating. When a repository is read, Overcast reconciles it against the
+registry's manifests, and a record it created from an earlier push is dropped
+when the registry answers 404 for that manifest — which is what a restart
+leaves behind, since the registry's contents do not survive its container while
+the records are persisted. A record written by `PutImage` is left alone: it was
+never in the registry, so the registry's silence says nothing about it.
+
 ## Running an image from here
 
 ECS resolves a task definition image addressed as
@@ -92,6 +134,17 @@ and
   needs an `insecure-registries` daemon entry for `<hostname>:<registryPort>`.
 - Images live in the registry container, which is removed on shutdown, so a
   restart starts empty — repository metadata persists, image content does not.
+  The image records go with the content: the first read of a repository after a
+  restart drops the ones the new registry cannot serve, so a publisher is told
+  the truth and pushes again.
+- The fallback to an ephemeral port is a degraded mode, not an equivalent one.
+  Measured on Docker Desktop 29.6.2 for Windows, the daemon reaches a fixed
+  publish and not an ephemeral one — `docker login localhost:5099` succeeds
+  where `docker login localhost:62154` times out on the same registry image,
+  though `docker port` reports both bindings as dual-stack. Overcast says so at
+  startup ("the Docker daemon cannot reach the ECR registry it just
+  published"); free `OVERCAST_ECR_REGISTRY_PORT`'s port, or point it at another
+  fixed one, rather than working around the pull failures downstream.
 - A registry on an *ephemeral* port can outlive an Overcast that was killed
   rather than shut down. See [Reclaiming a leaked registry
   container](#reclaiming-a-leaked-registry-container).
@@ -171,14 +224,14 @@ check the first before running the second.
 
 ### Images
 
-| Operation                   | Status       | Notes                                                                                                                 | AWS Docs                                                                                             |
-| --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `ListImages`                | ✅ Supported | Returns image IDs (tag + digest); reconciles local registry tags when Docker is available                             | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_ListImages.html)                |
-| `DescribeImages`            | ✅ Supported | Returns image detail objects (digest, tags, media type); reconciles local registry manifests when Docker is available | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImages.html)            |
-| `PutImage`                  | ✅ Supported | Stores an image manifest; generates a digest if none supplied                                                         | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_PutImage.html)                  |
-| `BatchGetImage`             | ✅ Supported | Fetches manifests by tag or digest                                                                                    | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_BatchGetImage.html)             |
-| `DescribeImageScanFindings` | ✅ Supported | Returns empty/not-scanned findings; no scan engine is emulated                                                        | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImageScanFindings.html) |
-| `BatchDeleteImage`          | ✅ Supported | Deletes images by tag or digest                                                                                       | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_BatchDeleteImage.html)          |
+| Operation                   | Status       | Notes                                                                                                                                                                                           | AWS Docs                                                                                             |
+| --------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `ListImages`                | ✅ Supported | Returns image IDs (tag + digest); reconciles local registry tags when Docker is available                                                                                                       | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_ListImages.html)                |
+| `DescribeImages`            | ✅ Supported | Returns image detail objects (digest, tags, media type); an imageIds entry that resolves to nothing raises ImageNotFoundException; reconciles local registry manifests when Docker is available | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImages.html)            |
+| `PutImage`                  | ✅ Supported | Stores an image manifest; generates a digest if none supplied                                                                                                                                   | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_PutImage.html)                  |
+| `BatchGetImage`             | ✅ Supported | Fetches manifests by tag or digest                                                                                                                                                              | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_BatchGetImage.html)             |
+| `DescribeImageScanFindings` | ✅ Supported | Returns empty/not-scanned findings; no scan engine is emulated                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeImageScanFindings.html) |
+| `BatchDeleteImage`          | ✅ Supported | Deletes images by tag or digest                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_BatchDeleteImage.html)          |
 
 ### Policy
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"testing"
@@ -69,6 +70,9 @@ type serverOptions struct {
 	store      state.Store       // nil means use default MemoryStore
 	initRunner *inithooks.Runner // nil means no init hooks
 	logger     *zap.Logger       // nil means silent (zap.NewNop)
+	// ownsNetworks marks a server whose Docker networks were minted for this
+	// test alone, so they are removed with it. See WithECSDocker.
+	ownsNetworks bool
 }
 
 // NewTestServer creates a started test server with sensible defaults.
@@ -159,6 +163,12 @@ func NewTestServer(t *testing.T, opts ...Option) *TestServer {
 		Store:  ms,
 		Config: so.cfg,
 		Clock:  so.mock,
+	}
+	// Registered first so it runs last: the networks cannot go until the
+	// containers on them have, which the server's own cleanup does.
+	if so.ownsNetworks {
+		networks := []string{so.cfg.Network, so.cfg.ControlNetwork()}
+		t.Cleanup(func() { removeTestNetworks(networks) })
 	}
 	// t.Cleanup runs in LIFO order: close the server first, then drain
 	// any in-flight async work (e.g. SNS fan-out goroutines).
@@ -265,8 +275,28 @@ func WithDataDir(dir string) Option {
 // independently.
 func WithLambdaDocker() Option {
 	return func(so *serverOptions) {
-		so.cfg.LambdaDockerSocket = "/var/run/docker.sock"
+		so.cfg.LambdaDockerSocket = TestDockerSocket()
 	}
+}
+
+// TestDockerSocket is the Docker endpoint a test server should manage
+// containers through: LAMBDA_DOCKER_SOCKET when set, otherwise the platform
+// default — the same resolution config.Load performs, so a test server talks to
+// the daemon a real one would.
+//
+// It is not "/var/run/docker.sock". That path does not exist on Windows, where
+// Docker Desktop listens on a named pipe, so every Docker-dependent test used
+// to build a server whose Docker client could never connect. The tests did not
+// fail: their own gate found the daemon (it resolves the endpoint correctly),
+// the server's did not, and the test skipped or timed out against an emulator
+// with no Docker at all. Container behaviour was therefore verified only on
+// Linux, which is how a broken ECR-to-ECS image pull reached users from a
+// Windows workstation with a green suite.
+func TestDockerSocket() string {
+	if socket := os.Getenv("LAMBDA_DOCKER_SOCKET"); socket != "" {
+		return socket
+	}
+	return config.DefaultDockerSocket()
 }
 
 // WithECSDocker enables Docker-backed ECS task placement on the test server,
@@ -275,11 +305,44 @@ func WithLambdaDocker() Option {
 // API surface and would pay a daemon round-trip for nothing.
 //
 // The network is named per test run because the containers are: two packages
-// running in parallel must not share, or race to remove, one another's.
+// running in parallel must not share, or race to remove, one another's. Being
+// per-run, they are also this server's to remove — see the cleanup in
+// NewTestServer. A Docker daemon has a finite address pool (Docker Desktop
+// subnets roughly thirty networks out of its default pools), so a suite that
+// mints a pair per test server and never removes them exhausts it after a few
+// dozen runs, and every later `docker network create` fails — which the
+// emulator reports as "Docker not available", leaving ECS metadata-only and
+// every container test failing for a reason that has nothing to do with the
+// code under test.
 func WithECSDocker() Option {
 	return func(so *serverOptions) {
-		so.cfg.ECSDockerSocket = "/var/run/docker.sock"
+		so.cfg.ECSDockerSocket = TestDockerSocket()
 		so.cfg.Network = fmt.Sprintf("overcast_ecs_test_%d", time.Now().UnixNano())
+		so.ownsNetworks = true
+	}
+}
+
+// WithECRRegistryPort makes the ECR registry claim a fixed host port instead of
+// an ephemeral one — the binding shape production uses, since
+// OVERCAST_ECR_REGISTRY_PORT defaults to 4510 while the harness defaults to 0.
+//
+// The difference is not cosmetic, and it decides whether a Docker-dependent
+// registry test runs at all. Measured on Docker Desktop 29.6.2 for Windows,
+// where the daemon runs in a VM: a fixed publish is reachable from the daemon
+// (`docker login localhost:5099` → Login Succeeded) and an ephemeral one is
+// not (`docker login localhost:62154` → context deadline exceeded on the
+// probe), though `docker port` reports both as dual-stack. So on Desktop every
+// registry test the harness left ephemeral skipped itself as "the daemon will
+// not talk plain HTTP to …", and the shape real users run was covered only on
+// native Linux CI.
+//
+// Pass a port nothing else will claim — ReserveTCPPort gets one. Do not share
+// 4510 between tests: a fixed-port claim replaces whatever container already
+// holds its name, which is correct for a predecessor and fatal for a sibling
+// test package's live registry.
+func WithECRRegistryPort(port int) Option {
+	return func(so *serverOptions) {
+		so.cfg.ECRRegistryPort = port
 	}
 }
 

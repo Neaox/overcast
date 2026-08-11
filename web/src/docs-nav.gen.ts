@@ -2664,6 +2664,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Asking whether an image is published",
+        "id": "asking-whether-an-image-is-published"
+      },
+      {
+        "depth": 2,
         "text": "Running an image from here",
         "id": "running-an-image-from-here"
       },

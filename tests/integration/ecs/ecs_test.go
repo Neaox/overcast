@@ -976,10 +976,9 @@ func skipWithoutDocker(t *testing.T) *docker.Client {
 	t.Helper()
 	socket := os.Getenv("ECS_DOCKER_SOCKET")
 	if socket == "" {
-		socket = os.Getenv("LAMBDA_DOCKER_SOCKET")
-	}
-	if socket == "" {
-		socket = "/var/run/docker.sock"
+		// The same endpoint the test server will use, so this gate speaks for
+		// the server rather than for a daemon the server cannot reach.
+		socket = helpers.TestDockerSocket()
 	}
 	dc := docker.NewClient(socket, zap.NewNop())
 	if !dc.Available(2 * time.Second) {

@@ -10,8 +10,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -60,11 +60,9 @@ func mustDecode(t *testing.T, resp *http.Response) map[string]any {
 
 func skipWithoutDocker(t *testing.T) *docker.Client {
 	t.Helper()
-	socket := os.Getenv("LAMBDA_DOCKER_SOCKET")
-	if socket == "" {
-		socket = "/var/run/docker.sock"
-	}
-	dc := docker.NewClient(socket, zap.NewNop())
+	// The same endpoint the test server will use, so this gate speaks for the
+	// server rather than for a daemon the server cannot reach.
+	dc := docker.NewClient(helpers.TestDockerSocket(), zap.NewNop())
 	if err := dc.Ping(t.Context()); err != nil {
 		t.Skip("Docker not available, skipping Docker-dependent ECR test")
 	}
@@ -897,8 +895,19 @@ func TestGetAuthorizationToken_withDocker_lazyStartsSharedRegistry(t *testing.T)
 	if proxy == "" {
 		t.Fatalf("missing proxyEndpoint")
 	}
-	if !bytes.Contains([]byte(proxy), []byte("http://overcast:")) {
-		t.Fatalf("expected hostname-aware proxy endpoint, got %q", proxy)
+	// Which host the endpoint names is settled by the daemon-reachability
+	// probe — "localhost" when the daemon answered there, the configured
+	// hostname when it could not be shown to — and this test cannot say which
+	// happened without re-running the probe. So it pins what it is actually
+	// about: a registry exists, and the endpoint names it rather than the
+	// emulator, whose port is what GetAuthorizationToken falls back to when
+	// there is no registry at all. Both branches of the host rule are covered
+	// deterministically in internal/services/ecr/registry_advertised_host_test.go.
+	if !strings.HasPrefix(proxy, "http://") {
+		t.Fatalf("proxyEndpoint is not an http endpoint: %q", proxy)
+	}
+	if strings.HasSuffix(proxy, fmt.Sprintf(":%d", srv.Config.Port)) {
+		t.Fatalf("proxyEndpoint names the emulator's API port rather than the registry: %q", proxy)
 	}
 
 	waitForNewManagedRegistry(t, dc, before)
@@ -970,6 +979,36 @@ func registryPing(t *testing.T, proxy, user, password string) int {
 	return resp.StatusCode
 }
 
+// dockerLoginOrSkip authenticates the Docker CLI against this server's registry
+// with the credentials GetAuthorizationToken hands out, skipping the test when
+// the daemon refuses plain HTTP to it. That refusal is daemon configuration the
+// test cannot change and says nothing about Overcast.
+func dockerLoginOrSkip(t *testing.T, srv *helpers.TestServer) {
+	t.Helper()
+
+	authResp := ecrCall(t, srv, "GetAuthorizationToken", map[string]any{})
+	if authResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 getting auth token, got %d", authResp.StatusCode)
+	}
+	authBody := mustDecode(t, authResp)
+	authData, ok := authBody["authorizationData"].([]any)
+	if !ok || len(authData) != 1 {
+		t.Fatalf("expected one authorizationData entry, got %#v", authBody["authorizationData"])
+	}
+	authEntry := authData[0].(map[string]any)
+	tokenB64, _ := authEntry["authorizationToken"].(string)
+	proxy, _ := authEntry["proxyEndpoint"].(string)
+	decoded, err := base64.StdEncoding.DecodeString(tokenB64)
+	if err != nil {
+		t.Fatalf("decode authorizationToken: %v", err)
+	}
+	user, password, found := strings.Cut(string(decoded), ":")
+	if !found {
+		t.Fatalf("unexpected decoded token format: %q", string(decoded))
+	}
+	helpers.DockerLoginOrSkip(t, proxy, user, password)
+}
+
 func TestECR_withDocker_pushListGetAndPullRoundTrip(t *testing.T) {
 	skipWithoutDocker(t)
 
@@ -977,6 +1016,9 @@ func TestECR_withDocker_pushListGetAndPullRoundTrip(t *testing.T) {
 		helpers.WithLambdaDocker(),
 		helpers.WithRegion("us-east-1"),
 		helpers.WithAccountID("000000000000"),
+		// The daemon does the pushing here, and on Docker Desktop it cannot
+		// reach an ephemeral publish — see WithECRRegistryPort.
+		helpers.WithECRRegistryPort(helpers.ReserveTCPPort(t)),
 	)
 
 	createResp := ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "roundtrip"})
@@ -990,37 +1032,11 @@ func TestECR_withDocker_pushListGetAndPullRoundTrip(t *testing.T) {
 		t.Fatal("missing repositoryUri")
 	}
 
-	authResp := ecrCall(t, srv, "GetAuthorizationToken", map[string]any{})
-	if authResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 getting auth token, got %d", authResp.StatusCode)
-	}
-	authBody := mustDecode(t, authResp)
-	authData := authBody["authorizationData"].([]any)
-	authEntry := authData[0].(map[string]any)
-	tokenB64, _ := authEntry["authorizationToken"].(string)
-	proxy, _ := authEntry["proxyEndpoint"].(string)
-	decoded, err := base64.StdEncoding.DecodeString(tokenB64)
-	if err != nil {
-		t.Fatalf("decode authorizationToken: %v", err)
-	}
-	parts := strings.SplitN(string(decoded), ":", 2)
-	if len(parts) != 2 {
-		t.Fatalf("unexpected decoded token format: %q", string(decoded))
-	}
+	dockerLoginOrSkip(t, srv)
 	// Use the already-present registry image as a tiny local source image.
 	sourceImage := "registry:2"
 	targetImage := repoURI + ":roundtrip"
 
-	loginCmd := exec.CommandContext(t.Context(), "docker", "login", proxy, "-u", parts[0], "--password-stdin")
-	loginCmd.Stdin = strings.NewReader(parts[1] + "\n")
-	loginOut, loginErr := loginCmd.CombinedOutput()
-	if loginErr != nil {
-		msg := string(loginOut)
-		if strings.Contains(msg, "https://") || strings.Contains(msg, "server gave HTTP response to HTTPS client") || strings.Contains(msg, "context deadline exceeded") {
-			t.Skipf("docker daemon is not configured to allow plain-http local registry access for %s: %s", proxy, strings.TrimSpace(msg))
-		}
-		t.Fatalf("docker login failed: %v\n%s", loginErr, loginOut)
-	}
 	runDockerCommand(t, "tag", sourceImage, targetImage)
 	t.Cleanup(func() {
 		_ = exec.CommandContext(context.Background(), "docker", "image", "rm", "-f", targetImage).Run()

@@ -4277,7 +4277,7 @@
           "operation": "DescribeImages",
           "category": "Images",
           "status": "✅ Supported",
-          "notes": "Returns image detail objects (digest, tags, media type); reconciles local registry manifests when Docker is available"
+          "notes": "Returns image detail objects (digest, tags, media type); an imageIds entry that resolves to nothing raises ImageNotFoundException; reconciles local registry manifests when Docker is available"
         },
         {
           "operation": "PutImage",
