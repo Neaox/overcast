@@ -34,8 +34,9 @@ func (noopLogWriter) WriteLogEvents(context.Context, string, string, []events.Lo
 	return nil
 }
 
-// newTailWaitInstance returns the minimum containerInstance waitForScannerIdle
-// touches: a clock, and the atomics streamLogs would be updating. Its reader
+// newTailWaitInstance returns the minimum containerInstance the log waits touch
+// — waitForScannerIdle here, waitForLogDrain in log_drain_wait_test.go: a clock,
+// and the atomics streamLogs would be updating. Its reader
 // starts parked in a Read on the Docker stream, which is where a reader that
 // has caught up spends all of its time.
 func newTailWaitInstance(clk clock.Clock) *containerInstance {
