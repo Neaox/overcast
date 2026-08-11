@@ -26,7 +26,7 @@
 10. [ECR and the fourth caller](#10-ecr-and-the-fourth-caller)
 11. [IPv6](#11-ipv6)
 12. [The bridge: friendly names on port 80](#12-the-bridge-friendly-names-on-port-80)
-13. [Known gaps](#13-known-gaps)
+13. [Things that will bite you](#13-things-that-will-bite-you)
 14. [Where to go next](#14-where-to-go-next)
 
 ---
@@ -81,9 +81,9 @@ If a later address in the list fails to bind, everything already opened is close
 
 **The web console is deliberately narrower than the API.** It binds only the first address. `OVERCAST_HOST=127.0.0.1` is how an unauthenticated emulator is kept off the network the machine is attached to, and a console that ignored it would leave the state browser — and its write actions — reachable from that network anyway. The extra addresses exist so container-side clients can reach the API; the console is a browser surface on this machine.
 
-**SMTP is loopback-only regardless of `OVERCAST_HOST`.** That means an SMTP client in a sibling container cannot reach it. This appears to be undeclared rather than deliberate — see [Known gaps](#13-known-gaps).
+**SMTP is loopback-only regardless of `OVERCAST_HOST`.** That means an SMTP client in a sibling container cannot reach it. This appears to be undeclared rather than deliberate — see [§13](#13-things-that-will-bite-you).
 
-**The Lambda Runtime API narrows deliberately, and the wildcard is only a fallback.** A wildcard would put an unauthenticated control channel for every Lambda container on whatever network this machine is attached to, and nothing off this machine is a legitimate caller. But loopback alone would strand every invocation, because containers connect back to it over the Lambda network. So it binds loopback plus one reachable address, chosen from where Overcast is running — its own network IP when containerised, the network gateway on native Linux, the host's default-route address under Docker Desktop.
+**The Lambda Runtime API narrows deliberately, and the wildcard is only a fallback.** A wildcard would put an unauthenticated control channel for every Lambda container on whatever network this machine is attached to, and nothing off this machine is a legitimate caller. But loopback alone would strand every invocation, because containers connect back to it over the control plane. So it binds loopback plus one reachable address, chosen from where Overcast is running — its own network IP when containerised, the network gateway on native Linux, the host's default-route address under Docker Desktop.
 
 Which case applies is decided by **actually attempting the bind** rather than by inspecting the operating system: getting it wrong by inspection leaves Lambda unable to answer an invocation, and `uname -s` reports Linux under WSL2 either way.
 
@@ -203,20 +203,34 @@ Overcast also never forges a negative answer, and distinguishes "I own this name
 
 ## 7. The container networks
 
-| Network | Env var | Default | Who attaches |
-|---|---|---|---|
-| Lambda | `LAMBDA_NETWORK` | `overcast_lambda` | every Lambda container; Overcast itself; RDS and ElastiCache containers, aliased |
-| ECS | `ECS_NETWORK` | `overcast_ecs` | every ECS task container; Overcast itself; RDS containers, aliased |
-| RDS | `RDS_NETWORK` | `overcast_rds` | engine containers |
-| ElastiCache | `ELASTICACHE_NETWORK` | `overcast_elasticache` | cache containers |
-| MSK | `MSK_NETWORK` | `overcast_msk` | Redpanda containers |
-| EKS | `EKS_NETWORK` | `overcast_eks` | live-mode control-plane containers |
-| EFS | `EFS_NETWORK` | `overcast_efs` | NFS export containers, only when `OVERCAST_EFS_NFS` is on |
-| Per-VPC | — | `overcast-vpc-{vpcId}` | Lambda functions with a `VpcConfig`; ECS `awsvpc` tasks; RDS instances in a VPC; Overcast itself when containerised |
+There are two, plus one per VPC. `internal/dataplane` is the only thing that
+picks between them; no service chooses a network for itself.
 
-**Several containers sit on more than one network.** An RDS engine container joins its own network, plus the Lambda and ECS networks with aliases, plus its VPC network if it has one — because a task placed in a VPC reaches it over the VPC network, and the compute-network aliases cover everything else. A Lambda function with a `VpcConfig` joins the Lambda network at creation and the VPC network after.
+| Plane | Env var | Default | Who attaches | Carries endpoint aliases |
+|---|---|---|---|---|
+| **Control** | derived, `{network}_control` | `overcast_control` | every container Overcast starts, and Overcast itself | no |
+| **Default data** | `OVERCAST_NETWORK` | `overcast` | every container belonging to no VPC | yes |
+| **Per-VPC** | — | `overcast-vpc-{vpcId}` | resources placed in that VPC; Overcast itself when containerised | yes |
 
-**An EC2 VPC becomes one Docker bridge** named after the VPC, with the subnet taken from its CIDR, and marked `--internal` unless the VPC has an attached internet gateway. `OVERCAST_EC2_VPC_STRATEGY` declares four strategies but only `shared` is implemented; the others fall back to it with a startup warning. A VPC whose network could not be created reports status `unbacked` and services refuse to place into it — the usual cause is a CIDR collision with a leftover network from an earlier run.
+The split is the point. The **control plane** carries Overcast's own channel to the containers it starts — the Lambda Runtime API, and the `AWS_ENDPOINT_URL` calls function and task code makes back into the emulator. On AWS the Runtime API lives inside the execution sandbox and the emulator's API stands in for a VPC endpoint per service; both are reachable whatever VPC a function joins. A **data plane** carries traffic *between* resources. Only the second is something a VPC should be able to restrict, and while both rode one network, "keep the Runtime API" was inseparable from "keep reaching every database".
+
+**Every container is created on the control plane and attached to a data plane before it starts.** Docker accepts one network at create, and the control plane is the one that must be up from the first packet: a Lambda container that cannot reach the Runtime API never finishes INIT. The ordering matters in the other direction too — application code routinely opens a database connection during INIT, so a container that started before its data-plane attachment landed would dial a name that does not resolve yet.
+
+The one exception is ECS's `awsvpc` attachment, which reads back the address Docker assigned and therefore cannot run until the container does. The same task joins the default plane before starting.
+
+**A VPC-placed resource currently keeps the default plane as well as its VPC network.** The target model is exactly one data plane per container, but withdrawing the default plane restricts reachability, and the failure mode for a connection a VPC forbids is a hang rather than an error. That is only safe once the resolver refuses such names outright ([§9](#9-a-container-reaching-another-container)), so the two land together.
+
+**An EC2 VPC becomes one Docker bridge** named after the VPC, with the subnet taken from its CIDR, and marked `--internal` unless the VPC has an attached internet gateway — though that flag is close to decorative while every container also sits on the non-internal default plane. A VPC whose network could not be created reports status `unbacked` and services refuse to place into it; the usual cause is a CIDR collision with a leftover network from an earlier run.
+
+`OVERCAST_EC2_VPC_STRATEGY` selects how VPCs map onto bridges. `shared` (the default), `strict` and `remapped` are all implemented; only `netns` is declared and falls back to `shared` with a startup warning. The choice matters because enforcement is per Docker network, so isolation is exactly as strong as the strategy in use — `shared` puts two same-CIDR VPCs on one bridge, and they are not isolated from each other.
+
+### The default VPC
+
+Every region seeds one on first use, as every real AWS account has: `IsDefault`, `172.31.0.0/16`, a default subnet per availability zone, an attached internet gateway, a main route table carrying the default route, and a `default` security group.
+
+Its backing network **is** the default data plane. So "this resource named no VPC" and "this resource is in the default VPC" are the same place by construction rather than by coincidence — which is what lets the reachability question stay a single comparison instead of a special case for the empty VPC ID.
+
+Two consequences follow from that network being the emulator's own. `DeleteVpc` on the default VPC removes the record and leaves the network, because every container Overcast started is attached to it; and a deleted default VPC stays deleted rather than being reseeded on the next describe, as on AWS, where `CreateDefaultVpc` is the way back.
 
 **ECS `awsvpc` tasks have two things allocating addresses from the same subnet**, and they do not know about each other. EC2's own counter decides what the task's ENI record says; Docker's IPAM decides what the container actually gets. They agree until one of them allocates once more than the other, and then they diverge silently — leaving a load balancer to read the ENI address and dial somewhere nothing is listening.
 
@@ -270,15 +284,30 @@ Both are correct, and the split is necessary. Overcast's resolver must be author
 
 **What goes wrong when they compose.** Docker aliases are exact-match. An unregistered name misses, so Docker forwards the query upstream — to Overcast's resolver, which *is* authoritative for that domain and duly answers with **Overcast's own address**. The client opens a connection to Overcast on port 3306 and **hangs**, because nothing there speaks that protocol. The symptom is a hang rather than a name-resolution failure, so the investigation starts at the database.
 
-**A stricter resolver would not fix it.** Overcast cannot distinguish "this subdomain should have been a container" from "this subdomain is one of mine" — resource hostnames are minted at runtime inside a namespace it legitimately owns. Refusing to answer for names it owns would break virtual-hosted S3 and every host-routed service, and forging NXDOMAIN would be worse, since clients cache negative answers and the failure would outlive the fix.
+**A blanket stricter resolver would not fix it.** Overcast cannot distinguish "this subdomain should have been a container" from "this subdomain is one of mine" by pattern — resource hostnames are minted at runtime inside a namespace it legitimately owns. Refusing every name it owns would break virtual-hosted S3 and every host-routed service, and forging NXDOMAIN would be worse, since clients cache negative answers and the failure would outlive the fix.
 
-**Overcast performs the registration itself.** There is nothing to configure. It becomes your concern only when adding a service that starts containers, and then it has three parts — miss any one and you get the same hang:
+Matching the *shape* of a data-plane name does not work either, and the reason is worth knowing before anyone tries it: `rds`, `cache` and `kafka` are ordinary words in a bucket name. A bucket legitimately called `my.rds` is addressed virtual-hosted as `my.rds.localhost`, which matches any grammar you would write for an RDS endpoint. This is the same reasoning that keeps those labels out of the host-routing table (`docs/networking.md` § Known AWS resource subdomains).
 
-1. **Attach the hostname as a network alias.** A container attached without one is reachable by address and nothing else.
-2. **Register every hostname base the endpoint could have been minted under**, not just the one in play when the container was created. The name a caller holds depends on the endpoint *that caller* used, and the process resolving it later is often not the one that received it.
-3. **Do it on every network a caller might be on.** An alias on the Lambda network does nothing for an ECS task — that was the bug behind a Fargate task being unable to reach its RDS instance.
+**What does work is refusing on positive identification.** When a name the zone owns reaches Overcast's resolver, it asks Docker a factual question: is some container advertising this exact alias, on a network this caller is not attached to? If so, the only answer Overcast could give is its own address, which produces the hang — so it refuses instead, and logs both sides:
 
-RDS is the reference implementation.
+```
+refusing a data-plane name the caller cannot reach
+  name:            cache-1.us-east-1.cfg.localhost.overcast.sh
+  target:          elasticache cache-1
+  caller:          ecs app/9f2
+  target_networks: [overcast-vpc-vpc-0abc]
+  caller_networks: [overcast_control overcast]
+```
+
+That cannot misidentify a bucket, because nothing advertises `my.rds.localhost` as an alias. Two limits fall out of the same rule. A caller Overcast did not start has unknown attachments rather than known-disjoint ones, so it is answered rather than refused; and a name with no container behind it anywhere — an RDS instance whose engine never started — is logged but still answered, since it cannot be told apart from an ordinary bucket with enough confidence to refuse.
+
+The check is affordable because of where it sits. A container's resolver is Docker's, which answers from aliases and forwards only what it cannot answer — so every data-plane name that reaches Overcast is *already* a miss, and the Docker lookup is paid by connections that are already broken.
+
+**Overcast performs the registration itself.** There is nothing to configure. It becomes your concern only when adding a service that starts containers, and `internal/dataplane` is where all of it lives:
+
+1. **Attach the hostname as a network alias** — `dataplane.Attach`, after create and before start. A container attached without one is reachable by address and nothing else.
+2. **Register every hostname base the endpoint could have been minted under** — `dataplane.Hostnames`. Not just the one in play when the container was created: the name a caller holds depends on the endpoint *that caller* used, and the process resolving it later is often not the one that received it.
+3. **Let the helper pick the plane.** Reaching for a network name directly is the mistake this package exists to prevent — when each service chose for itself, RDS attached to two compute networks, ElastiCache to one and MSK to none, and whether any two things could talk came down to which service remembered.
 
 ---
 
@@ -338,11 +367,12 @@ The one place the distinction has a visible, reproducible effect is [ECR](#10-ec
 
 Current behaviour, symptom first.
 
-- **An ECS task cannot resolve an ElastiCache node.** Cache containers are aliased on the Lambda network only, and only under the configured hostname — so a caller that reached Overcast on any other base gets a name nothing registered. It fails as a hang, for the reason in [§9](#9-a-container-reaching-another-container). Tracked as [#872](https://github.com/Neaox/overcast/issues/872).
+- **Putting a resource in a VPC restricts nothing.** Placement is real connectivity — the container joins that VPC's network — but it takes nothing away, and security groups are stored and never applied. So a function with a `VpcConfig` still reaches resources outside the VPC and the internet, and one *without* a `VpcConfig` still reaches private VPC resources; on AWS neither works. A test that proves "my function can reach my database" therefore passes whether or not the wiring is correct. The user-facing comparison is in [docs/networking.md § Lambda, ECS and VPCs](../networking.md#lambda-ecs-and-vpcs).
+- **Security groups, NACLs and subnets are not enforced.** Docker network membership expresses "in this VPC or not" and nothing finer, so there is no port- or source-level filtering and no public/private subnet distinction within a VPC.
 - **HTTPS fails for API Gateway, Lambda function URLs and AppSync.** A one-level wildcard certificate matches exactly one label, so `{id}.execute-api.{region}.{base}` falls outside the auto-minted SANs. Those need their own certificate.
 - **A container cannot reach the SMTP capture server.** It binds loopback whatever `OVERCAST_HOST` says.
-- **On a native Windows host, wildcard subdomains do not resolve inside containers.** The resolver needs `/etc/resolv.conf` to find upstreams and silently does not start without one, logging at debug level. The apex names still work, because those come from `/etc/hosts`.
-- **Setting `OVERCAST_EC2_VPC_STRATEGY` to anything but `shared` does nothing.** `strict`, `remapped` and `netns` are declared but unimplemented, and fall back with a startup warning. Overlapping VPCs share one network, and isolation leaks between them.
+- **On a native Windows host, wildcard subdomains do not resolve inside containers, and neither does the data-plane guard run.** The resolver needs `/etc/resolv.conf` to find upstreams and silently does not start without one, logging at debug level. The apex names still work, because those come from `/etc/hosts`. Run Overcast in a container if you need either.
+- **Same-CIDR VPCs are not isolated under the default strategy.** `shared` puts them on one Docker bridge, so anything scoped to a network is scoped to both. `strict` and `remapped` give real separation; `netns` is declared but falls back to `shared` with a startup warning.
 - **You cannot tell which addresses Overcast bound.** Nothing logs it, and the default is the wildcard — so a native run listens on every interface with no signal either way. Tracked as [#761](https://github.com/Neaox/overcast/issues/761), which also asks whether that default should narrow.
 
 ---
