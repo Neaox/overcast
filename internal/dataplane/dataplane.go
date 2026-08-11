@@ -62,6 +62,19 @@ type Placement struct {
 	// the resource named no VPC, which puts it on the default data plane.
 	VPCNetwork string
 
+	// Public keeps a VPC-placed resource on the default plane as well as its
+	// VPC network, so callers outside the VPC can still reach it.
+	//
+	// This is the escape hatch from placement, and it is deliberately spelled
+	// with AWS's own fields rather than an Overcast-specific one: RDS's
+	// `PubliclyAccessible`, ECS's `assignPublicIp: ENABLED`. Someone who needs
+	// it locally needs the same field on AWS, so the fix they learn here is the
+	// fix that works there.
+	//
+	// Ignored when VPCNetwork is empty — a resource already on the default
+	// plane cannot be made more reachable.
+	Public bool
+
 	// Aliases are the DNS names the container answers to on its data plane —
 	// every hostname the API could hand a caller for this resource. Compute
 	// (a Lambda container, an ECS task) leaves this empty: nothing resolves a
@@ -87,6 +100,54 @@ func Primary(cfg *config.Config) string {
 	return cfg.ControlNetwork()
 }
 
+// ControlPlaneInternal reports whether the control plane can be created
+// `--internal` — cut off from everything Docker did not put on it.
+//
+// It should be, in principle: a container in a VPC with no internet gateway is
+// on an `--internal` VPC network, and if the control plane it also sits on has
+// egress then the VPC's isolation is decoration. Making it internal is what
+// makes a private subnet actually private.
+//
+// **It returns false today, deliberately.** The plumbing is here and the seam is
+// ready, but turning it on is a bigger and differently-shaped change than
+// restricting placement, and the two do not belong in one commit.
+//
+// Two reasons to keep them apart. A container in a VPC with no internet gateway
+// would go from "no route out except through the control plane" to no route out
+// at all — correct for a private subnet, and a hard break for any function that
+// reaches a real endpoint during INIT. And the safe cases are narrower than they
+// look: it is sound when Overcast is containerised, because Overcast is *on* the
+// plane, but on a host, containers reach it at a host address — the bridge
+// gateway on a native Linux daemon, a routable address under Docker Desktop —
+// and whether an internal bridge still carries that is a platform question I
+// have not been able to test on both. Getting it wrong does not degrade
+// gracefully: the Runtime API rides this plane, so every invocation strands at
+// INIT.
+//
+// Until then a VPC's own `--internal` flag remains partly decorative, since
+// every container also sits on the non-internal control plane. That is the
+// honest state and the docs say so.
+func ControlPlaneInternal() bool {
+	return false
+}
+
+// PlaneSpecs is the set of networks the Docker supervisor ensures at startup:
+// the control plane, with its isolation decided by ControlPlaneInternal, and
+// the default data plane.
+//
+// Per-VPC networks are absent on purpose — EC2 creates those on demand, one per
+// VPC, and marks them internal or not according to whether the VPC has an
+// internet gateway.
+//
+// One definition, used by both the supervisor and Lambda's independent probe,
+// so the two cannot disagree about what exists or how it is isolated.
+func PlaneSpecs(cfg *config.Config) []docker.NetworkSpec {
+	return []docker.NetworkSpec{
+		{Name: cfg.Network},
+		{Name: Primary(cfg), Internal: ControlPlaneInternal()},
+	}
+}
+
 // PrimaryEndpoints is Primary as a NetworkingConfig, for container create.
 func PrimaryEndpoints(cfg *config.Config) *docker.NetworkingConfig {
 	return &docker.NetworkingConfig{
@@ -110,27 +171,57 @@ func DataNetwork(cfg *config.Config, p Placement) string {
 
 // DataNetworks returns every data plane a container placed by p joins.
 //
-// The target model is exactly one — a VPC restricts what a resource can reach,
-// so a VPC-placed resource should not also sit on the default plane. Overcast
-// does not enforce that yet: the failure mode for a connection a VPC forbids is
-// a *hang*, not an error (a name that resolves nowhere in Docker falls through
-// to Overcast's split-horizon resolver, which answers with Overcast's own
-// address), and the resolver guard that turns it into a named refusal is a
-// later phase. Restricting before that guard exists would trade a working
-// setup for an unexplained timeout.
+// **A resource that named a VPC gets that VPC's network and nothing else.**
+// That is the point of naming one: on AWS, placement subtracts. A function with
+// a VpcConfig gives up the internet it had and reaches only what its ENIs route
+// to; it cannot reach another VPC without peering, and it cannot reach the AWS
+// APIs at all without a NAT gateway or a VPC endpoint. Somebody who wrote a VPC
+// into their stack meant it, and an emulator that quietly ignores the
+// declaration withholds the most common AWS networking mistake there is until
+// the code reaches somewhere the failure costs a five-minute timeout with no
+// explanation attached.
 //
-// So until then a VPC-placed resource keeps the default plane as well, and a
-// caller outside its VPC can still resolve it — which is what Overcast did
-// before the planes existed, when every service attached its containers to the
-// compute networks regardless of VPC.
+// Two things make that restriction safe to impose here, and neither was true
+// before phase 5:
 //
-// **Deleting the second entry here is the enforcement change.** See
-// docs/plans/container-network-topology.md § 10, phase 6.
+//   - A connection this forbids fails by *name*, not by hanging. Overcast's
+//     resolver refuses a data-plane name the caller cannot reach and names both
+//     sides (internal/dns, internal/dataplane/guard.go). Without that, the same
+//     restriction produced a client waiting on a port nothing speaks.
+//   - The way out is an AWS field rather than an Overcast one — see Public.
+//
+// The control plane is unaffected and is not returned here: Overcast's own API
+// and the Lambda Runtime API stay reachable from inside any VPC, which is the
+// one divergence from AWS this model keeps on purpose. Read it as every VPC
+// having an interface endpoint for every service; the alternative is a function
+// that cannot finish INIT.
 func DataNetworks(cfg *config.Config, p Placement) []string {
 	if p.VPCNetwork == "" || p.VPCNetwork == cfg.Network {
 		return []string{cfg.Network}
 	}
-	return []string{p.VPCNetwork, cfg.Network}
+	if p.Public || !enforceable(cfg) {
+		return []string{p.VPCNetwork, cfg.Network}
+	}
+	return []string{p.VPCNetwork}
+}
+
+// enforceable reports whether a forbidden connection would fail in a way the
+// user can act on. Placement only restricts where it does.
+//
+// The whole argument for restricting is that the guard turns a connection a VPC
+// forbids into a named refusal. That guard lives behind Overcast's resolver, and
+// the resolver does not always run: it needs upstream servers to forward to,
+// which it reads from /etc/resolv.conf, which does not exist on a native Windows
+// or macOS host. There it declines to start, containers are never pointed at it,
+// and the guard never sees a query — see internal/router/container_dns.go.
+//
+// Restricting anyway on those hosts would deliver exactly the failure phase 5
+// existed to remove: a name resolving to Overcast's own address, and a client
+// hanging on a port nothing speaks. So enforcement follows the resolver rather
+// than the calendar, and a host that cannot diagnose the failure does not get
+// the restriction. Run Overcast in a container to have both.
+func enforceable(cfg *config.Config) bool {
+	return cfg.DNSListening
 }
 
 // AttachAdopted is Attach for a container Overcast did not create in this run —

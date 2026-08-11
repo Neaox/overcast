@@ -432,14 +432,16 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		// on the control plane, and an application that dials a database in its
 		// first breath would otherwise race the attachment.
 		//
-		// An awsvpc task joins this as well as its VPC network, which is what
-		// keeps a resource outside its VPC resolvable — the same union every
-		// other service keeps until enforcement lands (see dataplane.DataNetworks).
-		// The VPC attachment itself cannot be hoisted here: it reads back the
-		// address Docker assigned, which is not fixed until the container runs.
-		if err := dataplane.Attach(ctx, h.docker, h.cfg, dockerID, dataplane.Placement{}); err != nil {
-			_ = h.docker.RemoveContainerForce(dockerID)
-			return containerFailure(cd.Name, "ecs: container %s: %w", cd.Name, err)
+		// A task placed in a VPC does *not* join it — that is the restriction —
+		// unless it asked for `assignPublicIp: ENABLED`, which on AWS is what
+		// gives an awsvpc task a way out of its subnet. Its VPC attachment
+		// happens after the start below, because it reads back the address
+		// Docker assigned and that is not fixed until the container runs.
+		if placement.networkID == "" || placement.assignPublicIP {
+			if err := dataplane.Attach(ctx, h.docker, h.cfg, dockerID, dataplane.Placement{}); err != nil {
+				_ = h.docker.RemoveContainerForce(dockerID)
+				return containerFailure(cd.Name, "ecs: container %s: %w", cd.Name, err)
+			}
 		}
 
 		if err := h.docker.StartContainer(ctx, dockerID); err != nil {

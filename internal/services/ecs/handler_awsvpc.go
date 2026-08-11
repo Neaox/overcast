@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -82,6 +83,10 @@ func (h *Handler) resolveAwsvpcPlacement(
 			}
 			return ""
 		}),
+		assignPublicIP: strings.EqualFold(
+			firstOrEmpty(networkConfiguration.AwsvpcConfiguration, func(a *AwsvpcConfiguration) string {
+				return a.AssignPublicIp
+			}), "ENABLED"),
 	}
 	if placement.subnetID == "" || h.vpcResolver == nil {
 		return placement, nil

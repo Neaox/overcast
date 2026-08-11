@@ -341,7 +341,7 @@ func TestPoolFor_settledRegistryDoesNotWait(t *testing.T) {
 // A test server configures no socket, so this is the common path.
 func TestInitDockerRuntime_noSocketSettlesTheRegistry(t *testing.T) {
 	// Given: a service with no Docker socket configured.
-	s, _ := verdictTestService(t, func(string, []string, *zap.Logger) (*docker.ProbeResult, error) {
+	s, _ := verdictTestService(t, func(string, []docker.NetworkSpec, *zap.Logger) (*docker.ProbeResult, error) {
 		t.Error("probe called despite an empty LambdaDockerSocket")
 		return nil, nil
 	})
@@ -367,7 +367,7 @@ func TestAwaitDockerProbe_retriesUntilDockerAnswers(t *testing.T) {
 	// Given: a Docker daemon that is not there for the first two attempts.
 	var calls atomic.Int32
 	want := &docker.ProbeResult{}
-	s, _ := verdictTestService(t, func(string, []string, *zap.Logger) (*docker.ProbeResult, error) {
+	s, _ := verdictTestService(t, func(string, []docker.NetworkSpec, *zap.Logger) (*docker.ProbeResult, error) {
 		if calls.Add(1) < 3 {
 			return nil, context.DeadlineExceeded
 		}
@@ -393,7 +393,7 @@ func TestAwaitDockerProbe_retriesUntilDockerAnswers(t *testing.T) {
 func TestAwaitDockerProbe_stopsWithTheService(t *testing.T) {
 	// Given: a Docker daemon that never answers.
 	probed := make(chan struct{}, 1)
-	s, stop := verdictTestService(t, func(string, []string, *zap.Logger) (*docker.ProbeResult, error) {
+	s, stop := verdictTestService(t, func(string, []docker.NetworkSpec, *zap.Logger) (*docker.ProbeResult, error) {
 		select {
 		case probed <- struct{}{}:
 		default:

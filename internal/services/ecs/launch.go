@@ -31,6 +31,13 @@ type awsvpcPlacement struct {
 	// then deliberately not the address AWS callers are shown, so the ENI
 	// address must not be reconciled against it.
 	remapped bool
+
+	// assignPublicIP mirrors the task's `assignPublicIp: ENABLED`, which on AWS
+	// gives an awsvpc task in a public subnet a routable address and so a way
+	// out of its VPC. Here it keeps the task on the default data plane as well
+	// as its VPC network — the escape hatch from placement, spelled with AWS's
+	// own field so the fix that works locally is the fix that works deployed.
+	assignPublicIP bool
 }
 
 // taskLaunchSpec describes one task about to be placed.

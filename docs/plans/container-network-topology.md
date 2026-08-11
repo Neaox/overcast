@@ -1,28 +1,39 @@
 # Container network topology — what should be able to reach what
 
-> Status: **phases 1–5 implemented** (§10). The two planes exist, every
+> Status: **phases 1–6 implemented** (§10). The two planes exist, every
 > container-backed service is on the shared `internal/dataplane` helper, #872 is
 > closed, each region seeds a default VPC whose backing network *is* the default
-> data plane, and the resolver refuses a data-plane name the caller cannot reach
-> instead of answering with Overcast's address. Phase 6 (enforcement) is not
-> started, so **nothing is restricted yet** — every container still reaches every
-> other, which is the intended state until enforcement lands. The guard is
-> therefore quiet in practice today; it exists so that when placement does start
-> to restrict, the connection it forbids fails by name rather than hanging.
+> data plane, the resolver refuses a data-plane name the caller cannot reach
+> instead of answering with Overcast's address, and **naming a VPC now
+> restricts**: `dataplane.DataNetworks` returns the VPC network alone, so a
+> VPC-placed resource no longer keeps the default plane. The guard of phase 5 is
+> what makes that safe — a forbidden connection is refused by name rather than
+> hanging.
+>
+> Two ways out, both AWS's own fields rather than Overcast settings:
+> `PubliclyAccessible` on an RDS instance and `assignPublicIp: ENABLED` on an ECS
+> task, each reaching placement through `Placement.Public`. There is deliberately
+> no isolation toggle (§10, phase 6).
 >
 > Three deviations from the plan as written, all recorded in place:
 >
 > 1. The control plane is created as an ordinary bridge rather than `--internal`
->    (§5) — the flag is only observable once enforcement exists, so it moves to
->    phase 6.
-> 2. **A VPC-placed resource keeps the default plane as well as its VPC network**
->    (`dataplane.DataNetworks`). The "exactly one data plane" rule of §5 is the
->    target, not the current state — withdrawing the default plane is the
->    restriction itself, and that is phase 6. The guard it was waiting on now
->    exists, so the failure it produces is a named refusal rather than the hang
->    of §2. Deleting the second entry in `DataNetworks` is the enforcement change.
+>    (§5). The plumbing exists — `dataplane.ControlPlaneInternal()` and
+>    `docker.NetworkSpec.Internal` — but it returns false: a container in a
+>    gateway-less VPC would go from "no route out but the control plane" to none
+>    at all, which is a different blast radius and ships separately.
+> 2. **Enforcement follows the resolver, not the calendar.** `DataNetworks`
+>    withholds the restriction unless `cfg.DNSListening`. Overcast's DNS server
+>    needs `/etc/resolv.conf` to find upstreams and so does not start on a native
+>    Windows or macOS host; restricting there would produce exactly the hang
+>    phase 5 existed to remove. The same stack is therefore permissive on a host
+>    run and restrictive containerised — deliberate, documented, and better than
+>    a hang.
 > 3. ElastiCache replication groups land on the default plane because the record
->    carries no `CacheSubnetGroupName` (§10, phase 6 prerequisite).
+>    carries no `CacheSubnetGroupName` — it is discarded at the wire in both the
+>    Query handler and the typed request, and CloudFormation does not forward it
+>    either. They are therefore unaffected by enforcement rather than wrongly
+>    restricted by it; see §11.
 >
 > Scope: `internal/config/config.go`, `internal/router/router.go`,
 > `internal/docker/probe.go`, `internal/containerendpoint/`, `internal/dns/`,
@@ -443,12 +454,16 @@ What seeding means, concretely:
 
 **Phase 5 — the resolver guard.** §8. Lands with, or before, enforcement.
 
-**Phase 6 — enforcement.** Only after everything above is in and the guard is
-proving itself: stop attaching VPC-placed resources to the default plane (delete
-the second entry in `dataplane.DataNetworks`). This is the behaviour change;
-everything before it is structure. Add `PubliclyAccessible` to RDS and honour
-`assignPublicIp` in the same phase, so the escape hatches exist the day the
-restriction does.
+**Phase 6 — enforcement. Done.** Only after everything above is in and the guard
+is proving itself: stop attaching VPC-placed resources to the default plane
+(delete the second entry in `dataplane.DataNetworks`). This is the behaviour
+change; everything before it is structure. Add `PubliclyAccessible` to RDS and
+honour `assignPublicIp` in the same phase, so the escape hatches exist the day
+the restriction does.
+
+Shipped with one condition the plan did not anticipate: the restriction is
+withheld unless `cfg.DNSListening`, because the guard it depends on does not run
+on a native Windows or macOS host. See the status note at the top.
 
 **On by default, escape hatches only (decision, 2026-08-11).** No
 `OVERCAST_VPC_ISOLATION` knob and no warn-only release. A flag nobody turns on
@@ -487,10 +502,12 @@ setup stopped working needs to find the answer without reading this plan:
   fragment grammar — this is a behaviour break and the release notes are where
   most people will meet it.
 
-**Current session scope (decision 2026-08-11): phases 1–4.** Everything through
-the default VPC, nothing that restricts: the goal of the first phases is that
-every pair that cannot talk today — ECS → ElastiCache (#872), anything → MSK,
-EFS, EKS — can, and that the next service cannot reintroduce the gap.
+**How this was sequenced (2026-08-11).** Phases 1–4 shipped first and restricted
+nothing: the goal was that every pair that could not talk — ECS → ElastiCache
+(#872), anything → MSK, EFS, EKS — could, and that the next service could not
+reintroduce the gap. Phase 5's guard followed, then phase 6 turned the
+restriction on, in that order and for the reason given above: enforcement
+without the guard is the same restriction delivered as a hang.
 
 Two adjacent wins this unlocks, neither in scope: **VPC peering becomes
 implementable** (attach both sides — meaningful only once something is denied),
