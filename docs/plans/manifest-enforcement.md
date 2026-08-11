@@ -100,18 +100,25 @@ and #862 — review the implementation in full against `CONTRIBUTING.md` and
 establish AWS fidelity from the pinned model rather than by assumption — and
 #793 is the precedent for what a rushed one costs.
 
-| Ledger | Rows | Owners |
-| --- | --- | --- |
-| `unservedBindings` | 41 | #815, #854, #855, #856, #857, #858, #859 |
-| `weaklyServedBindings` | 8 | not faults; the gate's honest margin |
-| `protocolAsymmetries` | 1 | #886 |
+| Ledger | What it records |
+| --- | --- |
+| `unservedBindings` | Bindings no route serves, each naming the issue that owns the fix. Shrinks as they land. |
+| `weaklyServedBindings` | Not faults — the gate's honest margin, where a wildcard or a fallback handler delivers the request without the route table proving which operation it reaches. |
+| `protocolAsymmetries` | Operations reachable over one modeled protocol and not another. One entry, #886. |
 
-43 capability rows moved from Supported/Inert to WIP, because they are
-implemented, work, and cannot be called by any SDK. Two of them — AppSync's
-`EvaluateCode` and `EvaluateMappingTemplate` — are back to Supported: #860
-moved them onto `/v1/dataplane-evaluatecode` and `/v1/dataplane-evaluatetemplate`,
-and the ratchet's second direction is what required the ledger rows to go with
-them.
+**The counts are deliberately not repeated here.** They are derivable from
+`internal/router/modelbinding_ledger_dev_test.go`, which the build reads and
+this file does not; duplicating them produced a stale number and a merge
+conflict on every PR that retired a row.
+
+The ledger opened at 43 rows, and 43 capability rows moved from Supported/Inert
+to WIP with it, because they were implemented, worked, and could not be called
+by any SDK. Rows leave as their fixes land, and the ratchet's second direction
+is what forces that — a ledger entry naming a binding that is now served fails
+the build. #860 took AppSync's two out onto `/v1/dataplane-evaluatecode` and
+`/v1/dataplane-evaluatetemplate`; #855 took AppConfig Data's two out onto
+`POST /configurationsessions` and `GET /configuration`, with the session token
+read from the `configuration_token` query member rather than a path segment.
 
 #862 is not in that table, and the reason is the ratchet earning its keep.
 `ses/V2CreateEmailIdentity` was in `unservedBindings` while this branch was

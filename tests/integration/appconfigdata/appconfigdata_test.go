@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
@@ -57,6 +58,36 @@ func acdDo(t *testing.T, srv *helpers.TestServer, method, path string, body any)
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	return resp
+}
+
+// startSession calls StartConfigurationSession at its modeled binding and
+// returns the InitialConfigurationToken. minimumPollSeconds is sent as
+// RequiredMinimumPollIntervalInSeconds when non-nil.
+func startSession(t *testing.T, srv *helpers.TestServer, appID, envID, profID string, minimumPollSeconds *int) string {
+	t.Helper()
+	body := map[string]any{
+		"ApplicationIdentifier":          appID,
+		"EnvironmentIdentifier":          envID,
+		"ConfigurationProfileIdentifier": profID,
+	}
+	if minimumPollSeconds != nil {
+		body["RequiredMinimumPollIntervalInSeconds"] = *minimumPollSeconds
+	}
+	resp := acdDo(t, srv, http.MethodPost, "/configurationsessions", body)
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusCreated)
+	var result struct {
+		InitialConfigurationToken string `json:"InitialConfigurationToken"`
+	}
+	helpers.DecodeJSON(t, resp, &result)
+	return result.InitialConfigurationToken
+}
+
+// getConfiguration calls GetLatestConfiguration at its modeled binding, with
+// the configuration token in the query member AWS binds it to.
+func getConfiguration(t *testing.T, srv *helpers.TestServer, token string) *http.Response {
+	t.Helper()
+	return acdDo(t, srv, http.MethodGet, "/configuration?configuration_token="+url.QueryEscape(token), nil)
 }
 
 // createApp creates an AppConfig application and returns its ID.
@@ -316,20 +347,10 @@ func TestStartConfigurationSession_success(t *testing.T) {
 	profID := createProfile(t, srv, appID, "myprofile")
 
 	// When: StartConfigurationSession is called
-	resp := acdDo(t, srv, http.MethodPost, "/_appconfigdata/configurationsessions", map[string]any{
-		"ApplicationIdentifier":          appID,
-		"EnvironmentIdentifier":          envID,
-		"ConfigurationProfileIdentifier": profID,
-	})
-	defer resp.Body.Close()
+	token := startSession(t, srv, appID, envID, profID, nil)
 
-	// Then: 201 with an InitialConfigurationToken
-	helpers.AssertStatus(t, resp, http.StatusCreated)
-	var result struct {
-		InitialConfigurationToken string `json:"InitialConfigurationToken"`
-	}
-	helpers.DecodeJSON(t, resp, &result)
-	if result.InitialConfigurationToken == "" {
+	// Then: a token comes back
+	if token == "" {
 		t.Error("expected InitialConfigurationToken to be set")
 	}
 }
@@ -339,7 +360,7 @@ func TestStartConfigurationSession_unknownApp(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: StartConfigurationSession references a non-existent application
-	resp := acdDo(t, srv, http.MethodPost, "/_appconfigdata/configurationsessions", map[string]any{
+	resp := acdDo(t, srv, http.MethodPost, "/configurationsessions", map[string]any{
 		"ApplicationIdentifier":          "nonexistent",
 		"EnvironmentIdentifier":          "prod",
 		"ConfigurationProfileIdentifier": "myprofile",
@@ -348,6 +369,7 @@ func TestStartConfigurationSession_unknownApp(t *testing.T) {
 
 	// Then: 404
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	helpers.AssertJSONError(t, resp, "ResourceNotFoundException")
 }
 
 func TestStartConfigurationSession_unknownEnvironment(t *testing.T) {
@@ -357,7 +379,7 @@ func TestStartConfigurationSession_unknownEnvironment(t *testing.T) {
 	profID := createProfile(t, srv, appID, "myprofile")
 
 	// When: StartConfigurationSession references a non-existent environment
-	resp := acdDo(t, srv, http.MethodPost, "/_appconfigdata/configurationsessions", map[string]any{
+	resp := acdDo(t, srv, http.MethodPost, "/configurationsessions", map[string]any{
 		"ApplicationIdentifier":          appID,
 		"EnvironmentIdentifier":          "nonexistent",
 		"ConfigurationProfileIdentifier": profID,
@@ -366,6 +388,43 @@ func TestStartConfigurationSession_unknownEnvironment(t *testing.T) {
 
 	// Then: 404
 	helpers.AssertStatus(t, resp, http.StatusNotFound)
+}
+
+func TestStartConfigurationSession_missingApplicationIdentifier(t *testing.T) {
+	// Given: an empty store
+	srv := helpers.NewTestServer(t)
+
+	// When: a member the model marks required is omitted
+	resp := acdDo(t, srv, http.MethodPost, "/configurationsessions", map[string]any{
+		"EnvironmentIdentifier":          "prod",
+		"ConfigurationProfileIdentifier": "myprofile",
+	})
+	defer resp.Body.Close()
+
+	// Then: BadRequestException, not a not-found for a resource never named
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+}
+
+func TestStartConfigurationSession_pollIntervalOutOfRange(t *testing.T) {
+	// Given: a complete app/env/profile setup
+	srv := helpers.NewTestServer(t)
+	appID := createApp(t, srv, "myapp")
+	envID := createEnv(t, srv, appID, "prod")
+	profID := createProfile(t, srv, appID, "myprofile")
+
+	// When: RequiredMinimumPollIntervalInSeconds is below the modeled minimum
+	resp := acdDo(t, srv, http.MethodPost, "/configurationsessions", map[string]any{
+		"ApplicationIdentifier":                appID,
+		"EnvironmentIdentifier":                envID,
+		"ConfigurationProfileIdentifier":       profID,
+		"RequiredMinimumPollIntervalInSeconds": 5,
+	})
+	defer resp.Body.Close()
+
+	// Then: BadRequestException
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
 
 // ─── GetLatestConfiguration ───────────────────────────────────────────────────
@@ -377,23 +436,10 @@ func TestGetLatestConfiguration_returnsContent(t *testing.T) {
 	envID := createEnv(t, srv, appID, "prod")
 	profID := createProfile(t, srv, appID, "myprofile")
 	createHostedVersion(t, srv, appID, profID, `{"feature":"enabled"}`, "application/json")
-
-	sessionResp := acdDo(t, srv, http.MethodPost, "/_appconfigdata/configurationsessions", map[string]any{
-		"ApplicationIdentifier":          appID,
-		"EnvironmentIdentifier":          envID,
-		"ConfigurationProfileIdentifier": profID,
-	})
-	defer sessionResp.Body.Close()
-	helpers.AssertStatus(t, sessionResp, http.StatusCreated)
-	var session struct {
-		InitialConfigurationToken string `json:"InitialConfigurationToken"`
-	}
-	helpers.DecodeJSON(t, sessionResp, &session)
+	token := startSession(t, srv, appID, envID, profID, nil)
 
 	// When: GetLatestConfiguration is called with the session token
-	resp := acdDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfigdata/configuration/%s", session.InitialConfigurationToken),
-		nil)
+	resp := getConfiguration(t, srv, token)
 	defer resp.Body.Close()
 
 	// Then: 200 with configuration content
@@ -419,23 +465,10 @@ func TestGetLatestConfiguration_emptyWhenNoVersions(t *testing.T) {
 	appID := createApp(t, srv, "myapp")
 	envID := createEnv(t, srv, appID, "prod")
 	profID := createProfile(t, srv, appID, "myprofile")
-
-	sessionResp := acdDo(t, srv, http.MethodPost, "/_appconfigdata/configurationsessions", map[string]any{
-		"ApplicationIdentifier":          appID,
-		"EnvironmentIdentifier":          envID,
-		"ConfigurationProfileIdentifier": profID,
-	})
-	defer sessionResp.Body.Close()
-	helpers.AssertStatus(t, sessionResp, http.StatusCreated)
-	var session struct {
-		InitialConfigurationToken string `json:"InitialConfigurationToken"`
-	}
-	helpers.DecodeJSON(t, sessionResp, &session)
+	token := startSession(t, srv, appID, envID, profID, nil)
 
 	// When: GetLatestConfiguration is called
-	resp := acdDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfigdata/configuration/%s", session.InitialConfigurationToken),
-		nil)
+	resp := getConfiguration(t, srv, token)
 	defer resp.Body.Close()
 
 	// Then: 200 with empty body (no content yet)
@@ -456,31 +489,17 @@ func TestGetLatestConfiguration_unchangedReturnsEmpty(t *testing.T) {
 	envID := createEnv(t, srv, appID, "prod")
 	profID := createProfile(t, srv, appID, "myprofile")
 	createHostedVersion(t, srv, appID, profID, `{"key":"val"}`, "application/json")
-
-	sessionResp := acdDo(t, srv, http.MethodPost, "/_appconfigdata/configurationsessions", map[string]any{
-		"ApplicationIdentifier":          appID,
-		"EnvironmentIdentifier":          envID,
-		"ConfigurationProfileIdentifier": profID,
-	})
-	defer sessionResp.Body.Close()
-	var session struct {
-		InitialConfigurationToken string `json:"InitialConfigurationToken"`
-	}
-	helpers.DecodeJSON(t, sessionResp, &session)
+	token := startSession(t, srv, appID, envID, profID, nil)
 
 	// First call — gets the content
-	resp1 := acdDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfigdata/configuration/%s", session.InitialConfigurationToken),
-		nil)
+	resp1 := getConfiguration(t, srv, token)
 	defer resp1.Body.Close()
 	helpers.AssertStatus(t, resp1, http.StatusOK)
 	nextToken := resp1.Header.Get("Next-Poll-Configuration-Token")
 	_, _ = io.ReadAll(resp1.Body)
 
 	// When: GetLatestConfiguration is called again (no new version)
-	resp2 := acdDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfigdata/configuration/%s", nextToken),
-		nil)
+	resp2 := getConfiguration(t, srv, nextToken)
 	defer resp2.Body.Close()
 
 	// Then: 200 with empty body (unchanged)
@@ -498,22 +517,10 @@ func TestGetLatestConfiguration_newVersionDelivered(t *testing.T) {
 	envID := createEnv(t, srv, appID, "prod")
 	profID := createProfile(t, srv, appID, "myprofile")
 	createHostedVersion(t, srv, appID, profID, `{"v":1}`, "application/json")
-
-	sessionResp := acdDo(t, srv, http.MethodPost, "/_appconfigdata/configurationsessions", map[string]any{
-		"ApplicationIdentifier":          appID,
-		"EnvironmentIdentifier":          envID,
-		"ConfigurationProfileIdentifier": profID,
-	})
-	defer sessionResp.Body.Close()
-	var session struct {
-		InitialConfigurationToken string `json:"InitialConfigurationToken"`
-	}
-	helpers.DecodeJSON(t, sessionResp, &session)
+	token := startSession(t, srv, appID, envID, profID, nil)
 
 	// Consume version 1
-	resp1 := acdDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfigdata/configuration/%s", session.InitialConfigurationToken),
-		nil)
+	resp1 := getConfiguration(t, srv, token)
 	defer resp1.Body.Close()
 	nextToken := resp1.Header.Get("Next-Poll-Configuration-Token")
 	_, _ = io.ReadAll(resp1.Body)
@@ -522,9 +529,7 @@ func TestGetLatestConfiguration_newVersionDelivered(t *testing.T) {
 	createHostedVersion(t, srv, appID, profID, `{"v":2}`, "application/json")
 
 	// When: GetLatestConfiguration is called with the next token
-	resp2 := acdDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfigdata/configuration/%s", nextToken),
-		nil)
+	resp2 := getConfiguration(t, srv, nextToken)
 	defer resp2.Body.Close()
 
 	// Then: the new content is returned
@@ -540,9 +545,56 @@ func TestGetLatestConfiguration_invalidToken(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: GetLatestConfiguration is called with a bogus token
-	resp := acdDo(t, srv, http.MethodGet, "/_appconfigdata/configuration/not-a-real-token", nil)
+	resp := getConfiguration(t, srv, "not-a-real-token")
 	defer resp.Body.Close()
 
 	// Then: 400
 	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
 }
+
+func TestGetLatestConfiguration_spentTokenIsRejected(t *testing.T) {
+	// Given: a session whose token has been used once
+	srv := helpers.NewTestServer(t)
+	appID := createApp(t, srv, "myapp")
+	envID := createEnv(t, srv, appID, "prod")
+	profID := createProfile(t, srv, appID, "myprofile")
+	token := startSession(t, srv, appID, envID, profID, nil)
+	first := getConfiguration(t, srv, token)
+	first.Body.Close()
+	helpers.AssertStatus(t, first, http.StatusOK)
+
+	// When: the same token is presented again
+	resp := getConfiguration(t, srv, token)
+	defer resp.Body.Close()
+
+	// Then: BadRequestException — a configuration token is single-use
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	helpers.AssertJSONError(t, resp, "BadRequestException")
+}
+
+func TestGetLatestConfiguration_reportsTheRequestedPollInterval(t *testing.T) {
+	// Given: a session that asked for a 120-second minimum poll interval
+	srv := helpers.NewTestServer(t)
+	appID := createApp(t, srv, "myapp")
+	envID := createEnv(t, srv, appID, "prod")
+	profID := createProfile(t, srv, appID, "myprofile")
+	minimum := 120
+	token := startSession(t, srv, appID, envID, profID, &minimum)
+
+	// When: the session is polled
+	resp := getConfiguration(t, srv, token)
+	defer resp.Body.Close()
+
+	// Then: the requested minimum is what the client is told to wait, not the
+	// 60-second default
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	if got := resp.Header.Get("Next-Poll-Interval-In-Seconds"); got != "120" {
+		t.Errorf("expected Next-Poll-Interval-In-Seconds=120, got %q", got)
+	}
+}
+
+// Token lifetime and the minimum-poll-interval refusal need the clock wound
+// forward hours at a time, which through the whole router would drive every
+// other service's background ticker along with it. They are unit tests on the
+// package instead — see internal/services/appconfigdata/service_test.go.

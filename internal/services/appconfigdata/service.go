@@ -2,15 +2,16 @@
 //
 // Implemented operations: StartConfigurationSession, GetLatestConfiguration.
 //
-// The data plane retrieves configuration content stored via AppConfig's
-// CreateHostedConfigurationVersion control-plane API. Configuration is
-// delivered on the first poll after a new version is published; subsequent
-// polls return an empty body until the version changes (matching AWS
-// behaviour to avoid hot-loops in well-behaved SDKs).
+// Routes are AWS's own REST-JSON bindings from the pinned Smithy model
+// (appconfigdata-2021-11-11): POST /configurationsessions and
+// GET /configuration. The session token is a query member on the second, not a
+// path segment — see RegisterRoutes and getLatestConfiguration.
 //
-// Routes: POST /_appconfigdata/configurationsessions
-//
-//	GET  /_appconfigdata/configuration/{token}
+// The data plane serves configuration content stored through AppConfig's
+// CreateHostedConfigurationVersion control-plane API. Content is delivered on
+// the first poll after a new version is published; later polls answer with an
+// empty payload until the version changes, which is what AWS does and what
+// keeps a well-behaved polling SDK from re-applying unchanged configuration.
 package appconfigdata
 
 import (
@@ -19,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -27,24 +29,70 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/services/appconfig"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
 
-const serviceName = "appconfigdata"
+const (
+	serviceName = "appconfigdata"
+
+	// configurationTokenParam is the name AWS binds GetLatestConfiguration's
+	// ConfigurationToken member to (@httpQuery("configuration_token")).
+	configurationTokenParam = "configuration_token"
+
+	// defaultPollIntervalSeconds is reported in Next-Poll-Interval-In-Seconds
+	// for a session that set no RequiredMinimumPollIntervalInSeconds. The model
+	// gives the member no default, so this is Overcast's own choice and matches
+	// what the service returned before the operation was reachable.
+	defaultPollIntervalSeconds = 60
+
+	// minPollIntervalSeconds and maxPollIntervalSeconds are the bounds the
+	// model puts on RequiredMinimumPollIntervalInSeconds (OptionalPollSeconds
+	// carries @range(min: 15, max: 86400)).
+	minPollIntervalSeconds = 15
+	maxPollIntervalSeconds = 86400
+
+	// maxIdentifierLength is the model's Identifier @length max, which every
+	// StartConfigurationSession member is typed as.
+	maxIdentifierLength = 128
+
+	// tokenLifetime is how long a configuration token stays usable. AWS
+	// documents 24 hours on both InitialConfigurationToken and
+	// NextPollConfigurationToken, and answers BadRequestException past it.
+	tokenLifetime = 24 * time.Hour
+)
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-// session holds the state for one configuration polling session.
+// session holds the state behind one configuration token. Each token is
+// single-use: GetLatestConfiguration mints a successor and drops the one it
+// was given.
 type session struct {
 	Token           string `json:"Token"`
 	AppID           string `json:"AppID"`
 	EnvID           string `json:"EnvID"`
 	ProfileID       string `json:"ProfileID"`
 	LastVersionSeen int    `json:"LastVersionSeen"` // 0 = never delivered
+	// MinimumPollSeconds is the session's RequiredMinimumPollIntervalInSeconds,
+	// 0 when the caller did not ask for one. It both constrains how soon the
+	// next poll may come and is what the response reports.
+	MinimumPollSeconds int `json:"MinimumPollSeconds,omitempty"`
+	// IssuedAt is when this token was minted, for the 24-hour lifetime and the
+	// minimum-poll-interval check.
+	IssuedAt time.Time `json:"IssuedAt"`
+	// FromPoll marks a token minted by GetLatestConfiguration rather than by
+	// StartConfigurationSession. Only those are subject to MinimumPollSeconds:
+	// the constraint is on the gap between polls, so the first one is free.
+	FromPoll bool `json:"FromPoll,omitempty"`
+}
+
+// pollIntervalSeconds is the value reported in Next-Poll-Interval-In-Seconds.
+func (s *session) pollIntervalSeconds() int {
+	if s.MinimumPollSeconds > 0 {
+		return s.MinimumPollSeconds
+	}
+	return defaultPollIntervalSeconds
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -53,9 +101,10 @@ const nsSessions = "appconfigdata:sessions"
 
 type dataStore struct {
 	store state.Store
+	log   *serviceutil.ServiceLogger
 }
 
-func (d *dataStore) putSession(ctx context.Context, s *session) error {
+func (d *dataStore) put(ctx context.Context, s *session) error {
 	raw, err := json.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("appconfigdata: marshal session: %w", err)
@@ -63,16 +112,30 @@ func (d *dataStore) putSession(ctx context.Context, s *session) error {
 	return d.store.Set(ctx, nsSessions, s.Token, string(raw))
 }
 
-func (d *dataStore) getSession(ctx context.Context, token string) (*session, bool) {
+// get returns the session a token names.
+//
+// A store failure is returned as an error so the caller can answer
+// InternalServerException; one undecodable record is reported as absent and
+// logged, which reaches the client as the same BadRequestException an unknown
+// token gets rather than a 500 (AGENTS.md § State).
+func (d *dataStore) get(ctx context.Context, token string) (*session, bool, error) {
 	raw, found, err := d.store.Get(ctx, nsSessions, token)
-	if err != nil || !found {
-		return nil, false
+	if err != nil {
+		return nil, false, fmt.Errorf("appconfigdata: read session: %w", err)
+	}
+	if !found {
+		return nil, false, nil
 	}
 	var s session
-	if json.Unmarshal([]byte(raw), &s) != nil {
-		return nil, false
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		d.log.Warn("skipping malformed session record", zap.Error(err))
+		return nil, false, nil
 	}
-	return &s, true
+	return &s, true, nil
+}
+
+func (d *dataStore) delete(ctx context.Context, token string) error {
+	return d.store.Delete(ctx, nsSessions, token)
 }
 
 // ─── AppConfig accessor interface ────────────────────────────────────────────
@@ -91,173 +154,255 @@ type appConfigReader interface {
 
 // Service implements router.Service for AppConfigData.
 type Service struct {
-	log     *serviceutil.ServiceLogger
-	store   *dataStore
-	ac      appConfigReader
-	typedOp map[string]op.Operation
+	log   *serviceutil.ServiceLogger
+	clk   clock.Clock
+	store *dataStore
+	ac    appConfigReader
 }
 
 // New returns a configured AppConfigData Service.
 // ac must be the AppConfig Service instance already registered in the router.
-func New(cfg *config.Config, st state.Store, logger *zap.Logger, _ clock.Clock, ac appConfigReader) *Service {
-	s := &Service{
-		log:   serviceutil.NewServiceLogger(logger, serviceName),
-		store: &dataStore{store: st},
+func New(_ *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock, ac appConfigReader) *Service {
+	log := serviceutil.NewServiceLogger(logger, serviceName)
+	return &Service{
+		log:   log,
+		clk:   clk,
+		store: &dataStore{store: st, log: log},
 		ac:    ac,
 	}
-	s.typedOp = s.typedOps()
-	return s
 }
 
 func (s *Service) Name() string { return serviceName }
 
-func (s *Service) TargetPrefix() string { return "AppConfigData." }
-
-func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if codec.Supports(s.SupportedProtocols(), c) {
-			if typed, ok := s.typedOp[opName]; ok {
-				typed.Invoke(w, r, c)
-				return
-			}
-		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
+// RegisterRoutes registers the AppConfigData data plane at the bindings the
+// pinned model gives it. Both are root-level paths, which is why
+// detectService claims them explicitly — see internal/middleware/logger.go.
+func (s *Service) RegisterRoutes(r chi.Router) {
+	r.Post("/configurationsessions", s.startConfigurationSession)
+	r.Get("/configuration", s.getLatestConfiguration)
 }
 
-// RegisterRoutes registers the AppConfigData data-plane endpoints.
-func (s *Service) RegisterRoutes(r chi.Router) {
-	r.Route("/_appconfigdata", func(r chi.Router) {
-		r.Post("/configurationsessions", s.startConfigurationSession)
-		r.Get("/configuration/{token}", s.getLatestConfiguration)
-	})
+// PathPrefixes satisfies router.PathPrefixService.
+func (s *Service) PathPrefixes() []string {
+	return []string{"/configuration", "/configurationsessions"}
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
+// startConfigurationSession serves POST /configurationsessions. The model
+// binds every member of StartConfigurationSessionRequest to the JSON body —
+// there is no path, query or header member — and answers 201.
 func (s *Service) startConfigurationSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ApplicationIdentifier          string `json:"ApplicationIdentifier"`
 		EnvironmentIdentifier          string `json:"EnvironmentIdentifier"`
 		ConfigurationProfileIdentifier string `json:"ConfigurationProfileIdentifier"`
+		// A pointer so an omitted member is distinguishable from an explicit
+		// zero, which is out of range and has to be rejected.
+		RequiredMinimumPollIntervalInSeconds *int `json:"RequiredMinimumPollIntervalInSeconds"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	ctx := r.Context()
+	for _, member := range []struct{ name, value string }{
+		{"ApplicationIdentifier", req.ApplicationIdentifier},
+		{"EnvironmentIdentifier", req.EnvironmentIdentifier},
+		{"ConfigurationProfileIdentifier", req.ConfigurationProfileIdentifier},
+	} {
+		if aerr := validateIdentifier(member.name, member.value); aerr != nil {
+			protocol.WriteJSONError(w, r, aerr)
+			return
+		}
+	}
 
-	// Resolve application.
+	minimumPoll := 0
+	if req.RequiredMinimumPollIntervalInSeconds != nil {
+		minimumPoll = *req.RequiredMinimumPollIntervalInSeconds
+		if minimumPoll < minPollIntervalSeconds || minimumPoll > maxPollIntervalSeconds {
+			protocol.WriteJSONError(w, r, badRequest(fmt.Sprintf(
+				"RequiredMinimumPollIntervalInSeconds must be between %d and %d.",
+				minPollIntervalSeconds, maxPollIntervalSeconds)))
+			return
+		}
+	}
+
+	ctx := r.Context()
 	app, found := s.ac.ResolveApplication(ctx, req.ApplicationIdentifier)
 	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Application not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+		protocol.WriteJSONError(w, r, notFound("Application"))
 		return
 	}
-
-	// Resolve environment.
 	if _, found := s.ac.ResolveEnvironment(ctx, app.ID, req.EnvironmentIdentifier); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Environment not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+		protocol.WriteJSONError(w, r, notFound("Environment"))
 		return
 	}
-
-	// Resolve configuration profile.
 	prof, found := s.ac.ResolveProfile(ctx, app.ID, req.ConfigurationProfileIdentifier)
 	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Configuration profile not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+		protocol.WriteJSONError(w, r, notFound("ConfigurationProfile"))
 		return
 	}
 
-	token := newToken()
 	sess := &session{
-		Token:           token,
-		AppID:           app.ID,
-		EnvID:           req.EnvironmentIdentifier,
-		ProfileID:       prof.ID,
-		LastVersionSeen: 0,
+		Token:              newToken(),
+		AppID:              app.ID,
+		EnvID:              req.EnvironmentIdentifier,
+		ProfileID:          prof.ID,
+		MinimumPollSeconds: minimumPoll,
+		IssuedAt:           s.clk.Now(),
 	}
-	if err := s.store.putSession(ctx, sess); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if err := s.store.put(ctx, sess); err != nil {
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
 
 	protocol.WriteJSON(w, r, http.StatusCreated, map[string]any{
-		"InitialConfigurationToken": token,
+		"InitialConfigurationToken": sess.Token,
 	})
 }
 
+// getLatestConfiguration serves GET /configuration.
+//
+// ConfigurationToken is the operation's only request member and the model
+// binds it to the query string as configuration_token — not to a path segment,
+// which is the shape Overcast invented, and not to a header. The response is
+// equally unlike a JSON envelope: the configuration is the httpPayload and
+// every other output member is a header.
 func (s *Service) getLatestConfiguration(w http.ResponseWriter, r *http.Request) {
-	token := chi.URLParam(r, "token")
-	ctx := r.Context()
-
-	sess, found := s.store.getSession(ctx, token)
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "BadRequestException", Message: "Invalid or expired configuration token",
-			HTTPStatus: http.StatusBadRequest,
-		})
+	token := r.URL.Query().Get(configurationTokenParam)
+	if token == "" {
+		protocol.WriteJSONError(w, r, badRequest("ConfigurationToken is required."))
 		return
 	}
 
-	// What is the latest version available?
+	ctx := r.Context()
+	sess, found, err := s.store.get(ctx, token)
+	if err != nil {
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
+		return
+	}
+	if !found {
+		protocol.WriteJSONError(w, r, badRequest("Invalid or expired configuration token."))
+		return
+	}
+
+	now := s.clk.Now()
+	// A record written before IssuedAt existed carries the zero time; treating
+	// that as infinitely old would expire every session an upgrade inherits.
+	if !sess.IssuedAt.IsZero() && now.Sub(sess.IssuedAt) > tokenLifetime {
+		if err := s.store.delete(ctx, token); err != nil {
+			s.log.Warn("dropping expired session failed", zap.Error(err))
+		}
+		protocol.WriteJSONError(w, r, badRequest("Invalid or expired configuration token."))
+		return
+	}
+	// AWS models this refusal as InvalidParameterProblem.PollIntervalNotSatisfied:
+	// "The client called the service before the time specified in the poll
+	// interval." The token stays valid so the caller can retry once the
+	// interval has passed.
+	if sess.FromPoll && sess.MinimumPollSeconds > 0 &&
+		now.Sub(sess.IssuedAt) < time.Duration(sess.MinimumPollSeconds)*time.Second {
+		protocol.WriteJSONError(w, r, badRequest(fmt.Sprintf(
+			"This session requires at least %d seconds between calls to GetLatestConfiguration.",
+			sess.MinimumPollSeconds)))
+		return
+	}
+
 	latestVersion, err := s.ac.LatestVersionNumber(ctx, sess.AppID, sess.ProfileID)
 	if err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
 
-	// Rotate the token — each call must use the returned NextPollConfigurationToken.
-	nextToken := newToken()
-	updatedSess := &session{
-		Token:           nextToken,
-		AppID:           sess.AppID,
-		EnvID:           sess.EnvID,
-		ProfileID:       sess.ProfileID,
-		LastVersionSeen: latestVersion,
+	next := &session{
+		Token:              newToken(),
+		AppID:              sess.AppID,
+		EnvID:              sess.EnvID,
+		ProfileID:          sess.ProfileID,
+		LastVersionSeen:    latestVersion,
+		MinimumPollSeconds: sess.MinimumPollSeconds,
+		IssuedAt:           now,
+		FromPoll:           true,
 	}
-	if err := s.store.putSession(ctx, updatedSess); err != nil {
-		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+	if err := s.store.put(ctx, next); err != nil {
+		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	// Invalidate the old token so it cannot be replayed.
-	_ = s.store.store.Delete(ctx, nsSessions, token)
+	// The spent token cannot be replayed: the model says a configuration token
+	// is only valid for one call.
+	if err := s.store.delete(ctx, token); err != nil {
+		s.log.Warn("dropping spent configuration token failed", zap.Error(err))
+	}
 
-	w.Header().Set("Next-Poll-Configuration-Token", nextToken)
-	w.Header().Set("Next-Poll-Interval-In-Seconds", "60")
+	w.Header().Set("Next-Poll-Configuration-Token", next.Token)
+	w.Header().Set("Next-Poll-Interval-In-Seconds", strconv.Itoa(sess.pollIntervalSeconds()))
 
-	// If no version exists yet or version hasn't changed, return empty body.
+	// An unchanged version, or a version counter whose content has since been
+	// deleted, is an empty payload — the model's Configuration member is
+	// optional and AWS leaves it out when the client already has the latest
+	// data. Content-Type goes with it, so nothing is claimed about a body that
+	// is not there.
 	if latestVersion == 0 || latestVersion == sess.LastVersionSeen {
-		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-
-	// Fetch the latest version content.
 	hcv, found := s.ac.GetHostedConfigVersionByNum(ctx, sess.AppID, sess.ProfileID, latestVersion)
 	if !found {
-		// Version counter exists but content was deleted — return empty.
-		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	w.Header().Set("Content-Type", hcv.ContentType)
-	w.Header().Set("AppConfig-Configuration-Version", strconv.Itoa(hcv.VersionNumber))
+	// Version-Label is modeled here too, and is deliberately not sent: it
+	// carries the hosted configuration version's user-defined label, which
+	// Overcast's AppConfig control plane does not store. AWS also omits it when
+	// there is none.
+	if hcv.ContentType != "" {
+		w.Header().Set("Content-Type", hcv.ContentType)
+	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(hcv.Content))
+	if _, err := w.Write([]byte(hcv.Content)); err != nil {
+		s.log.Debug("writing configuration payload failed", zap.Error(err))
+	}
 }
 
-// newToken generates an opaque random session token.
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// badRequest builds the client error every invalid AppConfigData request gets.
+// BadRequestException is one of the four errors both operations model; a
+// generic MissingParameter would reach the SDK as an unmodeled error type.
+func badRequest(message string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "BadRequestException",
+		Message:    message,
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// notFound names the missing resource with one of the model's ResourceType
+// values. AWS carries that value in a ResourceType member of the error
+// payload, which protocol.AWSError has no room for, so it goes in the message.
+func notFound(resourceType string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ResourceNotFoundException",
+		Message:    resourceType + " not found",
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+// validateIdentifier applies the model's @required and Identifier @length
+// constraints to a StartConfigurationSession member.
+func validateIdentifier(member, value string) *protocol.AWSError {
+	switch {
+	case value == "":
+		return badRequest(member + " is required.")
+	case len(value) > maxIdentifierLength:
+		return badRequest(fmt.Sprintf("%s must be at most %d characters.", member, maxIdentifierLength))
+	}
+	return nil
+}
+
+// newToken generates an opaque configuration token. The model's Token shape is
+// ^\S{1,8192}$, which a UUID satisfies.
 func newToken() string {
 	return uuid.NewString()
 }

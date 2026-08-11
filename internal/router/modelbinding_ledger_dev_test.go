@@ -62,10 +62,11 @@ var unservedBindings = map[string]string{
 	"appconfig/ListEnvironments":                 "#854",
 	"appconfig/ListHostedConfigurationVersions":  "#854",
 
-	// #855 — served under /_appconfigdata, and the session token is a path
-	// segment where the model binds it as a member.
-	"appconfigdata/GetLatestConfiguration":    "#855",
-	"appconfigdata/StartConfigurationSession": "#855",
+	// #855 is deliberately absent. AppConfig Data was served under
+	// /_appconfigdata with the session token as a path segment; both operations
+	// now answer at POST /configurationsessions and GET /configuration, with
+	// the token read from the configuration_token query member the model binds
+	// it to.
 
 	// #856 is deliberately absent. OpenSearch's eight operations were served
 	// under /_opensearch; they now answer on the /2021-01-01 bindings the

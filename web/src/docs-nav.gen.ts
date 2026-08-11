@@ -1353,7 +1353,7 @@ export const DOCS_NAV = [
     "path": "docs/services/appconfigdata.md",
     "href": "services/appconfigdata.md",
     "title": "AppConfigData — AWS AppConfig Data Plane",
-    "description": "AWS AppConfigData is the **runtime data plane** for AppConfig. Applications use it to retrieve the latest deployed configuration content via a poll-based session model. Routes are...",
+    "description": "AWS AppConfigData is the **runtime data plane** for AppConfig. Applications use it to retrieve the latest deployed configuration content via a poll-based session model.",
     "section": "Service Reference",
     "tags": [
       "appconfig",
@@ -1404,11 +1404,6 @@ export const DOCS_NAV = [
         "depth": 3,
         "text": "Sessions",
         "id": "sessions"
-      },
-      {
-        "depth": 3,
-        "text": "Response headers",
-        "id": "response-headers"
       }
     ]
   },
