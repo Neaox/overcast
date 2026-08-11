@@ -1392,19 +1392,29 @@ func userHasAccessKey(user iamUserRecord, accessKeyID string) bool {
 	return false
 }
 
+// shouldBypassIAM reports whether a request is exempt from IAM enforcement.
+//
+// Only two things are: a CORS preflight, which carries no credentials to
+// evaluate, and Overcast's own internal endpoints. The latter are recognised
+// by the "/_" prefix and nothing else — S3 bucket names cannot begin with an
+// underscore, so that prefix is reserved against every service AWS has modeled
+// and every service it may model later.
+//
+// It is the only prefix with that property, which is why there is no third
+// arm here. "/api" used to be one, added for a console BFF that has never
+// passed through this middleware — IAMEnforce is wired once, on the AWS mux at
+// router.go, and the UI is a separate listener. It exempted two real things:
+// an S3 bucket named "api", which is a legal name, and later every operation
+// of MSK's v2 cluster API, once #894 bound it to /api/v2/clusters — the path
+// the pinned kafka model gives it.
+//
+// So adding a prefix here asserts two things, not one: that AWS models no
+// service under it, and that it is not a name S3 will accept.
 func shouldBypassIAM(r *http.Request) bool {
 	if r.Method == http.MethodOptions {
 		return true
 	}
-
-	path := r.URL.Path
-	if strings.HasPrefix(path, "/_") {
-		return true
-	}
-	if path == "/api" || strings.HasPrefix(path, "/api/") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(r.URL.Path, "/_")
 }
 
 func isSignedIAMRequest(r *http.Request) bool {
