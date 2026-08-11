@@ -117,7 +117,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | RDS              | [rds.md](./services/rds.md)                         | 34  | Core CRUD + common workflows  |
 | ElastiCache      | [elasticache.md](./services/elasticache.md)         | 24  | Core CRUD + common workflows  |
 | EFS              | [efs.md](./services/efs.md)                         | 31  | Core CRUD + common workflows  |
-| AppConfig        | [appconfig.md](./services/appconfig.md)             | 19  | Core CRUD + common workflows  |
+| AppConfig        | [appconfig.md](./services/appconfig.md)             | 20  | Core CRUD + common workflows  |
 | AppConfigData    | [appconfigdata.md](./services/appconfigdata.md)     | 2   | Core CRUD + common workflows  |
 | Secrets Manager  | [secretsmanager.md](./services/secretsmanager.md)   | 22  | Core CRUD + common workflows  |
 | SSM              | [ssm.md](./services/ssm.md)                         | 18  | Core CRUD + common workflows  |

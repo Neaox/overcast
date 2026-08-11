@@ -39,7 +39,7 @@
 | CloudFormation  | 52  | Stacks, change sets, async provisioner (~55 resource types including AppSync), intrinsic functions, GetAtt                                                                                                  |
 | RDS             | 34  | DB instances (Docker), start/stop, modify, subnet/parameter groups                                                                                                                                         |
 | ElastiCache     | 24  | Clusters (Docker Redis), replication groups, subnet groups, tagging                                                                                                                                        |
-| AppConfig       | 19  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
+| AppConfig       | 20  | Apps, environments, profiles, hosted config versions (CRUD + version counter)                                                                                                                              |
 | AppConfigData   | 2   | StartConfigurationSession, GetLatestConfiguration; poll-based delivery with "unchanged" detection                                                                                                          |
 | Secrets Manager | 22  | Secret CRUD, versioning, tags, rotation config (11 of 21 operations)                                                                                                                                       |
 | SSM             | 18  | Parameter Store: put, get, get-by-path, history, tags                                                                                                                                                      |
@@ -86,7 +86,7 @@
 | RDS             | 34  |
 | ElastiCache     | 24  |
 | EFS             | 31  |
-| AppConfig       | 19  |
+| AppConfig       | 20  |
 | AppConfigData   | 2   |
 | Secrets Manager | 22  |
 | SSM             | 18  |

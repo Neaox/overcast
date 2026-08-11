@@ -1,7 +1,8 @@
 // Package appregistry provides emulation of AWS Service Catalog AppRegistry.
 //
 // Wire protocol: REST-JSON.
-// Endpoints are mounted under /applications.
+// Endpoints are served under /applications, which the main router dispatches
+// between this service and AppConfig — see ApplicationsRouter.
 //
 // The primary use in Overcast is as a grouping primitive: a CloudFormation
 // stack (or the resources inside one) can be associated with an application,
@@ -73,28 +74,43 @@ func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
 	protocol.NotImplementedJSON(w, r)
 }
 
-// RegisterRoutes satisfies router.Service. AppRegistry uses /applications.
+// ApplicationsRouter returns the /applications sub-tree, for the main router to
+// dispatch to.
+//
+// AppRegistry no longer registers this path itself. AWS AppConfig models the
+// same /applications tree, and on a single-endpoint emulator the two can only
+// be told apart by the SigV4 credential scope, so the main router owns the path
+// and picks an owner per request — the same shape it already uses for /v2/apis.
+// AppRegistry is the dispatcher's fallback owner, which keeps unsigned and
+// servicecatalog-scoped traffic answering exactly as it always has. See #854.
+func (s *Service) ApplicationsRouter() chi.Router {
+	h := s.handler
+	r := chi.NewRouter()
+
+	r.Post("/", h.CreateApplication)
+	r.Get("/", h.ListApplications)
+	r.Get("/{application}", h.GetApplication)
+	r.Delete("/{application}", h.DeleteApplication)
+	r.Patch("/{application}", h.UpdateApplication)
+
+	// Resource associations
+	r.Get("/{application}/resources", h.ListAssociatedResources)
+	r.Put("/{application}/resources/{resourceType}/{resource}", h.AssociateResource)
+	r.Delete("/{application}/resources/{resourceType}/{resource}", h.DisassociateResource)
+	r.Get("/{application}/resources/{resourceType}/{resource}", h.GetAssociatedResource)
+
+	// Attribute group associations (inert tier)
+	r.Get("/{application}/attribute-groups", h.ListAssociatedAttributeGroups)
+	r.Put("/{application}/attribute-groups/{attributeGroup}", h.AssociateAttributeGroup)
+	r.Delete("/{application}/attribute-groups/{attributeGroup}", h.DisassociateAttributeGroup)
+
+	return r
+}
+
+// RegisterRoutes satisfies router.Service. /applications is registered by the
+// main router — see ApplicationsRouter.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	h := s.handler
-
-	r.Route("/applications", func(r chi.Router) {
-		r.Post("/", h.CreateApplication)
-		r.Get("/", h.ListApplications)
-		r.Get("/{application}", h.GetApplication)
-		r.Delete("/{application}", h.DeleteApplication)
-		r.Patch("/{application}", h.UpdateApplication)
-
-		// Resource associations
-		r.Get("/{application}/resources", h.ListAssociatedResources)
-		r.Put("/{application}/resources/{resourceType}/{resource}", h.AssociateResource)
-		r.Delete("/{application}/resources/{resourceType}/{resource}", h.DisassociateResource)
-		r.Get("/{application}/resources/{resourceType}/{resource}", h.GetAssociatedResource)
-
-		// Attribute group associations (inert tier)
-		r.Get("/{application}/attribute-groups", h.ListAssociatedAttributeGroups)
-		r.Put("/{application}/attribute-groups/{attributeGroup}", h.AssociateAttributeGroup)
-		r.Delete("/{application}/attribute-groups/{attributeGroup}", h.DisassociateAttributeGroup)
-	})
 
 	// Attribute groups top-level (inert tier)
 	r.Route("/attribute-groups", func(r chi.Router) {

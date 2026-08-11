@@ -1,26 +1,33 @@
 // Package appconfig provides a basic emulation of AWS AppConfig.
 //
 // Control plane implemented operations: CreateApplication, GetApplication,
-// ListApplications, DeleteApplication, CreateEnvironment, GetEnvironment,
-// ListEnvironments, DeleteEnvironment, CreateConfigurationProfile,
-// GetConfigurationProfile, ListConfigurationProfiles,
-// DeleteConfigurationProfile, CreateHostedConfigurationVersion,
-// GetHostedConfigurationVersion, ListHostedConfigurationVersions,
-// DeleteHostedConfigurationVersion.
+// ListApplications, UpdateApplication, DeleteApplication, CreateEnvironment,
+// GetEnvironment, ListEnvironments, DeleteEnvironment,
+// CreateConfigurationProfile, GetConfigurationProfile,
+// ListConfigurationProfiles, DeleteConfigurationProfile,
+// CreateHostedConfigurationVersion, GetHostedConfigurationVersion,
+// ListHostedConfigurationVersions, DeleteHostedConfigurationVersion,
+// TagResource, UntagResource, ListTagsForResource.
 //
 // Data-plane operations (StartConfigurationSession, GetLatestConfiguration)
-// are implemented in the sibling appconfigdata package.
+// are implemented in the sibling appconfigdata package: they are a separate
+// AWS model with its own signing name, not two halves of one service.
+//
+// AWS models AppConfig as restJson1 with no X-Amz-Target namespace, so every
+// operation is reached through a REST route and there is no target or RPC
+// dispatcher here. The `/applications` tree is registered by the main router
+// rather than by RegisterRoutes, because Service Catalog AppRegistry models
+// the same paths — see ApplicationsRouter.
 package appconfig
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -28,343 +35,242 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
-	"github.com/Neaox/overcast/internal/protocol/codec"
-	"github.com/Neaox/overcast/internal/protocol/op"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
 
 const serviceName = "appconfig"
 
-// ─── Types ────────────────────────────────────────────────────
+// maxContentLength is the largest hosted configuration AWS accepts (1 MB).
+// Exceeding it is PayloadTooLargeException, which the model binds to
+// CreateHostedConfigurationVersion alone.
+const maxContentLength = 1 << 20
 
-// Application represents an AppConfig application.
+// maxPageSize is the model's range on the MaxResults member of every AppConfig
+// list operation (`smithy.api#range` min 1, max 50).
+const maxPageSize = 50
+
+// errStaleLatestVersion reports a Latest-Version-Number header that is not the
+// profile's current latest. It is a sentinel rather than an AWSError because it
+// crosses the store boundary, where HTTP status codes do not belong.
+var errStaleLatestVersion = errors.New("appconfig: stale latest version number")
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+//
+// These are the AWS shapes, member for member, and are written to the wire as
+// they stand. AWS's Application, Environment and ConfigurationProfile carry no
+// ARN and no Tags: an ARN identifies these resources in the tag operations but
+// is never a response member, and tags are read back through
+// ListTagsForResource. Both used to be serialised here, invented.
+
+// Application is AWS's Application shape.
 type Application struct {
-	ID          string            `json:"Id"`
-	Name        string            `json:"Name"`
-	Description string            `json:"Description,omitempty"`
-	Tags        map[string]string `json:"Tags,omitempty"`
-	ARN         string            `json:"Arn,omitempty"`
+	ID          string `json:"Id"`
+	Name        string `json:"Name"`
+	Description string `json:"Description,omitempty"`
 }
 
-func appARN(region, accountID, appID string) string {
-	return fmt.Sprintf("arn:aws:appconfig:%s:%s:application/%s", region, accountID, appID)
+// Monitor is AWS's Monitor shape, the CloudWatch alarms an environment rolls
+// a deployment back on.
+type Monitor struct {
+	AlarmArn     string `json:"AlarmArn"`
+	AlarmRoleArn string `json:"AlarmRoleArn,omitempty"`
 }
 
-func envARN(region, accountID, appID, envID string) string {
-	return fmt.Sprintf("arn:aws:appconfig:%s:%s:application/%s/environment/%s", region, accountID, appID, envID)
-}
-
-func profileARN(region, accountID, appID, profID string) string {
-	return fmt.Sprintf("arn:aws:appconfig:%s:%s:application/%s/configurationprofile/%s", region, accountID, appID, profID)
-}
-
-// Environment represents an AppConfig environment.
+// Environment is AWS's Environment shape.
 type Environment struct {
-	ApplicationId string            `json:"ApplicationId"`
-	ID            string            `json:"Id"`
-	Name          string            `json:"Name"`
-	Description   string            `json:"Description,omitempty"`
-	State         string            `json:"State"`
-	Tags          map[string]string `json:"Tags,omitempty"`
-	ARN           string            `json:"Arn,omitempty"`
+	ApplicationID string    `json:"ApplicationId"`
+	ID            string    `json:"Id"`
+	Name          string    `json:"Name"`
+	Description   string    `json:"Description,omitempty"`
+	State         string    `json:"State"`
+	Monitors      []Monitor `json:"Monitors,omitempty"`
 }
 
-// ConfigurationProfile represents an AppConfig configuration profile.
+// Validator is AWS's Validator shape.
+type Validator struct {
+	Type    string `json:"Type"`
+	Content string `json:"Content"`
+}
+
+// ConfigurationProfile is AWS's ConfigurationProfile shape.
 type ConfigurationProfile struct {
-	ApplicationId string            `json:"ApplicationId"`
-	ID            string            `json:"Id"`
-	Name          string            `json:"Name"`
-	LocationUri   string            `json:"LocationUri,omitempty"`
-	Type          string            `json:"Type,omitempty"`
-	Tags          map[string]string `json:"Tags,omitempty"`
-	ARN           string            `json:"Arn,omitempty"`
+	ApplicationID    string      `json:"ApplicationId"`
+	ID               string      `json:"Id"`
+	Name             string      `json:"Name"`
+	Description      string      `json:"Description,omitempty"`
+	LocationUri      string      `json:"LocationUri,omitempty"`
+	RetrievalRoleArn string      `json:"RetrievalRoleArn,omitempty"`
+	Validators       []Validator `json:"Validators,omitempty"`
+	Type             string      `json:"Type,omitempty"`
 }
 
-// HostedConfigurationVersion represents a stored configuration payload.
+// configurationProfileSummary is AWS's ConfigurationProfileSummary, the item
+// shape of ListConfigurationProfiles. It is narrower than the full profile:
+// no Description, and validator *types* rather than whole validators.
+type configurationProfileSummary struct {
+	ApplicationID  string   `json:"ApplicationId"`
+	ID             string   `json:"Id"`
+	Name           string   `json:"Name"`
+	LocationUri    string   `json:"LocationUri,omitempty"`
+	ValidatorTypes []string `json:"ValidatorTypes,omitempty"`
+	Type           string   `json:"Type,omitempty"`
+}
+
+// HostedConfigurationVersion is a stored configuration payload. Content is the
+// operation's @httpPayload blob and every other member is bound to a response
+// header, so this type is the persisted record rather than a response body —
+// see writeHostedConfigurationVersion.
 type HostedConfigurationVersion struct {
-	ApplicationId          string `json:"ApplicationId"`
-	ConfigurationProfileId string `json:"ConfigurationProfileId"`
+	ApplicationID          string `json:"ApplicationId"`
+	ConfigurationProfileID string `json:"ConfigurationProfileId"`
 	VersionNumber          int    `json:"VersionNumber"`
 	ContentType            string `json:"ContentType"`
 	Description            string `json:"Description,omitempty"`
+	VersionLabel           string `json:"VersionLabel,omitempty"`
 	Content                string `json:"Content"` // raw bytes stored as a string
 }
 
-// ─── Store ────────────────────────────────────────────────────
-
-type appConfigStore struct {
-	mu    sync.Mutex
-	store state.Store
+// hostedConfigurationVersionSummary is AWS's
+// HostedConfigurationVersionSummaryList item: the metadata without the content.
+type hostedConfigurationVersionSummary struct {
+	ApplicationID          string `json:"ApplicationId"`
+	ConfigurationProfileID string `json:"ConfigurationProfileId"`
+	VersionNumber          int    `json:"VersionNumber"`
+	Description            string `json:"Description,omitempty"`
+	ContentType            string `json:"ContentType"`
+	VersionLabel           string `json:"VersionLabel,omitempty"`
 }
 
-func newAppConfigStore(s state.Store) *appConfigStore {
-	return &appConfigStore{store: s}
+// ─── Errors ───────────────────────────────────────────────────────────────────
+//
+// Codes and statuses come from the pinned model's error shapes:
+// BadRequestException 400, ConflictException 409, PayloadTooLargeException 413,
+// ResourceNotFoundException 404.
+
+func badRequest(message string) *protocol.AWSError {
+	return &protocol.AWSError{Code: "BadRequestException", Message: message, HTTPStatus: http.StatusBadRequest}
 }
 
-const (
-	nsApps     = "appconfig:apps"
-	nsEnvs     = "appconfig:envs"
-	nsProfiles = "appconfig:profiles"
-	nsHCVs     = "appconfig:hcversions"  // hosted configuration versions
-	nsHCVCnts  = "appconfig:hcvcounters" // per-profile version counters
-)
-
-func (s *appConfigStore) putApp(ctx context.Context, a *Application) error {
-	raw, err := json.Marshal(a)
-	if err != nil {
-		return fmt.Errorf("appconfig: marshal application: %w", err)
-	}
-	return s.store.Set(ctx, nsApps, a.ID, string(raw))
+func notFound(message string) *protocol.AWSError {
+	return &protocol.AWSError{Code: "ResourceNotFoundException", Message: message, HTTPStatus: http.StatusNotFound}
 }
 
-func (s *appConfigStore) getApp(ctx context.Context, id string) (*Application, bool) {
-	raw, found, err := s.store.Get(ctx, nsApps, id)
-	if err != nil || !found {
-		return nil, false
-	}
-	var a Application
-	if json.Unmarshal([]byte(raw), &a) != nil {
-		return nil, false
-	}
-	return &a, true
+func conflict(message string) *protocol.AWSError {
+	return &protocol.AWSError{Code: "ConflictException", Message: message, HTTPStatus: http.StatusConflict}
 }
 
-func (s *appConfigStore) listApps(ctx context.Context) ([]*Application, error) {
-	pairs, err := s.store.Scan(ctx, nsApps, "")
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*Application, 0, len(pairs))
-	for _, kv := range pairs {
-		var a Application
-		if json.Unmarshal([]byte(kv.Value), &a) == nil {
-			out = append(out, &a)
-		}
-	}
-	return out, nil
-}
-
-func (s *appConfigStore) deleteApp(ctx context.Context, id string) error {
-	return s.store.Delete(ctx, nsApps, id)
-}
-
-func envKey(appID, envID string) string { return appID + "/" + envID }
-
-func (s *appConfigStore) putEnv(ctx context.Context, e *Environment) error {
-	raw, err := json.Marshal(e)
-	if err != nil {
-		return fmt.Errorf("appconfig: marshal environment: %w", err)
-	}
-	return s.store.Set(ctx, nsEnvs, envKey(e.ApplicationId, e.ID), string(raw))
-}
-
-func (s *appConfigStore) getEnv(ctx context.Context, appID, envID string) (*Environment, bool) {
-	raw, found, err := s.store.Get(ctx, nsEnvs, envKey(appID, envID))
-	if err != nil || !found {
-		return nil, false
-	}
-	var e Environment
-	if json.Unmarshal([]byte(raw), &e) != nil {
-		return nil, false
-	}
-	return &e, true
-}
-
-func (s *appConfigStore) listEnvs(ctx context.Context, appID string) ([]*Environment, error) {
-	pairs, err := s.store.Scan(ctx, nsEnvs, "")
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*Environment, 0, len(pairs))
-	for _, kv := range pairs {
-		var e Environment
-		if json.Unmarshal([]byte(kv.Value), &e) == nil && e.ApplicationId == appID {
-			out = append(out, &e)
-		}
-	}
-	return out, nil
-}
-
-func (s *appConfigStore) deleteEnv(ctx context.Context, appID, envID string) error {
-	return s.store.Delete(ctx, nsEnvs, envKey(appID, envID))
-}
-
-func profileKey(appID, profID string) string { return appID + "/" + profID }
-
-func (s *appConfigStore) putProfile(ctx context.Context, p *ConfigurationProfile) error {
-	raw, err := json.Marshal(p)
-	if err != nil {
-		return fmt.Errorf("appconfig: marshal configuration profile: %w", err)
-	}
-	return s.store.Set(ctx, nsProfiles, profileKey(p.ApplicationId, p.ID), string(raw))
-}
-
-func (s *appConfigStore) getProfile(ctx context.Context, appID, profID string) (*ConfigurationProfile, bool) {
-	raw, found, err := s.store.Get(ctx, nsProfiles, profileKey(appID, profID))
-	if err != nil || !found {
-		return nil, false
-	}
-	var p ConfigurationProfile
-	if json.Unmarshal([]byte(raw), &p) != nil {
-		return nil, false
-	}
-	return &p, true
-}
-
-func (s *appConfigStore) listProfiles(ctx context.Context, appID string) ([]*ConfigurationProfile, error) {
-	pairs, err := s.store.Scan(ctx, nsProfiles, "")
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*ConfigurationProfile, 0, len(pairs))
-	for _, kv := range pairs {
-		var p ConfigurationProfile
-		if json.Unmarshal([]byte(kv.Value), &p) == nil && p.ApplicationId == appID {
-			out = append(out, &p)
-		}
-	}
-	return out, nil
-}
-
-func (s *appConfigStore) deleteProfile(ctx context.Context, appID, profID string) error {
-	return s.store.Delete(ctx, nsProfiles, profileKey(appID, profID))
-}
-
-// ─── Hosted Configuration Versions ────────────────────────────────────────────
-
-func hcvKey(appID, profID string, version int) string {
-	return fmt.Sprintf("%s/%s/%d", appID, profID, version)
-}
-
-func hcvCounterKey(appID, profID string) string { return appID + "/" + profID }
-
-// nextVersionNumber atomically increments and returns the next version number.
-func (s *appConfigStore) nextVersionNumber(ctx context.Context, appID, profID string) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	raw, found, err := s.store.Get(ctx, nsHCVCnts, hcvCounterKey(appID, profID))
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	if found {
-		n, _ = strconv.Atoi(raw)
-	}
-	n++
-	if err := s.store.Set(ctx, nsHCVCnts, hcvCounterKey(appID, profID), strconv.Itoa(n)); err != nil {
-		return 0, err
-	}
-	return n, nil
-}
-
-// latestVersionNumber returns the latest version number for a profile (0 if none).
-func (s *appConfigStore) latestVersionNumber(ctx context.Context, appID, profID string) (int, error) {
-	raw, found, err := s.store.Get(ctx, nsHCVCnts, hcvCounterKey(appID, profID))
-	if err != nil || !found {
-		return 0, err
-	}
-	n, _ := strconv.Atoi(raw)
-	return n, nil
-}
-
-func (s *appConfigStore) putHCV(ctx context.Context, v *HostedConfigurationVersion) error {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("appconfig: marshal hcv: %w", err)
-	}
-	return s.store.Set(ctx, nsHCVs, hcvKey(v.ApplicationId, v.ConfigurationProfileId, v.VersionNumber), string(raw))
-}
-
-func (s *appConfigStore) getHCV(ctx context.Context, appID, profID string, version int) (*HostedConfigurationVersion, bool) {
-	raw, found, err := s.store.Get(ctx, nsHCVs, hcvKey(appID, profID, version))
-	if err != nil || !found {
-		return nil, false
-	}
-	var v HostedConfigurationVersion
-	if json.Unmarshal([]byte(raw), &v) != nil {
-		return nil, false
-	}
-	return &v, true
-}
-
-func (s *appConfigStore) listHCVs(ctx context.Context, appID, profID string) ([]*HostedConfigurationVersion, error) {
-	pairs, err := s.store.Scan(ctx, nsHCVs, "")
-	if err != nil {
-		return nil, err
-	}
-	prefix := appID + "/" + profID + "/"
-	out := make([]*HostedConfigurationVersion, 0)
-	for _, kv := range pairs {
-		if len(kv.Key) <= len(prefix) || kv.Key[:len(prefix)] != prefix {
-			continue
-		}
-		var v HostedConfigurationVersion
-		if json.Unmarshal([]byte(kv.Value), &v) == nil {
-			out = append(out, &v)
-		}
-	}
-	return out, nil
-}
-
-func (s *appConfigStore) deleteHCV(ctx context.Context, appID, profID string, version int) error {
-	return s.store.Delete(ctx, nsHCVs, hcvKey(appID, profID, version))
-}
-
-// ─── Service ──────────────────────────────────────────────────
+// ─── Service ──────────────────────────────────────────────────────────────────
 
 // Service implements router.Service for AppConfig.
 type Service struct {
-	log     *serviceutil.ServiceLogger
-	store   *appConfigStore
-	cfg     *config.Config
-	typedOp map[string]op.Operation
+	store *appConfigStore
 }
 
 // New returns a configured AppConfig Service.
-func New(cfg *config.Config, st state.Store, logger *zap.Logger, _ clock.Clock) *Service {
-	s := &Service{
-		log:   serviceutil.NewServiceLogger(logger, serviceName),
-		store: newAppConfigStore(st),
-		cfg:   cfg,
-	}
-	s.typedOp = s.typedOps()
-	return s
+//
+// The config and the clock go unused, and both follow from the model: no
+// AppConfig shape carries a timestamp, and none carries an ARN, so the service
+// never has to name its own region or account. They stay in the signature
+// because every service constructor takes them.
+func New(_ *config.Config, st state.Store, logger *zap.Logger, _ clock.Clock) *Service {
+	return &Service{store: newAppConfigStore(st, serviceutil.NewServiceLogger(logger, serviceName))}
 }
 
 func (s *Service) Name() string { return serviceName }
 
-func (s *Service) TargetPrefix() string { return "AppConfig." }
+// RegisterRoutes satisfies router.Service and deliberately registers nothing.
+//
+// Both of AppConfig's path spaces are shared with another service and are
+// therefore owned by the main router, which picks the handler at request time:
+// `/applications` with Service Catalog AppRegistry (dispatched on the SigV4
+// credential scope) and `/tags/{ResourceArn}` with Pipes, EKS, Scheduler and
+// API Gateway (dispatched on the ARN). Registering either here would race those
+// services for the same chi patterns, where the last registration silently
+// wins. See ApplicationsRouter and TagsRouter.
+//
+// PathPrefixes is not implemented for the same reason: `/applications` is not
+// AppConfig's to claim, and claiming it would collide with the main router's
+// dispatcher when a subset test excludes this service.
+func (s *Service) RegisterRoutes(chi.Router) {}
 
-func (s *Service) Dispatch(w http.ResponseWriter, r *http.Request) {
-	if c, opName := codec.FromContext(r.Context()); c != nil && opName != "" {
-		if codec.Supports(s.SupportedProtocols(), c) {
-			if typed, ok := s.typedOp[opName]; ok {
-				typed.Invoke(w, r, c)
-				return
-			}
-		}
-		c.WriteError(w, r, protocol.ErrNotImplemented)
-		return
-	}
-	protocol.NotImplementedJSON(w, r)
+// ApplicationsRouter returns the `/applications` sub-tree, for the main router
+// to dispatch to when a request carries AppConfig's SigV4 credential scope.
+//
+// Every route is registered at the method and URI the pinned model binds:
+//
+//	CreateApplication                 POST   /applications
+//	ListApplications                  GET    /applications
+//	GetApplication                    GET    /applications/{ApplicationId}
+//	UpdateApplication                 PATCH  /applications/{ApplicationId}
+//	DeleteApplication                 DELETE /applications/{ApplicationId}
+//	CreateEnvironment                 POST   /applications/{ApplicationId}/environments
+//	ListEnvironments                  GET    /applications/{ApplicationId}/environments
+//	GetEnvironment                    GET    /applications/{ApplicationId}/environments/{EnvironmentId}
+//	DeleteEnvironment                 DELETE /applications/{ApplicationId}/environments/{EnvironmentId}
+//	CreateConfigurationProfile        POST   /applications/{ApplicationId}/configurationprofiles
+//	ListConfigurationProfiles         GET    /applications/{ApplicationId}/configurationprofiles
+//	GetConfigurationProfile           GET    /applications/{ApplicationId}/configurationprofiles/{ConfigurationProfileId}
+//	DeleteConfigurationProfile        DELETE /applications/{ApplicationId}/configurationprofiles/{ConfigurationProfileId}
+//	CreateHostedConfigurationVersion  POST   …/hostedconfigurationversions
+//	ListHostedConfigurationVersions   GET    …/hostedconfigurationversions
+//	GetHostedConfigurationVersion     GET    …/hostedconfigurationversions/{VersionNumber}
+//	DeleteHostedConfigurationVersion  DELETE …/hostedconfigurationversions/{VersionNumber}
+func (s *Service) ApplicationsRouter() chi.Router {
+	r := chi.NewRouter()
+
+	r.Post("/", s.createApplication)
+	r.Get("/", s.listApplications)
+	r.Get("/{ApplicationId}", s.getApplication)
+	r.Patch("/{ApplicationId}", s.updateApplication)
+	r.Delete("/{ApplicationId}", s.deleteApplication)
+
+	r.Post("/{ApplicationId}/environments", s.createEnvironment)
+	r.Get("/{ApplicationId}/environments", s.listEnvironments)
+	r.Get("/{ApplicationId}/environments/{EnvironmentId}", s.getEnvironment)
+	r.Delete("/{ApplicationId}/environments/{EnvironmentId}", s.deleteEnvironment)
+
+	r.Post("/{ApplicationId}/configurationprofiles", s.createConfigurationProfile)
+	r.Get("/{ApplicationId}/configurationprofiles", s.listConfigurationProfiles)
+	r.Get("/{ApplicationId}/configurationprofiles/{ConfigurationProfileId}", s.getConfigurationProfile)
+	r.Delete("/{ApplicationId}/configurationprofiles/{ConfigurationProfileId}", s.deleteConfigurationProfile)
+
+	const hcv = "/{ApplicationId}/configurationprofiles/{ConfigurationProfileId}/hostedconfigurationversions"
+	r.Post(hcv, s.createHostedConfigurationVersion)
+	r.Get(hcv, s.listHostedConfigurationVersions)
+	r.Get(hcv+"/{VersionNumber}", s.getHostedConfigurationVersion)
+	r.Delete(hcv+"/{VersionNumber}", s.deleteHostedConfigurationVersion)
+
+	return r
+}
+
+// TagsRouter returns AppConfig's handlers for /tags/{ResourceArn}, for the main
+// router's ARN-keyed tag dispatcher. Without it an AppConfig ARN falls to API
+// Gateway's service-agnostic tag store, which answers 200 with someone else's
+// tags.
+func (s *Service) TagsRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Post("/*", s.tagResource)
+	r.Delete("/*", s.untagResource)
+	r.Get("/*", s.listTagsForResource)
+	return r
 }
 
 // ─── Cross-service accessors (used by appconfigdata) ──────────────────────────
 
-// ResolveApplication finds an application by ID or name. Returns (app, true) or (nil, false).
+// ResolveApplication finds an application by ID or name.
 func (s *Service) ResolveApplication(ctx context.Context, identifier string) (*Application, bool) {
-	// try by ID first
 	if a, ok := s.store.getApp(ctx, identifier); ok {
 		return a, true
 	}
-	// fall back to name scan
-	apps, _ := s.store.listApps(ctx)
-	for _, a := range apps {
-		if a.Name == identifier {
-			return a, true
+	apps, err := s.store.listApps(ctx)
+	if err != nil {
+		return nil, false
+	}
+	for i := range apps {
+		if apps[i].Name == identifier {
+			return &apps[i], true
 		}
 	}
 	return nil, false
@@ -372,10 +278,13 @@ func (s *Service) ResolveApplication(ctx context.Context, identifier string) (*A
 
 // ResolveEnvironment finds an environment by ID or name within the given app.
 func (s *Service) ResolveEnvironment(ctx context.Context, appID, identifier string) (*Environment, bool) {
-	envs, _ := s.store.listEnvs(ctx, appID)
-	for _, e := range envs {
-		if e.ID == identifier || e.Name == identifier {
-			return e, true
+	envs, err := s.store.listEnvs(ctx, appID)
+	if err != nil {
+		return nil, false
+	}
+	for i := range envs {
+		if envs[i].ID == identifier || envs[i].Name == identifier {
+			return &envs[i], true
 		}
 	}
 	return nil, false
@@ -383,16 +292,20 @@ func (s *Service) ResolveEnvironment(ctx context.Context, appID, identifier stri
 
 // ResolveProfile finds a configuration profile by ID or name within the given app.
 func (s *Service) ResolveProfile(ctx context.Context, appID, identifier string) (*ConfigurationProfile, bool) {
-	profiles, _ := s.store.listProfiles(ctx, appID)
-	for _, p := range profiles {
-		if p.ID == identifier || p.Name == identifier {
-			return p, true
+	profiles, err := s.store.listProfiles(ctx, appID)
+	if err != nil {
+		return nil, false
+	}
+	for i := range profiles {
+		if profiles[i].ID == identifier || profiles[i].Name == identifier {
+			return &profiles[i], true
 		}
 	}
 	return nil, false
 }
 
-// LatestVersionNumber returns the latest hosted config version number for a profile (0 = none).
+// LatestVersionNumber returns the latest hosted config version number for a
+// profile (0 = none).
 func (s *Service) LatestVersionNumber(ctx context.Context, appID, profID string) (int, error) {
 	return s.store.latestVersionNumber(ctx, appID, profID)
 }
@@ -402,74 +315,71 @@ func (s *Service) GetHostedConfigVersionByNum(ctx context.Context, appID, profID
 	return s.store.getHCV(ctx, appID, profID, version)
 }
 
-// RegisterRoutes registers the REST endpoints for AppConfig.
-func (s *Service) RegisterRoutes(r chi.Router) {
-	r.Route("/_appconfig", func(r chi.Router) {
-		// Applications
-		r.Post("/applications", s.createApplication)
-		r.Get("/applications", s.listApplications)
-		r.Get("/applications/{appId}", s.getApplication)
-		r.Delete("/applications/{appId}", s.deleteApplication)
-		// Environments
-		r.Post("/applications/{appId}/environments", s.createEnvironment)
-		r.Get("/applications/{appId}/environments", s.listEnvironments)
-		r.Get("/applications/{appId}/environments/{envId}", s.getEnvironment)
-		r.Delete("/applications/{appId}/environments/{envId}", s.deleteEnvironment)
-		// Configuration Profiles
-		r.Post("/applications/{appId}/configurationprofiles", s.createConfigurationProfile)
-		r.Get("/applications/{appId}/configurationprofiles", s.listConfigurationProfiles)
-		r.Get("/applications/{appId}/configurationprofiles/{profId}", s.getConfigurationProfile)
-		r.Delete("/applications/{appId}/configurationprofiles/{profId}", s.deleteConfigurationProfile)
-		// Hosted Configuration Versions
-		r.Post("/applications/{appId}/configurationprofiles/{profId}/hostedconfigurationversions", s.createHostedConfigurationVersion)
-		r.Get("/applications/{appId}/configurationprofiles/{profId}/hostedconfigurationversions", s.listHostedConfigurationVersions)
-		r.Get("/applications/{appId}/configurationprofiles/{profId}/hostedconfigurationversions/{version}", s.getHostedConfigurationVersion)
-		r.Delete("/applications/{appId}/configurationprofiles/{profId}/hostedconfigurationversions/{version}", s.deleteHostedConfigurationVersion)
-		// Tags
-		r.Post("/tags/*", s.tagResource)
-		r.Delete("/tags/*", s.untagResource)
-		r.Get("/tags/*", s.listTagsForResource)
-	})
-}
-
-// ─── Handlers ─────────────────────────────────────────────────
+// ─── Application handlers ─────────────────────────────────────────────────────
 
 func (s *Service) createApplication(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"Name"`
-		Description string `json:"Description"`
+		Name        string            `json:"Name"`
+		Description string            `json:"Description"`
+		Tags        map[string]string `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "BadRequestException", Message: "Name is required",
-			HTTPStatus: http.StatusBadRequest,
-		})
+		protocol.WriteJSONError(w, r, badRequest("Name is required"))
 		return
 	}
-	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
-	id := shortID()
-	app := &Application{
-		ID: id, Name: req.Name, Description: req.Description,
-		Tags: make(map[string]string),
-		ARN:  appARN(region, s.cfg.AccountID, id),
-	}
+
+	app := &Application{ID: shortID(), Name: req.Name, Description: req.Description}
 	if err := s.store.putApp(r.Context(), app); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	if !s.applyInlineTags(w, r, applicationTagKey(app.ID), req.Tags) {
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusCreated, app)
 }
 
 func (s *Service) getApplication(w http.ResponseWriter, r *http.Request) {
-	app, found := s.store.getApp(r.Context(), chi.URLParam(r, "appId"))
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Application not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	app, ok := s.store.getApp(r.Context(), chi.URLParam(r, "ApplicationId"))
+	if !ok {
+		protocol.WriteJSONError(w, r, notFound("Application not found"))
+		return
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, app)
+}
+
+func (s *Service) updateApplication(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "ApplicationId")
+	app, ok := s.store.getApp(r.Context(), appID)
+	if !ok {
+		protocol.WriteJSONError(w, r, notFound("Application not found"))
+		return
+	}
+	// Both members are optional on UpdateApplication, so a member the caller
+	// omitted has to leave the stored value alone. Pointers are what tells
+	// "absent" from "set to empty", which a plain string cannot.
+	var req struct {
+		Name        *string `json:"Name"`
+		Description *string `json:"Description"`
+	}
+	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Name != nil {
+		if *req.Name == "" {
+			protocol.WriteJSONError(w, r, badRequest("Name is required"))
+			return
+		}
+		app.Name = *req.Name
+	}
+	if req.Description != nil {
+		app.Description = *req.Description
+	}
+	if err := s.store.putApp(r.Context(), app); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, app)
@@ -481,464 +391,516 @@ func (s *Service) listApplications(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Items": apps})
+	writePage(w, r, apps)
 }
 
 func (s *Service) deleteApplication(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "appId")
-	if _, found := s.store.getApp(r.Context(), id); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Application not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	appID := chi.URLParam(r, "ApplicationId")
+	if _, ok := s.store.getApp(r.Context(), appID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Application not found"))
 		return
 	}
-	_ = s.store.deleteApp(r.Context(), id)
+	if err := s.store.deleteApp(r.Context(), appID); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ─── Environment handlers ─────────────────────────────────────────────────────
+
 func (s *Service) createEnvironment(w http.ResponseWriter, r *http.Request) {
-	appID := chi.URLParam(r, "appId")
+	appID := chi.URLParam(r, "ApplicationId")
+	if _, ok := s.store.getApp(r.Context(), appID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Application not found"))
+		return
+	}
 	var req struct {
-		Name        string `json:"Name"`
-		Description string `json:"Description"`
+		Name        string            `json:"Name"`
+		Description string            `json:"Description"`
+		Monitors    []Monitor         `json:"Monitors"`
+		Tags        map[string]string `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
-	id := shortID()
+	if req.Name == "" {
+		protocol.WriteJSONError(w, r, badRequest("Name is required"))
+		return
+	}
+
 	env := &Environment{
-		ApplicationId: appID,
-		ID:            id,
+		ApplicationID: appID,
+		ID:            shortID(),
 		Name:          req.Name,
 		Description:   req.Description,
-		State:         "READY_FOR_DEPLOYMENT",
-		Tags:          make(map[string]string),
-		ARN:           envARN(region, s.cfg.AccountID, appID, id),
+		// AWS reports a new environment as ready until a deployment moves it
+		// on; Overcast emulates no deployments, so it stays there.
+		State:    "READY_FOR_DEPLOYMENT",
+		Monitors: req.Monitors,
 	}
 	if err := s.store.putEnv(r.Context(), env); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	if !s.applyInlineTags(w, r, environmentTagKey(appID, env.ID), req.Tags) {
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusCreated, env)
 }
 
 func (s *Service) getEnvironment(w http.ResponseWriter, r *http.Request) {
-	env, found := s.store.getEnv(r.Context(), chi.URLParam(r, "appId"), chi.URLParam(r, "envId"))
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Environment not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	env, ok := s.store.getEnv(r.Context(), chi.URLParam(r, "ApplicationId"), chi.URLParam(r, "EnvironmentId"))
+	if !ok {
+		protocol.WriteJSONError(w, r, notFound("Environment not found"))
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, env)
 }
 
 func (s *Service) listEnvironments(w http.ResponseWriter, r *http.Request) {
-	envs, err := s.store.listEnvs(r.Context(), chi.URLParam(r, "appId"))
+	appID := chi.URLParam(r, "ApplicationId")
+	if _, ok := s.store.getApp(r.Context(), appID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Application not found"))
+		return
+	}
+	envs, err := s.store.listEnvs(r.Context(), appID)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Items": envs})
+	writePage(w, r, envs)
 }
 
 func (s *Service) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
-	appID := chi.URLParam(r, "appId")
-	envID := chi.URLParam(r, "envId")
-	if _, found := s.store.getEnv(r.Context(), appID, envID); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Environment not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	appID := chi.URLParam(r, "ApplicationId")
+	envID := chi.URLParam(r, "EnvironmentId")
+	if _, ok := s.store.getEnv(r.Context(), appID, envID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Environment not found"))
 		return
 	}
-	_ = s.store.deleteEnv(r.Context(), appID, envID)
+	if err := s.store.deleteEnv(r.Context(), appID, envID); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ─── Configuration profile handlers ───────────────────────────────────────────
+
 func (s *Service) createConfigurationProfile(w http.ResponseWriter, r *http.Request) {
-	appID := chi.URLParam(r, "appId")
+	appID := chi.URLParam(r, "ApplicationId")
+	if _, ok := s.store.getApp(r.Context(), appID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Application not found"))
+		return
+	}
 	var req struct {
-		Name        string `json:"Name"`
-		LocationUri string `json:"LocationUri"`
-		Type        string `json:"Type"`
+		Name             string            `json:"Name"`
+		Description      string            `json:"Description"`
+		LocationUri      string            `json:"LocationUri"`
+		RetrievalRoleArn string            `json:"RetrievalRoleArn"`
+		Validators       []Validator       `json:"Validators"`
+		Type             string            `json:"Type"`
+		Tags             map[string]string `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	region := middleware.RegionFromContext(r.Context(), s.cfg.Region)
-	id := shortID()
+	// Name and LocationUri are the shape's two required members.
+	if req.Name == "" {
+		protocol.WriteJSONError(w, r, badRequest("Name is required"))
+		return
+	}
+	if req.LocationUri == "" {
+		protocol.WriteJSONError(w, r, badRequest("LocationUri is required"))
+		return
+	}
+
 	prof := &ConfigurationProfile{
-		ApplicationId: appID,
-		ID:            id,
-		Name:          req.Name,
-		LocationUri:   req.LocationUri,
-		Type:          req.Type,
-		Tags:          make(map[string]string),
-		ARN:           profileARN(region, s.cfg.AccountID, appID, id),
+		ApplicationID:    appID,
+		ID:               shortID(),
+		Name:             req.Name,
+		Description:      req.Description,
+		LocationUri:      req.LocationUri,
+		RetrievalRoleArn: req.RetrievalRoleArn,
+		Validators:       req.Validators,
+		Type:             req.Type,
 	}
 	if err := s.store.putProfile(r.Context(), prof); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
+	if !s.applyInlineTags(w, r, profileTagKey(appID, prof.ID), req.Tags) {
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusCreated, prof)
 }
 
 func (s *Service) getConfigurationProfile(w http.ResponseWriter, r *http.Request) {
-	prof, found := s.store.getProfile(r.Context(), chi.URLParam(r, "appId"), chi.URLParam(r, "profId"))
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Configuration profile not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	prof, ok := s.store.getProfile(r.Context(),
+		chi.URLParam(r, "ApplicationId"), chi.URLParam(r, "ConfigurationProfileId"))
+	if !ok {
+		protocol.WriteJSONError(w, r, notFound("Configuration profile not found"))
 		return
 	}
 	protocol.WriteJSON(w, r, http.StatusOK, prof)
 }
 
 func (s *Service) listConfigurationProfiles(w http.ResponseWriter, r *http.Request) {
-	profiles, err := s.store.listProfiles(r.Context(), chi.URLParam(r, "appId"))
+	appID := chi.URLParam(r, "ApplicationId")
+	if _, ok := s.store.getApp(r.Context(), appID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Application not found"))
+		return
+	}
+	profiles, err := s.store.listProfiles(r.Context(), appID)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Items": profiles})
+	// ListConfigurationProfiles binds a `type` query parameter that filters on
+	// the profile's Type. Ignoring it answered with profiles the caller asked
+	// to exclude.
+	wantType := r.URL.Query().Get("type")
+	items := make([]configurationProfileSummary, 0, len(profiles))
+	for _, p := range profiles {
+		if wantType != "" && p.Type != wantType {
+			continue
+		}
+		items = append(items, configurationProfileSummary{
+			ApplicationID:  p.ApplicationID,
+			ID:             p.ID,
+			Name:           p.Name,
+			LocationUri:    p.LocationUri,
+			ValidatorTypes: validatorTypes(p.Validators),
+			Type:           p.Type,
+		})
+	}
+	writePage(w, r, items)
 }
 
 func (s *Service) deleteConfigurationProfile(w http.ResponseWriter, r *http.Request) {
-	appID := chi.URLParam(r, "appId")
-	profID := chi.URLParam(r, "profId")
-	if _, found := s.store.getProfile(r.Context(), appID, profID); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Configuration profile not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	appID := chi.URLParam(r, "ApplicationId")
+	profID := chi.URLParam(r, "ConfigurationProfileId")
+	if _, ok := s.store.getProfile(r.Context(), appID, profID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Configuration profile not found"))
 		return
 	}
-	_ = s.store.deleteProfile(r.Context(), appID, profID)
+	if err := s.store.deleteProfile(r.Context(), appID, profID); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// shortID generates a 7-character hex ID similar to AppConfig's format.
-func shortID() string {
-	return uuid.NewString()[:7]
+func validatorTypes(validators []Validator) []string {
+	if len(validators) == 0 {
+		return nil
+	}
+	types := make([]string, 0, len(validators))
+	for _, v := range validators {
+		types = append(types, v.Type)
+	}
+	return types
 }
 
-// ─── Hosted Configuration Version handlers ─────────────────────────────────────
+// ─── Hosted configuration version handlers ────────────────────────────────────
 
-// createHostedConfigurationVersion stores raw config content.
-// Request body: raw configuration bytes.
-// Content-Type header: content type of the configuration.
-// Optional Description header.
+// createHostedConfigurationVersion stores raw configuration content.
+//
+// The model binds this operation as a binary upload, not a JSON envelope:
+// Content is an @httpPayload blob, Content-Type is a required header, and
+// Description, VersionLabel and Latest-Version-Number are headers too. The
+// response is the same shape — the content back as the payload, the metadata
+// in headers.
 func (s *Service) createHostedConfigurationVersion(w http.ResponseWriter, r *http.Request) {
-	appID := chi.URLParam(r, "appId")
-	profID := chi.URLParam(r, "profId")
-
-	// validate profile exists
-	if _, found := s.store.getProfile(r.Context(), appID, profID); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Configuration profile not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	appID := chi.URLParam(r, "ApplicationId")
+	profID := chi.URLParam(r, "ConfigurationProfileId")
+	if _, ok := s.store.getProfile(r.Context(), appID, profID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Configuration profile not found"))
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
-		contentType = "application/octet-stream"
+		protocol.WriteJSONError(w, r, badRequest("Content-Type is required"))
+		return
 	}
-	description := r.Header.Get("Description")
+	expected, aerr := optionalIntHeader(r, "Latest-Version-Number")
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
 
-	const maxContentLength = 1 << 20 // 1 MB
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxContentLength+1))
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
+	if len(body) == 0 {
+		protocol.WriteJSONError(w, r, badRequest("Content is required"))
+		return
+	}
 	if len(body) > maxContentLength {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "BadRequestException", Message: "Configuration content exceeds the maximum size of 1 MB.",
-			HTTPStatus: http.StatusBadRequest,
+			Code:       "PayloadTooLargeException",
+			Message:    "Configuration content exceeds the maximum size of 1 MB.",
+			HTTPStatus: http.StatusRequestEntityTooLarge,
 		})
 		return
 	}
 
-	versionNum, err := s.store.nextVersionNumber(r.Context(), appID, profID)
-	if err != nil {
+	versionNum, err := s.store.nextVersionNumber(r.Context(), appID, profID, expected)
+	switch {
+	case errors.Is(err, errStaleLatestVersion):
+		protocol.WriteJSONError(w, r, conflict("The Latest-Version-Number is not the latest version of the configuration profile."))
+		return
+	case err != nil:
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
 
 	hcv := &HostedConfigurationVersion{
-		ApplicationId:          appID,
-		ConfigurationProfileId: profID,
+		ApplicationID:          appID,
+		ConfigurationProfileID: profID,
 		VersionNumber:          versionNum,
 		ContentType:            contentType,
-		Description:            description,
+		Description:            r.Header.Get("Description"),
+		VersionLabel:           r.Header.Get("VersionLabel"),
 		Content:                string(body),
 	}
 	if err := s.store.putHCV(r.Context(), hcv); err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	// Return metadata (not the content) in the body, content-type as a header.
-	w.Header().Set("AppConfig-Configuration-Version", strconv.Itoa(versionNum))
-	w.Header().Set("AppConfig-Application-Id", appID)
-	w.Header().Set("AppConfig-Configuration-Profile-Id", profID)
-	protocol.WriteJSON(w, r, http.StatusCreated, hcv)
+	writeHostedConfigurationVersion(w, hcv, http.StatusCreated)
 }
 
 func (s *Service) getHostedConfigurationVersion(w http.ResponseWriter, r *http.Request) {
-	appID := chi.URLParam(r, "appId")
-	profID := chi.URLParam(r, "profId")
-	versionStr := chi.URLParam(r, "version")
-	version, err := strconv.Atoi(versionStr)
-	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "BadRequestException", Message: "Invalid version number",
-			HTTPStatus: http.StatusBadRequest,
-		})
+	appID := chi.URLParam(r, "ApplicationId")
+	profID := chi.URLParam(r, "ConfigurationProfileId")
+	version, aerr := versionNumberParam(r)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-
-	hcv, found := s.store.getHCV(r.Context(), appID, profID, version)
-	if !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Hosted configuration version not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	hcv, ok := s.store.getHCV(r.Context(), appID, profID, version)
+	if !ok {
+		protocol.WriteJSONError(w, r, notFound("Hosted configuration version not found"))
 		return
 	}
-
-	// Return raw configuration content with appropriate headers.
-	w.Header().Set("Content-Type", hcv.ContentType)
-	w.Header().Set("AppConfig-Configuration-Version", strconv.Itoa(hcv.VersionNumber))
-	w.Header().Set("AppConfig-Application-Id", appID)
-	w.Header().Set("AppConfig-Configuration-Profile-Id", profID)
-	if hcv.Description != "" {
-		w.Header().Set("AppConfig-Description", hcv.Description)
-	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(hcv.Content))
+	writeHostedConfigurationVersion(w, hcv, http.StatusOK)
 }
 
 func (s *Service) listHostedConfigurationVersions(w http.ResponseWriter, r *http.Request) {
-	appID := chi.URLParam(r, "appId")
-	profID := chi.URLParam(r, "profId")
-
+	appID := chi.URLParam(r, "ApplicationId")
+	profID := chi.URLParam(r, "ConfigurationProfileId")
+	if _, ok := s.store.getProfile(r.Context(), appID, profID); !ok {
+		protocol.WriteJSONError(w, r, notFound("Configuration profile not found"))
+		return
+	}
 	versions, err := s.store.listHCVs(r.Context(), appID, profID)
 	if err != nil {
 		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
 		return
 	}
-	// Return metadata without content (consistent with AWS).
-	type versionMeta struct {
-		ApplicationId          string `json:"ApplicationId"`
-		ConfigurationProfileId string `json:"ConfigurationProfileId"`
-		VersionNumber          int    `json:"VersionNumber"`
-		ContentType            string `json:"ContentType"`
-		Description            string `json:"Description,omitempty"`
-	}
-	items := make([]versionMeta, 0, len(versions))
+	// The model binds a `version_label` query filter, and the item shape
+	// carries metadata without the content.
+	wantLabel := r.URL.Query().Get("version_label")
+	items := make([]hostedConfigurationVersionSummary, 0, len(versions))
 	for _, v := range versions {
-		items = append(items, versionMeta{
-			ApplicationId:          v.ApplicationId,
-			ConfigurationProfileId: v.ConfigurationProfileId,
+		if wantLabel != "" && v.VersionLabel != wantLabel {
+			continue
+		}
+		items = append(items, hostedConfigurationVersionSummary{
+			ApplicationID:          v.ApplicationID,
+			ConfigurationProfileID: v.ConfigurationProfileID,
 			VersionNumber:          v.VersionNumber,
-			ContentType:            v.ContentType,
 			Description:            v.Description,
+			ContentType:            v.ContentType,
+			VersionLabel:           v.VersionLabel,
 		})
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{"Items": items})
+	writePage(w, r, items)
 }
 
 func (s *Service) deleteHostedConfigurationVersion(w http.ResponseWriter, r *http.Request) {
-	appID := chi.URLParam(r, "appId")
-	profID := chi.URLParam(r, "profId")
-	versionStr := chi.URLParam(r, "version")
-	version, err := strconv.Atoi(versionStr)
-	if err != nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "BadRequestException", Message: "Invalid version number",
-			HTTPStatus: http.StatusBadRequest,
-		})
+	appID := chi.URLParam(r, "ApplicationId")
+	profID := chi.URLParam(r, "ConfigurationProfileId")
+	version, aerr := versionNumberParam(r)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if _, found := s.store.getHCV(r.Context(), appID, profID, version); !found {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Hosted configuration version not found",
-			HTTPStatus: http.StatusNotFound,
-		})
+	if _, ok := s.store.getHCV(r.Context(), appID, profID, version); !ok {
+		protocol.WriteJSONError(w, r, notFound("Hosted configuration version not found"))
 		return
 	}
-	_ = s.store.deleteHCV(r.Context(), appID, profID, version)
+	if err := s.store.deleteHCV(r.Context(), appID, profID, version); err != nil {
+		protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ─── Tag helpers ─────────────────────────────────────────────────
+// writeHostedConfigurationVersion writes the response both the create and the
+// get bind: every metadata member as a header, the content as the payload.
+func writeHostedConfigurationVersion(w http.ResponseWriter, hcv *HostedConfigurationVersion, status int) {
+	w.Header().Set("Content-Type", hcv.ContentType)
+	w.Header().Set("Application-Id", hcv.ApplicationID)
+	w.Header().Set("Configuration-Profile-Id", hcv.ConfigurationProfileID)
+	w.Header().Set("Version-Number", strconv.Itoa(hcv.VersionNumber))
+	if hcv.Description != "" {
+		w.Header().Set("Description", hcv.Description)
+	}
+	if hcv.VersionLabel != "" {
+		w.Header().Set("VersionLabel", hcv.VersionLabel)
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(hcv.Content))
+}
 
-// appTagCfg tunes tag-validation error codes to match AppConfig.
+// versionNumberParam reads the {VersionNumber} path label, which the model
+// binds as an integer.
+func versionNumberParam(r *http.Request) (int, *protocol.AWSError) {
+	version, err := strconv.Atoi(chi.URLParam(r, "VersionNumber"))
+	if err != nil {
+		return 0, badRequest("VersionNumber must be an integer")
+	}
+	return version, nil
+}
+
+// optionalIntHeader reads an integer-valued header, returning nil when it is
+// absent so a caller that omitted it is not treated as having sent zero.
+func optionalIntHeader(r *http.Request, name string) (*int, *protocol.AWSError) {
+	raw := r.Header.Get(name)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, badRequest(name + " must be an integer")
+	}
+	return &value, nil
+}
+
+// ─── Pagination ───────────────────────────────────────────────────────────────
+
+// writePage answers a list operation with the modeled {Items, NextToken}
+// envelope. Every AppConfig list binds MaxResults to `max_results` and
+// NextToken to `next_token`, and caps MaxResults at 50; a token the emulator
+// did not issue is BadRequestException rather than a silent restart from the
+// first page.
+func writePage[T any](w http.ResponseWriter, r *http.Request, items []T) {
+	page, err := serviceutil.Paginate(items,
+		serviceutil.QueryInt(r, "max_results", 0),
+		r.URL.Query().Get("next_token"),
+		serviceutil.PaginateOptions{DefaultLimit: maxPageSize, MaxLimit: maxPageSize})
+	if err != nil {
+		protocol.WriteJSONError(w, r, badRequest("The specified next_token is not valid."))
+		return
+	}
+	body := map[string]any{"Items": page.Items}
+	if page.NextToken != "" {
+		body["NextToken"] = page.NextToken
+	}
+	protocol.WriteJSON(w, r, http.StatusOK, body)
+}
+
+// ─── Tags ─────────────────────────────────────────────────────────────────────
+
+// appConfigTagCfg tunes tag-validation error codes to match AppConfig, whose
+// model binds BadRequestException to all three tag operations.
 var appConfigTagCfg = serviceutil.TagValidationConfig{
 	ExceededCode:    "BadRequestException",
 	InvalidCode:     "BadRequestException",
 	ExceededMessage: "Too many tags.",
 }
 
-type arnParts struct {
-	ResourceType string
-	AppID        string
-	EnvID        string
-	ProfID       string
-	Version      string
+func applicationTagKey(appID string) string { return "application/" + appID }
+
+func environmentTagKey(appID, envID string) string {
+	return "environment/" + appID + "/" + envID
 }
 
-// parseAppConfigARN splits an AppConfig resource ARN into its parts.
-func parseAppConfigARN(arn string) *arnParts {
-	parts := strings.Split(arn, ":")
-	if len(parts) < 6 {
+func profileTagKey(appID, profID string) string {
+	return "configurationprofile/" + appID + "/" + profID
+}
+
+// resolveTagTarget maps an AppConfig resource ARN to the key its tags are
+// stored under, confirming the resource exists on the way: AWS answers
+// ResourceNotFoundException for an ARN that names nothing, where API Gateway's
+// service-agnostic store — which used to answer these requests — returns an
+// empty map for any ARN at all.
+//
+// Tags are keyed by resource identity rather than by the ARN itself so that
+// they follow the records, which are not region-scoped. See appConfigStore.
+func (s *Service) resolveTagTarget(ctx context.Context, arn string) (string, *protocol.AWSError) {
+	segments := arnResourceSegments(arn)
+	if len(segments) < 2 || segments[0] != "application" {
+		return "", notFound("Resource not found")
+	}
+	appID := segments[1]
+
+	switch {
+	case len(segments) == 2:
+		if _, ok := s.store.getApp(ctx, appID); ok {
+			return applicationTagKey(appID), nil
+		}
+	case len(segments) == 4 && segments[2] == "environment":
+		if _, ok := s.store.getEnv(ctx, appID, segments[3]); ok {
+			return environmentTagKey(appID, segments[3]), nil
+		}
+	case len(segments) == 4 && segments[2] == "configurationprofile":
+		if _, ok := s.store.getProfile(ctx, appID, segments[3]); ok {
+			return profileTagKey(appID, segments[3]), nil
+		}
+	case len(segments) == 6 && segments[4] == "hostedconfigurationversion":
+		// AWS does not tag hosted configuration versions; the resource exists
+		// but is not a tagging target.
+		return "", badRequest("Tagging hosted configuration versions is not supported")
+	}
+	return "", notFound("Resource not found")
+}
+
+// arnResourceSegments splits the resource part of an AppConfig ARN
+// ("application/{id}[/environment/{id}]") into its segments. It returns nil for
+// anything that is not a six-field ARN.
+func arnResourceSegments(arn string) []string {
+	fields := strings.SplitN(arn, ":", 6)
+	if len(fields) < 6 {
 		return nil
 	}
-	resource := parts[5]
-	segs := strings.Split(resource, "/")
-	if len(segs) < 2 {
-		return nil
-	}
-	if segs[0] != "application" {
-		return nil
-	}
-	p := &arnParts{ResourceType: "application", AppID: segs[1]}
-	if len(segs) < 3 {
-		return p
-	}
-	switch segs[2] {
-	case "environment":
-		p.ResourceType = "environment"
-		if len(segs) >= 4 {
-			p.EnvID = segs[3]
-		}
-	case "configurationprofile":
-		p.ResourceType = "configurationprofile"
-		if len(segs) >= 4 {
-			p.ProfID = segs[3]
-		}
-		if len(segs) >= 5 && segs[4] == "hostedconfigurationversion" && len(segs) >= 6 {
-			p.ResourceType = "hostedconfigurationversion"
-			p.Version = segs[5]
-		}
-	}
-	return p
+	return strings.Split(fields[5], "/")
 }
 
-// resolveTagTarget loads the resource identified by an ARN and returns its
-// tags map (nil when the resource is not found).
-func (s *Service) resolveTagTarget(ctx context.Context, arn string) (*arnParts, map[string]string, *protocol.AWSError) {
-	p := parseAppConfigARN(arn)
-	if p == nil || p.AppID == "" {
-		return nil, nil, &protocol.AWSError{
-			Code: "ResourceNotFoundException", Message: "Resource not found",
-			HTTPStatus: http.StatusNotFound,
-		}
+// tagResourceArn reads the {ResourceArn} path label. The router mounts these
+// handlers on a wildcard because an ARN contains slashes, and SDKs percent-
+// encode it.
+func tagResourceArn(r *http.Request) string {
+	arn := chi.URLParam(r, "*")
+	if decoded, err := url.PathUnescape(arn); err == nil {
+		return decoded
 	}
-	switch p.ResourceType {
-	case "application":
-		if app, ok := s.store.getApp(ctx, p.AppID); ok {
-			return p, app.Tags, nil
-		}
-	case "environment":
-		if p.EnvID == "" {
-			return nil, nil, &protocol.AWSError{
-				Code: "ResourceNotFoundException", Message: "Resource not found",
-				HTTPStatus: http.StatusNotFound,
-			}
-		}
-		if env, ok := s.store.getEnv(ctx, p.AppID, p.EnvID); ok {
-			return p, env.Tags, nil
-		}
-	case "configurationprofile":
-		if p.ProfID == "" {
-			return nil, nil, &protocol.AWSError{
-				Code: "ResourceNotFoundException", Message: "Resource not found",
-				HTTPStatus: http.StatusNotFound,
-			}
-		}
-		if prof, ok := s.store.getProfile(ctx, p.AppID, p.ProfID); ok {
-			return p, prof.Tags, nil
-		}
-	case "hostedconfigurationversion":
-		return nil, nil, &protocol.AWSError{
-			Code: "BadRequestException", Message: "Tagging hosted configuration versions is not supported",
-			HTTPStatus: http.StatusBadRequest,
-		}
-	}
-	return nil, nil, &protocol.AWSError{
-		Code: "ResourceNotFoundException", Message: "Resource not found",
-		HTTPStatus: http.StatusNotFound,
-	}
+	return arn
 }
-
-// persistTags writes updated tags back to the identified resource.
-func (s *Service) persistTags(ctx context.Context, p *arnParts, tags map[string]string) *protocol.AWSError {
-	switch p.ResourceType {
-	case "application":
-		app, ok := s.store.getApp(ctx, p.AppID)
-		if !ok {
-			return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Resource not found", HTTPStatus: http.StatusNotFound}
-		}
-		app.Tags = tags
-		if err := s.store.putApp(ctx, app); err != nil {
-			return protocol.ErrInternalError
-		}
-	case "environment":
-		env, ok := s.store.getEnv(ctx, p.AppID, p.EnvID)
-		if !ok {
-			return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Resource not found", HTTPStatus: http.StatusNotFound}
-		}
-		env.Tags = tags
-		if err := s.store.putEnv(ctx, env); err != nil {
-			return protocol.ErrInternalError
-		}
-	case "configurationprofile":
-		prof, ok := s.store.getProfile(ctx, p.AppID, p.ProfID)
-		if !ok {
-			return &protocol.AWSError{Code: "ResourceNotFoundException", Message: "Resource not found", HTTPStatus: http.StatusNotFound}
-		}
-		prof.Tags = tags
-		if err := s.store.putProfile(ctx, prof); err != nil {
-			return protocol.ErrInternalError
-		}
-	}
-	return nil
-}
-
-// ─── REST tag handlers ─────────────────────────────────────────
 
 func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
-	arn := chi.URLParam(r, "*")
 	var req struct {
 		Tags map[string]string `json:"Tags"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
 		return
 	}
-	p, existing, aerr := s.resolveTagTarget(r.Context(), arn)
+	if len(req.Tags) == 0 {
+		protocol.WriteJSONError(w, r, badRequest("Tags is required"))
+		return
+	}
+	key, aerr := s.resolveTagTarget(r.Context(), tagResourceArn(r))
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if existing == nil {
-		existing = make(map[string]string)
-	}
-	for k, v := range req.Tags {
-		existing[k] = v
-	}
-	if aerr := serviceutil.ValidateTags(appConfigTagCfg, existing); aerr != nil {
-		protocol.WriteJSONError(w, r, aerr)
-		return
-	}
-	if aerr := s.persistTags(r.Context(), p, existing); aerr != nil {
+	if aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, key, req.Tags, appConfigTagCfg); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -946,17 +908,17 @@ func (s *Service) tagResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
-	arn := chi.URLParam(r, "*")
 	keys := r.URL.Query()["tagKeys"]
-	p, existing, aerr := s.resolveTagTarget(r.Context(), arn)
+	if len(keys) == 0 {
+		protocol.WriteJSONError(w, r, badRequest("tagKeys is required"))
+		return
+	}
+	key, aerr := s.resolveTagTarget(r.Context(), tagResourceArn(r))
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	for _, k := range keys {
-		delete(existing, k)
-	}
-	if aerr := s.persistTags(r.Context(), p, existing); aerr != nil {
+	if aerr := serviceutil.RemoveStoreTags(r.Context(), s.store.tags, key, keys); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -964,14 +926,36 @@ func (s *Service) untagResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) listTagsForResource(w http.ResponseWriter, r *http.Request) {
-	arn := chi.URLParam(r, "*")
-	_, existing, aerr := s.resolveTagTarget(r.Context(), arn)
+	key, aerr := s.resolveTagTarget(r.Context(), tagResourceArn(r))
 	if aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	if existing == nil {
-		existing = make(map[string]string)
+	tags, aerr := serviceutil.ListStoreTags(r.Context(), s.store.tags, key)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
-	protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": existing})
+	protocol.WriteJSON(w, r, http.StatusOK, map[string]map[string]string{"Tags": tags})
 }
+
+// applyInlineTags stores the Tags map the three create operations accept in
+// their body, and reports whether the request may continue. A rejected tag map
+// fails the create rather than leaving the resource half-tagged.
+func (s *Service) applyInlineTags(w http.ResponseWriter, r *http.Request, key string, tags map[string]string) bool {
+	if len(tags) == 0 {
+		return true
+	}
+	if aerr := serviceutil.ApplyStoreTags(r.Context(), s.store.tags, key, tags, appConfigTagCfg); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return false
+	}
+	return true
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// shortID generates an ID in AppConfig's format: the model constrains Id to
+// `^[a-z0-9]{4,7}$`, and AWS issues seven lowercase hex characters. A UUID's
+// first seven characters are hex, so the prefix satisfies the pattern.
+func shortID() string { return uuid.NewString()[:7] }

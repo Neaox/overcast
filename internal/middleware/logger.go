@@ -53,6 +53,11 @@ import (
 //     them — the rule the rest of the model-derived work follows when several
 //     services are candidates — is not neutral here, because "" falls through
 //     to the S3 fallback. It would relabel three families that are correct now.
+//     Two of the ambiguous entries — "/v2/apis" and "/applications" — are
+//     shared by services Overcast actually implements, so they read the
+//     credential scope first and fall back to the prefix's historical owner.
+//     That is a narrower rule than deriving the switch: it costs nothing for
+//     unsigned traffic and answers the signed case correctly.
 //
 // TestDetectServiceClassifiesEveryRegisteredRouteFamily covers what that
 // leaves open: it walks the real router and fails when a service registers a
@@ -117,6 +122,15 @@ func detectService(r *http.Request, body ...[]byte) string {
 		strings.HasPrefix(r.URL.Path, "/usageplans"):
 		return "apigateway"
 	case strings.HasPrefix(r.URL.Path, "/applications"):
+		// Shared with AppConfig, which models the same tree, so this is the
+		// second entry that has to consult the credential scope before
+		// answering — see /v2/apis above, and router.go's applicationsDispatch,
+		// which resolves the route by the same signal. AppRegistry stays the
+		// answer for its own "servicecatalog" scope and for unsigned callers,
+		// which is what the web UI sends.
+		if svc := serviceFromAuthCredential(r); svc == "appconfig" {
+			return "appconfig"
+		}
 		return "appregistry"
 	case r.URL.Path == "/configurationsessions":
 		// StartConfigurationSession, which only AppConfig Data models. Matched

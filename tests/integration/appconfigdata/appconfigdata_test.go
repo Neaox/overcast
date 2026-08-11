@@ -1,5 +1,12 @@
-// Package appconfigdata_test contains integration tests for the AppConfig
-// hosted configuration versions API and the AppConfigData runtime data plane.
+// Package appconfigdata_test contains integration tests for the AppConfigData
+// runtime data plane.
+//
+// The AppConfig control-plane calls here are fixtures, not subjects: they seed
+// the application, environment, profile and hosted version a session resolves
+// against. They go to AppConfig's modeled bindings and carry its SigV4
+// credential scope, because /applications is shared with Service Catalog
+// AppRegistry and the scope is what tells the two apart (#854). The control
+// plane's own coverage is in tests/integration/appconfig.
 //
 // Run: go test ./tests/integration/appconfigdata/...
 package appconfigdata_test
@@ -11,12 +18,16 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
 )
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// appconfigSigV4 is the credential scope an AWS SDK for AppConfig signs with.
+const appconfigSigV4 = "AWS4-HMAC-SHA256 Credential=test/20250101/us-east-1/appconfig/aws4_request, SignedHeaders=host, Signature=fake"
 
 // acDo performs an AppConfig control-plane REST-JSON request.
 func acDo(t *testing.T, srv *helpers.TestServer, method, path string, body any) *http.Response {
@@ -31,6 +42,7 @@ func acDo(t *testing.T, srv *helpers.TestServer, method, path string, body any) 
 	}
 	req, _ := http.NewRequest(method, srv.URL+path, rdr)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", appconfigSigV4)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
@@ -93,7 +105,7 @@ func getConfiguration(t *testing.T, srv *helpers.TestServer, token string) *http
 // createApp creates an AppConfig application and returns its ID.
 func createApp(t *testing.T, srv *helpers.TestServer, name string) string {
 	t.Helper()
-	resp := acDo(t, srv, http.MethodPost, "/_appconfig/applications", map[string]any{"Name": name})
+	resp := acDo(t, srv, http.MethodPost, "/applications", map[string]any{"Name": name})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusCreated)
 	var result struct {
@@ -106,7 +118,7 @@ func createApp(t *testing.T, srv *helpers.TestServer, name string) string {
 // createEnv creates an AppConfig environment and returns its ID.
 func createEnv(t *testing.T, srv *helpers.TestServer, appID, name string) string {
 	t.Helper()
-	resp := acDo(t, srv, http.MethodPost, fmt.Sprintf("/_appconfig/applications/%s/environments", appID),
+	resp := acDo(t, srv, http.MethodPost, fmt.Sprintf("/applications/%s/environments", appID),
 		map[string]any{"Name": name})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusCreated)
@@ -121,7 +133,7 @@ func createEnv(t *testing.T, srv *helpers.TestServer, appID, name string) string
 func createProfile(t *testing.T, srv *helpers.TestServer, appID, name string) string {
 	t.Helper()
 	resp := acDo(t, srv, http.MethodPost,
-		fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles", appID),
+		fmt.Sprintf("/applications/%s/configurationprofiles", appID),
 		map[string]any{"Name": name, "LocationUri": "hosted"})
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusCreated)
@@ -132,209 +144,28 @@ func createProfile(t *testing.T, srv *helpers.TestServer, appID, name string) st
 	return result.Id
 }
 
-// createHostedVersion stores raw configuration content and returns the version number.
+// createHostedVersion stores raw configuration content and returns the version
+// number, which the operation binds to the Version-Number response header —
+// the response body is the configuration content itself.
 func createHostedVersion(t *testing.T, srv *helpers.TestServer, appID, profID, content, contentType string) int {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost,
-		srv.URL+fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles/%s/hostedconfigurationversions", appID, profID),
+		srv.URL+fmt.Sprintf("/applications/%s/configurationprofiles/%s/hostedconfigurationversions", appID, profID),
 		bytes.NewBufferString(content),
 	)
 	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", appconfigSigV4)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("createHostedVersion: %v", err)
 	}
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusCreated)
-	var result struct {
-		VersionNumber int `json:"VersionNumber"`
+	version, convErr := strconv.Atoi(resp.Header.Get("Version-Number"))
+	if convErr != nil || version == 0 {
+		t.Fatalf("expected a Version-Number header, got %q", resp.Header.Get("Version-Number"))
 	}
-	helpers.DecodeJSON(t, resp, &result)
-	if result.VersionNumber == 0 {
-		t.Fatal("expected VersionNumber > 0")
-	}
-	return result.VersionNumber
-}
-
-// ─── CreateHostedConfigurationVersion ────────────────────────────────────────
-
-func TestCreateHostedConfigurationVersion_success(t *testing.T) {
-	// Given: an app and profile
-	srv := helpers.NewTestServer(t)
-	appID := createApp(t, srv, "myapp")
-	profID := createProfile(t, srv, appID, "myprofile")
-
-	// When: a hosted configuration version is created
-	req, _ := http.NewRequest(http.MethodPost,
-		srv.URL+fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles/%s/hostedconfigurationversions", appID, profID),
-		bytes.NewBufferString(`{"feature":"enabled"}`),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Then: 201 with VersionNumber=1
-	helpers.AssertStatus(t, resp, http.StatusCreated)
-	var result struct {
-		VersionNumber          int    `json:"VersionNumber"`
-		ApplicationId          string `json:"ApplicationId"`
-		ConfigurationProfileId string `json:"ConfigurationProfileId"`
-		ContentType            string `json:"ContentType"`
-	}
-	helpers.DecodeJSON(t, resp, &result)
-	if result.VersionNumber != 1 {
-		t.Errorf("expected VersionNumber=1, got %d", result.VersionNumber)
-	}
-	if result.ApplicationId != appID {
-		t.Errorf("expected ApplicationId=%s, got %s", appID, result.ApplicationId)
-	}
-	if result.ConfigurationProfileId != profID {
-		t.Errorf("expected ConfigurationProfileId=%s, got %s", profID, result.ConfigurationProfileId)
-	}
-	if result.ContentType != "application/json" {
-		t.Errorf("expected ContentType=application/json, got %s", result.ContentType)
-	}
-}
-
-func TestCreateHostedConfigurationVersion_incrementsVersion(t *testing.T) {
-	// Given: an app and profile with one existing version
-	srv := helpers.NewTestServer(t)
-	appID := createApp(t, srv, "myapp")
-	profID := createProfile(t, srv, appID, "myprofile")
-	v1 := createHostedVersion(t, srv, appID, profID, `{"v":1}`, "application/json")
-
-	// When: a second version is created
-	v2 := createHostedVersion(t, srv, appID, profID, `{"v":2}`, "application/json")
-
-	// Then: version numbers are sequential
-	if v1 != 1 {
-		t.Errorf("expected v1=1, got %d", v1)
-	}
-	if v2 != 2 {
-		t.Errorf("expected v2=2, got %d", v2)
-	}
-}
-
-func TestCreateHostedConfigurationVersion_unknownProfile(t *testing.T) {
-	// Given: an existing app but nonexistent profile
-	srv := helpers.NewTestServer(t)
-	appID := createApp(t, srv, "myapp")
-
-	// When: CreateHostedConfigurationVersion references a missing profile
-	req, _ := http.NewRequest(http.MethodPost,
-		srv.URL+fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles/nonexistent/hostedconfigurationversions", appID),
-		bytes.NewBufferString(`{}`),
-	)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Then: 404
-	helpers.AssertStatus(t, resp, http.StatusNotFound)
-}
-
-// ─── GetHostedConfigurationVersion ───────────────────────────────────────────
-
-func TestGetHostedConfigurationVersion_success(t *testing.T) {
-	// Given: a version exists
-	srv := helpers.NewTestServer(t)
-	appID := createApp(t, srv, "myapp")
-	profID := createProfile(t, srv, appID, "myprofile")
-	createHostedVersion(t, srv, appID, profID, `{"feature":"on"}`, "application/json")
-
-	// When: GetHostedConfigurationVersion is called
-	resp := acDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles/%s/hostedconfigurationversions/1", appID, profID),
-		nil)
-	defer resp.Body.Close()
-
-	// Then: 200 with the raw configuration in the body
-	helpers.AssertStatus(t, resp, http.StatusOK)
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != `{"feature":"on"}` {
-		t.Errorf("unexpected body: %s", body)
-	}
-	ct := resp.Header.Get("Content-Type")
-	if ct != "application/json" {
-		t.Errorf("expected Content-Type=application/json, got %s", ct)
-	}
-}
-
-func TestGetHostedConfigurationVersion_notFound(t *testing.T) {
-	// Given: an app and profile with no versions
-	srv := helpers.NewTestServer(t)
-	appID := createApp(t, srv, "myapp")
-	profID := createProfile(t, srv, appID, "myprofile")
-
-	// When: version 99 is requested
-	resp := acDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles/%s/hostedconfigurationversions/99", appID, profID),
-		nil)
-	defer resp.Body.Close()
-
-	// Then: 404
-	helpers.AssertStatus(t, resp, http.StatusNotFound)
-}
-
-// ─── ListHostedConfigurationVersions ─────────────────────────────────────────
-
-func TestListHostedConfigurationVersions_success(t *testing.T) {
-	// Given: two versions exist
-	srv := helpers.NewTestServer(t)
-	appID := createApp(t, srv, "myapp")
-	profID := createProfile(t, srv, appID, "myprofile")
-	createHostedVersion(t, srv, appID, profID, `{"v":1}`, "application/json")
-	createHostedVersion(t, srv, appID, profID, `{"v":2}`, "application/json")
-
-	// When: ListHostedConfigurationVersions is called
-	resp := acDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles/%s/hostedconfigurationversions", appID, profID),
-		nil)
-	defer resp.Body.Close()
-
-	// Then: both versions are returned
-	helpers.AssertStatus(t, resp, http.StatusOK)
-	var result struct {
-		Items []struct {
-			VersionNumber int `json:"VersionNumber"`
-		} `json:"Items"`
-	}
-	helpers.DecodeJSON(t, resp, &result)
-	if len(result.Items) != 2 {
-		t.Errorf("expected 2 items, got %d", len(result.Items))
-	}
-}
-
-// ─── DeleteHostedConfigurationVersion ────────────────────────────────────────
-
-func TestDeleteHostedConfigurationVersion_success(t *testing.T) {
-	// Given: a version exists
-	srv := helpers.NewTestServer(t)
-	appID := createApp(t, srv, "myapp")
-	profID := createProfile(t, srv, appID, "myprofile")
-	createHostedVersion(t, srv, appID, profID, `{"feature":"on"}`, "application/json")
-
-	// When: the version is deleted
-	resp := acDo(t, srv, http.MethodDelete,
-		fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles/%s/hostedconfigurationversions/1", appID, profID),
-		nil)
-	defer resp.Body.Close()
-
-	// Then: 204
-	helpers.AssertStatus(t, resp, http.StatusNoContent)
-
-	// And: subsequent GET returns 404
-	resp2 := acDo(t, srv, http.MethodGet,
-		fmt.Sprintf("/_appconfig/applications/%s/configurationprofiles/%s/hostedconfigurationversions/1", appID, profID),
-		nil)
-	defer resp2.Body.Close()
-	helpers.AssertStatus(t, resp2, http.StatusNotFound)
+	return version
 }
 
 // ─── StartConfigurationSession ───────────────────────────────────────────────

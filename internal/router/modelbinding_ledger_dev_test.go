@@ -33,34 +33,20 @@ import (
 // the ledger rather than 66 route moves — the fixes are per-service work with
 // per-service review, and #793 is the precedent for what a rushed one costs.
 var unservedBindings = map[string]string{
-	// #854 — the whole AppConfig surface is served under /_appconfig. Worst of
-	// the set: POST /applications is silently answered by AppRegistry, which
-	// returns a servicecatalog ARN with 200 rather than a 501.
+	// #854 is deliberately absent, and it is the entry worth reading the
+	// history of. AppConfig's twelve rows were the only ones in this ledger
+	// whose modeled binding did not answer a clean 501: AppRegistry registered
+	// r.Route("/applications", …), and a chi sub-router owns its whole subtree,
+	// so a path it did not match hit *its* NotFound rather than the parent's
+	// "/*". A client calling AppConfig got a bare 404 with no AWS error body —
+	// or, on the four paths AppRegistry did match, a Service Catalog resource
+	// with a 200.
 	//
-	// These twelve are the only rows in this ledger whose modeled binding does
-	// not answer a clean 501 to a correctly signed request. Every other
-	// unserved binding falls through to restFallback, which asks the generated
-	// registry who owns the path and answers NotImplemented — the emulator
-	// being honest about a gap. AppConfig's do not, because AppRegistry
-	// registers r.Route("/applications", …) (internal/services/appregistry/
-	// service.go:80), and a chi sub-router owns its whole subtree: a path it
-	// does not match hits *its* NotFound, never the parent's "/*". So a client
-	// calling AppConfig gets a bare 404 with no AWS error body at all.
-	//
-	// The general rule, worth knowing before adding a prefix route: the 501
-	// fallback only protects paths no other service has claimed.
-	"appconfig/CreateConfigurationProfile":       "#854",
-	"appconfig/CreateEnvironment":                "#854",
-	"appconfig/CreateHostedConfigurationVersion": "#854",
-	"appconfig/DeleteConfigurationProfile":       "#854",
-	"appconfig/DeleteEnvironment":                "#854",
-	"appconfig/DeleteHostedConfigurationVersion": "#854",
-	"appconfig/GetConfigurationProfile":          "#854",
-	"appconfig/GetEnvironment":                   "#854",
-	"appconfig/GetHostedConfigurationVersion":    "#854",
-	"appconfig/ListConfigurationProfiles":        "#854",
-	"appconfig/ListEnvironments":                 "#854",
-	"appconfig/ListHostedConfigurationVersions":  "#854",
+	// The main router now owns /applications and picks the service from the
+	// SigV4 credential scope, and both sub-routers hand a path they do not
+	// serve back to restFallback. The general rule the fault taught, worth
+	// knowing before adding a prefix route: the 501 fallback only protects
+	// paths no other service has claimed.
 
 	// #855 is deliberately absent. AppConfig Data was served under
 	// /_appconfigdata with the session token as a path segment; both operations
@@ -120,13 +106,9 @@ var weaklyServedBindings = map[string]string{
 	"appregistry/TagResource":         "another service's fallback handler",
 	"appregistry/UntagResource":       "another service's fallback handler",
 
-	// AppConfig's own tag routes are under /_appconfig/tags, so a client
-	// calling the modeled /tags/{ResourceArn} reaches API Gateway's store
-	// instead — the same mis-attribution #854 records for POST /applications,
-	// and it goes away when #854 moves AppConfig onto its modeled paths.
-	"appconfig/ListTagsForResource": "another service's fallback handler",
-	"appconfig/TagResource":         "another service's fallback handler",
-	"appconfig/UntagResource":       "another service's fallback handler",
+	// AppConfig's three tag rows were here too, for the same reason, until
+	// #854 gave it a TagsRouter in the /tags dispatcher. It now serves its own
+	// ARNs and its rows are proven exactly.
 }
 
 // protocolAsymmetries records operations reachable over one of their service's

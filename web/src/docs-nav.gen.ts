@@ -1293,7 +1293,7 @@ export const DOCS_NAV = [
     "path": "docs/services/appconfig.md",
     "href": "services/appconfig.md",
     "title": "AppConfig — AWS AppConfig",
-    "description": "AWS AppConfig uses the REST JSON protocol. Routes are served under the /_appconfig/ path prefix.",
+    "description": "AWS AppConfig uses the REST JSON protocol, served at the /applications and /tags paths AWS models.",
     "section": "Service Reference",
     "tags": [
       "appconfig",
