@@ -191,8 +191,15 @@ const metricMathAlarmTemplate = `{
   }
 }`
 
-func TestCreateStack_metricMathAlarm_failsSayingItIsNotEmulated(t *testing.T) {
-	// Given: a metric-math alarm, which the evaluator refuses by design
+// A metric-math alarm is created and declares what will not happen to it.
+//
+// Refusing it used to fail the resource, and with it the stack and the deploy —
+// for a resource whose only defect is one Overcast will not act on. It is
+// created now, and the limitation rides the resource's status reason, which is
+// where CloudFormation puts everything else a reader needs to know about a
+// resource. See internal/protocol/limitation.go.
+func TestCreateStack_metricMathAlarm_isCreatedAndDeclaresItself(t *testing.T) {
+	// Given: a metric-math alarm, which the evaluator does not evaluate
 	srv := helpers.NewTestServer(t)
 	stackName := "alarm-math"
 
@@ -204,16 +211,20 @@ func TestCreateStack_metricMathAlarm_failsSayingItIsNotEmulated(t *testing.T) {
 	defer create.Body.Close()
 	helpers.AssertStatus(t, create, http.StatusOK)
 
-	// Then: the stack fails — and the reason names metric math, rather than
-	// blaming a missing MetricName the template never had to supply
-	status := waitForStackStatusIn(t, srv, stackName, "CREATE_FAILED", "ROLLBACK_COMPLETE", "CREATE_COMPLETE")
-	if status == "CREATE_COMPLETE" {
-		t.Fatal("metric-math alarm stack reached CREATE_COMPLETE; the alarm cannot be evaluated")
-	}
+	// Then: the deploy carries on
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	// And: the stack says what it will not do with the alarm, naming metric
+	// math rather than blaming a missing MetricName the template never had to
+	// supply.
 	reasons := strings.Join(describeStackEventReasons(t, srv, stackName), "\n")
-	if !strings.Contains(reasons, "Metric-math") {
-		t.Errorf("failure reason does not name metric math:\n%s", reasons)
+	if !strings.Contains(reasons, "metric-math") {
+		t.Errorf("no stack event declares the metric-math limitation:\n%s", reasons)
 	}
+
+	// And: the alarm is really there — declaring a limitation is not a licence
+	// to skip the resource.
+	assertAlarmExists(t, srv, "math-alarm", true)
 }
 
 // taggedAlarmTemplate is an alarm whose tag set the test varies between the

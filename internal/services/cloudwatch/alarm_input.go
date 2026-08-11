@@ -44,16 +44,50 @@ type alarmInput struct {
 	// only way to change an existing alarm's tags.
 	Tags []Tag
 
-	// ThresholdMetricID is set for an anomaly-detection alarm, and
-	// hasMetrics for a metric-math or multi-metric alarm. Both are refused —
-	// they are recorded here only so the refusal can name what it saw.
-	ThresholdMetricID string
-	hasMetrics        bool
-
-	// hasEvaluationCriteria marks a PromQL alarm (the EvaluationCriteria
-	// union). Refused, for the same reason as the rest: there is no PromQL
-	// engine behind the emulator.
+	// ThresholdMetricID is set for an anomaly-detection alarm, Metrics for a
+	// metric-math or multi-metric one, and hasEvaluationCriteria for a PromQL
+	// one (the EvaluationCriteria union). None of the three can be evaluated
+	// here, and each is created anyway — see unevaluatedReason.
+	ThresholdMetricID     string
+	Metrics               []any
 	hasEvaluationCriteria bool
+}
+
+// unevaluatedReason says why the evaluator will not decide this alarm's state,
+// and is empty for the alarms it will.
+//
+// These configurations are created rather than refused. A 501 from
+// PutMetricAlarm fails the CloudFormation resource, and with it the stack and
+// the deploy — for an alarm whose only defect is that nothing here will compute
+// it, in an emulator where that is true of a good deal. What refusing bought
+// was that "created" could never be mistaken for "armed"; the reason string
+// buys the same thing without stopping the deploy, and it travels: it is the
+// alarm's StateReason, the x-overcast-alarm-evaluation response header, and the
+// CloudFormation resource's status reason.
+//
+// The distinction is real and worth stating rather than papering over: a
+// single-metric alarm here is genuinely evaluated — against the datapoints
+// PutMetricData stores, on the period and evaluation-window rules AWS
+// documents, firing its actions on transition. An alarm carrying one of these
+// configurations sits at INSUFFICIENT_DATA for good.
+func (in *alarmInput) unevaluatedReason() string {
+	switch {
+	case len(in.Metrics) > 0:
+		return "Overcast does not evaluate metric-math or multi-metric alarms (the Metrics parameter). " +
+			"The alarm exists and is described, but its state is never computed. " +
+			"Only single-metric alarms — Namespace + MetricName + Statistic — are evaluated."
+	case in.ThresholdMetricID != "":
+		return "Overcast does not evaluate anomaly-detection alarms (ThresholdMetricId): there is no anomaly-detection model behind the emulator, so no band can be computed. " +
+			"The alarm exists and is described, but its state is never computed."
+	case anomalyComparisonOperators[in.ComparisonOperator]:
+		return "Overcast does not evaluate the comparison operator " + in.ComparisonOperator + ": it only has meaning against an anomaly-detection band, which is not emulated. " +
+			"The alarm exists and is described, but its state is never computed."
+	case in.ExtendedStatistic != "":
+		return "Overcast does not evaluate extended statistics such as " + in.ExtendedStatistic + ": PutMetricData stores pre-aggregated statistic values, so percentiles cannot be computed faithfully. " +
+			"The alarm exists and is described, but its state is never computed. Use Average, Sum, SampleCount, Minimum or Maximum for an alarm that is."
+	default:
+		return ""
+	}
 }
 
 // Tag is a CloudWatch resource tag.
@@ -90,39 +124,45 @@ func (in *alarmInput) validate() *protocol.AWSError {
 		return errValidation("1 validation error detected: Value null at 'alarmName' failed to satisfy constraint: Member must not be null")
 	}
 
-	// ---- §2.1 refusals: configurations that cannot be evaluated ----------
+	// ---- Validation real CloudWatch performs -----------------------------
+	//
+	// A configuration Overcast cannot evaluate is created rather than refused
+	// (see unevaluatedReason), so the checks below are the ones AWS itself
+	// applies — and several of them are conditional on the alarm's shape,
+	// because AWS asks for a different set from a metric-math alarm than from a
+	// plain one.
 
-	if in.hasMetrics {
-		return errUnsupportedAlarm("Metric-math and multi-metric alarms (the Metrics parameter)",
-			"Only single-metric alarms — Namespace + MetricName + Statistic — are evaluated.")
-	}
+	// A PromQL alarm stays refused. Not for want of the same argument — it is
+	// as inert as the rest — but because its whole configuration lives inside
+	// the EvaluationCriteria union, including the comparison and evaluation
+	// windows validated below, so accepting it means validating a shape nothing
+	// else here reads. It is also vanishingly rare next to the CDK constructs
+	// that produced the others. Left refused deliberately, not by omission.
 	if in.hasEvaluationCriteria {
 		return errUnsupportedAlarm("PromQL alarms (the EvaluationCriteria parameter)",
 			"There is no PromQL engine behind the emulator. Only single-metric alarms — Namespace + MetricName + Statistic — are evaluated.")
 	}
-	if in.ThresholdMetricID != "" {
-		return errUnsupportedAlarm("Anomaly-detection alarms (ThresholdMetricId)",
-			"There is no anomaly-detection model behind the emulator, so no band can be computed.")
-	}
-	if in.ExtendedStatistic != "" {
-		return errUnsupportedAlarm("Extended statistics such as "+in.ExtendedStatistic,
-			"PutMetricData stores pre-aggregated statistic values, so percentiles cannot be computed faithfully. Use Average, Sum, SampleCount, Minimum or Maximum.")
-	}
-	if anomalyComparisonOperators[in.ComparisonOperator] {
-		return errUnsupportedAlarm("The comparison operator "+in.ComparisonOperator,
-			"It only has meaning against an anomaly-detection band, which is not emulated.")
-	}
 
-	// ---- Validation real CloudWatch performs -----------------------------
-
-	if in.Namespace == "" || in.MetricName == "" {
+	// An alarm defined by Metrics carries its metric inside that structure; AWS
+	// rejects it for *also* naming one at the top level, and asks for nothing
+	// here that it has already been given there.
+	definedElsewhere := len(in.Metrics) > 0
+	if definedElsewhere {
+		if in.Namespace != "" || in.MetricName != "" {
+			return errValidation("The parameters MetricName and Namespace cannot be specified for an alarm based on the Metrics parameter")
+		}
+	} else if in.Namespace == "" || in.MetricName == "" {
 		return errValidation("The parameter MetricName and the parameter Namespace must both be specified for a metric alarm")
 	}
 	if in.Statistic != "" && !supportedStatistics[in.Statistic] {
 		return errValidation(fmt.Sprintf("1 validation error detected: Value '%s' at 'statistic' failed to satisfy constraint: "+
 			"Member must satisfy enum value set: [Maximum, SampleCount, Sum, Minimum, Average]", in.Statistic))
 	}
-	if in.ComparisonOperator != "" && comparisonPhrases[in.ComparisonOperator] == "" {
+	// The anomaly operators are valid AWS values that this evaluator has no band
+	// to apply — an alarm using one is created and left unevaluated, like the
+	// rest of its kind, rather than failed on an enum it does satisfy.
+	if in.ComparisonOperator != "" && comparisonPhrases[in.ComparisonOperator] == "" &&
+		!anomalyComparisonOperators[in.ComparisonOperator] {
 		return errValidation(fmt.Sprintf("1 validation error detected: Value '%s' at 'comparisonOperator' failed to satisfy constraint: "+
 			"Member must satisfy enum value set: [GreaterThanOrEqualToThreshold, GreaterThanThreshold, LessThanThreshold, LessThanOrEqualToThreshold]", in.ComparisonOperator))
 	}
@@ -144,26 +184,30 @@ func (in *alarmInput) validate() *protocol.AWSError {
 
 	// ---- Optional on the wire, required for *this* alarm shape -----------
 	//
-	// These five are marked "Required: No" on PutMetricAlarm only because an
-	// EvaluationCriteria (PromQL) alarm defines them inside that structure
-	// instead. For an alarm on a metric they are required, and AWS rejects the
-	// request without them. Overcast used to substitute Average /
+	// These are marked "Required: No" on PutMetricAlarm only because an alarm
+	// defined by Metrics or by EvaluationCriteria supplies them inside that
+	// structure instead. For an alarm on a metric they are required, and AWS
+	// rejects the request without them. Overcast used to substitute Average /
 	// GreaterThanThreshold / 60s / 1 period / 0.0, which does not fail — it
 	// arms an alarm nobody configured, and "greater than 0.0 on the Average"
 	// is a different alarm from the one the caller half-described.
-	if in.Statistic == "" {
-		return errValidation("The parameter Statistic or the parameter ExtendedStatistic must be specified for a metric alarm")
+	if !definedElsewhere {
+		if in.Statistic == "" && in.ExtendedStatistic == "" {
+			return errValidation("The parameter Statistic or the parameter ExtendedStatistic must be specified for a metric alarm")
+		}
+		if in.Period == 0 {
+			return errValidation("The parameter Period must be specified for a metric alarm")
+		}
 	}
 	if in.ComparisonOperator == "" {
 		return errValidation("1 validation error detected: Value null at 'comparisonOperator' failed to satisfy constraint: Member must not be null")
 	}
-	if in.Period == 0 {
-		return errValidation("The parameter Period must be specified for a metric alarm")
-	}
 	if in.EvaluationPeriods == 0 {
 		return errValidation("1 validation error detected: Value null at 'evaluationPeriods' failed to satisfy constraint: Member must not be null")
 	}
-	if in.Threshold == nil {
+	// An anomaly-detection alarm is bounded by its band, named in
+	// ThresholdMetricId, and AWS rejects it for carrying a static Threshold too.
+	if in.ThresholdMetricID == "" && in.Threshold == nil {
 		return errValidation("The parameter Threshold must be specified for an alarm based on a static threshold")
 	}
 	return nil
@@ -191,12 +235,15 @@ func (in *alarmInput) toAlarm(arn string, now time.Time, previous *MetricAlarm) 
 		MetricName:                         in.MetricName,
 		Namespace:                          in.Namespace,
 		Statistic:                          in.Statistic,
+		ExtendedStatistic:                  in.ExtendedStatistic,
+		Metrics:                            in.Metrics,
+		UnevaluatedReason:                  in.unevaluatedReason(),
 		Dimensions:                         canonicalizeDimensions(in.Dimensions),
 		Unit:                               in.Unit,
 		Period:                             in.Period,
 		EvaluationPeriods:                  in.EvaluationPeriods,
 		DatapointsToAlarm:                  in.DatapointsToAlarm,
-		Threshold:                          *in.Threshold,
+		ThresholdMetricID:                  in.ThresholdMetricID,
 		ComparisonOperator:                 in.ComparisonOperator,
 		TreatMissingData:                   in.TreatMissingData,
 		ActionsEnabled:                     true,
@@ -204,6 +251,13 @@ func (in *alarmInput) toAlarm(arn string, now time.Time, previous *MetricAlarm) 
 		OKActions:                          in.OKActions,
 		InsufficientDataActions:            in.InsufficientDataActions,
 		AlarmConfigurationUpdatedTimestamp: now.Format(time.RFC3339),
+	}
+	// An anomaly-detection alarm has no static threshold — its bound is the band
+	// named by ThresholdMetricId — so the pointer is nil and there is nothing to
+	// record. Reading it unconditionally panicked once the shape stopped being
+	// refused before it got here.
+	if in.Threshold != nil {
+		alarm.Threshold = *in.Threshold
 	}
 	// ActionsEnabled is the one property AWS documents a default for that the
 	// caller can also switch off, so it is the one that needs a pointer.
@@ -223,7 +277,13 @@ func (in *alarmInput) toAlarm(arn string, now time.Time, previous *MetricAlarm) 
 		return alarm
 	}
 	alarm.StateValue = stateInsufficientData
+	// An alarm nothing will evaluate says so where its state is read, rather
+	// than sitting at "Unchecked: Initial alarm creation" for good and looking
+	// like one whose first evaluation is merely pending.
 	alarm.StateReason = "Unchecked: Initial alarm creation"
+	if alarm.UnevaluatedReason != "" {
+		alarm.StateReason = alarm.UnevaluatedReason
+	}
 	alarm.StateUpdatedTimestamp = now.Format(time.RFC3339)
 	return alarm
 }
@@ -251,7 +311,7 @@ func alarmInputFromForm(r *http.Request) alarmInput {
 		OKActions:               memberList(r, "OKActions"),
 		InsufficientDataActions: memberList(r, "InsufficientDataActions"),
 		Tags:                    memberTags(r, "Tags"),
-		hasMetrics:              r.FormValue("Metrics.member.1.Id") != "",
+		Metrics:                 memberMetrics(r, "Metrics"),
 		hasEvaluationCriteria:   hasFormPrefix(r, "EvaluationCriteria."),
 	}
 	if raw := r.FormValue("Threshold"); raw != "" {
@@ -305,6 +365,28 @@ func memberTags(r *http.Request, name string) []Tag {
 			return out
 		}
 		out = append(out, Tag{Key: key, Value: r.FormValue(fmt.Sprintf("%s.member.%d.Value", name, i))})
+	}
+}
+
+// memberMetrics reads an AWS Query flattened MetricDataQuery list. The members
+// are kept as the maps they arrive as: Overcast does not compute a metric-math
+// alarm, so the definition is stored to be echoed back by DescribeAlarms rather
+// than interpreted, and inventing a struct for it would claim otherwise.
+func memberMetrics(r *http.Request, name string) []any {
+	var out []any
+	for i := 1; ; i++ {
+		prefix := fmt.Sprintf("%s.member.%d.", name, i)
+		id := r.FormValue(prefix + "Id")
+		if id == "" {
+			return out
+		}
+		query := map[string]any{"Id": id}
+		for _, field := range []string{"Expression", "Label", "ReturnData", "AccountId", "Period"} {
+			if v := r.FormValue(prefix + field); v != "" {
+				query[field] = v
+			}
+		}
+		out = append(out, query)
 	}
 }
 
@@ -371,7 +453,7 @@ func (b *putMetricAlarmJSONBody) toInput() alarmInput {
 		InsufficientDataActions: b.InsufficientDataActions,
 		ThresholdMetricID:       b.ThresholdMetricID,
 		Tags:                    b.Tags,
-		hasMetrics:              len(b.Metrics) > 0,
+		Metrics:                 b.Metrics,
 		hasEvaluationCriteria:   b.EvaluationCriteria != nil,
 	}
 }

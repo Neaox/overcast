@@ -259,15 +259,26 @@ type resolveContext struct {
 	// provisioned. Set by provisionResource before dispatching to a handler,
 	// so handlers can name a resource whose template does not name itself.
 	// Empty outside provisioning (property resolution does not need it).
-	LogicalID         string
-	StackTags         []Tag
-	PreviousStackTags []Tag
-	Params            map[string]string            // parameter name → value
-	Resources         map[string]string            // logical ID → physical ID
-	Conditions        map[string]bool              // condition name → evaluated value
-	Mappings          map[string]any               // raw mappings from template
-	Attributes        map[string]map[string]string // logical ID → attributes
-	Exports           map[string]string            // export name → value (cross-stack)
+	LogicalID string
+	// EmulationLimitation is what the services reported they would not do with
+	// the resource just provisioned, for the caller to record as its
+	// ResourceStatusReason. Set by provisionResource for each resource in turn
+	// — same one-at-a-time reasoning as LogicalID — and empty for a resource
+	// with nothing to declare. See limitation.go.
+	EmulationLimitation string
+	// ClientRequestToken is the token of the stack operation being resolved,
+	// carried here so a nested stack records its events under the same token as
+	// the parent that provisioned it. A nested stack is part of one operation,
+	// and its events have to be findable from the same request as the rest.
+	ClientRequestToken string
+	StackTags          []Tag
+	PreviousStackTags  []Tag
+	Params             map[string]string            // parameter name → value
+	Resources          map[string]string            // logical ID → physical ID
+	Conditions         map[string]bool              // condition name → evaluated value
+	Mappings           map[string]any               // raw mappings from template
+	Attributes         map[string]map[string]string // logical ID → attributes
+	Exports            map[string]string            // export name → value (cross-stack)
 
 	// DynamicRef resolves a {{resolve:...}} dynamic reference against the
 	// emulated services. Nil outside provisioning — a template resolved

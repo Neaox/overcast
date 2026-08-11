@@ -290,6 +290,7 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 			PhysicalID:          physID,
 			Type:                res.Type,
 			Status:              ResourceCreateComplete,
+			StatusReason:        rCtx.EmulationLimitation,
 			Timestamp:           now,
 			Attributes:          rCtx.Attributes[logicalID],
 			PropertiesHash:      propsHash,
@@ -298,7 +299,10 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 			UpdateReplacePolicy: res.UpdateReplacePolicy,
 		})
 		rCtx.Resources[logicalID] = physID
-		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, "")
+		// The resource succeeded; the reason, when there is one, says what
+		// Overcast will not do with it. It rides the CREATE_COMPLETE event so a
+		// deploy shows it as the resource goes by, not only on a later describe.
+		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, rCtx.EmulationLimitation)
 		p.publishResourceEvent(ctx, events.CFNResourceProvisioned, stack.StackName, logicalID, res.Type, physID)
 		log.Debug("cfn: resource provisioned",
 			zap.String("stack", stack.StackName),
@@ -315,10 +319,7 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 	stack.Status = StatusCreateComplete
 	stack.StatusReason = ""
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusCreateComplete, "")
-	if err := p.flushCriticalState(ctx); err != nil {
-		p.failStack(ctx, stack, StatusCreateFailed, fmt.Sprintf("persistent state flush failed: %v", err))
-		return
-	}
+	p.persistTerminalState(ctx, stack)
 	p.publishStackEvent(ctx, events.CFNStackCreated, stack)
 	log.Debug("cfn: stack provisioned",
 		zap.String("stack", stack.StackName),
@@ -568,6 +569,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			PhysicalID:          physID,
 			Type:                res.Type,
 			Status:              ResourceCreateComplete,
+			StatusReason:        rCtx.EmulationLimitation,
 			Timestamp:           now,
 			Attributes:          rCtx.Attributes[logicalID],
 			PropertiesHash:      propsHash,
@@ -576,7 +578,10 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			UpdateReplacePolicy: res.UpdateReplacePolicy,
 		})
 		rCtx.Resources[logicalID] = physID
-		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, "")
+		// The resource succeeded; the reason, when there is one, says what
+		// Overcast will not do with it. It rides the CREATE_COMPLETE event so a
+		// deploy shows it as the resource goes by, not only on a later describe.
+		p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateComplete, rCtx.EmulationLimitation)
 		p.publishResourceEvent(ctx, events.CFNResourceProvisioned, stack.StackName, logicalID, res.Type, physID)
 	}
 
@@ -654,10 +659,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 	stack.Status = StatusUpdateComplete
 	stack.StatusReason = ""
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateComplete, "")
-	if err := p.flushCriticalState(ctx); err != nil {
-		p.failStack(ctx, stack, StatusUpdateFailed, fmt.Sprintf("persistent state flush failed: %v", err))
-		return
-	}
+	p.persistTerminalState(ctx, stack)
 	p.publishStackEvent(ctx, events.CFNStackUpdated, stack)
 }
 
@@ -785,10 +787,7 @@ func (p *provisioner) deleteStackResourcesCtx(ctx context.Context, stack *Stack)
 	stack.StatusReason = ""
 	stack.Resources = nil
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusDeleteComplete, "")
-	if err := p.flushCriticalState(ctx); err != nil {
-		p.failStack(ctx, stack, StatusDeleteFailed, fmt.Sprintf("persistent state flush failed: %v", err))
-		return
-	}
+	p.persistTerminalState(ctx, stack)
 	p.publishStackEvent(ctx, events.CFNStackDeleted, stack)
 }
 
@@ -830,6 +829,14 @@ func (p *provisioner) provisionResource(ctx context.Context, logicalID string, r
 	// resolveContext.generatedName). Provisioning walks the dependency order
 	// one resource at a time, so a single field on the shared context is safe.
 	rCtx.LogicalID = logicalID
+
+	// Collect whatever the services report as inert while this resource is
+	// provisioned, for the caller to record as its status reason. Same
+	// single-field-on-a-shared-context reasoning as LogicalID above:
+	// provisioning walks the dependency order one resource at a time.
+	ctx, limitations := withLimitationCollector(ctx)
+	rCtx.EmulationLimitation = ""
+	defer func() { rCtx.EmulationLimitation = limitations.reason() }()
 
 	handler, ok := p.resolveHandler(res.Type)
 	if !ok {
@@ -1154,17 +1161,18 @@ func (p *provisioner) buildResolveContext(stack *Stack, tmpl *Template) *resolve
 	exports := p.collectExports(stack)
 
 	return &resolveContext{
-		Region:     region,
-		AccountID:  p.cfg.AccountID,
-		StackName:  stack.StackName,
-		StackID:    stack.StackID,
-		StackTags:  append([]Tag(nil), stack.Tags...),
-		Params:     params,
-		Resources:  make(map[string]string),
-		Conditions: evaluateConditions(tmpl.Conditions, params),
-		Mappings:   tmpl.Mappings,
-		Exports:    exports,
-		DynamicRef: p.dynamicRefResolver(region),
+		Region:             region,
+		AccountID:          p.cfg.AccountID,
+		StackName:          stack.StackName,
+		StackID:            stack.StackID,
+		ClientRequestToken: stack.ClientRequestToken,
+		StackTags:          append([]Tag(nil), stack.Tags...),
+		Params:             params,
+		Resources:          make(map[string]string),
+		Conditions:         evaluateConditions(tmpl.Conditions, params),
+		Mappings:           tmpl.Mappings,
+		Exports:            exports,
+		DynamicRef:         p.dynamicRefResolver(region),
 	}
 }
 
@@ -1262,15 +1270,57 @@ func createFailureSummary(logicalID string) string {
 	return fmt.Sprintf("The following resource(s) failed to create: [%s]", logicalID)
 }
 
+// failStack moves a stack to a terminal failure status and records why.
+//
+// The reason is logged as well as recorded on the stack, because the two are
+// read in different places and only one of them is the whole story. A stack
+// event says what failed; the log line lands in the trace of the request that
+// started the operation (the provisioning goroutine carries its recorder — see
+// provisionAsync), next to every internal call the operation made. A reader who
+// has the stack event has to be able to get from it to that trace, and a reader
+// who has the trace has to find the failure in it without knowing to go and
+// look at DescribeStackEvents.
 func (p *provisioner) failStack(ctx context.Context, stack *Stack, status, reason string) {
-	log := p.log.WithRecorder(ctx)
 	stack.Status = status
 	stack.StatusReason = reason
+	p.log.WithRecorder(ctx).Error("cfn: stack failed",
+		zap.String("stack", stack.StackName),
+		zap.String("status", status),
+		zap.String("reason", reason))
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", status, reason)
-	if err := p.flushCriticalState(ctx); err != nil {
-		log.Warn("cfn: failed to flush terminal stack state", zap.String("stack", stack.StackName), zap.Error(err))
-	}
+	p.persistTerminalState(ctx, stack)
 	p.publishStackEvent(ctx, events.CFNStackFailed, stack)
+}
+
+// persistTerminalState pushes a stack that has just reached a terminal status
+// out to the persistent store, so a restart straight after the operation
+// returns still finds it.
+//
+// A flush that does not complete is reported and nothing more. It used to fail
+// the stack — CREATE_FAILED with "persistent state flush failed: context
+// deadline exceeded" — which was the wrong reading of what a failed flush
+// means. Every resource in the stack exists and answers requests; the flush
+// decides only whether the record of them is in SQLite yet. And it is not lost
+// either way: HybridStore.flushOnce puts an uncommitted batch back at the head
+// of the pending queue and leaves the pending log untruncated, so the periodic
+// flusher retries it and an unclean exit replays it. Failing a stack that is
+// fully provisioned, over state that is still on its way to disk, rolls back a
+// deploy that had already succeeded.
+//
+// The flush is bounded because the caller is a provisioning goroutine an SDK
+// waiter is watching, not because five seconds means anything: this store-wide
+// flush carries every service's pending writes, and a deploy that has just
+// uploaded its assets can easily have more than five seconds of them queued.
+// Whether the store is keeping up is a question the store answers — see
+// PersistentHealth's pendingWrites and DebugMetrics.FlushHistory — and it must
+// not be answered through a stack's status.
+func (p *provisioner) persistTerminalState(ctx context.Context, stack *Stack) {
+	if err := p.flushCriticalState(ctx); err != nil {
+		p.log.WithRecorder(ctx).Warn("cfn: terminal stack state not yet persisted",
+			zap.String("stack", stack.StackName),
+			zap.String("status", stack.Status),
+			zap.Error(err))
+	}
 }
 
 func (p *provisioner) flushCriticalState(ctx context.Context) error {
@@ -1796,6 +1846,7 @@ func (p *provisioner) recordEvent(ctx context.Context, stack *Stack, logicalID, 
 		ResourceStatus:       status,
 		ResourceStatusReason: reason,
 		Timestamp:            p.clk.Now(),
+		ClientRequestToken:   stack.ClientRequestToken,
 	}
 	if err := p.store.appendStackEvent(ctx, stack.StackName, event); err != nil {
 		log.Error("cfn: failed to persist stack event", zap.Error(err))
@@ -2526,8 +2577,10 @@ func (c internalCall) do(ctx context.Context, router http.Handler) (*httptest.Re
 	recorder := trace.RecorderFromContext(ctx)
 	if recorder == nil {
 		router.ServeHTTP(rec, req)
+		noteLimitations(ctx, rec)
 		return rec, statusError(rec)
 	}
+	defer noteLimitations(ctx, rec)
 
 	childID := linkChildRequest(req, recorder)
 	start := time.Now()
@@ -5331,16 +5384,17 @@ func (h *nestedStackHandler) Create(ctx context.Context, router http.Handler, cf
 
 	now := h.p.clk.Now()
 	childStack := &Stack{
-		StackName:     childName,
-		StackID:       childStackID,
-		ParentStackID: rCtx.StackID,
-		RootID:        rootID,
-		Status:        StatusCreateInProgress,
-		Parameters:    childParams,
-		CreatedAt:     now,
-		Region:        rCtx.Region,
-		TemplateBody:  tmplBody,
-		Tags:          mergeNestedStackTags(rCtx.StackTags, props["Tags"]),
+		StackName:          childName,
+		StackID:            childStackID,
+		ParentStackID:      rCtx.StackID,
+		RootID:             rootID,
+		Status:             StatusCreateInProgress,
+		Parameters:         childParams,
+		CreatedAt:          now,
+		Region:             rCtx.Region,
+		TemplateBody:       tmplBody,
+		Tags:               mergeNestedStackTags(rCtx.StackTags, props["Tags"]),
+		ClientRequestToken: rCtx.ClientRequestToken,
 	}
 
 	// Store the child stack so it appears in ListStacks/DescribeStacks.
@@ -5381,6 +5435,10 @@ func (h *nestedStackHandler) Delete(ctx context.Context, _ http.Handler, _ *conf
 	}
 
 	childStack.Status = StatusDeleteInProgress
+	// The child was created under an earlier operation and still carries that
+	// operation's token. This delete belongs to the parent's, and its events
+	// have to say so.
+	childStack.ClientRequestToken = rCtx.ClientRequestToken
 	h.p.deleteStackResourcesCtx(ctx, childStack)
 	// A child that could not be torn down has to fail the parent. AWS reports
 	// the nested stack resource as DELETE_FAILED and the parent stack with it —
@@ -5444,6 +5502,7 @@ func (h *nestedStackHandler) Update(ctx context.Context, router http.Handler, cf
 
 	childStack.TemplateBody = tmplBody
 	childStack.Status = StatusUpdateInProgress
+	childStack.ClientRequestToken = rCtx.ClientRequestToken // see Delete
 	childStack.Tags = mergeNestedStackTags(rCtx.StackTags, props["Tags"])
 
 	if err := h.p.store.putStack(storeCtx, childStack); err != nil {
