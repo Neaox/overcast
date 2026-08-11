@@ -7,12 +7,12 @@ import "github.com/Neaox/overcast/internal/capabilities"
 func init() {
 	capabilities.Default.Register(
 		// DB instances
-		capabilities.Capability{Service: "rds", Operation: "CreateDBInstance", Category: "DB instances", Status: capabilities.StatusSupported, Notes: "Docker-backed when available; async creating→available; mysql/postgres/mariadb/aurora-mysql/aurora-postgresql; accepts `DBClusterIdentifier` for Aurora"},
+		capabilities.Capability{Service: "rds", Operation: "CreateDBInstance", Category: "DB instances", Status: capabilities.StatusSupported, Notes: "Docker-backed when available; async creating→available; mysql/postgres/mariadb/aurora-mysql/aurora-postgresql; accepts `DBClusterIdentifier` for Aurora; `PubliclyAccessible` defaults to true without a DB subnet group and false with one"},
 		capabilities.Capability{Service: "rds", Operation: "DescribeDBInstances", Category: "DB instances", Status: capabilities.StatusSupported, Notes: "List all or filter by DBInstanceIdentifier"},
 		capabilities.Capability{Service: "rds", Operation: "DeleteDBInstance", Category: "DB instances", Status: capabilities.StatusSupported, Notes: "Sets status to \"deleting\"; stops+removes Docker container"},
 		capabilities.Capability{Service: "rds", Operation: "StopDBInstance", Category: "DB instances", Status: capabilities.StatusSupported, Notes: "Stops Docker container; available→stopping→stopped"},
 		capabilities.Capability{Service: "rds", Operation: "StartDBInstance", Category: "DB instances", Status: capabilities.StatusSupported, Notes: "Starts Docker container; stopped→starting→available"},
-		capabilities.Capability{Service: "rds", Operation: "ModifyDBInstance", Category: "DB instances", Status: capabilities.StatusSupported, Notes: "Metadata updates (class, storage, engine version, multi-AZ); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and is held to RDS's 8–128 character and forbidden-character rules"},
+		capabilities.Capability{Service: "rds", Operation: "ModifyDBInstance", Category: "DB instances", Status: capabilities.StatusSupported, Notes: "Metadata updates (class, storage, engine version, multi-AZ, public accessibility); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and is held to RDS's 8–128 character and forbidden-character rules"},
 		capabilities.Capability{Service: "rds", Operation: "RebootDBInstance", Category: "DB instances", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "rds", Operation: "CreateDBSnapshot", Category: "DB instances", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "rds", Operation: "DeleteDBSnapshot", Category: "DB instances", Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},

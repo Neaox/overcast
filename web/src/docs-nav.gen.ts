@@ -3981,6 +3981,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Reachability — `PubliclyAccessible",
+        "id": "reachability-publiclyaccessible"
+      },
+      {
+        "depth": 3,
         "text": "What a cluster records and what it enforces",
         "id": "what-a-cluster-records-and-what-it-enforces"
       },

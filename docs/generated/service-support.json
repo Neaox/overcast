@@ -5287,7 +5287,7 @@
           "operation": "CreateDBInstance",
           "category": "DB instances",
           "status": "✅ Supported",
-          "notes": "Docker-backed when available; async creating→available; mysql/postgres/mariadb/aurora-mysql/aurora-postgresql; accepts `DBClusterIdentifier` for Aurora"
+          "notes": "Docker-backed when available; async creating→available; mysql/postgres/mariadb/aurora-mysql/aurora-postgresql; accepts `DBClusterIdentifier` for Aurora; `PubliclyAccessible` defaults to true without a DB subnet group and false with one"
         },
         {
           "operation": "DescribeDBInstances",
@@ -5317,7 +5317,7 @@
           "operation": "ModifyDBInstance",
           "category": "DB instances",
           "status": "✅ Supported",
-          "notes": "Metadata updates (class, storage, engine version, multi-AZ); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and is held to RDS's 8–128 character and forbidden-character rules"
+          "notes": "Metadata updates (class, storage, engine version, multi-AZ, public accessibility); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and is held to RDS's 8–128 character and forbidden-character rules"
         },
         {
           "operation": "RebootDBInstance",

@@ -277,8 +277,12 @@ type xmlDBInstance struct {
 	DBInstanceArn        string      `xml:"DBInstanceArn"`
 	InstanceCreateTime   string      `xml:"InstanceCreateTime,omitempty"`
 	MultiAZ              bool        `xml:"MultiAZ"`
-	StorageType          string      `xml:"StorageType"`
-	DBClusterIdentifier  string      `xml:"DBClusterIdentifier,omitempty"`
+	// Always emitted, never omitted: an SDK reads DBInstance.PubliclyAccessible
+	// as a boolean, and an absent element leaves it nil — "unknown" where the
+	// instance in fact has an answer.
+	PubliclyAccessible  bool   `xml:"PubliclyAccessible"`
+	StorageType         string `xml:"StorageType"`
+	DBClusterIdentifier string `xml:"DBClusterIdentifier,omitempty"`
 }
 
 type xmlEndpoint struct {
@@ -510,6 +514,7 @@ func (h *Handler) toXMLDBInstance(ctx context.Context, inst *DBInstance) xmlDBIn
 		DBInstanceArn:        inst.DBInstanceArn,
 		InstanceCreateTime:   inst.InstanceCreateTime,
 		MultiAZ:              inst.MultiAZ,
+		PubliclyAccessible:   inst.PubliclyAccessibleOrDefault(),
 		StorageType:          inst.StorageType,
 		DBClusterIdentifier:  inst.DBClusterIdentifier,
 	}
