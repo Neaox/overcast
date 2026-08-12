@@ -177,6 +177,7 @@ func (w *Watcher) dispatchContainer(ctx context.Context, de *dockerEvent) {
 		ExitCode:    attrs["exitCode"],
 		Service:     attrs[LabelService],
 		ResourceID:  attrs[LabelResourceID],
+		Instance:    attrs[LabelInstance],
 		Image:       attrs["image"],
 	}
 

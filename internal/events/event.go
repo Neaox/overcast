@@ -977,7 +977,13 @@ type DockerContainerPayload struct {
 	ExitCode    string `json:"exitCode"`   // set on "die" events; from Actor.Attributes["exitCode"]
 	Service     string `json:"service"`    // from label overcast.service
 	ResourceID  string `json:"resourceId"` // from label overcast.resource-id
-	Image       string `json:"image"`
+	// Instance is the identity of the Overcast that created the container,
+	// from label overcast.instance. A resource ID is a user-chosen name and
+	// says nothing about which Overcast on a shared daemon owns the container;
+	// this does. Empty for a container created before the label existed — see
+	// docker.LabelInstance.
+	Instance string `json:"instance,omitempty"`
+	Image    string `json:"image"`
 	// Reason is a human-readable explanation of why the container died, populated
 	// on "die" events from a post-death ContainerInspect. Empty for non-die events
 	// and for clean exits (exit code 0 with no error). Example values: "oom",

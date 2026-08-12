@@ -70,6 +70,16 @@ a crashed run's containers are no longer reclaimed at the next startup — an
 orderly shutdown still cleans up after itself, and what is left behind clears
 with `docker rm $(docker ps -aq --filter label=overcast.managed=true)`.
 
+Nor does one Overcast manage another's engine. A DB instance identifier is a
+name you choose, so both can hold one called `mydb`, and the container labels
+that name — startup reconciliation and the Docker event stream now match on the
+creating instance's identity as well, rather than stopping or restarting a
+database the other one is serving. The container name is derived from the
+identifier and Docker requires it to be unique per daemon, so the second
+Overcast to start a DB instance of that name fails it with a reason saying so
+instead of quietly sharing the first one's database. Give them different
+identifiers, or a Docker daemon each.
+
 When Docker is available, `CreateDBInstance` starts a real database container
 (mysql, postgres, mariadb, aurora-mysql, aurora-postgresql) with automatic port
 allocation from `RDS_PORT_BASE` (default 33060). When Docker is unavailable,

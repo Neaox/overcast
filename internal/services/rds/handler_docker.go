@@ -46,6 +46,54 @@ func dockerRecoveryBackoff(attempt int) time.Duration {
 // was created under — so these handlers locate the instance by scanning all
 // regions and then pin the region on the context for subsequent store writes.
 
+// containerIsOurs reports whether the container an event or a reconciliation
+// scan is describing is the one this Overcast created for inst.
+//
+// Resource IDs are user-chosen names, not daemon-unique. Two Overcasts sharing
+// a Docker daemon can each hold a DB instance called "mydb", and each one's
+// container carries overcast.resource-id=mydb — so matching on that alone lets
+// one of them restart, adopt, or stop the other's live database. An RDS
+// container keeps the database in its writable layer, which makes that a data
+// loss, not a nuisance.
+//
+// overcast.instance settles it where it is present: it names the state store
+// that created the container (docker.LabelInstance), and these records live in
+// exactly one such store. Where it is absent, the record's own
+// DockerContainerID settles it instead — this instance wrote that ID down when
+// it created the container, and container IDs are daemon-unique.
+//
+// That fallback is where this check parts company with the sweep's, which
+// treats an unlabelled resource as one it cannot claim. The asymmetry is in
+// what being wrong costs. A sweep that refuses an unlabelled container leaks
+// disk until someone reclaims it; a matcher that refuses one abandons a
+// running database — declared missing and rebuilt behind its back, or left
+// running when the record says the user stopped it. So an unlabelled container
+// is not refused here, it is referred to the only other party that can vouch
+// for it. A container created before the label existed goes on being managed;
+// one this instance never created is still never touched.
+func (h *Handler) containerIsOurs(ctx context.Context, containerID, owner string, inst *DBInstance) bool {
+	if domain := h.instances.Resolve(ctx); domain != "" && owner != "" {
+		return owner == domain
+	}
+	// Either the container predates the label, or this instance's own identity
+	// could not be read just now. A store that is briefly unavailable must not
+	// make every container on the daemon look foreign.
+	return containerID != "" && containerID == inst.DockerContainerID
+}
+
+// ourContainer picks the container in candidates that this Overcast created
+// for inst, if any. The candidates all carry inst's resource ID, which on a
+// shared daemon means "every Overcast's container for that name", not this
+// one's.
+func (h *Handler) ourContainer(ctx context.Context, candidates []*docker.ContainerSummary, inst *DBInstance) *docker.ContainerSummary {
+	for _, c := range candidates {
+		if h.containerIsOurs(ctx, c.ID, c.Instance(), inst) {
+			return c
+		}
+	}
+	return nil
+}
+
 // handleContainerEvent recovers an RDS engine that exits outside the RDS API.
 // Docker reports the same die event for a process crash and for a deliberate
 // Docker Desktop stop, so neither can establish RDS user intent. StopDBInstance
@@ -63,6 +111,12 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	}
 	ctx := middleware.ContextWithRegion(context.Background(), region)
 	log := h.log.WithRecorder(ctx)
+	if !h.containerIsOurs(ctx, p.ContainerID, p.Instance, inst) {
+		// Another Overcast's database exiting is its business. Recovering from
+		// it here would restart a container of ours that never stopped, and
+		// spend this instance's recovery budget doing it.
+		return
+	}
 
 	// The status is re-read under the record's lock rather than written back
 	// from the scan above: the event stream is a writer like any other, and the
@@ -100,6 +154,13 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 
 	ctx := middleware.ContextWithRegion(context.Background(), region)
 	log := h.log.WithRecorder(ctx)
+	if !h.containerIsOurs(ctx, p.ContainerID, p.Instance, inst) {
+		// The stopped/StoppedByUser branch below stops the container the event
+		// names. Reaching it for a container this instance did not create
+		// shuts down another Overcast's live database on the strength of a
+		// stop request nobody made against it.
+		return
+	}
 	switch inst.DBInstanceStatus {
 	case "stopped":
 		if inst.StoppedByUser {
@@ -245,12 +306,15 @@ func (h *Handler) recoverExpectedContainer(ctx context.Context, instanceID strin
 // any status drift (e.g. containers that exited while Overcast was not running).
 func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
 	log := h.log.WithRecorder(ctx)
-	// Index containers by resource ID for fast lookup.
-	byResource := make(map[string]*docker.ContainerSummary, len(containers))
+	// Index containers by resource ID for fast lookup. One resource ID can name
+	// several containers — a DB instance called "mydb" under each Overcast
+	// sharing this daemon — so they are collected rather than overwritten, and
+	// ourContainer picks this instance's out of them below.
+	byResource := make(map[string][]*docker.ContainerSummary, len(containers))
 	for i := range containers {
 		rid := containers[i].ResourceID()
 		if rid != "" {
-			byResource[rid] = &containers[i]
+			byResource[rid] = append(byResource[rid], &containers[i])
 		}
 	}
 
@@ -267,12 +331,20 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		}
 		rctx := middleware.ContextWithRegion(ctx, ri.Region)
 
-		c := byResource[inst.DBInstanceIdentifier]
+		candidates := byResource[inst.DBInstanceIdentifier]
+		c := h.ourContainer(rctx, candidates, inst)
 		switch {
 		case c == nil:
 			// A missing container is runtime drift, not a user-requested stop.
 			// Rebuild instances that were expected to be live; an explicitly
 			// stopped instance stays stopped.
+			if len(candidates) > 0 {
+				// Not missing so much as somebody else's. Say so: the rebuild
+				// below will collide with it over the container name, and that
+				// failure reads as a Docker problem without this line.
+				log.Warn("reconcile: the container for this name belongs to another Overcast on this daemon — leaving it alone",
+					zap.String("instance", inst.DBInstanceIdentifier))
+			}
 			if expectsDockerRecovery(inst) {
 				if h.recoverExpectedContainer(rctx, inst.DBInstanceIdentifier, nil) {
 					log.Info("reconcile: container missing — rebuilding",

@@ -326,14 +326,27 @@ type ContainerNetwork struct {
 // the given service name and resource ID. Use this before reusing a container
 // found by name to avoid accidentally attaching to a user-created container
 // that happens to share the same name.
+//
+// It says nothing about *which* Overcast: resource IDs are user-chosen names,
+// and two instances sharing a daemon can each have created a container for the
+// same one. Pair it with Instance where that matters.
 func (c *ContainerInspect) HasOvercastLabels(service, resourceID string) bool {
-	labels := c.Config.Labels
-	if len(labels) == 0 {
-		labels = c.Labels // fallback for older inspect responses
-	}
+	labels := c.labels()
 	return labels[LabelManaged] == "true" &&
 		labels[LabelService] == service &&
 		labels[LabelResourceID] == resourceID
+}
+
+// Instance returns the overcast.instance label value (empty string if not
+// set). See LabelInstance.
+func (c *ContainerInspect) Instance() string { return c.labels()[LabelInstance] }
+
+// labels returns the container's labels, preferring the modern inspect shape.
+func (c *ContainerInspect) labels() map[string]string {
+	if len(c.Config.Labels) > 0 {
+		return c.Config.Labels
+	}
+	return c.Labels // fallback for older inspect responses
 }
 
 // NetworkInspect holds Docker network details.

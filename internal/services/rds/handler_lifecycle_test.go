@@ -94,11 +94,19 @@ type lifecycleDaemon struct {
 	creates      int  // create-container requests
 	failCreate   bool // reject creates, so a rebuild cannot succeed
 	failStart    bool // reject starts, as when the daemon is going away
-	resourceID   string
 	createLabels map[string]string
 	createEnv    []string
 	archive      []byte
 	requests     []string
+	// byName is what a lookup of overcast-rds-<name> answers with, for the
+	// tests where another Overcast on this daemon already holds the name.
+	// Nil means no such container, which is every other test.
+	byName []byte
+	// foreign records requests aimed at containers this daemon does not model
+	// — another Overcast's, in the instance-scope tests. They are recorded
+	// rather than waved through by the default case, because the point of
+	// those tests is that the request is never made at all.
+	foreign []string
 
 	execCmds     [][]string // Cmd of every exec create, in order
 	execEnvs     [][]string // Env of every exec create, in order
@@ -200,6 +208,98 @@ func serveEngine(t *testing.T, h *Handler, id string) net.Listener {
 	return ln
 }
 
+// foreignRequest names a request by the container it addressed and what it
+// asked of it, e.g. "POST d0d0d0d0d0d0/stop".
+func foreignRequest(method, path string) string {
+	_, target, _ := strings.Cut(path, "/containers/")
+	return method + " " + target
+}
+
+// foreignRequests returns every request the daemon received for a container it
+// does not model.
+func (d *lifecycleDaemon) foreignRequests() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.foreign...)
+}
+
+// holdsNameForAnotherOvercast makes a lookup of this instance's container name
+// answer with a container another Overcast on the same daemon created for a DB
+// instance of the same name — labelled RDS, labelled with that identifier, and
+// labelled as somebody else's.
+func (d *lifecycleDaemon) holdsNameForAnotherOvercast(t *testing.T, id string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"Id":   neighbourContainerID,
+		"Name": "/overcast-rds-" + id,
+		"Config": map[string]any{"Labels": map[string]string{
+			docker.LabelManaged:    "true",
+			docker.LabelService:    "rds",
+			docker.LabelResourceID: id,
+			docker.LabelInstance:   neighbourInstance,
+		}},
+		"State":           map[string]any{"Status": "running", "Running": true},
+		"NetworkSettings": map[string]any{"Networks": map[string]any{}, "Ports": map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("encode the neighbouring container: %v", err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.byName = body
+}
+
+// The container another Overcast on the same daemon created for a DB instance
+// of the same name, and the sweep identity it stamped on it. Both differ from
+// anything this handler ever writes — that is the whole of what makes it
+// somebody else's.
+const (
+	neighbourContainerID = "d0d0d0d0d0d0"
+	neighbourInstance    = "another-overcast-instance"
+)
+
+// neighbourContainer is that container as it appears in a container listing:
+// same resource ID as one of this instance's, since the identifier is the
+// user's choice of name and nothing stops two Overcasts from being given the
+// same one.
+func neighbourContainer(id, state string) docker.ContainerSummary {
+	return docker.ContainerSummary{
+		ID:    neighbourContainerID,
+		Names: []string{"/overcast-rds-" + id},
+		State: state,
+		Labels: map[string]string{
+			docker.LabelManaged:    "true",
+			docker.LabelService:    "rds",
+			docker.LabelResourceID: id,
+			docker.LabelInstance:   neighbourInstance,
+		},
+	}
+}
+
+// ownContainer is the summary Docker returns for the container this handler
+// created for id, as reconciliation sees it.
+func ownContainer(t *testing.T, h *Handler, id, state string) docker.ContainerSummary {
+	t.Helper()
+	inst, aerr := h.store.getDBInstance(context.Background(), id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance: %s", aerr.Message)
+	}
+	if inst.DockerContainerID == "" {
+		t.Fatalf("instance %s never recorded a container", id)
+	}
+	return docker.ContainerSummary{
+		ID:    inst.DockerContainerID,
+		Names: []string{"/overcast-rds-" + id},
+		State: state,
+		Labels: map[string]string{
+			docker.LabelManaged:    "true",
+			docker.LabelService:    "rds",
+			docker.LabelResourceID: id,
+			docker.LabelInstance:   h.instances.Resolve(context.Background()),
+		},
+	}
+}
+
 // drop makes the daemon forget the container, as a startup sweep, a
 // `docker prune`, or a user tidying up by hand would.
 func (d *lifecycleDaemon) drop() {
@@ -251,7 +351,7 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 			d.mu.Lock()
 			exists := d.exists
 			running := d.running
-			resourceID := d.resourceID
+			labels := maps.Clone(d.createLabels)
 			d.mu.Unlock()
 			if !exists {
 				_, _ = w.Write([]byte("[]"))
@@ -261,14 +361,13 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 			if running {
 				state = "running"
 			}
+			// The labels the create request actually carried, including the
+			// sweep identity: a listing that invented its own would let
+			// reconciliation match on a label RDS never stamps.
 			_ = json.NewEncoder(w).Encode([]docker.ContainerSummary{{
-				ID:    cid,
-				State: state,
-				Labels: map[string]string{
-					docker.LabelManaged:    "true",
-					docker.LabelService:    "rds",
-					docker.LabelResourceID: resourceID,
-				},
+				ID:     cid,
+				State:  state,
+				Labels: labels,
 			}})
 
 		// Exec create. Docker refuses to exec into a container that is not
@@ -305,9 +404,18 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 			d.mu.Unlock()
 			_, _ = fmt.Fprintf(w, `{"Running":false,"ExitCode":%d}`, code)
 
-		// GetContainerByName lookup before create — no existing container.
+		// GetContainerByName lookup before create. No existing container unless
+		// a test put one there — the name is derived from the DB instance
+		// identifier, so it is where two Overcasts sharing a daemon collide.
 		case strings.Contains(p, "/containers/overcast-rds-") && strings.HasSuffix(p, "/json"):
-			w.WriteHeader(http.StatusNotFound)
+			d.mu.Lock()
+			body := d.byName
+			d.mu.Unlock()
+			if body == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(body)
 
 		case strings.HasSuffix(p, "/networks/create"):
 			_, _ = w.Write([]byte(`{"Id":"net-1"}`))
@@ -323,7 +431,6 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 			d.mu.Lock()
 			d.creates++
 			refuse := d.failCreate
-			d.resourceID = req.Labels[docker.LabelResourceID]
 			d.createLabels = maps.Clone(req.Labels)
 			d.createEnv = append([]string(nil), req.Env...)
 			d.requests = append(d.requests, "create")
@@ -391,6 +498,17 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 			_, _ = w.Write([]byte(`{"Id":"` + cid + `",` +
 				`"State":{"Status":"running","Running":true},` +
 				`"NetworkSettings":{"Networks":{"overcast_rds":{"IPAddress":"127.0.0.1"}},"Ports":{}}}`))
+
+		// Anything aimed at a container other than the one this daemon models:
+		// another Overcast's, in the instance-scope tests. Recorded so a test
+		// can say the request was never made. The cid exclusion keeps requests
+		// this daemon has no case for — a log read, say — from being reported
+		// as somebody else's container.
+		case strings.Contains(p, "/containers/") && !strings.Contains(p, "/containers/"+cid):
+			d.mu.Lock()
+			d.foreign = append(d.foreign, foreignRequest(r.Method, p))
+			d.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 
 		default:
 			w.WriteHeader(http.StatusNoContent)
@@ -1434,6 +1552,226 @@ func TestReconcileContainers_stopsDockerStartedExplicitlyStoppedInstance(t *test
 	}
 	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
 		t.Errorf("status = %q, want %q", got, "stopped")
+	}
+}
+
+// ── Two Overcasts, one Docker daemon ─────────────────────────────────────────
+//
+// A DB instance identifier is the user's choice of name, and nothing stops two
+// Overcasts from being given the same one. Both containers then carry
+// overcast.resource-id=mydb, so every match made on that label alone reaches
+// across the boundary: this instance's record finds the other's container.
+// What it does with it is the damage — an RDS container holds the database in
+// its writable layer, so stopping it takes an unrelated database offline and
+// hands it to the next sweep to delete.
+
+// The destructive shape: this instance's record says the user stopped its
+// database, the neighbour's is running, and reconciliation stopped it on the
+// strength of a StopDBInstance call that was never made against it.
+func TestReconcileContainers_leavesAnotherOvercastsDatabaseRunning(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "shared-name-stopped"
+
+	// Given: this Overcast's instance of that name was explicitly stopped.
+	createRunningInstance(t, h, id)
+	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	waitForStatus(t, h, id, "stopped")
+
+	// When: reconciliation lists both containers of that name — this one's,
+	// stopped as the record says, and the neighbouring Overcast's, running.
+	h.reconcileContainers(ctx, []docker.ContainerSummary{
+		ownContainer(t, h, id, "exited"),
+		neighbourContainer(id, "running"),
+	})
+	h.scheduler.Settle()
+	h.dockerWg.Wait()
+
+	// Then: nothing was asked of the neighbour's container.
+	if got := d.foreignRequests(); len(got) > 0 {
+		t.Errorf("reconciliation acted on another Overcast's container: %v", got)
+	}
+	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
+		t.Errorf("status = %q, want %q", got, "stopped")
+	}
+}
+
+// The same collision from the other side: this instance's own container is the
+// one that needs restarting, and it must be found among the containers of that
+// name rather than shadowed by the neighbour's.
+func TestReconcileContainers_restartsItsOwnContainerNotTheNeighbourOfTheSameName(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		neighbour func(id string) docker.ContainerSummary
+	}{
+		{"labelled as another Overcast's", func(id string) docker.ContainerSummary {
+			return neighbourContainer(id, "running")
+		}},
+		{"created before the instance label existed", func(id string) docker.ContainerSummary {
+			// Unlabelled is not permission either. The record names the
+			// container this instance created, and it does not name this one.
+			c := neighbourContainer(id, "running")
+			delete(c.Labels, docker.LabelInstance)
+			return c
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newLifecycleDaemon(t)
+			h := newLifecycleHandler(t, d)
+			ctx := context.Background()
+			const id = "shared-name-available"
+
+			// Given: this instance is meant to be live, and its own container
+			// exited while Overcast was away.
+			createRunningInstance(t, h, id)
+			d.mu.Lock()
+			d.running = false
+			startsBefore := d.starts
+			d.mu.Unlock()
+
+			// When: reconciliation lists the neighbour's running container of
+			// the same name alongside it.
+			h.reconcileContainers(ctx, []docker.ContainerSummary{
+				ownContainer(t, h, id, "exited"),
+				tc.neighbour(id),
+			})
+			h.scheduler.Settle()
+			h.dockerWg.Wait()
+
+			// Then: this instance's own engine is the one brought back, and
+			// the neighbour's is left to the Overcast that owns it.
+			d.mu.Lock()
+			startsAfter := d.starts
+			d.mu.Unlock()
+			if startsAfter <= startsBefore {
+				t.Error("reconciliation read the neighbour's container as this instance's runtime and left its own engine down")
+			}
+			if got := d.foreignRequests(); len(got) > 0 {
+				t.Errorf("reconciliation acted on another Overcast's container: %v", got)
+			}
+		})
+	}
+}
+
+// The event stream carries the same resource ID and the same ambiguity, and
+// this branch stops the container the event names. Docker reporting that the
+// neighbour started its database is not a reason to stop it.
+func TestHandleContainerStarted_leavesAnotherOvercastsContainerRunning(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "shared-name-started"
+
+	createRunningInstance(t, h, id)
+	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	waitForStatus(t, h, id, "stopped")
+
+	h.handleContainerStarted(ctx, events.Event{
+		Type: events.DockerContainerStarted,
+		Payload: events.DockerContainerPayload{
+			ContainerID: neighbourContainerID,
+			Action:      "start",
+			Service:     "rds",
+			ResourceID:  id,
+			Instance:    neighbourInstance,
+		},
+	})
+
+	if got := d.foreignRequests(); len(got) > 0 {
+		t.Errorf("a start event for another Overcast's container was acted on: %v", got)
+	}
+	if got := instanceStatus(t, h, ctx, id); got != "stopped" {
+		t.Errorf("status = %q, want %q", got, "stopped")
+	}
+}
+
+// A die event for the neighbour's container is not this instance's engine
+// crashing: recovering from it restarts a container that never stopped and
+// spends this instance's recovery budget doing it.
+func TestHandleContainerEvent_ignoresAnotherOvercastsContainerDying(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "shared-name-died"
+
+	createRunningInstance(t, h, id)
+	d.mu.Lock()
+	startsBefore := d.starts
+	d.mu.Unlock()
+
+	h.handleContainerEvent(ctx, events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: neighbourContainerID,
+			Action:      "die",
+			Service:     "rds",
+			ResourceID:  id,
+			Instance:    neighbourInstance,
+		},
+	})
+	h.scheduler.Settle()
+	h.dockerWg.Wait()
+
+	d.mu.Lock()
+	startsAfter := d.starts
+	d.mu.Unlock()
+	if startsAfter != startsBefore {
+		t.Errorf("another Overcast's die event restarted this instance's engine: starts %d -> %d", startsBefore, startsAfter)
+	}
+	if got := instanceStatus(t, h, ctx, id); got != "available" {
+		t.Errorf("status = %q, want %q — the instance's own engine never stopped", got, "available")
+	}
+	inst, aerr := h.store.getDBInstance(ctx, id)
+	if aerr != nil {
+		t.Fatalf("getDBInstance: %s", aerr.Message)
+	}
+	if inst.DockerRecoveryAttempts != 0 {
+		t.Errorf("recovery attempts = %d, want 0 — the budget was spent on somebody else's crash", inst.DockerRecoveryAttempts)
+	}
+}
+
+// Container names are unique per daemon and derived from the identifier, so a
+// rebuild finds the neighbour's container sitting on the name it wants. Reusing
+// it hands both Overcasts the same database, and this one goes on to stop and
+// delete it; the collision has to be reported instead.
+func TestStartDBInstance_refusesToReuseAnotherOvercastsContainerOfTheSameName(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+	ctx := context.Background()
+	const id = "shared-name-rebuild"
+
+	createRunningInstance(t, h, id)
+	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+	waitForStatus(t, h, id, "stopped")
+
+	// Given: this instance's container is gone, and the neighbouring Overcast
+	// holds the name a rebuild would use.
+	d.drop()
+	d.holdsNameForAnotherOvercast(t, id)
+
+	// When: the instance is started.
+	if _, aerr := h.startDBInstanceTyped(ctx, &startDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
+		t.Fatalf("StartDBInstance: %s: %s", aerr.Code, aerr.Message)
+	}
+
+	// Then: the start fails with the collision named, and the record does not
+	// walk away claiming a database it does not own.
+	inst := waitForStatus(t, h, id, "failed")
+	if !strings.Contains(inst.StatusReason, "another Overcast") {
+		t.Errorf("StatusReason = %q, want it to name the Overcast that holds the container", inst.StatusReason)
+	}
+	if inst.DockerContainerID == neighbourContainerID {
+		t.Error("the instance adopted another Overcast's container")
+	}
+	if got := d.foreignRequests(); len(got) > 0 {
+		t.Errorf("another Overcast's container was acted on: %v", got)
 	}
 }
 

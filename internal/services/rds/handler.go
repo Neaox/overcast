@@ -634,6 +634,18 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 			return fmt.Errorf("container %q exists but is not an overcast-managed RDS container for instance %q — refusing to reuse",
 				containerName, inst.DBInstanceIdentifier)
 		}
+		// The labels above prove it is an RDS container for this instance's
+		// name; they do not prove it is *this* Overcast's. Container names are
+		// unique per daemon and the name is derived from the identifier, so
+		// two Overcasts sharing a daemon collide here — and reusing what the
+		// other one created hands both of them the same database, then lets
+		// this one stop and delete it. Refusing says the same thing the daemon
+		// would say about the name, early enough to name the real reason.
+		if owner := existing.Instance(); owner != "" && owner != h.instances.Resolve(ctx) {
+			return fmt.Errorf("container %q was created by another Overcast instance (%s=%s) — refusing to reuse it for DB instance %q; "+
+				"two Overcasts sharing a Docker daemon cannot both run a DB instance of that name",
+				containerName, docker.LabelInstance, owner, inst.DBInstanceIdentifier)
+		}
 
 		h.log.Info("RDS: reusing existing container",
 			zap.String("instance", inst.DBInstanceIdentifier),
