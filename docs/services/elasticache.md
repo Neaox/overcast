@@ -24,6 +24,17 @@ When Docker is available, `CreateCacheCluster`, `CreateReplicationGroup`, and
 A TCP health check polls until the port is reachable before transitioning to "available".
 When Docker is unavailable, operations are metadata-only and status transitions immediately.
 
+One Overcast does not manage another's cache. A cache cluster ID, replication
+group ID and serverless cache name are all names you choose, so two Overcasts
+sharing a Docker daemon can each hold one called `sessions`, and the container
+labels that name — startup reconciliation and the Docker event stream match on
+the creating instance's identity as well, rather than marking a cache stopped
+that the other one is still serving. The container name is derived from the
+resource name and Docker requires it to be unique per daemon, so the second
+Overcast to start a cache of that name fails it with a reason saying so instead
+of quietly sharing the first one's. Give them different names, or a Docker
+daemon each.
+
 Supported engines: **redis** (`redis:6`, `redis:7`), **valkey** (`valkey/valkey:7`, `valkey/valkey:8`),
 **memcached** (`memcached:1.5`, `memcached:1.6`).
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -126,5 +127,90 @@ func TestInstanceDomain_nilResolvesToEmpty(t *testing.T) {
 	var d *serviceutil.InstanceDomain
 	if got := d.Resolve(context.Background()); got != "" {
 		t.Fatalf("expected %q from a nil domain, got %q", "", got)
+	}
+}
+
+// ── Matching a container to the record that owns it ──────────────────────────
+
+// The label settles ownership wherever it is present, in both directions.
+func TestContainerIsOurs_labelSettlesOwnership(t *testing.T) {
+	ctx := context.Background()
+	d := serviceutil.NewInstanceDomain(state.NewMemoryStore(), testNS)
+	mine := d.Resolve(ctx)
+
+	if !d.ContainerIsOurs(ctx, "c1", mine, "recorded-elsewhere") {
+		t.Error("a container labelled with this instance's identity was not claimed")
+	}
+	// Even when the record names it: another Overcast's container is never
+	// ours, and a record that names it is a record pointing at the wrong thing.
+	if d.ContainerIsOurs(ctx, "c1", "another-overcast", "c1") {
+		t.Error("a container labelled as another instance's was claimed")
+	}
+}
+
+// Without a label the record's own note of the container ID decides, which is
+// what keeps containers created before the label in service.
+func TestContainerIsOurs_unlabelledFallsBackToTheRecord(t *testing.T) {
+	ctx := context.Background()
+	d := serviceutil.NewInstanceDomain(state.NewMemoryStore(), testNS)
+
+	if !d.ContainerIsOurs(ctx, "c1", "", "c1") {
+		t.Error("an unlabelled container the record names was not claimed")
+	}
+	if d.ContainerIsOurs(ctx, "c1", "", "c2") {
+		t.Error("an unlabelled container the record does not name was claimed")
+	}
+	// A record tracking several containers — an ECS task — claims any of them.
+	if !d.ContainerIsOurs(ctx, "c2", "", "c1", "c2", "c3") {
+		t.Error("a container among those the record names was not claimed")
+	}
+	// A record tracking none yet claims nothing, rather than everything.
+	if d.ContainerIsOurs(ctx, "c1", "") {
+		t.Error("a record naming no container claimed one anyway")
+	}
+	// An empty container ID is not evidence of anything, even against a record
+	// that has yet to write one down.
+	if d.ContainerIsOurs(ctx, "", "", "") {
+		t.Error("an empty container ID matched an empty recorded ID")
+	}
+}
+
+// A nil domain resolves to "", which sends every match to the record. That is
+// the same rule an unlabelled container gets, and deliberately not the sweep's
+// "claim nothing": a service that never wired a domain must still manage the
+// containers its own records name.
+func TestContainerIsOurs_nilDomainStillTrustsTheRecord(t *testing.T) {
+	var d *serviceutil.InstanceDomain
+	if !d.ContainerIsOurs(context.Background(), "c1", "irrelevant", "c1") {
+		t.Error("a nil domain refused a container its own record names")
+	}
+	if d.ContainerIsOurs(context.Background(), "c1", "irrelevant", "c2") {
+		t.Error("a nil domain claimed a container no record names")
+	}
+}
+
+// OwnContainer picks this instance's out of every container carrying one
+// resource ID, whatever order the daemon listed them in.
+func TestOwnContainer_picksOursFromACollision(t *testing.T) {
+	ctx := context.Background()
+	d := serviceutil.NewInstanceDomain(state.NewMemoryStore(), testNS)
+	mine := d.Resolve(ctx)
+
+	ours := &docker.ContainerSummary{ID: "ours", Labels: map[string]string{docker.LabelInstance: mine}}
+	theirs := &docker.ContainerSummary{ID: "theirs", Labels: map[string]string{docker.LabelInstance: "another-overcast"}}
+
+	// Listed last is the case the old single-entry index got wrong.
+	if got := d.OwnContainer(ctx, []*docker.ContainerSummary{ours, theirs}, "ours"); got != ours {
+		t.Errorf("a neighbour's container listed last shadowed ours: got %v", got)
+	}
+	if got := d.OwnContainer(ctx, []*docker.ContainerSummary{theirs, ours}, "ours"); got != ours {
+		t.Errorf("a neighbour's container listed first shadowed ours: got %v", got)
+	}
+	// Only a neighbour's is no container of ours — not a fallback to it.
+	if got := d.OwnContainer(ctx, []*docker.ContainerSummary{theirs}, "ours"); got != nil {
+		t.Errorf("adopted a neighbour's container when ours was absent: got %v", got)
+	}
+	if got := d.OwnContainer(ctx, nil, "ours"); got != nil {
+		t.Errorf("found a container in an empty listing: got %v", got)
 	}
 }

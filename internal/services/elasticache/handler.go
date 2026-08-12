@@ -579,6 +579,19 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		if !existing.HasOvercastLabels(serviceName, c.CacheClusterId) {
 			return fmt.Errorf("container %q exists but is not an overcast-managed ElastiCache container — refusing to reuse", containerName)
 		}
+		// The labels above prove it is an ElastiCache container for this
+		// cluster's name; they do not prove it is *this* Overcast's. Container
+		// names are unique per daemon and the name is derived from the cluster
+		// ID, so two Overcasts sharing a daemon collide here — and reusing what
+		// the other created hands both of them one redis, which this one will
+		// later stop and delete on the strength of its own record. Scoping
+		// reconciliation alone would not have held: a record whose container is
+		// gone rebuilds, and the rebuild comes straight back through here.
+		if owner := existing.Instance(); owner != "" && owner != h.instances.Resolve(ctx) {
+			return fmt.Errorf("container %q was created by another Overcast instance (%s=%s) — refusing to reuse it for cache cluster %q; "+
+				"two Overcasts sharing a Docker daemon cannot both run a cache cluster of that name",
+				containerName, docker.LabelInstance, owner, c.CacheClusterId)
+		}
 		h.log.Info("ElastiCache: reusing existing container",
 			zap.String("cluster", c.CacheClusterId),
 			zap.String("container", existing.ID),
@@ -816,6 +829,13 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 	if existing, err := h.docker.GetContainerByName(ctx, containerName); err == nil && existing != nil {
 		if !existing.HasOvercastLabels(serviceName, resourceLabel) {
 			return fmt.Errorf("container %q exists but is not an overcast-managed replication group container — refusing to reuse", containerName)
+		}
+		// Somebody else's container for a group of the same name — see the
+		// cache-cluster reuse path for why the labels above do not settle it.
+		if owner := existing.Instance(); owner != "" && owner != h.instances.Resolve(ctx) {
+			return fmt.Errorf("container %q was created by another Overcast instance (%s=%s) — refusing to reuse it for replication group %q; "+
+				"two Overcasts sharing a Docker daemon cannot both run a replication group of that name",
+				containerName, docker.LabelInstance, owner, rg.ReplicationGroupId)
 		}
 		h.log.Info("ElastiCache: reusing existing replication group container",
 			zap.String("rg", rg.ReplicationGroupId),

@@ -19,6 +19,16 @@ import (
 // was stored under — so these handlers locate the resource with a
 // cross-region scan and pin that region on the context for store writes.
 
+// Every ElastiCache resource ID is a name the caller chose — a cache cluster
+// ID, a replication group ID, a serverless cache name — and nothing keeps
+// those unique across the Overcasts sharing a Docker daemon. Two of them can
+// each hold a cluster called "sessions", and each one's container carries
+// overcast.resource-id=sessions, so matching on that alone lets one mark the
+// other's live cache stopped, or adopt it and later stop and delete it. Every
+// match below therefore goes through h.instances, which settles ownership by
+// the identity of the store that created the container and falls back to the
+// record's own note of the container ID — see InstanceDomain.ContainerIsOurs.
+
 // handleContainerEvent processes DockerContainerDied and DockerContainerStopped.
 // Handles cache clusters (plain resource ID), replication groups ("rg:" prefix),
 // and serverless caches ("serverless:" prefix).
@@ -35,6 +45,12 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		}
 		ctx := middleware.ContextWithRegion(h.bgCtx, region)
 		log := h.log.WithRecorder(ctx)
+		if !h.instances.ContainerIsOurs(ctx, p.ContainerID, p.Instance, rg.DockerContainerID) {
+			// Another Overcast's cache exiting is its business. Marking this
+			// group stopped over it takes down a record whose own container
+			// never went anywhere.
+			return
+		}
 		switch rg.Status {
 		case "available", "starting":
 			h.transitionReplicationGroup(ctx, rgID, "stopped", rg.Status)
@@ -50,6 +66,9 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		}
 		ctx := middleware.ContextWithRegion(h.bgCtx, region)
 		log := h.log.WithRecorder(ctx)
+		if !h.instances.ContainerIsOurs(ctx, p.ContainerID, p.Instance, cache.DockerContainerID) {
+			return
+		}
 		switch cache.Status {
 		case "available", "starting":
 			h.transitionServerlessCache(ctx, name, "stopped", cache.Status)
@@ -65,6 +84,9 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	}
 	ctx := middleware.ContextWithRegion(h.bgCtx, region)
 	log := h.log.WithRecorder(ctx)
+	if !h.instances.ContainerIsOurs(ctx, p.ContainerID, p.Instance, cluster.DockerContainerID) {
+		return
+	}
 	switch cluster.CacheClusterStatus {
 	case "available", "starting":
 		h.transitionCacheCluster(ctx, p.ResourceID, "stopped", cluster.CacheClusterStatus)
@@ -86,6 +108,11 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 		if err != nil || !found || rg.ConfigurationEndpoint == nil {
 			return
 		}
+		if !h.instances.ContainerIsOurs(middleware.ContextWithRegion(h.bgCtx, region), p.ContainerID, p.Instance, rg.DockerContainerID) {
+			// Health-checking another Overcast's container would report this
+			// group available on an endpoint it does not own.
+			return
+		}
 		switch rg.Status {
 		case "stopped", "starting", "creating":
 			h.scheduleReplicationGroupHealthCheck(region, rgID, rg.ConfigurationEndpoint.Address, rg.ConfigurationEndpoint.Port)
@@ -97,6 +124,9 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 		if err != nil || !found || cache.Endpoint == nil {
 			return
 		}
+		if !h.instances.ContainerIsOurs(middleware.ContextWithRegion(h.bgCtx, region), p.ContainerID, p.Instance, cache.DockerContainerID) {
+			return
+		}
 		switch cache.Status {
 		case "stopped", "starting", "creating":
 			h.scheduleServerlessHealthCheck(region, name, cache.Endpoint.Address, cache.Endpoint.Port)
@@ -106,6 +136,9 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 
 	cluster, region, found, err := serviceutil.FindRegioned[CacheCluster](h.bgCtx, h.store.store, nsClusters, p.ResourceID, h.store.defaultRegion)
 	if err != nil || !found {
+		return
+	}
+	if !h.instances.ContainerIsOurs(middleware.ContextWithRegion(h.bgCtx, region), p.ContainerID, p.Instance, cluster.DockerContainerID) {
 		return
 	}
 	switch cluster.CacheClusterStatus {
@@ -121,11 +154,17 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 // per region, and reconciliation must cover every region, not just the default.
 func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
 	log := h.log.WithRecorder(ctx)
-	byResource := make(map[string]*docker.ContainerSummary, len(containers))
+	// One resource ID can name several containers — a cache called "sessions"
+	// under each Overcast sharing this daemon — so they are collected rather
+	// than overwritten, and OwnContainer picks this instance's out of them
+	// below. Keyed to a single container, the index kept whichever the daemon
+	// listed last, so a neighbour's could decide the state of a record whose
+	// own container was running all along.
+	byResource := make(map[string][]*docker.ContainerSummary, len(containers))
 	for i := range containers {
 		rid := containers[i].ResourceID()
 		if rid != "" {
-			byResource[rid] = &containers[i]
+			byResource[rid] = append(byResource[rid], &containers[i])
 		}
 	}
 
@@ -140,7 +179,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 				continue
 			}
 			rctx := middleware.ContextWithRegion(ctx, rc.Region)
-			c := byResource[cluster.CacheClusterId]
+			c := h.instances.OwnContainer(rctx, byResource[cluster.CacheClusterId], cluster.DockerContainerID)
 			switch {
 			case c == nil:
 				if cluster.CacheClusterStatus == "available" || cluster.CacheClusterStatus == "starting" || cluster.CacheClusterStatus == "creating" {
@@ -187,7 +226,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			}
 			rctx := middleware.ContextWithRegion(ctx, rr.Region)
 			resourceLabel := "rg:" + rg.ReplicationGroupId
-			c := byResource[resourceLabel]
+			c := h.instances.OwnContainer(rctx, byResource[resourceLabel], rg.DockerContainerID)
 			switch {
 			case c == nil:
 				if rg.Status == "available" || rg.Status == "starting" || rg.Status == "creating" {
@@ -232,7 +271,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		}
 		rctx := middleware.ContextWithRegion(ctx, rs.Region)
 		resourceLabel := "serverless:" + cache.ServerlessCacheName
-		c := byResource[resourceLabel]
+		c := h.instances.OwnContainer(rctx, byResource[resourceLabel], cache.DockerContainerID)
 		switch {
 		case c == nil:
 			if cache.Status == "available" || cache.Status == "starting" || cache.Status == "creating" {
