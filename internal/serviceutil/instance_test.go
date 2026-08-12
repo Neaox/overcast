@@ -51,3 +51,80 @@ func TestInstanceIdentity_unavailableStoreYieldsNoIdentity(t *testing.T) {
 		t.Fatalf("expected no identity from a nil store, got %q", got)
 	}
 }
+
+// ─── InstanceDomain ───────────────────────────────────────────────────────────
+
+// countingStore counts reads so the memoization can be observed. Every service
+// resolves the domain on its container-creation path, so a lookup per container
+// would put a store round-trip in front of every task, cache and cold start.
+type countingStore struct {
+	state.Store
+	reads int
+}
+
+func (c *countingStore) Get(ctx context.Context, ns, key string) (string, bool, error) {
+	c.reads++
+	return c.Store.Get(ctx, ns, key)
+}
+
+func TestInstanceDomain_resolvesOnceAndAgreesWithInstanceIdentity(t *testing.T) {
+	ctx := context.Background()
+	st := &countingStore{Store: state.NewMemoryStore()}
+	d := serviceutil.NewInstanceDomain(st, testNS)
+
+	first := d.Resolve(ctx)
+	if first == "" {
+		t.Fatal("expected an identity to be minted")
+	}
+	readsAfterFirst := st.reads
+	if again := d.Resolve(ctx); again != first {
+		t.Fatalf("memoized identity changed: %q then %q", first, again)
+	}
+	if st.reads != readsAfterFirst {
+		t.Errorf("Resolve hit the store again: %d reads then %d", readsAfterFirst, st.reads)
+	}
+	// The label the creation path stamps must be the value the sweep compares
+	// against, or a service sweeps away its own containers — or none of them.
+	if got := serviceutil.InstanceIdentity(ctx, st, testNS); got != first {
+		t.Errorf("domain %q disagrees with the identity in the store %q", first, got)
+	}
+}
+
+// A failed resolution is not cached. A store briefly unavailable at startup
+// must not leave the service unable to sweep anything until it is restarted.
+func TestInstanceDomain_doesNotCacheAFailedResolution(t *testing.T) {
+	ctx := context.Background()
+	flaky := &flakyStore{Store: state.NewMemoryStore(), failNext: true}
+	d := serviceutil.NewInstanceDomain(flaky, testNS)
+
+	if got := d.Resolve(ctx); got != "" {
+		t.Fatalf("expected no identity while the store was failing, got %q", got)
+	}
+	if got := d.Resolve(ctx); got == "" {
+		t.Fatal("a transient store failure disabled sweeping for the life of the process")
+	}
+}
+
+// flakyStore fails the first read, then behaves.
+type flakyStore struct {
+	state.Store
+	failNext bool
+}
+
+func (f *flakyStore) Get(ctx context.Context, ns, key string) (string, bool, error) {
+	if f.failNext {
+		f.failNext = false
+		return "", false, errors.New("store unavailable")
+	}
+	return f.Store.Get(ctx, ns, key)
+}
+
+// A nil domain is what a service that never wired one has. It must resolve to
+// "" rather than panic, because "" is the answer the sweeps already treat as
+// "prove nothing, remove nothing".
+func TestInstanceDomain_nilResolvesToEmpty(t *testing.T) {
+	var d *serviceutil.InstanceDomain
+	if got := d.Resolve(context.Background()); got != "" {
+		t.Fatalf("expected %q from a nil domain, got %q", "", got)
+	}
+}

@@ -26,6 +26,10 @@ const (
 	nsTaskSets           = "ecs:task-sets"
 	nsAccountSettings    = "ecs:account-settings"
 	nsContainerInstances = "ecs:container-instances"
+	// nsInstance holds this instance's sweep-domain identity, stamped into
+	// docker.LabelInstance on every task container. See
+	// serviceutil.InstanceDomain.
+	nsInstance = "ecs:instance"
 )
 
 // Tag is a key-value pair attached to an ECS resource.

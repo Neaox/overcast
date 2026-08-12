@@ -51,6 +51,11 @@ type Handler struct {
 	vpcResolver VPCNetworkResolver
 	dockerWg    sync.WaitGroup // tracks in-flight container-start goroutines
 	typedOp     map[string]op.Operation
+	// instances scopes container sweeps to the containers this instance
+	// created. A cache is ephemeral, so what this prevents is not lost data but
+	// a second Overcast's startup deleting the first's stopped caches out from
+	// under it. See docker.LabelInstance.
+	instances *serviceutil.InstanceDomain
 	// bgCtx is cancelled by Service.Stop so async goroutines and scheduler
 	// callbacks can abandon Docker/store work once shutdown begins.
 	bgCtx    context.Context
@@ -72,6 +77,7 @@ func newHandler(cfg *config.Config, store *cacheStore, log *serviceutil.ServiceL
 		scheduler: lifecycle.NewScheduler(clk),
 		bgCtx:     bgCtx,
 		bgCancel:  bgCancel,
+		instances: serviceutil.NewInstanceDomain(store.store, nsInstance),
 	}
 	h.typedOp = h.typedOps()
 	return h
@@ -627,7 +633,7 @@ func (h *Handler) startCacheContainer(ctx context.Context, c *CacheCluster) erro
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        image,
 			ExposedPorts: map[string]struct{}{containerPort: {}},
-			Labels:       docker.ManagedLabels(serviceName, c.CacheClusterId),
+			Labels:       h.instances.ManagedLabels(ctx, serviceName, c.CacheClusterId),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
 			NetworkMode: dataplane.Primary(h.cfg),
@@ -858,7 +864,7 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        image,
 			ExposedPorts: map[string]struct{}{containerPort: {}},
-			Labels:       docker.ManagedLabels(serviceName, resourceLabel),
+			Labels:       h.instances.ManagedLabels(ctx, serviceName, resourceLabel),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
 			NetworkMode: dataplane.Primary(h.cfg),

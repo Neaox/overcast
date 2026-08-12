@@ -17,30 +17,77 @@ import (
 //     Failures are re-enqueued for retry (up to 3 attempts).
 //
 // DrainAndSweep is called at shutdown: it drains the remove queue and then
-// removes every managed container (Docker-level sweep), catching any orphans.
+// removes this instance's managed containers (Docker-level sweep), catching
+// any orphans.
+//
+// Every sweep here is scoped to the instance that created the containers — see
+// InstanceDomainFunc and LabelInstance. Container IDs handed to StopNow and
+// ScheduleRemove are not, and need not be: those come from this instance's own
+// records, so they are already known to be ours.
 //
 // Zero value is invalid — use NewGC.
 type GC struct {
 	client    *Client
 	logger    *zap.Logger
 	keeps     bool // KeepContainers: skip removes (debugging only)
+	domain    InstanceDomainFunc
 	removeQ   chan string
 	done      chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
 }
 
+// InstanceDomainFunc resolves the identity of the Overcast instance whose
+// containers this GC may sweep — the value its service stamps into
+// LabelInstance at creation. It is a function rather than a string because
+// resolving it reads the state store, which can fail transiently; a GC given a
+// string would cache that failure for the life of the process. Implementations
+// are expected to memoize success and retry failure
+// (serviceutil.InstanceDomain.Resolve does).
+//
+// Returning "" means ownership cannot be established, and every sweep then
+// removes nothing.
+type InstanceDomainFunc func(context.Context) string
+
 // NewGC creates a GC tied to a Docker client.
 // keepContainers=true means containers are never removed — stop only
 // (useful for debugging / post-mortem inspection).
-func NewGC(client *Client, logger *zap.Logger, keepContainers bool) *GC {
+//
+// domain scopes the sweeps to one instance's own containers. A nil domain
+// disables sweeping entirely rather than restoring the old sweep-everything
+// behaviour: the failure mode of sweeping too little is disk held until
+// someone prunes, and of sweeping too much is another Overcast's running
+// database destroyed.
+func NewGC(client *Client, logger *zap.Logger, keepContainers bool, domain InstanceDomainFunc) *GC {
 	return &GC{
 		client:  client,
 		logger:  logger,
 		keeps:   keepContainers,
+		domain:  domain,
 		removeQ: make(chan string, 256),
 		done:    make(chan struct{}),
 	}
+}
+
+// sweepDomain resolves the identity this GC's sweeps are confined to, or ""
+// when it cannot be established.
+func (g *GC) sweepDomain(ctx context.Context) string {
+	if g.domain == nil {
+		return ""
+	}
+	return g.domain(ctx)
+}
+
+// ownedByThisInstance reports whether a sweep may remove c.
+//
+// Absence of the label is not permission. A container without one was created
+// by an Overcast that predates the label, or by something else entirely;
+// either way its owner cannot be established, and an unremovable orphan is a
+// far cheaper mistake than deleting a resource another instance is serving.
+// The same goes for domain == "": a store that will not answer is not evidence
+// that anything on the daemon is litter.
+func ownedByThisInstance(c *ContainerSummary, domain string) bool {
+	return domain != "" && c.Instance() == domain
 }
 
 // StopNow fires an async StopContainer in its own goroutine and returns
@@ -172,13 +219,25 @@ func (g *GC) removeContainer(containerID string) {
 	}
 }
 
-// DrainAndSweep shuts down the GC and removes every managed container for the
-// given service. service="" matches all services. Blocks until complete or ctx
-// expires during the drain phase.
+// DrainAndSweep shuts down the GC and removes this instance's managed
+// containers for the given service. service="" matches all services. Blocks
+// until complete or ctx expires during the drain phase.
 //
 // Call from each service's Stop() method — this is the safety net that catches
 // any container whose store record was already deleted but whose Docker
 // container was never cleaned up.
+//
+// The sweep stops and force-removes without consulting container state,
+// because at shutdown a running container of ours is exactly what needs
+// stopping. That is only defensible once "of ours" is enforced: unscoped, this
+// was the most destructive path in the package, since one instance's ordinary
+// shutdown tore down another instance's live RDS databases, ECS tasks, Lambda
+// runtimes and MSK brokers on the same daemon.
+//
+// Scoping costs this sweep nothing even under a memory backend, which is what
+// separates it from the startup sweeps. Every container it has any business
+// removing was created by this process, and so carries the identity this
+// process is resolving now — freshly minted or not.
 //
 // Once DrainAndSweep returns the GC is inert; further StopNow / ScheduleRemove
 // calls are no-ops.
@@ -227,8 +286,15 @@ func (g *GC) DrainAndSweep(ctx context.Context, service string) {
 		g.logger.Warn("gc: sweep list failed", zap.String("service", service), zap.Error(err))
 		return
 	}
+	domain := g.sweepDomain(sweepCtx)
 	for _, c := range containers {
 		id := c.ID
+		if !ownedByThisInstance(&c, domain) {
+			g.logger.Debug("gc: shutdown sweep leaving container owned elsewhere",
+				zap.String("container", id), zap.String("service", c.Service()),
+				zap.String("owner", c.Instance()))
+			continue
+		}
 		g.logger.Debug("gc: sweep removing container",
 			zap.String("container", id), zap.String("service", c.Service()))
 		_ = g.client.StopContainer(sweepCtx, id, 5)
@@ -236,16 +302,18 @@ func (g *GC) DrainAndSweep(ctx context.Context, service string) {
 	}
 }
 
-// Sweep removes every managed container for the given service without closing
-// the GC. Call at startup to clean up orphaned containers from prior runs.
-// service="" matches all services. Non-blocking — runs in a goroutine.
+// Sweep removes this instance's non-running managed containers for the given
+// service without closing the GC. Call at startup to clean up containers this
+// instance orphaned in a prior run. service="" matches all services.
+// Non-blocking — runs in a goroutine.
 func (g *GC) Sweep(service string) {
 	g.SweepExcept(service, nil)
 }
 
 // SweepExcept is Sweep with a veto. keep is asked about each candidate's
 // resource ID and reports whether something live still owns it; those are left
-// alone. Pass nil to sweep every non-running container, which is Sweep.
+// alone. Pass nil to sweep every non-running container of this instance's own,
+// which is Sweep.
 //
 // A stopped container is not automatically litter. Compute that is recreated on
 // demand — an ECS task, a Lambda runtime — has no attachment to the container
@@ -255,6 +323,24 @@ func (g *GC) Sweep(service string) {
 // it left the instance record pointing at an ID Docker no longer had, after
 // which every start failed, every log fetch 404'd, and the instance still
 // claimed to be available.
+//
+// The veto answers "does anything still own this?" from the sweeping
+// instance's own records, which is why it cannot stand alone. Two Overcasts
+// share a daemon but not a store, so the second one's veto says "no owner"
+// about every container the first one is using. For RDS that was data loss and
+// not merely a stranded record: an RDS container carries no volume or bind
+// mount, so the database lives in the container's writable layer and is
+// destroyed with it. The instance-identity check runs first and is what makes
+// the veto safe.
+//
+// Under a memory backend this sweep removes nothing, because the identity is
+// minted fresh each start and so nothing predating the process is in scope.
+// That is a deliberate trade and a smaller one than it looks: DrainAndSweep
+// already cleans up on an orderly shutdown, so what leaks is the containers of
+// a run that crashed. A durable backend still recognises and sweeps them.
+// Deleting a container whose owner cannot be established is not a choice worth
+// the disk it reclaims; `docker rm $(docker ps -aq --filter
+// label=overcast.managed=true)` reclaims it on request.
 func (g *GC) SweepExcept(service string, keep func(resourceID string) bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -266,11 +352,20 @@ func (g *GC) SweepExcept(service string, keep func(resourceID string) bool) {
 				zap.String("service", service), zap.Error(err))
 			return
 		}
+		domain := g.sweepDomain(ctx)
 		removed := 0
 		for _, c := range containers {
 			id := c.ID
 			if c.State == "running" {
 				continue // Don't touch running containers from the current session.
+			}
+			// Before the veto, because the veto reads this instance's records
+			// and those say nothing about another instance's containers.
+			if !ownedByThisInstance(&c, domain) {
+				g.logger.Debug("gc: startup sweep leaving container owned elsewhere",
+					zap.String("container", id), zap.String("service", c.Service()),
+					zap.String("owner", c.Instance()), zap.String("state", c.State))
+				continue
 			}
 			if keep != nil && keep(c.ResourceID()) {
 				g.logger.Debug("gc: startup sweep keeping container owned by a live resource",

@@ -61,10 +61,9 @@ type Service struct {
 	// ("volume/subpath" → struct{}) so repeat mounts skip the helper run.
 	materialized sync.Map
 
-	// instanceMu guards instanceID, the sweep-domain identity stamped into
-	// every volume and container this instance creates. See sweepDomain.
-	instanceMu sync.Mutex
-	instanceID string
+	// instances resolves the sweep-domain identity stamped into every volume
+	// and container this instance creates. See sweepDomain.
+	instances *serviceutil.InstanceDomain
 
 	// nfsMu serializes host-port reservations for mount-target NFS exports;
 	// nfsWg tracks in-flight export starts so Stop waits for them. See
@@ -117,6 +116,7 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		clk:       clk,
 		log:       serviceutil.NewServiceLogger(logger, serviceName),
 		scheduler: lifecycle.NewScheduler(clk),
+		instances: serviceutil.NewInstanceDomain(st, nsInstance),
 	}
 	s.typedOp = s.typedOps()
 	return s

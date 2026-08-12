@@ -2,9 +2,11 @@ package serviceutil
 
 import (
 	"context"
+	"sync"
 
 	"github.com/google/uuid"
 
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/state"
 )
 
@@ -59,4 +61,71 @@ func InstanceIdentity(ctx context.Context, st state.Store, namespace string) str
 		return settled
 	}
 	return minted
+}
+
+// InstanceDomain memoizes one service's InstanceIdentity lookup. Every service
+// that stamps docker.LabelInstance needs the identity on two paths — the
+// creation path that writes the label and the sweep that reads it — and both
+// must agree, so the resolution belongs in one place per service rather than
+// at each call site.
+//
+// A successful resolution is cached for the life of the process: the identity
+// is a property of the store, and re-reading it per container would put a
+// store round-trip on the creation path for an answer that cannot change. A
+// failed one is deliberately not cached, so a store that is briefly
+// unavailable at startup does not leave the service unable to sweep anything
+// until it is restarted.
+//
+// The zero value is not usable — see NewInstanceDomain. A nil *InstanceDomain
+// resolves to "", which callers must read as "ownership cannot be
+// established": stamp nothing, sweep nothing.
+type InstanceDomain struct {
+	store     state.Store
+	namespace string
+
+	mu sync.Mutex
+	id string
+}
+
+// NewInstanceDomain returns an InstanceDomain reading from st under namespace.
+// The namespace is per-service (e.g. "rds:instance") so that services given
+// separate backend overrides get separate identities, matching the rule that
+// the identity's lifetime is its store's.
+//
+// Nothing is read until the first Resolve, which keeps service construction
+// free of store I/O.
+func NewInstanceDomain(st state.Store, namespace string) *InstanceDomain {
+	return &InstanceDomain{store: st, namespace: namespace}
+}
+
+// Resolve returns this service's sweep-domain identity, minting one on first
+// use. Safe for concurrent use. Returns "" when ownership cannot be
+// established.
+func (d *InstanceDomain) Resolve(ctx context.Context) string {
+	if d == nil {
+		return ""
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.id == "" {
+		d.id = InstanceIdentity(ctx, d.store, d.namespace)
+	}
+	return d.id
+}
+
+// ManagedLabels returns docker.ManagedLabels for the resource, stamped with
+// this instance's identity. It is what every Docker-backed service should use
+// in place of docker.ManagedLabels when the resource it is creating will later
+// be swept.
+//
+// The instance label is added only when the identity resolves. An empty value
+// would claim an ownership that was never established, and the sweep would
+// then have to special-case it; leaving the label off says the same thing in
+// the way the sweep already understands.
+func (d *InstanceDomain) ManagedLabels(ctx context.Context, service, resourceID string) map[string]string {
+	labels := docker.ManagedLabels(service, resourceID)
+	if domain := d.Resolve(ctx); domain != "" {
+		labels[docker.LabelInstance] = domain
+	}
+	return labels
 }

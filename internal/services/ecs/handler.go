@@ -46,6 +46,10 @@ type Handler struct {
 	targets     TargetRegistrar
 	secrets     SecretsManagerResolver
 	parameters  ParameterResolver
+	// instances scopes container sweeps to the containers this instance
+	// created, so a second Overcast on the same daemon does not treat this
+	// one's running tasks as orphans. See docker.LabelInstance.
+	instances *serviceutil.InstanceDomain
 	// logWriter ships task container output to CloudWatch Logs for containers
 	// using the awslogs driver. Nil until InitLogWriter is called.
 	logWriter     events.LogWriter
@@ -130,7 +134,11 @@ func (h *Handler) ensureBuiltinProviders(ctx context.Context) {
 }
 
 func newHandler(cfg *config.Config, store *ecsStore, log *serviceutil.ServiceLogger, clk clock.Clock) *Handler {
-	h := &Handler{cfg: cfg, store: store, log: log, clk: clk, scheduler: lifecycle.NewScheduler(clk)}
+	h := &Handler{
+		cfg: cfg, store: store, log: log, clk: clk,
+		scheduler: lifecycle.NewScheduler(clk),
+		instances: serviceutil.NewInstanceDomain(store.store, nsInstance),
+	}
 	h.initOps()
 	return h
 }

@@ -59,31 +59,19 @@ func (s *Service) volumesActive() bool {
 }
 
 // sweepDomain returns the identity stamped into every volume and container
-// this instance creates, and the only value a sweep here may act on. Memoized
-// after the first successful resolution; a failed one is not cached, so a
-// store that is briefly unavailable does not disable sweeping for the life of
-// the process.
+// this instance creates, and the only value a sweep here may act on.
 //
 // "" means ownership cannot be established — callers stamp nothing and sweep
 // nothing.
 func (s *Service) sweepDomain(ctx context.Context) string {
-	s.instanceMu.Lock()
-	defer s.instanceMu.Unlock()
-	if s.instanceID == "" {
-		s.instanceID = serviceutil.InstanceIdentity(ctx, s.store, nsInstance)
-	}
-	return s.instanceID
+	return s.instances.Resolve(ctx)
 }
 
 // managedLabels returns the standard labels plus this instance's sweep-domain
 // identity, which is what later lets reconciliation tell a volume or container
 // it created from one belonging to another Overcast on the same daemon.
 func (s *Service) managedLabels(ctx context.Context, resourceID string) map[string]string {
-	labels := docker.ManagedLabels(serviceName, resourceID)
-	if domain := s.sweepDomain(ctx); domain != "" {
-		labels[docker.LabelInstance] = domain
-	}
-	return labels
+	return s.instances.ManagedLabels(ctx, serviceName, resourceID)
 }
 
 // ensureVolume creates the backing volume for a file system. Safe to repeat:

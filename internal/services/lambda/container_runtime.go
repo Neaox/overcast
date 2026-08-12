@@ -42,6 +42,7 @@ import (
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/logging"
 	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // ContainerRuntime implements Runtime by running Lambda functions in Docker
@@ -69,6 +70,10 @@ type ContainerRuntime struct {
 	tarCache         *tarCache                            // pre-built code/layer tars; nil = disabled
 	imageVerified    sync.Map                             // pull key → struct{}{}: image confirmed present, skip the per-acquire daemon check
 	coldStartSem     chan struct{}                        // bounds concurrent container creation/INIT bursts
+	// instances stamps each runtime container with this instance's identity, so
+	// the GC's sweeps can tell them from another Overcast's on the same daemon.
+	// The same value must reach the GC — see NewContainerRuntime.
+	instances *serviceutil.InstanceDomain
 
 	// initBurst tracks containers that are still in the INIT phase with burst
 	// CPU. Keyed by function ARN → {containerID, steadyStateCPUs}.
@@ -214,6 +219,7 @@ func NewContainerRuntime(
 	runtimeAPI *RuntimeAPIServer,
 	logger *zap.Logger,
 	maxConcurrentStarts int,
+	instances *serviceutil.InstanceDomain,
 ) *ContainerRuntime {
 	// Derive the Overcast emulator endpoint from the Runtime API address.
 	// The Runtime API host is the IP that Lambda containers can route to on
@@ -247,6 +253,7 @@ func NewContainerRuntime(
 		exitNotify:   newExitNotifier(),
 		coldStartSem: make(chan struct{}, limit),
 		tarCache:     newTarCache(int64(cfg.LambdaTarCacheMB) * 1024 * 1024),
+		instances:    instances,
 	}
 }
 
@@ -607,7 +614,7 @@ func (cr *ContainerRuntime) acquireContainer(ctx context.Context, fn *Function, 
 		// "No such image" straight after a pull that worked.
 		Image:  ref.resolved.Ref,
 		Env:    env,
-		Labels: docker.ManagedLabels("lambda", fn.Name),
+		Labels: cr.instances.ManagedLabels(ctx, "lambda", fn.Name),
 	}
 	// For zip functions, CMD is the handler. For image functions, the image's
 	// built-in ENTRYPOINT+CMD are used unless ImageConfig provides overrides.
