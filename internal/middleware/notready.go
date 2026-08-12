@@ -16,6 +16,25 @@ import (
 // header rather than relying solely on its SDK's own retry/backoff policy.
 const notReadyRetryAfterSeconds = 2
 
+// InternalPrefix is the one path prefix reserved for endpoints Overcast serves
+// on its own behalf rather than on AWS's — health, metrics, debug state, the
+// event stream, per-service admin APIs, and the data plane of emulated
+// workloads.
+//
+// It is reserved by an S3 naming rule rather than by convention: a bucket name
+// cannot begin with an underscore, so no request AWS models can ever collide
+// with it. That guarantee is worth spending on exactly one prefix, which is
+// the whole argument for having one. Sixteen roots collapsed into it over
+// docs/plans/non-canonical-url-namespace.md's phases 2-6.
+//
+// It lives in middleware rather than router because the dependency runs one
+// way: router imports middleware, so this is the package both can share.
+//
+// Every path Overcast serves is either a binding the pinned manifest models or
+// starts here, enforced by
+// router.TestNoRouteIsRegisteredOutsideTheNamespace.
+const InternalPrefix = "/_overcast/"
+
 // NotReady rejects a request with a 503 while the storage backend is still
 // completing a one-time startup migration (see internal/state/migrate.go),
 // instead of letting the request observe whatever the store would otherwise
@@ -60,19 +79,13 @@ func NotReady(store state.Store) func(http.Handler) http.Handler {
 }
 
 // isInternalPath reports whether path is one of Overcast's own operational
-// endpoints rather than an AWS API request. Every one is registered under a
-// leading underscore, a convention no real AWS service path uses.
+// endpoints rather than an AWS API request, so operators can still check
+// status and poll init-hook progress while a migration is in flight.
 //
-// It stays the broad "/_" test rather than router.InternalPrefix until
-// docs/plans/non-canonical-url-namespace.md finishes. Phases 2 and 3 moved the
-// router roots, the debug namespace and MCP, but /_overcast/cognito, /_lambda, /_ecs,
-// /_rds and the data-plane prefixes are still outside the namespace, and
-// exempting only /_overcast/ would start gating them mid-migration. What is
-// left is listed in that plan's unmigratedRoutes ratchet; when it empties,
-// this becomes the prefix test.
-//
-// (router.InternalPrefix is not referenced here in any case — router imports
-// middleware, so the dependency only runs the other way.)
+// It was the broad "/_" test through phases 2-5, because narrowing it to
+// InternalPrefix while routes were still outside the namespace would have
+// started gating them mid-migration. Phase 6 moved the last of them, so the
+// two are now the same set and the constant says which one is meant.
 func isInternalPath(path string) bool {
-	return strings.HasPrefix(path, "/_")
+	return strings.HasPrefix(path, InternalPrefix)
 }

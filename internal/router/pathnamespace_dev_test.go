@@ -9,10 +9,17 @@ import (
 
 	"github.com/Neaox/overcast/internal/awsapi"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/middleware"
 )
 
+// internalPrefix is middleware.InternalPrefix, aliased so this file reads the
+// same as it did when the constant lived here. It moved to middleware in phase
+// 6 because both packages need it and the dependency only runs one way:
+// router imports middleware, never the reverse.
+const internalPrefix = middleware.InternalPrefix
+
 // nonManifestRoutes are the paths Overcast serves that are neither a modeled
-// AWS binding nor under InternalPrefix, and are expected to stay that way.
+// AWS binding nor under internalPrefix, and are expected to stay that way.
 //
 // Each entry carries its reason as a value rather than a comment, so a failure
 // reads as an argument rather than a list. Adding one is legal and reviewable;
@@ -40,42 +47,32 @@ var nonManifestRoutes = map[string]string{
 // leave the ledger behind.
 //
 // **Do not add to this map.** A new internal endpoint goes under
-// InternalPrefix; a new AWS operation goes where the manifest binds it. An
+// internalPrefix; a new AWS operation goes where the manifest binds it. An
 // entry here is a debt already owed, not a way to take on more.
 var unmigratedRoutes = map[string]string{
-	// Phase 2 is done: the router-owned roots now live under InternalPrefix.
+	// Phase 2 is done: the router-owned roots now live under internalPrefix.
 
 	// Phase 3 is done: /_overcast/debug/* and /_overcast/mcp are namespaced.
 
-	// Phase 4 is done for the service admin routes. These four did not move
-	// with them, and the reason is worth keeping: "/_" is not only the
-	// namespace marker, it is also what shouldBypassIAM exempts. These carry a
-	// real resource-scoped authorization check — a policy allowing
-	// lambda:PutTestEvent on one function must not authorize another, which
-	// TestIAMEnforce_enabled_lambdaTestEventsPathDeniesNonMatchingFunction
-	// pins — and moving them under the prefix silently removed it. They go in
-	// phase 6, with the predicate rework that lets an internal path still be
-	// authorized. Until then they stay where AWS's own routes are, which is
-	// its own kind of wrong, and the lesser one.
-	"/2015-03-31/functions/{name}/source":                  "phase 6 -> /_overcast/lambda/functions/{name}/source (blocked: IAM bypass)",
-	"/2015-03-31/functions/{name}/test-events":             "phase 6 -> /_overcast/lambda/functions/{name}/test-events (blocked: IAM bypass)",
-	"/2015-03-31/functions/{name}/test-events/{eventName}": "phase 6 -> /_overcast/lambda/functions/{name}/test-events/{eventName} (blocked: IAM bypass)",
-	"/2015-03-31/functions/{name}/invoke-with-progress":    "phase 6 -> /_overcast/lambda/functions/{name}/invoke-with-progress (blocked: IAM bypass)",
-
 	// Phase 5 is done: the data plane is namespaced.
 
-	// Phase 6 — decided in section 4.3: serve the AWS shape
-	// /{poolId}/.well-known/... and delete the region-prefixed form, whose
-	// leading segment restates the region the pool ID already carries.
-	"/{region}/{poolId}/.well-known/jwks.json":            "phase 6 -> /{poolId}/.well-known/jwks.json (AWS's shape)",
-	"/{region}/{poolId}/.well-known/openid-configuration": "phase 6 -> /{poolId}/.well-known/openid-configuration (AWS's shape)",
-
-	// Not a move — a deletion. CloudFront registers monitoring-subscription
-	// twice: at AWS's /2020-05-31/distributions/{id}/... (plural, which every
-	// SDK sends) and at this singular alias, which nothing models and nothing
-	// sends. Removing a route is a behaviour change, so it is filed rather
-	// than folded into a namespace phase.
-	"/2020-05-31/distribution/{id}/monitoring-subscription": "delete: redundant alias of the modeled plural path, which is also registered",
+	// The last two, and the only ones left. Cognito's OIDC discovery.
+	//
+	// Section 4.3 originally said the region-prefixed form could simply be
+	// deleted, on the grounds that a pool ID already encodes its region.
+	// Section 4.7 withdraws that: the segment stands in for the region AWS
+	// puts in the *hostname*, and this path is the JWT issuer. Deleting it
+	// changes `iss` in every minted token, breaks OIDC Discovery section 4.3's
+	// requirement that the issuer be byte-identical to the URL discovery was
+	// fetched from, and interacts with ValidateCognitoToken, which parses the
+	// pool ID back out of the issuer path.
+	//
+	// So this is not a rename waiting its turn — it is a token-compatibility
+	// decision, and it is deliberately still open. Adding the AWS-shaped
+	// /{poolId}/.well-known/... alongside is uncontroversial; removing this one
+	// is not.
+	"/{region}/{poolId}/.well-known/jwks.json":            "open decision: the JWT issuer path — see plan section 4.7 before touching",
+	"/{region}/{poolId}/.well-known/openid-configuration": "open decision: the JWT issuer path — see plan section 4.7 before touching",
 }
 
 // buildTagGatedRoutes are ledger entries that some build configurations do not
@@ -135,7 +132,7 @@ func TestNoRouteIsRegisteredOutsideTheNamespace(t *testing.T) {
 
 		// When: each route is classified.
 		switch {
-		case strings.HasPrefix(pattern, InternalPrefix):
+		case strings.HasPrefix(pattern, internalPrefix):
 			// Namespaced. Nothing further to prove: the prefix is reserved
 			// because S3 bucket names cannot begin with an underscore.
 		case strings.HasPrefix(pattern, "/_"):
@@ -151,7 +148,7 @@ func TestNoRouteIsRegisteredOutsideTheNamespace(t *testing.T) {
 		t.Errorf("routes under \"/_\" but outside %[1]q:\n\t%s\n"+
 			"Internal endpoints live under %[1]s — one reserved prefix, not sixteen. "+
 			"See docs/plans/non-canonical-url-namespace.md.",
-			InternalPrefix, strings.Join(misnamespaced, "\n\t"))
+			internalPrefix, strings.Join(misnamespaced, "\n\t"))
 	}
 
 	sort.Strings(invented)
@@ -160,7 +157,7 @@ func TestNoRouteIsRegisteredOutsideTheNamespace(t *testing.T) {
 			"Either serve the operation where AWS binds it (check the URI in the pinned "+
 			"manifest), move the endpoint under %s, or add it to nonManifestRoutes with "+
 			"the reason it is neither.",
-			strings.Join(invented, "\n\t"), InternalPrefix)
+			strings.Join(invented, "\n\t"), internalPrefix)
 	}
 
 	// And: neither ledger outlives the routes it describes. An entry for a
@@ -216,8 +213,8 @@ func TestModeledURIIndex_covers(t *testing.T) {
 	}
 
 	invented := []string{
-		"/2015-03-31/functions/{name}/source",                   // web UI function editor
-		"/2015-03-31/functions/{name}/test-events",              // web UI Test tab
+		"/_overcast/lambda/functions/{name}/source",             // web UI function editor
+		"/_overcast/lambda/functions/{name}/test-events",        // web UI Test tab
 		"/2020-05-31/distribution/{id}/monitoring-subscription", // singular: the redundant alias
 		"/_overcast/eks/clusters/{name}/kubeconfig",             // EKS emulator extension
 		"/{region}/{poolId}/.well-known/jwks.json",              // region-prefixed OIDC discovery

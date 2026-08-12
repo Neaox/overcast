@@ -985,7 +985,7 @@ func TestIAMEnforce_enabled_lambdaTestEventsPathDeniesNonMatchingFunction(t *tes
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	req := httptest.NewRequest(http.MethodPut, "/2015-03-31/functions/other-fn/test-events/demo", strings.NewReader(`{"Body":"{}"}`))
+	req := httptest.NewRequest(http.MethodPut, "/_overcast/lambda/functions/other-fn/test-events/demo", strings.NewReader(`{"Body":"{}"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260423/us-east-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
 	req.Header.Set("X-Amz-Date", "20260423T000000Z")

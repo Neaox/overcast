@@ -2971,7 +2971,7 @@ func (h *Handler) deadLetterAsyncFailure(ctx context.Context, fn *Function, payl
 // idle timeouts proxies commonly apply (nginx defaults to 60 s).
 const sseKeepaliveInterval = 15 * time.Second
 
-// InvokeFunctionSSE handles POST /2015-03-31/functions/{name}/invoke-with-progress.
+// InvokeFunctionSSE handles POST /_overcast/lambda/functions/{name}/invoke-with-progress.
 // Emulator-only endpoint that streams lifecycle progress events as SSE, then
 // sends the final invoke result. Used by the web UI Test tab.
 func (h *Handler) InvokeFunctionSSE(w http.ResponseWriter, r *http.Request) {
@@ -3172,7 +3172,7 @@ func invokeResultToJSON(r *InvokeResult) map[string]interface{} {
 
 // ─── Saved test events (emulator-only) ────────────────────────────────────────
 
-// ListTestEvents handles GET /2015-03-31/functions/{name}/test-events.
+// ListTestEvents handles GET /_overcast/lambda/functions/{name}/test-events.
 // Emulator-only endpoint for the web UI's Test tab.
 func (h *Handler) ListTestEvents(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
@@ -3199,7 +3199,7 @@ func (h *Handler) ListTestEvents(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"events": out})
 }
 
-// PutTestEvent handles PUT /2015-03-31/functions/{name}/test-events/{eventName}.
+// PutTestEvent handles PUT /_overcast/lambda/functions/{name}/test-events/{eventName}.
 // Emulator-only endpoint for creating or updating saved test events.
 func (h *Handler) PutTestEvent(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())
@@ -3230,7 +3230,7 @@ func (h *Handler) PutTestEvent(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"name": eventName, "body": req.Body})
 }
 
-// DeleteTestEvent handles DELETE /2015-03-31/functions/{name}/test-events/{eventName}.
+// DeleteTestEvent handles DELETE /_overcast/lambda/functions/{name}/test-events/{eventName}.
 // Emulator-only endpoint for removing saved test events.
 func (h *Handler) DeleteTestEvent(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())

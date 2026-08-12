@@ -3095,7 +3095,7 @@ func TestCreateMonitoringSubscription_success(t *testing.T) {
 
 	body := monitoringSubscriptionXMLBody("Enabled")
 	req, _ := http.NewRequest(http.MethodPost,
-		srv.URL+"/2020-05-31/distribution/"+distID+"/monitoring-subscription",
+		srv.URL+"/2020-05-31/distributions/"+distID+"/monitoring-subscription",
 		bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/xml")
 	resp, err := http.DefaultClient.Do(req)
@@ -3112,14 +3112,14 @@ func TestGetMonitoringSubscription_success(t *testing.T) {
 
 	body := monitoringSubscriptionXMLBody("Enabled")
 	req, _ := http.NewRequest(http.MethodPost,
-		srv.URL+"/2020-05-31/distribution/"+distID+"/monitoring-subscription",
+		srv.URL+"/2020-05-31/distributions/"+distID+"/monitoring-subscription",
 		bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/xml")
 	resp, _ := http.DefaultClient.Do(req)
 	resp.Body.Close()
 
 	getReq, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/2020-05-31/distribution/"+distID+"/monitoring-subscription", nil)
+		srv.URL+"/2020-05-31/distributions/"+distID+"/monitoring-subscription", nil)
 	getResp, err := http.DefaultClient.Do(getReq)
 	if err != nil {
 		t.Fatalf("GetMonitoringSubscription: %v", err)
@@ -3147,7 +3147,7 @@ func TestGetMonitoringSubscription_notFound(t *testing.T) {
 	distID := cfCreateDist(t, srv, "mon-sub-get-404")
 
 	req, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/2020-05-31/distribution/"+distID+"/monitoring-subscription", nil)
+		srv.URL+"/2020-05-31/distributions/"+distID+"/monitoring-subscription", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GetMonitoringSubscription: %v", err)
@@ -3162,14 +3162,14 @@ func TestDeleteMonitoringSubscription_success(t *testing.T) {
 
 	body := monitoringSubscriptionXMLBody("Enabled")
 	req, _ := http.NewRequest(http.MethodPost,
-		srv.URL+"/2020-05-31/distribution/"+distID+"/monitoring-subscription",
+		srv.URL+"/2020-05-31/distributions/"+distID+"/monitoring-subscription",
 		bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/xml")
 	resp, _ := http.DefaultClient.Do(req)
 	resp.Body.Close()
 
 	delReq, _ := http.NewRequest(http.MethodDelete,
-		srv.URL+"/2020-05-31/distribution/"+distID+"/monitoring-subscription", nil)
+		srv.URL+"/2020-05-31/distributions/"+distID+"/monitoring-subscription", nil)
 	delResp, err := http.DefaultClient.Do(delReq)
 	if err != nil {
 		t.Fatalf("DeleteMonitoringSubscription: %v", err)
@@ -3179,7 +3179,7 @@ func TestDeleteMonitoringSubscription_success(t *testing.T) {
 
 	// Verify it's gone
 	getReq, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/2020-05-31/distribution/"+distID+"/monitoring-subscription", nil)
+		srv.URL+"/2020-05-31/distributions/"+distID+"/monitoring-subscription", nil)
 	getResp, getErr := http.DefaultClient.Do(getReq)
 	if getErr != nil {
 		t.Fatalf("GetMonitoringSubscription after delete: %v", getErr)

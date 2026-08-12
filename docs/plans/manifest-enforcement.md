@@ -26,6 +26,24 @@ repository.
 | 5 | A capability `Note` may not state a binding the model contradicts | `cmd/capgen` `checkNotesBindingsMatchTheModel` | — |
 | 7 | A service's route skeleton is generated, not typed | `capgen --routes --service <name>` | — |
 | 8 | A compat test's declared `op` is a real AWS operation | `cmd/capgen` `checkCompatRegistryServiceKeys` | — |
+| 9 | Every **registered route** is a modeled binding or lives under `/_overcast/` | `internal/router/pathnamespace_dev_test.go` | `unmigratedRoutes` |
+
+Point 9 is the only one that walks **route → model**. Every other row starts
+from something Overcast declares and asks whether it is served correctly; that
+direction is structurally blind to a path the emulator *invented*, because an
+invented path is declared nowhere. It answers requests, breaks no gate, and is
+found only when somebody reads the routing table — which is what #793, #815 and
+#854–#860 were.
+
+On its first run it reported six invented paths a hand audit had missed, all of
+them nested inside prefixes AWS really does bind (`/2015-03-31/functions/{name}/source`
+and friends), plus a CloudFront route registered twice — once at AWS's plural
+path and once at a singular one nothing models. The model → route direction
+could not have found that second registration: CloudFront declares the
+operation, the plural route serves it, and the gate is satisfied.
+
+The migration it enforces is [One namespace for every non-canonical
+URL](./non-canonical-url-namespace.md).
 
 Point 6 (`detectService`) is audited below rather than enforced; the reason is
 recorded there.

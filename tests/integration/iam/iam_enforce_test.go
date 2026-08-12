@@ -1604,7 +1604,7 @@ func TestIAMEnforceIntegration_lambdaTestEventResourceScopedDeniesMismatchedFunc
 		t,
 		srv,
 		http.MethodPut,
-		"/2015-03-31/functions/other-fn/test-events/demo",
+		"/_overcast/lambda/functions/other-fn/test-events/demo",
 		map[string]any{"Body": "{}"},
 		"AWS4-HMAC-SHA256 Credential=test/20260423/us-east-1/lambda/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc",
 	)

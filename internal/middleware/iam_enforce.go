@@ -720,6 +720,25 @@ func requestLambdaIAMResource(r *http.Request, fields *iamRequestFieldResolver) 
 	region := iamRegionOrDefault(r)
 	trimmedPath := strings.Trim(strings.TrimSpace(r.URL.Path), "/")
 	parts := strings.Split(trimmedPath, "/")
+
+	// Both shapes reach here, and they differ by exactly one leading segment:
+	//
+	//	2015-03-31/functions/{name}/…        — AWS's, led by an API version
+	//	_overcast/lambda/functions/{name}/…  — Overcast's emulator-only ones
+	//
+	// Dropping "_overcast" leaves "lambda" standing where the version segment
+	// stands, so every index below keeps meaning what it has always meant.
+	//
+	// Without it the name is read from the wrong segment and the ARN degrades
+	// to "*", which does not fail a request — it widens what a policy matches,
+	// so a grant on one function would authorise every function. Phase 6 of
+	// docs/plans/non-canonical-url-namespace.md moved these paths, and
+	// TestIAMEnforce_enabled_lambdaTestEventsPathDeniesNonMatchingFunction is
+	// what caught it.
+	if len(parts) >= 2 && "/"+parts[0]+"/" == InternalPrefix && parts[1] == "lambda" {
+		parts = parts[1:]
+	}
+
 	if len(parts) >= 3 && parts[1] == "layers" {
 		layerName, err := url.PathUnescape(parts[2])
 		if err != nil {
@@ -1418,11 +1437,37 @@ func userHasAccessKey(user iamUserRecord, accessKeyID string) bool {
 //
 // So adding a prefix here asserts two things, not one: that AWS models no
 // service under it, and that it is not a name S3 will accept.
+//
+// # Internal does not mean unauthenticated
+//
+// The namespace answers "who invented this path", which is not the same
+// question as "may anyone call it". Most internal endpoints carry no
+// authorization of their own and the prefix test is the whole answer for them.
+// A few do: the emulator-only Lambda endpoints read and write a function's
+// source and its saved test events, authorized per function, and
+// TestIAMEnforce_enabled_lambdaTestEventsPathDeniesNonMatchingFunction pins
+// that a policy naming one function must not authorize another.
+//
+// Those two meanings rode on the same "/_" test until phase 6 of
+// docs/plans/non-canonical-url-namespace.md, which is why moving the routes
+// into the namespace deleted their authorization and had to be backed out of
+// phase 4. They are separated by asking overcastRESTOperation — the table that
+// already enumerates exactly the internal routes carrying an operation name,
+// for the logger and for IAM alike. An internal path it can name is a path
+// with something to authorize, so it is not exempt.
+//
+// A route marker would be the obvious alternative and is not available:
+// IAMEnforce is registered with r.Use, so it runs before chi resolves which
+// route matched and there is no route to read a marker from.
 func shouldBypassIAM(r *http.Request) bool {
 	if r.Method == http.MethodOptions {
 		return true
 	}
-	return strings.HasPrefix(r.URL.Path, "/_")
+	if !strings.HasPrefix(r.URL.Path, InternalPrefix) {
+		return false
+	}
+	_, named := overcastRESTOperation(detectService(r), r.Method, r.URL.Path)
+	return !named
 }
 
 func isSignedIAMRequest(r *http.Request) bool {

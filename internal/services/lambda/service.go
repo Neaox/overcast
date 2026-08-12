@@ -1231,6 +1231,12 @@ func (s *Service) SyncInvoker() events.FunctionSyncInvoker { return s.invoker }
 // Lambda uses versioned REST paths, not a single-dispatch target header.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	const apiBase = "/2015-03-31"
+	// emulatorBase is where Overcast's own Lambda endpoints live. They used to
+	// hang off apiBase, which put invented paths inside a prefix AWS models —
+	// invisible to a "/_" grep, and misleading to anyone reading the routing
+	// table, which is the worse half. See
+	// docs/plans/non-canonical-url-namespace.md.
+	const emulatorBase = "/_overcast/lambda"
 	// The concurrency operation families are the ones AWS serves under API
 	// versions other than the 2015-03-31 base. Registering them on the base
 	// makes every SDK call miss the handler and fall through to the S3
@@ -1299,12 +1305,8 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// InvokeWithResponseStream uses a different API version path.
 	const streamBase = "/2021-11-15"
 	r.Post(streamBase+"/functions/{name}/response-streaming-invocations", s.handler.InvokeWithResponseStream)
-	// Emulator-only: SSE invoke with progress events for the web UI. These
-	// four endpoints sit inside AWS's prefix rather than under /_overcast/
-	// because "/_" is what shouldBypassIAM exempts, and they carry a
-	// resource-scoped IAM check. Phase 6 of
-	// docs/plans/non-canonical-url-namespace.md moves them.
-	r.Post(apiBase+"/functions/{name}/invoke-with-progress", s.handler.InvokeFunctionSSE)
+	// Emulator-only: SSE invoke with progress events for the web UI.
+	r.Post(emulatorBase+"/functions/{name}/invoke-with-progress", s.handler.InvokeFunctionSSE)
 	// Versions.
 	r.Post(apiBase+"/functions/{name}/versions", s.handler.PublishVersion)
 	r.Get(apiBase+"/functions/{name}/versions", s.handler.ListVersionsByFunction)
@@ -1315,12 +1317,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(apiBase+"/functions/{name}/aliases/{aliasName}", s.handler.UpdateAlias)
 	r.Delete(apiBase+"/functions/{name}/aliases/{aliasName}", s.handler.DeleteAlias)
 	// Emulator-only: plain-text source code storage for the web UI editor.
-	r.Get(apiBase+"/functions/{name}/source", s.handler.GetFunctionSource)
-	r.Put(apiBase+"/functions/{name}/source", s.handler.PutFunctionSource)
+	r.Get(emulatorBase+"/functions/{name}/source", s.handler.GetFunctionSource)
+	r.Put(emulatorBase+"/functions/{name}/source", s.handler.PutFunctionSource)
 	// Emulator-only: saved test events for the web UI Test tab.
-	r.Get(apiBase+"/functions/{name}/test-events", s.handler.ListTestEvents)
-	r.Put(apiBase+"/functions/{name}/test-events/{eventName}", s.handler.PutTestEvent)
-	r.Delete(apiBase+"/functions/{name}/test-events/{eventName}", s.handler.DeleteTestEvent)
+	r.Get(emulatorBase+"/functions/{name}/test-events", s.handler.ListTestEvents)
+	r.Put(emulatorBase+"/functions/{name}/test-events/{eventName}", s.handler.PutTestEvent)
+	r.Delete(emulatorBase+"/functions/{name}/test-events/{eventName}", s.handler.DeleteTestEvent)
 	// Layers — introduced 2018-10-31, separate API base from functions.
 	const layerBase = "/2018-10-31"
 	r.Get(layerBase+"/layers", s.handler.ListLayers)

@@ -1078,7 +1078,7 @@ func handleLambdaSourceGet(w http.ResponseWriter, r *http.Request) {
 		qs = "?file=" + url.QueryEscape(f)
 	}
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
-		fmt.Sprintf("%s/2015-03-31/functions/%s/source%s", ep, url.PathEscape(name), qs), nil)
+		fmt.Sprintf("%s/_overcast/lambda/functions/%s/source%s", ep, url.PathEscape(name), qs), nil)
 	forwardRegion(req, r)
 	resp, err := bffHTTPClient.Do(req)
 	if err != nil {
@@ -1097,7 +1097,7 @@ func handleLambdaSourcePut(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	name := chi.URLParam(r, "name")
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPut,
-		fmt.Sprintf("%s/2015-03-31/functions/%s/source", ep, url.PathEscape(name)), r.Body)
+		fmt.Sprintf("%s/_overcast/lambda/functions/%s/source", ep, url.PathEscape(name)), r.Body)
 	req.Header.Set("Content-Type", "application/json")
 	forwardRegion(req, r)
 	resp, err := bffHTTPClient.Do(req)
@@ -1117,7 +1117,7 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	name := chi.URLParam(r, "name")
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		fmt.Sprintf("%s/2015-03-31/functions/%s/invoke-with-progress", ep, url.PathEscape(name)),
+		fmt.Sprintf("%s/_overcast/lambda/functions/%s/invoke-with-progress", ep, url.PathEscape(name)),
 		r.Body)
 	req.Header.Set("Content-Type", "application/json")
 	forwardRegion(req, r)
@@ -1156,7 +1156,7 @@ func handleLambdaTestEventsGet(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	name := chi.URLParam(r, "name")
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet,
-		fmt.Sprintf("%s/2015-03-31/functions/%s/test-events", ep, url.PathEscape(name)), nil)
+		fmt.Sprintf("%s/_overcast/lambda/functions/%s/test-events", ep, url.PathEscape(name)), nil)
 	forwardRegion(req, r)
 	resp, err := bffHTTPClient.Do(req)
 	if err != nil {
@@ -1176,7 +1176,7 @@ func handleLambdaTestEventPut(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	eventName := chi.URLParam(r, "eventName")
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPut,
-		fmt.Sprintf("%s/2015-03-31/functions/%s/test-events/%s",
+		fmt.Sprintf("%s/_overcast/lambda/functions/%s/test-events/%s",
 			ep, url.PathEscape(name), url.PathEscape(eventName)), r.Body)
 	req.Header.Set("Content-Type", "application/json")
 	forwardRegion(req, r)
@@ -1198,7 +1198,7 @@ func handleLambdaTestEventDelete(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	eventName := chi.URLParam(r, "eventName")
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodDelete,
-		fmt.Sprintf("%s/2015-03-31/functions/%s/test-events/%s",
+		fmt.Sprintf("%s/_overcast/lambda/functions/%s/test-events/%s",
 			ep, url.PathEscape(name), url.PathEscape(eventName)), nil)
 	forwardRegion(req, r)
 	// bffHTTPClient, not http.DefaultClient: the shared client carries the

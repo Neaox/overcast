@@ -103,12 +103,12 @@ func TestDetectOperationLambdaRESTSurface(t *testing.T) {
 
 		// Emulator-only routes: no AWS model describes them, so they come from
 		// the one hand-written table in restoperation.go.
-		{http.MethodGet, "/2015-03-31/functions/fn/source", "GetFunction", "GetFunctionSource"},
-		{http.MethodPut, "/2015-03-31/functions/fn/source", "PutObject", "PutFunctionSource"},
-		{http.MethodGet, "/2015-03-31/functions/fn/test-events", "GetFunction", "ListTestEvents"},
-		{http.MethodPut, "/2015-03-31/functions/fn/test-events/ev", "PutObject", "PutTestEvent"},
-		{http.MethodDelete, "/2015-03-31/functions/fn/test-events/ev", "DeleteObject", "DeleteTestEvent"},
-		{http.MethodPost, "/2015-03-31/functions/fn/invoke-with-progress", "InvokeFunction", "Invoke"},
+		{http.MethodGet, "/_overcast/lambda/functions/fn/source", "GetFunction", "GetFunctionSource"},
+		{http.MethodPut, "/_overcast/lambda/functions/fn/source", "PutObject", "PutFunctionSource"},
+		{http.MethodGet, "/_overcast/lambda/functions/fn/test-events", "GetFunction", "ListTestEvents"},
+		{http.MethodPut, "/_overcast/lambda/functions/fn/test-events/ev", "PutObject", "PutTestEvent"},
+		{http.MethodDelete, "/_overcast/lambda/functions/fn/test-events/ev", "DeleteObject", "DeleteTestEvent"},
+		{http.MethodPost, "/_overcast/lambda/functions/fn/invoke-with-progress", "InvokeFunction", "Invoke"},
 	}
 
 	for _, tt := range tests {
@@ -154,7 +154,7 @@ func TestRequestIAMActionLambdaRESTSurface(t *testing.T) {
 		// has no lambda:Invoke action.
 		{http.MethodPost, "/2015-03-31/functions/fn/invocations", "lambda:InvokeFunction"},
 		{http.MethodPost, "/2021-11-15/functions/fn/response-streaming-invocations", "lambda:InvokeFunction"},
-		{http.MethodPost, "/2015-03-31/functions/fn/invoke-with-progress", "lambda:InvokeFunction"},
+		{http.MethodPost, "/_overcast/lambda/functions/fn/invoke-with-progress", "lambda:InvokeFunction"},
 
 		{http.MethodPost, "/2015-03-31/functions/fn/versions", "lambda:PublishVersion"},
 		{http.MethodGet, "/2015-03-31/functions/fn/versions", "lambda:ListVersionsByFunction"},
@@ -196,11 +196,11 @@ func TestRequestIAMActionLambdaRESTSurface(t *testing.T) {
 		{http.MethodPost, "/2017-03-31/tags/arn%3Aaws%3Alambda%3A%3A%3Afunction%3Afn", "lambda:TagResource"},
 		{http.MethodGet, "/2017-03-31/tags/arn%3Aaws%3Alambda%3A%3A%3Afunction%3Afn", "lambda:ListTags"},
 		{http.MethodDelete, "/2017-03-31/tags/arn%3Aaws%3Alambda%3A%3A%3Afunction%3Afn", "lambda:UntagResource"},
-		{http.MethodGet, "/2015-03-31/functions/fn/source", "lambda:GetFunctionSource"},
-		{http.MethodPut, "/2015-03-31/functions/fn/source", "lambda:PutFunctionSource"},
-		{http.MethodGet, "/2015-03-31/functions/fn/test-events", "lambda:ListTestEvents"},
-		{http.MethodPut, "/2015-03-31/functions/fn/test-events/ev", "lambda:PutTestEvent"},
-		{http.MethodDelete, "/2015-03-31/functions/fn/test-events/ev", "lambda:DeleteTestEvent"},
+		{http.MethodGet, "/_overcast/lambda/functions/fn/source", "lambda:GetFunctionSource"},
+		{http.MethodPut, "/_overcast/lambda/functions/fn/source", "lambda:PutFunctionSource"},
+		{http.MethodGet, "/_overcast/lambda/functions/fn/test-events", "lambda:ListTestEvents"},
+		{http.MethodPut, "/_overcast/lambda/functions/fn/test-events/ev", "lambda:PutTestEvent"},
+		{http.MethodDelete, "/_overcast/lambda/functions/fn/test-events/ev", "lambda:DeleteTestEvent"},
 	}
 
 	for _, tt := range tests {
@@ -224,7 +224,7 @@ func TestRequestIAMActionNeverBorrowsAnotherServicesOperation(t *testing.T) {
 	}
 	invokePaths := map[string]bool{
 		"/2015-03-31/functions/fn/invocations":                    true,
-		"/2015-03-31/functions/fn/invoke-with-progress":           true,
+		"/_overcast/lambda/functions/fn/invoke-with-progress":     true,
 		"/2021-11-15/functions/fn/response-streaming-invocations": true,
 	}
 
@@ -256,13 +256,13 @@ func lambdaRegisteredPaths() []string {
 		"/2015-03-31/functions/fn/policy",
 		"/2015-03-31/functions/fn/policy/stmt-1",
 		"/2015-03-31/functions/fn/invocations",
-		"/2015-03-31/functions/fn/invoke-with-progress",
+		"/_overcast/lambda/functions/fn/invoke-with-progress",
 		"/2015-03-31/functions/fn/versions",
 		"/2015-03-31/functions/fn/aliases",
 		"/2015-03-31/functions/fn/aliases/live",
-		"/2015-03-31/functions/fn/source",
-		"/2015-03-31/functions/fn/test-events",
-		"/2015-03-31/functions/fn/test-events/ev",
+		"/_overcast/lambda/functions/fn/source",
+		"/_overcast/lambda/functions/fn/test-events",
+		"/_overcast/lambda/functions/fn/test-events/ev",
 		"/2015-03-31/event-source-mappings",
 		"/2015-03-31/event-source-mappings/uuid",
 		"/2017-03-31/tags/arn%3Aaws%3Alambda%3A%3A%3Afunction%3Afn",

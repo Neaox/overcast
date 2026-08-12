@@ -124,7 +124,7 @@ func TestInvokeFunctionSSE_keepsStreamWarmWhileHandlerRuns(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost,
-		"/2015-03-31/functions/slow/invoke-with-progress",
+		"/_overcast/lambda/functions/slow/invoke-with-progress",
 		strings.NewReader(`{"payload":"{}"}`))
 	req = withFunctionNameParam(req, "slow")
 	w := newSyncResponseWriter()
