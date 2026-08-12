@@ -189,11 +189,20 @@ var registeredRouteClassification = map[string]string{
 	//   reads the service from the path itself and delegates to S3 without a
 	//   Smithy-Protocol header, so the s3 label matches what happens.
 	"/service": "s3",
-	//   Label-rooted routes, indistinguishable from a bucket path by shape:
-	//   SQS's path-style queue URLs and Cognito's per-pool OIDC discovery
-	//   documents, the latter fetched unsigned by JWT libraries.
+	//   Label-rooted routes: SQS's path-style queue URLs and Cognito's per-pool
+	//   OIDC discovery documents, the latter fetched unsigned by JWT libraries.
+	//
+	//   "s3" is the fall-through here and costs nothing, but for a sharper
+	//   reason than elsewhere in this section — these two are not merely
+	//   *undistinguished* from a bucket path, they are undistinguishable by
+	//   this switch and distinguishable by their own shape. An account ID is
+	//   all digits; a pool ID is "{region}_{suffix}", and an S3 bucket name can
+	//   be neither, because it may not contain an underscore and a numeric
+	//   bucket name would still be a legal bucket. The router relies on that
+	//   disjointness rather than on precedence, and
+	//   cognito.TestOIDCDiscoveryPathCannotCollideWithS3OrSQS pins it.
 	"/{accountID:[0-9]+}": "s3",
-	"/{region}":           "s3",
+	"/{poolId}":           "s3",
 }
 
 // buildTagGatedRouteFamilies are families registered only in some build

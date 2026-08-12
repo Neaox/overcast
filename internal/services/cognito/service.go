@@ -91,8 +91,24 @@ func (s *Service) Name() string { return serviceName }
 func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Post("/_overcast/cognito/user-pools/{poolId}/import-users", s.handleImportUsers)
 
-	r.Get("/{region}/{poolId}/.well-known/jwks.json", s.serveJWKS)
-	r.Get("/{region}/{poolId}/.well-known/openid-configuration", s.HandleOIDCDiscovery)
+	// OIDC discovery, at the path portion of AWS's own issuer:
+	// https://cognito-idp.{region}.amazonaws.com/{poolId}/.well-known/...
+	//
+	// These are top-level label routes, which normally means a collision with
+	// S3's bucket space — but not here: a Cognito pool ID is "{region}_{suffix}"
+	// and an S3 bucket name cannot contain an underscore, so the two shapes are
+	// disjoint by construction rather than by routing precedence.
+	// TestOIDCDiscoveryPathCannotCollideWithS3OrSQS pins that.
+	//
+	// The region comes from poolRegionMiddleware, which recovers it from the
+	// pool ID, rather than from a leading path segment. AWS puts it in the
+	// hostname; a single-origin emulator has nowhere to put it, and does not
+	// need to. See docs/plans/non-canonical-url-namespace.md section 4.9.
+	r.Group(func(sub chi.Router) {
+		sub.Use(s.poolRegionMiddleware)
+		sub.Get("/{poolId}/.well-known/jwks.json", s.serveJWKS)
+		sub.Get("/{poolId}/.well-known/openid-configuration", s.HandleOIDCDiscovery)
+	})
 
 	// Managed login OAuth2/OIDC endpoints (emulator convenience routes).
 	// These routes are hit by plain browser requests with no SigV4 headers,

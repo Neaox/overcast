@@ -35,6 +35,9 @@ var nonManifestRoutes = map[string]string{
 
 	"/restapis/{restApiId}/{stageName}/_user_request_/*": "LocalStack URL compatibility for API Gateway execute-api. The underscore mid-path is deliberate and must not be tidied into the namespace: the point is byte-identical compatibility with a URL LocalStack documents, and host-addressed callers already have the namespaced route. See docs/plans/non-canonical-url-namespace.md section 3.",
 	"/restapis/{restApiId}/{stageName}/_user_request_":   "The stage root of the route above — LocalStack's URL with an empty path. Same reason, registered separately because chi's wildcard does not match the empty remainder.",
+
+	"/{poolId}/.well-known/jwks.json":            "Cognito OIDC discovery, at the path portion of AWS's own issuer. AWS models no SDK operation for discovery, so no manifest row can ever cover it whatever shape it takes — this is a permanent exception, not a migration that stalled. Safe at the top level because a pool ID contains \"_\" and an S3 bucket name cannot; TestOIDCDiscoveryPathCannotCollideWithS3OrSQS pins that.",
+	"/{poolId}/.well-known/openid-configuration": "As above. OIDC Discovery 1.0 section 4.3 requires the issuer to be byte-identical to the URL this document was fetched from, which is why the route and issuerFor have to agree and neither can move alone.",
 }
 
 // unmigratedRoutes is the ratchet: every path that breaks the rule today,
@@ -56,23 +59,13 @@ var unmigratedRoutes = map[string]string{
 
 	// Phase 5 is done: the data plane is namespaced.
 
-	// The last two, and the only ones left. Cognito's OIDC discovery.
+	// **Empty.** Every path Overcast serves is now either a binding the pinned
+	// manifest models or lives under InternalPrefix, with the handful of standing
+	// exceptions recorded in nonManifestRoutes above and nowhere else.
 	//
-	// Section 4.3 originally said the region-prefixed form could simply be
-	// deleted, on the grounds that a pool ID already encodes its region.
-	// Section 4.7 withdraws that: the segment stands in for the region AWS
-	// puts in the *hostname*, and this path is the JWT issuer. Deleting it
-	// changes `iss` in every minted token, breaks OIDC Discovery section 4.3's
-	// requirement that the issuer be byte-identical to the URL discovery was
-	// fetched from, and interacts with ValidateCognitoToken, which parses the
-	// pool ID back out of the issuer path.
-	//
-	// So this is not a rename waiting its turn — it is a token-compatibility
-	// decision, and it is deliberately still open. Adding the AWS-shaped
-	// /{poolId}/.well-known/... alongside is uncontroversial; removing this one
-	// is not.
-	"/{region}/{poolId}/.well-known/jwks.json":            "open decision: the JWT issuer path — see plan section 4.7 before touching",
-	"/{region}/{poolId}/.well-known/openid-configuration": "open decision: the JWT issuer path — see plan section 4.7 before touching",
+	// Keeping the map rather than deleting it is deliberate: the next migration
+	// that has to move routes in stages needs somewhere to put the debt, and the
+	// gate's staleness check only works against a map that exists.
 }
 
 // buildTagGatedRoutes are ledger entries that some build configurations do not

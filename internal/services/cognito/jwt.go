@@ -138,7 +138,10 @@ func verifyJWTSignature(tokenStr string, pub *rsa.PublicKey) error {
 }
 
 // poolIDFromIssuer extracts the user pool ID from a Cognito issuer URL.
-// Expected format: http(s)://{host}/{region}/{poolId}.
+// Expected format: http(s)://{host}/{poolId} — the path portion of AWS's
+// https://cognito-idp.{region}.amazonaws.com/{poolId}. Reading the last
+// segment rather than a fixed index is what kept this working when the
+// region segment was removed; keep it that way.
 func poolIDFromIssuer(iss string) (string, error) {
 	idx := strings.LastIndex(iss, "/")
 	if idx < 0 || idx == len(iss)-1 {
@@ -170,7 +173,7 @@ func jwkFromPublicKey(pub *rsa.PublicKey, kid string) jwkEntry {
 	}
 }
 
-// serveJWKS handles GET /{region}/{poolId}/.well-known/jwks.json.
+// serveJWKS handles GET /{poolId}/.well-known/jwks.json.
 // This endpoint is called by JWT validation libraries (e.g. aws-jwt-verify) to
 // fetch the RSA public key for a user pool.
 func (s *Service) serveJWKS(w http.ResponseWriter, r *http.Request) {

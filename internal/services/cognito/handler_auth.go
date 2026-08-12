@@ -324,7 +324,31 @@ func (s *Service) resendConfirmationCode(w http.ResponseWriter, r *http.Request)
 // compares the string literally — see the guard comment there before changing
 // either side. Full analysis: docs/plans/client-facing-url-minting.md.
 func (s *Service) issuerURL(r *http.Request, poolID string) string {
-	return serviceutil.ClientBaseURL(s.cfg, r) + "/" + s.region(r.Context()) + "/" + poolID
+	return issuerFor(serviceutil.ClientBaseURL(s.cfg, r), poolID)
+}
+
+// issuerFor is the single definition of the issuer's *shape*: a client base
+// followed by the pool ID, matching the path portion of AWS's
+// https://cognito-idp.{region}.amazonaws.com/{poolId} exactly.
+//
+// It exists because the shape was written out three times — here, in
+// issuerURLTyped for the Smithy CBOR path, and inline in HandleOIDCDiscovery —
+// and the three had to agree for reasons that are not obvious from any one of
+// them. A caller's wire protocol must not change the issuer their token
+// carries, and OIDC Discovery 1.0 section 4.3 requires the issuer to be
+// byte-identical to the URL the discovery document was fetched from, which
+// couples the discovery *route* to this string as well. Three copies of a
+// constraint like that is a drift waiting to happen; issuerBase already
+// unified where the base comes from, and this unifies what is appended to it.
+//
+// The region is deliberately absent. AWS carries it in the hostname, which a
+// single-origin emulator has nowhere to put — and it would be redundant if it
+// did, because a pool ID is "{region}_{suffix}" and poolRegionMiddleware
+// already recovers the region from it. Overcast served it as a leading path
+// segment until the namespace migration removed it; see
+// docs/plans/non-canonical-url-namespace.md section 4.9.
+func issuerFor(base, poolID string) string {
+	return base + "/" + poolID
 }
 
 // initiateAuth — InitiateAuth (USER_PASSWORD_AUTH + REFRESH_TOKEN_AUTH).

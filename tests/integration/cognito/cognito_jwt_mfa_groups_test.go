@@ -88,7 +88,7 @@ func TestJWKS_endpoint(t *testing.T) {
 	}).Body.Close()
 
 	// When: JWKS endpoint is fetched
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/us-east-1/"+poolID+"/.well-known/jwks.json", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/"+poolID+"/.well-known/jwks.json", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("JWKS GET: %v", err)

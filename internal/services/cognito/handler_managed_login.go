@@ -22,7 +22,7 @@ package cognito
 //   - HandleForgotPasswordSubmit   POST /_overcast/cognito/user-pools/{poolId}/forgot-password
 //   - HandleResetPasswordPage      GET  /_overcast/cognito/user-pools/{poolId}/reset-password
 //   - HandleResetPasswordSubmit    POST /_overcast/cognito/user-pools/{poolId}/reset-password
-//   - HandleOIDCDiscovery          GET  /{region}/{poolId}/.well-known/openid-configuration
+//   - HandleOIDCDiscovery          GET  /{poolId}/.well-known/openid-configuration
 //   - HandleDebugToken             GET  /_overcast/cognito/user-pools/{poolId}/debug/token
 //   - HandleGetPassword            GET  /_overcast/cognito/user-pools/{poolId}/users/{username}/password
 
@@ -1321,9 +1321,8 @@ func (s *Service) renderMFAError(w http.ResponseWriter, pool *UserPool, params o
 
 // ─── OIDC discovery ───────────────────────────────────────────────────────────
 
-// HandleOIDCDiscovery serves GET /{region}/{poolId}/.well-known/openid-configuration.
+// HandleOIDCDiscovery serves GET /{poolId}/.well-known/openid-configuration.
 func (s *Service) HandleOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
-	region := chi.URLParam(r, "region")
 	poolID := chi.URLParam(r, "poolId")
 	ctx := r.Context()
 
@@ -1336,8 +1335,13 @@ func (s *Service) HandleOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
 	// Same origin resolution as issuerURL — see the rationale there. This
 	// document is the surface an OIDC library actually reads, so every endpoint
 	// it advertises has to be one the discovering client can dial.
+	//
+	// issuerFor rather than a fourth copy of the shape: OIDC Discovery 1.0
+	// section 4.3 requires this value to be byte-identical to the URL this
+	// document was fetched from, so it has to agree with both the route below
+	// and the issuer minted into tokens.
 	origin := serviceutil.ClientBaseURL(s.cfg, r)
-	issuer := origin + "/" + region + "/" + poolID
+	issuer := issuerFor(origin, poolID)
 	base := origin + "/_overcast/cognito/user-pools/" + poolID
 
 	doc := map[string]any{
