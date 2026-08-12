@@ -5564,7 +5564,14 @@ func (h *nestedStackHandler) fetchTemplate(ctx context.Context, router http.Hand
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", templateURL, err)
 	}
-	return rec.Body.String(), nil
+	// A nested stack's child arrives through the same TemplateURL parameter as
+	// a root stack's, and AWS bounds it the same way. Without this the parent
+	// deploys clean here and fails in the account on the child.
+	fetched := rec.Body.String()
+	if err := checkResolvedTemplateSize(fetched); err != nil {
+		return "", err
+	}
+	return fetched, nil
 }
 
 // ── XML extraction helper ──────────────────────────────────────────────────

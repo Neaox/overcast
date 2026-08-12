@@ -1104,33 +1104,56 @@ func targetDispatch(dispatchers []TargetDispatcher, queryDispatchers []QueryDisp
 			}
 		}
 		// No X-Amz-Target match — try AWS Query protocol services (SNS, SES v1).
-		// ParseForm caches results; safe to call before dispatching.
 		if strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
-			if err := r.ParseForm(); err == nil {
-				action := r.FormValue("Action")
-				version := r.FormValue("Version")
-				// Version is a stricter discriminator than action name — it avoids
-				// action name collisions between services (e.g. both SES and
-				// CloudFormation implement "GetTemplate").
-				if qd, ok := queryOwner(queryDispatchers, version, action); ok {
-					qd.DispatchQuery(w, r)
-					return
+			// This is the parse that decides the operation for every Query
+			// service; it caches its results, so it is safe to call before
+			// dispatching. protocol.ParseFormPreservingBody may already have
+			// declined the body as too large to buffer speculatively, which is
+			// not a rejection — it leaves the body readable precisely so this
+			// parse can make the real decision on it.
+			//
+			// The cap is stated rather than inherited: ParseForm has its own
+			// undocumented ceiling, and MaxQueryRequestBody matches it so the
+			// set of accepted requests is unchanged. What changes is the
+			// failure: a body this parse refuses used to fall past every branch
+			// below to the NotImplementedQueryXML at the end of this handler,
+			// so an oversized CreateStack came back 501 with
+			// x-emulator-unsupported — an answer that names the wrong problem
+			// and sends the caller looking for a feature gap.
+			//
+			// The refusal is written in the generic Query envelope even for a
+			// service that uses EC2's. Nothing better is available: the failure
+			// is that the body could not be parsed, so the Action naming the
+			// service was never read. The 501 this replaced had the same
+			// constraint.
+			r.Body = http.MaxBytesReader(w, r.Body, protocol.MaxQueryRequestBody)
+			if err := r.ParseForm(); err != nil {
+				protocol.WriteQueryXMLError(w, r, protocol.QueryFormParseError(err))
+				return
+			}
+			action := r.FormValue("Action")
+			version := r.FormValue("Version")
+			// Version is a stricter discriminator than action name — it avoids
+			// action name collisions between services (e.g. both SES and
+			// CloudFormation implement "GetTemplate").
+			if qd, ok := queryOwner(queryDispatchers, version, action); ok {
+				qd.DispatchQuery(w, r)
+				return
+			}
+			if claim, ok := operationRegistry.ClaimQuery(version, action); ok {
+				writeNotImplemented(w, r, claim)
+				return
+			}
+			// Final fallback: first dispatcher with no ownership declaration.
+			for _, qd := range queryDispatchers {
+				if _, isActionOwner := qd.(QueryActionOwner); isActionOwner {
+					continue
 				}
-				if claim, ok := operationRegistry.ClaimQuery(version, action); ok {
-					writeNotImplemented(w, r, claim)
-					return
+				if _, isVersionOwner := qd.(QueryVersionOwner); isVersionOwner {
+					continue
 				}
-				// Final fallback: first dispatcher with no ownership declaration.
-				for _, qd := range queryDispatchers {
-					if _, isActionOwner := qd.(QueryActionOwner); isActionOwner {
-						continue
-					}
-					if _, isVersionOwner := qd.(QueryVersionOwner); isVersionOwner {
-						continue
-					}
-					qd.DispatchQuery(w, r)
-					return
-				}
+				qd.DispatchQuery(w, r)
+				return
 			}
 		}
 		// No match — return an error in the appropriate format.

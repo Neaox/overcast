@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 )
 
 // MaxQueryFormBody bounds how much of a request body is ever read into memory
@@ -19,7 +20,52 @@ const MaxQueryFormBody = 1 << 20 // 1 MiB
 
 // ErrFormBodyTooLarge reports that a request body exceeded MaxQueryFormBody, so
 // its form fields were not parsed. The body is left intact and readable.
+//
+// It is not a rejection. A request that trips it is re-parsed in full once
+// routing has established that it really is Query traffic — see
+// MaxQueryRequestBody — so a body between the two limits is dispatched
+// normally. Callers must treat this as "not parsed here", never as "too large
+// to serve": SQS accepts a 1 MiB MessageBody, which URL-encodes to more than
+// MaxQueryFormBody on its own, and refusing that request would be wrong.
 var ErrFormBodyTooLarge = errors.New("protocol: request body exceeds the AWS Query form parse limit")
+
+// MaxQueryRequestBody bounds a complete AWS Query request body, as opposed to
+// the speculative prefix MaxQueryFormBody buffers before routing. It is the
+// point past which the emulator will not parse a form at all.
+//
+// The value matches net/http's own undocumented ParseForm ceiling, which is
+// what enforced this bound before it was named. That is deliberate: making it
+// explicit changes no request's outcome, only what an already-refused request
+// is told. Legitimate Query traffic is far below it — the largest inline
+// payload any Query service accepts is SQS's 1 MiB message body, at most 3 MiB
+// once URL-encoded.
+const MaxQueryRequestBody = 10 << 20 // 10 MiB
+
+// QueryFormParseError converts a failed Query form parse into the error a
+// client should see.
+//
+// The distinction it exists to draw is between an operation the emulator has
+// not implemented and a request the emulator will not accept. Falling through
+// to NotImplemented conflates them, and the 501 it produces carries
+// x-emulator-unsupported — telling tooling that Overcast lacks CreateStack
+// when the truth is that this particular body was too big to parse. See
+// ErrMethodNotAllowed for the same line drawn against a method AWS refuses.
+func QueryFormParseError(err error) *AWSError {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return &AWSError{
+			Code: "RequestEntityTooLarge",
+			Message: "Request body exceeds the maximum size of " +
+				strconv.Itoa(MaxQueryRequestBody) + " bytes.",
+			HTTPStatus: http.StatusRequestEntityTooLarge,
+		}
+	}
+	return &AWSError{
+		Code:       "MalformedQueryString",
+		Message:    "The request body could not be parsed as an AWS Query form.",
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
 
 // ParseFormPreservingBody populates r.Form and r.PostForm the way
 // (*http.Request).ParseForm does, but leaves r.Body readable afterwards.

@@ -109,8 +109,17 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 // resolveTemplateBody returns the template body from either TemplateBody or
 // TemplateURL. When TemplateURL is provided, the template is fetched from S3
 // via internal dispatch (the same mechanism used for nested stacks).
+//
+// An inline TemplateBody is size-checked here, so every caller enforces AWS's
+// cap on it without repeating the check; see checkInlineTemplateSize for why
+// the fetched-from-URL path is deliberately exempt. The error is the message
+// alone, which every caller reports as a ValidationError with HTTP 400.
 func (h *Handler) resolveTemplateBody(r *http.Request) (string, error) {
-	if body := r.FormValue("TemplateBody"); body != "" {
+	body := r.FormValue("TemplateBody")
+	if err := checkInlineTemplateSize(body); err != nil {
+		return "", err
+	}
+	if body != "" {
 		return body, nil
 	}
 	templateURL := r.FormValue("TemplateURL")
@@ -134,7 +143,11 @@ func (h *Handler) resolveTemplateBody(r *http.Request) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch template from %s: %w", templateURL, err)
 	}
-	return rec.Body.String(), nil
+	fetched := rec.Body.String()
+	if err := checkResolvedTemplateSize(fetched); err != nil {
+		return "", err
+	}
+	return fetched, nil
 }
 
 // stub returns 501 for unimplemented operations.
@@ -900,6 +913,14 @@ func (h *Handler) GetTemplateSummary(w http.ResponseWriter, r *http.Request) {
 	templateBody := r.FormValue("TemplateBody")
 	templateURL := r.FormValue("TemplateURL")
 	stackName := r.FormValue("StackName")
+
+	// This operation reads TemplateBody itself rather than through
+	// resolveTemplateBody, which it reaches only when the inline body is
+	// absent — so the inline size check has to be made here too.
+	if err := checkInlineTemplateSize(templateBody); err != nil {
+		writeCFNError(w, r, "ValidationError", err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Try TemplateURL if TemplateBody is not provided.
 	if templateBody == "" && templateURL != "" {
