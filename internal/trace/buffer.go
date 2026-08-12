@@ -22,9 +22,15 @@ const maxInternalRing = 200
 // requests, `pinned` for the ones that went wrong, and `internal` for the
 // infrastructure polling isInternalPath classifies.
 //
-// A trace is in exactly one of them. It enters `live`, and when the live ring
-// finally evicts it, retireLocked decides whether it is worth pinning — see
-// there for why that decision cannot be made any earlier.
+// A trace enters `live`, and when the live ring finally evicts it, retireLocked
+// decides whether it is worth pinning — see there for why that decision cannot
+// be made any earlier.
+//
+// **A trace can be in two rings at once.** Pinning a failure also pins the calls
+// it made (pinFamilyLocked), and those are usually still live, so `pinned` and
+// `live` both reference them. The index holds one entry per trace regardless,
+// and both iterators skip the pinned copy of a still-live trace so that a page
+// — or a deep search — never sees it twice.
 //
 // They are separate rings rather than one ring with a quota because a shared
 // ring cannot be both fair and cheap. Enforcing the quota inside it meant
@@ -253,9 +259,37 @@ func (b *Buffer) retireLocked(s *slot) {
 	}
 	if b.policy.Pinned > 0 && qualifiesPinned(s.rec) {
 		b.pinLocked(s)
+		b.pinFamilyLocked(s)
 		return
 	}
 	b.dropLocked(s)
+}
+
+// pinFamilyLocked keeps the calls a pinned failure made.
+//
+// Pinning a failure that cannot show what it did is half a rescue. Each hop
+// names a trace of its own — that is where its bodies live now — and those
+// traces are *newer* than the parent, so FIFO evicts the parent first and the
+// children moments after. The pinned deploy would then be a timeline whose
+// every body reports OmitEvicted.
+//
+// The family rides along in whatever room is left, and **never displaces
+// another failure**: two failures are two things somebody may come back for,
+// and one deploy's children are not worth more than either. A deploy with more
+// calls than the ring has spare slots keeps the ones that fit; the rest degrade
+// to OmitEvicted, which the UI already explains.
+// Callers must hold b.mu.
+func (b *Buffer) pinFamilyLocked(parent *slot) {
+	for _, id := range parent.rec.hopRequestIDList() {
+		if b.pinned.len() >= b.pinned.cap() {
+			return
+		}
+		child, ok := b.index[id]
+		if !ok || child.inPinned {
+			continue
+		}
+		b.pinLocked(child)
+	}
 }
 
 // dropLocked forgets a trace entirely, returning its bytes to the budget.
@@ -408,12 +442,17 @@ func (b *Buffer) eachNewestFirstLocked(fn func(*Recorder) bool) {
 		if pick < 0 {
 			return
 		}
-		rec := rings[pick].at(at[pick]).rec
+		sl := rings[pick].at(at[pick])
 		at[pick]--
-		if rec == nil {
+		if sl == nil || sl.rec == nil {
 			continue
 		}
-		if !fn(rec) {
+		// A failure pinned while its trace is still live is reachable from two
+		// rings. Yield it from `live` only, or a page shows it twice.
+		if rings[pick] == b.pinned && sl.inLive {
+			continue
+		}
+		if !fn(sl.rec) {
 			return
 		}
 	}
@@ -425,9 +464,16 @@ func (b *Buffer) eachNewestFirstLocked(fn func(*Recorder) bool) {
 func (b *Buffer) eachRecorderLocked(fn func(*Recorder)) {
 	for _, r := range [...]*ring{b.live, b.pinned, b.internal} {
 		for i := 0; i < r.len(); i++ {
-			if s := r.at(i); s != nil && s.rec != nil {
-				fn(s.rec)
+			s := r.at(i)
+			if s == nil || s.rec == nil {
+				continue
 			}
+			// See eachNewestFirstLocked: a pinned-and-still-live trace is in
+			// two rings, and a deep search must not scan it twice.
+			if r == b.pinned && s.inLive {
+				continue
+			}
+			fn(s.rec)
 		}
 	}
 }
