@@ -254,6 +254,16 @@ type routeSet struct {
 
 func inventory(t *testing.T) *routeSet {
 	t.Helper()
+	return inventoryWith(t, func(*config.Config) {})
+}
+
+// inventoryWith is inventory with a chance to adjust the config first, for
+// gates that need routes the default build does not register. Only the
+// namespace gate uses it so far, to switch Debug on and make the /_debug/*
+// namespace visible; the model-binding gates want the default surface, since a
+// modeled AWS binding never hides behind a debug flag.
+func inventoryWith(t *testing.T, configure func(*config.Config)) *routeSet {
+	t.Helper()
 
 	cfg := &config.Config{
 		Host:      "127.0.0.1",
@@ -264,6 +274,7 @@ func inventory(t *testing.T) *routeSet {
 		LogLevel:  "error",
 		DataDir:   t.TempDir(),
 	}
+	configure(cfg)
 	handler, preShutdown, cleanup, _ := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	t.Cleanup(func() {
 		preShutdown()
