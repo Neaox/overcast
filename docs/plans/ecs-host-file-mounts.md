@@ -5,7 +5,25 @@ description: A clean inner loop for applications that run on ECS in staging and 
 
 # ECS hot reload — editing local source inside an emulated task
 
-**Status:** **Layers 1–2 complete**; Layer 3's standalone guide (`docs/local-dev.md`) outstanding · **Opened:** 2026-08-12 · **Revised:** 2026-08-12 (design reworked around API-fidelity/convenience separation; guide made a deliverable; open questions decided — full volume-type coverage now in scope)
+**Status:** **complete** — all three layers shipped (#923, #926, and the guide) · **Opened:** 2026-08-12 · **Revised:** 2026-08-12 (design reworked around API-fidelity/convenience separation; guide made a deliverable; open questions decided — full volume-type coverage now in scope)
+
+> **Closed out.** What remains is follow-up work, tracked here rather than left
+> implied:
+>
+> - **Three validation messages are Overcast's wording, not AWS's.** Only the
+>   Fargate `host.sourcePath` string is verbatim from a real `ClientException`.
+>   Capture AWS's own text for the Fargate `dockerVolumeConfiguration`,
+>   task-scope `autoprovision`, and one-configuration-per-volume rejections
+>   before pinning them in tests.
+> - **The docker-gated lifecycle tests are not written.** Shared volumes
+>   surviving a task stop, `autoprovision: false` failing a placement, and a
+>   real bind surviving an edit — see the testing section, and use the
+>   fake-daemon rig rather than `SkipWithoutDocker`.
+> - **`configuredAtLaunch` volumes** remain unmodelled; the branch structure in
+>   `containerMounts` takes them the same way it took
+>   `dockerVolumeConfiguration`.
+> - **The server-side mount overlay** stays deferred — see Alternatives
+>   considered.
 **Scope:** `internal/services/ecs`, `internal/docker` (volume driver options, inspect), `internal/config`, a shared host-path helper lifted out of `internal/services/lambda`, `docs/services/ecs.md`, a new published guide
 **Related:** [efs-data-plane.md](./efs-data-plane.md) (the mount path this extends), Lambda hot reload ([docs/services/lambda.md § Hot Reload](../services/lambda.md#hot-reload)) — the precedent this deliberately mirrors
 
@@ -395,7 +413,19 @@ definitions already honour `privileged`
 ([handler_tasks.go:381](../../internal/services/ecs/handler_tasks.go)), so the
 flag-off default is the real boundary and this is defence in depth.
 
-## Layer 3 — the guide is a deliverable, not an afterthought
+## Layer 3 — the guide is a deliverable, not an afterthought — **done**
+
+> **Landed.** `docs/local-dev.md` ("The inner loop"), linked from the docs index
+> and cross-linked with both service pages; the ECS and Lambda sections shipped
+> with Layers 1–2. One correction found while writing it: **published-doc
+> anchors use the web UI's `slug()`**, which collapses a run of
+> non-alphanumerics to a *single* hyphen, so an em-dashed heading is
+> `#hot-reload-editing-local-source-inside-a-task`. The double-hyphen form is
+> GitHub's, and is correct in `docs/plans/` and `docs/dev/` — which are read
+> there — but wrong in published docs. `internal/router/advisories.go` already
+> used the single-hyphen form and is the precedent. Two links were fixed, one of
+> them introduced by Layer 2; the same mistake elsewhere in published docs
+> predates this work and is raised separately.
 
 The feature is only done when a developer can go from "my Laravel app deploys to
 ECS" to "my save is live on the next request" from the docs alone.
