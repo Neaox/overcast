@@ -105,14 +105,32 @@ than silently selecting the alphabetically first service. The shared protocol
 still selects the fallback envelope; A3/A4 ownership and coverage reporting use
 the collision records to require an explicit resolution or exclusion.
 
-The A2 collision arrays are intentionally write-only until A3/A4 consume them
-for ownership and coverage reports. Most ambiguous rows are already claimed by
-an Overcast target prefix or Query version, so the router will not reach them;
-the registry-boundary tests are the correct coverage level meanwhile. Likewise,
-the generated Query index currently preserves existing observable behavior: the
+The collision arrays are no longer write-only: `resolveCollision`
+(`internal/awsapi/ambiguity.go`) reads them so a claim can be attributed where
+Overcast — not the models — already knows the owner. Two declarations do that
+work, and neither is new data. `serviceAliases` collapses a collision whose
+members are one service under two modeled identities, which is all 51
+`cloudwatch-events`/`eventbridge` target collisions. `queryVersionOwners`
+(`versions.go`) names the service that answers an API version, which is the
+same statement each service's `OwnsVersion` is built from, and settles all 71
+query collisions — DocumentDB, Neptune and RDS sharing `2014-10-31`, of which
+Overcast implements only RDS. A declared owner is honoured only when it is one
+of the services that actually collided, so it tie-breaks rather than overrides,
+and a collision neither step resolves stays ambiguous: the four Timestream
+target collisions are two real services Overcast does not implement.
+
+This changes attribution only. The shared error-profile writer switches on
+`ErrorProfile`, which is derived from the protocol and never from the service,
+so the 501 responses are unchanged; the classifier in `internal/middleware` is
+the only consumer of a resolved `Claim.Service`. The resolution runs solely on
+the already-ambiguous branch, so an ordinary claim still binary-searches one
+sorted index and allocates nothing. Coverage reporting remains A3/A4 work, and
+now reads arrays whose ambiguity has already been narrowed to the genuinely
+unattributable.
+
+The generated Query index otherwise preserves existing observable behavior: the
 generic Query fallback already uses its common XML envelope, and EC2 owns its
 only modeled version before the registry can choose `ErrorProfileEC2QueryXML`.
-Both become live reporting/routing inputs as A3 widens ownership evidence.
 
 Measured locally after A2 with `go test -run=^$ -bench=RegistryClaim -benchmem
 -count=3 ./internal/awsapi` in a Linux `golang:1.24` container on an AMD Ryzen
@@ -145,6 +163,14 @@ completes the generated ownership surface:
   `ServiceDisabled` branch this route used to carry was removed with it.)
   The Smithy protocol header is required evidence: a headerless S3 multipart
   request with the same legal path grammar delegates to S3; and
+- a sorted `modelServices` index lists every modeled service identity, so
+  `IsServiceKey` can answer whether a name is a service at all. RPC v2 is the
+  one protocol that names its service in a URI label rather than attaching it
+  to something resolvable, and the router dispatches that label against its own
+  registered services before the registry is consulted — so `/service/ecs/…`
+  answers CBOR for a service the models bind no RPC v2 operation on. The
+  classifier reads the label the same way, and a label naming no service is not
+  believed; and
 - generated corpus tests require every non-S3 operation and every additive RPC
   trait to resolve through a target, Query, REST, or RPC ownership index.
 

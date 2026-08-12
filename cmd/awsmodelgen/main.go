@@ -219,8 +219,8 @@ func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
 		if op.TargetPrefix != "" && (op.Protocol == "AWSJSON10" || op.Protocol == "AWSJSON11") {
 			targets = append(targets, op)
 		}
-		if op.Protocol == "AWSQuery" || op.Protocol == "EC2Query" {
-			queries = append(queries, op)
+		if queryOp, ok := queryIndexEntry(op); ok {
+			queries = append(queries, queryOp)
 		}
 		if (op.Protocol == "RESTJSON" || op.Protocol == "RESTXML") && op.HTTPMethod != "" && op.URI != "" && op.Service != "s3" {
 			rest = append(rest, op)
@@ -251,6 +251,33 @@ func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
 	writeQueryIndex(out, queries)
 	writeRESTTrie(out, rest)
 	writeRPCIndex(out, rpc)
+	writeModelServiceIndex(out, operations)
+}
+
+// writeModelServiceIndex emits every modeled service identity, sorted, so the
+// registry can answer whether a name is a service at all.
+//
+// Smithy RPC v2 carries the service in a URI label rather than a header or a
+// path prefix, and a label naming no service must not be believed. The other
+// indexes answer that question incidentally — a target or an (Action, Version)
+// pair either resolves or does not — but a service label has nothing attached
+// to it to resolve against.
+func writeModelServiceIndex(out *bytes.Buffer, operations []operation) {
+	seen := make(map[string]bool, len(operations))
+	services := make([]string, 0, 512)
+	for _, op := range operations {
+		if op.Service == "" || seen[op.Service] {
+			continue
+		}
+		seen[op.Service] = true
+		services = append(services, op.Service)
+	}
+	sort.Strings(services)
+	out.WriteString("\nvar modelServices = []string{\n")
+	for _, service := range services {
+		fmt.Fprintf(out, "\t%q,\n", service)
+	}
+	out.WriteString("}\n")
 }
 
 func writeTargetIndex(out *bytes.Buffer, operations []operation) {
@@ -275,6 +302,61 @@ func writeTargetIndex(out *bytes.Buffer, operations []operation) {
 	}
 	out.WriteString("}\n")
 	writeCollisionIndex(out, "targetCollisions", collisions)
+}
+
+// overcastQueryServices names the modeled services Overcast answers on the AWS
+// Query wire that the pinned models do not declare a Query protocol for.
+//
+// AWS has been migrating services off Query, and it retires the trait from a
+// model well before it stops accepting the wire — SQS's model is awsJson1_0
+// only, while Overcast still serves form-encoded Action/Version requests for it
+// (internal/services/sqs implements router.QueryDispatcher and declares
+// codec.QueryXML in SupportedProtocols). The generated index is derived from
+// what AWS publishes, so the fact that *Overcast* answers a wire AWS no longer
+// describes cannot be derived at all; it has to be declared, and this is the
+// one place it is.
+//
+// The consequence of an omission is not cosmetic. A Query request whose action
+// the index cannot name has no other service signal when it is unsigned — no
+// X-Amz-Target, no distinguishing path — so detectService falls through to the
+// S3 fallback, and the request is logged, traced and IAM-authorised as s3.
+//
+// The value is the reason, kept next to the entry so a later reader can tell a
+// deliberate declaration from a workaround.
+var overcastQueryServices = map[string]string{
+	"sqs": "AWS migrated the SQS model to awsJson1_0; the Query wire is still served and still what unsigned clients send",
+}
+
+// queryIndexEntry reports whether an operation belongs in the Query index, and
+// with which protocol.
+//
+// Protocols rather than Protocol: a Smithy service can carry the Query trait
+// additively alongside a newer primary protocol, which is exactly what
+// CloudWatch does (awsJson1_0 primary, awsQuery and rpcv2Cbor additive). Keying
+// on the primary alone dropped every one of its 50 operations from the index,
+// so an unsigned PutMetricAlarm — what the AWS CLI and the web UI send — was
+// classified as s3. The RPC index three lines below has always read the full
+// set; this one was the outlier.
+func queryIndexEntry(op operation) (operation, bool) {
+	// The primary is tested as well as the set, so this is strictly additive
+	// against the rule it replaces. modelProtocols puts the primary first in
+	// the set, so for anything parsed from a model the first test is redundant
+	// — but it is what makes "this cannot drop an operation the index already
+	// had" true by reading rather than by trusting that invariant, which is
+	// worth one clause in a function that regenerates a committed manifest.
+	if op.Protocol == "AWSQuery" || op.Protocol == "EC2Query" ||
+		slices.Contains(op.Protocols, "AWSQuery") || slices.Contains(op.Protocols, "EC2Query") {
+		return op, true
+	}
+	if _, declared := overcastQueryServices[op.Service]; declared {
+		// The entry describes a Query binding, so it carries the Query
+		// protocol regardless of what the model calls the service's primary.
+		// ClaimQuery derives the error envelope from this field, and a Query
+		// request must be answered with the Query XML envelope.
+		op.Protocol = "AWSQuery"
+		return op, true
+	}
+	return operation{}, false
 }
 
 func writeQueryIndex(out *bytes.Buffer, operations []operation) {

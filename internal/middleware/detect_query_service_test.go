@@ -30,35 +30,33 @@ func queryRequest(body string) (*http.Request, []byte) {
 
 func TestDetectService_labelsQueryProtocolByItsAction(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		body  string
-		want  string
-		known bool // a gap this test records rather than enforces
+		name string
+		body string
+		want string
 	}{
-		{"sns", "Action=CreateTopic&Version=2010-03-31&Name=t", "sns", false},
-		{"cloudformation", "Action=DescribeStacks&Version=2010-05-15", "cloudformation", false},
-		{"iam", "Action=ListRoles&Version=2010-05-08", "iam", false},
-		{"sts", "Action=GetCallerIdentity&Version=2011-06-15", "sts", false},
+		{"sns", "Action=CreateTopic&Version=2010-03-31&Name=t", "sns"},
+		{"cloudformation", "Action=DescribeStacks&Version=2010-05-15", "cloudformation"},
+		{"iam", "Action=ListRoles&Version=2010-05-08", "iam"},
+		{"sts", "Action=GetCallerIdentity&Version=2011-06-15", "sts"},
 
-		// SQS and CloudWatch are served over the Query protocol by Overcast and
-		// are absent from the generated query registry, because the pinned AWS
-		// models no longer declare Query for them — SQS's model is awsJson1_0
-		// only. The registry is generated from what AWS models, so the fact
-		// that Overcast still answers these on the Query wire has to come from
-		// Overcast's own declarations, and today it comes from nowhere.
+		// SQS and CloudWatch, the two services this file was written to record
+		// as broken. Both are served on the Query wire by Overcast and were
+		// absent from the generated query index, so every unsigned request to
+		// them was labelled — and IAM-authorised — as s3.
 		//
-		// Skipped rather than deleted: the expectation is right and the
-		// classifier is wrong. See the follow-up that sweeps every service and
-		// operation across both the trace and log paths.
-		{"sqs", "Action=GetQueueUrl&Version=2012-11-05&QueueName=q", "sqs", true},
-		{"sqs create", "Action=CreateQueue&Version=2012-11-05&QueueName=q", "sqs", true},
-		{"cloudwatch", "Action=PutMetricAlarm&Version=2010-08-01&AlarmName=a", "cloudwatch", true},
-		{"version first", "Version=2012-11-05&Action=ListQueues", "sqs", true},
+		// They were absent for two different reasons, and both are now fixed in
+		// cmd/awsmodelgen. CloudWatch's model does declare awsQuery, additively
+		// alongside awsJson1_0, and the index was built from each model's
+		// primary protocol alone. SQS's model declares no Query at all, because
+		// AWS migrated it off the wire it still accepts, so it is named in
+		// overcastQueryServices — the one place Overcast states which wires it
+		// answers that AWS has stopped describing.
+		{"sqs", "Action=GetQueueUrl&Version=2012-11-05&QueueName=q", "sqs"},
+		{"sqs create", "Action=CreateQueue&Version=2012-11-05&QueueName=q", "sqs"},
+		{"cloudwatch", "Action=PutMetricAlarm&Version=2010-08-01&AlarmName=a", "cloudwatch"},
+		{"version first", "Version=2012-11-05&Action=ListQueues", "sqs"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.known {
-				t.Skip("known gap: served over Query by Overcast, absent from the generated query registry")
-			}
 			r, body := queryRequest(tc.body)
 			if got := detectService(r, body); got != tc.want {
 				t.Errorf("detectService(%s) = %q, want %q", tc.body, got, tc.want)

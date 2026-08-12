@@ -1,5 +1,7 @@
 package awsapi
 
+import "sort"
+
 // Protocol identifies the wire protocol declared by an AWS Smithy service model.
 type Protocol string
 
@@ -103,6 +105,43 @@ func WalkOperations(visit func(Operation) bool) {
 
 // ServiceKey maps a modeled service identity to Overcast's established key.
 func ServiceKey(modelService string) string { return overcastService(modelService) }
+
+// IsServiceKey reports whether service is an established Overcast service key —
+// the name detectService answers with and IAM enforcement authorises against —
+// rather than a modeled identity that aliases to one, or a string a caller
+// invented.
+//
+// It exists for Smithy RPC v2, which is the one protocol that names its service
+// in a URI label. Every other wire attaches the service to something the
+// registry can resolve — a target, an (Action, Version) pair, a path — and so
+// answers "is this a service?" incidentally. A label has nothing attached, and
+// the router will dispatch on it before consulting the registry, so the
+// classifier has to be able to ask the question directly or believe whatever
+// arrives.
+//
+// A key is either a modeled identity that no alias moves, or the target of an
+// alias. Both halves are needed: "ecs" is a modeled identity Overcast keeps,
+// "apigateway" is spelled by no model at all (the models say "api-gateway" and
+// "apigatewayv2"), and "cloudwatch-events" is a modeled identity that is *not*
+// a key, because it aliases to eventbridge.
+func IsServiceKey(service string) bool {
+	if service == "" {
+		return false
+	}
+	i := sort.SearchStrings(modelServices, service)
+	if i < len(modelServices) && modelServices[i] == service && overcastService(service) == service {
+		return true
+	}
+	// Alias targets are few and this runs only for an RPC v2 label, so a scan
+	// costs less than a second generated index that could disagree with the
+	// first.
+	for _, alias := range serviceAliases {
+		if alias.OvercastService == service {
+			return true
+		}
+	}
+	return false
+}
 
 // WalkSigningNames visits each distinct (Overcast service key, SigV4 signing
 // name) pair the pinned models declare, stopping early if visit returns false.
