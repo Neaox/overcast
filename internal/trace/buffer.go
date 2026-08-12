@@ -293,6 +293,9 @@ func (b *Buffer) ListSummaries(filter ListFilter) ([]Summary, string) {
 		if f.hopsFor != "" && !rec.HasHop(f.hopsFor) {
 			continue
 		}
+		if !rec.MatchesSearch(f.search) {
+			continue
+		}
 		s := rec.Summary()
 		if !matchSummary(s, f) {
 			continue
@@ -360,23 +363,14 @@ func (b *Buffer) ListSummaries(filter ListFilter) ([]Summary, string) {
 }
 
 // matchSummary applies the filters that need fields only a live read can
-// supply. The method and path filters are applied before the summary is taken;
-// see ListSummaries.
+// supply. The method and path filters are applied before the summary is taken,
+// and the search term by Recorder.MatchesSearch — which reaches fields a
+// Summary does not carry; see ListSummaries.
 func matchSummary(s Summary, f compiledFilter) bool {
 	if f.service != "" && !strings.EqualFold(s.Service, f.service) {
 		return false
 	}
-	if !matchesAny(f.statuses, s.StatusCode, statusMatches) {
-		return false
-	}
-	if f.search != "" {
-		if !strings.Contains(strings.ToLower(s.RequestID), f.search) &&
-			!strings.Contains(strings.ToLower(s.Path), f.search) &&
-			!strings.Contains(strings.ToLower(s.Service), f.search) {
-			return false
-		}
-	}
-	return true
+	return matchesAny(f.statuses, s.StatusCode, statusMatches)
 }
 
 // matchesAny reports whether subject satisfies any of the filter values. An

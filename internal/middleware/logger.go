@@ -620,8 +620,16 @@ func Logger(logger *zap.Logger, clk clock.Clock) func(http.Handler) http.Handler
 
 			reqID := protocol.RequestIDFromContext(r.Context())
 			duration := clk.Since(start)
-			svc := detectService(r)
-			op := detectOperationForService(r, svc)
+			// Classified with the body the handler already read, not without
+			// it. detectService takes it variadically, and omitting it here
+			// silently disabled the step that classifies Query-protocol
+			// requests by their Action — so every unsigned SQS, SNS or
+			// CloudFormation call was logged under the s3 fallback, which is
+			// what the field defaults to when nothing else claims the request.
+			// captured() adds no read: see its doc comment.
+			body := capture.captured()
+			svc := detectService(r, body)
+			op := detectOperationForService(r, svc, body)
 
 			log := serviceutil.NewServiceLogger(logger, svc)
 			if op != "" {

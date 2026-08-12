@@ -74,6 +74,7 @@ func debugHandlers(cfg *config.Config, store state.Store, ec2 debugEC2Provider, 
 		r.Get("/trace/{requestId}", debugTraceGet(traceBuf))
 		r.Get("/traces", debugTraceList(traceBuf))
 		r.Get("/traces/count", debugTraceCount(traceBuf))
+		r.Get("/traces/search", debugTraceSearch(traceBuf))
 
 		// ---- Service-specific debug endpoints ---------------------------------
 		if ec2 != nil {
@@ -686,6 +687,49 @@ func debugTraceList(buf *trace.Buffer) http.HandlerFunc {
 			"traces":     entries,
 			"nextCursor": nextCursor,
 		})
+	}
+}
+
+// minDeepSearchQuery is the shortest query the deep scan will run.
+//
+// A one- or two-character query matches nearly every body in the ring. The
+// result is expensive to produce and worthless to read, and it is never what
+// anyone meant — it is what a search box looks like halfway through a word.
+const minDeepSearchQuery = 3
+
+// debugTraceSearch scans retained traces for a string in their bodies, hop
+// errors and log entries — the fields the list's own search deliberately does
+// not reach.
+//
+// One call scans a budget's worth and returns a cursor; the caller decides
+// whether to continue. That is what makes an abandoned search cheap: the client
+// stops asking, and a call already in flight stops as soon as the connection
+// closes, because r.Context() is cancelled and DeepSearch checks it between
+// hops rather than between traces.
+func debugTraceSearch(buf *trace.Buffer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if buf == nil {
+			writeDebugJSON(w, http.StatusNotFound, map[string]string{"error": "trace buffer not available"})
+			return
+		}
+		q := r.URL.Query()
+		query := strings.TrimSpace(q.Get("q"))
+		if len([]rune(query)) < minDeepSearchQuery {
+			// Said rather than silently ignored: a caller that gets an empty
+			// result for a two-character query has no way to tell "nothing
+			// matched" from "we did not look".
+			writeDebugJSON(w, http.StatusBadRequest, map[string]any{
+				"error":     "query too short",
+				"minLength": minDeepSearchQuery,
+			})
+			return
+		}
+		result := buf.DeepSearch(r.Context(), trace.DeepFilter{
+			Query:           query,
+			Cursor:          q.Get("cursor"),
+			IncludeInternal: q.Get("internal") == "true",
+		})
+		writeDebugJSON(w, http.StatusOK, result)
 	}
 }
 

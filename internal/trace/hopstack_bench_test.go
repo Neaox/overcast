@@ -97,6 +97,13 @@ func BenchmarkBufferListSummaries(b *testing.B) {
 		{"errors", ListFilter{Statuses: []string{"4xx", "5xx"}, Limit: 50}},
 		{"methods", ListFilter{Methods: []string{"GET", "POST"}, Limit: 50}},
 		{"hopsFor", ListFilter{HopsFor: "hop-999-19", Limit: 50}},
+		// Search is the widest path: it is the only filter that reads fields
+		// out from under the recorder's lock for every retained trace, and the
+		// web UI re-runs the whole list once a second while someone types. The
+		// miss case is the one that matters — a query matching nothing still
+		// pays for every field of every trace.
+		{"searchHit", ListFilter{Search: "createqueue", Limit: 50}},
+		{"searchMiss", ListFilter{Search: "no-such-term", Limit: 50}},
 	}
 	for _, bm := range benchmarks {
 		b.Run(bm.name, func(b *testing.B) {

@@ -118,3 +118,58 @@ export interface TraceListParams {
   hopsFor?: string
   limit?: number
 }
+
+/**
+ * Where in a trace a deep search found its query. Mirrors trace.MatchField —
+ * the server's names, not the UI's, so a new field added there shows up here as
+ * a type error rather than silently rendering as an unlabelled match.
+ */
+export type TraceMatchField =
+  | "log"
+  | "hopError"
+  | "hopResponse"
+  | "hopRequest"
+  | "requestBody"
+  | "responseBody"
+
+/**
+ * One trace a deep search matched, and where.
+ *
+ * `before`/`text`/`after` are the excerpt already split around the match, so
+ * rendering the highlight is a matter of three spans rather than searching the
+ * text again and guessing which occurrence was the one that matched.
+ *
+ * A match inside a body that is not text carries `binary` and an `offset`
+ * instead of an excerpt: rendering CBOR as a string produces mojibake that
+ * reads as corruption in the payload rather than an artefact of the search.
+ */
+export interface TraceMatch {
+  requestId: string
+  field: TraceMatchField
+  hopId?: string
+  label: string
+  before?: string
+  text?: string
+  after?: string
+  binary?: boolean
+  offset?: number
+  summary: TraceSummary
+}
+
+export interface TraceSearchResponse {
+  matches: TraceMatch[]
+  /** Resumes the scan. Absent once `done`. */
+  nextCursor?: string
+  /** The scan reached the oldest retained trace. */
+  done: boolean
+  /** The scan stopped because the caller went away, not because it finished. */
+  cancelled?: boolean
+  scanned: number
+  remaining: number
+}
+
+export interface TraceSearchParams {
+  q: string
+  cursor?: string
+  internal?: boolean
+}

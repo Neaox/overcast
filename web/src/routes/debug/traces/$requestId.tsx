@@ -24,6 +24,18 @@ export const Route = createFileRoute("/debug/traces/$requestId")({
   head: ({ params }) => ({
     meta: [{ title: `Trace ${params.requestId.slice(0, 12)}… — Overcast` }],
   }),
+  /**
+   * `hop` selects one of the trace's hops on arrival.
+   *
+   * It lives in the URL rather than in component state because it is how the
+   * search results link here: a deep match found in hop 42's response body has
+   * to open hop 42, not the top of a three-hundred-hop trace. Told only which
+   * trace to open, the reader would have to find the match by hand again —
+   * which is the work the search just did for them.
+   */
+  validateSearch: (search: Record<string, unknown>): { hop?: string } => ({
+    hop: typeof search.hop === "string" && search.hop ? search.hop : undefined,
+  }),
   component: function TraceDetailRoute() {
     const { requestId } = Route.useParams()
     return <TraceDetailPage key={requestId} />
@@ -142,7 +154,11 @@ function TraceDetailPage() {
 
 function OverviewTab({ trace }: { trace: TraceEntry }) {
   const [hopView, setHopView] = useState<HopView>("sequence")
-  const [selectedHopId, setSelectedHopId] = useState<string | null>(null)
+  // Seeded from the URL so a link from a search result opens the hop the match
+  // was found in. Selecting another one afterwards is ordinary local state —
+  // the URL names where you arrived, not every click since.
+  const { hop: initialHopId } = Route.useSearch()
+  const [selectedHopId, setSelectedHopId] = useState<string | null>(initialHopId ?? null)
 
   const hops = trace.hops ?? []
   const hasHops = hops.length > 0
