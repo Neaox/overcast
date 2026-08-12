@@ -142,6 +142,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		Ceiling: cfg.DebugTraceCeiling,
 		Window:  cfg.DebugTraceWindow,
 		Pinned:  cfg.DebugTracePinned,
+		Bytes:   cfg.DebugTraceBytes,
 	}, clk)
 
 	// ---- Middleware chain --------------------------------------------------

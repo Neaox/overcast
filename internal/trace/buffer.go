@@ -49,6 +49,10 @@ type Buffer struct {
 	index    map[string]*slot
 	policy   RetentionPolicy
 	clk      clock.Clock
+	// bytes is the retained body total the byte backstop bounds. It is
+	// maintained by dropLocked and Settle — the two places a trace's
+	// contribution can change — so that it never has to be recomputed.
+	bytes int64
 }
 
 // NewBuffer creates a fixed-size buffer holding capacity user-facing traces.
@@ -112,7 +116,7 @@ func (b *Buffer) Add(rec *Recorder) {
 	if rec.internal {
 		s := &slot{rec: rec}
 		if evicted := b.internal.push(s); evicted != nil {
-			delete(b.index, evicted.rec.requestID)
+			b.dropLocked(evicted)
 		}
 		b.index[rec.requestID] = s
 		return
@@ -131,8 +135,46 @@ func (b *Buffer) Add(rec *Recorder) {
 	b.index[rec.requestID] = s
 }
 
-// Cull reclaims overflow that has aged past the retention window. Add does this
-// too; this is for callers that want it to happen without an arrival.
+// Settle accounts for a trace's retained size once its response is recorded.
+// The DebugTrace middleware calls it after the handler returns.
+//
+// Size is sampled here rather than maintained as the trace is built: the bodies
+// are final at this point, and a running total updated from AddHop and AddLog
+// would touch the hottest paths in a deploy thousands of times per trace to
+// keep a number read rarely. What grows afterwards — hop metadata and capped
+// log entries — is the small, bounded remainder.
+func (b *Buffer) Settle(rec *Recorder) {
+	if b == nil || rec == nil || rec.requestID == "" {
+		return
+	}
+	size := rec.retainedBytes()
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s, ok := b.index[rec.requestID]
+	if !ok || s.rec != rec {
+		// Already evicted, or the ID was re-registered with a different
+		// recorder; either way this measurement is not about what is held.
+		return
+	}
+	b.bytes += size - s.bytes
+	s.bytes = size
+	b.enforceBytesLocked()
+}
+
+// RetainedBytes reports the request and response body bytes currently held.
+func (b *Buffer) RetainedBytes() int64 {
+	if b == nil {
+		return 0
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.bytes
+}
+
+// Cull reclaims overflow that has aged past the retention window, and anything
+// over the byte budget. Add does both; this is for callers that want it to
+// happen without an arrival.
 func (b *Buffer) Cull() {
 	if b == nil {
 		return
@@ -140,6 +182,28 @@ func (b *Buffer) Cull() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.cullLocked()
+	b.enforceBytesLocked()
+}
+
+// enforceBytesLocked reclaims the oldest live traces until the retained bodies
+// fit the budget, stopping at the floor.
+//
+// Stopping there is the point. The backstop exists to make the *ceiling* safe,
+// not to overrule rule 1: a floor that is itself over budget is the operator's
+// own configuration, and silently discarding what they asked to keep would be
+// the worse failure. Pinned traces are not reclaimed here either — they are
+// what somebody came back for. Callers must hold b.mu.
+func (b *Buffer) enforceBytesLocked() {
+	if b.policy.Bytes <= 0 {
+		return
+	}
+	for b.bytes > b.policy.Bytes && b.live.len() > b.policy.Floor {
+		s := b.live.popOldest()
+		if s == nil {
+			return
+		}
+		b.retireLocked(s)
+	}
 }
 
 // cullLocked drops live traces older than the window, down to the floor.
@@ -191,6 +255,18 @@ func (b *Buffer) retireLocked(s *slot) {
 		b.pinLocked(s)
 		return
 	}
+	b.dropLocked(s)
+}
+
+// dropLocked forgets a trace entirely, returning its bytes to the budget.
+//
+// Every path that removes an index entry goes through here. Accounting that
+// only ever goes up is a budget that ratchets shut, and the failure mode is
+// silent: retention quietly shrinks to the floor and stays there.
+// Callers must hold b.mu.
+func (b *Buffer) dropLocked(s *slot) {
+	b.bytes -= s.bytes
+	s.bytes = 0
 	delete(b.index, s.rec.requestID)
 }
 
@@ -200,7 +276,7 @@ func (b *Buffer) pinLocked(s *slot) {
 	if evicted := b.pinned.push(s); evicted != nil {
 		evicted.inPinned = false
 		if !evicted.inLive {
-			delete(b.index, evicted.rec.requestID)
+			b.dropLocked(evicted)
 		}
 	}
 }

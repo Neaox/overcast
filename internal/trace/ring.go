@@ -19,6 +19,11 @@ type slot struct {
 	// disagreeing about whether it still exists.
 	inLive   bool
 	inPinned bool
+	// bytes is this trace's contribution to the buffer's retained total,
+	// sampled by Settle once the response is recorded. It is held here rather
+	// than recomputed on eviction so that what is subtracted is exactly what
+	// was added, however the recorder has changed in between.
+	bytes int64
 }
 
 // ring is a fixed-capacity, insertion-ordered ring of slots.

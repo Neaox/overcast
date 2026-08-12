@@ -89,6 +89,10 @@ func DebugTrace(cfg *config.Config, buf *trace.Buffer, clk clock.Clock) func(htt
 				rec.SetResponseBodyOmitted(trace.OmitSize)
 			}
 			rec.SetDuration(clk.Since(start))
+			// The bodies are final now, so this is where the trace's retained
+			// size is measured — once, off the hot path, rather than being
+			// maintained by every AddHop a deploy makes. See Buffer.Settle.
+			buf.Settle(rec)
 		})
 	}
 }

@@ -186,6 +186,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_DEBUG_TRACE_CEILING`   | `10000`                | How far a burst may grow retention past the floor |
 | `OVERCAST_DEBUG_TRACE_WINDOW`    | `1h`                   | How long traces above the floor survive before being reclaimed |
 | `OVERCAST_DEBUG_TRACE_PINNED`    | `1000`                 | Traces kept because they went wrong, exempt from the floor and the window |
+| `OVERCAST_DEBUG_TRACE_BYTES_MB`  | `512`                  | Retained request/response body budget. Reclaims the burst down to the floor; never below it |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
 | `OVERCAST_ENFORCE_IAM`           | `false`                | Evaluate the calling principal's IAM policies before each request and return AWS-shaped `AccessDenied` when they do not allow it. **Off by default**; with it off nothing is evaluated and no policy is read. See [iam.md § Request-time enforcement](./services/iam.md#request-time-enforcement-opt-in) |
 | `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests that exceed their usage plan's throttle or quota with AWS's `429`. Off by default: the limits are measured and reported (`GetUsage`, `apigateway:Throttled` events) but never rejected — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |

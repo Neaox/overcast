@@ -339,9 +339,12 @@ the first two hundred, two hours on a fake clock, all three still retrievable in
 **Deliberately not in it**, because each needs per-trace size accounting that neither the mechanics
 nor the counters have yet, and because one reviewable change is worth more than one large one:
 
-- **The byte backstop.** Retention is bounded by count only. At the shipped ceiling that is ~10,000
-  traces; typical ones are 2–5 KiB, so ~50 MB, but ten thousand 1 MiB uploads would be ~10 GB. Real,
-  not exotic — a seeding script does exactly that — so this is the first follow-up.
+- ~~**The byte backstop.**~~ ✅ shipped. `RetentionPolicy.Bytes`
+  (`OVERCAST_DEBUG_TRACE_BYTES_MB`, default 512) reclaims the oldest overflow until the retained
+  bodies fit, stopping at the floor and never touching a pinned trace. Size is sampled once by
+  `Buffer.Settle`, called by the middleware after the response is recorded — the plan's "do not
+  account for it on the write path" made concrete. Every index deletion routes through `dropLocked`
+  so the total cannot ratchet shut, which is the failure mode that would be silent.
 - **Family pinning.** A pinned parent does not yet pin the calls it made, so its hop bodies can
   report `evicted`. Phase 3 is what makes that survivable: the hop keeps its metadata and the notice
   says the body is gone rather than rendering an empty panel.
