@@ -11,8 +11,6 @@ import type { TraceMatch, TraceMatchField } from "@/types"
 const FIELD_LABELS: Record<TraceMatchField, string> = {
   log: "log",
   hopError: "hop error",
-  hopResponse: "hop response",
-  hopRequest: "hop request",
   requestBody: "request body",
   responseBody: "response body",
 }

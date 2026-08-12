@@ -3,10 +3,14 @@ package trace
 // Deep search — finding a trace by something it said.
 //
 // Recorder.MatchesSearch matches the short scalar fields and stops there,
-// because everything else a trace holds is unbounded: up to MaxHopBodyBytes of
-// hop bodies and 500 log entries each, across a ring of a thousand. Scanning
-// all of it is a gigabyte-scale job in the worst case, which is exactly the
-// case worth searching — a CDK deploy fills the ring with traces at the cap.
+// because everything else a trace holds is large: a request and response body
+// of up to 1 MiB each and 500 log entries, across a ring of a thousand.
+// Scanning all of it is a gigabyte-scale job in the worst case, which is
+// exactly the case worth searching — a CDK deploy fills the ring.
+//
+// Hop bodies are no longer part of that. A hop retains none: the call it
+// records is a trace of its own and is scanned as itself, so the same bytes are
+// no longer walked twice per search.
 //
 // So this is not a list filter. It is a budgeted, resumable, cancellable scan:
 // one call walks backwards from a cursor until it has scanned its budget,
@@ -51,10 +55,12 @@ const excerptRadius = 60
 type MatchField string
 
 const (
-	MatchLog          MatchField = "log"
-	MatchHopError     MatchField = "hopError"
-	MatchHopResponse  MatchField = "hopResponse"
-	MatchHopRequest   MatchField = "hopRequest"
+	MatchLog      MatchField = "log"
+	MatchHopError MatchField = "hopError"
+	// There is no hopRequest / hopResponse. A hop retains no bodies — the call
+	// it records is a trace of its own, and this scan walks every retained
+	// trace, so a body matches once as that trace's own requestBody or
+	// responseBody rather than twice.
 	MatchRequestBody  MatchField = "requestBody"
 	MatchResponseBody MatchField = "responseBody"
 )
@@ -321,24 +327,15 @@ func scanTrace(ctx context.Context, rec *Recorder, needle []byte) (*Match, int, 
 		if i%16 == 0 && ctx.Err() != nil {
 			return nil, cost, true
 		}
+		// The error, and only the error: a hop retains no bodies. The call it
+		// records is a trace in its own right, and this scan walks every
+		// retained trace — so those bodies are still found, once, on the trace
+		// that owns them rather than twice. A match reports the callee's own
+		// request or response, and the hops tab links the two directions.
 		hop := &snap.hops[i]
-		if at := indexFoldString(hop.Error, needle); at >= 0 {
-			cost += len(hop.Error)
-			return newMatch(rec, snap, MatchHopError, hop.ID, hopLabel(hop), []byte(hop.Error), at, len(needle)), cost, false
-		}
 		cost += len(hop.Error)
-
-		for _, candidate := range []struct {
-			field MatchField
-			body  []byte
-		}{
-			{MatchHopResponse, hop.ResponseBody},
-			{MatchHopRequest, hop.RequestBody},
-		} {
-			cost += len(candidate.body)
-			if at := indexFold(candidate.body, needle); at >= 0 {
-				return newMatch(rec, snap, candidate.field, hop.ID, hopLabel(hop), candidate.body, at, len(needle)), cost, false
-			}
+		if at := indexFoldString(hop.Error, needle); at >= 0 {
+			return newMatch(rec, snap, MatchHopError, hop.ID, hopLabel(hop), []byte(hop.Error), at, len(needle)), cost, false
 		}
 	}
 

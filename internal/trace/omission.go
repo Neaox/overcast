@@ -19,19 +19,29 @@ const (
 	// OmitNone means the body is intact — or that there was never a body.
 	OmitNone OmitReason = ""
 
-	// OmitSize means the body exceeded a per-body cap and was cut short, with
-	// the leading bytes retained: MaxHopBody for a hop, the middleware's
-	// maxTraceBody for the request or response itself.
+	// OmitSize means the body exceeded the middleware's maxTraceBody cap and
+	// was cut short, with the leading bytes retained.
 	OmitSize OmitReason = "size"
 
-	// OmitTraceBudget means the trace had already retained MaxHopBodyBytes of
-	// hop bodies, so this one was dropped in full. Everything else about the
-	// hop — ordering, timing, service, operation, outcome — is still recorded;
-	// see chargeHopBodiesLocked for why the hop is kept rather than dropped.
+	// OmitTraceBudget means one response had already inlined
+	// MaxInlinedHopBodies worth of hop bodies, so this hop's were left out of
+	// that response. Nothing was deleted: a hop is a dispatched request with a
+	// trace of its own, and that trace still holds the bodies in full — which
+	// is what the UI's notice links to.
 	//
-	// This is the loss a CDK deploy actually hits: one deploy trace exhausts
-	// the budget partway through, and every hop after it carries no bodies.
+	// A CDK deploy is what makes this necessary. One trace dispatches thousands
+	// of hops and a reader opens them one at a time, so serving every body in
+	// one payload spends megabytes to render a table.
 	OmitTraceBudget OmitReason = "trace-budget"
+
+	// OmitEvicted means the hop's own trace is no longer retained, so its
+	// bodies cannot be resolved. The hop's metadata — service, operation,
+	// status, timing, ordering — is unaffected: that lives on the parent.
+	//
+	// A parent does not normally outlive the calls it made, since a child trace
+	// is created during the parent's processing and is therefore newer. Pinning
+	// a failed parent is what will make this reachable.
+	OmitEvicted OmitReason = "evicted"
 
 	// OmitStreaming means the response was streamed (an SSE endpoint, a
 	// Lambda response stream) and no body was ever captured. Nothing was

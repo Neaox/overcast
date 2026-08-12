@@ -13,14 +13,15 @@ import (
 	"github.com/Neaox/overcast/internal/trace"
 )
 
-// Internal dispatch hop bodies must be bounded like top-level trace entries:
-// an oversized request or response routed through the provisioner must not be
-// pinned whole in the trace ring buffer.
-func TestInternalRequest_oversizedHopBodiesAreCapped(t *testing.T) {
+// A deploy dispatching megabytes internally must pin none of it on the calling
+// trace. The dispatch is itself a traced request, so the hop names it and the
+// bodies are resolved from there on read — recording a copy here would double
+// what the ring holds for exactly the largest traces.
+func TestInternalRequest_hopPinsNoBodiesAndNamesTheCall(t *testing.T) {
 	// Given: a debug trace recorder and a dispatch with >1 MiB bodies both ways
 	rec := trace.NewRecorder("req-1", time.Unix(0, 0), "POST", "/", "localhost", "", http.Header{})
 	ctx := trace.ContextWithRecorder(context.Background(), rec)
-	big := bytes.Repeat([]byte("x"), trace.MaxHopBody+4096)
+	big := bytes.Repeat([]byte("x"), (1<<20)+4096)
 	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(big)
 	})
@@ -30,20 +31,18 @@ func TestInternalRequest_oversizedHopBodiesAreCapped(t *testing.T) {
 		t.Fatalf("internalRequest returned error: %v", err)
 	}
 
-	// Then: the recorded hop stores capped bodies, not the originals
+	// Then: the hop holds no body bytes at all
 	hops := rec.Entry().Hops
 	if len(hops) != 1 {
 		t.Fatalf("hops = %d, want 1", len(hops))
 	}
-	if got := len(hops[0].RequestBody); got != trace.MaxHopBody {
-		t.Errorf("len(hop RequestBody) = %d, want %d", got, trace.MaxHopBody)
+	if got := len(hops[0].RequestBody) + len(hops[0].ResponseBody); got != 0 {
+		t.Errorf("hop retained %d body bytes, want none", got)
 	}
-	if got := len(hops[0].ResponseBody); got != trace.MaxHopBody {
-		t.Errorf("len(hop ResponseBody) = %d, want %d", got, trace.MaxHopBody)
-	}
-	if hops[0].RequestBodyOmitted != trace.OmitSize || hops[0].ResponseBodyOmitted != trace.OmitSize {
-		t.Errorf("omission reasons = (%q, %q), want both %q",
-			hops[0].RequestBodyOmitted, hops[0].ResponseBodyOmitted, trace.OmitSize)
+	// And: it names the request they can be resolved from, which is the whole
+	// basis for not keeping them.
+	if hops[0].RequestID == "" {
+		t.Error("hop carries no RequestID, so its bodies could never be resolved")
 	}
 }
 
