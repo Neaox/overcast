@@ -140,37 +140,93 @@ func TestRegistryClaimRPC_additiveCBORProtocol(t *testing.T) {
 	}
 }
 
-func TestRegistryClaimTarget_collidingService(t *testing.T) {
+// TestRegistryClaimTarget_collidingAliasedIdentities covers the collision that
+// is not one. The models carry EventBridge twice, as "cloudwatch-events" and
+// "eventbridge", so awsmodelgen blanks the service on all 51 of its targets —
+// but both identities are one service, serviceAliases says so, and there is
+// nothing to choose between a service and itself.
+//
+// Before this resolved, every EventBridge JSON call was labelled with the S3
+// fallback in the request log and the debug trace, and IAM-authorised as an
+// `s3:` action.
+func TestRegistryClaimTarget_collidingAliasedIdentities(t *testing.T) {
 	// Given: a modeled target shared by CloudWatch Events and EventBridge.
 	registry := NewRegistry()
 
 	// When: its immutable registry entry is claimed.
 	claim, ok := registry.ClaimTarget("AWSEvents.CreateEventBus")
 
-	// Then: the shared wire operation is usable for its error profile but is
-	// deliberately not attributed to an arbitrary service identity.
+	// Then: it names the one service both identities are, and is no longer
+	// ambiguous. ModelService stays empty: the generated entry retains no
+	// single source identity, because the models genuinely declared two.
 	if !ok {
 		t.Fatal("ClaimTarget() did not recognize AWSEvents.CreateEventBus")
+	}
+	if claim.Ambiguous || claim.Service != "eventbridge" {
+		t.Errorf("ClaimTarget() = %+v, want an unambiguous eventbridge claim", claim)
+	}
+}
+
+// TestRegistryClaimTarget_collidingUnresolvedServices is the other half of the
+// same rule: a collision between services that really are different, and that
+// no Overcast declaration resolves, stays ambiguous. Timestream Query and
+// Timestream Write share four targets and Overcast implements neither, so
+// there is nothing to prefer and preferring anything would be the invention
+// the generator refused to make.
+func TestRegistryClaimTarget_collidingUnresolvedServices(t *testing.T) {
+	// Given: a modeled target shared by two services that are not aliases.
+	registry := NewRegistry()
+
+	// When: its immutable registry entry is claimed.
+	claim, ok := registry.ClaimTarget("Timestream_20181101.DescribeEndpoints")
+
+	// Then: it is still unattributed.
+	if !ok {
+		t.Fatal("ClaimTarget() did not recognize Timestream_20181101.DescribeEndpoints")
 	}
 	if !claim.Ambiguous || claim.ModelService != "" || claim.Service != "" {
 		t.Errorf("ClaimTarget() = %+v, want an unassigned ambiguous claim", claim)
 	}
 }
 
-func TestRegistryClaimQuery_collidingService(t *testing.T) {
+// TestRegistryClaimQuery_collidingServiceResolvedByVersionOwner covers the
+// collision that is real but one-sided. DocumentDB, Neptune and RDS share the
+// 2014-10-31 API version and most of its action names — all 71 collisions in
+// the query index are these three — and Overcast implements only RDS, which is
+// what queryVersionOwners records and what rds.OwnsVersion routes by.
+func TestRegistryClaimQuery_collidingServiceResolvedByVersionOwner(t *testing.T) {
 	// Given: a Query key shared by DocumentDB, Neptune, and RDS.
 	registry := NewRegistry()
 
 	// When: its immutable registry entry is claimed.
 	claim, ok := registry.ClaimQuery("2014-10-31", "CreateDBCluster")
 
-	// Then: the shared wire operation keeps its Query error profile without
-	// inventing an owner that would corrupt later coverage reporting.
+	// Then: the declared owner of the version settles it.
 	if !ok {
 		t.Fatal("ClaimQuery() did not recognize CreateDBCluster")
 	}
-	if !claim.Ambiguous || claim.ModelService != "" || claim.Service != "" {
-		t.Errorf("ClaimQuery() = %+v, want an unassigned ambiguous claim", claim)
+	if claim.Ambiguous || claim.Service != "rds" {
+		t.Errorf("ClaimQuery() = %+v, want an unambiguous rds claim", claim)
+	}
+}
+
+// TestResolveCollision_honoursOnlyDeclarationsThatCollided states the guard
+// that keeps queryVersionOwners a tie-break rather than an override. A declared
+// owner is used only when it is one of the modeled services that actually
+// collided, so an entry that goes stale — a version whose family the models
+// reshuffle — cannot hand its service an action that service never declared.
+func TestResolveCollision_honoursOnlyDeclarationsThatCollided(t *testing.T) {
+	collisions := []operationCollision{
+		{Key: "shared", Services: []string{"docdb", "neptune"}},
+	}
+	if got := resolveCollision(collisions, "shared", "rds"); got != "" {
+		t.Errorf("resolveCollision() = %q for an owner that did not collide, want \"\"", got)
+	}
+	if got := resolveCollision(collisions, "shared", "neptune"); got != "neptune" {
+		t.Errorf("resolveCollision() = %q, want neptune", got)
+	}
+	if got := resolveCollision(collisions, "absent", "rds"); got != "" {
+		t.Errorf("resolveCollision() = %q for a key that never collided, want \"\"", got)
 	}
 }
 

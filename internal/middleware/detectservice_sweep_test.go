@@ -83,7 +83,6 @@ func TestClassifiesEveryDeclaredOperationOnItsContentWire(t *testing.T) {
 	// When: each is classified by the trace path and by the log path.
 	// Then: both name the service that answers it and the operation it asked for.
 	var wrong []string
-	stillUnattributed := map[string]bool{}
 	seen := map[string]bool{}
 	for _, probe := range probes {
 		for _, path := range []struct {
@@ -95,16 +94,6 @@ func TestClassifiesEveryDeclaredOperationOnItsContentWire(t *testing.T) {
 		} {
 			gotService, gotOp := path.classify(t, probe.build())
 			if gotService == probe.service && gotOp == probe.op {
-				continue
-			}
-			// A modeled key several services declare. The operation is still
-			// named — an action is unambiguous even when its owner is not — so
-			// the miss is the service alone, and it is recorded rather than
-			// asserted. Only some of a service's operations collide, so this is
-			// counted per service rather than required of every probe. See
-			// unattributed.
-			if unattributed[probe.service] && gotService == "s3" && gotOp == probe.op {
-				stillUnattributed[probe.service] = true
 				continue
 			}
 			// Collapsed per (shape, path, service, answer): a whole service
@@ -128,51 +117,6 @@ func TestClassifiesEveryDeclaredOperationOnItsContentWire(t *testing.T) {
 			"authorised as an s3: action.",
 			len(wrong), strings.Join(wrong, "\n\t"))
 	}
-	var closed []string
-	for service := range unattributed {
-		if !stillUnattributed[service] {
-			closed = append(closed, service)
-		}
-	}
-	sort.Strings(closed)
-	if len(closed) > 0 {
-		t.Errorf("recorded as unattributable but now classified on every operation — "+
-			"the gap closed, so stop recording it:\n\t%s", strings.Join(closed, "\n\t"))
-	}
-}
-
-// unattributed records the services whose content-classified requests the
-// generated registry cannot attribute, because several modeled services declare
-// the same key and awsmodelgen blanks the service rather than guess between
-// them. detectService then falls through to the S3 fallback.
-//
-// This is a real defect and it is deliberately not fixed here. It is one root
-// cause with one fix, and that fix belongs to the registry rather than to the
-// classifier: the collision lists are already generated beside the indexes
-// (targetCollisions, queryCollisions), and in both live cases Overcast
-// implements exactly one of the colliding services, so the ambiguity is
-// resolvable — but resolving it changes which service the *router* attributes
-// an unimplemented operation to (writeNotImplemented, smithyRPCServiceFor,
-// whose doc comment turns on exactly this hazard), which is a wider blast
-// radius than the classification fix this file accompanies.
-//
-//   - eventbridge: the collision is spurious. "cloudwatch-events" and
-//     "eventbridge" are two modeled identities of one AWS service, so every
-//     collider means the same thing and nothing actually needs choosing.
-//   - rds: the collision is real but one-sided. DocumentDB and Neptune share
-//     RDS's API version and most of its action names; Overcast implements
-//     none of the three but RDS.
-//
-// **Do not add an entry here to make a new failure go away.** An entry is a
-// claim that no signal in the request can name the service, which is true only
-// when several *modeled* services declare the key. Anything else — a service
-// missing from an index, a wire Overcast serves that AWS no longer models — is
-// the defect this file exists to catch, and belongs in the registry instead.
-// Recorded entries are held to their exact failure, and a service that starts
-// classifying correctly fails this test until its entry is removed.
-var unattributed = map[string]bool{
-	"eventbridge": true,
-	"rds":         true,
 }
 
 func orNone(op string) string {

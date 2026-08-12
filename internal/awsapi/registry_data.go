@@ -107,6 +107,15 @@ var serviceAliases = []serviceAlias{
 	{ModelService: "apigatewayv2", OvercastService: "apigateway"},
 	{ModelService: "auto-scaling", OvercastService: "autoscaling"},
 	{ModelService: "bedrock-runtime", OvercastService: "bedrock"},
+	// EventBridge under its former name. The models carry the same service
+	// twice — "cloudwatch-events" declares 51 operations, every one of them
+	// also declared by "eventbridge", and it binds no REST URI of its own — so
+	// the two identities collide on all 51 X-Amz-Targets and awsmodelgen
+	// blanks the service for each. Aliasing them together is what makes that a
+	// non-collision: nothing has to be chosen between a service and itself.
+	// Without it every EventBridge JSON call was classified as the S3
+	// fallback. See ambiguity.go.
+	{ModelService: "cloudwatch-events", OvercastService: "eventbridge"},
 	{ModelService: "cognito-identity-provider", OvercastService: "cognito"},
 	{ModelService: "dynamodb-streams", OvercastService: "dynamodbstreams"},
 	{ModelService: "elastic-load-balancing-v2", OvercastService: "elbv2"},

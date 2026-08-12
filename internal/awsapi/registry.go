@@ -51,13 +51,22 @@ func (r *Registry) ClaimTarget(target string) (Claim, bool) {
 		return Claim{}, false
 	}
 	op := targetOperations[i]
+	service, ambiguous := overcastService(op.ModelService), op.Ambiguous
+	if ambiguous {
+		// No declared owner: a target prefix names its service directly, so
+		// the only ambiguity worth resolving here is modeled identities that
+		// are one service. See ambiguity.go.
+		if resolved := resolveCollision(targetCollisions, target, ""); resolved != "" {
+			service, ambiguous = resolved, false
+		}
+	}
 	return Claim{
-		Service:      overcastService(op.ModelService),
+		Service:      service,
 		ModelService: op.ModelService,
 		Operation:    op.Operation,
 		Protocol:     op.Protocol,
 		ErrorProfile: ErrorProfileJSON,
-		Ambiguous:    op.Ambiguous,
+		Ambiguous:    ambiguous,
 	}, true
 }
 
@@ -82,13 +91,22 @@ func (r *Registry) ClaimQuery(version, action string) (Claim, bool) {
 	if op.Protocol == ProtocolEC2Query {
 		profile = ErrorProfileEC2QueryXML
 	}
+	service, ambiguous := overcastService(op.ModelService), op.Ambiguous
+	if ambiguous {
+		// The API version is the declared owner: it is what each Query service's
+		// OwnsVersion is built from, so this resolves the claim the same way the
+		// router already routes it. See ambiguity.go.
+		if resolved := resolveCollision(queryCollisions, version+"\x00"+action, queryVersionOwners[version]); resolved != "" {
+			service, ambiguous = resolved, false
+		}
+	}
 	return Claim{
-		Service:      overcastService(op.ModelService),
+		Service:      service,
 		ModelService: op.ModelService,
 		Operation:    op.Operation,
 		Protocol:     op.Protocol,
 		ErrorProfile: profile,
-		Ambiguous:    op.Ambiguous,
+		Ambiguous:    ambiguous,
 	}, true
 }
 
