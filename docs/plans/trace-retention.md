@@ -155,7 +155,37 @@ Each is a plain insertion-ordered ring whose only eviction is *advance head*. So
 
 Implement it once as an unexported `ring` type with `push`, `oldest`, `cullBefore` and `len`, used
 three times. The three differ in capacity and policy, not mechanics, and three hand-rolled head/tail
-pairs is how they drift. `index` becomes `map[string]slot` where `slot` is `{ring uint8; pos int}`.
+pairs is how they drift.
+
+### Admission, promotion, and what the index holds
+
+**A trace cannot be classified when it is admitted.** `Add` runs at request start: the status is not
+known yet, and for a CloudFormation deploy a hop can fail minutes later on a goroutine that outlives
+the request. So a trace enters `live` and may have to move.
+
+**Classify at eviction, not at admission.** When the `live` ring is about to drop its head, ask
+whether it qualifies as pinned; if it does, push it to `pinned` instead of losing it. That is O(1),
+needs no scan, no sweeper and no timer — and it is the *last* possible moment, which is exactly when
+an asynchronous failure has had the most time to arrive. A trace that fails after it was already
+evicted was never going to be saved by an earlier check.
+
+**Promotion pulls children out of the middle of `live`.** Family pinning cannot wait for each child
+to reach its own eviction, so it has to reach into the ring — and removing from the middle of a
+positional ring leaves holes, which is exactly the property phase 2 buys.
+
+Resolve it by letting a Recorder live in **both** rings:
+
+- `index` is `map[string]*Recorder`, not a map to a slot. Lookup never has to know which ring holds
+  what, and dual membership costs nothing.
+- The rings hold pointers purely for age ordering and eviction policy.
+- Eviction from `live` is still just "advance head": it drops one reference. A Recorder that is also
+  pinned survives on the other one, and the garbage collector settles the rest.
+- A `pinned bool` on the Recorder decides whether the index entry goes when `live` drops it. That is
+  the whole bookkeeping.
+
+An earlier draft had `index` map to `{ring uint8; pos int}`. That is wrong here: it assumes a trace
+is in exactly one ring at exactly one position, and both halves stop being true the moment a family
+is pinned.
 
 ### `ListSummaries` must change with it
 
@@ -264,6 +294,16 @@ not exotic either, and it is the one way raising the ceiling could hurt someone.
 So: a byte budget that evicts oldest-non-pinned first when it binds. Default 512 MiB. It is a guard
 rail on the ceiling raise, **not** the mechanism the design rests on — in the original draft it was
 the primary bound, and de-duplication is what demoted it.
+
+**Do not account for it on the write path.** The obvious implementation keeps a running buffer total
+updated from `AddHop` and `AddLog`, which are the hottest paths there are during a deploy — a
+cross-object atomic touched thousands of times per trace, to maintain a number consulted rarely.
+
+De-duplication removes the need. Once hop bodies are references, a trace's size is dominated by its
+own request and response bodies, both of which are final when `SetResponse` returns; everything that
+grows afterwards is hop *metadata* and capped log entries. So take the measurement once, when the
+response is recorded, and treat later growth as the small, bounded term it is. The budget check then
+reads a per-Recorder number that nothing on the hot path has to maintain.
 
 ---
 
