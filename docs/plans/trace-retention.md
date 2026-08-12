@@ -1,7 +1,9 @@
 # Trace retention — keeping the thing that broke until someone looks at it
 
-> **Status:** phase 1 shipped in [#942](https://github.com/Neaox/overcast/pull/942). Phases 2–4 proposed;
-> no retention behaviour has changed yet, and the buffer is still one ring with a floor of 1000.
+> **Status:** complete. Phases 1–4 shipped, plus the byte backstop (#956), family pinning (#957) and
+> the retention counters. The buffer holds three age-ordered rings under a floor/ceiling/window
+> policy, pins failures and the calls they made, bounds itself by bytes, and reports what it
+> reclaimed.
 > **Scope:** `internal/trace/`, `internal/router/debug.go`, `internal/services/cloudformation/provisioner.go`, `web/src/features/debug-traces/`.
 > **Audience:** any contributor or agent. Read [CONTRIBUTING.md](../../CONTRIBUTING.md) and [AGENTS.md](../../AGENTS.md) first; all their rules apply.
 >
@@ -355,8 +357,13 @@ nor the counters have yet, and because one reviewable change is worth more than 
   copy of a still-live trace. The first version of that test did not actually reach dual membership —
   it evicted the children along with the parent — and passed against an implementation that listed
   those traces twice.
-- **The retention counters and their UI** — the terminal bar at the end of the list, and the
-  *kept: error* badge. Both want the same size accounting as the backstop.
+- ~~**The retention counters and their UI**~~ ✅ shipped. `Buffer.Stats` serves per-ring occupancy,
+  the limits, retained bytes against the budget, the oldest retained timestamp and running drop
+  counts split by rule; the count endpoint carries it; the list ends with a bar naming what was
+  reclaimed and why, and a pinned row is badged *kept: error*.
+
+  Internal polling is counted but deliberately excluded from the notice — it recycles itself
+  constantly and would swamp the number a reader cares about.
 
 One correction the implementation forced: `NewBuffer(n)` keeps meaning *a fixed buffer of n*, with no
 growth, window or pinning. An earlier cut had it derive a policy, which made `NewBuffer(3)` retain

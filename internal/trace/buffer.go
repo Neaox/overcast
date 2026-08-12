@@ -59,6 +59,8 @@ type Buffer struct {
 	// maintained by dropLocked and Settle — the two places a trace's
 	// contribution can change — so that it never has to be recomputed.
 	bytes int64
+	// dropped counts what retention has reclaimed, by rule. See RetentionStats.
+	dropped DroppedCounts
 }
 
 // NewBuffer creates a fixed-size buffer holding capacity user-facing traces.
@@ -122,7 +124,7 @@ func (b *Buffer) Add(rec *Recorder) {
 	if rec.internal {
 		s := &slot{rec: rec}
 		if evicted := b.internal.push(s); evicted != nil {
-			b.dropLocked(evicted)
+			b.dropLocked(evicted, dropInternal)
 		}
 		b.index[rec.requestID] = s
 		return
@@ -136,7 +138,7 @@ func (b *Buffer) Add(rec *Recorder) {
 
 	s := &slot{rec: rec, inLive: true}
 	if evicted := b.live.push(s); evicted != nil {
-		b.retireLocked(evicted)
+		b.retireLocked(evicted, dropCapacity)
 	}
 	b.index[rec.requestID] = s
 }
@@ -208,7 +210,7 @@ func (b *Buffer) enforceBytesLocked() {
 		if s == nil {
 			return
 		}
-		b.retireLocked(s)
+		b.retireLocked(s, dropBytes)
 	}
 }
 
@@ -228,7 +230,7 @@ func (b *Buffer) cullLocked() {
 			return
 		}
 		b.live.popOldest()
-		b.retireLocked(s)
+		b.retireLocked(s, dropAged)
 	}
 }
 
@@ -250,7 +252,7 @@ func (b *Buffer) growLiveLocked() {
 // last possible moment, and therefore the most informed one — a trace that
 // fails after this point was never going to be saved by an earlier check.
 // Callers must hold b.mu.
-func (b *Buffer) retireLocked(s *slot) {
+func (b *Buffer) retireLocked(s *slot, why dropReason) {
 	s.inLive = false
 	if s.inPinned {
 		// Already reachable from the pinned ring; the live ring merely dropped
@@ -262,7 +264,7 @@ func (b *Buffer) retireLocked(s *slot) {
 		b.pinFamilyLocked(s)
 		return
 	}
-	b.dropLocked(s)
+	b.dropLocked(s, why)
 }
 
 // pinFamilyLocked keeps the calls a pinned failure made.
@@ -298,7 +300,8 @@ func (b *Buffer) pinFamilyLocked(parent *slot) {
 // only ever goes up is a budget that ratchets shut, and the failure mode is
 // silent: retention quietly shrinks to the floor and stays there.
 // Callers must hold b.mu.
-func (b *Buffer) dropLocked(s *slot) {
+func (b *Buffer) dropLocked(s *slot, why dropReason) {
+	b.countDrop(why)
 	b.bytes -= s.bytes
 	s.bytes = 0
 	delete(b.index, s.rec.requestID)
@@ -310,7 +313,7 @@ func (b *Buffer) pinLocked(s *slot) {
 	if evicted := b.pinned.push(s); evicted != nil {
 		evicted.inPinned = false
 		if !evicted.inLive {
-			b.dropLocked(evicted)
+			b.dropLocked(evicted, dropPinnedCap)
 		}
 	}
 }
@@ -419,7 +422,7 @@ func (b *Buffer) Capacity() int {
 // collected, which is tens of entries rather than the whole buffer.
 //
 // Callers must hold b.mu.
-func (b *Buffer) eachNewestFirstLocked(fn func(*Recorder) bool) {
+func (b *Buffer) eachNewestFirstLocked(fn func(*slot) bool) {
 	rings := [...]*ring{b.live, b.pinned, b.internal}
 	// Cursor into each ring, newest first.
 	var at [len(rings)]int
@@ -452,7 +455,7 @@ func (b *Buffer) eachNewestFirstLocked(fn func(*Recorder) bool) {
 		if rings[pick] == b.pinned && sl.inLive {
 			continue
 		}
-		if !fn(sl.rec) {
+		if !fn(sl) {
 			return
 		}
 	}
@@ -590,10 +593,10 @@ func (b *Buffer) ListSummaries(filter ListFilter) ([]Summary, string) {
 		// index instead: O(1), and it asks the same question the full scan used
 		// to answer — is the cursor still retained *and* still matching?
 		if s, ok := b.index[filter.Before]; ok {
-			_, found = summaryIfMatch(s.rec, f)
+			_, found = summaryIfMatch(s, f)
 		}
-		b.eachNewestFirstLocked(func(rec *Recorder) bool {
-			s, ok := summaryIfMatch(rec, f)
+		b.eachNewestFirstLocked(func(sl *slot) bool {
+			s, ok := summaryIfMatch(sl, f)
 			if !ok {
 				return true
 			}
@@ -604,8 +607,8 @@ func (b *Buffer) ListSummaries(filter ListFilter) ([]Summary, string) {
 			return len(page) < limit
 		})
 	case filter.After != "":
-		b.eachNewestFirstLocked(func(rec *Recorder) bool {
-			s, ok := summaryIfMatch(rec, f)
+		b.eachNewestFirstLocked(func(sl *slot) bool {
+			s, ok := summaryIfMatch(sl, f)
 			if !ok {
 				return true
 			}
@@ -617,8 +620,8 @@ func (b *Buffer) ListSummaries(filter ListFilter) ([]Summary, string) {
 			return len(page) <= limit
 		})
 	default:
-		b.eachNewestFirstLocked(func(rec *Recorder) bool {
-			s, ok := summaryIfMatch(rec, f)
+		b.eachNewestFirstLocked(func(sl *slot) bool {
+			s, ok := summaryIfMatch(sl, f)
 			if !ok {
 				return true
 			}
@@ -665,7 +668,8 @@ func (b *Buffer) ListSummaries(filter ListFilter) ([]Summary, string) {
 // The lock-free rejections come first deliberately: they read only fields fixed
 // at construction, so a deploy hammering AddHop never contends with a list
 // call. Only a trace that survives them pays for Summary's read lock.
-func summaryIfMatch(rec *Recorder, f compiledFilter) (Summary, bool) {
+func summaryIfMatch(sl *slot, f compiledFilter) (Summary, bool) {
+	rec := sl.rec
 	if !matchesAny(f.methods, rec.method, methodMatches) {
 		return Summary{}, false
 	}
@@ -682,6 +686,7 @@ func summaryIfMatch(rec *Recorder, f compiledFilter) (Summary, bool) {
 	if !matchSummary(s, f) {
 		return Summary{}, false
 	}
+	s.Pinned = sl.inPinned
 	return s, true
 }
 

@@ -739,9 +739,11 @@ func debugTraceCount(buf *trace.Buffer) http.HandlerFunc {
 			writeDebugJSON(w, http.StatusNotFound, map[string]string{"error": "trace buffer not available"})
 			return
 		}
-		writeDebugJSON(w, http.StatusOK, map[string]any{
-			"count":    buf.Len(),
-			"capacity": buf.Capacity(),
-		})
+		// The full retention picture, not just the occupancy: a list that
+		// simply stops is indistinguishable from a bug, so the console needs
+		// to be able to say what was reclaimed and under which rule.
+		// `count` and `capacity` keep their original meanings for anything
+		// already reading them.
+		writeDebugJSON(w, http.StatusOK, buf.Stats())
 	}
 }
