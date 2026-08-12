@@ -13,7 +13,8 @@ package lambda
 //     RedrivePolicy handles retries and DLQ movement.
 //   - DynamoDB Streams: the event is retried up to MaximumRetryAttempts times.
 //     After exhausting retries, if a DestinationConfig.OnFailure.Destination
-//     is set, a failure record is sent to the destination SQS queue.
+//     is set, a failure record is sent to it — see dead_letter.go, which the
+//     function-level DeadLetterConfig shares the delivery with.
 //
 // Every goroutine respects context cancellation (ctx.Done). DynamoDB stream
 // subscriptions are cancelled via the unsubscribe function returned by bus.Subscribe.
@@ -31,6 +32,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
@@ -46,11 +48,14 @@ type esmDeliveryManager struct {
 	store    *esmStore
 	invoker  lambdaInvoker
 	receiver events.MessageReceiver // nil when SQS service is not available
-	enqueuer events.MessageEnqueuer // nil when SQS service is not available
-	bus      *events.Bus            // nil when event bus is not wired
-	log      *serviceutil.ServiceLogger
-	clk      clock.Clock
-	cfg      *config.Config
+	// targets resolves the dispatcher an on-failure destination is delivered
+	// through. It is a getter rather than the dispatcher itself so that
+	// InitRouter and InitESMDelivery can run in either order.
+	targets func() *eventtarget.Dispatcher
+	bus     *events.Bus // nil when event bus is not wired
+	log     *serviceutil.ServiceLogger
+	clk     clock.Clock
+	cfg     *config.Config
 
 	// baseCtx is the parent of every per-ESM delivery context, and the only
 	// stop signal available to delivery goroutines that are tracked by wg but
@@ -77,7 +82,7 @@ func newESMDeliveryManager(
 	store *esmStore,
 	invoker lambdaInvoker,
 	receiver events.MessageReceiver,
-	enqueuer events.MessageEnqueuer,
+	targets func() *eventtarget.Dispatcher,
 	bus *events.Bus,
 	log *serviceutil.ServiceLogger,
 	clk clock.Clock,
@@ -92,7 +97,7 @@ func newESMDeliveryManager(
 		store:      store,
 		invoker:    invoker,
 		receiver:   receiver,
-		enqueuer:   enqueuer,
+		targets:    targets,
 		bus:        bus,
 		log:        log,
 		clk:        clk,
@@ -755,8 +760,9 @@ func (m *esmDeliveryManager) buildDynamoDBRecord(sourceARN string, _ events.Even
 // ---- Helpers ---------------------------------------------------------------
 
 // sendOnFailure delivers a failure record to the ESM's on-failure destination
-// (if configured). Currently only SQS destinations are supported, matching
-// the most common real-world pattern.
+// (if configured). The delivery itself is deliverFailureRecord's, shared with
+// the function-level dead-letter queue in dead_letter.go; what belongs to this
+// path is the invocation record it sends.
 func (m *esmDeliveryManager) sendOnFailure(ctx context.Context, esm *EventSourceMapping, payload events.DynamoDBStreamPayload, funcName, lastErr string) {
 	if esm.DestinationConfig == nil || esm.DestinationConfig.OnFailure == nil {
 		return
@@ -765,19 +771,6 @@ func (m *esmDeliveryManager) sendOnFailure(ctx context.Context, esm *EventSource
 	if destARN == "" {
 		return
 	}
-
-	// Only SQS destinations are supported in the emulator.
-	if !isSQSArn(destARN) {
-		m.log.Logger().Warn("lambda: esm on-failure: unsupported destination type (only SQS is supported)",
-			zap.String("destination", destARN))
-		return
-	}
-	if m.enqueuer == nil {
-		m.log.Logger().Warn("lambda: esm on-failure: SQS enqueuer not available")
-		return
-	}
-
-	dlqName := queueNameFromARN(destARN)
 
 	// Build an AWS-compatible invocation failure record.
 	// See: https://docs.aws.amazon.com/lambda/latest/dg/invocation-async.html#invocation-async-destinations
@@ -809,15 +802,27 @@ func (m *esmDeliveryManager) sendOnFailure(ctx context.Context, esm *EventSource
 		return
 	}
 
-	if err := m.enqueuer.EnqueueRaw(ctx, dlqName, string(body)); err != nil {
-		m.log.Logger().Error("lambda: esm on-failure: enqueue failed",
-			zap.String("queue", dlqName),
+	// No message attributes: an on-failure *destination* carries its diagnosis
+	// inside the invocation record, unlike a dead-letter queue.
+	if err := deliverFailureRecord(ctx, m.dispatcher(), destARN, body, nil); err != nil {
+		m.log.Logger().Error("lambda: esm on-failure: delivery failed",
+			zap.String("destination", destARN),
+			zap.String("function", funcName),
 			zap.Error(err))
-	} else {
-		m.log.Logger().Info("lambda: esm on-failure: failure record sent to DLQ",
-			zap.String("queue", dlqName),
-			zap.String("function", funcName))
+		return
 	}
+	m.log.Logger().Info("lambda: esm on-failure: failure record sent to destination",
+		zap.String("destination", destARN),
+		zap.String("function", funcName))
+}
+
+// dispatcher resolves the target dispatcher, tolerating a manager built
+// without one (the shutdown and reload unit tests).
+func (m *esmDeliveryManager) dispatcher() *eventtarget.Dispatcher {
+	if m.targets == nil {
+		return nil
+	}
+	return m.targets()
 }
 
 // effectiveMaxRetries returns the max retry count for an ESM, treating nil/-1 as 10000.

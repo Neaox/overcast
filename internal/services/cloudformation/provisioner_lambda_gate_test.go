@@ -41,7 +41,6 @@ import (
 // rather than leaving a stale excuse behind.
 var reviewedGatedForwards = map[string]map[string]string{
 	lambda.OpCreateFunction: {
-		"DeadLetterConfig":         "async DLQ routing is not emulated; dropping it would lose failed invocations silently",
 		"SnapStart":                "no snapshot lifecycle; accepting it would claim init-time savings that do not exist",
 		"CapacityProviderConfig":   "Lambda-managed instances are not emulated",
 		"DurableConfig":            "durable functions are not emulated",
@@ -51,7 +50,6 @@ var reviewedGatedForwards = map[string]map[string]string{
 		"Code.S3ObjectStorageMode": "the storage mode of the deployment package is not emulated",
 	},
 	lambda.OpUpdateFunctionConfiguration: {
-		"DeadLetterConfig":       "as CreateFunction",
 		"SnapStart":              "as CreateFunction",
 		"CapacityProviderConfig": "as CreateFunction",
 	},

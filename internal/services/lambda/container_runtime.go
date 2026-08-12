@@ -1599,6 +1599,10 @@ func (ci *containerInstance) Invoke(ctx context.Context, event []byte, opts Invo
 			Payload:    resp.Payload,
 		}
 	}
+	// Every branch above describes the same invocation, so the request ID is
+	// attached once here rather than three times. A dead-letter queue reports
+	// it so the message can be correlated with the function's logs.
+	result.RequestID = reqID
 
 	// Wait for the scanner to catch up on handler stdout so the
 	// X-Amz-Log-Result tail snapshot includes the function's output. Only

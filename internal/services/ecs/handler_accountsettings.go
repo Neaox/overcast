@@ -7,7 +7,6 @@ package ecs
 // name is accepted as a free-form value. Overrides are stored per region.
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/Neaox/overcast/internal/protocol"
@@ -67,11 +66,9 @@ func (h *Handler) ListAccountSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"settings": settings,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // PutAccountSetting handles AmazonEC2ContainerServiceV20141113.PutAccountSetting.
@@ -97,11 +94,9 @@ func (h *Handler) PutAccountSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"setting": setting,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // PutAccountSettingDefault handles AmazonEC2ContainerServiceV20141113.PutAccountSettingDefault.
@@ -143,9 +138,7 @@ func (h *Handler) DeleteAccountSetting(w http.ResponseWriter, r *http.Request) {
 		returned = h.resolvedSetting(r, req.Name)
 	}
 
-	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"setting": returned,
-	})
+	}, "application/x-amz-json-1.1")
 }

@@ -261,11 +261,36 @@ func (g *lambdaGroup) UpdateFunctionCode(_ context.Context, t *harness.TestConte
 }
 
 func (g *lambdaGroup) UpdateFunctionConfiguration(_ context.Context, t *harness.TestContext) error {
+	// A real queue, so --dead-letter-config names a target that exists rather
+	// than a plausible-looking string.
+	queue := fmt.Sprintf("%s-lmbd-crud-dlq", t.RunID)
+	created, err := awscli.RunOutput(t.Endpoint, t.Region, "sqs", "create-queue", "--queue-name", queue)
+	if err != nil {
+		return err
+	}
+	queueURL, _ := created["QueueUrl"].(string)
+	defer awscli.Run(t.Endpoint, t.Region, "sqs", "delete-queue", "--queue-url", queueURL) //nolint:errcheck
+	attrs, err := awscli.RunOutput(t.Endpoint, t.Region, "sqs", "get-queue-attributes",
+		"--queue-url", queueURL, "--attribute-names", "QueueArn")
+	if err != nil {
+		return err
+	}
+	attributes, _ := attrs["Attributes"].(map[string]any)
+	dlqARN, _ := attributes["QueueArn"].(string)
+	if dlqARN == "" {
+		return fmt.Errorf("lambda UpdateFunctionConfiguration: queue %q has no ARN", queue)
+	}
+
+	// DeadLetterConfig rides along because it is the member that used to answer
+	// 501 here, which failed every `cdk deploy` of a function with a DLQ. Both
+	// the response and a later read are checked: an update that answers 200 and
+	// drops the property is the same bug wearing a better status code.
 	out, err := awscli.RunOutput(t.Endpoint, t.Region,
 		"lambda", "update-function-configuration",
 		"--function-name", g.currentFnName(t),
 		"--timeout", "30",
 		"--memory-size", "256",
+		"--dead-letter-config", "TargetArn="+dlqARN,
 	)
 	if err != nil {
 		return err
@@ -273,7 +298,26 @@ func (g *lambdaGroup) UpdateFunctionConfiguration(_ context.Context, t *harness.
 	if timeout, _ := out["Timeout"].(float64); timeout != 30 {
 		return fmt.Errorf("lambda UpdateFunctionConfiguration: expected Timeout=30, got %v", out["Timeout"])
 	}
+	if got := deadLetterTargetARN(out); got != dlqARN {
+		return fmt.Errorf("lambda UpdateFunctionConfiguration: expected DeadLetterConfig.TargetArn=%s, got %q", dlqARN, got)
+	}
+	fetched, err := awscli.RunOutput(t.Endpoint, t.Region,
+		"lambda", "get-function-configuration", "--function-name", g.currentFnName(t))
+	if err != nil {
+		return err
+	}
+	if got := deadLetterTargetARN(fetched); got != dlqARN {
+		return fmt.Errorf("lambda UpdateFunctionConfiguration: expected the stored DeadLetterConfig.TargetArn=%s, got %q", dlqARN, got)
+	}
 	return nil
+}
+
+// deadLetterTargetARN reads DeadLetterConfig.TargetArn out of a decoded
+// function-configuration document, returning "" when the block is absent.
+func deadLetterTargetARN(cfg map[string]any) string {
+	block, _ := cfg["DeadLetterConfig"].(map[string]any)
+	arn, _ := block["TargetArn"].(string)
+	return arn
 }
 
 func (g *lambdaGroup) DeleteFunction(_ context.Context, t *harness.TestContext) error {

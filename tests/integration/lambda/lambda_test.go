@@ -5176,10 +5176,11 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 	srv := helpers.NewTestServer(t)
 	// TracingConfig, EphemeralStorage and KMSKeyArn are deliberately absent:
 	// they are stored and echoed now, and covered by
-	// tracing_storage_kms_test.go. Everything still listed here would promise
-	// behaviour Overcast does not deliver — see CreateFunction's gate.
+	// tracing_storage_kms_test.go. DeadLetterConfig is absent for a stronger
+	// reason — it is implemented, and dead_letter_config_test.go owns it.
+	// Everything still listed here would promise behaviour Overcast does not
+	// deliver — see CreateFunction's gate.
 	createFunctionFields := map[string]any{
-		"DeadLetterConfig":       map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
 		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
 		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
 		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
@@ -5227,7 +5228,6 @@ func TestUnsupportedFunctionAndEventSourceConfigurationFailsBeforeMutation(t *te
 	var baselineConfig functionConfiguration
 	decodeJSON(t, baseline, &baselineConfig)
 	updateConfigurationFields := map[string]any{
-		"DeadLetterConfig":       map[string]any{"TargetArn": "arn:aws:sqs:us-east-1:000000000000:dlq"},
 		"SnapStart":              map[string]any{"ApplyOn": "PublishedVersions"},
 		"CapacityProviderConfig": map[string]any{"LambdaManagedInstancesCapacityProviderConfig": map[string]any{}},
 		"DurableConfig":          map[string]any{"RetentionPeriodInDays": 1},
@@ -5371,7 +5371,7 @@ func TestGetFunctionConcurrency_success(t *testing.T) {
 	}
 }
 
-func TestGetFunctionConcurrency_notSet_returns404(t *testing.T) {
+func TestGetFunctionConcurrency_notSet_returnsEmptyBody(t *testing.T) {
 	// Given a function with no reserved concurrency
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "concurrency-notset-fn")
@@ -5380,8 +5380,11 @@ func TestGetFunctionConcurrency_notSet_returns404(t *testing.T) {
 	resp := doJSON(t, http.MethodGet, getConcurrencyURL(srv, "concurrency-notset-fn"), nil)
 	defer resp.Body.Close()
 
-	// Then 404 ResourceNotFoundException
-	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	// Then 200 with no ReservedConcurrentExecutions, which is what AWS answers.
+	// This case used to assert 404: the operation does model
+	// ResourceNotFoundException, but for the function rather than for its
+	// reservation. reserved_concurrency_test.go owns the detail.
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 func TestDeleteFunctionConcurrency_success(t *testing.T) {
@@ -5401,10 +5404,12 @@ func TestDeleteFunctionConcurrency_success(t *testing.T) {
 	// Then 204 No Content
 	helpers.AssertStatus(t, resp2, http.StatusNoContent)
 
-	// And GetFunctionConcurrency now returns 404
+	// And GetFunctionConcurrency reports no reservation — 200 with an empty
+	// document, as AWS answers. reserved_concurrency_test.go asserts that the
+	// member is genuinely absent rather than reported as a zero.
 	resp3 := doJSON(t, http.MethodGet, getConcurrencyURL(srv, "concurrency-del-fn"), nil)
 	defer resp3.Body.Close()
-	helpers.AssertStatus(t, resp3, http.StatusNotFound)
+	helpers.AssertStatus(t, resp3, http.StatusOK)
 }
 
 // TestReservedConcurrency_awsPaths_doNotFallThroughToS3 pins the routing

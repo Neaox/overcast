@@ -79,6 +79,15 @@ type functionConfiguration struct {
 	TracingConfig    *tracingConfigWire    `json:"TracingConfig,omitempty"`
 	EphemeralStorage *ephemeralStorageWire `json:"EphemeralStorage,omitempty"`
 	KMSKeyArn        string                `json:"KMSKeyArn,omitempty"`
+	// DeadLetterConfig is reported only when the function has one, as on AWS.
+	DeadLetterConfig *deadLetterConfigWire `json:"DeadLetterConfig,omitempty"`
+}
+
+// deadLetterConfigWire is the AWS wire format for DeadLetterConfig, in both the
+// request and the response.
+// https://docs.aws.amazon.com/lambda/latest/api/API_DeadLetterConfig.html
+type deadLetterConfigWire struct {
+	TargetArn string `json:"TargetArn,omitempty"`
 }
 
 // tracingConfigWire is the AWS wire format for TracingConfig, in both the
@@ -173,9 +182,9 @@ type createFunctionRequest struct {
 	TracingConfig    *tracingConfigWire       `json:"TracingConfig,omitempty"`
 	EphemeralStorage *ephemeralStorageRequest `json:"EphemeralStorage,omitempty"`
 	KMSKeyArn        *string                  `json:"KMSKeyArn"`
+	DeadLetterConfig *deadLetterConfigWire    `json:"DeadLetterConfig,omitempty"`
 	// Each of these still answers 501 rather than being stored and echoed like
-	// the three above; the reason for each is at CreateFunction's gate.
-	DeadLetterConfig       json.RawMessage `json:"DeadLetterConfig"`
+	// the four above; the reason for each is at CreateFunction's gate.
 	SnapStart              json.RawMessage `json:"SnapStart"`
 	CapacityProviderConfig json.RawMessage `json:"CapacityProviderConfig"`
 	DurableConfig          json.RawMessage `json:"DurableConfig"`
@@ -235,9 +244,11 @@ type updateFunctionConfigurationRequest struct {
 	TracingConfig     *tracingConfigWire       `json:"TracingConfig,omitempty"`
 	EphemeralStorage  *ephemeralStorageRequest `json:"EphemeralStorage,omitempty"`
 	KMSKeyArn         *string                  `json:"KMSKeyArn"`
+	// DeadLetterConfig replaces the function's dead-letter target. An explicit
+	// empty TargetArn removes it; a nil field means "no change".
+	DeadLetterConfig *deadLetterConfigWire `json:"DeadLetterConfig,omitempty"`
 	// Each of these still answers 501 rather than being stored and echoed like
-	// the three above; the reason for each is at CreateFunction's gate.
-	DeadLetterConfig       json.RawMessage `json:"DeadLetterConfig"`
+	// the four above; the reason for each is at CreateFunction's gate.
 	SnapStart              json.RawMessage `json:"SnapStart"`
 	CapacityProviderConfig json.RawMessage `json:"CapacityProviderConfig"`
 	DurableConfig          json.RawMessage `json:"DurableConfig"`
@@ -466,10 +477,13 @@ func validateArchitectures(architectures []string) *protocol.AWSError {
 	return nil
 }
 
-// ─── advanced configuration: tracing, ephemeral storage, KMS key ─────────────
+// ─── advanced configuration: tracing, ephemeral storage, KMS key, DLQ ────────
 //
-// These three members are stored and echoed rather than refused, because
-// accepting them claims nothing a caller can observe as false:
+// DeadLetterConfig is stored, echoed *and* acted on: a failed asynchronous
+// invocation is delivered to its target — see dead_letter.go.
+//
+// The other three are stored and echoed rather than refused, because accepting
+// them claims nothing a caller can observe as false:
 //
 //   - TracingConfig — there is no X-Ray service in Overcast at all, so no trace
 //     is produced or missing whichever mode is set. Rejecting it broke every
@@ -500,6 +514,16 @@ const (
 var kmsKeyARNPattern = regexp.MustCompile(`^((arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|())$`)
 
 const kmsKeyARNConstraint = `(arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|()`
+
+// deadLetterTargetARNPattern is AWS's own pattern for
+// DeadLetterConfig.TargetArn. As with KMSKeyArn the empty alternative is AWS's,
+// and is how the association is removed. It is spelled out separately rather
+// than sharing kmsKeyARNPattern's variable: the two are independent members of
+// AWS's model that happen to carry the same pattern today, and folding them
+// together would make a future divergence look like a typo.
+var deadLetterTargetARNPattern = regexp.MustCompile(`^((arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|())$`)
+
+const deadLetterTargetARNConstraint = `(arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|()`
 
 // validateTracingConfig checks Mode against the modeled enum. Mode is optional
 // in AWS's request shape, so an empty object is accepted and means "default".
@@ -539,10 +563,27 @@ func validateKMSKeyArn(arn *string) *protocol.AWSError {
 	return nil
 }
 
-// validateAdvancedConfiguration runs the three members' modeled constraints in
+// validateDeadLetterConfig checks TargetArn against AWS's own pattern for the
+// member. The empty alternative is AWS's: passing "" is how a dead-letter
+// target is removed, so an empty TargetArn is valid rather than missing.
+// https://docs.aws.amazon.com/lambda/latest/api/API_DeadLetterConfig.html
+func validateDeadLetterConfig(config *deadLetterConfigWire) *protocol.AWSError {
+	if config == nil {
+		return nil
+	}
+	if !deadLetterTargetARNPattern.MatchString(config.TargetArn) {
+		return smithyPatternConstraint("deadLetterConfig.targetArn", config.TargetArn, deadLetterTargetARNConstraint)
+	}
+	return nil
+}
+
+// validateAdvancedConfiguration runs the four members' modeled constraints in
 // the order AWS declares them, so CreateFunction and
 // UpdateFunctionConfiguration cannot drift on which error a request gets.
-func validateAdvancedConfiguration(tracing *tracingConfigWire, storage *ephemeralStorageRequest, kmsKeyArn *string) *protocol.AWSError {
+func validateAdvancedConfiguration(tracing *tracingConfigWire, storage *ephemeralStorageRequest, kmsKeyArn *string, deadLetter *deadLetterConfigWire) *protocol.AWSError {
+	if aerr := validateDeadLetterConfig(deadLetter); aerr != nil {
+		return aerr
+	}
 	if aerr := validateTracingConfig(tracing); aerr != nil {
 		return aerr
 	}
@@ -552,10 +593,15 @@ func validateAdvancedConfiguration(tracing *tracingConfigWire, storage *ephemera
 	return validateKMSKeyArn(kmsKeyArn)
 }
 
-// applyAdvancedConfiguration writes the three members onto the function. Each
+// applyAdvancedConfiguration writes the four members onto the function. Each
 // is presence-aware: a nil member leaves the stored value alone, which is what
 // UpdateFunctionConfiguration needs and what CreateFunction gets for free.
-func applyAdvancedConfiguration(fn *Function, tracing *tracingConfigWire, storage *ephemeralStorageRequest, kmsKeyArn *string) {
+//
+// DeadLetterConfig differs from TracingConfig in what an explicitly empty value
+// means, because AWS gives them different meanings: an empty TracingConfig
+// omits the optional Mode and asks for nothing, while an empty TargetArn is the
+// documented way to remove a dead-letter target.
+func applyAdvancedConfiguration(fn *Function, tracing *tracingConfigWire, storage *ephemeralStorageRequest, kmsKeyArn *string, deadLetter *deadLetterConfigWire) {
 	if tracing != nil && tracing.Mode != "" {
 		fn.TracingMode = tracing.Mode
 	}
@@ -564,6 +610,9 @@ func applyAdvancedConfiguration(fn *Function, tracing *tracingConfigWire, storag
 	}
 	if kmsKeyArn != nil {
 		fn.KMSKeyArn = *kmsKeyArn
+	}
+	if deadLetter != nil {
+		fn.DeadLetterTargetArn = deadLetter.TargetArn
 	}
 }
 
@@ -675,12 +724,9 @@ func UnsupportedRequestMembers() map[string][]string {
 // unsupportedMembers is CreateFunction's 501 gate. Each member here stays
 // refused because accepting one would promise behaviour a caller can observe
 // Overcast not delivering — unlike TracingConfig, EphemeralStorage and
-// KMSKeyArn, which are stored and echoed (see "advanced configuration" above):
+// KMSKeyArn, which are stored and echoed, and DeadLetterConfig, which is acted
+// on (see "advanced configuration" above):
 //
-//   - DeadLetterConfig — accepting it says failed async invocations reach the
-//     target queue or topic. They do not: async retry and on-failure delivery
-//     are not emulated outside event source mappings, so the DLQ would stay
-//     silently empty and the caller would never learn why.
 //   - SnapStart — promises a restored snapshot and the init-phase semantics
 //     that come with it; execution environments here always cold start.
 //   - CapacityProviderConfig, DurableConfig, TenancyConfig — each selects an
@@ -694,7 +740,6 @@ func UnsupportedRequestMembers() map[string][]string {
 //     is *not* here: it selects a real object version and is honoured.
 func (req *createFunctionRequest) unsupportedMembers() unsupportedRequestMembers {
 	members := unsupportedRequestMembers{
-		"DeadLetterConfig":       rawRequestField(req.DeadLetterConfig),
 		"SnapStart":              rawRequestField(req.SnapStart),
 		"CapacityProviderConfig": rawRequestField(req.CapacityProviderConfig),
 		"DurableConfig":          rawRequestField(req.DurableConfig),
@@ -732,7 +777,6 @@ func (req *updateFunctionCodeRequest) unsupportedMembers() unsupportedRequestMem
 // the very check the caller asked for.
 func (req *updateFunctionConfigurationRequest) unsupportedMembers() unsupportedRequestMembers {
 	return unsupportedRequestMembers{
-		"DeadLetterConfig":       rawRequestField(req.DeadLetterConfig),
 		"SnapStart":              rawRequestField(req.SnapStart),
 		"CapacityProviderConfig": rawRequestField(req.CapacityProviderConfig),
 		"DurableConfig":          rawRequestField(req.DurableConfig),
@@ -846,6 +890,12 @@ func functionToConfig(fn *Function) *functionConfiguration {
 	}
 	cfg.EphemeralStorage = &ephemeralStorageWire{Size: ephemeralStorageSize}
 	cfg.KMSKeyArn = fn.KMSKeyArn
+	// AWS reports DeadLetterConfig only for a function that has one, so a
+	// function without one keeps the member off the wire entirely rather than
+	// reporting an empty target.
+	if fn.DeadLetterTargetArn != "" {
+		cfg.DeadLetterConfig = &deadLetterConfigWire{TargetArn: fn.DeadLetterTargetArn}
+	}
 	return cfg
 }
 
@@ -867,9 +917,7 @@ func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 		configs = append(configs, functionToConfig(fn))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listFunctionsResponse{Functions: configs})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listFunctionsResponse{Functions: configs})
 }
 
 // ListRuntimes handles GET /_lambda/runtimes (emulator-only). The catalog is
@@ -908,7 +956,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
-	if aerr := validateAdvancedConfiguration(req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn); aerr != nil {
+	if aerr := validateAdvancedConfiguration(req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn, req.DeadLetterConfig); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -1074,7 +1122,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		Tags:            copyTags(req.Tags),
 	}
 	applyLoggingConfig(fn, loggingConfig)
-	applyAdvancedConfiguration(fn, req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn)
+	applyAdvancedConfiguration(fn, req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn, req.DeadLetterConfig)
 	if req.CodeSigningConfigArn != "" {
 		exists, aerr := h.codeSigningConfigExists(r, req.CodeSigningConfigArn)
 		if aerr != nil {
@@ -1223,9 +1271,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+	protocol.WriteRESTJSON(w, r, http.StatusCreated, functionToConfig(fn))
 }
 
 func (h *Handler) startFunctionPrewarm(fn *Function) bool {
@@ -1353,9 +1399,7 @@ func (h *Handler) functionForCodeSigning(w http.ResponseWriter, r *http.Request)
 }
 
 func writeCodeSigningConfig(w http.ResponseWriter, r *http.Request, arn, name string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(codeSigningConfigResponse{
+	protocol.WriteRESTJSON(w, r, http.StatusOK, codeSigningConfigResponse{
 		CodeSigningConfigArn: arn,
 		FunctionName:         name,
 	})
@@ -1494,9 +1538,7 @@ func (h *Handler) GetFunction(w http.ResponseWriter, r *http.Request) {
 		codeBlock.Location = fn.ImageUri
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(getFunctionResponse{
+	protocol.WriteRESTJSON(w, r, http.StatusOK, getFunctionResponse{
 		Configuration: *functionToConfig(fn),
 		Code:          codeBlock,
 		Tags:          fn.Tags,
@@ -1523,9 +1565,7 @@ func (h *Handler) GetFunctionConfiguration(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionToConfig(fn))
 }
 
 // UpdateFunctionCode handles PUT /2015-03-31/functions/{name}/code.
@@ -1653,9 +1693,7 @@ func (h *Handler) UpdateFunctionCode(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionToConfig(fn))
 }
 
 func validateUpdateFunctionCodeSource(packageType string, req updateFunctionCodeRequest) (*protocol.AWSError, bool) {
@@ -1732,7 +1770,7 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		protocol.NotImplementedJSON(w, r)
 		return
 	}
-	if aerr := validateAdvancedConfiguration(req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn); aerr != nil {
+	if aerr := validateAdvancedConfiguration(req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn, req.DeadLetterConfig); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
@@ -1865,7 +1903,7 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		if req.LoggingConfig != nil {
 			applyLoggingConfig(current, loggingConfig)
 		}
-		applyAdvancedConfiguration(current, req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn)
+		applyAdvancedConfiguration(current, req.TracingConfig, req.EphemeralStorage, req.KMSKeyArn, req.DeadLetterConfig)
 		if req.Layers != nil {
 			current.Layers = layerLinks
 		}
@@ -1925,9 +1963,7 @@ func (h *Handler) UpdateFunctionConfiguration(w http.ResponseWriter, r *http.Req
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(functionToConfig(fn))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionToConfig(fn))
 }
 
 // retireExecutionEnvironment retires the warm execution environment for fn
@@ -2663,12 +2699,83 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 	bgCtx := middleware.ContextWithRegion(context.Background(), region)
 	ctx := bgCtx
 
+	for attempt := 1; ; attempt++ {
+		outcome := h.invokeAsyncOnce(ctx, fn, rt, payload)
+		if outcome.succeeded {
+			return
+		}
+		if !outcome.retryable || attempt >= asyncInvokeAttempts {
+			h.deadLetterAsyncFailure(bgCtx, fn, payload, outcome.requestID, outcome.errorMessage, attempt)
+			return
+		}
+		h.log.Debug("invokeAsync: retrying a failed event",
+			zap.String("function", fn.Name),
+			zap.Int("attempt", attempt),
+			zap.Int("of", asyncInvokeAttempts),
+			zap.String("error", outcome.errorMessage))
+		select {
+		case <-h.clk.After(asyncRetryBackoff(attempt)):
+		case <-ctx.Done():
+			h.deadLetterAsyncFailure(bgCtx, fn, payload, outcome.requestID, outcome.errorMessage, attempt)
+			return
+		}
+	}
+}
+
+// asyncInvokeAttempts is how many times an InvocationType=Event invocation is
+// run in total before its event is dead-lettered: AWS's default of the initial
+// attempt plus two retries.
+//
+// It is not configurable, because the API that configures it is not
+// implemented: MaximumRetryAttempts belongs to PutFunctionEventInvokeConfig,
+// and a function with no event-invoke config gets AWS's default — which is what
+// every function here has.
+const asyncInvokeAttempts = 3
+
+// asyncRetryBackoff is how long to wait before the given attempt's retry.
+//
+// AWS: "the retry interval increases exponentially from 1 second after the
+// first attempt to a maximum of 5 minutes"
+// (https://docs.aws.amazon.com/lambda/latest/dg/invocation-retries.html). With
+// only two retries the ceiling is never approached, so the real intervals are
+// AWS's own — one second, then two — rather than the compressed stand-in
+// EventBridge and Pipes need for their much longer schedules. It runs on the
+// injected clock, so a test drives it rather than waiting it out.
+func asyncRetryBackoff(attempt int) time.Duration {
+	return time.Duration(1<<(attempt-1)) * time.Second
+}
+
+// asyncInvokeOutcome is what one attempt of an asynchronous invocation did.
+// requestID and errorMessage describe the failure and feed the dead-letter
+// message's attributes; both are empty on success.
+type asyncInvokeOutcome struct {
+	succeeded bool
+	// retryable is false for a failure AWS would not retry either. The one
+	// that matters is a concurrency throttle that outlived acquireForAsync's
+	// own back-off: AWS documents a function reserved to zero as sending
+	// events to the dead-letter queue "without any retries".
+	retryable    bool
+	requestID    string
+	errorMessage string
+}
+
+// invokeAsyncOnce runs a single attempt: acquire an execution environment, wait
+// for it to initialise, invoke the handler.
+//
+// Each attempt acquires its own environment and is tracked as its own
+// invocation, which is what AWS does — a retry is a fresh invocation with its
+// own request ID, not a resumption of the last one.
+func (h *Handler) invokeAsyncOnce(ctx context.Context, fn *Function, rt Runtime, payload []byte) asyncInvokeOutcome {
 	inv := h.tracker.Begin(fn.Name, payload)
 	inst, err := h.acquireForAsync(ctx, fn, rt)
 	if err != nil {
 		inv.Abandon(err.Error())
 		h.log.Error("invokeAsync: acquire instance", zap.String("function", fn.Name), zap.Error(err))
-		return
+		// A throttle that survived acquireForAsync's retries is the
+		// reserved-concurrency case and is not retried again; anything else is
+		// a Docker hiccup, which the synchronous path also retries.
+		_, throttled := asThrottle(err)
+		return asyncInvokeOutcome{retryable: !throttled, errorMessage: err.Error()}
 	}
 	inv.Bind(inst)
 	inv.Ready()
@@ -2676,7 +2783,7 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 		rt.Release(ctx, inst, false)
 		inv.Abandon(err.Error())
 		h.log.Error("invokeAsync: runtime init", zap.String("function", fn.Name), zap.Error(err))
-		return
+		return asyncInvokeOutcome{retryable: true, errorMessage: err.Error()}
 	}
 	inv.Running()
 
@@ -2697,11 +2804,65 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 	inv.Finish(invocationOutcome(invokeErr, result))
 	if invokeErr != nil {
 		h.log.Error("invokeAsync: execution error", zap.String("function", fn.Name), zap.Error(invokeErr))
-		return
+		// A timeout is the one failure here that already knows its request ID:
+		// the invocation reached the runtime and was abandoned mid-flight.
+		var timeout *invokeTimeoutError
+		requestID := ""
+		if errors.As(invokeErr, &timeout) {
+			requestID = timeout.RequestID
+		}
+		return asyncInvokeOutcome{retryable: true, requestID: requestID, errorMessage: invokeErr.Error()}
 	}
 	if result != nil && result.FunctionError != "" {
 		h.log.Debug("invokeAsync: function error", zap.String("function", fn.Name), zap.String("function_error", result.FunctionError))
+		return asyncInvokeOutcome{
+			retryable:    true,
+			requestID:    result.RequestID,
+			errorMessage: invocationFailureReasonFromResult(result),
+		}
 	}
+	return asyncInvokeOutcome{succeeded: true}
+}
+
+// deadLetterAsyncFailure sends a failed asynchronous invocation to the
+// function's DeadLetterConfig target, if it has one. attempts is how many times
+// the event was run, for the log line — a dead-letter message itself carries no
+// attempt count, which is why AWS's on-failure destinations exist.
+//
+// Every failure that gets here is one the Invoke API answers 200 for: a handled
+// error, an unhandled crash, a timeout, and — in this emulator only — a cold
+// start that never produced an execution environment, all of which
+// invokeSyncOnce reports as a 200 carrying X-Amz-Function-Error rather than as
+// an HTTP failure. So ErrorCode is 200 for all of them.
+//
+// Failure to deliver is logged and dropped, as on AWS: "If Lambda can't send a
+// message to the dead-letter queue, it deletes the event". There is no caller
+// left to tell — the invocation answered 202 long ago.
+func (h *Handler) deadLetterAsyncFailure(ctx context.Context, fn *Function, payload []byte, requestID, errorMessage string, attempts int) {
+	if fn.DeadLetterTargetArn == "" {
+		return
+	}
+	if requestID == "" {
+		// The invocation never reached the Runtime API, so no request ID was
+		// ever allocated for it. AWS allocates one when it accepts the event
+		// and always reports it, so one is minted here rather than sending the
+		// attribute empty.
+		requestID = uuid.NewString()
+	}
+	attrs := deadLetterAttributes(requestID, http.StatusOK, errorMessage)
+	if err := deliverFailureRecord(ctx, h.deadLetterTargets(), fn.DeadLetterTargetArn, payload, attrs); err != nil {
+		h.log.Error("invokeAsync: dead-letter delivery failed — the event is dropped",
+			zap.String("function", fn.Name),
+			zap.String("target", fn.DeadLetterTargetArn),
+			zap.String("request_id", requestID),
+			zap.Error(err))
+		return
+	}
+	h.log.Warn("invokeAsync: failed event sent to the dead-letter target",
+		zap.String("function", fn.Name),
+		zap.String("target", fn.DeadLetterTargetArn),
+		zap.String("request_id", requestID),
+		zap.Int("attempts", attempts))
 }
 
 // ─── SSE Invoke (emulator-only) ───────────────────────────────────────────────

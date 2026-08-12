@@ -205,9 +205,7 @@ func (h *Handler) AddPermission(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]string{"Statement": string(statementJSON)})
+	protocol.WriteRESTJSON(w, r, http.StatusCreated, map[string]string{"Statement": string(statementJSON)})
 }
 
 func (h *Handler) GetPolicy(w http.ResponseWriter, r *http.Request) {
@@ -231,8 +229,7 @@ func (h *Handler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, protocol.Wrap(protocol.ErrInternalError, err))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(getPolicyResponse{Policy: string(documentJSON), RevisionID: policy.RevisionID})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, getPolicyResponse{Policy: string(documentJSON), RevisionID: policy.RevisionID})
 }
 
 func (h *Handler) RemovePermission(w http.ResponseWriter, r *http.Request) {

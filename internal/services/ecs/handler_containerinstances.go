@@ -9,7 +9,6 @@ package ecs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -66,11 +65,9 @@ func (h *Handler) RegisterContainerInstance(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"containerInstance": ci,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // DeregisterContainerInstance handles AmazonEC2ContainerServiceV20141113.DeregisterContainerInstance.
@@ -126,11 +123,9 @@ func (h *Handler) DeregisterContainerInstance(w http.ResponseWriter, r *http.Req
 	ci.Status = "INACTIVE"
 	ci.AgentConnected = false
 
-	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"containerInstance": ci,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // ListContainerInstances handles AmazonEC2ContainerServiceV20141113.ListContainerInstances.
@@ -165,11 +160,9 @@ func (h *Handler) ListContainerInstances(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"containerInstanceArns": arns,
-	})
+	}, "application/x-amz-json-1.1")
 }
 
 // DescribeContainerInstances handles AmazonEC2ContainerServiceV20141113.DescribeContainerInstances.
@@ -217,10 +210,8 @@ func (h *Handler) DescribeContainerInstances(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	protocol.WriteAWSJSON(w, r, http.StatusOK, map[string]any{
 		"containerInstances": found,
 		"failures":           failures,
-	})
+	}, "application/x-amz-json-1.1")
 }

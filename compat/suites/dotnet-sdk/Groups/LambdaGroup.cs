@@ -134,21 +134,58 @@ public sealed class LambdaGroup(AwsClients clients) : IServiceGroup
     private async Task UpdateFunctionConfigurationAsync(TestContext context)
     {
         var name = RequireFuncName(context, "LambdaFuncName");
-        await clients.Lambda().UpdateFunctionConfigurationAsync(new UpdateFunctionConfigurationRequest
+
+        // A real queue, so DeadLetterConfig names a target that exists rather
+        // than a plausible-looking string.
+        var queueName = $"{context.RunId}-lcrud-dlq";
+        var queue = await clients.SQS().CreateQueueAsync(new Amazon.SQS.Model.CreateQueueRequest { QueueName = queueName });
+        try
         {
-            FunctionName = name,
-            Timeout = 30,
-            MemorySize = 256,
-            Environment = new Amazon.Lambda.Model.Environment
+            var qAttrs = await clients.SQS().GetQueueAttributesAsync(new Amazon.SQS.Model.GetQueueAttributesRequest
             {
-                Variables = new Dictionary<string, string> { ["KEY"] = "VAL" },
-            },
-        });
-        var getResp = await clients.Lambda().GetFunctionAsync(new GetFunctionRequest { FunctionName = name });
-        Assertions.Equal(30, getResp.Configuration.Timeout, "UpdateFunctionConfiguration: Timeout");
-        Assertions.Equal(256, getResp.Configuration.MemorySize, "UpdateFunctionConfiguration: MemorySize");
-        Assertions.NotNull(getResp.Configuration.Environment, "UpdateFunctionConfiguration: Environment");
-        Assertions.True(getResp.Configuration.Environment.Variables.TryGetValue("KEY", out var val) && val == "VAL", "UpdateFunctionConfiguration: env var KEY");
+                QueueUrl = queue.QueueUrl,
+                AttributeNames = ["QueueArn"],
+            });
+            var dlqArn = qAttrs.Attributes["QueueArn"];
+
+            // DeadLetterConfig rides along because it is the member that used to
+            // answer 501 here, which failed every `cdk deploy` of a function with
+            // a DLQ. Both the response and a later read are checked: an update
+            // that answers 200 and drops the property is the same bug wearing a
+            // better status code.
+            var updated = await clients.Lambda().UpdateFunctionConfigurationAsync(new UpdateFunctionConfigurationRequest
+            {
+                FunctionName = name,
+                Timeout = 30,
+                MemorySize = 256,
+                Environment = new Amazon.Lambda.Model.Environment
+                {
+                    Variables = new Dictionary<string, string> { ["KEY"] = "VAL" },
+                },
+                DeadLetterConfig = new DeadLetterConfig { TargetArn = dlqArn },
+            });
+            Assertions.NotNull(updated.DeadLetterConfig, "UpdateFunctionConfiguration: response DeadLetterConfig");
+            Assertions.Equal(dlqArn, updated.DeadLetterConfig.TargetArn, "UpdateFunctionConfiguration: response DeadLetterConfig.TargetArn");
+
+            var getResp = await clients.Lambda().GetFunctionAsync(new GetFunctionRequest { FunctionName = name });
+            Assertions.Equal(30, getResp.Configuration.Timeout, "UpdateFunctionConfiguration: Timeout");
+            Assertions.Equal(256, getResp.Configuration.MemorySize, "UpdateFunctionConfiguration: MemorySize");
+            Assertions.NotNull(getResp.Configuration.Environment, "UpdateFunctionConfiguration: Environment");
+            Assertions.True(getResp.Configuration.Environment.Variables.TryGetValue("KEY", out var val) && val == "VAL", "UpdateFunctionConfiguration: env var KEY");
+            Assertions.NotNull(getResp.Configuration.DeadLetterConfig, "UpdateFunctionConfiguration: stored DeadLetterConfig");
+            Assertions.Equal(dlqArn, getResp.Configuration.DeadLetterConfig.TargetArn, "UpdateFunctionConfiguration: stored DeadLetterConfig.TargetArn");
+        }
+        finally
+        {
+            try
+            {
+                await clients.SQS().DeleteQueueAsync(new Amazon.SQS.Model.DeleteQueueRequest { QueueUrl = queue.QueueUrl });
+            }
+            catch (Amazon.SQS.AmazonSQSException)
+            {
+                // Teardown is best effort.
+            }
+        }
     }
 
     private async Task DeleteFunctionAsync(TestContext context)

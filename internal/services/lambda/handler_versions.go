@@ -230,9 +230,7 @@ func (h *Handler) PublishVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := versionToResponse(v)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(resp)
+	protocol.WriteRESTJSON(w, r, http.StatusCreated, resp)
 }
 
 // ListVersionsByFunction handles GET /2015-03-31/functions/{name}/versions.
@@ -270,9 +268,7 @@ func (h *Handler) ListVersionsByFunction(w http.ResponseWriter, r *http.Request)
 		out = append(out, versionToResponse(v))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listVersionsResponse{Versions: out})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listVersionsResponse{Versions: out})
 }
 
 // ─── Aliases ──────────────────────────────────────────────────────────────────
@@ -345,9 +341,7 @@ func (h *Handler) CreateAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(aliasToResponse(a))
+	protocol.WriteRESTJSON(w, r, http.StatusCreated, aliasToResponse(a))
 }
 
 // GetAlias handles GET /2015-03-31/functions/{name}/aliases/{aliasName}.
@@ -373,9 +367,7 @@ func (h *Handler) GetAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(aliasToResponse(a))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, aliasToResponse(a))
 }
 
 // UpdateAlias handles PUT /2015-03-31/functions/{name}/aliases/{aliasName}.
@@ -424,9 +416,7 @@ func (h *Handler) UpdateAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(aliasToResponse(a))
+	protocol.WriteRESTJSON(w, r, http.StatusOK, aliasToResponse(a))
 }
 
 // ListAliases handles GET /2015-03-31/functions/{name}/aliases.
@@ -462,9 +452,7 @@ func (h *Handler) ListAliases(w http.ResponseWriter, r *http.Request) {
 		out = append(out, aliasToResponse(a))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(listAliasesResponse{Aliases: out})
+	protocol.WriteRESTJSON(w, r, http.StatusOK, listAliasesResponse{Aliases: out})
 }
 
 // DeleteAlias handles DELETE /2015-03-31/functions/{name}/aliases/{aliasName}.

@@ -58,7 +58,6 @@ var unservedBindings = map[string]string{
 	// under /_opensearch; they now answer on the /2021-01-01 bindings the
 	// model gives them, so the ledger must not still claim the fault.
 
-
 	// #860 is deliberately absent. AppSync's two evaluation operations were
 	// served under /v1/apis/{apiId}/… where the model binds them to the
 	// API-independent /v1/dataplane-evaluatecode and /v1/dataplane-evaluatetemplate;

@@ -14,6 +14,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/eventtarget"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -54,6 +55,14 @@ type Handler struct {
 
 	efsResolverMu sync.RWMutex
 	efsResolver   EFSVolumeResolver
+
+	// targets delivers a dead-lettered failure to the SQS queue or SNS topic
+	// its ARN names. Wired by Service.InitRouter, so it is nil in a test
+	// server built without a root router — a delivery attempted then is
+	// reported as a wiring fault rather than pretending to have happened.
+	targetsMu sync.RWMutex
+	targets   *eventtarget.Dispatcher
+
 	// prewarmer, when set, starts a background Docker image pull for fn so
 	// the first Invoke does not pay the cold-pull cost on the request path.
 	// Wired by Service.initDockerRuntime once ContainerRuntime is up; nil
@@ -88,6 +97,20 @@ func (h *Handler) setVPCResolver(r VPCNetworkResolver) {
 	h.vpcResolverMu.Lock()
 	h.vpcResolver = r
 	h.vpcResolverMu.Unlock()
+}
+
+func (h *Handler) setDeadLetterTargets(d *eventtarget.Dispatcher) {
+	h.targetsMu.Lock()
+	h.targets = d
+	h.targetsMu.Unlock()
+}
+
+// deadLetterTargets is passed to the ESM delivery manager as a method value, so
+// the two do not have to be wired in a particular order.
+func (h *Handler) deadLetterTargets() *eventtarget.Dispatcher {
+	h.targetsMu.RLock()
+	defer h.targetsMu.RUnlock()
+	return h.targets
 }
 
 func (h *Handler) getVPCResolver() VPCNetworkResolver {

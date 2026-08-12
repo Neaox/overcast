@@ -42,8 +42,58 @@ func ReserveTCPPort(t *testing.T) int {
 // That refusal is daemon configuration a test cannot change and says nothing
 // about Overcast, so it is a gate rather than a failure. Any other login error
 // is real and fails.
+//
+// The matching logout is not tidiness — it is the difference between a suite
+// that cleans up after itself and one that degrades the machine it runs on.
+// `docker login` records the credential per registry address, in two places at
+// once: an `auths` key in ~/.docker/config.json, and an entry in the platform
+// credential store named by `credsStore` (Windows Credential Manager, the macOS
+// keychain, libsecret). Every registry here is `localhost:<ephemeral port>`, so
+// each run of each test mints an address that will never be seen again and
+// leaves an entry behind for it — permanently, accumulating across every run by
+// every contributor.
+//
+// That has a hard ceiling. A saturated Windows credential store fails the next
+// login with "Not enough memory resources are available to process this
+// command", which reads as a machine problem rather than as this suite's litter
+// and takes every Docker-gated test down with it. It was found at ~200 entries
+// on a development machine.
+//
+// So the test logs out of what it logged in to. `docker logout` is the
+// supported way to remove both records and normalises the scheme, so the same
+// proxyEndpoint string the login was given matches what was stored.
+//
+// It is an improvement rather than a cure, and the shape of what is left
+// matters. Measured on Windows with Docker Desktop: a single test leaks
+// nothing, and a serial run of the ECR and ECS suites leaks nothing, where
+// before this every login leaked. Run concurrently the cleanup often does not
+// take — around three entries survived running those two packages together,
+// and around fifteen survived a full `go test ./...` on a loaded machine. The
+// credential helper is a separate process mutating one shared store, and the
+// logout is best-effort with a bounded timeout, so under contention it races or
+// gives up. Unbounded growth is now bounded growth, which is worth having and
+// is not the same as fixed.
+//
+// Two things were tried and rejected, so they are not re-attempted: isolating
+// DOCKER_CONFIG to a temp directory (with no config.json the CLI *detects* the
+// platform helper rather than falling back to a file store, and Docker Desktop
+// maintains ~/.docker/config.json itself regardless), and reading the residue
+// as a shared-file race in config.json (it is the helper, not the file). If
+// this needs to be airtight, the promising direction is forcing the file store
+// with an explicit empty `credHelpers` entry for the registry, which removes
+// the shared store from the picture entirely — untested here for want of a
+// live registry to log in to.
 func DockerLoginOrSkip(t *testing.T, proxy, user, password string) {
 	t.Helper()
+	// Registered before the login so a partial one — the credential stored, the
+	// command still reporting failure — is cleaned up too. Logging out of a
+	// registry that was never logged in to is a no-op, and this runs on a fresh
+	// context because t's is already cancelled by cleanup time.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "docker", "logout", proxy).Run()
+	})
 	cmd := exec.CommandContext(t.Context(), "docker", "login", proxy, "-u", user, "--password-stdin")
 	cmd.Stdin = strings.NewReader(password + "\n")
 	out, err := cmd.CombinedOutput()

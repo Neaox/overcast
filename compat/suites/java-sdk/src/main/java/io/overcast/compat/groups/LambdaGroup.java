@@ -9,6 +9,8 @@ import software.amazon.awssdk.services.lambda.LambdaAsyncClient;
 import software.amazon.awssdk.services.lambda.LambdaClient;
 import software.amazon.awssdk.services.lambda.model.*;
 import software.amazon.awssdk.services.lambda.model.Runtime;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +33,7 @@ public final class LambdaGroup implements ServiceGroup {
     }
 
     private LambdaClient lambda() { return clients.lambda(); }
+    private SqsClient sqs() { return clients.sqs(); }
     private LambdaAsyncClient lambdaAsync() { return clients.lambdaAsync(); }
 
     @Override
@@ -124,9 +127,42 @@ public final class LambdaGroup implements ServiceGroup {
 
     private void updateFunctionConfiguration(TestContext ctx) throws Exception {
         String name = ctx.getString("lambdaFuncName");
-        lambda().updateFunctionConfiguration(r -> r.functionName(name).timeout(30).memorySize(256));
-        var resp = lambda().getFunction(r -> r.functionName(name));
-        Assertions.assertEquals(30, resp.configuration().timeout(), "UpdateFunctionConfiguration: timeout mismatch");
+        // A real queue, so DeadLetterConfig names a target that exists rather
+        // than a plausible-looking string.
+        String queue = "oc-" + ctx.runId() + "-lamcrud-dlq";
+        String queueUrl = sqs().createQueue(r -> r.queueName(queue)).queueUrl();
+        try {
+            String dlqArn = sqs().getQueueAttributes(r -> r.queueUrl(queueUrl)
+                    .attributeNames(QueueAttributeName.QUEUE_ARN))
+                    .attributes().get(QueueAttributeName.QUEUE_ARN);
+
+            // DeadLetterConfig rides along because it is the member that used to
+            // answer 501 here, which failed every `cdk deploy` of a function
+            // with a DLQ. Both the response and a later read are checked: an
+            // update that answers 200 and drops the property is the same bug
+            // wearing a better status code.
+            var updated = lambda().updateFunctionConfiguration(r -> r.functionName(name)
+                    .timeout(30)
+                    .memorySize(256)
+                    .deadLetterConfig(d -> d.targetArn(dlqArn)));
+            Assertions.assertNotNull(updated.deadLetterConfig(),
+                    "UpdateFunctionConfiguration: response carries no DeadLetterConfig");
+            Assertions.assertEquals(dlqArn, updated.deadLetterConfig().targetArn(),
+                    "UpdateFunctionConfiguration: DeadLetterConfig.TargetArn mismatch");
+
+            var resp = lambda().getFunction(r -> r.functionName(name));
+            Assertions.assertEquals(30, resp.configuration().timeout(), "UpdateFunctionConfiguration: timeout mismatch");
+            Assertions.assertNotNull(resp.configuration().deadLetterConfig(),
+                    "UpdateFunctionConfiguration: the stored configuration carries no DeadLetterConfig");
+            Assertions.assertEquals(dlqArn, resp.configuration().deadLetterConfig().targetArn(),
+                    "UpdateFunctionConfiguration: stored DeadLetterConfig.TargetArn mismatch");
+        } finally {
+            try {
+                sqs().deleteQueue(r -> r.queueUrl(queueUrl));
+            } catch (RuntimeException ignored) {
+                // Teardown is best effort.
+            }
+        }
     }
 
     private void deleteFunction(TestContext ctx) throws Exception {
