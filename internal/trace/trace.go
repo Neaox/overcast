@@ -648,6 +648,11 @@ type Summary struct {
 	HopCount   int           `json:"hopCount,omitempty"`
 	LogCount   int           `json:"logCount,omitempty"`
 	Internal   bool          `json:"internal,omitempty"`
+	// Pinned marks a trace retained because it went wrong, rather than because
+	// it is recent. Without it a failure outliving everything around it looks
+	// like a bug in eviction; the row can now say why it is still here.
+	// Set by the buffer, which owns retention — the recorder does not know.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 var internalPaths = map[string]bool{

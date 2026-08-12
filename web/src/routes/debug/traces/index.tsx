@@ -4,6 +4,7 @@ import { Search, RefreshCw, EyeOff, Terminal, GitFork } from "lucide-react"
 import { useInfiniteQuery, useQuery, useQueryClient, infiniteQueryOptions } from "@tanstack/react-query"
 import type { InfiniteData } from "@tanstack/react-query"
 import { traceCountQueryOptions, debugTraceKeys } from "@/features/debug-traces/data"
+import { describeRetention } from "@/features/debug-traces/retention"
 import { debugTrace } from "@/services/api/misc"
 import { endpointResolver } from "@/services/api/base"
 import { nsToHuman, statusColor, statusMessage, formatTimestamp, shellQuote, traceRequestUrl, mergePolledTraces } from "@/features/debug-traces/utils"
@@ -95,6 +96,7 @@ function TracesPage() {
   const { data: countData } = useQuery({
     ...traceCountQueryOptions(),
   })
+  const retention = useMemo(() => describeRetention(countData), [countData])
 
   // Live poll: fetch traces newer than the newest one in the cache (same
   // filters as the list) and fold them into the infinite query's first page.
@@ -326,7 +328,24 @@ function TracesPage() {
                 ) : (
                   displayTraces.map((t) => (
                     <tr key={t.requestId} className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors" onClick={() => void navigate({ to: "/debug/traces/$requestId", params: { requestId: t.requestId } })}>
-                      <td className="px-3 py-2 whitespace-nowrap text-fg-muted font-mono text-xs">{formatTimestamp(t.timestamp)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-fg-muted font-mono text-xs">
+                        {formatTimestamp(t.timestamp)}
+                        {/*
+                          Retention keeps failures past the point where their
+                          neighbours are reclaimed, so an old row sitting among
+                          new ones needs to say why it is still here — otherwise
+                          it reads as eviction being broken.
+                        */}
+                        {t.pinned && (
+                          <Badge
+                            variant="outline"
+                            className="ml-2 border-amber-500/40 text-amber-400"
+                            title="Kept because this request failed; retention keeps failures past the window"
+                          >
+                            kept: error
+                          </Badge>
+                        )}
+                      </td>
                       <td className="px-3 py-2"><Badge variant="outline" className="text-xs font-mono">{t.method}</Badge></td>
                       {/*
                         `truncate` cannot work on the <td> itself — a table cell
@@ -404,6 +423,20 @@ function TracesPage() {
             </table>
           </div>
           {hasNextPage && <div ref={bottomSentinelRef} className="h-1" />}
+          {/*
+            The end of the list, and what lies past it. Without this a list that
+            stops is indistinguishable from a bug: a reader cannot tell whether
+            the request they want was never traced, or was traced and reclaimed.
+          */}
+          {!hasNextPage && retention && (
+            <div className="mt-3 rounded-md border border-border bg-bg-elevated px-3 py-2 text-xs text-fg-muted">
+              <span className="font-medium text-fg">{retention.headline}</span>
+              {retention.reasons.length > 0 && <> — {retention.reasons.join("; ")}</>}
+              {countData?.oldestRetained && (
+                <> · oldest retained {formatTimestamp(countData.oldestRetained)}</>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

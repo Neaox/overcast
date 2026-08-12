@@ -90,6 +90,11 @@ export interface TraceSummary {
   statusCode: number
   duration: number
   internal?: boolean
+  /**
+   * Retained because it went wrong rather than because it is recent. Without
+   * this a failure outliving everything around it looks like an eviction bug.
+   */
+  pinned?: boolean
   hopCount?: number
   logCount?: number
 }
@@ -99,9 +104,38 @@ export interface TraceListResponse {
   nextCursor?: string
 }
 
+/**
+ * What the buffer is holding and what it has let go. Mirrors trace.RetentionStats.
+ *
+ * The fields beyond count/capacity are what let the console explain the end of
+ * the list: a list that simply stops cannot be told apart from a bug.
+ */
 export interface TraceCountResponse {
   count: number
   capacity: number
+
+  live: number
+  pinned: number
+  internal: number
+
+  floor: number
+  ceiling: number
+  /** Retention window, as a Go duration in nanoseconds. */
+  window: number
+  pinnedLimit: number
+
+  bytes: number
+  bytesBudget: number
+  /** RFC3339; absent when nothing is retained. */
+  oldestRetained?: string
+
+  dropped: {
+    capacity: number
+    aged: number
+    bytes: number
+    pinnedCap: number
+    internal: number
+  }
 }
 
 /** Event-bus event captured while a traced request was in flight. */
