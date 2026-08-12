@@ -43,7 +43,7 @@ func TestLiveModeUpdateKubeconfigReturnsKubeconfigWhenClusterReady(t *testing.T)
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-ready/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-ready/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -84,7 +84,7 @@ func TestLiveModeUpdateKubeconfigReturnsUnavailableWhenClusterNotReady(t *testin
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-creating/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-creating/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -134,7 +134,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAFromRuntime(t *testing.T) {
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-backfill/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-backfill/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -239,7 +239,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAWhenCachedRuntimeIDIsStale(t *testin
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-backfill-stale-id/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-backfill-stale-id/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -344,7 +344,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAWhenCachedRuntimeIDIsBlank(t *testin
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-backfill-blank-id/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-backfill-blank-id/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -443,7 +443,7 @@ func TestLiveModeUpdateKubeconfigReconcilesRuntimeAfterRestart(t *testing.T) {
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-restart-backfill/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-restart-backfill/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -558,7 +558,7 @@ func TestLiveModeUpdateKubeconfigReconcilesReadyClusterAfterRestart(t *testing.T
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-restart-ready-kubeconfig/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-restart-ready-kubeconfig/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -684,7 +684,7 @@ func TestLiveModeUpdateKubeconfigReconcilesWhenCachedRuntimeIDMissing(t *testing
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-restart-ready-kubeconfig-empty-id/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-restart-ready-kubeconfig-empty-id/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -830,7 +830,7 @@ func TestLiveModeUpdateKubeconfigReconcilesWhenCachedRuntimeIDIsStale(t *testing
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/live-restart-ready-kubeconfig-stale-id/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/live-restart-ready-kubeconfig-stale-id/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

@@ -321,7 +321,7 @@ func (s *Service) Stop(ctx context.Context) {
 //     segment position puts two param nodes in the trie for the same path.
 //     Every cluster label here is therefore {name}; the path shape, which is
 //     what a client sends, is identical either way.
-//   - POST /clusters/{name}/kubeconfig is the one endpoint here that AWS does
+//   - POST /_overcast/eks/clusters/{name}/kubeconfig is the one endpoint here that AWS does
 //     not model. `aws eks update-kubeconfig` is a CLI-side command that calls
 //     DescribeCluster and writes the file locally, so there is no API to be
 //     faithful to; Overcast serves the generated kubeconfig instead, and the
@@ -356,7 +356,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Get("/clusters/{name}/insights/{insightId}", s.describeInsight)
 	r.Post("/clusters/{name}/update-config", s.updateClusterConfig)
 	r.Get("/clusters/{name}/updates/{updateId}", s.describeUpdate)
-	r.Post("/clusters/{name}/kubeconfig", s.updateKubeconfig)
+	r.Post("/_overcast/eks/clusters/{name}/kubeconfig", s.updateKubeconfig)
 	r.Delete("/clusters/{name}", s.deleteCluster)
 	r.Post("/clusters/{name}/node-groups", s.createNodegroup)
 	r.Post("/clusters/{name}/node-groups/{nodegroupName}/update-version", s.updateNodegroupVersion)

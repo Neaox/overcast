@@ -4,7 +4,7 @@ package lambda
 //
 // One record per execution environment, keyed by the instance's stable ID, so
 // a function running five concurrent invocations reports five instances. The
-// records back GET /_lambda/instances and the system map, and drive the
+// records back GET /_overcast/lambda/instances and the system map, and drive the
 // LambdaInstance* SSE events.
 //
 // Records are created two ways:

@@ -15,7 +15,7 @@ function emulatorUrl(c: { req: { header: (k: string) => string | undefined } }) 
 
 lambdaRoutes.get("/runtimes", async (c) => {
   const baseUrl = emulatorUrl(c)
-  const res = await fetch(`${baseUrl}/_lambda/runtimes`)
+  const res = await fetch(`${baseUrl}/_overcast/lambda/runtimes`)
   const data = await res.json()
   return c.json(data, res.status as 200)
 })
@@ -27,7 +27,7 @@ lambdaRoutes.get("/layers/:layerName/versions/:version/metadata", async (c) => {
   const layerName = c.req.param("layerName")
   const version = c.req.param("version")
   const res = await fetch(
-    `${baseUrl}/_lambda/layers/${encodeURIComponent(layerName)}/versions/${encodeURIComponent(version)}/metadata`,
+    `${baseUrl}/_overcast/lambda/layers/${encodeURIComponent(layerName)}/versions/${encodeURIComponent(version)}/metadata`,
   )
   const text = await res.text()
   if (!text) {

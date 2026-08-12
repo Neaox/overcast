@@ -4,7 +4,7 @@
  * GET /api/lambda/instances
  *
  * Returns the current snapshot of warm/running Lambda execution instances from
- * the /_lambda/instances emulator endpoint. Used by the topology map to render
+ * the /_overcast/lambda/instances emulator endpoint. Used by the topology map to render
  * per-function instance sub-nodes.
  */
 import { Hono } from "hono"
@@ -46,7 +46,7 @@ lambdaInstancesRoutes.get("/instances", async (c) => {
   })
 
   try {
-    const res = await fetch(`${endpoint.baseUrl}/_lambda/instances`, {
+    const res = await fetch(`${endpoint.baseUrl}/_overcast/lambda/instances`, {
       headers: { Accept: "application/json" },
     })
     if (!res.ok) {

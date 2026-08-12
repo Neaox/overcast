@@ -87,7 +87,7 @@ func fetchLogs(t *testing.T, h *Handler, id string) (*httptest.ResponseRecorder,
 	t.Helper()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("instanceId", id)
-	req := httptest.NewRequest(http.MethodGet, "/_rds/instances/"+id+"/logs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/rds/instances/"+id+"/logs", nil)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rec := httptest.NewRecorder()

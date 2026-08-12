@@ -11,14 +11,14 @@ import (
 )
 
 // inboxHandlers returns a chi.Router that mounts the inbox capture API under
-// /_overcast/inbox/. Only registered when the SMTP mock server is enabled.
+// /_overcast/ses/inbox/. Only registered when the SMTP mock server is enabled.
 //
 // Endpoints:
 //
-//	GET    /_overcast/inbox/messages            list all captured messages (newest first)
-//	GET    /_overcast/inbox/messages/{id}       get a single message
-//	DELETE /_overcast/inbox/messages            clear all messages
-//	DELETE /_overcast/inbox/messages/{id}       delete a single message
+//	GET    /_overcast/ses/inbox/messages            list all captured messages (newest first)
+//	GET    /_overcast/ses/inbox/messages/{id}       get a single message
+//	DELETE /_overcast/ses/inbox/messages            clear all messages
+//	DELETE /_overcast/ses/inbox/messages/{id}       delete a single message
 func inboxHandlers(store *smtp.MailStore) func(chi.Router) {
 	return func(r chi.Router) {
 		r.Get("/messages", func(w http.ResponseWriter, req *http.Request) {

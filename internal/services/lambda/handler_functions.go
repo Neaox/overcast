@@ -920,7 +920,7 @@ func (h *Handler) ListFunctions(w http.ResponseWriter, r *http.Request) {
 	protocol.WriteRESTJSON(w, r, http.StatusOK, listFunctionsResponse{Functions: configs})
 }
 
-// ListRuntimes handles GET /_lambda/runtimes (emulator-only). The catalog is
+// ListRuntimes handles GET /_overcast/lambda/runtimes (emulator-only). The catalog is
 // the same table CreateFunction validates against, so what the web UI offers
 // and what the API accepts cannot disagree.
 func (h *Handler) ListRuntimes(w http.ResponseWriter, _ *http.Request) {

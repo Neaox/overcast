@@ -87,7 +87,7 @@ export function createMyThingMutationOptions() {
 ## API client conventions (`web/src/services/api/<service>.ts`)
 
 - **Always use AWS SDK v3 clients for standard AWS service endpoints.** Import the relevant commands from `@aws-sdk/client-<service>` and obtain a client from `awsClients.<service>()` (defined in `web/src/services/aws-clients.ts`). Never hand-roll `fetch` calls or use `emulatorFetch` for operations that the SDK covers.
-- `emulatorFetch` and direct `fetch` are only acceptable for emulator-specific custom endpoints (`/_overcast/*`, `/_rds/*`, etc.) that have no SDK equivalent.
+- `emulatorFetch` and direct `fetch` are only acceptable for emulator-specific custom endpoints (`/_overcast/*`, `/_overcast/rds/*`, etc.) that have no SDK equivalent.
 - When adding a new service client file, add both browser-side factory methods to `aws-clients.ts` and the corresponding imports to `web/api/src/client/aws.ts` for BFF use.
 
 ---

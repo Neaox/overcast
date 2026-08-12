@@ -328,7 +328,7 @@ func TestInstanceTracker_reportsEveryConcurrentInstance(t *testing.T) {
 		trackedFor(tracker, "fn", nil).Running()
 	}
 
-	// Then: all three are reported, so GET /_lambda/instances and the system
+	// Then: all three are reported, so GET /_overcast/lambda/instances and the system
 	// map show the concurrency that is actually running.
 	snap := tracker.Instances()
 	if len(snap) != 3 {

@@ -28,7 +28,7 @@ completes to subscribers, matching the behaviour of real SNS.
 - Subscription confirmation (`ConfirmSubscription` token flow) is simplified:
   the emulator auto-confirms all subscriptions without requiring a token round-trip.
 - HTTP/HTTPS subscriptions require a reachable URL inside the Docker network.
-- `email` and `email-json` subscriptions are captured in the Inbox (`/_overcast/inbox`),
+- `email` and `email-json` subscriptions are captured in the Inbox (`/_overcast/ses/inbox`),
   viewable in the web UI.
 - `sms` subscriptions are captured in the same Inbox with `kind=sms`, viewable
   in the web UI. No real SMS is sent. The endpoint must be a phone number in

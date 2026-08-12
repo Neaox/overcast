@@ -18,7 +18,7 @@ ecsRoutes.get("/tasks/:taskArn/logs/:container", async (c) => {
   const taskArn = c.req.param("taskArn")
   const container = c.req.param("container")
   const res = await fetch(
-    `${baseUrl}/_ecs/tasks/${encodeURIComponent(taskArn)}/logs/${encodeURIComponent(container)}`,
+    `${baseUrl}/_overcast/ecs/tasks/${encodeURIComponent(taskArn)}/logs/${encodeURIComponent(container)}`,
   )
   const data = await res.json()
   return c.json(data, res.status as 200)
@@ -29,7 +29,7 @@ ecsRoutes.get("/tasks/:taskArn/logs/:container", async (c) => {
 ecsRoutes.get("/clusters/:cluster/tasks", async (c) => {
   const baseUrl = emulatorUrl(c)
   const cluster = c.req.param("cluster")
-  const res = await fetch(`${baseUrl}/_ecs/clusters/${encodeURIComponent(cluster)}/tasks`)
+  const res = await fetch(`${baseUrl}/_overcast/ecs/clusters/${encodeURIComponent(cluster)}/tasks`)
   const data = await res.json()
   return c.json(data, res.status as 200)
 })

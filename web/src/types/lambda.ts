@@ -23,7 +23,7 @@ export type PutCodePayload =
 // ── BFF-only types (emulator endpoints, not AWS SDK) ───────────────────────
 
 /**
- * One entry of the emulator's Lambda runtime catalog (`GET /_lambda/runtimes`).
+ * One entry of the emulator's Lambda runtime catalog (`GET /_overcast/lambda/runtimes`).
  *
  * The backend derives every field from the same table CreateFunction validates
  * against, so `supported` and `createBlocked` are authoritative: an unsupported

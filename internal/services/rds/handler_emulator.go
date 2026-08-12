@@ -1,6 +1,6 @@
 package rds
 
-// handler_emulator.go — Emulator-only endpoints behind /_rds/ prefix.
+// handler_emulator.go — Emulator-only endpoints behind /_overcast/rds/ prefix.
 // These are NOT part of the AWS API surface.
 //
 // The logs endpoint exists to answer one question: why will this database not

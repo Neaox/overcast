@@ -44,7 +44,7 @@ var emulatorOnlyWriters = map[string]string{
 	// Endpoints under /_<service>/… , served to the web console only.
 	"ec2/handler_debug.go":             "/_ec2 debug endpoints",
 	"ecs/handler_emulator.go":          "/_ecs task inspection for the console",
-	"lambda/handler_instances.go":      "/_lambda/instances for the console",
+	"lambda/handler_instances.go":      "/_overcast/lambda/instances for the console",
 	"rds/handler_emulator.go":          "/_rds diagnostics for the console",
 	"secretsmanager/service.go":        "/_secretsmanager console admin routes",
 	"ses/service.go":                   "/_ses console admin routes",

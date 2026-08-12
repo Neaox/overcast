@@ -33,7 +33,7 @@ EKS supports two modes:
 - In `live` mode, identity-provider-config and pod-identity-association endpoints also reject legacy mock-record clusters with `501`.
 - In `live` mode, fargate-profile and cluster-scoped add-on endpoints also reject legacy mock-record clusters with `501`.
 - In `live` mode, `DeleteCluster` remains allowed for legacy mock-record clusters so mixed-mode leftovers can be cleaned up.
-- `UpdateKubeconfig` is an Overcast extension rather than an AWS API operation: `aws eks update-kubeconfig` is a CLI-side command that calls `DescribeCluster` and writes the file locally. Overcast serves the generated kubeconfig at `POST /clusters/{name}/kubeconfig`, which no AWS SDK calls.
+- `UpdateKubeconfig` is an Overcast extension rather than an AWS API operation: `aws eks update-kubeconfig` is a CLI-side command that calls `DescribeCluster` and writes the file locally. Overcast serves the generated kubeconfig at `POST /_overcast/eks/clusters/{name}/kubeconfig`, which no AWS SDK calls.
 - In `live` mode, `UpdateKubeconfig` returns generated kubeconfig once the cluster reaches `ACTIVE` and runtime CA data is available; when CA is missing it attempts an on-demand backfill from the k3s runtime container before returning `503`.
 - Nodegroups are metadata-only in both modes and do not start compute.
 

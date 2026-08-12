@@ -4088,8 +4088,8 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
-        "text": "Instance logs — `GET /_rds/instances/{id}/logs",
-        "id": "instance-logs-get-rds-instances-id-logs"
+        "text": "Instance logs — `GET /_overcast/rds/instances/{id}/logs",
+        "id": "instance-logs-get-overcast-rds-instances-id-logs"
       },
       {
         "depth": 2,

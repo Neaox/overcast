@@ -1444,7 +1444,7 @@ func TestGetLayerVersionMetadata_detectsExternalExtensions(t *testing.T) {
 	helpers.AssertStatus(t, resp, http.StatusCreated)
 
 	// When: emulator layer metadata is requested.
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/_lambda/layers/extension-layer/versions/1/metadata", nil)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/lambda/layers/extension-layer/versions/1/metadata", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

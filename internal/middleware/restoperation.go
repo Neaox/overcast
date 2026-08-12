@@ -77,6 +77,14 @@ func awsapiServiceKey(s string) string {
 
 // lambdaFunctionResourcePrefix is the Lambda functions collection that
 // Overcast's emulator-only per-function endpoints hang off.
+//
+// It is AWS's own prefix, which is what makes this function necessary: an
+// invented path sitting inside a modeled one has to be told apart from its
+// neighbours by hand. Phase 4 of docs/plans/non-canonical-url-namespace.md
+// tried to move these under the reserved prefix and backed it out — "/_" is
+// also what shouldBypassIAM exempts, so the move would have taken the
+// resource-scoped authorization on these routes with it. They move in phase 6,
+// once an internal path can still be authorized.
 const lambdaFunctionResourcePrefix = "/2015-03-31/functions/"
 
 // overcastRESTOperation names the REST routes Overcast serves that no AWS

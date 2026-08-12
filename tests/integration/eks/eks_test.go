@@ -2002,7 +2002,7 @@ func TestEKSUpdateKubeconfig(t *testing.T) {
 
 	_ = mustCreateCluster(t, srv.URL, "demo-cluster", nil)
 
-	kubeconfigResp := eksCall(t, http.MethodPost, srv.URL+"/clusters/demo-cluster/kubeconfig", nil)
+	kubeconfigResp := eksCall(t, http.MethodPost, srv.URL+"/_overcast/eks/clusters/demo-cluster/kubeconfig", nil)
 	if kubeconfigResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for update kubeconfig, got %d", kubeconfigResp.StatusCode)
 	}
@@ -2031,7 +2031,7 @@ func TestEKSLiveModeUpdateKubeconfigReturnsNotImplemented(t *testing.T) {
 
 	_ = mustCreateCluster(t, mockSrv.URL, "live-kubeconfig-cluster", nil)
 
-	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/clusters/live-kubeconfig-cluster/kubeconfig", nil)
+	resp := eksCall(t, http.MethodPost, liveSrv.URL+"/_overcast/eks/clusters/live-kubeconfig-cluster/kubeconfig", nil)
 	expectStatus(t, resp, http.StatusNotImplemented)
 }
 

@@ -399,7 +399,7 @@ func WithLambdaHotReload() Option {
 
 // WithSMTPMock enables the built-in SMTP capture server on a random port.
 // Emails delivered to SNS email/email-json subscribers are captured and
-// accessible via GET /_overcast/inbox/messages on the test server.
+// accessible via GET /_overcast/ses/inbox/messages on the test server.
 func WithSMTPMock() Option {
 	return func(so *serverOptions) {
 		so.cfg.SMTPMock = true

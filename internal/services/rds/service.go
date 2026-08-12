@@ -102,7 +102,7 @@ func (s *Service) Name() string { return serviceName }
 
 // RegisterRoutes satisfies router.Service. Registers emulator-only endpoints.
 func (s *Service) RegisterRoutes(r chi.Router) {
-	r.Get("/_rds/instances/{instanceId}/logs", s.handler.GetInstanceLogs)
+	r.Get("/_overcast/rds/instances/{instanceId}/logs", s.handler.GetInstanceLogs)
 }
 
 // OwnsVersion satisfies router.QueryVersionOwner.
