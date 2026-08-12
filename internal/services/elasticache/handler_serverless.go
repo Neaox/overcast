@@ -398,6 +398,13 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 		if !existing.HasOvercastLabels(serviceName, resourceLabel) {
 			return fmt.Errorf("container %q exists but is not an overcast-managed serverless cache container — refusing to reuse", containerName)
 		}
+		// Somebody else's container for a cache of the same name — see the
+		// cache-cluster reuse path for why the labels above do not settle it.
+		if owner := existing.Instance(); owner != "" && owner != h.instances.Resolve(ctx) {
+			return fmt.Errorf("container %q was created by another Overcast instance (%s=%s) — refusing to reuse it for serverless cache %q; "+
+				"two Overcasts sharing a Docker daemon cannot both run a serverless cache of that name",
+				containerName, docker.LabelInstance, owner, c.ServerlessCacheName)
+		}
 		hostPort := 0
 		if bindings, ok := existing.NetworkSettings.Ports[containerPort]; ok && len(bindings) > 0 {
 			if p, err := strconv.Atoi(bindings[0].HostPort); err == nil {

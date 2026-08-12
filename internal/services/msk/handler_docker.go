@@ -42,6 +42,17 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 		if !existing.HasOvercastLabels(serviceName, clusterARN) {
 			return fmt.Errorf("container %q exists but is not an overcast-managed MSK container — refusing to reuse", containerName)
 		}
+		// The labels above prove it is an MSK container for this cluster's ARN;
+		// they do not prove it is *this* Overcast's. Reusing what another one
+		// created hands both of them a single broker, which this one will later
+		// stop and delete on the strength of its own record. Scoping
+		// reconciliation alone would not have held: a cluster whose container is
+		// gone restarts, and the restart comes straight back through here.
+		if owner := existing.Instance(); owner != "" && owner != h.instances.Resolve(ctx) {
+			return fmt.Errorf("container %q was created by another Overcast instance (%s=%s) — refusing to reuse it for MSK cluster %q; "+
+				"two Overcasts sharing a Docker daemon cannot both run a cluster of that name",
+				containerName, docker.LabelInstance, owner, clusterARN)
+		}
 		h.log.Info("MSK: reusing existing container",
 			zap.String("cluster", clusterARN),
 			zap.String("container", existing.ID),
@@ -346,6 +357,15 @@ func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 
 // ── Docker container event handlers ──────────────────────────────────────────
 
+// Containers are matched to cluster records by the overcast.resource-id label,
+// and nothing about that label is unique to one Overcast: two of them sharing
+// a Docker daemon keep separate state stores, so each can hold a container
+// carrying the other's ARN — through a restored state directory or a copied
+// record. Matching on it alone lets one fail, adopt, or health-check the
+// other's live broker, and it cannot tell a stale container for an ARN from
+// the live one beside it either. Every match below therefore goes through
+// h.instances — see InstanceDomain.ContainerIsOurs.
+
 // handleContainerEvent processes DockerContainerDied and DockerContainerStopped.
 func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	p, ok := e.Payload.(events.DockerContainerPayload)
@@ -355,6 +375,12 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	ctx := clusterRegionCtx(p.ResourceID)
 	cluster, aerr := h.store.getCluster(ctx, p.ResourceID)
 	if aerr != nil || cluster == nil {
+		return
+	}
+	if !h.instances.ContainerIsOurs(ctx, p.ContainerID, p.Instance, cluster.DockerContainerID) {
+		// Another Overcast's broker exiting is its business. Failing this
+		// cluster over it reports an outage the broker the record names never
+		// had.
 		return
 	}
 	switch cluster.State {
@@ -376,6 +402,11 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 	if aerr != nil || cluster == nil {
 		return
 	}
+	if !h.instances.ContainerIsOurs(ctx, p.ContainerID, p.Instance, cluster.DockerContainerID) {
+		// Health-checking on another Overcast's start would promote this
+		// cluster to ACTIVE on a broker it does not own.
+		return
+	}
 	switch cluster.State {
 	case "FAILED", "STARTING", "CREATING":
 		addr, port := h.clusterEndpointAddr(ctx, cluster.DockerContainerID, cluster.HostPort)
@@ -386,11 +417,16 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 // reconcileContainers is called once at startup after Docker becomes available.
 // It compares live container state against stored clusters and corrects status drift.
 func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
-	byResource := make(map[string]*docker.ContainerSummary, len(containers))
+	// One resource ID can name several containers — another Overcast's for the
+	// same ARN, or a stale one from an earlier run beside the live one — so
+	// they are collected rather than overwritten, and OwnContainer picks this
+	// instance's out of them below. Keyed to a single container, the index kept
+	// whichever the daemon listed last.
+	byResource := make(map[string][]*docker.ContainerSummary, len(containers))
 	for i := range containers {
 		rid := containers[i].ResourceID()
 		if rid != "" {
-			byResource[rid] = &containers[i]
+			byResource[rid] = append(byResource[rid], &containers[i])
 		}
 	}
 
@@ -405,7 +441,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			continue
 		}
 		rctx := middleware.ContextWithRegion(ctx, rc.Region)
-		c := byResource[cluster.ClusterArn]
+		c := h.instances.OwnContainer(rctx, byResource[cluster.ClusterArn], cluster.DockerContainerID)
 		switch {
 		case c == nil:
 			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" {

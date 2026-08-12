@@ -54,31 +54,11 @@ func dockerRecoveryBackoff(attempt int) time.Duration {
 // container carries overcast.resource-id=mydb — so matching on that alone lets
 // one of them restart, adopt, or stop the other's live database. An RDS
 // container keeps the database in its writable layer, which makes that a data
-// loss, not a nuisance.
-//
-// overcast.instance settles it where it is present: it names the state store
-// that created the container (docker.LabelInstance), and these records live in
-// exactly one such store. Where it is absent, the record's own
-// DockerContainerID settles it instead — this instance wrote that ID down when
-// it created the container, and container IDs are daemon-unique.
-//
-// That fallback is where this check parts company with the sweep's, which
-// treats an unlabelled resource as one it cannot claim. The asymmetry is in
-// what being wrong costs. A sweep that refuses an unlabelled container leaks
-// disk until someone reclaims it; a matcher that refuses one abandons a
-// running database — declared missing and rebuilt behind its back, or left
-// running when the record says the user stopped it. So an unlabelled container
-// is not refused here, it is referred to the only other party that can vouch
-// for it. A container created before the label existed goes on being managed;
-// one this instance never created is still never touched.
+// loss, not a nuisance. See InstanceDomain.ContainerIsOurs for what settles it,
+// and why an unlabelled container is referred to the record rather than
+// refused.
 func (h *Handler) containerIsOurs(ctx context.Context, containerID, owner string, inst *DBInstance) bool {
-	if domain := h.instances.Resolve(ctx); domain != "" && owner != "" {
-		return owner == domain
-	}
-	// Either the container predates the label, or this instance's own identity
-	// could not be read just now. A store that is briefly unavailable must not
-	// make every container on the daemon look foreign.
-	return containerID != "" && containerID == inst.DockerContainerID
+	return h.instances.ContainerIsOurs(ctx, containerID, owner, inst.DockerContainerID)
 }
 
 // ourContainer picks the container in candidates that this Overcast created
@@ -86,12 +66,7 @@ func (h *Handler) containerIsOurs(ctx context.Context, containerID, owner string
 // shared daemon means "every Overcast's container for that name", not this
 // one's.
 func (h *Handler) ourContainer(ctx context.Context, candidates []*docker.ContainerSummary, inst *DBInstance) *docker.ContainerSummary {
-	for _, c := range candidates {
-		if h.containerIsOurs(ctx, c.ID, c.Instance(), inst) {
-			return c
-		}
-	}
-	return nil
+	return h.instances.OwnContainer(ctx, candidates, inst.DockerContainerID)
 }
 
 // handleContainerEvent recovers an RDS engine that exits outside the RDS API.

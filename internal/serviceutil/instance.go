@@ -113,6 +113,66 @@ func (d *InstanceDomain) Resolve(ctx context.Context) string {
 	return d.id
 }
 
+// ContainerIsOurs reports whether a container is one this instance created for
+// the record that wrote down recordedIDs.
+//
+// Services match a container to a record by its overcast.resource-id label,
+// and that label settles nothing about ownership: a resource ID is usually a
+// name the caller chose, and even a minted one is shared by two processes
+// pointed at one data directory. Matching on it alone lets one Overcast stop,
+// adopt or fail another's live container.
+//
+// docker.LabelInstance settles it where it is present — it names the state
+// store that created the container, and a record lives in exactly one such
+// store. Where it is absent, the record's own note of the container ID does:
+// this instance wrote that down when it created the container, and container
+// IDs are daemon-unique. Records that track several containers (an ECS task)
+// pass all of them; one is enough to claim it.
+//
+// That fallback is where matching parts company with sweeping, which treats an
+// unlabelled resource as one it cannot claim. The asymmetry is in what being
+// wrong costs. A sweep that refuses an unlabelled container leaks disk until
+// someone reclaims it; a matcher that refuses one abandons a running resource
+// — reported stopped while it is still serving, or rebuilt behind its back. So
+// an unlabelled container is not refused here, it is referred to the only
+// other party that can vouch for it. A container created before the label
+// existed goes on being managed; one this instance never created is still
+// never touched.
+func (d *InstanceDomain) ContainerIsOurs(ctx context.Context, containerID, owner string, recordedIDs ...string) bool {
+	if domain := d.Resolve(ctx); domain != "" && owner != "" {
+		return owner == domain
+	}
+	// Either the container predates the label, or this instance's own identity
+	// could not be read just now. A store that is briefly unavailable must not
+	// make every container on the daemon look foreign.
+	if containerID == "" {
+		return false
+	}
+	for _, id := range recordedIDs {
+		if id != "" && id == containerID {
+			return true
+		}
+	}
+	return false
+}
+
+// OwnContainer picks the container in candidates that this instance created
+// for the record that wrote down recordedIDs, if any.
+//
+// Callers index containers by resource ID, and on a shared daemon one resource
+// ID can name several — every Overcast's container for that name, or a stale
+// one beside the live one. An index keyed to a single container per resource
+// ID keeps whichever the daemon listed last, which is how a neighbour's comes
+// to decide the state of a record whose own container is running.
+func (d *InstanceDomain) OwnContainer(ctx context.Context, candidates []*docker.ContainerSummary, recordedIDs ...string) *docker.ContainerSummary {
+	for _, c := range candidates {
+		if d.ContainerIsOurs(ctx, c.ID, c.Instance(), recordedIDs...) {
+			return c
+		}
+	}
+	return nil
+}
+
 // ManagedLabels returns docker.ManagedLabels for the resource, stamped with
 // this instance's identity. It is what every Docker-backed service should use
 // in place of docker.ManagedLabels when the resource it is creating will later

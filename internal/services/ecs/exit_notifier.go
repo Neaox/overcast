@@ -105,6 +105,31 @@ func (h *Handler) retainContainerLogs(ctx context.Context, task *Task, dockerID 
 	}
 }
 
+// containerIsOurs reports whether the container a die event is describing is
+// one this Overcast created for task.
+//
+// A container is matched to a task by the overcast.resource-id label, and that
+// label says nothing about which Overcast created it: two of them sharing a
+// Docker daemon keep separate state stores, and a store restored or copied
+// between them leaves both holding the same task IDs while each creates its
+// own containers. The damage is not in the per-container update below, which
+// already compares Docker IDs — it is in the stop decision, which asks only
+// whether any recorded container is still running. A task still being placed
+// has none recorded yet and satisfies that vacuously, so a foreign exit stops
+// it, tears down its volumes, counts the death against the deployment and
+// schedules a replacement.
+//
+// A task tracks a container ID per container rather than one on the record, so
+// all of them are offered as the fallback ownership evidence — see
+// InstanceDomain.ContainerIsOurs for what settles it.
+func (h *Handler) containerIsOurs(ctx context.Context, containerID, owner string, task *Task) bool {
+	recorded := make([]string, 0, len(task.Containers))
+	for _, c := range task.Containers {
+		recorded = append(recorded, c.DockerID)
+	}
+	return h.instances.ContainerIsOurs(ctx, containerID, owner, recorded...)
+}
+
 // recordContainerExit records one container's exit on its task's record, and
 // stops the task when that was the last container still running. It returns the
 // region the task is stored under, the stored task (nil when there is no such
@@ -126,6 +151,9 @@ func (h *Handler) recordContainerExit(clusterName, taskID string, p events.Docke
 		return "", nil, false
 	}
 	ctx := middleware.ContextWithRegion(context.Background(), region)
+	if !h.containerIsOurs(ctx, p.ContainerID, p.Instance, task) {
+		return "", nil, false
+	}
 
 	exitCode, _ := strconv.Atoi(p.ExitCode)
 
