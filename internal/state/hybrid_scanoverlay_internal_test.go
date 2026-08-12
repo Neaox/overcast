@@ -32,7 +32,15 @@ import (
 
 // newFlushControlledHybridStore returns a store whose flushes only ever
 // happen when a test asks for one: a flush interval far longer than any test
-// run, already past the startup seed so flushOnce is no longer a no-op.
+// run, already past the startup seed so flushOnce is no longer a no-op, and
+// no background flusher left running behind the test.
+//
+// That last part is not redundant with the hour-long interval. seedFromSQLite
+// closes s.loaded and only THEN sends its one-time signalFlush() nudge, so
+// waiting on the seed alone (however it is spelled) returns while that nudge
+// is still in flight — see waitForHybridSeedThenStopBackground for the full
+// argument and the earlier incident. Stopping the background goroutines is
+// what makes the test goroutine the only possible caller of flush().
 func newFlushControlledHybridStore(t *testing.T) *HybridStore {
 	t.Helper()
 	s, err := NewHybridStore(t.TempDir(), time.Hour)
@@ -47,8 +55,44 @@ func newFlushControlledHybridStore(t *testing.T) *HybridStore {
 	if err := s.WaitReady(context.Background()); err != nil {
 		t.Fatalf("WaitReady: %v", err)
 	}
-	<-s.loaded // flushOnce defers to the next tick until the seed has finished
+	waitForHybridSeedThenStopBackground(t, s)
 	return s
+}
+
+// TestFlushControlledHybridStore_StopsTheBackgroundFlusher guards the contract
+// every test in this file depends on: that nothing flushes except the test
+// itself.
+//
+// Waiting for the seed to finish does not give that. seedFromSQLite closes
+// s.loaded and only then nudges the run loop into a flush, so a helper that
+// returned as soon as s.loaded closed handed the test a flush that was still
+// in flight. It lands at an arbitrary point in the rest of the test, and when
+// it lands between the Set and the base read in
+// TestHybridStore_ScanMerged_SnapshotsOverlayBeforeBaseRead it commits the
+// very write that test needs to keep unflushed — closing the torn window
+// before the test can drive it, and tripping that test's setup guard. That is
+// what failed once on CI in the full coverage suite (run 31587072910), and
+// only there: the window is microseconds wide unless the runner is loaded
+// enough to keep run() off-CPU across the test's first write.
+//
+// Assert the postcondition that rules it out rather than the symptom, which
+// is a race and so cannot be asserted reliably: with the background
+// goroutines stopped, wg.Wait() returns at once. With run() still alive it
+// blocks until the store is closed.
+func TestFlushControlledHybridStore_StopsTheBackgroundFlusher(t *testing.T) {
+	s := newFlushControlledHybridStore(t)
+
+	stopped := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("newFlushControlledHybridStore returned with background goroutines still running: a flush can still land in the middle of a test")
+	}
 }
 
 func TestHybridStore_ScanMerged_SnapshotsOverlayBeforeBaseRead(t *testing.T) {
