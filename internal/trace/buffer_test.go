@@ -634,7 +634,7 @@ func TestBuffer_concurrentHopsWhileListing(t *testing.T) {
 	}
 }
 
-func TestIsInternalPathDebugNamespace(t *testing.T) {
+func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 	// The whole /_debug/* namespace and /_metrics are polled by the web UI
 	// and must be classified internal, matching middleware's
 	// isOperationalPollPath, so polling never consumes user-trace budget.
@@ -660,12 +660,42 @@ func TestIsInternalPathDebugNamespace(t *testing.T) {
 			t.Errorf("isInternalPath(%q) = false, want true", p)
 		}
 	}
+	// A leading underscore does NOT mean internal, and this half of the test
+	// is the one that says so. isInternalPath is an allowlist, not a prefix
+	// test, because Overcast serves two different kinds of thing under "/_":
+	// its own operational endpoints, and the data plane of the workloads it
+	// emulates. The second kind is a real client's request — an SDK, a
+	// browser, curl — and belongs in the trace list like any other.
+	//
+	// Today that distinction survives by accident: the data-plane routes
+	// happen to sit on first segments (/_appsync, /_apigateway, /_cognito,
+	// /_cloudfront, /_elb, /_lambda/url-invoke) that nobody added to
+	// internalPaths. docs/plans/non-canonical-url-namespace.md moves every one
+	// of them under /_overcast/, which spends that accident — so these cases
+	// are written down before the move rather than after, and each phase of it
+	// has to keep them passing at whatever path they land on.
+	//
+	// Getting this wrong is quiet, which is why it is worth a test: an
+	// AppSync GraphQL call or a Lambda function URL invoke misfiled as
+	// internal does not error, it just stops appearing in the trace UI, and
+	// the first symptom is someone unable to find a request they know they
+	// made.
 	user := []string{
 		"/",
 		"/2015-03-31/functions",
 		"/my-bucket/key",
 		"/_debugfoo",
 		"/_overcast/init",
+
+		// Data plane: the emulated workload answers these, not Overcast.
+		"/_appsync/abc123/graphql",
+		"/_appsync/abc123/realtime",
+		"/_apigateway/execute-api/abc123/us-east-1/test/hello",
+		"/_lambda/url-invoke/abc123/",
+		"/_cloudfront/E123456789/index.html",
+		"/_elb/healthz",
+		"/_cognito/us-east-1_abc123/login",
+		"/_cognito/us-east-1_abc123/oauth2/token",
 	}
 	for _, p := range user {
 		if isInternalPath(p) {

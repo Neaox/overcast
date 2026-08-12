@@ -1,7 +1,9 @@
 # One namespace for every non-canonical URL: `/_overcast/`
 
-> Status: **agreed** — audit complete and open questions decided (§4.3, §5, §8);
-> no code changed yet.
+> Status: **in progress** — phases 0, 0b and 1 done; no routes have moved yet.
+> The rule is enforced from phase 1 onward by
+> `TestNoRouteIsRegisteredOutsideTheNamespace`, against the `unmigratedRoutes`
+> ratchet that phases 2–6 empty. Open questions all decided (§4.3, §8).
 > Scope: `internal/router/`, `internal/middleware/`, `internal/services/{apigateway,appsync,cloudfront,cognito,ecs,elbv2,lambda,rds}/`,
 > `internal/trace/`, `internal/bff/`, `web/`, `compat/ui/`, `Dockerfile`,
 > `docker-compose*.yml`, `docs/`.
@@ -73,7 +75,7 @@ them the highest-risk group to move (§6).
 | `/_appsync/{apiId}/graphql`, `/_appsync/{apiId}/realtime` | [appsync/service.go:241](../../internal/services/appsync/service.go) | `/_overcast/appsync/{apiId}/…` |
 | `/_cloudfront/{distId}/*` | [cloudfront/service.go:223](../../internal/services/cloudfront/service.go) | `/_overcast/cloudfront/{distId}/*` |
 | `/_elb`, `/_elb/*` | [elbv2/service.go:102](../../internal/services/elbv2/service.go) | `/_overcast/elb/*` |
-| `/_lambda/url-invoke/{urlId}/*` | [lambda/service.go:1323](../../internal/services/lambda/service.go) | `/_overcast/lambda/url-invoke/{urlId}/*` |
+| `/_lambda/url-invoke/{urlId}/*` | [lambda/service.go:1343](../../internal/services/lambda/service.go) | `/_overcast/lambda/url-invoke/{urlId}/*` |
 | `/_cognito/{poolId}/…` — 23 routes (`oauth2/{authorize,token,userInfo,revoke}`, `login`, `logout`, `signup`, `confirm`, `new-password`, `mfa`, `forgot-password`, `reset-password`, `branding`, `debug/token`, `users/{username}/password`) | [cognito/service.go:103](../../internal/services/cognito/service.go) | `/_overcast/cognito/user-pools/{poolId}/…` — see §4.1 |
 
 The corresponding rewrite sites are
@@ -81,7 +83,7 @@ The corresponding rewrite sites are
 [appsync/handler_host_execute.go:39,50](../../internal/services/appsync/handler_host_execute.go),
 [cloudfront/handler_proxy.go:623](../../internal/services/cloudfront/handler_proxy.go),
 [elbv2/handler_proxy.go:48,81](../../internal/services/elbv2/handler_proxy.go),
-[lambda/handler_url.go:412](../../internal/services/lambda/handler_url.go) and
+[lambda/handler_url.go:404](../../internal/services/lambda/handler_url.go) and
 [cognito/handler_managed_login.go:254,1341,1770](../../internal/services/cognito/handler_managed_login.go).
 Each must move in the same commit as the route it rewrites to.
 
@@ -105,9 +107,10 @@ generalises to everything.
 
 ## 3. Non-`/_` paths: the part you asked me to check
 
-You were right that this is nearly a closed set, but not entirely. Walking
-every route the router registers and subtracting the manifest-modeled bindings
-leaves exactly five things.
+Nearly a closed set, but not entirely. Walking every route the router
+registers and subtracting the manifest-modeled bindings leaves the five things
+below — **and §3.2 records six more that this list missed**, found by the gate
+once it existed. Read both before treating either as complete.
 
 **Real violations of the rule:**
 
@@ -269,6 +272,41 @@ The measured table above now reads:
 | `GET /api/v2/clusters/{arn}` (`DescribeClusterV2`) | none — defect 3 |
 | `GET /v1/clusters` under an SDK's `kafka` credential scope | `kafka:ListClusters` |
 
+### 3.2 What the audit above missed, and why
+
+**This section was written from a grep for `/_`, and the gate found six more
+invented paths on its first run.** Recorded here because the reason it missed
+them is the reason the gate is worth having: *an invented path nested inside a
+modeled prefix does not look invented.* Every one of these begins with
+segments AWS really does bind.
+
+| Path | What it is |
+| --- | --- |
+| `/2015-03-31/functions/{name}/source` | web UI function editor — emulator-only, hung off Lambda's modeled prefix |
+| `/2015-03-31/functions/{name}/test-events` | saved test events for the Test tab |
+| `/2015-03-31/functions/{name}/test-events/{eventName}` | as above |
+| `/2015-03-31/functions/{name}/invoke-with-progress` | SSE invoke that streams progress to the console |
+| `/clusters/{name}/kubeconfig` | EKS `UpdateKubeconfig`, which its own capability row calls an emulator extension — `aws eks update-kubeconfig` is a CLI-side command that calls DescribeCluster and writes the file locally, so no SDK sends this at all |
+| `/@connections/{apiId}/{stageName}/*` | API Gateway's WebSocket management API. AWS binds `/@connections/{ConnectionId}` on a per-API host; Overcast puts API and stage in the path because the emulator cannot rely on host addressing. A real adaptation of a real operation, but an invented shape |
+
+The first five are straightforward namespace debt and move in phase 4. The
+sixth needs a decision in phase 5: the modeled path plus host routing, or an
+`/_overcast/` endpoint.
+
+The gate also found one thing that is not namespace debt at all:
+**`/2020-05-31/distribution/{id}/monitoring-subscription`** is a redundant
+alias. CloudFront registers monitoring-subscription twice — once at AWS's
+`/2020-05-31/distributions/{id}/…` (plural, which every SDK sends, and which
+works) and once at this singular path, which nothing models and nothing sends.
+Filed as a deletion rather than a move, since removing a route is a behaviour
+change.
+
+Worth noting *why* the model-to-route gate never reported it: that gate starts
+from the capability rows Overcast declares and asks whether each is reachable.
+CloudFront declares `CreateMonitoringSubscription`, the plural route serves it,
+and the gate is satisfied. Nothing in that direction can see a *second*
+registration on a path no model mentions. Only route-to-model can.
+
 ## 4. Design decisions
 
 ### 4.1 The Cognito collision, and why the shape is `/_overcast/<service>/<resource>/…`
@@ -300,7 +338,7 @@ plane?") on every new route.
 ### 4.2 `/_overcast/inbox` → `/_overcast/ses/inbox`
 
 `internalService` already attributes `/_overcast/inbox` to SES
-([logger.go:336](../../internal/middleware/logger.go)); the path is the only
+([logger.go:354](../../internal/middleware/logger.go)); the path is the only
 thing that disagrees. Moving it is what lets that whole function delete.
 
 ### 4.3 Cognito discovery documents
@@ -355,16 +393,31 @@ and see the dispatch-mounted sub-routers too). For every registered route:
 3. appears in `nonManifestRoutes`, a map of pattern → reason → pass;
 4. otherwise → **fail**, naming the pattern and the two ways to fix it.
 
-`nonManifestRoutes` ends up holding exactly five groups, each carrying its
-reason as a string, not a comment — so `go test` output explains itself:
+`nonManifestRoutes` holds the permanent exceptions, each carrying its reason as
+a string rather than a comment — so `go test` output explains itself:
 
 | Entry | Reason recorded |
 | --- | --- |
 | `/favicon.ico` | browser-chosen path; we do not control it |
-| `POST /`, `GET /`, `/*`, `POST /service/{service}/operation/{operation}` | protocol roots (`awsQuery`, `awsJson`, S3, Smithy RPC v2) — never a manifest `URI` |
-| `/{accountID:[0-9]+}/…` | SQS path-style queue URL: a real AWS shape the manifest expresses as an endpoint, not an operation |
-| `/{poolId}/.well-known/{jwks.json,openid-configuration}` | AWS-shaped OIDC discovery; AWS models no SDK operation for it (§4.3) |
-| `/restapis/{restApiId}/{stageName}/_user_request_/*` | LocalStack URL compatibility; the mid-path `_` is deliberate (§3, violation 2) |
+| `/`, `/*`, `/service/{service}/operation/{operation}` | protocol roots (`awsQuery`, `awsJson`, S3, Smithy RPC v2) — never a manifest `URI` |
+| `/{accountID:[0-9]+}/{queueName}` | SQS path-style queue URL: a real AWS shape the manifest expresses as an endpoint, not an operation |
+| `/restapis/{restApiId}/{stageName}/_user_request_/*` and `…/_user_request_` | LocalStack URL compatibility; the mid-path `_` is deliberate (§3, violation 2). Two entries because chi's wildcard does not match the empty remainder |
+
+`/{poolId}/.well-known/{jwks.json,openid-configuration}` joins them in phase 6,
+when the AWS-shaped route is added (§4.3) — AWS models no SDK operation for
+OIDC discovery, so no manifest row can ever cover it.
+
+Alongside it, `unmigratedRoutes` is the **ratchet**: every path that breaks the
+rule today, keyed to the phase that retires it. 68 entries at the time of
+writing. It only shrinks — the gate fails on an entry that is no longer
+registered, so a phase cannot move a route and quietly leave the ledger behind.
+`buildTagGatedRoutes` exempts the entries some build configurations do not
+register (`/_mcp/*` under `slim`), mirroring `buildTagGatedRouteFamilies` in
+`internal/middleware/detectservice_routes_test.go`.
+
+Both ledgers are checked for staleness, and the recorded reason is quoted when
+one goes stale. An entry naming a path nothing registers is worse than
+clutter: it silently pre-approves whatever gets registered there next.
 
 It is a ratchet in the same sense as `unservedBindings` and
 `protocolAsymmetries`: adding an entry is legal and reviewable, and the review
@@ -381,14 +434,86 @@ Wire it into `make aws-models-check` alongside the existing
 
 | Today | After |
 | --- | --- |
-| `internalService`, a 9-arm switch ([logger.go:320](../../internal/middleware/logger.go)) | `strings.Split(path, "/")[2]` |
+| `internalService`, a 9-arm switch ([logger.go:338](../../internal/middleware/logger.go)) | `strings.Split(path, "/")[2]` |
 | `detectService`'s internal arms | one `/_overcast/` arm |
 | 16 `/_*` entries in `registeredRouteClassification` | 1 |
-| `HasPrefix(path, "/_")` in `notready.go`, `iam_enforce.go`, `logger.go` (×2) | `HasPrefix(path, router.InternalPrefix)` |
-| `internalPaths` map + `isInternalPath`'s special cases ([trace.go:572](../../internal/trace/trace.go)) | one prefix test |
+| `HasPrefix(path, "/_")` in `notready.go`, `iam_enforce.go`, and `logger.go` (×2, the `internalService` attribution pair at :216 and :451) | `HasPrefix(path, router.InternalPrefix)` |
 
-A single exported `router.InternalPrefix = "/_overcast/"` replaces every
-literal. That constant is the enforceable version of the rule.
+A single exported `router.InternalPrefix = "/_overcast/"` replaces those
+literals. That constant is the enforceable version of the rule.
+
+Note which `logger.go` sites those are. The two in the row above ask *"who owns
+this path"*; `isOperationalPollPath`, in the same file, asks *"was this polled
+or did a client do it"* — a different question with a different answer, and the
+next section is about not confusing them.
+
+### What the move must NOT delete — the two allowlists
+
+**An earlier draft of this plan listed `trace.internalPaths` and
+`isInternalPath`'s special cases here, to be replaced by "one prefix test".
+That was wrong, and it would have been a silent regression.**
+
+`/_` currently does double duty. It means *"a path Overcast invented"* — the
+thing this plan collapses — and it is also the accidental carrier of a second,
+unrelated distinction: *"not a real client's request"*. Those are different
+sets, and only the first is about naming.
+
+Two predicates depend on the second, and neither is a prefix test:
+
+| Predicate | Shape today | Decides |
+| --- | --- | --- |
+| [`trace.isInternalPath`](../../internal/trace/trace.go) | allowlist: 8 exact paths + `/_debug/*` | whether a request spends user-trace ring-buffer budget, and whether it shows in the trace UI |
+| [`middleware.isOperationalPollPath`](../../internal/middleware/logger.go) | allowlist: `/_health` + `/_debug*` | whether the request logs at TRACE instead of INFO |
+
+Everything **not** in those allowlists is treated as a real client's request —
+which today silently includes the whole emulated data plane, because those
+routes happen to sit on first segments (`/_appsync`, `/_apigateway`,
+`/_cognito`, `/_cloudfront`, `/_elb`, `/_lambda/url-invoke`) that nobody added
+to an allowlist. An AppSync GraphQL call, an API Gateway invoke, a Lambda
+function URL request and a Cognito hosted-UI login are all requests a user
+made and expects to find in the trace list.
+
+Move every one of them to `/_overcast/…` and collapse the predicate to a
+prefix test, and all of them are reclassified as internal noise: no error, no
+failing build — they just stop appearing in the trace UI, and the first
+symptom is somebody unable to find a request they know they made.
+
+**Guard landed ahead of the move**
+(`TestIsInternalPathSeparatesPollingFromClientTraffic`,
+`TestIsOperationalPollPath`): both allowlists now pin the data-plane paths as
+client traffic at their current spellings, and the second test is new —
+`isOperationalPollPath` had no coverage at all. Verified to discriminate by
+collapsing `isInternalPath` to a prefix test, which fails all eight data-plane
+cases. Every phase must keep them passing at whatever path the routes land on.
+
+### How the distinction gets carried afterwards — decide before phase 5
+
+Three options, to settle before the data-plane routes move:
+
+1. **Re-root the allowlists.** Zero behaviour change, smallest diff, keeps two
+   hand-maintained lists that drift — a new data-plane route is misclassified
+   by omission, which is how this got fragile in the first place.
+2. **Sub-namespace by kind**, `/_overcast/x/…` for data plane. Restores a
+   path-shaped signal so every predicate stays a prefix test, but puts a
+   cryptic segment into user-facing URLs (Cognito hosted UI, function URLs)
+   and revives the objection in §4.1.
+3. **Mark it on the route, not in the path** — *recommended*. "Is this a real
+   client's request?" is a property of the route, not of its spelling, and the
+   codebase already works this way in one place:
+   [logger.go:189 and :428](../../internal/middleware/logger.go) consult
+   `HostClaimFromContext(…).Kind == HostClaimHostRoute` to spot host-routed
+   data-plane traffic and refuse to name an AWS operation for it. Generalise
+   that to a marker stamped by the data-plane route groups at registration, and
+   the predicates stop reading paths altogether. It also covers the case the
+   host claim misses today: reaching the same route directly by path rather
+   than through host addressing.
+
+Option 3 additionally makes it possible to tighten two predicates that are
+conflated *today*, independent of this plan: `notready.go` and `iam_enforce.go`
+exempt `/_appsync/{id}/graphql` from the storage-migrating gate and from IAM
+enforcement purely because it starts with `/_`. Whether that is right is a
+design question this plan does not settle — but after the move it should be a
+decision, not an inheritance.
 
 ### Where the rule gets written down
 
@@ -427,7 +552,8 @@ One PR per phase; Go, web, docs and tests in the same commit.
 | # | Content | Why here |
 | --- | --- | --- |
 | **0** | ✅ **Done.** Fix the `/api` IAM bypass (§3.1). Standalone, failing test first. | Independent of the move, and a live hole. |
-| **1** | Gate 9 (§5) landed **with every current violation in `nonManifestRoutes`**, plus `router.InternalPrefix`. No routes move. | The rule is enforced from day one; every later phase shrinks the ratchet instead of racing it. |
+| **0b** | ✅ **Done.** Pin the internal-vs-client-traffic classification in both allowlists, data-plane paths included (§5). No routes move. | The one regression in this plan that fails silently. Cheaper to write down before the move than to diagnose after it. |
+| **1** | ✅ **Done.** Gate 9 (§5) landed with every current violation in the `unmigratedRoutes` ratchet, plus `router.InternalPrefix`. No routes moved. | The rule is enforced from day one; every later phase shrinks the ratchet instead of racing it. |
 | **2** | Router roots: `/_health`, `/_metrics`, `/_topology`, `/_/info`, `/_events`, `/_internal/domains/watch`, plus `overcast-mcp`'s own `/_health`. Predicates, web, 4 healthchecks, `cmd/compat/launch.go`. | Highest-traffic, lowest-risk: no minted URLs. |
 | **3** | `/_debug/*` → `/_overcast/debug/*`; `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
 | **4** | Service admin: `/_lambda/*`, `/_ecs/*`, `/_rds/*`, and `/_overcast/inbox` → `/_overcast/ses/inbox`. | Console-only consumers. |

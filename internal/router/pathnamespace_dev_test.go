@@ -1,0 +1,369 @@
+//go:build dev
+
+package router
+
+import (
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/Neaox/overcast/internal/awsapi"
+	"github.com/Neaox/overcast/internal/config"
+)
+
+// nonManifestRoutes are the paths Overcast serves that are neither a modeled
+// AWS binding nor under InternalPrefix, and are expected to stay that way.
+//
+// Each entry carries its reason as a value rather than a comment, so a failure
+// reads as an argument rather than a list. Adding one is legal and reviewable;
+// the review question is always "why is this not under /_overcast/?"
+var nonManifestRoutes = map[string]string{
+	"/favicon.ico": "browser-chosen path; a 204 to keep auto-requests out of the S3 fallback. We do not control where a browser asks for this.",
+
+	"/":  "protocol root: awsQuery and awsJson dispatch on X-Amz-Target or the Action parameter, never on the path, so no modeled URI describes it.",
+	"/*": "protocol root: the S3 fallback. S3's bucket/object space is deliberately unbounded, which is what makes every unclaimed prefix S3's.",
+	"/service/{service}/operation/{operation}": "protocol root: Smithy RPC v2 names the service and operation in the path itself. The manifest records each operation's own URI, never this dispatch shape.",
+
+	"/{accountID:[0-9]+}/{queueName}": "SQS path-style queue URL. A real AWS shape, but the manifest models it as an endpoint rather than an operation URI, so no row can cover it.",
+
+	"/restapis/{restApiId}/{stageName}/_user_request_/*": "LocalStack URL compatibility for API Gateway execute-api. The underscore mid-path is deliberate and must not be tidied into the namespace: the point is byte-identical compatibility with a URL LocalStack documents, and host-addressed callers already have the namespaced route. See docs/plans/non-canonical-url-namespace.md section 3.",
+	"/restapis/{restApiId}/{stageName}/_user_request_":   "The stage root of the route above — LocalStack's URL with an empty path. Same reason, registered separately because chi's wildcard does not match the empty remainder.",
+}
+
+// unmigratedRoutes is the ratchet: every path that breaks the rule today,
+// recorded so the gate can be enforced from the commit that introduces it
+// rather than from the commit that finishes the migration. The value names the
+// phase of docs/plans/non-canonical-url-namespace.md that retires the entry.
+//
+// It only ever shrinks. Each phase deletes the lines it moved, and this gate
+// fails on an entry that is no longer registered — so a phase cannot quietly
+// leave the ledger behind.
+//
+// **Do not add to this map.** A new internal endpoint goes under
+// InternalPrefix; a new AWS operation goes where the manifest binds it. An
+// entry here is a debt already owed, not a way to take on more.
+var unmigratedRoutes = map[string]string{
+	// Phase 2 — router-owned roots. No minted URLs, so nothing outside the
+	// repo holds these except container healthchecks and polling scripts.
+	"/_health":                     "phase 2 -> /_overcast/health",
+	"/_metrics":                    "phase 2 -> /_overcast/metrics",
+	"/_topology":                   "phase 2 -> /_overcast/topology",
+	"/_/info":                      "phase 2 -> /_overcast/info; the only /_/ root in the tree",
+	"/_events":                     "phase 2 -> /_overcast/events",
+	"/_events/request/{requestId}": "phase 2 -> /_overcast/events/request/{requestId}",
+	"/_internal/domains/watch":     "phase 2 -> /_overcast/domains/watch",
+
+	// Phase 3 — build-tag-gated namespaces, isolated from service code.
+	// /_debug/* is registered only when Debug is on, which is why this gate
+	// builds its router with it enabled.
+	"/_debug/config":             "phase 3 -> /_overcast/debug/config",
+	"/_debug/ec2/vpcs":           "phase 3 -> /_overcast/debug/ec2/vpcs",
+	"/_debug/health":             "phase 3 -> /_overcast/debug/health",
+	"/_debug/metrics":            "phase 3 -> /_overcast/debug/metrics",
+	"/_debug/pprof":              "phase 3 -> /_overcast/debug/pprof",
+	"/_debug/pprof/allocs":       "phase 3 -> /_overcast/debug/pprof/allocs",
+	"/_debug/pprof/block":        "phase 3 -> /_overcast/debug/pprof/block",
+	"/_debug/pprof/cmdline":      "phase 3 -> /_overcast/debug/pprof/cmdline",
+	"/_debug/pprof/goroutine":    "phase 3 -> /_overcast/debug/pprof/goroutine",
+	"/_debug/pprof/heap":         "phase 3 -> /_overcast/debug/pprof/heap",
+	"/_debug/pprof/mutex":        "phase 3 -> /_overcast/debug/pprof/mutex",
+	"/_debug/pprof/profile":      "phase 3 -> /_overcast/debug/pprof/profile",
+	"/_debug/pprof/symbol":       "phase 3 -> /_overcast/debug/pprof/symbol",
+	"/_debug/pprof/threadcreate": "phase 3 -> /_overcast/debug/pprof/threadcreate",
+	"/_debug/pprof/trace":        "phase 3 -> /_overcast/debug/pprof/trace",
+	"/_debug/reset":              "phase 3 -> /_overcast/debug/reset",
+	"/_debug/reset/{service}":    "phase 3 -> /_overcast/debug/reset/{service}",
+	"/_debug/state":              "phase 3 -> /_overcast/debug/state",
+	"/_debug/state/{namespace}":  "phase 3 -> /_overcast/debug/state/{namespace}",
+	"/_debug/trace/{requestId}":  "phase 3 -> /_overcast/debug/trace/{requestId}",
+	"/_debug/traces":             "phase 3 -> /_overcast/debug/traces",
+	"/_debug/traces/count":       "phase 3 -> /_overcast/debug/traces/count",
+	"/_debug/traces/search":      "phase 3 -> /_overcast/debug/traces/search",
+	"/_mcp/*":                    "phase 3 -> /_overcast/mcp; excluded by the slim build",
+
+	// Phase 4 — service admin and console-only endpoints. The web UI is the
+	// only consumer, so these move without touching a URL any SDK holds.
+	"/_lambda/instances": "phase 4 -> /_overcast/lambda/instances",
+	"/_lambda/runtimes":  "phase 4 -> /_overcast/lambda/runtimes",
+	"/_lambda/layers/{layerName}/versions/{versionNumber}/metadata": "phase 4 -> /_overcast/lambda/layers/...",
+	"/_ecs/clusters/{cluster}/tasks":                                "phase 4 -> /_overcast/ecs/clusters/{cluster}/tasks",
+	"/_ecs/tasks/{taskArn}/logs/{container}":                        "phase 4 -> /_overcast/ecs/tasks/{taskArn}/logs/{container}",
+	"/_rds/instances/{instanceId}/logs":                             "phase 4 -> /_overcast/rds/instances/{instanceId}/logs",
+	// Emulator-only endpoints hung off Lambda's modeled prefix, for the web
+	// UI's function editor and Test tab (see overcastRESTOperation in
+	// internal/middleware/restoperation.go). The leading segments are AWS's,
+	// which is exactly why the audit's "/_" grep missed them and this gate
+	// did not: nesting an invented path inside a modeled prefix hides it.
+	"/2015-03-31/functions/{name}/source":                  "phase 4 -> /_overcast/lambda/functions/{name}/source",
+	"/2015-03-31/functions/{name}/test-events":             "phase 4 -> /_overcast/lambda/functions/{name}/test-events",
+	"/2015-03-31/functions/{name}/test-events/{eventName}": "phase 4 -> /_overcast/lambda/functions/{name}/test-events/{eventName}",
+	"/2015-03-31/functions/{name}/invoke-with-progress":    "phase 4 -> /_overcast/lambda/functions/{name}/invoke-with-progress",
+	// EKS UpdateKubeconfig, which its own capability row calls an emulator
+	// extension rather than an AWS operation: `aws eks update-kubeconfig` is a
+	// CLI-side command that calls DescribeCluster and writes the file locally,
+	// so no SDK sends this request at all.
+	"/clusters/{name}/kubeconfig": "phase 4 -> /_overcast/eks/clusters/{name}/kubeconfig",
+
+	// Phase 5 — the data plane. These are the paths host addressing rewrites
+	// to, and they appear in URLs Overcast mints and hands back to callers, so
+	// moving them changes URLs users have already configured.
+	"/_apigateway/execute-api/{apiId}/{region}/*": "phase 5 -> /_overcast/apigateway/execute-api/...",
+	"/_appsync/{apiId}/graphql":                   "phase 5 -> /_overcast/appsync/apis/{apiId}/graphql",
+	"/_appsync/{apiId}/realtime":                  "phase 5 -> /_overcast/appsync/apis/{apiId}/realtime",
+	"/_cloudfront/{distId}/*":                     "phase 5 -> /_overcast/cloudfront/distributions/{distId}/*",
+	"/_elb":                                       "phase 5 -> /_overcast/elb",
+	"/_elb/*":                                     "phase 5 -> /_overcast/elb/*",
+	"/_lambda/url-invoke/{urlId}/*":               "phase 5 -> /_overcast/lambda/url-invoke/{urlId}/*",
+	// Cognito managed login. Moving these changes the hosted-UI URLs and the
+	// endpoints advertised in the OIDC discovery document, which is why phase
+	// 5 is the loud one — a redirect URI already registered in an app config
+	// stops matching.
+	"/_cognito/{poolId}/oauth2/authorize":          "phase 5 -> /_overcast/cognito/user-pools/{poolId}/oauth2/authorize",
+	"/_cognito/{poolId}/oauth2/token":              "phase 5 -> /_overcast/cognito/user-pools/{poolId}/oauth2/token",
+	"/_cognito/{poolId}/oauth2/userInfo":           "phase 5 -> /_overcast/cognito/user-pools/{poolId}/oauth2/userInfo",
+	"/_cognito/{poolId}/oauth2/revoke":             "phase 5 -> /_overcast/cognito/user-pools/{poolId}/oauth2/revoke",
+	"/_cognito/{poolId}/login":                     "phase 5 -> /_overcast/cognito/user-pools/{poolId}/login",
+	"/_cognito/{poolId}/logout":                    "phase 5 -> /_overcast/cognito/user-pools/{poolId}/logout",
+	"/_cognito/{poolId}/signup":                    "phase 5 -> /_overcast/cognito/user-pools/{poolId}/signup",
+	"/_cognito/{poolId}/confirm":                   "phase 5 -> /_overcast/cognito/user-pools/{poolId}/confirm",
+	"/_cognito/{poolId}/new-password":              "phase 5 -> /_overcast/cognito/user-pools/{poolId}/new-password",
+	"/_cognito/{poolId}/mfa":                       "phase 5 -> /_overcast/cognito/user-pools/{poolId}/mfa",
+	"/_cognito/{poolId}/forgot-password":           "phase 5 -> /_overcast/cognito/user-pools/{poolId}/forgot-password",
+	"/_cognito/{poolId}/reset-password":            "phase 5 -> /_overcast/cognito/user-pools/{poolId}/reset-password",
+	"/_cognito/{poolId}/branding":                  "phase 5 -> /_overcast/cognito/user-pools/{poolId}/branding",
+	"/_cognito/{poolId}/debug/token":               "phase 5 -> /_overcast/cognito/user-pools/{poolId}/debug/token",
+	"/_cognito/{poolId}/users/{username}/password": "phase 5 -> /_overcast/cognito/user-pools/{poolId}/users/{username}/password",
+	// API Gateway's WebSocket management API. AWS binds it to
+	// /@connections/{ConnectionId} on a per-API host; Overcast puts the API and
+	// stage in the path instead, because the emulator cannot rely on host
+	// addressing. A real adaptation of a real operation, but an invented shape
+	// — phase 5 decides whether it becomes the modeled path plus host routing,
+	// or an /_overcast/ endpoint.
+	"/@connections/{apiId}/{stageName}/*": "phase 5 — decide: modeled path + host routing, or /_overcast/apigateway/connections/...",
+
+	// Phase 6 — decided in section 4.3: serve the AWS shape
+	// /{poolId}/.well-known/... and delete the region-prefixed form, whose
+	// leading segment restates the region the pool ID already carries.
+	"/{region}/{poolId}/.well-known/jwks.json":            "phase 6 -> /{poolId}/.well-known/jwks.json (AWS's shape)",
+	"/{region}/{poolId}/.well-known/openid-configuration": "phase 6 -> /{poolId}/.well-known/openid-configuration (AWS's shape)",
+
+	// Not a move — a deletion. CloudFront registers monitoring-subscription
+	// twice: at AWS's /2020-05-31/distributions/{id}/... (plural, which every
+	// SDK sends) and at this singular alias, which nothing models and nothing
+	// sends. Removing a route is a behaviour change, so it is filed rather
+	// than folded into a namespace phase.
+	"/2020-05-31/distribution/{id}/monitoring-subscription": "delete: redundant alias of the modeled plural path, which is also registered",
+}
+
+// buildTagGatedRoutes are ratchet entries that some build configurations do
+// not register, so their absence is not a debt someone paid without saying so.
+// CI runs the suite under -tags slim,dev as well as -tags dev, and
+// mcp_routes_slim.go registers nothing — the slim binary deliberately exposes
+// no MCP surface. Mirrors buildTagGatedRouteFamilies in
+// internal/middleware/detectservice_routes_test.go, which exists for the same
+// reason.
+var buildTagGatedRoutes = map[string]bool{"/_mcp/*": true}
+
+// TestNoRouteIsRegisteredOutsideTheNamespace is the route-to-model direction of
+// the manifest gates, and the enforceable form of the rule in
+// docs/plans/non-canonical-url-namespace.md:
+//
+//	Every path Overcast serves on the AWS API listener is either a binding the
+//	pinned AWS manifest models, or it lives under /_overcast/.
+//
+// TestModeledBindings_areServedWhereAWSBindsThem walks model to route and asks
+// whether everything AWS models is reachable. This walks route to model and
+// asks the opposite: whether everything reachable is something AWS models.
+// Neither implies the other, and only this direction catches a path the
+// emulator invented — the failure behind #793, #815 and #854-#860, which a
+// name-only check cannot see.
+func TestNoRouteIsRegisteredOutsideTheNamespace(t *testing.T) {
+	// Given: every route the router registers, and every URI the models bind.
+	// Debug is on because the /_debug/* namespace is registered behind it, and
+	// a namespace gate that cannot see a whole namespace is not a gate.
+	routes := inventoryWith(t, func(cfg *config.Config) { cfg.Debug = true })
+	modeled := newModeledURIIndex()
+
+	var invented, misnamespaced []string
+	seenRatchet := map[string]bool{}
+	seenPermanent := map[string]bool{}
+	// A pattern registered for several methods is one path, and the rule is
+	// about paths. Judging it once also keeps a nine-method proxy route from
+	// filling the failure report with nine copies of itself.
+	judged := map[string]bool{}
+
+	for _, route := range routes.routes {
+		pattern := route.Pattern
+		if _, permanent := nonManifestRoutes[pattern]; permanent {
+			seenPermanent[pattern] = true
+			continue
+		}
+		if _, unmigrated := unmigratedRoutes[pattern]; unmigrated {
+			seenRatchet[pattern] = true
+			continue
+		}
+		if judged[pattern] {
+			continue
+		}
+		judged[pattern] = true
+
+		// When: each route is classified.
+		switch {
+		case strings.HasPrefix(pattern, InternalPrefix):
+			// Namespaced. Nothing further to prove: the prefix is reserved
+			// because S3 bucket names cannot begin with an underscore.
+		case strings.HasPrefix(pattern, "/_"):
+			misnamespaced = append(misnamespaced, pattern)
+		case !modeled.covers(pattern):
+			invented = append(invented, pattern)
+		}
+	}
+
+	// Then: nothing is served on a path that is neither modeled nor namespaced.
+	sort.Strings(misnamespaced)
+	if len(misnamespaced) > 0 {
+		t.Errorf("routes under \"/_\" but outside %[1]q:\n\t%s\n"+
+			"Internal endpoints live under %[1]s — one reserved prefix, not sixteen. "+
+			"See docs/plans/non-canonical-url-namespace.md.",
+			InternalPrefix, strings.Join(misnamespaced, "\n\t"))
+	}
+
+	sort.Strings(invented)
+	if len(invented) > 0 {
+		t.Errorf("routes on paths no AWS model binds:\n\t%s\n"+
+			"Either serve the operation where AWS binds it (check the URI in the pinned "+
+			"manifest), move the endpoint under %s, or add it to nonManifestRoutes with "+
+			"the reason it is neither.",
+			strings.Join(invented, "\n\t"), InternalPrefix)
+	}
+
+	// And: neither ledger outlives the routes it describes. An entry for a
+	// path nothing registers is worse than clutter — it silently pre-approves
+	// whatever gets registered there next.
+	reportStaleLedger(t, "unmigratedRoutes", unmigratedRoutes, seenRatchet,
+		"only shrinks; a phase that moved these owes the deletion")
+	reportStaleLedger(t, "nonManifestRoutes", nonManifestRoutes, seenPermanent,
+		"records exceptions to the rule; an exception with no route is not one")
+}
+
+// reportStaleLedger fails when a ledger names a path the router no longer
+// registers, quoting the recorded reason so the report says what is being
+// deleted and why it was ever allowed.
+func reportStaleLedger(t *testing.T, name string, ledger map[string]string, seen map[string]bool, rule string) {
+	t.Helper()
+
+	var stale []string
+	for pattern, reason := range ledger {
+		if !seen[pattern] && !buildTagGatedRoutes[pattern] {
+			stale = append(stale, pattern+"\n\t\trecorded reason: "+reason)
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		t.Errorf("%[1]s entries no longer registered — delete them:\n\t%[2]s\n%[1]s %[3]s.",
+			name, strings.Join(stale, "\n\t"), rule)
+	}
+}
+
+// TestModeledURIIndex_covers guards the half of the gate that can fail open.
+//
+// If the index over-matches, every route looks modeled and
+// TestNoRouteIsRegisteredOutsideTheNamespace passes while proving nothing —
+// the failure mode a gate is least likely to notice about itself, because a
+// green test is what it looks like. So the invented cases below matter more
+// than the modeled ones, and they are drawn from what the gate really found on
+// its first run.
+func TestModeledURIIndex_covers(t *testing.T) {
+	index := newModeledURIIndex()
+
+	modeled := []string{
+		"/2015-03-31/functions/{name}/invocations",               // Lambda Invoke
+		"/api/v2/clusters",                                       // MSK ListClustersV2
+		"/v2/email/identities",                                   // SES v2
+		"/2020-05-31/distributions/{id}/monitoring-subscription", // CloudFront, AWS's plural
+		"/restapis/{restApiId}",                                  // API Gateway
+	}
+	for _, pattern := range modeled {
+		if !index.covers(pattern) {
+			t.Errorf("covers(%q) = false, want true — the manifest binds this path", pattern)
+		}
+	}
+
+	invented := []string{
+		"/2015-03-31/functions/{name}/source",                   // web UI function editor
+		"/2015-03-31/functions/{name}/test-events",              // web UI Test tab
+		"/2020-05-31/distribution/{id}/monitoring-subscription", // singular: the redundant alias
+		"/clusters/{name}/kubeconfig",                           // EKS emulator extension
+		"/{region}/{poolId}/.well-known/jwks.json",              // region-prefixed OIDC discovery
+		"/nothing/aws/ever/modeled",
+	}
+	for _, pattern := range invented {
+		if index.covers(pattern) {
+			t.Errorf("covers(%q) = true, want false — no modeled URI binds this path", pattern)
+		}
+	}
+}
+
+// modeledURIIndex is every modeled URI, pre-split and bucketed by first path
+// segment.
+//
+// The bucketing is what makes the gate affordable: the corpus is ~18,850
+// operations and the router registers hundreds of routes, so the naive cross
+// product is millions of segment comparisons. Keying on the first segment
+// reduces almost every lookup to a handful. Routes whose own first segment is
+// a label — SQS's queue URLs, Cognito's per-pool discovery — can match a URI
+// under any key, so they get the full scan they need.
+type modeledURIIndex struct {
+	byFirstSegment map[string][][]string
+	// parameterised holds URIs whose own first segment is a model label. No
+	// literal key can index them, because they match any first segment.
+	parameterised [][]string
+	all           [][]string
+}
+
+func newModeledURIIndex() *modeledURIIndex {
+	index := &modeledURIIndex{byFirstSegment: map[string][][]string{}}
+	awsapi.WalkOperations(func(op awsapi.Operation) bool {
+		if op.URI == "" {
+			return true
+		}
+		segments := uriSegments(op.URI)
+		index.all = append(index.all, segments)
+		switch {
+		case len(segments) < 2:
+			index.parameterised = append(index.parameterised, segments)
+		case isLabelSegment(segments[1]):
+			index.parameterised = append(index.parameterised, segments)
+		default:
+			index.byFirstSegment[segments[1]] = append(index.byFirstSegment[segments[1]], segments)
+		}
+		return true
+	})
+	return index
+}
+
+// covers reports whether any modeled URI is served by this route pattern.
+func (m *modeledURIIndex) covers(pattern string) bool {
+	segments := patternSegments(pattern)
+	if len(segments) < 2 || isLabelSegment(segments[1]) {
+		return anyCovered(segments, m.all)
+	}
+	return anyCovered(segments, m.byFirstSegment[segments[1]]) ||
+		anyCovered(segments, m.parameterised)
+}
+
+func anyCovered(pattern []string, uris [][]string) bool {
+	for _, uri := range uris {
+		if patternCovers(pattern, uri) != coverageNone {
+			return true
+		}
+	}
+	return false
+}
+
+// isLabelSegment reports whether a path segment matches values rather than
+// being one, in either notation: chi's "{name}" and "*", the models' "{Name}"
+// and "{Name+}".
+func isLabelSegment(s string) bool {
+	return s == "*" || strings.HasPrefix(s, "{")
+}
