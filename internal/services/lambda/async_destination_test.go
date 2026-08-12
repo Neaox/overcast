@@ -13,56 +13,10 @@ package lambda
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"testing"
-	"time"
 
-	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/eventtarget"
 )
-
-// slowFailingRuntime always fails, and takes perInvoke of mock-clock time to do
-// it — the shape of a handler whose own runtime, not the back-off between
-// attempts, is what ages an event out.
-type slowFailingRuntime struct {
-	clk       *clock.Mock
-	perInvoke time.Duration
-
-	mu      sync.Mutex
-	invokes int
-}
-
-func (r *slowFailingRuntime) CanHandle(string) bool { return true }
-func (r *slowFailingRuntime) Acquire(_ context.Context, fn *Function) (RuntimeInstance, error) {
-	return &slowFailingInstance{poolTestInstance: newPoolTestInstance(fn.Name), rt: r}, nil
-}
-func (r *slowFailingRuntime) Release(context.Context, RuntimeInstance, bool) {}
-
-func (r *slowFailingRuntime) invokeCount() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.invokes
-}
-
-type slowFailingInstance struct {
-	*poolTestInstance
-	rt *slowFailingRuntime
-}
-
-func (i *slowFailingInstance) Invoke(context.Context, []byte, InvokeOptions) (*InvokeResult, error) {
-	i.rt.mu.Lock()
-	i.rt.invokes++
-	i.rt.mu.Unlock()
-	// Advancing here rather than sleeping keeps the test deterministic: the
-	// handler "took" a minute of the clock the age is measured against.
-	i.rt.clk.Add(i.rt.perInvoke)
-	return &InvokeResult{
-		StatusCode:    200,
-		FunctionError: "Unhandled",
-		RequestID:     "slow-req",
-		Payload:       []byte(`{"errorMessage":"slow boom"}`),
-	}, nil
-}
 
 const (
 	testDestinationQueue = "arn:aws:sqs:us-east-1:000000000000:async-destination"
@@ -114,18 +68,18 @@ func TestInvokeAsync_zeroRetryAttemptsMeansNoRetry(t *testing.T) {
 }
 
 func TestInvokeAsync_ageingOutStopsTheRetries(t *testing.T) {
-	// Given: a function that always fails and takes a minute to do it, allowed
-	// AWS's two retries and AWS's minimum event age.
+	// Given: a function that always fails, allowed AWS's two retries and AWS's
+	// minimum event age.
 	//
-	// The slow handler is what makes this reachable at all. AWS's retry
-	// schedule is one second then two, and its minimum MaximumEventAgeInSeconds
-	// is sixty, so an event whose attempts return promptly can never outlive
-	// its age — on AWS the age is mostly spent waiting in the asynchronous
-	// queue, which Overcast does not make an event wait in. A long-running
-	// handler is the case where the age does decide the outcome.
-	rt := &slowFailingRuntime{perInvoke: time.Minute}
+	// One attempt is the whole point. AWS waits a minute before the first
+	// retry, so an event with a sixty-second maximum age has already expired
+	// when that wait ends and is discarded without being sent again — the age
+	// decides the outcome, and the two retries it is entitled to never run.
+	// This is only reachable because the back-off is AWS's real one; while it
+	// was compressed to seconds the event outlived nothing and the setting was
+	// stored, honoured and unreachable.
+	rt := &failingRuntime{requestID: "aged-out"}
 	f := newDeadLetterFixture(t, rt, "")
-	rt.clk = f.clk
 	f.configureEventInvoke(t, &EventInvokeConfig{
 		MaximumRetryAttempts:     intPtr(2),
 		MaximumEventAgeInSeconds: intPtr(60),
@@ -134,13 +88,10 @@ func TestInvokeAsync_ageingOutStopsTheRetries(t *testing.T) {
 	// When: it is invoked asynchronously.
 	f.invokeAsyncAndDrain(t, testDLQEvent)
 
-	// Then: it stopped before exhausting its retries — the age ended it, not
-	// the count.
-	if got := rt.invokeCount(); got >= 3 {
-		t.Errorf("handler ran %d time(s), want fewer than 3 — the event should have aged out first", got)
-	}
-	if got := rt.invokeCount(); got == 0 {
-		t.Error("handler never ran; the event aged out before its first attempt")
+	// Then: it ran once. Not "fewer than three" — the age is what ended it and
+	// the count it ends at is exact.
+	if got := rt.invokeCount(); got != 1 {
+		t.Errorf("handler ran %d time(s), want 1 — the event ages out during the first retry wait", got)
 	}
 }
 

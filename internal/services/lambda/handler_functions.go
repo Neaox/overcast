@@ -2716,12 +2716,7 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 			h.deliverAsyncDestination(bgCtx, fn, eventInvoke, payload, outcome, attempt, true)
 			return
 		}
-		aged := h.eventAgedOut(eventInvoke, accepted)
-		if !outcome.retryable || attempt >= attempts || aged {
-			if aged {
-				h.log.Warn("invokeAsync: event outlived MaximumEventAgeInSeconds, no further retries",
-					zap.String("function", fn.Name), zap.Int("attempt", attempt))
-			}
+		if !outcome.retryable || attempt >= attempts {
 			h.failAsyncInvocation(bgCtx, fn, eventInvoke, payload, outcome, attempt)
 			return
 		}
@@ -2733,6 +2728,17 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 		select {
 		case <-h.clk.After(asyncRetryBackoff(attempt)):
 		case <-ctx.Done():
+			h.failAsyncInvocation(bgCtx, fn, eventInvoke, payload, outcome, attempt)
+			return
+		}
+		// The age is checked here, after the wait and before the retry runs,
+		// because that is where AWS checks it: "new events might age out before
+		// Lambda has a chance to send them to your function". Checking it after
+		// an attempt instead would bill the event an invocation AWS would never
+		// have made.
+		if h.eventAgedOut(eventInvoke, accepted) {
+			h.log.Warn("invokeAsync: event outlived MaximumEventAgeInSeconds, discarding it unrun",
+				zap.String("function", fn.Name), zap.Int("attempts", attempt))
 			h.failAsyncInvocation(bgCtx, fn, eventInvoke, payload, outcome, attempt)
 			return
 		}
@@ -2774,11 +2780,14 @@ func asyncInvokeAttempts(cfg *EventInvokeConfig) int {
 // function's MaximumEventAgeInSeconds, which ends the retries independently of
 // how many are left.
 //
+// The age is measured from acceptance — the moment the caller was answered 202
+// — so it covers the waits between attempts and the time the handler itself
+// spends running, which is what makes AWS's sixty-second minimum meaningful
+// against AWS's one- and two-minute retry waits.
+//
 // A function with no configured age never ages out here. AWS's own default is
-// six hours, and an emulator that discarded an event after six hours of
-// retrying would be describing a schedule it does not run: these retries are
-// seconds apart, so nothing would ever reach it. Configuring an age is the only
-// way to see this fire, which is what the setting is for.
+// six hours, and an event cannot survive that long with at most two retries; on
+// AWS the difference is queue residency, which Overcast has no equivalent of.
 func (h *Handler) eventAgedOut(cfg *EventInvokeConfig, accepted time.Time) bool {
 	if cfg == nil || cfg.MaximumEventAgeInSeconds == nil {
 		return false
@@ -2803,15 +2812,24 @@ func (h *Handler) eventInvokeConfigFor(ctx context.Context, fn *Function) *Event
 
 // asyncRetryBackoff is how long to wait before the given attempt's retry.
 //
-// AWS: "the retry interval increases exponentially from 1 second after the
-// first attempt to a maximum of 5 minutes"
-// (https://docs.aws.amazon.com/lambda/latest/dg/invocation-retries.html). With
-// only two retries the ceiling is never approached, so the real intervals are
-// AWS's own — one second, then two — rather than the compressed stand-in
-// EventBridge and Pipes need for their much longer schedules. It runs on the
-// injected clock, so a test drives it rather than waiting it out.
+// AWS runs two different schedules for asynchronous invocation and it is easy
+// to cite the wrong one. This is the *function error* case, where AWS is
+// explicit: "by default Lambda attempts to run it two more times, with a
+// one-minute wait between the first two attempts, and two minutes between the
+// second and third attempts"
+// (https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-error-handling.html).
+// The exponential "from 1 second ... to a maximum of 5 minutes" schedule on the
+// same page belongs to throttles and 500s, which reach here as a different
+// outcome entirely.
+//
+// Minutes rather than the seconds this used to wait, because the compression
+// was not free: MaximumEventAgeInSeconds has a sixty-second minimum, so an
+// emulator retrying seconds apart could never reach it, and the setting was
+// stored and honoured but unreachable. At AWS's real intervals it decides
+// outcomes exactly as it does on AWS. The wait runs on the injected clock, so a
+// test drives it rather than waiting it out.
 func asyncRetryBackoff(attempt int) time.Duration {
-	return time.Duration(1<<(attempt-1)) * time.Second
+	return time.Duration(attempt) * time.Minute
 }
 
 // asyncInvokeOutcome is what one attempt of an asynchronous invocation did.
