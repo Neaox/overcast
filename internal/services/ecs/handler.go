@@ -439,6 +439,7 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		EphemeralStorage        *EphemeralStorage     `json:"ephemeralStorage"`
 		PidMode                 string                `json:"pidMode"`
 		IpcMode                 string                `json:"ipcMode"`
+		Tags                    []Tag                 `json:"tags"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -513,6 +514,10 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		IpcMode:                 req.IpcMode,
 	}
 	if aerr := h.store.putTaskDefinition(r.Context(), td); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	if aerr := h.storeTaskDefinitionTags(r.Context(), td.TaskDefinitionArn, req.Tags); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}

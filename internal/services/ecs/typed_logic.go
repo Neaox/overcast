@@ -60,6 +60,7 @@ type registerTaskDefinitionRequest struct {
 	PidMode                 string                `json:"pidMode" cbor:"pidMode"`
 	IpcMode                 string                `json:"ipcMode" cbor:"ipcMode"`
 	Volumes                 []TaskVolume          `json:"volumes" cbor:"volumes"`
+	Tags                    []Tag                 `json:"tags" cbor:"tags"`
 }
 
 // validateTaskVolumes rejects container mount points that reference a volume
@@ -698,6 +699,9 @@ func (h *Handler) registerTaskDefinitionTyped(ctx context.Context, req *register
 		IpcMode:                 req.IpcMode,
 	}
 	if aerr := h.store.putTaskDefinition(ctx, td); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := h.storeTaskDefinitionTags(ctx, td.TaskDefinitionArn, req.Tags); aerr != nil {
 		return nil, aerr
 	}
 	if h.puller != nil {

@@ -3,10 +3,10 @@ package lambda
 import (
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
-	"unicode"
+
+	"github.com/Neaox/overcast/internal/hostpath"
 )
 
 const hotReloadTagKey = "overcast:hot-reload-path"
@@ -29,26 +29,10 @@ func hotReloadTagPath(fn *Function) string {
 	return strings.TrimSpace(fn.Tags[hotReloadTagKey])
 }
 
+// normalizeHotReloadPath is hostpath.Normalize, kept as a name local to this
+// package's callers. ECS's hot reload shares the implementation.
 func normalizeHotReloadPath(raw string) (string, error) {
-	p := strings.TrimSpace(raw)
-	if p == "" {
-		return "", fmt.Errorf("path is empty")
-	}
-
-	// Convert Windows drive-letter paths to Docker-compatible mount paths.
-	// Example: C:\\Users\\dev\\app -> /c/Users/dev/app
-	if len(p) >= 3 && unicode.IsLetter(rune(p[0])) && p[1] == ':' && (p[2] == '\\' || p[2] == '/') {
-		drive := strings.ToLower(string(p[0]))
-		rest := strings.ReplaceAll(p[2:], "\\", "/")
-		p = "/" + drive + rest
-	}
-
-	p = strings.ReplaceAll(p, "\\", "/")
-	p = path.Clean(p)
-	if !strings.HasPrefix(p, "/") {
-		return "", fmt.Errorf("%q is not absolute", raw)
-	}
-	return p, nil
+	return hostpath.Normalize(raw)
 }
 
 func validateFunctionHotReloadConfig(fn *Function) (string, error) {
@@ -94,16 +78,7 @@ func functionCodeIdentity(fn *Function) string {
 }
 
 func decorateHotReloadMountError(err error, hotReloadPath string) error {
-	if err == nil || hotReloadPath == "" {
-		return err
-	}
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "mounts denied") ||
-		strings.Contains(msg, "invalid mount config") ||
-		strings.Contains(msg, "bind source path does not exist") {
-		return fmt.Errorf("hot reload mount failed for %q: %w; if using Docker Desktop, allow this path in File Sharing settings: https://docs.docker.com/desktop/settings-and-maintenance/settings/#file-sharing", hotReloadPath, err)
-	}
-	return err
+	return hostpath.DecorateMountError(err, hotReloadPath)
 }
 
 // typeScriptSourceDiagnostic returns a non-empty warning string when dir

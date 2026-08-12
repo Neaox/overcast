@@ -312,12 +312,17 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 	// can look up the task.
 	resourceID := clusterName + "/" + taskID
 
+	// Hot-reload redirects are resolved once for the task: the tags belong to
+	// the task definition, so asking per container would repeat the same store
+	// read and the same warnings for every container in it.
+	hotReload := h.hotReloadPaths(td, h.taskDefinitionTags(ctx, td.TaskDefinitionArn))
+
 	// Volumes before containers: a mount naming a volume that does not exist
 	// fails container creation, and provisioning once here rather than per
 	// container keeps the daemon calls to a single pass. The failure is
 	// attributed to the first container, which is the one whose creation would
 	// have hit it.
-	if err := h.provisionTaskVolumes(ctx, td, clusterName, taskID); err != nil {
+	if err := h.provisionTaskVolumes(ctx, td, clusterName, taskID, hotReload); err != nil {
 		name := ""
 		if len(td.ContainerDefinitions) > 0 {
 			name = td.ContainerDefinitions[0].Name
@@ -374,6 +379,8 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 
 		containerName := fmt.Sprintf("overcast-ecs-%s-%s-%s", clusterName, taskID[:8], cd.Name)
 
+		mounts := h.containerMounts(ctx, td, &td.ContainerDefinitions[i], taskID, hotReload)
+
 		ccfg := &docker.CreateContainerRequest{
 			ContainerConfig: &docker.ContainerConfig{
 				Image: image,
@@ -393,7 +400,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			// notifier schedules removal immediately after capturing it.
 			HostConfig: &docker.HostConfig{AutoRemove: false,
 				Privileged:   cd.Privileged != nil && *cd.Privileged,
-				Mounts:       h.containerMounts(ctx, td, &td.ContainerDefinitions[i], taskID),
+				Mounts:       mounts,
 				NetworkMode:  dataplane.Primary(h.cfg),
 				PortBindings: portBindings,
 				ExtraHosts:   endpoint.ExtraHosts(),
@@ -406,7 +413,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 		// (docker rmi after the recorded pull) instead of failing until restart.
 		dockerID, err := h.puller.CreateContainerWithRetry(ctx, containerName, ccfg)
 		if err != nil {
-			return containerFailure(cd.Name, "ecs: create container %s: %w", cd.Name, err)
+			return containerFailure(cd.Name, "ecs: create container %s: %w", cd.Name, decorateBindMountError(err, mounts))
 		}
 
 		// With TLS on, the task must trust the CA that minted Overcast's
@@ -438,7 +445,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 
 		if err := h.docker.StartContainer(ctx, dockerID); err != nil {
 			_ = h.docker.RemoveContainerForce(dockerID)
-			return containerFailure(cd.Name, "ecs: start container %s: %w", cd.Name, err)
+			return containerFailure(cd.Name, "ecs: start container %s: %w", cd.Name, decorateBindMountError(err, mounts))
 		}
 		if placement.networkID != "" {
 			// Only the first container carries the task's ENI address. AWS gives
@@ -562,13 +569,18 @@ func mountedVolumes(td *TaskDefinition) []*TaskVolume {
 // A failure is returned rather than warned about: unlike a missing EFS mount,
 // which degrades to a container writing into its own layer, a volume the task
 // definition asked for and did not get is a task that will not do what it says.
-func (h *Handler) provisionTaskVolumes(ctx context.Context, td *TaskDefinition, clusterName, taskID string) error {
+func (h *Handler) provisionTaskVolumes(ctx context.Context, td *TaskDefinition, clusterName, taskID string, hotReload map[string]string) error {
 	if h.docker == nil {
 		return nil
 	}
 	for _, v := range mountedVolumes(td) {
 		dvc := v.DockerVolumeConfiguration
 		if v.EFSVolumeConfiguration != nil || (v.Host != nil && v.Host.SourcePath != "") {
+			continue
+		}
+		// A redirected volume is a bind to a directory that already exists on
+		// the host; there is no Docker volume to create for it.
+		if hotReload[v.Name] != "" {
 			continue
 		}
 		if dvc != nil && dockerVolumeScope(dvc) == "shared" {
@@ -765,7 +777,7 @@ func (h *Handler) sweepOrphanedTaskVolumes(ctx context.Context) {
 // A mount point naming a volume the definition does not declare is skipped;
 // registration rejects that, so reaching it means a task definition stored
 // before the rule existed.
-func (h *Handler) containerMounts(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition, taskID string) []docker.Mount {
+func (h *Handler) containerMounts(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition, taskID string, hotReload map[string]string) []docker.Mount {
 	if len(cd.MountPoints) == 0 {
 		return nil
 	}
@@ -782,6 +794,16 @@ func (h *Handler) containerMounts(ctx context.Context, td *TaskDefinition, cd *C
 			continue
 		}
 		switch {
+		// A hot-reload redirect wins over the scratch volume it replaces, and
+		// only ever applies to a volume that had no configuration of its own —
+		// hotReloadPaths refuses to redirect anything else.
+		case hotReload[mp.SourceVolume] != "":
+			mounts = append(mounts, docker.Mount{
+				Type:     "bind",
+				Source:   hotReload[mp.SourceVolume],
+				Target:   mp.ContainerPath,
+				ReadOnly: mp.ReadOnly,
+			})
 		case v.EFSVolumeConfiguration != nil:
 			m, ok := h.efsMount(ctx, v.EFSVolumeConfiguration, cd, mp)
 			if !ok {

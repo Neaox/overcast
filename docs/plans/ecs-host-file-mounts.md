@@ -5,7 +5,7 @@ description: A clean inner loop for applications that run on ECS in staging and 
 
 # ECS hot reload — editing local source inside an emulated task
 
-**Status:** **Layer 1 complete**, Layers 2–3 outstanding · **Opened:** 2026-08-12 · **Revised:** 2026-08-12 (design reworked around API-fidelity/convenience separation; guide made a deliverable; open questions decided — full volume-type coverage now in scope)
+**Status:** **Layers 1–2 complete**; Layer 3's standalone guide (`docs/local-dev.md`) outstanding · **Opened:** 2026-08-12 · **Revised:** 2026-08-12 (design reworked around API-fidelity/convenience separation; guide made a deliverable; open questions decided — full volume-type coverage now in scope)
 **Scope:** `internal/services/ecs`, `internal/docker` (volume driver options, inspect), `internal/config`, a shared host-path helper lifted out of `internal/services/lambda`, `docs/services/ecs.md`, a new published guide
 **Related:** [efs-data-plane.md](./efs-data-plane.md) (the mount path this extends), Lambda hot reload ([docs/services/lambda.md § Hot Reload](../services/lambda.md#hot-reload)) — the precedent this deliberately mirrors
 
@@ -265,7 +265,32 @@ A volume failure now maps to `ResourceInitializationError` in
 is the AWS code for it — checked before the `network` case, since a driver named
 after a network filesystem would otherwise match that first.
 
-## Layer 2 — hot reload via the volume-redirect tag
+## Layer 2 — hot reload via the volume-redirect tag — **done**
+
+> **Landed.** `internal/services/ecs/hot_reload.go` (tag resolution, redirect,
+> bind-error decoration), `internal/hostpath` (shared with Lambda),
+> `RegisterTaskDefinition` tag storage on both wire paths, the unified flags,
+> `hot_reload_test.go`, the config inheritance matrix, service docs on both
+> sides, changelog fragment. Deltas from the plan:
+>
+> 1. **`redirectableVolume` is the rule the whole feature rests on**, and it is
+>    narrower than "a volume with no configuration": only a volume that declares
+>    *nothing* can be redirected. An EFS, Docker, or `host.sourcePath` volume
+>    already names its own storage, so redirecting one would mean overriding
+>    what the definition asked for rather than filling in what it deliberately
+>    left open. Same reason the tag cannot invent a volume that is not declared.
+> 2. **The flag is checked after a tag has asked for a redirect**, not before, so
+>    the warning naming `OVERCAST_ECS_HOT_RELOAD` only reaches the user who
+>    wanted it. Checking first would have made the feature silent for exactly
+>    the person trying to turn it on.
+> 3. **Bind-error decoration names every bind source, not the culprit**, because
+>    the daemon does not say which mount it rejected. `decorateBindMountError`
+>    covers `host.sourcePath` binds too, not just hot-reload ones.
+> 4. **Lambda's error prefix changed** from "hot reload mount failed" to "bind
+>    mount failed" now that the helper is shared. Nothing asserted the old text.
+> 5. Tag storage is keyed on the **revision's** ARN, so a later revision that
+>    names no tags has none rather than inheriting its predecessor's — which is
+>    what AWS does, and what makes a redirect follow a `cdk deploy` cleanly.
 
 The developer-machine story, gated exactly as Lambda's is.
 

@@ -701,13 +701,18 @@ with every runtime and every bundler.
 Use bind-mount hot reload when you need sub-second iteration and want to skip the
 redeploy cycle entirely.
 
-Enable the global feature flag when starting Overcast:
+Enable the feature flag when starting Overcast:
 
 ```bash
 OVERCAST_LAMBDA_HOT_RELOAD=true overcast serve
 # or
 docker run -e OVERCAST_LAMBDA_HOT_RELOAD=true overcast
 ```
+
+`OVERCAST_HOT_RELOAD=true` turns it on for every compute service at once —
+Lambda and [ECS](./ecs.md#hot-reload--editing-local-source-inside-a-task) —
+and `OVERCAST_LAMBDA_HOT_RELOAD` overrides it either way, so a single service
+can be opted out of an umbrella `true`.
 
 Then create or update the function with the `overcast:hot-reload-path` tag set
 to an absolute host path:
