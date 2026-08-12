@@ -867,18 +867,10 @@ func (s *HybridStore) List(ctx context.Context, namespace, prefix string) ([]str
 	if shouldReadHybridNamespaceFromSQLite(namespace) {
 		if s.sqliteReadyNow() {
 			s.readsSQLite.Add(1)
-			keys, err := s.sqliteList(ctx, namespace, prefix)
-			if err != nil {
-				return nil, err
-			}
-			return s.mergePendingKeys(namespace, prefix, keys), nil
+			return s.listMerged(ctx, namespace, prefix, s.sqliteList)
 		}
 		s.readsMemory.Add(1)
-		keys, err := s.mem.List(ctx, namespace, prefix)
-		if err != nil {
-			return nil, err
-		}
-		return s.mergePendingKeys(namespace, prefix, keys), nil
+		return s.listMerged(ctx, namespace, prefix, s.mem.List)
 	}
 	if s.isLoaded() {
 		s.readsMemory.Add(1)
@@ -886,18 +878,10 @@ func (s *HybridStore) List(ctx context.Context, namespace, prefix string) ([]str
 	}
 	if s.sqliteReadyNow() {
 		s.readsSQLite.Add(1)
-		keys, err := s.sqliteList(ctx, namespace, prefix)
-		if err != nil {
-			return nil, err
-		}
-		return s.mergePendingKeys(namespace, prefix, keys), nil
+		return s.listMerged(ctx, namespace, prefix, s.sqliteList)
 	}
 	s.readsMemory.Add(1)
-	keys, err := s.mem.List(ctx, namespace, prefix)
-	if err != nil {
-		return nil, err
-	}
-	return s.mergePendingKeys(namespace, prefix, keys), nil
+	return s.listMerged(ctx, namespace, prefix, s.mem.List)
 }
 
 func (s *HybridStore) ListNamespaces(ctx context.Context) ([]string, error) {
@@ -943,18 +927,10 @@ func (s *HybridStore) Scan(ctx context.Context, namespace, prefix string) ([]KV,
 	if shouldReadHybridNamespaceFromSQLite(namespace) {
 		if s.sqliteReadyNow() {
 			s.readsSQLite.Add(1)
-			pairs, err := s.sqliteScan(ctx, namespace, prefix)
-			if err != nil {
-				return nil, err
-			}
-			return s.mergePendingPairs(namespace, prefix, pairs), nil
+			return s.scanMerged(ctx, namespace, prefix, s.sqliteScan)
 		}
 		s.readsMemory.Add(1)
-		pairs, err := s.mem.Scan(ctx, namespace, prefix)
-		if err != nil {
-			return nil, err
-		}
-		return s.mergePendingPairs(namespace, prefix, pairs), nil
+		return s.scanMerged(ctx, namespace, prefix, s.mem.Scan)
 	}
 	if s.isLoaded() {
 		s.readsMemory.Add(1)
@@ -962,18 +938,57 @@ func (s *HybridStore) Scan(ctx context.Context, namespace, prefix string) ([]KV,
 	}
 	if s.sqliteReadyNow() {
 		s.readsSQLite.Add(1)
-		pairs, err := s.sqliteScan(ctx, namespace, prefix)
-		if err != nil {
-			return nil, err
-		}
-		return s.mergePendingPairs(namespace, prefix, pairs), nil
+		return s.scanMerged(ctx, namespace, prefix, s.sqliteScan)
 	}
 	s.readsMemory.Add(1)
-	pairs, err := s.mem.Scan(ctx, namespace, prefix)
+	return s.scanMerged(ctx, namespace, prefix, s.mem.Scan)
+}
+
+// hybridScanBaseFunc fetches the raw, overlay-unaware Scan result for a whole
+// namespace+prefix — SQLite once ready, the memory layer as the startup
+// fallback. Passed to scanMerged rather than branched on inside it, mirroring
+// hybridScanPageBaseFunc.
+type hybridScanBaseFunc func(ctx context.Context, namespace, prefix string) ([]KV, error)
+
+// hybridListBaseFunc is hybridScanBaseFunc's keys-only counterpart, for List.
+type hybridListBaseFunc func(ctx context.Context, namespace, prefix string) ([]string, error)
+
+// scanMerged snapshots the pending-write overlay BEFORE reading the base
+// source, then merges the base result against that snapshot.
+//
+// The order matters and is the whole point of this helper. Reading the base
+// first and consulting the live overlay afterwards is a torn read: a flush
+// that commits in between moves a key out of the overlay and into SQLite,
+// but the base result was captured before that commit and the overlay no
+// longer holds the key — so the key exists in the store and appears in
+// neither half, and Scan silently omits it. Snapshotting first inverts the
+// hazard into a harmless one: a key missing from the snapshot was already
+// committed before the snapshot was taken, so the later base read is
+// guaranteed to see it. (The reverse staleness — returning a key deleted
+// after the snapshot — is the ordinary point-in-time semantics every read
+// here already has, and matches Get, which consults the overlay first for
+// exactly the same reason.)
+//
+// This is the same invariant hybridScanPageMerged relies on for the
+// paginated path, which is why both build a hybridOverlaySnapshot up front.
+func (s *HybridStore) scanMerged(ctx context.Context, namespace, prefix string, fetchBase hybridScanBaseFunc) ([]KV, error) {
+	snap := s.snapshotOverlayLocked(namespace, prefix, "")
+	pairs, err := fetchBase(ctx, namespace, prefix)
 	if err != nil {
 		return nil, err
 	}
-	return s.mergePendingPairs(namespace, prefix, pairs), nil
+	return mergeOverlayPairs(snap, namespace, pairs), nil
+}
+
+// listMerged is scanMerged's keys-only counterpart — see its doc comment for
+// why the overlay snapshot has to be taken before the base read.
+func (s *HybridStore) listMerged(ctx context.Context, namespace, prefix string, fetchBase hybridListBaseFunc) ([]string, error) {
+	snap := s.snapshotOverlayLocked(namespace, prefix, "")
+	keys, err := fetchBase(ctx, namespace, prefix)
+	if err != nil {
+		return nil, err
+	}
+	return mergeOverlayKeys(snap, namespace, keys), nil
 }
 
 // ScanPage is the paginated counterpart to Scan (3.2 in
@@ -1159,10 +1174,9 @@ type hybridOverlaySnapshot struct {
 	// newKeys holds every key with an explicit dirty/flushing entry under
 	// namespace+prefix, strictly after startAfter, sorted ascending. A
 	// prefix tombstone alone never introduces a candidate key (it only
-	// shadows existing ones — see forEachPendingCandidateKeyLocked, which
-	// this mirrors), so tombstone-only coverage of a base key is instead
-	// caught when resolve() is called against that base key directly during
-	// the merge walk.
+	// shadows existing ones), so tombstone-only coverage of a base key is
+	// instead caught when resolve() is called against that base key directly
+	// during the merge walk.
 	newKeys []string
 }
 
@@ -2688,24 +2702,28 @@ func (s *HybridStore) markPersistentSuccess() {
 	s.mu.Unlock()
 }
 
-func (s *HybridStore) mergePendingKeys(namespace, prefix string, keys []string) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+// mergeOverlayKeys merges a base List result with the pending-write overlay
+// snapshot taken before that base read (see listMerged). snap.newKeys already
+// holds every key with an explicit pending Set or Delete under the requested
+// namespace+prefix — the candidates a base read taken at a different instant
+// may not have covered — and snap.resolve applies the same precedence rule as
+// the request-path resolvePendingLocked, so a prefix tombstone still shadows
+// base keys it covers even though it contributes no candidate of its own.
+func mergeOverlayKeys(snap hybridOverlaySnapshot, namespace string, keys []string) []string {
 	seen := make(map[string]struct{}, len(keys))
 	for _, key := range keys {
-		if resolved, ok := s.resolvePendingLocked(namespace, key); ok && resolved.deleted {
+		if resolved, ok := snap.resolve(namespace, key); ok && resolved.deleted {
 			continue
 		}
 		seen[key] = struct{}{}
 	}
-	s.forEachPendingCandidateKeyLocked(namespace, prefix, func(key string) {
-		if resolved, ok := s.resolvePendingLocked(namespace, key); ok && !resolved.deleted {
+	for _, key := range snap.newKeys {
+		if resolved, ok := snap.resolve(namespace, key); ok && !resolved.deleted {
 			seen[key] = struct{}{}
 		} else {
 			delete(seen, key)
 		}
-	})
+	}
 	merged := make([]string, 0, len(seen))
 	for key := range seen {
 		merged = append(merged, key)
@@ -2714,13 +2732,11 @@ func (s *HybridStore) mergePendingKeys(namespace, prefix string, keys []string) 
 	return merged
 }
 
-func (s *HybridStore) mergePendingPairs(namespace, prefix string, pairs []KV) []KV {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+// mergeOverlayPairs is mergeOverlayKeys' key-and-value counterpart, for Scan.
+func mergeOverlayPairs(snap hybridOverlaySnapshot, namespace string, pairs []KV) []KV {
 	seen := make(map[string]string, len(pairs))
 	for _, pair := range pairs {
-		if resolved, ok := s.resolvePendingLocked(namespace, pair.Key); ok {
+		if resolved, ok := snap.resolve(namespace, pair.Key); ok {
 			if resolved.deleted {
 				continue
 			}
@@ -2729,13 +2745,13 @@ func (s *HybridStore) mergePendingPairs(namespace, prefix string, pairs []KV) []
 		}
 		seen[pair.Key] = pair.Value
 	}
-	s.forEachPendingCandidateKeyLocked(namespace, prefix, func(key string) {
-		if resolved, ok := s.resolvePendingLocked(namespace, key); ok && !resolved.deleted {
+	for _, key := range snap.newKeys {
+		if resolved, ok := snap.resolve(namespace, key); ok && !resolved.deleted {
 			seen[key] = resolved.value
 		} else {
 			delete(seen, key)
 		}
-	})
+	}
 	keys := make([]string, 0, len(seen))
 	for key := range seen {
 		keys = append(keys, key)
@@ -2746,32 +2762,6 @@ func (s *HybridStore) mergePendingPairs(namespace, prefix string, pairs []KV) []
 		merged = append(merged, KV{Key: key, Value: seen[key]})
 	}
 	return merged
-}
-
-// forEachPendingCandidateKeyLocked calls fn once for every key that has an
-// explicit pending write (Set or Delete) in namespace under prefix — i.e.
-// candidate keys that might not appear in a base List/Scan result because
-// they were created (or last touched) after that base read ran. A prefix
-// tombstone alone never introduces a candidate key; it only shadows existing
-// ones, which resolvePendingLocked already accounts for when called against
-// base keys in mergePendingKeys/mergePendingPairs. Callers must hold s.mu.
-func (s *HybridStore) forEachPendingCandidateKeyLocked(namespace, prefix string, fn func(key string)) {
-	seen := make(map[string]struct{})
-	visit := func(m map[string]dirtyEntry) {
-		for composite := range m {
-			ns, key := splitStoreKey(composite)
-			if ns != namespace || !strings.HasPrefix(key, prefix) {
-				continue
-			}
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			fn(key)
-		}
-	}
-	visit(s.flushing)
-	visit(s.dirty)
 }
 
 // Hybrid startup must never discover namespaces by scanning kv. On Windows
