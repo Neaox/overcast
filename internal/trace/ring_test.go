@@ -54,18 +54,37 @@ func TestRing_positionTracksAgeAcrossWrap(t *testing.T) {
 	}
 }
 
-func TestRing_emptyAndSingleSlot(t *testing.T) {
-	// A zero or negative capacity must still yield a usable ring rather than
-	// panicking on a modulo by zero.
+// A zero-capacity ring stores nothing, rather than quietly keeping the most
+// recent entry. A population that is switched off — pinning, say — should
+// retain none of its traces, not one of them.
+func TestRing_zeroCapacityStoresNothing(t *testing.T) {
 	r := newRing(0)
-	if r.len() != 0 {
-		t.Fatalf("len = %d, want 0", r.len())
+	if r.len() != 0 || r.cap() != 0 {
+		t.Fatalf("len/cap = %d/%d, want 0/0", r.len(), r.cap())
 	}
-	if evicted := r.push(testSlot("only")); evicted != nil {
+
+	// The pushed slot comes straight back as displaced, so the caller knows it
+	// was not kept — and nothing divides by zero on the way.
+	s := testSlot("only")
+	if evicted := r.push(s); evicted != s {
+		t.Errorf("push returned %v, want the slot straight back", evicted)
+	}
+	if r.len() != 0 {
+		t.Errorf("len = %d after pushing to a zero-capacity ring, want 0", r.len())
+	}
+	if r.oldest() != nil || r.popOldest() != nil {
+		t.Error("a zero-capacity ring reported an entry")
+	}
+}
+
+// A single-slot ring is the smallest one that stores anything.
+func TestRing_singleSlotKeepsTheNewest(t *testing.T) {
+	r := newRing(1)
+	if evicted := r.push(testSlot("first")); evicted != nil {
 		t.Errorf("first push evicted %v", evicted)
 	}
-	if evicted := r.push(testSlot("next")); evicted == nil || evicted.rec.requestID != "only" {
-		t.Errorf("evicted = %v, want only", evicted)
+	if evicted := r.push(testSlot("second")); evicted == nil || evicted.rec.requestID != "first" {
+		t.Errorf("evicted = %v, want first", evicted)
 	}
 	if r.len() != 1 {
 		t.Errorf("len = %d, want 1", r.len())

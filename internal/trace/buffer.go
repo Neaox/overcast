@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/Neaox/overcast/internal/clock"
 )
 
 // maxInternalRing bounds the internal ring however large the user floor gets.
@@ -16,8 +18,13 @@ import (
 const maxInternalRing = 200
 
 // Buffer is a concurrency-safe store of traces keyed by request ID for O(1)
-// lookup, holding them in two age-ordered rings: one for user-facing requests
-// and one for the infrastructure polling isInternalPath classifies.
+// lookup, holding them in three age-ordered rings: `live` for user-facing
+// requests, `pinned` for the ones that went wrong, and `internal` for the
+// infrastructure polling isInternalPath classifies.
+//
+// A trace is in exactly one of them. It enters `live`, and when the live ring
+// finally evicts it, retireLocked decides whether it is worth pinning — see
+// there for why that decision cannot be made any earlier.
 //
 // They are separate rings rather than one ring with a quota because a shared
 // ring cannot be both fair and cheap. Enforcing the quota inside it meant
@@ -37,12 +44,21 @@ const maxInternalRing = 200
 type Buffer struct {
 	mu       sync.RWMutex
 	live     *ring
+	pinned   *ring
 	internal *ring
 	index    map[string]*slot
+	policy   RetentionPolicy
+	clk      clock.Clock
 }
 
-// NewBuffer creates a buffer whose user-facing ring holds capacity traces.
+// NewBuffer creates a fixed-size buffer holding capacity user-facing traces.
 // Pass 0 or negative to get the default (1000).
+//
+// It is deliberately *not* the retention policy: no growth, no age cull, no
+// pinning. A caller asking for a buffer of three means three. Production opts
+// into retention explicitly through NewBufferWithPolicy, so that the extra
+// behaviour is something a reader can see being switched on rather than a
+// default that follows a number around.
 //
 // The internal ring is sized alongside that rather than carved out of it, so
 // the capacity asked for is the number of user-facing traces actually retained.
@@ -50,11 +66,28 @@ func NewBuffer(capacity int) *Buffer {
 	if capacity <= 0 {
 		capacity = 1000
 	}
-	internalCap := min(capacity/5, maxInternalRing)
+	return NewBufferWithPolicy(RetentionPolicy{Floor: capacity, Ceiling: capacity}, nil)
+}
+
+// NewBufferWithPolicy creates a buffer retaining traces under p, reading time
+// from clk. The clock is injected because the age cull is the first part of
+// this package that depends on the passage of time, and a wall-clock test of it
+// would be flaky by construction.
+func NewBufferWithPolicy(p RetentionPolicy, clk clock.Clock) *Buffer {
+	p = p.normalise()
+	if clk == nil {
+		clk = clock.New()
+	}
+	internalCap := min(p.Floor/5, maxInternalRing)
 	return &Buffer{
-		live:     newRing(capacity),
+		// The live ring starts at the floor and grows towards the ceiling only
+		// if a burst arrives, so an idle emulator never allocates for one.
+		live:     newRing(p.Floor),
+		pinned:   newRing(p.Pinned),
 		internal: newRing(internalCap),
-		index:    make(map[string]*slot, capacity+internalCap),
+		index:    make(map[string]*slot, p.Floor+internalCap),
+		policy:   p,
+		clk:      clk,
 	}
 }
 
@@ -75,15 +108,101 @@ func (b *Buffer) Add(rec *Recorder) {
 		s.rec = rec
 		return
 	}
-	target := b.live
+
 	if rec.internal {
-		target = b.internal
+		s := &slot{rec: rec}
+		if evicted := b.internal.push(s); evicted != nil {
+			delete(b.index, evicted.rec.requestID)
+		}
+		b.index[rec.requestID] = s
+		return
 	}
-	s := &slot{rec: rec}
-	if evicted := target.push(s); evicted != nil {
-		delete(b.index, evicted.rec.requestID)
+
+	// The age cull runs here rather than on a timer: arrivals are the only
+	// thing that can make retention wrong, and a buffer nobody writes to has
+	// nothing to reclaim.
+	b.cullLocked()
+	b.growLiveLocked()
+
+	s := &slot{rec: rec, inLive: true}
+	if evicted := b.live.push(s); evicted != nil {
+		b.retireLocked(evicted)
 	}
 	b.index[rec.requestID] = s
+}
+
+// Cull reclaims overflow that has aged past the retention window. Add does this
+// too; this is for callers that want it to happen without an arrival.
+func (b *Buffer) Cull() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.cullLocked()
+}
+
+// cullLocked drops live traces older than the window, down to the floor.
+//
+// Age is positional, so this is a walk from the head that stops at the first
+// entry still inside the window — O(culled), with no scan and no sweeper.
+// Callers must hold b.mu.
+func (b *Buffer) cullLocked() {
+	if b.policy.Window <= 0 {
+		return
+	}
+	cutoff := b.clk.Now().Add(-b.policy.Window)
+	for b.live.len() > b.policy.Floor {
+		s := b.live.oldest()
+		if s == nil || !s.rec.timestamp.Before(cutoff) {
+			return
+		}
+		b.live.popOldest()
+		b.retireLocked(s)
+	}
+}
+
+// growLiveLocked enlarges the live ring when a burst has filled it, doubling
+// towards the ceiling. Callers must hold b.mu.
+func (b *Buffer) growLiveLocked() {
+	if b.live.len() < b.live.cap() || b.live.cap() >= b.policy.Ceiling {
+		return
+	}
+	b.live.grow(min(b.live.cap()*2, b.policy.Ceiling))
+}
+
+// retireLocked decides what becomes of a trace leaving the live ring: pinned if
+// it went wrong, dropped otherwise.
+//
+// **This is where a trace is classified, and it cannot happen earlier.** Add
+// runs at request start, before a status exists, and a CloudFormation hop can
+// fail minutes later on a goroutine that outlives the request. Eviction is the
+// last possible moment, and therefore the most informed one — a trace that
+// fails after this point was never going to be saved by an earlier check.
+// Callers must hold b.mu.
+func (b *Buffer) retireLocked(s *slot) {
+	s.inLive = false
+	if s.inPinned {
+		// Already reachable from the pinned ring; the live ring merely dropped
+		// one of the two references.
+		return
+	}
+	if b.policy.Pinned > 0 && qualifiesPinned(s.rec) {
+		b.pinLocked(s)
+		return
+	}
+	delete(b.index, s.rec.requestID)
+}
+
+// pinLocked moves a slot onto the pinned ring. Callers must hold b.mu.
+func (b *Buffer) pinLocked(s *slot) {
+	s.inPinned = true
+	if evicted := b.pinned.push(s); evicted != nil {
+		evicted.inPinned = false
+		if !evicted.inLive {
+			delete(b.index, evicted.rec.requestID)
+		}
+	}
 }
 
 // Get materialises the full trace for a request ID, current as of this call.
@@ -177,7 +296,7 @@ func (b *Buffer) Capacity() int {
 	if b == nil {
 		return 0
 	}
-	return b.live.cap() + b.internal.cap()
+	return b.live.cap() + b.pinned.cap() + b.internal.cap()
 }
 
 // eachNewestFirstLocked calls fn for every retained recorder, newest first,
@@ -191,22 +310,30 @@ func (b *Buffer) Capacity() int {
 //
 // Callers must hold b.mu.
 func (b *Buffer) eachNewestFirstLocked(fn func(*Recorder) bool) {
-	i, j := b.live.len()-1, b.internal.len()-1
-	for i >= 0 || j >= 0 {
-		var rec *Recorder
-		switch {
-		case j < 0:
-			rec, i = b.live.at(i).rec, i-1
-		case i < 0:
-			rec, j = b.internal.at(j).rec, j-1
-		default:
-			l, n := b.live.at(i).rec, b.internal.at(j).rec
-			if l.timestamp.Before(n.timestamp) {
-				rec, j = n, j-1
-			} else {
-				rec, i = l, i-1
+	rings := [...]*ring{b.live, b.pinned, b.internal}
+	// Cursor into each ring, newest first.
+	var at [len(rings)]int
+	for i, r := range rings {
+		at[i] = r.len() - 1
+	}
+	for {
+		// Pick whichever ring's current entry is newest. A slot is in exactly
+		// one of these — retireLocked clears inLive before pinning — so no
+		// trace is yielded twice.
+		pick := -1
+		for i, r := range rings {
+			if at[i] < 0 {
+				continue
+			}
+			if pick < 0 || rings[pick].at(at[pick]).rec.timestamp.Before(r.at(at[i]).rec.timestamp) {
+				pick = i
 			}
 		}
+		if pick < 0 {
+			return
+		}
+		rec := rings[pick].at(at[pick]).rec
+		at[pick]--
 		if rec == nil {
 			continue
 		}
@@ -220,7 +347,7 @@ func (b *Buffer) eachNewestFirstLocked(fn func(*Recorder) bool) {
 // order. For callers that impose their own ordering afterwards.
 // Callers must hold b.mu.
 func (b *Buffer) eachRecorderLocked(fn func(*Recorder)) {
-	for _, r := range [...]*ring{b.live, b.internal} {
+	for _, r := range [...]*ring{b.live, b.pinned, b.internal} {
 		for i := 0; i < r.len(); i++ {
 			if s := r.at(i); s != nil && s.rec != nil {
 				fn(s.rec)

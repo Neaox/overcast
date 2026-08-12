@@ -129,10 +129,20 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	// Trace buffer — created here so the middleware can capture it at
 	// construction time. When cfg.Debug is false the middleware is identity
-	// and the buffer is never accessed. cfg.DebugTraceBuffer
-	// (OVERCAST_DEBUG_TRACE_BUFFER) sets the ring buffer capacity; NewBuffer
-	// applies the default of 1000 for a zero or negative value.
-	traceBuf := trace.NewBuffer(cfg.DebugTraceBuffer)
+	// and the buffer is never accessed.
+	//
+	// The retention policy is passed explicitly rather than inferred from a
+	// capacity, because it is more than a size. The floor is what a quiet
+	// emulator keeps; the ceiling and window are what a burst needs; the pinned
+	// cap is what a *failed* burst needs, since a deploy that fails does not
+	// stop but rolls back, and the rollback would otherwise push the error out
+	// of a purely recency-ordered buffer.
+	traceBuf := trace.NewBufferWithPolicy(trace.RetentionPolicy{
+		Floor:   cfg.DebugTraceBuffer,
+		Ceiling: cfg.DebugTraceCeiling,
+		Window:  cfg.DebugTraceWindow,
+		Pinned:  cfg.DebugTracePinned,
+	}, clk)
 
 	// ---- Middleware chain --------------------------------------------------
 	r.Use(chimiddleware.RealIP)

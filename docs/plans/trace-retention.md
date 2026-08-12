@@ -329,7 +329,32 @@ retention, and counting them separately would let a single deploy exhaust the fa
 
 ---
 
-## Phase 4 — the retention policy
+## Phase 4 — the retention policy ⏳ mechanics shipped
+
+Shipped: `RetentionPolicy`, the `pinned` ring, growth towards the ceiling, the lazy age cull, and
+classification at eviction — wired through `OVERCAST_DEBUG_TRACE_CEILING` / `_WINDOW` / `_PINNED`.
+The acceptance test at the top of the Testing section passes: six thousand traces, three failures in
+the first two hundred, two hours on a fake clock, all three still retrievable in full.
+
+**Deliberately not in it**, because each needs per-trace size accounting that neither the mechanics
+nor the counters have yet, and because one reviewable change is worth more than one large one:
+
+- **The byte backstop.** Retention is bounded by count only. At the shipped ceiling that is ~10,000
+  traces; typical ones are 2–5 KiB, so ~50 MB, but ten thousand 1 MiB uploads would be ~10 GB. Real,
+  not exotic — a seeding script does exactly that — so this is the first follow-up.
+- **Family pinning.** A pinned parent does not yet pin the calls it made, so its hop bodies can
+  report `evicted`. Phase 3 is what makes that survivable: the hop keeps its metadata and the notice
+  says the body is gone rather than rendering an empty panel.
+- **The retention counters and their UI** — the terminal bar at the end of the list, and the
+  *kept: error* badge. Both want the same size accounting as the backstop.
+
+One correction the implementation forced: `NewBuffer(n)` keeps meaning *a fixed buffer of n*, with no
+growth, window or pinning. An earlier cut had it derive a policy, which made `NewBuffer(3)` retain
+thirty — surprising for a caller asking for three, and it broke tests that were right. Production
+opts into retention explicitly in `router.New`, so the extra behaviour is visible at the call site
+instead of following a number around.
+
+### The original phase-4 write-up
 
 Ceiling, window, pinning, the byte backstop, the lazy age cull, and the config knobs. Retention
 counters feeding the count endpoint, and the UI that surfaces them:
