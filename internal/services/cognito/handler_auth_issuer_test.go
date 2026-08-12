@@ -52,7 +52,7 @@ func TestIssuerURL_honoursConfiguredHostnameAndTLS(t *testing.T) {
 				Hostname: "overcast.local",
 				Port:     4566,
 			},
-			want: "http://overcast.local:39783/us-east-1/us-east-1_abc123",
+			want: "http://overcast.local:39783/us-east-1_abc123",
 		},
 		{
 			name: "TLS makes the issuer https",
@@ -63,7 +63,7 @@ func TestIssuerURL_honoursConfiguredHostnameAndTLS(t *testing.T) {
 				TLSCertFile: "/tmp/cert.pem",
 				TLSKeyFile:  "/tmp/key.pem",
 			},
-			want: "https://overcast.local:39783/us-east-1/us-east-1_abc123",
+			want: "https://overcast.local:39783/us-east-1_abc123",
 		},
 	}
 
@@ -96,10 +96,10 @@ func TestIssuerURL_honoursConfiguredHostnameAndTLS(t *testing.T) {
 // docs/plans/client-facing-url-minting.md, "Per-service requirements".
 func TestPoolIDFromIssuer_ignoresTheOrigin(t *testing.T) {
 	for _, iss := range []string{
-		"http://localhost.overcast.sh:4566/us-east-1/us-east-1_abc123",
-		"http://localhost.overcast.sh:4652/us-east-1/us-east-1_abc123", // published port
-		"http://localhost:39783/us-east-1/us-east-1_abc123",            // harness port
-		"https://overcast.local:8443/us-east-1/us-east-1_abc123",       // TLS proxy
+		"http://localhost.overcast.sh:4566/us-east-1_abc123",
+		"http://localhost.overcast.sh:4652/us-east-1_abc123", // published port
+		"http://localhost:39783/us-east-1_abc123",            // harness port
+		"https://overcast.local:8443/us-east-1_abc123",       // TLS proxy
 	} {
 		got, err := poolIDFromIssuer(iss)
 		if err != nil {

@@ -292,7 +292,7 @@ func extractIdentitySourceToken(r *http.Request, identitySource string) string {
 }
 
 // poolIDFromIssuerPath extracts the pool ID (last path segment) from a Cognito
-// issuer URL. Format: http(s)://{host}/{region}/{poolId}
+// issuer URL. Format: http(s)://{host}/{poolId}
 // Returns an empty string when extraction is not possible.
 func poolIDFromIssuerPath(iss string) string {
 	idx := strings.LastIndex(iss, "/")

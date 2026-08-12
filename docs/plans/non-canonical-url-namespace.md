@@ -1,10 +1,9 @@
 # One namespace for every non-canonical URL: `/_overcast/`
 
-> Status: **substantially done** — phases 0-6 complete. **Every internal route
-> family has collapsed into `/_overcast`, and no path Overcast serves is
-> outside the rule except two the ratchet still names.** The one remaining
-> item is a decision, not a migration: Cognito's OIDC discovery path is the
-> JWT issuer — see §4.7.
+> Status: **done.** Every internal route family has collapsed into
+> `/_overcast`, every path Overcast serves is either a modeled binding or
+> namespaced, and the ratchet is empty. The rule is enforced route-by-route
+> in CI and written down where contributors meet it (§5).
 > The rule is enforced from phase 1 onward by
 > `TestNoRouteIsRegisteredOutsideTheNamespace`, against the `unmigratedRoutes`
 > ratchet that phases 2–6 empty. Open questions all decided (§4.3, §8).
@@ -518,6 +517,64 @@ namespace holds more than services — `health`, `metrics`, `debug`, `events`,
 blindly invents "health" and "debug" as service names. Collapsing it needs a
 set of real service keys to check against, which is another list, so the switch
 stays and says why.
+
+### 4.9 Cognito's issuer: the region segment, resolved
+
+§4.3 said the region-prefixed `/{region}/{poolId}/.well-known/…` could be
+deleted because a pool ID already encodes its region. §4.7 withdrew that on
+the grounds that the segment is the JWT issuer path and removing it is not
+free. Both were partly right, and the resolution needed one fact neither had:
+**how much the cost actually is.**
+
+In alpha, with a small and known user base, an invalidated token means logging
+in again. That is the whole cost, and it collapses the argument: the segment
+is informationally redundant — `poolRegionMiddleware` already recovers the
+region from the pool ID — and once removing it is nearly free, redundancy is
+the only consideration left.
+
+So the issuer is now `{base}/{poolId}`, matching the path portion of AWS's
+`https://cognito-idp.{region}.amazonaws.com/{poolId}` exactly. AWS carries the
+region in the hostname; a single-origin emulator has nowhere to put it and
+does not need it.
+
+**What §4.7 got right and this does not overturn:** the issuer and the
+discovery route are coupled by OIDC Discovery 1.0 §4.3 — the issuer must be
+byte-identical to the URL the document was fetched from — so the two can never
+move independently. That is why `issuerFor` exists.
+
+#### Three copies of one string
+
+The change surfaced something worth recording. The issuer's shape was written
+out three times: `issuerURL` (JSON dispatch), `issuerURLTyped` (Smithy CBOR
+dispatch), and inline in `HandleOIDCDiscovery`. They had to agree for reasons
+none of them stated locally — a caller's wire protocol must not change the
+issuer their token carries, and §4.3 couples both to the route.
+
+`client-facing-url-minting.md` claims "both paths now call the same function,
+so they cannot disagree again". That is true of the *base* — `issuerBase` and
+`ClientBaseURL` share `ClientBaseURLFromOrigin` — and was not true of the
+*path suffix*, which stayed duplicated. `issuerFor` now single-sources the
+shape, which makes that claim true for the first time.
+
+#### Why the top-level route is safe
+
+`/{poolId}/.well-known/…` is label-rooted on a router whose unclaimed space is
+S3's, alongside SQS's `/{accountID:[0-9]+}/…`. The three are disjoint by AWS's
+own naming rules rather than by routing precedence: a pool ID is
+`{region}_{suffix}` and always contains an underscore, an S3 bucket name may
+not contain one at all, and an account ID is all digits.
+
+That is a fact about AWS, not about chi, so it is asserted rather than assumed
+— `cognito.TestOIDCDiscoveryPathCannotCollideWithS3OrSQS`. If it ever stopped
+holding, the symptom would be an S3 request answered by Cognito, which would
+not look like a routing bug from the outside.
+
+#### The exception is permanent, not deferred
+
+Both discovery paths stay in `nonManifestRoutes`. AWS models no SDK operation
+for OIDC discovery, so no manifest row can cover them in *any* shape — this is
+a standing exception rather than a migration that stalled, and the entries say
+so.
 
 ## 5. Enforcement — the point of the exercise
 

@@ -126,7 +126,7 @@ the Smithy RPC path (`POST /service/cognito/operation/{Operation}`).
 Each user pool exposes a JWKS endpoint used by API Gateways and libraries to validate tokens:
 
 ```
-GET /{region}/{poolId}/.well-known/jwks.json
+GET /{poolId}/.well-known/jwks.json
 ```
 
 Access and ID tokens are RS256-signed JWTs. The signing key is lazily generated per pool (RSA-2048)

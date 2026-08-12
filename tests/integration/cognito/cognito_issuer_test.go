@@ -61,7 +61,7 @@ func issuerTestPool(t *testing.T, srv *helpers.TestServer) (poolID, idToken, acc
 // TestIssuer_usesConfiguredHostnameNotDialAddress asserts the "iss" claim is
 // built on the configured external origin rather than the request's Host header.
 //
-// (*cognito.Service).issuerURL is "http://" + r.Host + "/" + region + "/" + poolID
+// (*cognito.Service).issuerURL is "http://" + r.Host + "/" + poolID, matching the path portion of AWS's issuer
 // (internal/services/cognito/handler_auth.go:307), so today the claim carries
 // whatever address the authenticating client dialed — here 127.0.0.1 — and
 // ignores OVERCAST_HOSTNAME entirely. Every other service that mints a
@@ -79,7 +79,7 @@ func TestIssuer_usesConfiguredHostnameNotDialAddress(t *testing.T) {
 	}
 
 	// Then: both tokens carry an issuer on the configured external origin.
-	want := srv.ExternalBase() + "/us-east-1/" + poolID
+	want := srv.ExternalBase() + "/" + poolID
 	for _, tc := range []struct{ name, token string }{
 		{"IdToken", idToken},
 		{"AccessToken", accessToken},
@@ -109,7 +109,7 @@ func TestOIDCDiscovery_usesConfiguredHostname(t *testing.T) {
 	poolID, _, _ := issuerTestPool(t, srv)
 
 	// When: a client fetches the OIDC discovery document.
-	resp, err := http.Get(srv.URL + "/us-east-1/" + poolID + "/.well-known/openid-configuration")
+	resp, err := http.Get(srv.URL + "/" + poolID + "/.well-known/openid-configuration")
 	if err != nil {
 		t.Fatalf("fetch discovery document: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestOIDCDiscovery_usesConfiguredHostname(t *testing.T) {
 	// Then: every advertised endpoint is on the configured external origin, so a
 	// client that discovers keys here can dial them.
 	base := srv.ExternalBase()
-	wantIssuer := base + "/us-east-1/" + poolID
+	wantIssuer := base + "/" + poolID
 	if got, _ := doc["issuer"].(string); got != wantIssuer {
 		t.Errorf("issuer = %q, want %q", got, wantIssuer)
 	}
@@ -211,7 +211,7 @@ func TestIssuer_sameAcrossWireProtocols(t *testing.T) {
 	if cborIss != jsonIss {
 		t.Errorf("issuer differs by wire protocol:\n  JSON = %q\n  CBOR = %q", jsonIss, cborIss)
 	}
-	want := srv.ExternalBase() + "/us-east-1/" + poolID
+	want := srv.ExternalBase() + "/" + poolID
 	if cborIss != want {
 		t.Errorf("CBOR iss = %q, want %q", cborIss, want)
 	}

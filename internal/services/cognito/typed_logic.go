@@ -722,7 +722,7 @@ func (s *Service) validateAccessTokenTyped(ctx context.Context, tokenStr string)
 // relative string that no OIDC key discovery and no API Gateway JWT authorizer
 // could use. See docs/plans/harness-representativeness-audit.md.
 func (s *Service) issuerURLTyped(ctx context.Context, poolID string) string {
-	return s.issuerBase(ctx) + "/" + s.region(ctx) + "/" + poolID
+	return issuerFor(s.issuerBase(ctx), poolID)
 }
 
 // issuerBase is serviceutil.ClientBaseURL for the typed path, which holds a
