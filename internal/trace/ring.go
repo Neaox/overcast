@@ -19,6 +19,10 @@ type slot struct {
 	// disagreeing about whether it still exists.
 	inLive   bool
 	inPinned bool
+	// viaFamily marks a slot pinned because a failure named it, rather than
+	// because it failed itself. It is what bounds a deploy's call log to a
+	// share of the pinned ring — see maxFamilyShare.
+	viaFamily bool
 	// bytes is this trace's contribution to the buffer's retained total,
 	// sampled by Settle once the response is recorded. It is held here rather
 	// than recomputed on eviction so that what is subtracted is exactly what
