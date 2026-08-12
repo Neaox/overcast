@@ -191,12 +191,12 @@ func (b *Buffer) DeepSearch(ctx context.Context, filter DeepFilter) DeepResult {
 func (b *Buffer) scanOrder(includeInternal bool) []*Recorder {
 	b.mu.RLock()
 	candidates := make([]*Recorder, 0, len(b.index))
-	for _, rec := range b.entries {
-		if rec == nil || (rec.internal && !includeInternal) {
-			continue
+	b.eachRecorderLocked(func(rec *Recorder) {
+		if rec.internal && !includeInternal {
+			return
 		}
 		candidates = append(candidates, rec)
-	}
+	})
 	b.mu.RUnlock()
 
 	// Newest first, ties broken by request ID so the order is total: two traces

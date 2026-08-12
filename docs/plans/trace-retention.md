@@ -122,7 +122,33 @@ cull overflow after an hour" needs no detector.
 
 ---
 
-## Phase 2 — three rings, not one
+## Phase 2 — three rings, not one ✅ shipped as two
+
+Shipped in the `ring` type and the `live` / `internal` split. **The `pinned` ring is not in it**: it
+has no producer until phase 4 sets one, and an empty ring nothing writes to is a dead end a reader
+has to chase — the same reason phase 1 left `reclaimed` out of `OmitReason`. The `ring` type it
+lands in is here and the third instance is one line.
+
+Measured on a 5900X, `-benchtime=300x -count=2..3`, same benchmark run against `b13dcbe1` and after:
+
+| | depth | before | after |
+| --- | --- | --- | --- |
+| `ListSummaries`, one 50-row page | 1,000 | 64 µs · 164 KB | **3.2 µs · 8.4 KB** |
+| | 10,000 | 700 µs · 1,606 KB | **3.6 µs · 8.4 KB** |
+| `Add`, internal, population saturated | 1,000 | 2.0 µs | **0.52 µs** |
+| | 10,000 | 44–53 µs | **0.55 µs** |
+
+The shape matters more than the ratios: **before, both paths scaled with retained depth** — listing
+11× and internal admission 22× going from 1,000 to 10,000. After, both are flat. That is the property
+the ceiling rests on, and `BenchmarkBufferListSummaries_depth` and `BenchmarkBufferAdd_internal` exist
+to fail if it is ever lost.
+
+One caveat worth carrying: the `Add` benchmark only reaches the old scan once the internal population
+is at its cap, which was `capacity/5` — 2,000 entries at depth 10,000. A version that timed a few
+hundred cold admissions measured the wrong path entirely and reported no regression. The saturation
+loop is the benchmark.
+
+### The original phase-2 write-up
 
 The current `Buffer` is one ring with an internal-trace quota carved out of it, and that carve-out
 costs more than it looks:
@@ -153,9 +179,14 @@ Each is a plain insertion-ordered ring whose only eviction is *advance head*. So
 - The age cull is `advance head while oldest is outside the window and len > floor` — O(culled), no
   scan, no sweeper goroutine, no timer. Evaluated lazily on `Add`.
 
-Implement it once as an unexported `ring` type with `push`, `oldest`, `cullBefore` and `len`, used
-three times. The three differ in capacity and policy, not mechanics, and three hand-rolled head/tail
-pairs is how they drift.
+Implement it once as an unexported `ring` type, used for each population. They differ in capacity and
+policy, not mechanics, and hand-rolled head/tail pairs are how they drift. Shipped with `push`, `at`,
+`len` and `cap`; `cullBefore` arrives with the window in phase 4, since nothing calls it before then.
+
+**One consequence to state plainly:** the internal ring is sized *alongside* the floor rather than
+carved out of it, so a buffer asked for 1,000 retains 1,000 user-facing traces and up to 200 internal
+ones, where it previously retained 1,000 of both mixed. Idle polling no longer costs a user-facing
+trace at all. `Capacity()` reports the sum so that `Len()` can never exceed it.
 
 ### Admission, promotion, and what the index holds
 
