@@ -225,8 +225,8 @@ hops need not be related — a `PutBucketPolicy` at hop 347 can fail because of 
 Raising five to fifty moves an arbitrary line without making the window mean anything.
 
 The relation that *would* mean something — same logical resource, or dependency ancestor — is not
-available. `Hop.Parent` exists on the struct and is **never set by any Go code**, and the dispatch
-funnel `internalCall.do` does not carry a logical resource ID to set it from. See
+available: the dispatch funnel `internalCall.do` does not carry a logical resource ID, so a hop
+cannot say which template resource it was materialising. See
 [what would make this precise](#what-would-make-this-precise).
 
 So pin the whole family, because it is cheap. A 3,000-hop deploy's children are ~2–5 KiB each — 6 to
@@ -306,22 +306,32 @@ Failing-test-first throughout, per [AGENTS.md](../../AGENTS.md).
 - Bench `ListSummaries` at 1,000 and 10,000, and `Add` on the internal path, which is the one the
   removed linear scan was hurting.
 
-## What would make this precise
+## How the links actually work, and what would make them precise
 
-Pinning the whole family is the right answer *given what a hop knows today*, which is nothing about
-causation. Two small additions would change that, and both are worth more than retention alone:
+Worth writing down, because the obvious guess is wrong. **Traces already navigate in both
+directions**, and none of it uses `Hop.Parent`:
 
-- **Set `Hop.Parent`.** The field is on the struct and serialized to the UI, and no Go code has ever
-  assigned it. The hops of one trace are currently a flat list in dispatch order; CloudFormation
-  provisions a tree.
+| Direction | Mechanism |
+| --- | --- |
+| Parent → child | `Hop.RequestID`, rendered as a link to that call's own trace |
+| Child → parent | `Entry.ParentRequestID`, set from the `X-Overcast-Parent-Request-Id` header by `linkChildRequest` — the *Called by* line |
+| "who called me?" | the `hopsFor` list filter — `HasHop` over `Recorder.hopRequestIDs`, an O(1) map built for exactly this |
+
+`Hop.Parent` is not part of that and never was. It expresses *intra-trace hop nesting* — hop B issued
+during hop A — and `internalCall.do` dispatches flat, so nothing has ever produced nesting. Nothing in
+Go sets it and nothing in `web/src` reads it, unlike `Hop.Noisy`, which is dead in Go but genuinely
+wired to a UI control.
+
+- **Delete `Hop.Parent`** (and `parent?: string` from `TraceHop`). Its navigation job is done, by other
+  fields; keeping an always-absent field on a public debug payload invites exactly the mistake of
+  reaching for it. Fold it into phase 3, which is already restructuring `Hop`.
 - **Carry the logical resource ID** through `internalCall` to the hop. The provisioner knows which
   template resource it is materialising at the point it dispatches; the hop does not record it, so a
   reader cannot ask "show me every call for `MyBucket`" and neither can the retention policy.
 
-With either, "pin the family" could narrow to "pin the failing resource and what it depended on", and
-the hops tab could group 300 calls into 40 resources — which is the difference between a timeline a
-person can read and one they scroll past. Neither is required for phases 2–4; both are cheap, and the
-second is a change at one call site.
+The second is what would let "pin the family" narrow to "pin the failing resource and what it depended
+on", and would let the hops tab group 300 calls into 40 resources — the difference between a timeline
+a person can read and one they scroll past. Not required for phases 2–4; a change at one call site.
 
 ## What this does not do
 
