@@ -139,6 +139,7 @@ func TestWatcher_DispatchEvents(t *testing.T) {
 				LabelManaged:    "true",
 				LabelService:    "lambda",
 				LabelResourceID: "my-function",
+				LabelInstance:   "store-identity",
 			},
 		},
 	}
@@ -227,6 +228,12 @@ func TestWatcher_DispatchEvents(t *testing.T) {
 	}
 	if p0.ResourceID != "my-function" {
 		t.Errorf("start.ResourceID = %s, want my-function", p0.ResourceID)
+	}
+	// A resource ID does not say which Overcast on the daemon owns the
+	// container; subscribers that act on one of these events need this to tell
+	// their own container from a neighbour's of the same name.
+	if p0.Instance != "store-identity" {
+		t.Errorf("start.Instance = %q, want store-identity", p0.Instance)
 	}
 
 	// Verify: die
