@@ -817,8 +817,8 @@ func TestRecorderBodyTruncation(t *testing.T) {
 	rec.SetRequestBody(body[:1024], true, int64(len(body)))
 
 	e := rec.Entry()
-	if !e.RequestBodyTruncated {
-		t.Error("expected body to be truncated")
+	if e.RequestBodyOmitted != OmitSize {
+		t.Errorf("RequestBodyOmitted = %q, want %q", e.RequestBodyOmitted, OmitSize)
 	}
 	if len(e.RequestBody) != 1024 {
 		t.Errorf("expected 1024 bytes, got %d", len(e.RequestBody))
@@ -836,8 +836,8 @@ func TestRecorderStreamingResponse(t *testing.T) {
 	if !e.Streaming {
 		t.Error("expected streaming true")
 	}
-	if !e.ResponseBodyTruncated {
-		t.Error("expected response body truncated for streaming")
+	if e.ResponseBodyOmitted != OmitStreaming {
+		t.Errorf("ResponseBodyOmitted = %q, want %q", e.ResponseBodyOmitted, OmitStreaming)
 	}
 }
 

@@ -35,16 +35,16 @@ type Entry struct {
 	Region    string        `json:"region"`
 	Stack     string        `json:"stack,omitempty"`
 
-	RequestHeaders       http.Header `json:"requestHeaders"`
-	RequestBody          []byte      `json:"requestBody,omitempty"`
-	RequestBodyTruncated bool        `json:"requestBodyTruncated,omitempty"`
-	RequestSize          int64       `json:"requestSize,omitempty"`
+	RequestHeaders     http.Header `json:"requestHeaders"`
+	RequestBody        []byte      `json:"requestBody,omitempty"`
+	RequestBodyOmitted OmitReason  `json:"requestBodyOmitted,omitempty"`
+	RequestSize        int64       `json:"requestSize,omitempty"`
 
-	ResponseHeaders       http.Header `json:"responseHeaders"`
-	ResponseBody          []byte      `json:"responseBody,omitempty"`
-	ResponseBodyTruncated bool        `json:"responseBodyTruncated,omitempty"`
-	StatusCode            int         `json:"statusCode"`
-	Streaming             bool        `json:"streaming,omitempty"`
+	ResponseHeaders     http.Header `json:"responseHeaders"`
+	ResponseBody        []byte      `json:"responseBody,omitempty"`
+	ResponseBodyOmitted OmitReason  `json:"responseBodyOmitted,omitempty"`
+	StatusCode          int         `json:"statusCode"`
+	Streaming           bool        `json:"streaming,omitempty"`
 
 	Hops       []Hop      `json:"hops,omitempty"`
 	LogEntries []LogEntry `json:"logEntries,omitempty"`
@@ -91,33 +91,34 @@ const MaxFailedHopStacks = 20
 // that a full ring buffer of budget-exhausting traces is bounded by the ring's
 // own capacity, not by deploy size. Exceeding it never drops a hop: every hop's
 // metadata — service, operation, status, timing, error, ordering, request ID —
-// is still recorded, and only the bodies are omitted, flagged with the same
-// RequestBodyTruncated/ResponseBodyTruncated markers the per-hop cap uses.
+// is still recorded, and only the bodies are dropped, marked OmitTraceBudget.
+// That is deliberately a different OmitReason from the per-hop cap's OmitSize:
+// this one leaves no prefix behind, and a reader must be able to tell.
 const MaxHopBodyBytes = 8 << 20 // 8 MiB
 
 // Hop records one internal service-to-service call made during request
 // processing.
 type Hop struct {
-	ID                    string        `json:"id"`
-	Parent                string        `json:"parent,omitempty"`
-	RequestID             string        `json:"requestId,omitempty"`
-	Order                 int           `json:"order"`
-	CallerService         string        `json:"callerService"`
-	CallerOperation       string        `json:"callerOperation,omitempty"`
-	Service               string        `json:"service"`
-	Operation             string        `json:"operation"`
-	TargetURI             string        `json:"targetUri,omitempty"`
-	RequestHeaders        http.Header   `json:"requestHeaders,omitempty"`
-	RequestBody           []byte        `json:"requestBody,omitempty"`
-	RequestBodyTruncated  bool          `json:"requestBodyTruncated,omitempty"`
-	ResponseStatus        int           `json:"responseStatus"`
-	ResponseBody          []byte        `json:"responseBody,omitempty"`
-	ResponseBodyTruncated bool          `json:"responseBodyTruncated,omitempty"`
-	Duration              time.Duration `json:"duration"`
-	Error                 string        `json:"error,omitempty"`
-	Timestamp             time.Time     `json:"timestamp"`
-	Noisy                 bool          `json:"noisy,omitempty"`
-	Stack                 string        `json:"stack,omitempty"`
+	ID                  string        `json:"id"`
+	Parent              string        `json:"parent,omitempty"`
+	RequestID           string        `json:"requestId,omitempty"`
+	Order               int           `json:"order"`
+	CallerService       string        `json:"callerService"`
+	CallerOperation     string        `json:"callerOperation,omitempty"`
+	Service             string        `json:"service"`
+	Operation           string        `json:"operation"`
+	TargetURI           string        `json:"targetUri,omitempty"`
+	RequestHeaders      http.Header   `json:"requestHeaders,omitempty"`
+	RequestBody         []byte        `json:"requestBody,omitempty"`
+	RequestBodyOmitted  OmitReason    `json:"requestBodyOmitted,omitempty"`
+	ResponseStatus      int           `json:"responseStatus"`
+	ResponseBody        []byte        `json:"responseBody,omitempty"`
+	ResponseBodyOmitted OmitReason    `json:"responseBodyOmitted,omitempty"`
+	Duration            time.Duration `json:"duration"`
+	Error               string        `json:"error,omitempty"`
+	Timestamp           time.Time     `json:"timestamp"`
+	Noisy               bool          `json:"noisy,omitempty"`
+	Stack               string        `json:"stack,omitempty"`
 }
 
 // LogEntry is one structured log line captured for this request.
@@ -249,7 +250,9 @@ func (r *Recorder) SetRequestBody(body []byte, truncated bool, size int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.entry.RequestBody = body
-	r.entry.RequestBodyTruncated = truncated
+	if truncated {
+		r.entry.RequestBodyOmitted = OmitSize
+	}
 	if size < 0 {
 		size = int64(len(body))
 	}
@@ -267,29 +270,33 @@ func (r *Recorder) SetResponse(headers http.Header, body []byte, status int, max
 	r.entry.StatusCode = status
 	r.entry.Streaming = streaming
 	if streaming {
-		r.entry.ResponseBodyTruncated = true
+		// Nothing was captured, so there is nothing to store — and the reason
+		// must not be OmitSize: a streamed body was never held at all, which
+		// reads differently from one we cut short.
+		r.entry.ResponseBodyOmitted = OmitStreaming
 		return
 	}
 	if len(body) > maxBody {
 		// Copy: see SetRequestBody. The middleware's tee buffer is already
 		// capped, but this method must bound whatever it is handed.
 		r.entry.ResponseBody = append([]byte(nil), body[:maxBody]...)
-		r.entry.ResponseBodyTruncated = true
+		r.entry.ResponseBodyOmitted = OmitSize
 	} else {
 		r.entry.ResponseBody = body
 	}
 }
 
-// SetResponseBodyTruncated marks the response body as truncated. Called by
-// the middleware when the traceResponseWriter detects truncation at write
-// time (before the final response body is available).
-func (r *Recorder) SetResponseBodyTruncated() {
+// SetResponseBodyOmitted records why the response body is not intact. Called by
+// the middleware when the traceResponseWriter detects truncation at write time
+// (before the final response body is available), which SetResponse cannot see
+// because it is handed the already-capped tee buffer.
+func (r *Recorder) SetResponseBodyOmitted(reason OmitReason) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.entry.ResponseBodyTruncated = true
+	r.entry.ResponseBodyOmitted = reason
 }
 
 // SetServiceInfo records the detected service, operation, and region.
@@ -356,11 +363,11 @@ func (r *Recorder) AddHop(h Hop) string {
 	// Bound each body before taking the lock: the copy is the expensive part.
 	if len(h.RequestBody) > MaxHopBody {
 		h.RequestBody = append([]byte(nil), h.RequestBody[:MaxHopBody]...)
-		h.RequestBodyTruncated = true
+		h.RequestBodyOmitted = OmitSize
 	}
 	if len(h.ResponseBody) > MaxHopBody {
 		h.ResponseBody = append([]byte(nil), h.ResponseBody[:MaxHopBody]...)
-		h.ResponseBodyTruncated = true
+		h.ResponseBodyOmitted = OmitSize
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -395,11 +402,11 @@ func (r *Recorder) chargeHopBodiesLocked(h *Hop) {
 	if r.hopBodyBytes >= MaxHopBodyBytes {
 		if len(h.RequestBody) > 0 {
 			h.RequestBody = nil
-			h.RequestBodyTruncated = true
+			h.RequestBodyOmitted = OmitTraceBudget
 		}
 		if len(h.ResponseBody) > 0 {
 			h.ResponseBody = nil
-			h.ResponseBodyTruncated = true
+			h.ResponseBodyOmitted = OmitTraceBudget
 		}
 		return
 	}
@@ -703,10 +710,12 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		Stack                 string         `json:"stack,omitempty"`
 		RequestHeaders        http.Header    `json:"requestHeaders"`
 		RequestBody           string         `json:"requestBody,omitempty"`
+		RequestBodyOmitted    OmitReason     `json:"requestBodyOmitted,omitempty"`
 		RequestBodyTruncated  bool           `json:"requestBodyTruncated,omitempty"`
 		RequestSize           int64          `json:"requestSize,omitempty"`
 		ResponseHeaders       http.Header    `json:"responseHeaders"`
 		ResponseBody          string         `json:"responseBody,omitempty"`
+		ResponseBodyOmitted   OmitReason     `json:"responseBodyOmitted,omitempty"`
 		ResponseBodyTruncated bool           `json:"responseBodyTruncated,omitempty"`
 		StatusCode            int            `json:"statusCode"`
 		Streaming             bool           `json:"streaming,omitempty"`
@@ -735,11 +744,13 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 		Stack:                 e.Stack,
 		RequestHeaders:        e.RequestHeaders,
 		RequestBody:           string(e.RequestBody),
-		RequestBodyTruncated:  e.RequestBodyTruncated,
+		RequestBodyOmitted:    e.RequestBodyOmitted,
+		RequestBodyTruncated:  e.RequestBodyOmitted.Omitted(),
 		RequestSize:           e.RequestSize,
 		ResponseHeaders:       e.ResponseHeaders,
 		ResponseBody:          string(e.ResponseBody),
-		ResponseBodyTruncated: e.ResponseBodyTruncated,
+		ResponseBodyOmitted:   e.ResponseBodyOmitted,
+		ResponseBodyTruncated: e.ResponseBodyOmitted.Omitted(),
 		StatusCode:            e.StatusCode,
 		Streaming:             e.Streaming,
 		Hops:                  e.Hops,
@@ -770,9 +781,11 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 		TargetURI             string        `json:"targetUri,omitempty"`
 		RequestHeaders        http.Header   `json:"requestHeaders,omitempty"`
 		RequestBody           string        `json:"requestBody,omitempty"`
+		RequestBodyOmitted    OmitReason    `json:"requestBodyOmitted,omitempty"`
 		RequestBodyTruncated  bool          `json:"requestBodyTruncated,omitempty"`
 		ResponseStatus        int           `json:"responseStatus"`
 		ResponseBody          string        `json:"responseBody,omitempty"`
+		ResponseBodyOmitted   OmitReason    `json:"responseBodyOmitted,omitempty"`
 		ResponseBodyTruncated bool          `json:"responseBodyTruncated,omitempty"`
 		Duration              time.Duration `json:"duration"`
 		Error                 string        `json:"error,omitempty"`
@@ -792,10 +805,12 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 		TargetURI:             h.TargetURI,
 		RequestHeaders:        h.RequestHeaders,
 		RequestBody:           string(h.RequestBody),
-		RequestBodyTruncated:  h.RequestBodyTruncated,
+		RequestBodyOmitted:    h.RequestBodyOmitted,
+		RequestBodyTruncated:  h.RequestBodyOmitted.Omitted(),
 		ResponseStatus:        h.ResponseStatus,
 		ResponseBody:          string(h.ResponseBody),
-		ResponseBodyTruncated: h.ResponseBodyTruncated,
+		ResponseBodyOmitted:   h.ResponseBodyOmitted,
+		ResponseBodyTruncated: h.ResponseBodyOmitted.Omitted(),
 		Duration:              h.Duration,
 		Error:                 h.Error,
 		Timestamp:             h.Timestamp,

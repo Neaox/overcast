@@ -1,3 +1,14 @@
+/**
+ * Why a body is not intact. Mirrors trace.OmitReason — the server's values, not
+ * the UI's, so a reason added there shows up here as a type error rather than
+ * silently rendering as "no body". `describeOmission` still handles an
+ * unrecognised value at runtime, for a server built ahead of this UI.
+ *
+ * The legacy `*BodyTruncated` booleans are derived from this server-side and
+ * kept for compatibility; prefer the reason, which says *which* loss occurred.
+ */
+export type TraceOmitReason = "size" | "trace-budget" | "streaming"
+
 export interface TraceEntry {
   requestId: string
   timestamp: string
@@ -13,11 +24,13 @@ export interface TraceEntry {
   requestHeaders: Record<string, string[]>
   requestBody?: string
   requestBodyTruncated?: boolean
+  requestBodyOmitted?: TraceOmitReason
   requestSize?: number
 
   responseHeaders: Record<string, string[]>
   responseBody?: string
   responseBodyTruncated?: boolean
+  responseBodyOmitted?: TraceOmitReason
   statusCode: number
   streaming?: boolean
 
@@ -49,8 +62,10 @@ export interface TraceHop {
   targetUri?: string
   requestHeaders?: Record<string, string[]>
   requestBody?: string
+  requestBodyOmitted?: TraceOmitReason
   responseStatus: number
   responseBody?: string
+  responseBodyOmitted?: TraceOmitReason
   duration: number
   error?: string
   timestamp: string

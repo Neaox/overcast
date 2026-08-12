@@ -18,7 +18,8 @@ import { formatBodyForDisplay, bodyHintFromHeaders, formatStackTrace } from "@/l
 import { Waterfall } from "@/features/debug-traces/components/waterfall"
 import { SequenceDiagram } from "@/features/debug-traces/components/sequence-diagram"
 import { FlowMap } from "@/features/debug-traces/components/flow-map"
-import type { TraceEntry, TraceHop, TraceLogEntry } from "@/types"
+import { BodyOmissionChip, BodyOmissionNotice } from "@/features/debug-traces/components/body-omission"
+import type { TraceEntry, TraceHop, TraceLogEntry, TraceOmitReason } from "@/types"
 
 export const Route = createFileRoute("/debug/traces/$requestId")({
   head: ({ params }) => ({
@@ -253,7 +254,7 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
           <HeadersBodyView
             headers={trace.requestHeaders}
             body={trace.requestBody}
-            truncated={trace.requestBodyTruncated}
+            omitted={trace.requestBodyOmitted}
             hint={reqHint}
           />
         </div>
@@ -262,8 +263,7 @@ function OverviewTab({ trace }: { trace: TraceEntry }) {
           <HeadersBodyView
             headers={trace.responseHeaders}
             body={trace.responseBody}
-            truncated={trace.responseBodyTruncated}
-            streaming={trace.streaming}
+            omitted={trace.responseBodyOmitted}
             hint={resHint}
           />
         </div>
@@ -363,18 +363,42 @@ function HopDetailPanel({ hopId, hops, onClose }: { hopId: string; hops: TraceHo
         {hop.targetUri && <div className="col-span-3"><span className="text-fg-muted">Target: </span><span className="font-mono">{hop.targetUri}</span></div>}
         {hop.error && <div className="col-span-3 text-red-400 font-mono">{hop.error}</div>}
       </div>
-      {hop.requestBody && (
-        <div className="mb-2">
-          <div className="text-xs text-fg-muted mb-1">Request Body</div>
-          <HopBody raw={String(hop.requestBody)} headers={hop.requestHeaders} />
-        </div>
-      )}
-      {hop.responseBody && (
-        <div>
-          <div className="text-xs text-fg-muted mb-1">Response Body</div>
-          <HopBody raw={String(hop.responseBody)} headers={hop.requestHeaders} />
-        </div>
-      )}
+      <HopBodySection label="Request Body" hop={hop} which="request" className="mb-2" />
+      <HopBodySection label="Response Body" hop={hop} which="response" />
+    </div>
+  )
+}
+
+/**
+ * One hop body, or an explanation of why it is not here.
+ *
+ * Renders nothing when the hop genuinely carried no body, and the omission
+ * notice when one was dropped — the case a CDK deploy hits every time it
+ * exhausts the per-trace hop-body budget, and which used to render as no
+ * section at all.
+ */
+function HopBodySection({
+  label,
+  hop,
+  which,
+  className,
+}: {
+  label: string
+  hop: TraceHop
+  which: "request" | "response"
+  className?: string
+}) {
+  const body = which === "request" ? hop.requestBody : hop.responseBody
+  const omitted = which === "request" ? hop.requestBodyOmitted : hop.responseBodyOmitted
+  if (!body && !omitted) return null
+  return (
+    <div className={className}>
+      <div className="text-xs text-fg-muted mb-1">
+        {label}
+        <BodyOmissionChip reason={omitted} hasBody={!!body} />
+      </div>
+      <BodyOmissionNotice reason={omitted} hasBody={!!body} ownRequestId={hop.requestId} />
+      {body && <HopBody raw={String(body)} headers={hop.requestHeaders} />}
     </div>
   )
 }
@@ -414,14 +438,12 @@ function Field({ label, value, className }: { label: string; value: string; clas
 function HeadersBodyView({
   headers,
   body,
-  truncated,
-  streaming,
+  omitted,
   hint,
 }: {
   headers: Record<string, string[]>
   body?: string
-  truncated?: boolean
-  streaming?: boolean
+  omitted?: TraceOmitReason
   hint: "json" | "xml" | "text"
 }) {
   const ct = (headers["Content-Type"] ?? headers["content-type"] ?? [""])[0]
@@ -433,11 +455,6 @@ function HeadersBodyView({
   )
   return (
     <div className="flex flex-col gap-3">
-      {streaming && (
-        <div className="rounded-md bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-sm text-amber-400">
-          Streaming response — body was not captured.
-        </div>
-      )}
       <div>
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
@@ -462,19 +479,19 @@ function HeadersBodyView({
           </table>
         </div>
       </div>
-      {body !== undefined && (
+      {(body !== undefined || omitted) && (
         <div>
           <div className="text-xs text-fg-muted mb-1">
             Body
-            {truncated && (
-              <span className="ml-2 text-amber-400">(truncated at 1 MiB)</span>
-            )}
+            <BodyOmissionChip reason={omitted} hasBody={!!body} />
           </div>
-          {formatted?.html ? (
-            <pre className="rounded-lg border border-border bg-bg-elevated p-4 text-xs font-mono overflow-x-auto max-h-96" dangerouslySetInnerHTML={{ __html: formatted.html }} />
-          ) : (
-            <pre className="rounded-lg border border-border bg-bg-elevated p-4 text-xs font-mono overflow-x-auto max-h-96">{body}</pre>
-          )}
+          <BodyOmissionNotice reason={omitted} hasBody={!!body} />
+          {body !== undefined &&
+            (formatted?.html ? (
+              <pre className="rounded-lg border border-border bg-bg-elevated p-4 text-xs font-mono overflow-x-auto max-h-96" dangerouslySetInnerHTML={{ __html: formatted.html }} />
+            ) : (
+              <pre className="rounded-lg border border-border bg-bg-elevated p-4 text-xs font-mono overflow-x-auto max-h-96">{body}</pre>
+            ))}
         </div>
       )}
     </div>
@@ -616,18 +633,8 @@ function HopsTab({ hops, requestId, navigate }: { hops: TraceHop[]; requestId: s
                             </Button>
                           </div>
                         )}
-                        {hop.requestBody && (
-                          <div>
-                            <div className="text-fg-muted mb-1">Request Body:</div>
-          <HopBody raw={String(hop.requestBody)} headers={hop.requestHeaders} />
-                          </div>
-                        )}
-                        {hop.responseBody && (
-                          <div>
-                            <div className="text-fg-muted mb-1">Response Body:</div>
-                            <HopBody raw={String(hop.responseBody)} headers={hop.requestHeaders} />
-                          </div>
-                        )}
+                        <HopBodySection label="Request Body" hop={hop} which="request" />
+                        <HopBodySection label="Response Body" hop={hop} which="response" />
                         {hop.error && (
                           <div className="text-red-400 font-mono">{hop.error}</div>
                         )}
