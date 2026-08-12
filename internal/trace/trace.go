@@ -61,11 +61,6 @@ type Entry struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
-// MaxHopBody is the largest request or response body stored on a Hop.
-// AddHop copies and truncates anything larger so an oversized internal
-// dispatch cannot pin its full body in the ring buffer.
-const MaxHopBody = 1 << 20 // 1 MiB
-
 // MaxHopStacks bounds how many goroutine stacks one trace captures for its
 // hops. A CloudFormation or CDK deploy dispatches hundreds of internal calls
 // through a single trace, and runtime.Stack costs both CPU and a multi-KiB
@@ -80,27 +75,27 @@ const MaxHopStacks = 20
 // must not be starved by the 300 successful hops ahead of it.
 const MaxFailedHopStacks = 20
 
-// MaxHopBodyBytes bounds the total hop request+response body bytes one trace
-// retains. The ring buffer holds live Recorders, so a trace's hop bodies stay
-// resident for as long as the trace does; a CDK deploy dispatches thousands of
-// hops through a single trace and each one may carry up to MaxHopBody, so
-// without a per-trace budget one deploy could pin gigabytes.
+// MaxInlinedHopBodies bounds the hop bodies one materialised Entry carries.
 //
-// 8 MiB is chosen to be far more than any hop sequence a reader actually
-// inspects (the UI shows bodies one hop at a time) while staying small enough
-// that a full ring buffer of budget-exhausting traces is bounded by the ring's
-// own capacity, not by deploy size. Exceeding it never drops a hop: every hop's
-// metadata — service, operation, status, timing, error, ordering, request ID —
-// is still recorded, and only the bodies are dropped, marked OmitTraceBudget.
-// That is deliberately a different OmitReason from the per-hop cap's OmitSize:
-// this one leaves no prefix behind, and a reader must be able to tell.
-const MaxHopBodyBytes = 8 << 20 // 8 MiB
+// A hop stores no bodies. Every hop is a router-dispatched request with a trace
+// of its own — one AddHop call site, always through router.ServeHTTP, always
+// setting RequestID — so a copy on the parent would be a second copy of bodies
+// the buffer already holds. They are resolved from those traces when an Entry
+// is materialised, which moves the bound from what the ring *retains* to what
+// one response *carries*.
+//
+// The bound is still needed there. A deploy dispatches thousands of hops
+// through a single trace and a reader opens them one at a time, so inlining
+// every body would spend megabytes to render a table. Past this, a hop reports
+// OmitTraceBudget and the UI links to the hop's own trace, where the body is
+// intact — the difference from the old per-trace budget being that nothing has
+// actually been deleted.
+const MaxInlinedHopBodies = 8 << 20 // 8 MiB
 
 // Hop records one internal service-to-service call made during request
 // processing.
 type Hop struct {
 	ID                  string        `json:"id"`
-	Parent              string        `json:"parent,omitempty"`
 	RequestID           string        `json:"requestId,omitempty"`
 	Order               int           `json:"order"`
 	CallerService       string        `json:"callerService"`
@@ -160,11 +155,6 @@ type Recorder struct {
 	// HopsFor list filter — "which request originated this one?" — is an O(1)
 	// lookup instead of a scan of every hop of every trace.
 	hopRequestIDs map[string]struct{}
-	// hopBodyBytes is the hop body bytes retained so far, against
-	// MaxHopBodyBytes. A plain int under mu rather than an atomic: AddHop
-	// already holds the write lock when it charges the budget, so this costs a
-	// compare and an add on the write path rather than a locked RMW.
-	hopBodyBytes int
 
 	// Stack-capture budgets. These are atomics rather than fields under mu so
 	// that the decision to capture — and the capture itself, which is the
@@ -351,8 +341,13 @@ func (r *Recorder) SetDuration(d time.Duration) {
 //
 // A stack is captured for the hop only while this trace still has budget —
 // see MaxHopStacks and MaxFailedHopStacks. A hop that arrives with a Stack
-// already set keeps it and spends no budget. Bodies are bounded per hop and
-// per trace; see MaxHopBody and MaxHopBodyBytes. No hop is ever dropped.
+// already set keeps it and spends no budget. No hop is ever dropped.
+//
+// **Bodies are deliberately not retained.** The hop's RequestID names a trace
+// that already holds them, so keeping a copy here would double what the ring
+// carries for a deploy; they are resolved from that trace on read. Callers may
+// keep passing bodies — the provisioner has them to hand — and they are simply
+// not stored. See MaxInlinedHopBodies.
 func (r *Recorder) AddHop(h Hop) string {
 	if r == nil {
 		return ""
@@ -360,18 +355,9 @@ func (r *Recorder) AddHop(h Hop) string {
 	if h.Stack == "" && r.hopStackBudget(hopFailed(h)) {
 		h.Stack = CaptureStack()
 	}
-	// Bound each body before taking the lock: the copy is the expensive part.
-	if len(h.RequestBody) > MaxHopBody {
-		h.RequestBody = append([]byte(nil), h.RequestBody[:MaxHopBody]...)
-		h.RequestBodyOmitted = OmitSize
-	}
-	if len(h.ResponseBody) > MaxHopBody {
-		h.ResponseBody = append([]byte(nil), h.ResponseBody[:MaxHopBody]...)
-		h.ResponseBodyOmitted = OmitSize
-	}
+	h.RequestBody, h.ResponseBody = nil, nil
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.chargeHopBodiesLocked(&h)
 	r.hopOrder++
 	h.Order = r.hopOrder
 	if h.ID == "" {
@@ -387,30 +373,15 @@ func (r *Recorder) AddHop(h Hop) string {
 	return h.ID
 }
 
-// chargeHopBodiesLocked charges h's bodies against this trace's
-// MaxHopBodyBytes budget. Once the budget is spent the hop is still recorded
-// in full apart from its bodies, which are dropped and flagged truncated —
-// dropping the hop instead would lose the ordering, timing and outcome a
-// deploy is read for. A hop carrying no bodies costs nothing, so a deploy of
-// body-less hops keeps recording them indefinitely.
-// Callers must hold r.mu.
-func (r *Recorder) chargeHopBodiesLocked(h *Hop) {
-	n := len(h.RequestBody) + len(h.ResponseBody)
-	if n == 0 {
-		return
-	}
-	if r.hopBodyBytes >= MaxHopBodyBytes {
-		if len(h.RequestBody) > 0 {
-			h.RequestBody = nil
-			h.RequestBodyOmitted = OmitTraceBudget
-		}
-		if len(h.ResponseBody) > 0 {
-			h.ResponseBody = nil
-			h.ResponseBodyOmitted = OmitTraceBudget
-		}
-		return
-	}
-	r.hopBodyBytes += n
+// bodies returns copies of the request and response bodies and their omission
+// reasons. It is what a parent's hop resolves against, so it copies for the
+// same reason Entry does: the caller holds the result while the recorder is
+// still live.
+func (r *Recorder) bodies() (req []byte, reqOmit OmitReason, resp []byte, respOmit OmitReason) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]byte(nil), r.entry.RequestBody...), r.entry.RequestBodyOmitted,
+		append([]byte(nil), r.entry.ResponseBody...), r.entry.ResponseBodyOmitted
 }
 
 func hopID(order int) string {
@@ -771,7 +742,6 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 func (h Hop) MarshalJSON() ([]byte, error) {
 	type shadow struct {
 		ID                    string        `json:"id"`
-		Parent                string        `json:"parent,omitempty"`
 		RequestID             string        `json:"requestId,omitempty"`
 		Order                 int           `json:"order"`
 		CallerService         string        `json:"callerService"`
@@ -795,7 +765,6 @@ func (h Hop) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(shadow{
 		ID:                    h.ID,
-		Parent:                h.Parent,
 		RequestID:             h.RequestID,
 		Order:                 h.Order,
 		CallerService:         h.CallerService,

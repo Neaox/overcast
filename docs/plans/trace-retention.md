@@ -239,7 +239,34 @@ capacity 1000 before the ceiling is raised in phase 4.
 
 ---
 
-## Phase 3 — stop duplicating hop bodies
+## Phase 3 — stop duplicating hop bodies ✅ shipped
+
+`AddHop` retains no bodies; `Buffer.Get` resolves them from each hop's own trace via
+`inlineHopBodies`, in two passes so the index lookups take `b.mu` and the copying takes only each
+callee's lock. `MaxHopBodyBytes` and `MaxHopBody` are gone, replaced by `MaxInlinedHopBodies` —
+**the bound moved from what the ring retains to what one response carries**, which is the change in a
+line. `OmitEvicted` covers a callee that is no longer retained, and `Hop.Parent` was deleted
+alongside it, as the rework recorded.
+
+**`trace-budget` was predicted to disappear and did not.** It survives, repurposed: the same reason
+now means "not inlined into this view", not "not retained". That is a better sentence than the one it
+replaced — nothing has been deleted, and the notice already links to where the body is — but the
+prediction was wrong, and the constant it names changed underneath it.
+
+Two things the write-up below did not anticipate:
+
+- **Deep search changed shape, not coverage.** It scanned hop bodies, which no longer exist, so
+  `MatchHopResponse` / `MatchHopRequest` are gone with them. The bytes are still found — once, on the
+  trace that owns them, rather than twice — so the ECR `ImageNotFoundException` that motivated deep
+  search now matches the ECR call's own trace instead of the deploy's hop, with `hopsFor` linking
+  back. `TraceMatchField` in the web types is a strict union precisely so a change here surfaces as a
+  compile error rather than an unlabelled badge, and it did.
+- **The memory claim is not benchmarkable as an allocation.** Before this, a hop under 1 MiB stored
+  the caller's slice *without copying it*, so `allocs/op` is unchanged either way — what changed is
+  what stays reachable. A benchmark would report "no difference" while measuring the wrong thing, so
+  the guarantee is a structural test (`TestAddHop_keepsEveryHopAndNoBodies`), not a number.
+
+### The original phase-3 write-up
 
 Keep the `RequestID` the hop already carries; resolve the body from the callee's trace on read.
 

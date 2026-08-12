@@ -7,7 +7,7 @@
  * The legacy `*BodyTruncated` booleans are derived from this server-side and
  * kept for compatibility; prefer the reason, which says *which* loss occurred.
  */
-export type TraceOmitReason = "size" | "trace-budget" | "streaming"
+export type TraceOmitReason = "size" | "trace-budget" | "streaming" | "evicted"
 
 export interface TraceEntry {
   requestId: string
@@ -52,7 +52,6 @@ export interface TraceEntry {
 
 export interface TraceHop {
   id: string
-  parent?: string
   requestId?: string
   order: number
   callerService: string
@@ -142,8 +141,6 @@ export interface TraceListParams {
 export type TraceMatchField =
   | "log"
   | "hopError"
-  | "hopResponse"
-  | "hopRequest"
   | "requestBody"
   | "responseBody"
 

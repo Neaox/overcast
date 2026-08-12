@@ -15,14 +15,25 @@ describe("describeOmission", () => {
     expect(got?.label).toMatch(/truncated/i)
   })
 
-  it("names the per-trace budget, and says the rest of the hop survived", () => {
-    // The deploy case: the reader needs to know the body is gone but the
+  it("names the inlining budget, and says the rest of the hop survived", () => {
+    // The deploy case: the reader needs to know the body is not here but the
     // timing, status and ordering they are looking at are still real.
     const got = describeOmission("trace-budget", false)
     expect(got?.partial).toBe(false)
-    expect(got?.label).toMatch(/not captured/i)
+    expect(got?.label).toMatch(/not shown here/i)
     expect(got?.detail).toMatch(/8 MiB/)
     expect(got?.seeOwnTrace).toBeFalsy()
+  })
+
+  it("distinguishes a body that is merely not inlined from one that is gone", () => {
+    // Both hide the body from this view, but only one of them means the bytes
+    // no longer exist anywhere — and only one is worth linking.
+    const notInlined = describeOmission("trace-budget", false, true)
+    const gone = describeOmission("evicted", false, true)
+    expect(notInlined?.detail).toMatch(/nothing was deleted/i)
+    expect(gone?.label).toMatch(/no longer retained/i)
+    expect(gone?.detail).toMatch(/evicted/i)
+    expect(gone?.seeOwnTrace).toBeFalsy()
   })
 
   it("points at the hop's own trace when the body is still readable there", () => {

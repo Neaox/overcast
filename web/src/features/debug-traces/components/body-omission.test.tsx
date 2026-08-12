@@ -19,21 +19,21 @@ describe("body omission", () => {
     // A request that carried no body must not be described as one we dropped.
     renderBoth(undefined, true)
     expect(screen.queryByText(/truncated/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/not captured/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/not shown here/i)).not.toBeInTheDocument()
   })
 
   it("annotates a surviving prefix with a chip rather than replacing it", () => {
     renderBoth("size", true)
     expect(screen.getByText(/truncated at 1 MiB/i)).toBeInTheDocument()
     // No standalone notice: the body is still on screen to read.
-    expect(screen.queryByText(/not captured/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/not shown here/i)).not.toBeInTheDocument()
   })
 
   it("stands in for a hop body the per-trace budget dropped", () => {
     // The CDK deploy case. The reader must learn that the body is gone *and*
     // that the timing and status they are looking at are still real.
     renderBoth("trace-budget", false)
-    expect(screen.getByText(/not captured/i)).toBeInTheDocument()
+    expect(screen.getByText(/not shown here/i)).toBeInTheDocument()
     expect(screen.getByText(/8 MiB/)).toBeInTheDocument()
     expect(screen.getByText(/still recorded/i)).toBeInTheDocument()
     expect(screen.queryByRole("link")).not.toBeInTheDocument()
@@ -51,7 +51,7 @@ describe("body omission", () => {
     )
     // The sentence is split across the label span, the text node and the
     // link, so it is asserted on the rendered text rather than one element.
-    expect(document.body.textContent).toMatch(/its trace still holds the body in full/i)
+    expect(document.body.textContent).toMatch(/that trace holds the body in full/i)
   })
 
   it("says a streamed body was never held, not that it was dropped", () => {

@@ -8,12 +8,12 @@
 
 /**
  * The caps quoted to the reader. They mirror Go constants — `maxTraceBody` in
- * internal/middleware/debugtrace.go and `MaxHopBody` / `MaxHopBodyBytes` in
+ * internal/middleware/debugtrace.go and `MaxInlinedHopBodies` in
  * internal/trace/trace.go — and are repeated here because the limits are not
  * served with the trace. If either changes, change it here too.
  */
 const PER_BODY_CAP = "1 MiB"
-const PER_TRACE_HOP_BUDGET = "8 MiB"
+const INLINED_HOP_BODIES = "8 MiB"
 
 export interface OmissionNotice {
   /** Short label, shown next to (or in place of) the body. */
@@ -62,16 +62,24 @@ export function describeOmission(
       }
     case "trace-budget":
       return {
-        label: "Body not captured here",
+        label: "Body not shown here",
         detail:
-          `This trace had already retained ${PER_TRACE_HOP_BUDGET} of hop bodies, so this copy was dropped. ` +
+          `This view had already inlined ${INLINED_HOP_BODIES} of hop bodies, so this one was left out of it. ` +
           (hasOwnTrace
-            ? `The hop was dispatched as its own request, and its trace still holds the body in full.`
+            ? `Nothing was deleted: the hop was dispatched as its own request, and that trace holds the body in full.`
             : `Everything else about the hop — service, operation, status, timing and ordering — is still recorded.`),
         partial: false,
         // Only offered when the hop really was dispatched through the router.
         // A hop with no request ID has no trace to send the reader to.
         seeOwnTrace: hasOwnTrace,
+      }
+    case "evicted":
+      return {
+        label: "Body no longer retained",
+        detail:
+          "The hop was dispatched as its own request, and that trace has since been evicted, so its bodies are gone. " +
+          "Everything else about the hop — service, operation, status, timing and ordering — is still recorded.",
+        partial: false,
       }
     case "streaming":
       return {

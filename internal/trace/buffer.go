@@ -100,7 +100,56 @@ func (b *Buffer) Get(requestID string) (Entry, bool) {
 	}
 	// Deliberately outside b.mu: materialising deep-copies bodies and hops,
 	// and holding the buffer's lock for that would block every writer.
-	return rec.Entry(), true
+	e := rec.Entry()
+	b.inlineHopBodies(&e)
+	return e, true
+}
+
+// inlineHopBodies fills each hop's bodies in from the trace of the call that
+// hop records, and says why when it cannot.
+//
+// A hop retains no bodies of its own; this is where a reader gets them back.
+// The work is in two passes so neither is done under the wrong lock: the index
+// lookups need b.mu and are O(1) each, while copying the bodies is the
+// expensive part and needs only each callee's own lock.
+func (b *Buffer) inlineHopBodies(e *Entry) {
+	if len(e.Hops) == 0 {
+		return
+	}
+
+	sources := make([]*Recorder, len(e.Hops))
+	b.mu.RLock()
+	for i, hop := range e.Hops {
+		if hop.RequestID == "" {
+			continue
+		}
+		if s, ok := b.index[hop.RequestID]; ok {
+			sources[i] = s.rec
+		}
+	}
+	b.mu.RUnlock()
+
+	budget := MaxInlinedHopBodies
+	for i := range e.Hops {
+		hop := &e.Hops[i]
+		if hop.RequestID == "" {
+			// Not a dispatched call, so there is no trace to resolve against
+			// and nothing has been lost.
+			continue
+		}
+		if sources[i] == nil {
+			hop.RequestBodyOmitted, hop.ResponseBodyOmitted = OmitEvicted, OmitEvicted
+			continue
+		}
+		req, reqOmit, resp, respOmit := sources[i].bodies()
+		if len(req)+len(resp) > budget {
+			hop.RequestBodyOmitted, hop.ResponseBodyOmitted = OmitTraceBudget, OmitTraceBudget
+			continue
+		}
+		budget -= len(req) + len(resp)
+		hop.RequestBody, hop.RequestBodyOmitted = req, reqOmit
+		hop.ResponseBody, hop.ResponseBodyOmitted = resp, respOmit
+	}
 }
 
 // recorderLocked returns the recorder for a request ID. Callers must hold b.mu.

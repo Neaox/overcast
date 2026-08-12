@@ -21,15 +21,21 @@ import (
 
 // deepTrace registers a trace carrying one hop and one log line, which between
 // them cover the fields worth searching.
-func deepTrace(b *Buffer, id string, ts time.Time, logMessage, hopError string, hopBody []byte) *Recorder {
+// deepTrace builds a trace carrying the things a deep search scans. The body
+// goes on the trace's own response rather than on a hop: a hop retains no
+// bodies, because the call it records is a trace in its own right and is
+// scanned as itself.
+func deepTrace(b *Buffer, id string, ts time.Time, logMessage, hopError string, body []byte) *Recorder {
 	rec := NewRecorder(id, ts, http.MethodPost, "/", "localhost", "", http.Header{})
 	rec.SetServiceInfo("cloudformation", "CreateStack", "us-east-1")
-	if hopError != "" || hopBody != nil {
+	if body != nil {
+		rec.SetResponse(http.Header{}, body, 400, 1<<20, false)
+	}
+	if hopError != "" {
 		rec.AddHop(Hop{
 			Service:        "ecr",
 			Operation:      "DescribeImages",
 			ResponseStatus: 400,
-			ResponseBody:   hopBody,
 			Error:          hopError,
 		})
 	}
@@ -104,26 +110,42 @@ func TestDeepSearch_findsALogMessage(t *testing.T) {
 	}
 }
 
-func TestDeepSearch_findsAHopResponseBody(t *testing.T) {
+// The flagship case for deep search: an ECS pull failure whose explanation is
+// an ECR call's response body. That body used to be copied onto the calling
+// trace's hop and matched there. It is no longer copied — the ECR call is a
+// trace of its own — so the match now lands on that trace, as its own response
+// body. The reader gets the same answer, attributed to the request that
+// actually produced it, and the hops tab links back to the caller.
+func TestDeepSearch_findsAnInternalCallsResponseBody(t *testing.T) {
 	buf := NewBuffer(10)
-	deepTrace(buf, "pull-404", time.Now(), "", "",
-		[]byte(`{"__type":"ImageNotFoundException","message":"The image tag does not exist"}`))
+	now := time.Now()
+
+	// The ECR call, as it is really recorded: its own request.
+	callee := NewRecorder("ecr-1", now, http.MethodPost, "/", "localhost", "", http.Header{})
+	callee.SetServiceInfo("ecr", "DescribeImages", "us-east-1")
+	callee.SetResponse(http.Header{},
+		[]byte(`{"__type":"ImageNotFoundException","message":"The image tag does not exist"}`),
+		400, 1<<20, false)
+	buf.Add(callee)
+
+	// The caller, whose hop names it.
+	caller := NewRecorder("pull-404", now.Add(-time.Second), http.MethodPost, "/", "localhost", "", http.Header{})
+	caller.SetServiceInfo("cloudformation", "CreateStack", "us-east-1")
+	caller.AddHop(Hop{Service: "ecr", Operation: "DescribeImages", RequestID: "ecr-1", ResponseStatus: 400})
+	buf.Add(caller)
 
 	matches := searchAll(t, buf, "imagenotfoundexception")
 
-	if got := matchedIDs(matches); len(got) != 1 || got[0] != "pull-404" {
-		t.Fatalf("deep search = %v, want [pull-404]", got)
+	// Found once, on the trace that owns the bytes — not twice.
+	if got := matchedIDs(matches); len(got) != 1 || got[0] != "ecr-1" {
+		t.Fatalf("deep search = %v, want [ecr-1]", got)
 	}
 	m := matches[0]
-	if m.Field != MatchHopResponse {
-		t.Errorf("Field = %q, want %q", m.Field, MatchHopResponse)
-	}
-	// Which hop, or the reader is left searching a 300-hop trace by hand.
-	if m.HopID == "" {
-		t.Error("HopID is empty; a body match that does not name its hop is a riddle")
+	if m.Field != MatchResponseBody {
+		t.Errorf("Field = %q, want %q", m.Field, MatchResponseBody)
 	}
 	if !strings.Contains(m.Label, "ecr") || !strings.Contains(m.Label, "DescribeImages") {
-		t.Errorf("Label = %q, want it to name the hop's service and operation", m.Label)
+		t.Errorf("Label = %q, want it to name the matched trace's service and operation", m.Label)
 	}
 }
 
