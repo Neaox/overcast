@@ -117,6 +117,29 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 
 ---
 
+## VPC placement — `VpcConfig`
+
+A function with a `VpcConfig` naming subnets is placed on that VPC's network and
+nothing else. It can reach what is in the VPC with it, and cannot reach a
+container outside it — which is what a `VpcConfig` means on AWS, where placement
+subtracts rather than adds.
+
+Overcast's own API endpoint is the exception, and stays reachable from every
+function regardless of placement. `AWS_ENDPOINT_URL` and the Lambda Runtime API
+ride a separate control plane, so calling S3 or DynamoDB from inside a VPC works
+here without the NAT gateway or VPC endpoint AWS would need. That is a
+deliberate divergence: the alternative is every VPC-placed function failing on
+its first SDK call.
+
+The common mistake this now catches is a database in a VPC and a function
+without a `VpcConfig` — which never worked on AWS, and used to work here. The
+fix is the AWS one: put the function in the VPC, or set `PubliclyAccessible` on
+the instance. A refused connection is named rather than left to hang; see
+[Networking § Lambda, ECS and VPCs](../networking.md) for the message and the
+full list of what is and is not enforced.
+
+---
+
 ## Runtimes
 
 Every runtime identifier Overcast knows about comes from one table in

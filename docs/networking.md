@@ -342,42 +342,96 @@ normally never have to think about either.
 | `overcast` (`OVERCAST_NETWORK`) | The **data plane**: where resources reach each other. A Lambda function resolving an RDS endpoint, an ECS task reaching a cache node |
 | `overcast_control` | Overcast's own channel to the containers it starts — the Lambda Runtime API, and the `AWS_ENDPOINT_URL` calls your function and task code make back into the emulator. Derived from `OVERCAST_NETWORK`; not separately configurable |
 
-A resource created in a VPC additionally joins that VPC's network
-(`overcast-vpc-*`). It keeps the shared data plane as well, so anything can
-still reach it by name — Overcast does not yet restrict traffic by VPC.
+A resource created in a VPC joins that VPC's network (`overcast-vpc-*`)
+**instead of** the shared one, so only things in the same VPC can reach it by
+name — see [Lambda, ECS and VPCs](#lambda-ecs-and-vpcs) for what that costs and
+how to opt out.
 
 **If you attach your own containers to Overcast's network** — a compose service
 that needs to reach a database Overcast started, say — join `overcast`.
 
-### Lambda, ECS and VPCs
+## Lambda, ECS and VPCs
 
-Giving a function a `VpcConfig` (or a task an `awsvpc` configuration) is **real
-connectivity**: the container joins that VPC's Docker network, takes an address
-from its CIDR, and can reach the other resources in it by name.
+Giving a function a `VpcConfig` (or a task an `awsvpc` configuration) puts the
+container in that VPC: it joins that VPC's Docker network, takes an address from
+its CIDR, and reaches the other resources in it by name.
 
-What it does **not** do yet is take anything away. This is where Overcast and
-AWS diverge, and the divergence runs in the direction that makes a local test
-pass when the deployed thing will fail:
+**It also takes away everything outside that VPC**, which is what naming a VPC
+means on AWS.
 
-| | On AWS | In Overcast today |
+| | On AWS | In Overcast |
 | --- | --- | --- |
-| A function **with** a `VpcConfig` reaching a resource outside that VPC | ✗ no route | ✓ works |
-| A function **without** a `VpcConfig` reaching a private VPC resource | ✗ no route | ✓ works |
-| A function in a VPC with no NAT gateway reaching the internet | ✗ | ✓ |
+| A function **with** a `VpcConfig` reaching a resource outside that VPC | ✗ no route | ✗ refused |
+| A function **without** a `VpcConfig` reaching a resource inside one | ✗ no route | ✗ refused |
+| Two resources in the same VPC reaching each other | ✓ | ✓ |
+| A function in a VPC with no NAT gateway reaching the internet | ✗ | ✓ — see [what is still not enforced](#what-is-still-not-enforced) |
 | Security groups restricting any of the above | ✓ enforced | ✗ stored, never applied |
 | A function in a VPC calling the AWS APIs without a NAT or VPC endpoint | ✗ | ✓ **deliberately** — see below |
 
-So a test that proves "my Lambda can reach my database" passes here whether or
-not the VPC wiring is correct. If the wiring is what you are testing, that test
-is not yet meaningful in Overcast — check it against AWS, or against the
-[plan for enforcement](./plans/container-network-topology.md), which will make
-these rows agree.
+"Refused" means what it says. Overcast will not answer a name the caller cannot
+reach, and the log names both sides:
 
-The last row stays divergent on purpose. Overcast's own API is what a container
-calls for S3, SQS, DynamoDB and everything else, and it rides the same channel
-as the Lambda Runtime API — so withholding it would not model a missing NAT
-gateway, it would stop the function from starting at all. Read it as *"every VPC
-has an interface endpoint for every service"*.
+```
+refusing a data-plane name the caller cannot reach
+  name:            mydb.us-east-1.rds.localhost.overcast.sh
+  target:          rds mydb
+  caller:          lambda api-handler
+  target_networks: [overcast-vpc-vpc-0abc]
+  caller_networks: [overcast_control overcast]
+```
+
+That is better than AWS gives you, where the same mistake is a connection that
+times out several minutes later with nothing to point at.
+
+### If this just started failing
+
+Your stack is describing something that would not work deployed either. Three
+ways out, all of them AWS's own fields rather than Overcast settings — so the
+fix that works here is the fix that works on AWS:
+
+| Situation | Fix |
+| --- | --- |
+| A function or task should be in the VPC | Give it a `VpcConfig` / `awsvpcConfiguration` naming a subnet in that VPC |
+| A database should be reachable from outside its VPC | `PubliclyAccessible: true` on the instance |
+| A task should be reachable from outside its VPC | `assignPublicIp: ENABLED` in its `awsvpcConfiguration` |
+
+If none of those is what you want, the honest answer is that the two things
+genuinely cannot talk on AWS, and the local failure has told you so early.
+
+### Two things this does not restrict
+
+**Overcast's own API stays reachable from inside any VPC.** A container calls it
+for S3, SQS, DynamoDB and everything else, and it rides the same channel as the
+Lambda Runtime API — withholding it would not model a missing NAT gateway, it
+would stop the function from starting at all. Read it as *"every VPC has an
+interface endpoint for every service"*.
+
+**On a native Windows or macOS host, nothing is restricted at all.** The
+restriction is only safe where a forbidden connection fails by name, and that
+needs Overcast's DNS resolver, which needs `/etc/resolv.conf` to find upstream
+servers. There is no such file on those hosts, so the resolver does not start,
+and rather than let a forbidden connection hang with no explanation Overcast
+keeps the old permissive behaviour. Run Overcast in a container — the
+recommended setup — to get the restriction and the diagnostics together.
+
+### What is still not enforced
+
+Docker network membership expresses "in this VPC or not", and nothing finer. So
+what a VPC lets *through* is not modelled:
+
+- **Security groups and NACLs.** Stored and returned; never applied. There is no
+  port- or source-level filtering between two containers that share a network.
+- **Subnets within a VPC.** One flat network per VPC — no public/private
+  distinction, no per-subnet routing. Everything in a VPC reaches everything
+  else in it.
+- **Internet access.** A VPC with no internet gateway is created `--internal`,
+  but every container also sits on the control plane, which is not — so a
+  private subnet still reaches the internet. Closing that is a separate change
+  with its own risks; see the plan.
+- **Two VPCs with the same CIDR**, under the default `shared` strategy, are one
+  Docker network and therefore not isolated from each other. `strict` and
+  `remapped` give real separation — see
+  [`OVERCAST_EC2_VPC_STRATEGY`](./services/ec2.md).
 
 ### "This used to work with `LAMBDA_NETWORK` set"
 

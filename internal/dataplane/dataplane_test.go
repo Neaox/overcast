@@ -35,8 +35,12 @@ type fakeVPCResolver struct {
 func (f fakeVPCResolver) VPCNetworkStatus(context.Context, string) string    { return f.status }
 func (f fakeVPCResolver) DockerNetworkForVpc(context.Context, string) string { return f.network }
 
+// testConfig is a deployment where placement restricts: the resolver is
+// listening, so a connection a VPC forbids fails by name. That is the normal
+// containerised setup and the one most of these cases care about; the host
+// deployment where it does not hold has its own case below.
 func testConfig() *config.Config {
-	return &config.Config{Network: "overcast", Hostname: "localhost"}
+	return &config.Config{Network: "overcast", Hostname: "localhost", DNSListening: true}
 }
 
 // The control plane is derived, never configured separately: there is no way to
@@ -63,12 +67,74 @@ func TestDataNetwork_defaultsToThePlaneAndPrefersAVPC(t *testing.T) {
 // whatever VPC a resource joins, the second is what a VPC restricts.
 func TestNetworks_isControlThenData(t *testing.T) {
 	got := Networks(testConfig(), Placement{VPCNetwork: "overcast-vpc-vpc-abc"})
-	want := []string{"overcast_control", "overcast-vpc-vpc-abc", "overcast"}
+	want := []string{"overcast_control", "overcast-vpc-vpc-abc"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("Networks = %#v, want %#v", got, want)
 	}
 	if got := Networks(testConfig(), Placement{}); !slices.Equal(got, []string{"overcast_control", "overcast"}) {
 		t.Fatalf("no VPC: Networks = %#v", got)
+	}
+}
+
+// Naming a VPC is what restricts a resource — on AWS, placement subtracts. This
+// is the assertion that says so; before enforcement it read the other way.
+func TestDataNetworks_aVPCPlacedResourceLeavesTheDefaultPlane(t *testing.T) {
+	cfg := testConfig()
+
+	got := DataNetworks(cfg, Placement{VPCNetwork: "overcast-vpc-vpc-abc"})
+	if !slices.Equal(got, []string{"overcast-vpc-vpc-abc"}) {
+		t.Fatalf("DataNetworks = %#v, want the VPC network alone", got)
+	}
+}
+
+// The way out is an AWS field, not an Overcast one: RDS's PubliclyAccessible,
+// ECS's assignPublicIp. Someone who needs it here needs it on AWS too.
+func TestDataNetworks_publicKeepsTheDefaultPlane(t *testing.T) {
+	cfg := testConfig()
+
+	got := DataNetworks(cfg, Placement{VPCNetwork: "overcast-vpc-vpc-abc", Public: true})
+	want := []string{"overcast-vpc-vpc-abc", "overcast"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("DataNetworks = %#v, want %#v", got, want)
+	}
+}
+
+// Enforcement follows the resolver. Without it — a native Windows or macOS
+// host, where there is no /etc/resolv.conf to read upstreams from and the
+// resolver declines to start — a forbidden connection would hang on Overcast's
+// own address rather than fail by name, which is the failure the guard exists
+// to remove. So the restriction is withheld there rather than delivered blind.
+func TestDataNetworks_notEnforcedWithoutTheResolver(t *testing.T) {
+	cfg := testConfig()
+	cfg.DNSListening = false
+
+	got := DataNetworks(cfg, Placement{VPCNetwork: "overcast-vpc-vpc-abc"})
+	want := []string{"overcast-vpc-vpc-abc", "overcast"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("DataNetworks = %#v, want %#v — the union, since the failure would be a hang", got, want)
+	}
+}
+
+// A resource with no VPC is already on the default plane; Public cannot make it
+// more reachable, and must not duplicate the attachment.
+func TestDataNetworks_publicIsInertWithoutAVPC(t *testing.T) {
+	cfg := testConfig()
+
+	if got := DataNetworks(cfg, Placement{Public: true}); !slices.Equal(got, []string{"overcast"}) {
+		t.Fatalf("DataNetworks = %#v, want the default plane once", got)
+	}
+}
+
+// The seeded default VPC's backing network *is* the default plane, so a
+// resource placed in it must not be attached twice — with or without Public.
+func TestDataNetworks_defaultVPCIsNotADoubleAttachment(t *testing.T) {
+	cfg := testConfig()
+
+	for _, public := range []bool{false, true} {
+		got := DataNetworks(cfg, Placement{VPCNetwork: cfg.Network, Public: public})
+		if !slices.Equal(got, []string{"overcast"}) {
+			t.Fatalf("public=%v: DataNetworks = %#v, want one attachment", public, got)
+		}
 	}
 }
 
@@ -92,23 +158,37 @@ func TestAttach_joinsTheDataPlaneWithAliases(t *testing.T) {
 	}
 }
 
-// Until enforcement lands, a VPC-placed resource keeps the default plane too.
-// Dropping it early would restrict reachability with no resolver guard behind
-// it, so the connection a VPC forbids would hang rather than fail — which is
-// the #872 failure mode, reintroduced deliberately.
-func TestAttach_aVPCPlacedResourceAlsoKeepsTheDefaultPlane(t *testing.T) {
+// A VPC-placed resource is attached to its VPC network and nowhere else. This
+// is the restriction itself: before enforcement the same call also joined the
+// default plane, which is why anything could reach anything.
+func TestAttach_aVPCPlacedResourceLeavesTheDefaultPlane(t *testing.T) {
 	dc := &fakeConnector{}
 
 	if err := Attach(context.Background(), dc, testConfig(), "container-1",
 		Placement{VPCNetwork: "overcast-vpc-vpc-abc", Aliases: []string{"db.localhost"}}); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
+	if !slices.Equal(dc.networks, []string{"overcast-vpc-vpc-abc"}) {
+		t.Fatalf("attached to %#v, want the VPC network alone", dc.networks)
+	}
+	if !slices.Equal(dc.aliases, []string{"db.localhost"}) {
+		t.Fatalf("aliases = %#v", dc.aliases)
+	}
+}
+
+// Public re-adds the default plane, carrying the same names — a caller outside
+// the VPC has to be able to *resolve* it, not merely route to it.
+func TestAttach_publicAlsoJoinsTheDefaultPlaneWithAliases(t *testing.T) {
+	dc := &fakeConnector{}
+
+	if err := Attach(context.Background(), dc, testConfig(), "container-1",
+		Placement{VPCNetwork: "overcast-vpc-vpc-abc", Public: true, Aliases: []string{"db.localhost"}}); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
 	want := []string{"overcast-vpc-vpc-abc", "overcast"}
 	if !slices.Equal(dc.networks, want) {
 		t.Fatalf("attached to %#v, want %#v", dc.networks, want)
 	}
-	// The names have to be on both, or resolving from outside the VPC still
-	// falls through to Overcast's resolver.
 	if !slices.Equal(dc.aliases, []string{"db.localhost"}) {
 		t.Fatalf("aliases on the default plane = %#v", dc.aliases)
 	}

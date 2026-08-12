@@ -716,7 +716,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 // dockerProbeFunc is docker.Probe's signature, indirected through a Service
 // field so tests can drive the re-probe loop without a daemon.
-type dockerProbeFunc func(socketPath string, networks []string, logger *zap.Logger) (*docker.ProbeResult, error)
+type dockerProbeFunc func(socketPath string, networks []docker.NetworkSpec, logger *zap.Logger) (*docker.ProbeResult, error)
 
 // dockerRetryInterval is how long the Lambda service waits between attempts
 // when Docker was not reachable at startup. Starting the emulator before Docker
@@ -747,7 +747,7 @@ func (s *Service) initDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 		return
 	}
 
-	result, probeErr := s.probe(cfg.LambdaDockerSocket, dataplane.Networks(cfg, dataplane.Placement{}), log)
+	result, probeErr := s.probe(cfg.LambdaDockerSocket, dataplane.PlaneSpecs(cfg), log)
 	if probeErr != nil {
 		s.log.Warn("Docker not available — using stub runtime for now; re-probing in the background",
 			zap.String("socket", cfg.LambdaDockerSocket),
@@ -781,7 +781,7 @@ func (s *Service) awaitDockerProbe(cfg *config.Config, clk clock.Clock, log *zap
 		case <-t.C:
 		}
 
-		result, err := s.probe(cfg.LambdaDockerSocket, dataplane.Networks(cfg, dataplane.Placement{}), log)
+		result, err := s.probe(cfg.LambdaDockerSocket, dataplane.PlaneSpecs(cfg), log)
 		if err != nil {
 			log.Debug("lambda: Docker still not available",
 				zap.String("socket", cfg.LambdaDockerSocket), zap.Error(err))

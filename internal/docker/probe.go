@@ -29,13 +29,34 @@ type ProbeResult struct {
 	Client *Client
 }
 
+// NetworkSpec is one network the supervisor ensures at startup.
+type NetworkSpec struct {
+	// Name is the Docker network name.
+	Name string
+
+	// Internal cuts the network off from the wider network — no egress, no
+	// route to anything Docker did not put on it.
+	//
+	// It matters for the control plane specifically. A VPC with no internet
+	// gateway is created `--internal` to model a private subnet, but a
+	// container on it is also on the control plane, so if *that* has egress the
+	// VPC's isolation is defeated and the flag is decoration.
+	Internal bool
+}
+
 // Probe creates a Docker client, verifies connectivity with retries, and
 // ensures the given networks exist. This is the common bootstrap pattern
 // shared by every service that runs containers.
 //
+// A network that already exists with a different Internal setting is left as
+// it is, with a warning naming the fix. Changing the flag means deleting and
+// recreating the network, which would sever every container already attached —
+// a worse outcome at startup than an isolation property that is one `docker
+// network rm` away from correct.
+//
 // Returns nil with a logged warning (not an error) when Docker is unreachable
 // — callers degrade gracefully (metadata ops work, container ops return errors).
-func Probe(socketPath string, networks []string, logger *zap.Logger) (*ProbeResult, error) {
+func Probe(socketPath string, networks []NetworkSpec, logger *zap.Logger) (*ProbeResult, error) {
 	dc := NewClient(socketPath, logger)
 
 	// Retry briefly — when running inside a devcontainer the socket is
@@ -62,19 +83,40 @@ func Probe(socketPath string, networks []string, logger *zap.Logger) (*ProbeResu
 	// Create the planes (idempotent). Doing it here, before any client is
 	// handed to a service, is what lets services create containers straight
 	// onto a network without each re-ensuring it first.
-	for _, network := range networks {
-		if network == "" {
+	for _, spec := range networks {
+		if spec.Name == "" {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		_, err := dc.CreateNetwork(ctx, network)
+		_, err := dc.CreateNetworkWithOptions(ctx, CreateNetworkOptions{
+			Name:     spec.Name,
+			Internal: spec.Internal,
+		})
+		if err == nil {
+			warnOnInternalDrift(ctx, dc, spec, logger)
+		}
 		cancel()
 		if err != nil {
-			return nil, fmt.Errorf("create network %s: %w", network, err)
+			return nil, fmt.Errorf("create network %s: %w", spec.Name, err)
 		}
 	}
 
 	return &ProbeResult{Client: dc}, nil
+}
+
+// warnOnInternalDrift reports a pre-existing network whose Internal flag does
+// not match what this run asked for, which CreateNetworkWithOptions silently
+// tolerates because it treats "already exists" as success.
+func warnOnInternalDrift(ctx context.Context, dc *Client, spec NetworkSpec, logger *zap.Logger) {
+	info, err := dc.InspectNetwork(ctx, spec.Name)
+	if err != nil || info == nil || info.Internal == spec.Internal {
+		return
+	}
+	logger.Warn("Docker network predates this configuration and its isolation differs — "+
+		"remove it while nothing is attached to have it recreated",
+		zap.String("network", spec.Name),
+		zap.Bool("internal_now", info.Internal),
+		zap.Bool("internal_wanted", spec.Internal))
 }
 
 // RemoveLegacyNetworks drops the pre-two-plane per-service networks. Networks

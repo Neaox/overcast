@@ -183,12 +183,18 @@ Three more things worth knowing:
   code that opens a database connection during INIT runs before the name it
   dials resolves. The one exception is ECS's `awsvpc` attachment, which reads
   back the address Docker assigned and therefore cannot run until the container
-  does; the same task joins the default plane before it starts.
-- **A VPC-placed resource keeps the default plane too, for now.** The target
-  model is one data plane per container, but restricting before the resolver
-  guard exists would turn a working setup into an unexplained hang rather than
-  a named error. `dataplane.DataNetworks` is where that union lives and where
-  enforcement will remove it.
+  does; the same task joins the default plane first, if it is entitled to one.
+- **A VPC-placed resource gets its VPC network and nothing else.** That is the
+  restriction, and `dataplane.DataNetworks` is where it lives. Two things widen
+  it back: `Placement.Public`, set from AWS's own `PubliclyAccessible` and
+  `assignPublicIp`; and a deployment where Overcast's resolver is not running,
+  since the restriction is only safe where a forbidden connection fails by name
+  rather than hanging.
+- **So a service must pass a VPC when the resource has one.** Before enforcement
+  a service that never called `PlaceInVPC` merely lost some fidelity; now it
+  strands the resource on the default plane where its own consumers cannot see
+  it. If you are adding a container-backed service, resolving its VPC is not
+  optional.
 - **A VPC attachment needs aliases too**, which is why they live on `Placement`
   rather than being passed only on the default path. Attaching without them
   leaves the container reachable by IP but unresolvable by name — so the caller

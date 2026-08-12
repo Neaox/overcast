@@ -340,6 +340,18 @@ to call back into the emulator:
   Overcast, so a single URL is dialable from both sides. `OVERCAST_HOSTNAME` and
   the comma-separated `OVERCAST_SPLIT_HORIZON_HOSTS` are added to that set.
 
+### A task in a VPC is restricted to it
+
+A task whose `networkConfiguration.awsvpcConfiguration` names subnets in a VPC
+lands on that VPC's network **and nothing else** — it cannot reach a container
+outside the VPC, exactly as on AWS. The way out is AWS's own field:
+`assignPublicIp: ENABLED` also keeps the task on the default plane.
+
+Overcast's own API endpoint stays reachable from every task either way, so
+`AWS_ENDPOINT_URL` keeps working; the control plane is not the thing being
+restricted. See [Networking § Lambda, ECS and VPCs](../networking.md) for what
+is and is not enforced, and for what a refused connection looks like.
+
 ---
 
 <!-- BEGIN overcast:capabilities -->

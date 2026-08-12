@@ -75,7 +75,7 @@ func NewSupervisorWithTracker(bus *events.Bus, logger *zap.Logger, tracker *Trac
 // daemon reached. Configs sharing the same socket path reuse a single client
 // connection and share a single availability probe. Returns one ServiceResult
 // per successful config; configs that fail to probe are logged and skipped.
-func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, networks []string) []ServiceResult {
+func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, networks []NetworkSpec) []ServiceResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -98,7 +98,11 @@ func (s *Supervisor) Probe(ctx context.Context, configs []ServiceConfig, network
 			entry = &probeEntry{result: pr, err: err}
 			probeCache[cfg.Socket] = entry
 			if err == nil {
-				RemoveLegacyNetworks(ctx, pr.Client, log, networks...)
+				keep := make([]string, 0, len(networks))
+				for _, spec := range networks {
+					keep = append(keep, spec.Name)
+				}
+				RemoveLegacyNetworks(ctx, pr.Client, log, keep...)
 			}
 		}
 

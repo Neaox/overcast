@@ -184,6 +184,13 @@ says about itself.
 Aurora cluster does not carry one, and `CreateDBCluster` does not accept one.
 Set it on the cluster's instances.
 
+**This field decides reachability, not just metadata.** An instance in a subnet
+group lands on that VPC's network and nothing else, so a Lambda or ECS task
+outside the VPC cannot reach it — as on AWS. `PubliclyAccessible=true` also
+keeps the instance on the default plane, which is the way out. If a connection
+that used to work has started being refused, that is what changed; see
+[Networking § Lambda, ECS and VPCs](../networking.md).
+
 ### What an Aurora member instance inherits
 
 On AWS, an Aurora cluster owns the placement and the credentials, and its member

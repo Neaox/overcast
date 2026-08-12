@@ -754,9 +754,24 @@ export const DOCS_NAV = [
         "id": "the-docker-networks-overcast-uses"
       },
       {
-        "depth": 3,
+        "depth": 2,
         "text": "Lambda, ECS and VPCs",
         "id": "lambda-ecs-and-vpcs"
+      },
+      {
+        "depth": 3,
+        "text": "If this just started failing",
+        "id": "if-this-just-started-failing"
+      },
+      {
+        "depth": 3,
+        "text": "Two things this does not restrict",
+        "id": "two-things-this-does-not-restrict"
+      },
+      {
+        "depth": 3,
+        "text": "What is still not enforced",
+        "id": "what-is-still-not-enforced"
       },
       {
         "depth": 3,
@@ -2877,6 +2892,11 @@ export const DOCS_NAV = [
         "id": "task-container-networking"
       },
       {
+        "depth": 3,
+        "text": "A task in a VPC is restricted to it",
+        "id": "a-task-in-a-vpc-is-restricted-to-it"
+      },
+      {
         "depth": 2,
         "text": "Summary",
         "id": "summary"
@@ -3079,6 +3099,11 @@ export const DOCS_NAV = [
         "depth": 1,
         "text": "ElastiCache — Managed In-Memory Cache",
         "id": "elasticache-managed-in-memory-cache"
+      },
+      {
+        "depth": 2,
+        "text": "VPC placement",
+        "id": "vpc-placement"
       },
       {
         "depth": 2,
@@ -3588,6 +3613,11 @@ export const DOCS_NAV = [
         "depth": 2,
         "text": "Known limitations",
         "id": "known-limitations"
+      },
+      {
+        "depth": 2,
+        "text": "VPC placement — `VpcConfig",
+        "id": "vpc-placement-vpcconfig"
       },
       {
         "depth": 2,

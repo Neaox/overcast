@@ -42,6 +42,24 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey** (`valkey/valkey:
 > Replication groups start a single primary container only — no multi-node replication is
 > wired up between replicas.
 
+## VPC placement
+
+A cache cluster created with a `CacheSubnetGroupName` lands on that subnet
+group's VPC network and nothing else, so a Lambda or ECS task outside the VPC
+cannot reach it — as on AWS, where ElastiCache is never publicly accessible and
+has no `PubliclyAccessible` escape hatch. Put the caller in the same VPC.
+
+Two gaps to know about:
+
+- **Replication groups ignore `CacheSubnetGroupName`.** It is discarded before
+  it reaches the record, so a replication group always lands on the default
+  plane and is reachable from everywhere. That is more permissive than AWS, not
+  less, so nothing breaks — but do not rely on it to isolate anything.
+- CloudFormation does not forward `CacheSubnetGroupName` either.
+
+See [Networking § Lambda, ECS and VPCs](../networking.md) for the full picture
+and for what a refused connection looks like.
+
 ---
 
 <!-- BEGIN overcast:capabilities -->

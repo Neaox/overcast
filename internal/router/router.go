@@ -779,8 +779,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 				}
 			}
 
-			results := dockerSup.Probe(context.Background(), configs,
-				[]string{cfg.Network, cfg.ControlNetwork()})
+			results := dockerSup.Probe(context.Background(), configs, dataplane.PlaneSpecs(cfg))
 
 			// The resolver has been answering since before any of this ran, with
 			// no way to tell a reachable endpoint from an unreachable one. Now
