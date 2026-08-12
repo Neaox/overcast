@@ -1273,11 +1273,30 @@ func (d *Client) RemoveVolume(ctx context.Context, name string, force bool) erro
 
 // ListVolumes returns managed volumes, optionally filtered to one service.
 func (d *Client) ListVolumes(ctx context.Context, service string) ([]VolumeSummary, error) {
+	return d.listVolumes(ctx, service, false)
+}
+
+// ListUnusedVolumes is ListVolumes restricted to volumes no container
+// references — Docker's "dangling" filter.
+//
+// This is the only sound way to ask whether a volume is still wanted. The
+// alternative, asking an emulator's own records whether the owning task still
+// exists, is wrong the moment a second Overcast shares the daemon: each has its
+// own records, so each sees the other's live volumes as abandoned. The daemon
+// holds the one view of container references that every instance agrees on.
+func (d *Client) ListUnusedVolumes(ctx context.Context, service string) ([]VolumeSummary, error) {
+	return d.listVolumes(ctx, service, true)
+}
+
+func (d *Client) listVolumes(ctx context.Context, service string, unusedOnly bool) ([]VolumeSummary, error) {
 	filterMap := map[string][]string{
 		"label": {LabelManaged + "=true"},
 	}
 	if service != "" {
 		filterMap["label"] = append(filterMap["label"], LabelService+"="+service)
+	}
+	if unusedOnly {
+		filterMap["dangling"] = []string{"true"}
 	}
 	filterJSON, err := json.Marshal(filterMap)
 	if err != nil {

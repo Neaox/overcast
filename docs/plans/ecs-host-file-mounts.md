@@ -15,10 +15,24 @@ description: A clean inner loop for applications that run on ECS in staging and 
 >   Capture AWS's own text for the Fargate `dockerVolumeConfiguration`,
 >   task-scope `autoprovision`, and one-configuration-per-volume rejections
 >   before pinning them in tests.
-> - **The docker-gated lifecycle tests are not written.** Shared volumes
->   surviving a task stop, `autoprovision: false` failing a placement, and a
->   real bind surviving an edit — see the testing section, and use the
->   fake-daemon rig rather than `SkipWithoutDocker`.
+> - **The docker-gated lifecycle tests are partly written.** The orphan sweep's
+>   scoping is covered (`volume_sweep_test.go`, fake-daemon rig). Still open:
+>   shared volumes surviving a task stop, and `autoprovision: false` failing a
+>   placement.
+>
+> **End-to-end verification, 2026-08-12.** Run against a real daemon with the
+> image built from this work: a Windows path in the tag normalised and bound
+> (`F:\dev\…` → `/f/dev/…`), host files visible in the task, **a host edit live
+> with `RestartCount: 0`**, the overlay volume correctly shadowing the host's
+> `vendor/`, and the flag-off path falling back to a scratch volume with the
+> warning naming both flags. Volume labelling verified on both instances.
+>
+> That run also found a real defect, since fixed: the orphan sweep was **not
+> instance-scoped**. A second Overcast on the same daemon deleted a volume
+> belonging to the first instance's *running* task, because the sweep asked its
+> own task records whether the owner still existed and two instances keep
+> separate records. It now asks the daemon which volumes are unreferenced. The
+> `overcast.ecs.region` label added for that lookup is now provenance only.
 > - **`configuredAtLaunch` volumes** remain unmodelled; the branch structure in
 >   `containerMounts` takes them the same way it took
 >   `dockerVolumeConfiguration`.
