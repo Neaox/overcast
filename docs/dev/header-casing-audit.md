@@ -7,7 +7,7 @@ answer is different for each of those three layers. Read this before "fixing" a 
 complaint: two of the three layers are working as intended, and the one that wasn't had a
 narrow, specific cause.
 
-Written up from a report that `POST /_appsync/<api-id>/graphql` with
+Written up from a report that `POST /_overcast/appsync/apis/<api-id>/graphql` with
 `--header 'x-api-key: da2-...'` showed the header as `X-Api-Key`.
 
 ---

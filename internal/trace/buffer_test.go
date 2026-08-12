@@ -667,13 +667,18 @@ func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 	// emulates. The second kind is a real client's request — an SDK, a
 	// browser, curl — and belongs in the trace list like any other.
 	//
-	// Today that distinction survives by accident: the data-plane routes
-	// happen to sit on first segments (/_appsync, /_apigateway, /_cognito,
-	// /_cloudfront, /_elb, /_lambda/url-invoke) that nobody added to
-	// internalPaths. docs/plans/non-canonical-url-namespace.md moves every one
-	// of them under /_overcast/, which spends that accident — so these cases
-	// are written down before the move rather than after, and each phase of it
-	// has to keep them passing at whatever path they land on.
+	// It used to survive by accident: the data-plane routes sat on first
+	// segments of their own (/_appsync, /_apigateway, /_cognito, /_cloudfront,
+	// /_elb, /_lambda/url-invoke) that nobody had added to internalPaths, so
+	// the allowlist excluded them without anyone deciding it should.
+	//
+	// docs/plans/non-canonical-url-namespace.md spent that accident. Phase 5
+	// moved every one of them under /_overcast/, so the cases below now sit in
+	// the same namespace as /_overcast/health and /_overcast/debug and are
+	// distinguished from them by this allowlist alone. That is why these were
+	// written down before the move rather than after — they are the reason
+	// isInternalPath cannot become a prefix test now that a prefix test would
+	// compile and pass.
 	//
 	// Getting this wrong is quiet, which is why it is worth a test: an
 	// AppSync GraphQL call or a Lambda function URL invoke misfiled as
@@ -688,14 +693,14 @@ func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 		"/_overcast/init",
 
 		// Data plane: the emulated workload answers these, not Overcast.
-		"/_appsync/abc123/graphql",
-		"/_appsync/abc123/realtime",
-		"/_apigateway/execute-api/abc123/us-east-1/test/hello",
-		"/_lambda/url-invoke/abc123/",
-		"/_cloudfront/E123456789/index.html",
-		"/_elb/healthz",
-		"/_cognito/us-east-1_abc123/login",
-		"/_cognito/us-east-1_abc123/oauth2/token",
+		"/_overcast/appsync/apis/abc123/graphql",
+		"/_overcast/appsync/apis/abc123/realtime",
+		"/_overcast/apigateway/execute-api/abc123/us-east-1/test/hello",
+		"/_overcast/lambda/url-invoke/abc123/",
+		"/_overcast/cloudfront/distributions/E123456789/index.html",
+		"/_overcast/elb/healthz",
+		"/_overcast/cognito/user-pools/us-east-1_abc123/login",
+		"/_overcast/cognito/user-pools/us-east-1_abc123/oauth2/token",
 	}
 	for _, p := range user {
 		if isInternalPath(p) {

@@ -401,7 +401,7 @@ func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch)
 	if !hasLeadingSlash(path) {
 		path = "/" + path
 	}
-	r.URL.Path = "/_lambda/url-invoke/" + m.ID + path
+	r.URL.Path = "/_overcast/lambda/url-invoke/" + m.ID + path
 	if r.URL.RawPath != "" {
 		r.URL.RawPath = r.URL.Path
 	}

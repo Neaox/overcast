@@ -3,7 +3,7 @@ package appsync
 // handler_execute.go — GraphQL query execution and API_KEY authentication.
 //
 // Implemented:
-//   - ExecuteGraphQL        POST /_appsync/{apiId}/graphql
+//   - ExecuteGraphQL        POST /_overcast/appsync/apis/{apiId}/graphql
 //   - API_KEY authentication (x-api-key header validation with expiry check)
 
 import (
@@ -38,7 +38,7 @@ type graphQLExecutionRequest struct {
 
 // ─── ExecuteGraphQL ──────────────────────────────────────────────────────────
 
-// ExecuteGraphQL handles POST /_appsync/{apiId}/graphql.
+// ExecuteGraphQL handles POST /_overcast/appsync/apis/{apiId}/graphql.
 func (h *Handler) ExecuteGraphQL(w http.ResponseWriter, r *http.Request) {
 	apiID := chi.URLParam(r, "apiId")
 

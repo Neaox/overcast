@@ -170,7 +170,7 @@ func seedV2Route(t *testing.T, h *Handler, apiID, routeID, routeKey, integID, fu
 func executeV2(t *testing.T, h *Handler, apiID, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := execRequest(http.MethodGet, "/@connections/"+apiID+"/dev"+path, map[string]string{
+	req := execRequest(http.MethodGet, "/_overcast/apigateway/connections/"+apiID+"/dev"+path, map[string]string{
 		"apiId":     apiID,
 		"stageName": "dev",
 		"*":         path[1:],

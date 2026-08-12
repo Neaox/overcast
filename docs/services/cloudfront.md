@@ -122,7 +122,7 @@ All endpoints use the `/2020-05-31` path prefix.
 
 | Operation    | Status | Notes                                                                         |
 | ------------ | ------ | ----------------------------------------------------------------------------- |
-| ProxyRequest | ✅     | `/_cloudfront/{distId}/*` — forwards to configured origins with path matching |
+| ProxyRequest | ✅     | `/_overcast/cloudfront/distributions/{distId}/*` — forwards to configured origins with path matching |
 
 The origin proxy is an emulator-only extension (not part of the real CloudFront API). It forwards HTTP requests through a distribution's configured origins:
 

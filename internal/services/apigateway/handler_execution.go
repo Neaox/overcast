@@ -8,7 +8,7 @@ package apigateway
 //
 // Execution routes:
 //   REST v1: /restapis/{restApiId}/{stageName}/_user_request_/{path}
-//   HTTP v2: /@connections/{apiId}/{stageName}/{path}
+//   HTTP v2: /_overcast/apigateway/connections/{apiId}/{stageName}/{path}
 //
 // Supported integration types:
 //   AWS_PROXY  — Lambda proxy integration (v1 and v2)

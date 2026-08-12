@@ -3,7 +3,7 @@ package appsync
 // handler_subscriptions.go — WebSocket endpoint for AppSync real-time subscriptions.
 //
 // Implemented:
-//   - HandleWebSocket  GET /_appsync/{apiId}/realtime
+//   - HandleWebSocket  GET /_overcast/appsync/apis/{apiId}/realtime
 //
 // Protocol messages:
 //   connection_init → connection_ack
@@ -28,7 +28,7 @@ import (
 	"github.com/Neaox/overcast/internal/protocol"
 )
 
-// HandleWebSocket handles GET /_appsync/{apiId}/realtime — upgrades to WebSocket
+// HandleWebSocket handles GET /_overcast/appsync/apis/{apiId}/realtime — upgrades to WebSocket
 // and manages the AppSync real-time subscription protocol.
 func (h *Handler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	apiID := chi.URLParam(r, "apiId")

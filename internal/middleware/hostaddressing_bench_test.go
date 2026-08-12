@@ -102,7 +102,7 @@ func BenchmarkHostClassifier_Classify(b *testing.B) {
 func BenchmarkHostAddressing_Middleware(b *testing.B) {
 	rows := []HostRouteRow{
 		{Label: "execute-api", Rewrite: func(r *http.Request, m HostRouteMatch) {
-			r.URL.Path = "/_apigateway/" + m.ID + r.URL.Path
+			r.URL.Path = "/_overcast/apigateway/" + m.ID + r.URL.Path
 		}},
 	}
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})

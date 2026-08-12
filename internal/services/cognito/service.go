@@ -100,7 +100,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// middleware parses the region from the Cognito pool ID ("{region}_{id}")
 	// and injects it into the request context so store lookups use the
 	// correct region-scoped key.
-	r.Route("/_cognito/{poolId}", func(sub chi.Router) {
+	r.Route("/_overcast/cognito/user-pools/{poolId}", func(sub chi.Router) {
 		sub.Use(s.poolRegionMiddleware)
 		sub.Get("/oauth2/authorize", s.HandleAuthorize)
 		sub.Post("/oauth2/token", s.HandleToken)

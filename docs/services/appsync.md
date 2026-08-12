@@ -45,7 +45,7 @@ API stacks, and Events API (v2) with channel namespace CRUD.
 > TransactGetItems, and TransactWriteItems operations. APPSYNC_JS resolver runtime
 > is supported using a pure-Go JS engine (goja) with expanded `@aws-appsync/utils`
 > module. VTL mapping template evaluation uses a full Go interpreter. Real-time
-> subscriptions are supported via WebSocket at `/_appsync/{apiId}/realtime` with
+> subscriptions are supported via WebSocket at `/_overcast/appsync/apis/{apiId}/realtime` with
 > mutation-to-subscription fan-out. Error enrichment: `$util.error` errorType
 > and data are propagated into `extensions.errorType`/`extensions.data`
 > (both VTL and APPSYNC_JS runtimes), and field resolver errors include a `path`
@@ -61,7 +61,7 @@ API stacks, and Events API (v2) with channel namespace CRUD.
 - **Schema validation.** Uploaded SDL is parsed and validated using gqlparser. Invalid
   SDL or schemas without a Query type are rejected with 400 BadRequestException.
   Parsed schemas are cached in-memory for query validation and execution.
-- **GraphQL execution.** The `POST /_appsync/{apiId}/graphql` endpoint executes
+- **GraphQL execution.** The `POST /_overcast/appsync/apis/{apiId}/graphql` endpoint executes
   queries and mutations against NONE, HTTP, AWS_LAMBDA, and AMAZON_DYNAMODB data
   sources. Both UNIT and PIPELINE resolvers are supported. PIPELINE resolvers
   execute functions in order, with the last function's result returned. For NONE
@@ -113,13 +113,13 @@ API stacks, and Events API (v2) with channel namespace CRUD.
   response. `evaluationResult`, `error`, `stash` and (for `EvaluateCode`) `logs`
   are populated; `outErrors` is not, because neither evaluator collects
   `util.appendError` output yet.
-- **Real-time subscriptions.** WebSocket endpoint at `/_appsync/{apiId}/realtime`
+- **Real-time subscriptions.** WebSocket endpoint at `/_overcast/appsync/apis/{apiId}/realtime`
   using the AppSync real-time protocol: connection_init→connection_ack,
   start→start_ack, stop→complete, ka (30s keepalive). Mutations automatically
   fan out to matching subscriptions (convention: mutation `createFoo` → subscription
   `onCreateFoo`). Connection lifecycle managed by in-memory subscription manager.
 - **Config-level emulation.** All resources are stored for CDK/IaC compatibility.
-- **CloudFormation/CDK provisioning.** CloudFormation provisions real AppSync state for `AWS::AppSync::GraphQLApi`, `GraphQLSchema`, `ApiKey`, `DataSource`, `Resolver`, `FunctionConfiguration`, `DomainName`, `DomainNameApiAssociation`, `ApiCache`, `SourceApiAssociation`, `Api` (Events API), and `ChannelNamespace`. CDK-style references such as `Fn::GetAtt GraphqlApi.ApiId`, `Fn::GetAtt GraphqlApi.GraphQLEndpointArn`, `Fn::GetAtt ApiKey.ApiKey`, `Fn::GetAtt Function.FunctionId`, `Fn::GetAtt EventsApi.ApiId`, `Fn::GetAtt EventsApi.ApiArn`, `Fn::GetAtt EventsApi.Dns.Http`, and `Fn::GetAtt Namespace.ChannelNamespaceArn` are supported, and stack-created GraphQL APIs execute through `POST /_appsync/{apiId}/graphql`. GraphQL API environment variables, S3-backed schema/resolver/function template locations, and S3-backed channel namespace code handlers are supported for common CDK asset flows.
+- **CloudFormation/CDK provisioning.** CloudFormation provisions real AppSync state for `AWS::AppSync::GraphQLApi`, `GraphQLSchema`, `ApiKey`, `DataSource`, `Resolver`, `FunctionConfiguration`, `DomainName`, `DomainNameApiAssociation`, `ApiCache`, `SourceApiAssociation`, `Api` (Events API), and `ChannelNamespace`. CDK-style references such as `Fn::GetAtt GraphqlApi.ApiId`, `Fn::GetAtt GraphqlApi.GraphQLEndpointArn`, `Fn::GetAtt ApiKey.ApiKey`, `Fn::GetAtt Function.FunctionId`, `Fn::GetAtt EventsApi.ApiId`, `Fn::GetAtt EventsApi.ApiArn`, `Fn::GetAtt EventsApi.Dns.Http`, and `Fn::GetAtt Namespace.ChannelNamespaceArn` are supported, and stack-created GraphQL APIs execute through `POST /_overcast/appsync/apis/{apiId}/graphql`. GraphQL API environment variables, S3-backed schema/resolver/function template locations, and S3-backed channel namespace code handlers are supported for common CDK asset flows.
 - **Cascade delete.** Deleting a GraphQL API removes all child resources (schema, keys,
   data sources, functions, resolvers). Deleting an Event API removes all its channel
   namespaces. Deleting a domain name removes its API association.
@@ -147,8 +147,8 @@ API stacks, and Events API (v2) with channel namespace CRUD.
 
 A GraphQL API is reachable two ways, with identical behaviour:
 
-- **Path-style** — `POST {base}/_appsync/{apiId}/graphql`, and the realtime
-  WebSocket at `{base}/_appsync/{apiId}/realtime`. Resolves with no DNS setup
+- **Path-style** — `POST {base}/_overcast/appsync/apis/{apiId}/graphql`, and the realtime
+  WebSocket at `{base}/_overcast/appsync/apis/{apiId}/realtime`. Resolves with no DNS setup
   at all.
 - **Host-routed** — `http://{apiId}.appsync-api.{region}.{base}/graphql`, and
   `http://{apiId}.appsync-realtime-api.{region}.{base}` for subscriptions.

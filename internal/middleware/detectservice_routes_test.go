@@ -86,28 +86,23 @@ var registeredRouteClassification = map[string]string{
 	// never reach the S3 fallback; internalService maps the known owners and
 	// calls the rest "internal".
 	//
-	// These are collapsing into "/_overcast" as
-	// docs/plans/non-canonical-url-namespace.md runs. Phase 2 retired "/_",
-	// "/_internal", "/_health", "/_metrics", "/_topology" and "/_events";
-	// phase 3 took "/_mcp"; phase 4 took "/_ecs" and "/_rds" outright and
-	// moved the Lambda admin routes off "/_lambda", leaving only url-invoke
-	// there for phase 5.
+	// **There is one, and this is it.** Sixteen internal families collapsed
+	// into "/_overcast" over docs/plans/non-canonical-url-namespace.md's
+	// phases 2-5: phase 2 retired "/_", "/_internal", "/_health", "/_metrics",
+	// "/_topology" and "/_events"; phase 3 took "/_mcp"; phase 4 took "/_ecs"
+	// and "/_rds"; phase 5 took "/_apigateway", "/_appsync", "/_cloudfront",
+	// "/_cognito", "/_elb", "/_lambda" and "/@connections".
 	//
-	// That is why /_overcast answers for more services than any other family
-	// and gains one whenever a phase lands. It is multi-valued because it is a
-	// directory with several owners under it (/_overcast/cognito,
-	// /_overcast/ses/inbox, /_overcast/events, …), not because anything is
-	// ambiguous: internalService reads the owner from the second segment, and
-	// this list growing is that switch converging on exactly that rule.
-	"/_apigateway": "internal",
-	"/_appsync":    "appsync",
-	"/_cloudfront": "cloudfront",
-	"/_cognito":    "cognito",
-	"/_elb":        "internal",
-	// Only /_lambda/url-invoke is left under this family; phase 4 moved the
-	// rest, and phase 5 takes the data plane.
-	"/_lambda":   "lambda",
-	"/_overcast": "cognito|ecs|eks|events|internal|lambda|metrics|rds|secretsmanager|ses",
+	// The single guarantee that makes the prefix safe — S3 bucket names cannot
+	// begin with "_" — is now spent once rather than sixteen times, and a new
+	// entry in this section is a namespace violation rather than a new
+	// convention. TestNoRouteIsRegisteredOutsideTheNamespace enforces that
+	// directly; this map is where it would show up as drift.
+	//
+	// It is multi-valued because the prefix is a directory with several owners
+	// under it, not because anything is ambiguous: internalService reads the
+	// owner from the second segment.
+	"/_overcast": "appsync|cloudfront|cognito|ecs|eks|events|internal|lambda|metrics|rds|secretsmanager|ses",
 
 	// Undated literals the prefix switch claims. /applications is shared by
 	// AppConfig and AppRegistry; unsigned it resolves to AppRegistry, which
@@ -165,9 +160,12 @@ var registeredRouteClassification = map[string]string{
 	// prefix switch runs ahead of the credential scope, so claiming one takes
 	// the path away from a genuine S3 request to a bucket of that name.
 	//
-	//   API Gateway: /@connections (WebSocket management), /account,
-	//   /domainnames, /tags, /vpclinks, and their /v2 forms.
-	"/@connections":   "s3",
+	//   API Gateway: /account, /domainnames, /tags, /vpclinks, and their /v2
+	//   forms. The WebSocket management API used to be listed here too, at
+	//   /@connections; phase 5 moved it to
+	//   /_overcast/apigateway/connections, so it is inside the namespace now
+	//   and covered by the "/_overcast" family above rather than by a root
+	//   segment of its own.
 	"/account":        "s3",
 	"/domainnames":    "s3",
 	"/tags":           "s3",

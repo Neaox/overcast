@@ -2829,7 +2829,7 @@ func TestProxy_customOrigin(t *testing.T) {
 
 	// When: a request is proxied through CloudFront
 	proxyReq, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/_cloudfront/"+dist.ID+"/hello", nil)
+		srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/hello", nil)
 	proxyResp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {
 		t.Fatalf("proxy request: %v", err)
@@ -2903,7 +2903,7 @@ func TestProxy_defaultRootObject(t *testing.T) {
 
 	// When: the root path "/" is requested
 	req, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/_cloudfront/"+dist.ID+"/", nil)
+		srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("proxy request: %v", err)
@@ -2980,7 +2980,7 @@ func TestProxy_cacheBehaviorPathPattern(t *testing.T) {
 
 	// When: /api/users is requested (matches path pattern)
 	req, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/_cloudfront/"+dist.ID+"/api/users", nil)
+		srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/api/users", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("proxy request: %v", err)
@@ -2999,7 +2999,7 @@ func TestProxy_distNotFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	req, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/_cloudfront/NONEXISTENT/hello", nil)
+		srv.URL+"/_overcast/cloudfront/distributions/NONEXISTENT/hello", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("proxy request: %v", err)
@@ -3059,7 +3059,7 @@ func TestProxy_disabledDistribution(t *testing.T) {
 
 	// When: proxy request to disabled distribution
 	req, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/_cloudfront/"+dist.ID+"/hello", nil)
+		srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/hello", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("proxy request: %v", err)
@@ -4156,7 +4156,7 @@ func TestProxy_viewerProtocolPolicyIsGatedOnServableTLS(t *testing.T) {
 			dist, _ := cfCreateDistFromXML(t, srv,
 				viewerPolicyDistXML("viewer-policy-"+tc.name, tc.policy, originDomain, originPort))
 
-			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/hello", nil)
+			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/hello", nil)
 			if tc.fwdProto != "" {
 				req.Header.Set("X-Forwarded-Proto", tc.fwdProto)
 			}
@@ -4325,7 +4325,7 @@ func TestProxy_originGroupFailover(t *testing.T) {
 			dist, _ := cfCreateDistFromXML(t, srv,
 				originGroupDistXML("origin-group-"+tc.name, "127.0.0.1", primaryPort, portOf(secondary), tc.failoverCodes))
 
-			req, _ := http.NewRequest(tc.method, srv.URL+"/_cloudfront/"+dist.ID+"/thing", nil)
+			req, _ := http.NewRequest(tc.method, srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/thing", nil)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Fatalf("proxy request: %v", err)
@@ -4435,7 +4435,7 @@ func TestProxy_originsBackedByAnEmulatedServiceStayLocal(t *testing.T) {
 				dist, _ := cfCreateDistFromXML(t, srv, singleOriginDistXML("cf-origin-"+tc.name, tc.domain, ""))
 
 				// When: the object is fetched through the distribution
-				req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/index.html", nil)
+				req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/index.html", nil)
 				resp, err := http.DefaultClient.Do(req)
 				if err != nil {
 					t.Fatalf("proxy request: %v", err)
@@ -4464,7 +4464,7 @@ func TestProxy_originsBackedByAnEmulatedServiceStayLocal(t *testing.T) {
 		dist, _ := cfCreateDistFromXML(t, srv,
 			singleOriginDistXML("cf-origin-path", "cf-origin-bucket.s3.amazonaws.com", "/sub/dir"))
 
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/index.html", nil)
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/index.html", nil)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("proxy request: %v", err)
@@ -4495,7 +4495,7 @@ func TestProxy_originsBackedByAnEmulatedServiceStayLocal(t *testing.T) {
 		dist, _ := cfCreateDistFromXML(t, srv,
 			singleOriginDistXML("cf-origin-apigw", "nosuchapi.execute-api.us-east-1.amazonaws.com", ""))
 
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_cloudfront/"+dist.ID+"/prod/hello", nil)
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/cloudfront/distributions/"+dist.ID+"/prod/hello", nil)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("proxy request: %v", err)

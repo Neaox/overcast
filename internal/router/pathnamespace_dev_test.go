@@ -62,42 +62,7 @@ var unmigratedRoutes = map[string]string{
 	"/2015-03-31/functions/{name}/test-events/{eventName}": "phase 6 -> /_overcast/lambda/functions/{name}/test-events/{eventName} (blocked: IAM bypass)",
 	"/2015-03-31/functions/{name}/invoke-with-progress":    "phase 6 -> /_overcast/lambda/functions/{name}/invoke-with-progress (blocked: IAM bypass)",
 
-	// Phase 5 — the data plane. These are the paths host addressing rewrites
-	// to, and they appear in URLs Overcast mints and hands back to callers, so
-	// moving them changes URLs users have already configured.
-	"/_apigateway/execute-api/{apiId}/{region}/*": "phase 5 -> /_overcast/apigateway/execute-api/...",
-	"/_appsync/{apiId}/graphql":                   "phase 5 -> /_overcast/appsync/apis/{apiId}/graphql",
-	"/_appsync/{apiId}/realtime":                  "phase 5 -> /_overcast/appsync/apis/{apiId}/realtime",
-	"/_cloudfront/{distId}/*":                     "phase 5 -> /_overcast/cloudfront/distributions/{distId}/*",
-	"/_elb":                                       "phase 5 -> /_overcast/elb",
-	"/_elb/*":                                     "phase 5 -> /_overcast/elb/*",
-	"/_lambda/url-invoke/{urlId}/*":               "phase 5 -> /_overcast/lambda/url-invoke/{urlId}/*",
-	// Cognito managed login. Moving these changes the hosted-UI URLs and the
-	// endpoints advertised in the OIDC discovery document, which is why phase
-	// 5 is the loud one — a redirect URI already registered in an app config
-	// stops matching.
-	"/_cognito/{poolId}/oauth2/authorize":          "phase 5 -> /_overcast/cognito/user-pools/{poolId}/oauth2/authorize",
-	"/_cognito/{poolId}/oauth2/token":              "phase 5 -> /_overcast/cognito/user-pools/{poolId}/oauth2/token",
-	"/_cognito/{poolId}/oauth2/userInfo":           "phase 5 -> /_overcast/cognito/user-pools/{poolId}/oauth2/userInfo",
-	"/_cognito/{poolId}/oauth2/revoke":             "phase 5 -> /_overcast/cognito/user-pools/{poolId}/oauth2/revoke",
-	"/_cognito/{poolId}/login":                     "phase 5 -> /_overcast/cognito/user-pools/{poolId}/login",
-	"/_cognito/{poolId}/logout":                    "phase 5 -> /_overcast/cognito/user-pools/{poolId}/logout",
-	"/_cognito/{poolId}/signup":                    "phase 5 -> /_overcast/cognito/user-pools/{poolId}/signup",
-	"/_cognito/{poolId}/confirm":                   "phase 5 -> /_overcast/cognito/user-pools/{poolId}/confirm",
-	"/_cognito/{poolId}/new-password":              "phase 5 -> /_overcast/cognito/user-pools/{poolId}/new-password",
-	"/_cognito/{poolId}/mfa":                       "phase 5 -> /_overcast/cognito/user-pools/{poolId}/mfa",
-	"/_cognito/{poolId}/forgot-password":           "phase 5 -> /_overcast/cognito/user-pools/{poolId}/forgot-password",
-	"/_cognito/{poolId}/reset-password":            "phase 5 -> /_overcast/cognito/user-pools/{poolId}/reset-password",
-	"/_cognito/{poolId}/branding":                  "phase 5 -> /_overcast/cognito/user-pools/{poolId}/branding",
-	"/_cognito/{poolId}/debug/token":               "phase 5 -> /_overcast/cognito/user-pools/{poolId}/debug/token",
-	"/_cognito/{poolId}/users/{username}/password": "phase 5 -> /_overcast/cognito/user-pools/{poolId}/users/{username}/password",
-	// API Gateway's WebSocket management API. AWS binds it to
-	// /@connections/{ConnectionId} on a per-API host; Overcast puts the API and
-	// stage in the path instead, because the emulator cannot rely on host
-	// addressing. A real adaptation of a real operation, but an invented shape
-	// — phase 5 decides whether it becomes the modeled path plus host routing,
-	// or an /_overcast/ endpoint.
-	"/@connections/{apiId}/{stageName}/*": "phase 5 — decide: modeled path + host routing, or /_overcast/apigateway/connections/...",
+	// Phase 5 is done: the data plane is namespaced.
 
 	// Phase 6 — decided in section 4.3: serve the AWS shape
 	// /{poolId}/.well-known/... and delete the region-prefixed form, whose

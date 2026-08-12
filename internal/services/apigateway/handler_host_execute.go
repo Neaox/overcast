@@ -14,7 +14,7 @@ package apigateway
 // v2) whether the first path segment is a stage name or already part of the
 // resource path. middleware.HostDispatch (see Service.HostRouteRewrite)
 // therefore does the minimum possible: it rewrites the request onto
-// /_apigateway/execute-api/{apiId}/{region}/*, preserving the client's path
+// /_overcast/apigateway/execute-api/{apiId}/{region}/*, preserving the client's path
 // and method untouched. ExecuteByHost, registered for that route, resolves
 // API kind + stage using the exact same store lookups ExecuteRestAPI and
 // ExecuteV2API already use for path-style invokes' cross-region fallback,
@@ -35,7 +35,7 @@ import (
 
 // HostRouteRewrite adapts a Host-routed API Gateway invoke request
 // ({apiId}.execute-api.{region}.{base}/...) to the emulator's internal
-// /_apigateway/execute-api/{apiId}/{region}/* marker route (see
+// /_overcast/apigateway/execute-api/{apiId}/{region}/* marker route (see
 // ExecuteByHost for why the client's path is passed through verbatim rather
 // than being parsed here).
 func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch) {
@@ -47,13 +47,13 @@ func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch)
 	if region == "" {
 		region = "-"
 	}
-	r.URL.Path = "/_apigateway/execute-api/" + m.ID + "/" + region + path
+	r.URL.Path = "/_overcast/apigateway/execute-api/" + m.ID + "/" + region + path
 	if r.URL.RawPath != "" {
 		r.URL.RawPath = r.URL.Path
 	}
 }
 
-// ExecuteByHost handles /_apigateway/execute-api/{apiId}/{region}/* — see
+// ExecuteByHost handles /_overcast/apigateway/execute-api/{apiId}/{region}/* — see
 // the file doc above.
 func (h *Handler) ExecuteByHost(w http.ResponseWriter, r *http.Request) {
 	apiID := chi.URLParam(r, "apiId")

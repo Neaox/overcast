@@ -948,7 +948,7 @@ func appsyncGraphQL(t *testing.T, srv *helpers.TestServer, apiID, apiKey, query 
 	if err != nil {
 		t.Fatalf("marshal GraphQL body: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/_appsync/"+apiID+"/graphql", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/appsync/apis/"+apiID+"/graphql", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("appsync GraphQL request: %v", err)
 	}
