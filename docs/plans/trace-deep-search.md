@@ -1,6 +1,8 @@
 # Trace search — finding a request by what it says, not just what it is
 
-> **Status:** Phase 1 complete (`Recorder.MatchesSearch`, benchmarked). **Phase 2 complete** — `Buffer.DeepSearch`, `GET /_debug/traces/search`, and the bff proxy, with the scan budgeted, resumable and cancellable as designed below. Phase 3 (the UI) is the remaining piece.
+> **Status:** all three phases complete and verified in a browser against a built image. Phase 1 — `Recorder.MatchesSearch`, benchmarked. Phase 2 — `Buffer.DeepSearch`, `GET /_debug/traces/search`, the bff proxy. Phase 3 — `useDeepSearch`, match rows with excerpts, the `hop` deep link, and the corrected empty state.
+>
+> One thing this document did not predict, recorded because it cost a debugging round: **TanStack Pacer takes no reactive state subscription unless you give `useDebouncedValue` a selector.** Without one the settled value updates inside the debouncer and never re-renders the component, so the search runs once — for whatever the query happened to be at the last unrelated render — and never again. It looks like a caching bug and is not one.
 > **Scope:** `internal/trace/`, `internal/router/debug.go`, `internal/bff/bff.go`, `web/src/routes/debug/traces/`.
 > **Audience:** any contributor or agent. Read [CONTRIBUTING.md](../../CONTRIBUTING.md) and [AGENTS.md](../../AGENTS.md) first; all their rules apply.
 
@@ -137,7 +139,7 @@ Excerpt ~60 characters either side, split into before/match/after so the client 
 
 ---
 
-## Phase 3 — what the user sees
+## Phase 3 — what the user sees ✅ done
 
 ```
 ┌────────────────────────────────────────────────────────────┐

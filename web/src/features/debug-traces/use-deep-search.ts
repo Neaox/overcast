@@ -41,6 +41,11 @@ export interface DeepSearchState {
   remaining: number
   /** The settled query the results belong to, which lags what is in the box. */
   query: string
+  /**
+   * True while the query is still settling, so what is on screen belongs to an
+   * older query than the one being typed.
+   */
+  settling: boolean
 }
 
 /**
@@ -64,8 +69,21 @@ export interface DeepSearchState {
  *                 does not spend the budget
  */
 export function useDeepSearch(query: string, enabled: boolean): DeepSearchState {
-  const [settled] = useDebouncedValue(query, { wait: DEEP_SEARCH_SETTLE_MS })
+  // The selector is not optional in practice, whatever its signature says.
+  // Pacer subscribes to no debouncer state unless one is given — "by default,
+  // there will be no reactive state subscriptions" — so without it the settled
+  // value updates inside the debouncer and the component is never re-rendered
+  // to see it. The symptom is a search that runs once, for whatever the query
+  // happened to be at the last unrelated render, and then never again.
+  //
+  // `isPending` is also what the caller wants to know: it is true from the
+  // first keystroke until the scan is allowed to start, which is the window
+  // where results on screen belong to a query that is no longer in the box.
+  const [settled, debouncer] = useDebouncedValue(query, { wait: DEEP_SEARCH_SETTLE_MS }, (state) => ({
+    isPending: state.isPending,
+  }))
   const trimmed = settled.trim()
+  const settling = debouncer.state.isPending
 
   // Below the minimum the server refuses outright, so asking would produce a
   // 400 the UI would have to explain. Holding back is the same answer, sooner.
@@ -104,6 +122,7 @@ export function useDeepSearch(query: string, enabled: boolean): DeepSearchState 
       scanned: pages.reduce((total, p) => total + p.scanned, 0),
       remaining: last?.remaining ?? 0,
       query: trimmed,
+      settling,
     }
-  }, [data, active, isFetching, trimmed])
+  }, [data, active, isFetching, trimmed, settling])
 }
