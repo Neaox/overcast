@@ -12,7 +12,7 @@
 //	go run ./scripts/bench-startup.go -threshold 50 # fail if p50 > 50ms
 //
 // Output: a summary table with p50, p95, max, and mean for each backend,
-// plus the internal startup_duration_ms from /_metrics.
+// plus the internal startup_duration_ms from /_overcast/metrics.
 //
 // Exit code 1 if any backend's p50 wall time exceeds -threshold (default 80ms).
 // This is designed to be called from `make bench-startup` or CI.
@@ -57,7 +57,7 @@ func main() {
 	type result struct {
 		Backend    string
 		WallTimes  []float64 // ms
-		InternalMs []float64 // startup_duration_ms from /_metrics
+		InternalMs []float64 // startup_duration_ms from /_overcast/metrics
 		HeapBytes  []uint64
 		SysBytes   []uint64
 	}
@@ -187,8 +187,8 @@ func measure(binary, backend string, verbose bool) (wallMs float64, m metricsSna
 		cmd.Wait()
 	}()
 
-	// Poll /_metrics until it responds or timeout.
-	metricsURL := fmt.Sprintf("http://127.0.0.1:%d/_metrics", port)
+	// Poll /_overcast/metrics until it responds or timeout.
+	metricsURL := fmt.Sprintf("http://127.0.0.1:%d/_overcast/metrics", port)
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	deadline := time.After(10 * time.Second)
 	ticker := time.NewTicker(5 * time.Millisecond)
@@ -197,7 +197,7 @@ func measure(binary, backend string, verbose bool) (wallMs float64, m metricsSna
 	for {
 		select {
 		case <-deadline:
-			return 0, m, fmt.Errorf("timeout waiting for /_metrics on port %d", port)
+			return 0, m, fmt.Errorf("timeout waiting for /_overcast/metrics on port %d", port)
 		case <-ticker.C:
 			resp, rerr := client.Get(metricsURL)
 			if rerr != nil {
@@ -209,7 +209,7 @@ func measure(binary, backend string, verbose bool) (wallMs float64, m metricsSna
 				continue
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-				return 0, m, fmt.Errorf("decode /_metrics: %w", err)
+				return 0, m, fmt.Errorf("decode /_overcast/metrics: %w", err)
 			}
 			return float64(wall.Microseconds()) / 1000.0, m, nil
 		}

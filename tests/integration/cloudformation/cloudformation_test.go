@@ -3094,7 +3094,7 @@ func TestNestedStack_fiveLevelDeep(t *testing.T) {
 	}
 
 	// And: the topology endpoint shows nested-stack edges forming the chain.
-	topoResp, err := http.Get(srv.URL + "/_topology")
+	topoResp, err := http.Get(srv.URL + "/_overcast/topology")
 	if err != nil {
 		t.Fatalf("topology request: %v", err)
 	}
@@ -3836,7 +3836,7 @@ func TestCreateStack_SQSEventSourceMapping(t *testing.T) {
 	}
 
 	// And: the topology should include an esm edge.
-	topoResp, err := http.Get(srv.URL + "/_topology")
+	topoResp, err := http.Get(srv.URL + "/_overcast/topology")
 	if err != nil {
 		t.Fatalf("topology: %v", err)
 	}

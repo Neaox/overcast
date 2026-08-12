@@ -175,7 +175,7 @@ What each tier obligates:
   configuration; documented divergences shrink.
 
 The code-level source of truth is `ServiceTiers` in
-[internal/router/tiers.go](./internal/router/tiers.go) (surfaced via `/_health` and the
+[internal/router/tiers.go](./internal/router/tiers.go) (surfaced via `/_overcast/health` and the
 web UI, with `ServiceGoalTiers` marking work-in-progress services) — update it in the
 same commit that graduates a service. The per-operation inventory lives in each
 service's `capabilities_dev.go`. Report operations honestly: `StatusSupported` means
@@ -582,7 +582,7 @@ Overcast's level ladder has five rungs: `TRACE` < `DEBUG` < `INFO` < `WARN` < `E
 defined in [`internal/logging`](./internal/logging/level.go) as
 `zapcore.Level(-2)`, one step under zap's `DebugLevel`. It exists because
 Docker's `HEALTHCHECK` (and any orchestrator's liveness/readiness probe) hits
-`/_health` every few seconds forever, and the web UI polls `/_debug/*`
+`/_overcast/health` every few seconds forever, and the web UI polls `/_debug/*`
 continuously — at `INFO` that traffic drowns real activity; even at `DEBUG` it
 drowns the request-explaining detail a human actually opened the logs to
 read. `TRACE` gives that machine chatter somewhere to go without either
@@ -624,7 +624,7 @@ artifact — `TRACE` is where volume is allowed.
 | `ERROR` | Actionable failures: the store degraded, a migration failed, unrecoverable request handling, a panic recovery.                                                                |
 
 The Logger middleware logs one line per request: `INFO` for real AWS API
-calls, `TRACE` for `/_health` and `/_debug/*` polling (see
+calls, `TRACE` for `/_overcast/health` and `/_debug/*` polling (see
 `isOperationalPollPath` in `internal/middleware/logger.go`), `ERROR` for 5xx
 responses. Don't duplicate the per-request line in handlers — add `DEBUG`/
 `TRACE` lines only for detail the request-line summary doesn't carry.

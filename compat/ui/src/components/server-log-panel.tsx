@@ -64,7 +64,7 @@ export function ServerLogPanel({ endpoint }: { endpoint: string }) {
               <Trash2 size={13} />
             </button>
             <span className="ml-auto text-[10px] font-mono text-gray-400 dark:text-gray-500 truncate">
-              {endpoint}/_events
+              {endpoint}/_overcast/events
             </span>
           </div>
           <div

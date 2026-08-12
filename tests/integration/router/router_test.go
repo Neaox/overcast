@@ -18,7 +18,7 @@ import (
 func TestHealth_returnsOK(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
-	resp, err := http.Get(srv.URL + "/_health")
+	resp, err := http.Get(srv.URL + "/_overcast/health")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestHealth_includesStorageConfig(t *testing.T) {
 		"sqs": config.StateBackendMemory,
 	}))
 
-	resp, err := http.Get(srv.URL + "/_health")
+	resp, err := http.Get(srv.URL + "/_overcast/health")
 	if err != nil {
 		t.Fatal(err)
 	}

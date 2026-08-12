@@ -1,7 +1,7 @@
 package main
 
 // sse_source.go — a hostbridge.Source implementation that tails overcast's
-// /_internal/domains/watch SSE endpoint. It reconnects on error with a
+// /_overcast/domains/watch SSE endpoint. It reconnects on error with a
 // short backoff; the bridge itself is stateless with respect to gaps so the
 // reconnect simply re-snapshots.
 
@@ -67,7 +67,7 @@ func (s *sseSource) Watch(ctx context.Context) (<-chan hostbridge.Event, error) 
 
 // stream runs one SSE connection until it errors or ctx is cancelled.
 func (s *sseSource) stream(ctx context.Context, out chan<- hostbridge.Event) error {
-	url := strings.TrimRight(s.endpoint, "/") + "/_internal/domains/watch"
+	url := strings.TrimRight(s.endpoint, "/") + "/_overcast/domains/watch"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err

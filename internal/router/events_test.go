@@ -89,12 +89,12 @@ func newTestBus() *events.Bus        { return events.NewBus() }
 func newTestShutdown() chan struct{} { return make(chan struct{}) }
 func nopLogger() *zap.Logger         { return zap.NewNop() }
 
-// doSSERequest starts a GET /_events request against handler in a goroutine,
+// doSSERequest starts a GET /_overcast/events request against handler in a goroutine,
 // using a cancelable context so the test can disconnect the client.
 // It returns the recorder and the cancel function.
 func doSSERequest(handler http.HandlerFunc, query string) (*flushRecorder, context.CancelFunc) {
 	rec := newFlushRecorder()
-	url := "/_events"
+	url := "/_overcast/events"
 	if query != "" {
 		url += "?" + query
 	}
@@ -294,7 +294,7 @@ func TestEventsHandler_ShutdownClosesStream(t *testing.T) {
 
 	done := make(chan struct{})
 	rec := newFlushRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/_events", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/events", nil)
 
 	go func() {
 		defer close(done)
@@ -320,7 +320,7 @@ func TestEventsHandler_ClientDisconnectClosesStream(t *testing.T) {
 
 	done := make(chan struct{})
 	rec := newFlushRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/_events", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/events", nil)
 	ctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(ctx)
 
@@ -352,7 +352,7 @@ func TestEventsHandler_NonFlusherReturns500(t *testing.T) {
 	handler := eventsHandler(bus, nopLogger(), clock.New(), shutdownCh)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/_events", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/events", nil)
 	handler(nonFlusherWriter{rec}, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -540,7 +540,7 @@ func publishN(bus *events.Bus, n int) {
 // Last-Event-ID a browser's EventSource sends on an automatic reconnect.
 func doSSERequestWithHeaders(handler http.HandlerFunc, query string, headers map[string]string) (*flushRecorder, context.CancelFunc) {
 	rec := newFlushRecorder()
-	url := "/_events"
+	url := "/_overcast/events"
 	if query != "" {
 		url += "?" + query
 	}

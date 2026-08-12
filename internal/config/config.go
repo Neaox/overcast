@@ -162,7 +162,7 @@ type Config struct {
 
 	// StateConfigured is the raw value of OVERCAST_STATE as configured, or
 	// "auto" if the variable was unset (auto is also the default). Unlike
-	// State, this is never resolved — it exists so /_health and startup logs
+	// State, this is never resolved — it exists so /_overcast/health and startup logs
 	// can report what was actually configured, not just what it resolved to.
 	StateConfigured string
 

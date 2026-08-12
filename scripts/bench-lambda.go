@@ -171,7 +171,7 @@ func benchRuntime(endpoint, rt string, coldN, warmN int, apigw bool, cooldown ti
 // ---- Overcast API helpers -------------------------------------------------
 
 func ping(endpoint string) error {
-	resp, err := httpClient.Get(endpoint + "/_metrics")
+	resp, err := httpClient.Get(endpoint + "/_overcast/metrics")
 	if err != nil {
 		return err
 	}

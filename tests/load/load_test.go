@@ -174,7 +174,7 @@ func TestLoad_MultiServiceThrash(t *testing.T) {
 		loadGoroutines, loadIterations, loadGoroutines*loadIterations*4, elapsed.Round(time.Millisecond))
 
 	// Then: server still responds to a simple health-like operation.
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_health", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/health", nil)
 	resp, err := loadClient.Do(req)
 	if err != nil {
 		t.Fatalf("server unreachable after thrash: %v", err)

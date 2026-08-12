@@ -107,7 +107,7 @@ func TestIAMEnforce_enabled_bypassesInternalRoutes(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/_health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/health", nil)
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)

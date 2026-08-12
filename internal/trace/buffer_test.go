@@ -177,7 +177,7 @@ func TestBuffer_internalCapHoldsAfterWrap(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		addTrace(buf, traceSpec{
 			RequestID: "int-" + strconv.Itoa(i),
-			Path:      "/_health",
+			Path:      "/_overcast/health",
 			Timestamp: time.Now().Add(time.Duration(10+i) * time.Second),
 		})
 	}
@@ -205,9 +205,9 @@ func TestBuffer_internalQuotaRotatesWhenNotFull(t *testing.T) {
 	// internal trace arrives, Then the oldest internal entry is recycled
 	// (ring semantics within the quota) instead of dropping the new trace.
 	buf := NewBuffer(10) // maxInternal = 2
-	addTrace(buf, traceSpec{RequestID: "int-0", Path: "/_health", Timestamp: time.Now()})
-	addTrace(buf, traceSpec{RequestID: "int-1", Path: "/_health", Timestamp: time.Now().Add(time.Second)})
-	addTrace(buf, traceSpec{RequestID: "int-2", Path: "/_health", Timestamp: time.Now().Add(2 * time.Second)})
+	addTrace(buf, traceSpec{RequestID: "int-0", Path: "/_overcast/health", Timestamp: time.Now()})
+	addTrace(buf, traceSpec{RequestID: "int-1", Path: "/_overcast/health", Timestamp: time.Now().Add(time.Second)})
+	addTrace(buf, traceSpec{RequestID: "int-2", Path: "/_overcast/health", Timestamp: time.Now().Add(2 * time.Second)})
 
 	if _, ok := buf.Get("int-2"); !ok {
 		t.Error("newest internal trace was dropped; expected oldest to be recycled")
@@ -232,7 +232,7 @@ func TestBuffer_fullEvictionFairness(t *testing.T) {
 	// entry is not evicted almost immediately — eviction stays oldest-first.
 	buf := NewBuffer(5) // maxInternal = 1
 	addTrace(buf, traceSpec{RequestID: "user-0", Path: "/", Timestamp: time.Now()})
-	addTrace(buf, traceSpec{RequestID: "int-1", Path: "/_health", Timestamp: time.Now().Add(time.Second)})
+	addTrace(buf, traceSpec{RequestID: "int-1", Path: "/_overcast/health", Timestamp: time.Now().Add(time.Second)})
 	for i := 2; i < 5; i++ {
 		addTrace(buf, traceSpec{
 			RequestID: "user-" + strconv.Itoa(i),
@@ -635,12 +635,12 @@ func TestBuffer_concurrentHopsWhileListing(t *testing.T) {
 }
 
 func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
-	// The whole /_debug/* namespace and /_metrics are polled by the web UI
+	// The whole /_debug/* namespace and /_overcast/metrics are polled by the web UI
 	// and must be classified internal, matching middleware's
 	// isOperationalPollPath, so polling never consumes user-trace budget.
 	internal := []string{
-		"/_health",
-		"/_metrics",
+		"/_overcast/health",
+		"/_overcast/metrics",
 		"/_debug",
 		"/_debug/traces",
 		"/_debug/traces/abc-123",
@@ -649,11 +649,11 @@ func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 		"/_debug/metrics",
 		"/_debug/state",
 		"/_debug/state/sqs:queues",
-		"/_events",
-		"/_events/request",
+		"/_overcast/events",
+		"/_overcast/events/request",
 		"/_overcast/inbox",
 		"/_overcast/inbox/messages",
-		"/_/info",
+		"/_overcast/info",
 	}
 	for _, p := range internal {
 		if !isInternalPath(p) {

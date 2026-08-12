@@ -149,7 +149,7 @@ func cmdConfig(_ []string) {
 }
 
 func cmdMetrics(_ []string) {
-	get("/_metrics")
+	get("/_overcast/metrics")
 }
 
 func cmdState(args []string) {

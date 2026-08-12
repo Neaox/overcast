@@ -42,14 +42,14 @@ func TestDetectService(t *testing.T) {
 		{name: "apigateway v2", method: "GET", path: "/v2/apis", want: "apigateway"},
 		{name: "appsync events v2", method: "GET", path: "/v2/apis", header: map[string]string{"Authorization": "AWS4-HMAC-SHA256 Credential=AKID/20260623/us-east-1/appsync/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc"}, want: "appsync"},
 
-		// Internal /_events and /_metrics
-		{name: "events", method: "GET", path: "/_events", want: "events"},
-		{name: "metrics", method: "GET", path: "/_metrics", want: "metrics"},
+		// Internal /_overcast/events and /_overcast/metrics
+		{name: "events", method: "GET", path: "/_overcast/events", want: "events"},
+		{name: "metrics", method: "GET", path: "/_overcast/metrics", want: "metrics"},
 
 		// Emulator-internal /_-prefixed paths — must NOT fall through to S3
-		{name: "health", method: "GET", path: "/_health", want: "internal"},
-		{name: "topology", method: "GET", path: "/_topology", want: "internal"},
-		{name: "info", method: "GET", path: "/_/info", want: "internal"},
+		{name: "health", method: "GET", path: "/_overcast/health", want: "internal"},
+		{name: "topology", method: "GET", path: "/_overcast/topology", want: "internal"},
+		{name: "info", method: "GET", path: "/_overcast/info", want: "internal"},
 		{name: "debug", method: "GET", path: "/_debug/store", want: "internal"},
 		{name: "cognito oauth", method: "GET", path: "/_cognito/us-east-1_ABC/oauth2/authorize", want: "cognito"},
 		{name: "cognito login", method: "POST", path: "/_cognito/us-east-1_ABC/login", want: "cognito"},
@@ -155,13 +155,13 @@ func TestDetectOperation(t *testing.T) {
 		{name: "x-id param", method: "GET", path: "/bucket/key?x-id=GetObject", want: "GetObject"},
 
 		// Internal endpoints with known operations
-		{name: "events", method: "GET", path: "/_events", want: "Subscribe"},
-		{name: "metrics", method: "GET", path: "/_metrics", want: "GetMetrics"},
+		{name: "events", method: "GET", path: "/_overcast/events", want: "Subscribe"},
+		{name: "metrics", method: "GET", path: "/_overcast/metrics", want: "GetMetrics"},
 
 		// Emulator-internal /_-prefixed paths — must return "" (no operation)
-		{name: "health", method: "GET", path: "/_health", want: ""},
-		{name: "topology", method: "GET", path: "/_topology", want: ""},
-		{name: "info", method: "GET", path: "/_/info", want: ""},
+		{name: "health", method: "GET", path: "/_overcast/health", want: ""},
+		{name: "topology", method: "GET", path: "/_overcast/topology", want: ""},
+		{name: "info", method: "GET", path: "/_overcast/info", want: ""},
 		{name: "cognito oauth", method: "GET", path: "/_cognito/us-east-1_ABC/oauth2/authorize", want: ""},
 		{name: "cognito debug token", method: "GET", path: "/_cognito/us-east-1_ABC/debug/token", want: ""},
 		{name: "lambda instances", method: "GET", path: "/_lambda/instances", want: ""},
@@ -255,11 +255,11 @@ func TestInternalService(t *testing.T) {
 		{"/_overcast/secretsmanager/secrets", "secretsmanager"},
 		{"/_overcast/secretsmanager/secrets/id/value", "secretsmanager"},
 		{"/_overcast/inbox/messages", "ses"},
-		{"/_health", "internal"},
-		{"/_topology", "internal"},
-		{"/_/info", "internal"},
+		{"/_overcast/health", "internal"},
+		{"/_overcast/topology", "internal"},
+		{"/_overcast/info", "internal"},
 		{"/_debug/store", "internal"},
-		{"/_metrics", "internal"}, // still "internal" via this helper; detectService handles the exact match earlier
+		{"/_overcast/metrics", "internal"}, // still "internal" via this helper; detectService handles the exact match earlier
 		{"/_unknown/path", "internal"},
 	}
 
@@ -292,7 +292,7 @@ func TestInternalService(t *testing.T) {
 // silently quieter log.
 func TestIsOperationalPollPath(t *testing.T) {
 	polled := []string{
-		"/_health",
+		"/_overcast/health",
 		"/_debug",
 		"/_debug/state",
 		"/_debug/traces",
@@ -332,7 +332,7 @@ func TestIsOperationalPollPath(t *testing.T) {
 }
 
 func TestLogger_healthCheckLogsAtTrace(t *testing.T) {
-	// Given: a /_health request (polled every few seconds by Docker/K8s
+	// Given: a /_overcast/health request (polled every few seconds by Docker/K8s
 	// healthchecks) and a real AWS API call (SQS CreateQueue) through the
 	// same middleware.
 	core, logs := observer.New(serviceutil.TraceLevel)
@@ -342,7 +342,7 @@ func TestLogger_healthCheckLogsAtTrace(t *testing.T) {
 	}))
 
 	// When: a health-check request is served.
-	healthReq := httptest.NewRequest(http.MethodGet, "/_health", nil)
+	healthReq := httptest.NewRequest(http.MethodGet, "/_overcast/health", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), healthReq)
 
 	// And: a debug-namespace request is served.
@@ -355,7 +355,7 @@ func TestLogger_healthCheckLogsAtTrace(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), awsReq)
 
 	// Then: the health-check and debug-namespace requests log at TRACE...
-	for _, path := range []string{"/_health", "/_debug/state"} {
+	for _, path := range []string{"/_overcast/health", "/_debug/state"} {
 		found := false
 		for _, e := range logs.FilterMessage("request").All() {
 			if e.ContextMap()["path"] == path {

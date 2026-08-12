@@ -10,7 +10,7 @@ import (
 	"github.com/Neaox/overcast/internal/state"
 )
 
-// healthResponse is the JSON body returned by GET /_health.
+// healthResponse is the JSON body returned by GET /_overcast/health.
 type healthResponse struct {
 	Status           string            `json:"status"`
 	Timestamp        string            `json:"timestamp"`
@@ -49,7 +49,7 @@ type persistentHealth struct {
 	LastSuccessAt string `json:"lastSuccessAt,omitempty"`
 }
 
-// newHealthHandler returns a handler for GET /_health.
+// newHealthHandler returns a handler for GET /_overcast/health.
 // Used by Docker HEALTHCHECK, load balancers, and readiness probes.
 // Returns 200 OK when the server is ready to accept requests.
 // enabledServices is the list of service names that are currently enabled.
@@ -91,7 +91,7 @@ func newHealthHandler(cfg *config.Config, store state.Store, enabledServices []s
 	}
 }
 
-// infoResponse is the JSON body returned by GET /_/info.
+// infoResponse is the JSON body returned by GET /_overcast/info.
 // Always available (not debug-gated). Used by the web UI to discover the
 // server's configured region so it can pre-select the correct region on first
 // load, even when the user has never explicitly chosen one.
@@ -106,7 +106,7 @@ type infoResponse struct {
 	IAMEnforce bool `json:"iam_enforce"`
 }
 
-// newInfoHandler returns a handler for GET /_/info.
+// newInfoHandler returns a handler for GET /_overcast/info.
 func newInfoHandler(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

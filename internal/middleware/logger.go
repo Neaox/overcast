@@ -192,9 +192,9 @@ func detectService(r *http.Request, body ...[]byte) string {
 		return "scheduler"
 	case isBedrockRuntimeInferencePath(r.URL.Path):
 		return "bedrock"
-	case r.URL.Path == "/_events":
+	case r.URL.Path == "/_overcast/events":
 		return "events"
-	case r.URL.Path == "/_metrics":
+	case r.URL.Path == "/_overcast/metrics":
 		return "metrics"
 	}
 
@@ -440,9 +440,9 @@ func detectOperationForService(r *http.Request, svc string, body ...[]byte) stri
 	}
 
 	switch r.URL.Path {
-	case "/_events":
+	case "/_overcast/events":
 		return "Subscribe"
-	case "/_metrics":
+	case "/_overcast/metrics":
 		return "GetMetrics"
 	}
 
@@ -528,7 +528,7 @@ func s3ShapeOperation(r *http.Request) string {
 // by the handler. Go's standard ResponseWriter doesn't expose the status after
 // the fact, so we intercept WriteHeader to record it.
 //
-// Flush is forwarded so that SSE handlers (/_events) can still call Flush
+// Flush is forwarded so that SSE handlers (/_overcast/events) can still call Flush
 // through the middleware chain — without this the Flusher type assertion in
 // eventsHandler would fail and the request would panic with a 500.
 type responseWriter struct {
@@ -591,7 +591,7 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // at TRACE: polling intervals of a few seconds would otherwise drown genuine
 // request activity even at DEBUG.
 func isOperationalPollPath(path string) bool {
-	return path == "/_health" || strings.HasPrefix(path, "/_debug/") || path == "/_debug"
+	return path == "/_overcast/health" || strings.HasPrefix(path, "/_debug/") || path == "/_debug"
 }
 
 // Logger logs every request with structured fields: real AWS API calls and

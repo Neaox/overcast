@@ -2,7 +2,7 @@ package router
 
 // topology.go — internal topology API for the system map.
 //
-// GET /_topology — returns every resource and connection across all regions
+// GET /_overcast/topology — returns every resource and connection across all regions
 // in a single, fast response. Reads directly from the state store with
 // parallel Scan calls, avoiding the overhead of marshalling AWS SDK requests
 // back into our own process.

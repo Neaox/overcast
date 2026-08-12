@@ -318,7 +318,7 @@ backend verifies against that file plus the system roots.
 **Verify:**
 
 ```bash
-curl --cacert ~/.overcast/data/ca/rootCA.pem https://localhost:4566/_health
+curl --cacert ~/.overcast/data/ca/rootCA.pem https://localhost:4566/_overcast/health
 curl --cacert ~/.overcast/data/ca/rootCA.pem -sso /dev/null -w '%{http_version}\n' https://localhost:4567/
 # → 2
 ```

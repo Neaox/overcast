@@ -206,7 +206,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 		}()
 	}
 	// Docker is not available — leave the group in "creating".
-	// The /_health endpoint and web UI banner tell the user why.
+	// The /_overcast/health endpoint and web UI banner tell the user why.
 
 	h.publish(r, events.ElastiCacheReplicationGroupCreated, events.ResourcePayload{Name: id, ARN: arn})
 

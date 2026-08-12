@@ -2,7 +2,7 @@ package router
 
 // domains.go — Server-Sent Events endpoint for the custom-domain registry.
 //
-// GET /_internal/domains/watch
+// GET /_overcast/domains/watch
 //
 // Streams the current set of registered custom domain names and all subsequent
 // changes as newline-delimited SSE. Consumed by the `overcast dev` host CLI

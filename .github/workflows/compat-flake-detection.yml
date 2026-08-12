@@ -139,7 +139,7 @@ jobs:
             OVERCAST_PORT=4566 OVERCAST_STATE=memory OVERCAST_LOG_LEVEL=warn OVERCAST_RDS_MODE=mock ./bin/overcast serve &
             pid=$!
             for _ in $(seq 1 30); do
-              curl -sf http://localhost:4566/_health > /dev/null && break
+              curl -sf http://localhost:4566/_overcast/health > /dev/null && break
               sleep 1
             done
             ./bin/compat \

@@ -26,10 +26,10 @@ const notReadyRetryAfterSeconds = 2
 // state.NotReadyReporter and HybridStore.NotReady for the precise window
 // this covers).
 //
-// Internal Overcast endpoints (any path starting with "/_" — /_debug,
-// /_health, /_/info, /_overcast/*, ...) are exempt, so operators can still
-// check status, inspect debug state, or poll init-hook progress while a
-// migration is in flight. No real AWS API request path starts with "/_".
+// Internal Overcast endpoints — any path starting with "/_" — are exempt, so
+// operators can still check status, inspect debug state, or poll init-hook
+// progress while a migration is in flight. No real AWS API request path starts
+// with "/_", because an S3 bucket name cannot.
 //
 // store is checked once per request via a non-blocking type assertion to
 // state.NotReadyReporter — stores that don't implement it (MemoryStore,
@@ -60,11 +60,18 @@ func NotReady(store state.Store) func(http.Handler) http.Handler {
 }
 
 // isInternalPath reports whether path is one of Overcast's own operational
-// endpoints (as opposed to an AWS API request) — every one of them is
-// registered under a leading underscore (see internal/router/router.go's
-// "/_debug", "/_health", "/_/info", "/_overcast/*", "/_events", "/_metrics",
-// "/_topology", "/_internal/*" routes), a convention no real AWS service
-// path uses.
+// endpoints rather than an AWS API request. Every one is registered under a
+// leading underscore, a convention no real AWS service path uses.
+//
+// It stays the broad "/_" test rather than router.InternalPrefix until
+// docs/plans/non-canonical-url-namespace.md finishes: phase 2 moved the router
+// roots, but /_debug, /_cognito, /_lambda and the rest are still outside the
+// namespace, and exempting only /_overcast/ would start gating them mid-
+// migration. The remaining paths are listed in that plan's unmigratedRoutes
+// ratchet; when it empties, this becomes the prefix test.
+//
+// (router.InternalPrefix is not referenced here in any case — router imports
+// middleware, so the dependency only runs the other way.)
 func isInternalPath(path string) bool {
 	return strings.HasPrefix(path, "/_")
 }

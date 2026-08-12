@@ -39,7 +39,7 @@ guard against regressions in what's already working.
 
 **The runner manages its own Overcast instance.** Unless you pin `--endpoint`,
 `cmd/compat` starts a throwaway emulator on a **free port**, waits for
-`/_health`, runs against it, and stops it on exit. Ports 4566 (API) and 4567
+`/_overcast/health`, runs against it, and stops it on exit. Ports 4566 (API) and 4567
 (web UI) are never bound — those belong to your own instance
 ([AGENTS.md § Reserved ports](../AGENTS.md#reserved-ports--4566-and-4567-belong-to-the-user)) —
 so a compat run never disturbs whatever you have running, and two runs can go
@@ -144,7 +144,7 @@ disabled, so it leaves nothing behind.
 A managed instance gets the host Docker socket, because Lambda and ECS start
 containers through it and without one every Lambda invoke fails
 ([#867](https://github.com/Neaox/overcast/issues/867)). Compat then asks the
-instance's own `/_health` whether it found a daemon, and says so once at
+instance's own `/_overcast/health` whether it found a daemon, and says so once at
 startup if it did not. When the *machine* is the reason — nothing to mount, or
 no daemon here at all — the tests that need one are skipped
 (`OVERCAST_COMPAT_SKIP_DOCKER=1`), because they cannot run here and reporting

@@ -73,7 +73,7 @@ services:
 
 | LocalStack                       | overcast                  | Notes                          |
 | -------------------------------- | ------------------------- | ------------------------------ |
-| `/_localstack/health`            | `/_health`                | Always enabled                 |
+| `/_localstack/health`            | `/_overcast/health`                | Always enabled                 |
 | `/_localstack/health` (detailed) | `/_debug/health`          | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/init`              | `/_overcast/init`         | Always enabled                 |
 | `/_localstack/init/{stage}`      | `/_overcast/init/{stage}` | Always enabled                 |
@@ -280,7 +280,7 @@ Confirm the container is running and healthy:
 
 ```bash
 docker compose ps
-curl http://localhost:4566/_health
+curl http://localhost:4566/_overcast/health
 ```
 
 ### SDK returns "The specified bucket does not exist" for a bucket I just created

@@ -11,9 +11,9 @@ describe("ConnectionDialogContent", () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
-    // The dialog's validation probe polls <baseUrl>/_/info.
+    // The dialog's validation probe polls <baseUrl>/_overcast/info.
     server.use(
-      http.get(`${CUSTOM.baseUrl}/_/info`, () => HttpResponse.json({ version: "test" })),
+      http.get(`${CUSTOM.baseUrl}/_overcast/info`, () => HttpResponse.json({ version: "test" })),
     )
   })
 

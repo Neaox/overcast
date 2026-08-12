@@ -294,7 +294,7 @@ type managedOvercast struct {
 	Artifact overcastArtifact
 	// NoDocker is empty when the instance reported a reachable Docker daemon,
 	// and otherwise says in one sentence why it has none. It is read from the
-	// instance's own /_health rather than inferred, so it is the same answer
+	// instance's own /_overcast/health rather than inferred, so it is the same answer
 	// the Lambda tests are about to get.
 	NoDocker string
 	// DockerIsEnvironmental says the machine, not the emulator, is why
@@ -307,7 +307,7 @@ type managedOvercast struct {
 }
 
 // startOvercast brings up a throwaway instance on free ports and waits for it
-// to answer /_health. What it runs is decided by chooseOvercastArtifact: an
+// to answer /_overcast/health. What it runs is decided by chooseOvercastArtifact: an
 // artifact the caller named, otherwise a locally built binary (fast, and picks
 // up uncommitted changes), otherwise the default container image.
 func startOvercast(ctx context.Context, opts overcastOptions) (*managedOvercast, error) {
@@ -434,7 +434,7 @@ func resolveDockerSocket(mount bool, path string) (socket, whyNot string) {
 	return path, ""
 }
 
-// instanceDocker is the part of /_health that says whether the instance found
+// instanceDocker is the part of /_overcast/health that says whether the instance found
 // a Docker daemon. Services is empty until the emulator's probe has finished,
 // which is what tells "not yet" apart from "no" — see internal/docker.Tracker.
 type instanceDocker struct {
@@ -477,7 +477,7 @@ func dockerVerdict(
 		// The instance never said. Guessing either way would be worse than
 		// saying so: an unwarranted skip hides a real failure, an unwarranted
 		// failure blames the emulator for this machine.
-		logf("could not tell whether the instance has Docker (no answer from /_health within %s); "+
+		logf("could not tell whether the instance has Docker (no answer from /_overcast/health within %s); "+
 			"Docker-dependent tests will run and report whatever they find", dockerReadyTimeout)
 		return "", false
 	}
@@ -519,14 +519,14 @@ const (
 	dockerStateUnavailable
 )
 
-// dockerReported polls /_health until the instance's Docker probe has
+// dockerReported polls /_overcast/health until the instance's Docker probe has
 // finished. A probe that has not run yet reports available=false with no
 // services, which is indistinguishable from a real "no" at a single glance and
 // is why this waits for the services list rather than reading the flag once.
 func dockerReported(ctx context.Context, endpoint string, timeout time.Duration) dockerState {
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 2 * time.Second}
-	url := strings.TrimSuffix(endpoint, "/") + "/_health"
+	url := strings.TrimSuffix(endpoint, "/") + "/_overcast/health"
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
@@ -905,12 +905,12 @@ func startOvercastContainer(
 	return oc, nil
 }
 
-// waitForHealth polls /_health until the instance answers or the timeout
+// waitForHealth polls /_overcast/health until the instance answers or the timeout
 // expires.
 func waitForHealth(ctx context.Context, endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 2 * time.Second}
-	url := strings.TrimSuffix(endpoint, "/") + "/_health"
+	url := strings.TrimSuffix(endpoint, "/") + "/_overcast/health"
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {

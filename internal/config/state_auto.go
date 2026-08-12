@@ -11,7 +11,7 @@ import (
 // default when OVERCAST_STATE is unset — see resolveAutoState).
 //
 // This is internal provenance for logging and diagnostics (the startup log
-// line, the memory-mode advisory, and /_health's storage.configured field) —
+// line, the memory-mode advisory, and /_overcast/health's storage.configured field) —
 // not itself a user-facing configuration knob.
 type StateSource string
 

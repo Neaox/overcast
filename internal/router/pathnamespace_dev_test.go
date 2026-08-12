@@ -43,15 +43,7 @@ var nonManifestRoutes = map[string]string{
 // InternalPrefix; a new AWS operation goes where the manifest binds it. An
 // entry here is a debt already owed, not a way to take on more.
 var unmigratedRoutes = map[string]string{
-	// Phase 2 — router-owned roots. No minted URLs, so nothing outside the
-	// repo holds these except container healthchecks and polling scripts.
-	"/_health":                     "phase 2 -> /_overcast/health",
-	"/_metrics":                    "phase 2 -> /_overcast/metrics",
-	"/_topology":                   "phase 2 -> /_overcast/topology",
-	"/_/info":                      "phase 2 -> /_overcast/info; the only /_/ root in the tree",
-	"/_events":                     "phase 2 -> /_overcast/events",
-	"/_events/request/{requestId}": "phase 2 -> /_overcast/events/request/{requestId}",
-	"/_internal/domains/watch":     "phase 2 -> /_overcast/domains/watch",
+	// Phase 2 is done: the router-owned roots now live under InternalPrefix.
 
 	// Phase 3 — build-tag-gated namespaces, isolated from service code.
 	// /_debug/* is registered only when Debug is on, which is why this gate

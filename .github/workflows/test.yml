@@ -326,7 +326,7 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: |
           for _ in $(seq 1 30); do
-            if curl -sf "$OVERCAST_ENDPOINT/_health" > /dev/null; then
+            if curl -sf "$OVERCAST_ENDPOINT/_overcast/health" > /dev/null; then
               exit 0
             fi
             sleep 1
@@ -847,7 +847,7 @@ jobs:
           docker run -d --name oc-smoke -p 4566:4566 -p 4567:4567 "$TAG"
           trap 'docker rm -f oc-smoke >/dev/null 2>&1 || true' EXIT
           sleep 2
-          curl -sf http://localhost:4566/_health
+          curl -sf http://localhost:4566/_overcast/health
 
           # 404 because internal/router/mcp_routes.go is !slim only. Any other
           # status means the route is registered, i.e. this is not a slim build.
@@ -877,7 +877,7 @@ jobs:
           docker run -d --name oc-smoke -p 4566:4566 -p 4567:4567 "$TAG"
           trap 'docker rm -f oc-smoke >/dev/null 2>&1 || true' EXIT
           sleep 2
-          curl -sf http://localhost:4566/_health
+          curl -sf http://localhost:4566/_overcast/health
 
           # Registered, so anything but 404. A bare GET without an SSE Accept
           # header is refused with 406 by the MCP transport — that refusal is

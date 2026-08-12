@@ -64,7 +64,7 @@ Every endpoint in the service docs carries one of these statuses:
 ### Service emulation tiers
 
 Each service also has an overall emulation tier, visible on the health
-endpoint (`/_health`) and the web dashboard:
+endpoint (`/_overcast/health`) and the web dashboard:
 
 | Tier        | Meaning                                                                                                                                                                           |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -383,7 +383,7 @@ storage. Each overridden service gets its own SQLite file under
 
 The active storage configuration is visible in three places:
 
-- **`GET /_health`** — the `storage` object shows the resolved default backend (`default`), what was actually configured (`configured` — e.g. `auto`, when `default` was resolved rather than explicitly set), per-service overrides, and persistent backend health including pending hybrid writes when available.
+- **`GET /_overcast/health`** — the `storage` object shows the resolved default backend (`default`), what was actually configured (`configured` — e.g. `auto`, when `default` was resolved rather than explicitly set), per-service overrides, and persistent backend health including pending hybrid writes when available.
 - **Dashboard footer** — the web management console displays the storage mode with a tooltip listing overrides.
 - **Startup log** — when `OVERCAST_STATE` resolves via `auto`, Overcast logs which mode it picked and why (e.g. `storage mode auto-detected: memory (no persistence signal found...) — set OVERCAST_STATE to override`). The web console's Metrics & Health page also surfaces this as an advisory whenever the resolved mode is `memory`.
 
@@ -473,10 +473,10 @@ Every response carries a request ID (`x-amzn-requestid` for most services,
 
 | Endpoint                    | Method | Description                                           |
 | --------------------------- | ------ | ----------------------------------------------------- |
-| `/_health`                  | GET    | Basic health check (always enabled)                   |
-| `/_events`                  | GET    | SSE stream of internal events (always enabled)        |
-| `/_metrics`                 | GET    | Go runtime memory/GC/goroutine stats (always enabled) |
-| `/_topology`                | GET    | Full cross-region resource graph (always enabled)     |
+| `/_overcast/health`                  | GET    | Basic health check (always enabled)                   |
+| `/_overcast/events`                  | GET    | SSE stream of internal events (always enabled)        |
+| `/_overcast/metrics`                 | GET    | Go runtime memory/GC/goroutine stats (always enabled) |
+| `/_overcast/topology`                | GET    | Full cross-region resource graph (always enabled)     |
 | `/_debug/health`            | GET    | Detailed: uptime, services, state backend and health  |
 | `/_debug/config`            | GET    | Effective configuration (secrets redacted)            |
 | `/_debug/state`             | GET    | Every namespace and its keys (no values)              |

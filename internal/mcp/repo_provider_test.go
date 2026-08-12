@@ -604,8 +604,8 @@ func TestRepoEndpointMapGroupsInternalRoutes(t *testing.T) {
 	writeTestFile(t, root, "internal/router/router.go", `package router
 
 func sample(r interface{Get(string, any); Route(string, any)}) {
-	r.Get("/_health", nil)
-	r.Get("/_topology", nil)
+	r.Get("/_overcast/health", nil)
+	r.Get("/_overcast/topology", nil)
 	r.Route("/_debug", nil)
 }
 `)
@@ -615,10 +615,10 @@ func sample(r interface{Get(string, any); Route(string, any)}) {
 	}
 	got := out.(map[string]any)
 	endpoints := got["endpoints"].(map[string][]string)
-	if len(endpoints["health"]) != 1 || endpoints["health"][0] != "/_health" {
+	if len(endpoints["health"]) != 1 || endpoints["health"][0] != "/_overcast/health" {
 		t.Fatalf("unexpected health endpoints: %#v", endpoints["health"])
 	}
-	if len(endpoints["topology"]) != 1 || endpoints["topology"][0] != "/_topology" {
+	if len(endpoints["topology"]) != 1 || endpoints["topology"][0] != "/_overcast/topology" {
 		t.Fatalf("unexpected topology endpoints: %#v", endpoints["topology"])
 	}
 	if len(endpoints["debug"]) != 1 || endpoints["debug"][0] != "/_debug" {
@@ -985,7 +985,7 @@ func TestRuntimeProbeInstanceReportsHealthAndMCP(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/_health":
+		case r.Method == http.MethodGet && r.URL.Path == "/_overcast/health":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/_mcp":
@@ -1072,7 +1072,7 @@ func TestRuntimeProbeInstanceUsesCacheAndForceRefresh(t *testing.T) {
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/_health":
+		case r.Method == http.MethodGet && r.URL.Path == "/_overcast/health":
 			callCount++
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"ok":true}`))
@@ -1144,7 +1144,7 @@ func TestRuntimeRefreshProbeCacheClearsEndpointAndAll(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/_health":
+		case r.Method == http.MethodGet && r.URL.Path == "/_overcast/health":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/_mcp":

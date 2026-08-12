@@ -24,14 +24,14 @@ func registeredServices(t *testing.T) []string {
 // TestServiceTiers_coverEveryRegisteredService is a tripwire, not a sanity
 // check. New falls back to TierStub for any registered service missing from
 // ServiceTiers, so a service that is enabled and answering requests is
-// silently reported as "stub" in /_health — and the web UI files it under
+// silently reported as "stub" in /_overcast/health — and the web UI files it under
 // "not emulated". The fallback is invisible: nothing fails, the label is just
 // wrong. Every registered service must therefore carry an explicit tier.
 func TestServiceTiers_coverEveryRegisteredService(t *testing.T) {
 	for _, svc := range registeredServices(t) {
 		t.Run(svc, func(t *testing.T) {
 			if _, ok := ServiceTiers[svc]; !ok {
-				t.Errorf("service %q has no ServiceTiers entry: New defaults it to %q in /_health, mislabelling it if any operation is implemented — add an explicit tier in tiers.go", svc, TierStub)
+				t.Errorf("service %q has no ServiceTiers entry: New defaults it to %q in /_overcast/health, mislabelling it if any operation is implemented — add an explicit tier in tiers.go", svc, TierStub)
 			}
 		})
 	}

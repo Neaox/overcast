@@ -24,7 +24,7 @@ services:
       # Has no effect when STATE=memory.
       - overcast-data:/data
     healthcheck:
-      test: [ "CMD", "wget", "-qO-", "http://localhost:4566/_health" ]
+      test: [ "CMD", "wget", "-qO-", "http://localhost:4566/_overcast/health" ]
       interval: 5s
       timeout: 3s
       retries: 5

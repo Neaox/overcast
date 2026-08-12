@@ -50,7 +50,7 @@ type Event struct {
 }
 
 // Source is the upstream feed of domain events. The overcast host CLI
-// implementation of Source tails the emulator's /_internal/domains/watch
+// implementation of Source tails the emulator's /_overcast/domains/watch
 // SSE endpoint; tests can supply an in-memory channel instead.
 //
 // Watch must return a channel that is closed when the underlying feed

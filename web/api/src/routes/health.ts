@@ -6,7 +6,7 @@ export const healthRoutes = new Hono()
 /**
  * GET /api/health
  *
- * Proxies /_health from the configured emulator endpoint and returns the
+ * Proxies /_overcast/health from the configured emulator endpoint and returns the
  * response including the list of enabled services.
  */
 healthRoutes.get("/", async (c) => {
@@ -15,7 +15,7 @@ healthRoutes.get("/", async (c) => {
     [REGION_HEADER]: c.req.header(REGION_HEADER),
   })
 
-  const res = await fetch(`${endpoint.baseUrl}/_health`)
+  const res = await fetch(`${endpoint.baseUrl}/_overcast/health`)
   if (!res.ok) {
     return c.json({ error: "health check failed" }, 502)
   }

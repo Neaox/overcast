@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// metricsSnapshot is the JSON body returned by GET /_metrics.
+// metricsSnapshot is the JSON body returned by GET /_overcast/metrics.
 // Exposes safe, read-only runtime statistics — no debug gate required.
 type metricsSnapshot struct {
 	// timing
@@ -86,7 +86,7 @@ func collectMetrics() metricsSnapshot {
 	}
 }
 
-// metricsHandler handles GET /_metrics.
+// metricsHandler handles GET /_overcast/metrics.
 // Always available — not gated by the debug flag.
 func metricsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

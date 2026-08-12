@@ -655,14 +655,14 @@ type Summary struct {
 }
 
 var internalPaths = map[string]bool{
-	"/_health":          true,
-	"/_metrics":         true,
-	"/_events":          true,
-	"/_events/request":  true,
-	"/_events/request/": true,
-	"/_overcast/inbox":  true,
-	"/_overcast/inbox/": true,
-	"/_/info":           true,
+	"/_overcast/health":          true,
+	"/_overcast/metrics":         true,
+	"/_overcast/events":          true,
+	"/_overcast/events/request":  true,
+	"/_overcast/events/request/": true,
+	"/_overcast/inbox":           true,
+	"/_overcast/inbox/":          true,
+	"/_overcast/info":            true,
 }
 
 // isInternalPath reports whether p is polled by infrastructure or the web UI
@@ -677,7 +677,7 @@ func isInternalPath(p string) bool {
 	if internalPaths[p] {
 		return true
 	}
-	// Match prefix paths like /_overcast/inbox/messages or /_events/request/<id>
+	// Match prefix paths like /_overcast/inbox/messages or /_overcast/events/request/<id>
 	for prefix := range internalPaths {
 		if len(prefix) > 1 && prefix[len(prefix)-1] == '/' && len(p) > len(prefix) && p[:len(prefix)] == prefix {
 			return true

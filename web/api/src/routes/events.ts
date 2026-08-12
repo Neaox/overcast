@@ -1,5 +1,5 @@
 /**
- * /api/events — SSE proxy to the emulator's /_events endpoint.
+ * /api/events — SSE proxy to the emulator's /_overcast/events endpoint.
  *
  * The browser cannot pass custom headers with EventSource, so the emulator
  * endpoint and region are accepted as query params ("ep" and "region") in
@@ -27,7 +27,7 @@ eventsRoutes.get("/", async (c) => {
   const region = c.req.header(REGION_HEADER) ?? c.req.query("region") ?? DEFAULT_ENDPOINT.region
 
   // Build upstream URL: preserve any source filters passed by the client.
-  const upstream = new URL("/_events", endpointUrl)
+  const upstream = new URL("/_overcast/events", endpointUrl)
   const sources = c.req.queries("source") ?? []
   for (const s of sources) upstream.searchParams.append("source", s)
   const resumeParam = c.req.query("last_event_id")

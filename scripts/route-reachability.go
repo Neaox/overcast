@@ -193,7 +193,7 @@ func main() {
 func waitReady(ctx context.Context, client *http.Client, base string) error {
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/_health", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/_overcast/health", nil)
 		if err != nil {
 			return err
 		}
@@ -203,7 +203,7 @@ func waitReady(ctx context.Context, client *http.Client, base string) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("no instance answered %s/_health within 60s: %w", base, err)
+			return fmt.Errorf("no instance answered %s/_overcast/health within 60s: %w", base, err)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

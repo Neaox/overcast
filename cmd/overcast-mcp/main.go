@@ -37,7 +37,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/mcp/", server.Handler())
-	mux.HandleFunc("/_health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/_overcast/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
