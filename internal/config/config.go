@@ -606,6 +606,12 @@ type Config struct {
 	// failing and somebody opening the trace UI, not for the deploy itself.
 	DebugTraceWindow time.Duration
 
+	// DebugTraceBytes bounds the request and response body bytes retained
+	// (OVERCAST_DEBUG_TRACE_BYTES, in MiB). A backstop on the burst rather than
+	// an override of the floor: the ceiling counts traces, and ten thousand
+	// 1 MiB uploads are not ten thousand DescribeStacks polls.
+	DebugTraceBytes int64
+
 	// DebugTracePinned caps the traces retained because they went wrong
 	// (OVERCAST_DEBUG_TRACE_PINNED). Those are exempt from both the floor and
 	// the window: a failure is what someone comes back for.
@@ -1067,6 +1073,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_DEBUG_TRACE_CEILING       10000   (how far a burst may grow retention)
 //	OVERCAST_DEBUG_TRACE_WINDOW        1h      (how long overflow above the floor survives)
 //	OVERCAST_DEBUG_TRACE_PINNED        1000    (traces kept because they went wrong)
+//	OVERCAST_DEBUG_TRACE_BYTES_MB      512     (retained body bytes; backstop on the burst)
 //	OVERCAST_TLS                       ""    (auto = mint from the local overcast CA; serves API + web UI over HTTPS/h2)
 //	OVERCAST_TLS_CERT                  ""
 //	OVERCAST_TLS_KEY                   ""
@@ -1489,6 +1496,7 @@ func Load() (*Config, error) {
 	cfg.DebugTraceBuffer = envInt("OVERCAST_DEBUG_TRACE_BUFFER", 1000)
 	cfg.DebugTraceCeiling = envInt("OVERCAST_DEBUG_TRACE_CEILING", 10000)
 	cfg.DebugTracePinned = envInt("OVERCAST_DEBUG_TRACE_PINNED", 1000)
+	cfg.DebugTraceBytes = int64(envInt("OVERCAST_DEBUG_TRACE_BYTES_MB", 512)) << 20
 	traceWindowStr := envOr("OVERCAST_DEBUG_TRACE_WINDOW", "1h")
 	cfg.DebugTraceWindow, err = time.ParseDuration(traceWindowStr)
 	if err != nil {

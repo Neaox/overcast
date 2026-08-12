@@ -27,6 +27,19 @@ type RetentionPolicy struct {
 	// Pinned caps the traces kept because they went wrong. Zero disables
 	// pinning, which makes retention purely recency-ordered again.
 	Pinned int
+	// Bytes bounds the request and response bodies retained. Zero disables the
+	// backstop.
+	//
+	// Ceiling counts traces, and a count is a poor proxy for memory when one
+	// trace can be a thousand times the size of another: ten thousand
+	// DescribeStacks polls are tens of megabytes, while ten thousand 1 MiB
+	// uploads are ten gigabytes — and a seeding script does exactly that.
+	//
+	// This is a backstop on the *burst*, not an override of rule 1. It reclaims
+	// down to the floor and stops: a floor that is itself over budget is the
+	// operator's own configuration, and silently discarding what they asked to
+	// keep would be the worse failure.
+	Bytes int64
 }
 
 // DefaultRetention is what ships. Nothing here is expected to be configured:
@@ -47,6 +60,7 @@ func DefaultRetention(floor int) RetentionPolicy {
 		Ceiling: max(floor*10, floor),
 		Window:  time.Hour,
 		Pinned:  1000,
+		Bytes:   512 << 20,
 	}
 }
 
@@ -66,7 +80,31 @@ func (p RetentionPolicy) normalise() RetentionPolicy {
 	if p.Pinned < 0 {
 		p.Pinned = 0
 	}
+	if p.Bytes < 0 {
+		p.Bytes = 0
+	}
 	return p
+}
+
+// retainedBytes is what a trace costs the buffer, near enough to bound it.
+//
+// The two bodies are the term that varies by three orders of magnitude — a
+// DescribeStacks poll against a 1 MiB upload — and are what the backstop exists
+// to bound. Everything else a trace holds is already capped and small by
+// comparison: headers, 500 log entries, and hop metadata that carries no bodies
+// since they are resolved from the callee's own trace.
+//
+// It is sampled once, when the response is recorded, rather than maintained on
+// the write path. Keeping a running total updated from AddHop and AddLog would
+// touch the hottest paths in a deploy thousands of times per trace to maintain
+// a number read rarely.
+func (r *Recorder) retainedBytes() int64 {
+	if r == nil {
+		return 0
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return int64(len(r.entry.RequestBody) + len(r.entry.ResponseBody))
 }
 
 // qualifiesPinned reports whether a trace is one rule 3 keeps.
