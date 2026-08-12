@@ -22,6 +22,10 @@ const (
 	nsParameterGroups = "elasticache:parameter-groups"
 	nsTags            = "elasticache:tags"
 	nsPorts           = "elasticache:ports"
+	// nsInstance holds this instance's sweep-domain identity, stamped into
+	// docker.LabelInstance on every cache container. See
+	// serviceutil.InstanceDomain.
+	nsInstance = "elasticache:instance"
 )
 
 // CacheCluster represents a stored ElastiCache cache cluster.

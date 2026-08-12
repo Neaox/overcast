@@ -27,6 +27,11 @@ const (
 	// Keys are function names.
 	nsFunctions = "lambda:functions"
 
+	// nsInstance holds this instance's sweep-domain identity, stamped into
+	// docker.LabelInstance on every runtime container. See
+	// serviceutil.InstanceDomain.
+	nsInstance = "lambda:instance"
+
 	// nsFunctionCode holds each function's deployment package (base64 of the
 	// zip), split from the function record: the record is read on every invoke,
 	// and embedding the package made each of those reads decode the whole zip.

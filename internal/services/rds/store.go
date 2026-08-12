@@ -23,6 +23,10 @@ const (
 	nsParameterGroups = "rds:parameter-groups"
 	nsEvents          = "rds:events"
 	nsTags            = "rds:tags"
+	// nsInstance holds this instance's sweep-domain identity, the value
+	// stamped into docker.LabelInstance on every engine container. See
+	// serviceutil.InstanceDomain.
+	nsInstance = "rds:instance"
 )
 
 // DBInstance represents a stored RDS DB instance.

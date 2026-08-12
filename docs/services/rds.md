@@ -59,6 +59,17 @@ container removed by hand) rebuilds it rather than reporting a start that
 started nothing. Containers belonging to a stopped instance survive an Overcast
 restart, so a stopped database can always be started again.
 
+They also survive another Overcast. Engine containers carry the identity of the
+state store that created them, and the startup and shutdown sweeps only remove
+containers bearing their own — so two Overcasts sharing a Docker daemon keep
+separate databases rather than deleting each other's. This matters more for RDS
+than elsewhere: an engine container has no volume and no bind mount, so the
+database lives in the container's writable layer and goes with it. With the
+default `memory` state backend the identity is minted afresh on every start, so
+a crashed run's containers are no longer reclaimed at the next startup — an
+orderly shutdown still cleans up after itself, and what is left behind clears
+with `docker rm $(docker ps -aq --filter label=overcast.managed=true)`.
+
 When Docker is available, `CreateDBInstance` starts a real database container
 (mysql, postgres, mariadb, aurora-mysql, aurora-postgresql) with automatic port
 allocation from `RDS_PORT_BASE` (default 33060). When Docker is unavailable,

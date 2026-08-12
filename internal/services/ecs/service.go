@@ -55,7 +55,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.docker = dc
 	s.handler.puller = docker.NewImagePuller(dc).WithResolver(s.handler.images)
-	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.ECSKeepContainers)
+	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.ECSKeepContainers, s.handler.instances.Resolve)
 	s.handler.gc.StartRemoveLoop(context.Background())
 	s.handler.gc.Sweep(serviceName) // clean up orphaned containers from previous runs
 	s.handler.dockerReady.Store(true)

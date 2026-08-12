@@ -88,7 +88,11 @@ type Revision struct {
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 const (
-	nsClusters       = "msk:clusters"
+	nsClusters = "msk:clusters"
+	// nsInstance holds this instance's sweep-domain identity, stamped into
+	// docker.LabelInstance on every broker container. See
+	// serviceutil.InstanceDomain.
+	nsInstance       = "msk:instance"
 	nsConfigurations = "msk:configurations"
 	nsTags           = "msk:tags"
 	nsPorts          = "msk:ports"
@@ -276,6 +280,10 @@ type Handler struct {
 	gc          *docker.GC
 	dockerWg    sync.WaitGroup
 	vpcResolver VPCNetworkResolver
+	// instances scopes container sweeps to the containers this instance
+	// created, so one Overcast's shutdown does not take down another's running
+	// brokers. See docker.LabelInstance.
+	instances *serviceutil.InstanceDomain
 
 	// One writer at a time per record — see locks.go.
 	clusterLocks serviceutil.RecordLocks
@@ -297,6 +305,7 @@ func newHandler(cfg *config.Config, store *mskStore, log *serviceutil.ServiceLog
 		log:       log,
 		clk:       clk,
 		scheduler: lifecycle.NewScheduler(clk),
+		instances: serviceutil.NewInstanceDomain(store.store, nsInstance),
 	}
 }
 
@@ -410,7 +419,7 @@ func (s *Service) SetVPCResolver(r VPCNetworkResolver) {
 func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.docker = dc
 	s.handler.puller = docker.NewImagePuller(dc)
-	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.MSKKeepContainers)
+	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.MSKKeepContainers, s.handler.instances.Resolve)
 	s.handler.gc.StartRemoveLoop(context.Background())
 	s.handler.gc.Sweep(serviceName) // clean up orphaned containers from previous runs
 	s.handler.dockerReady.Store(true)

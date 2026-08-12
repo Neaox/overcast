@@ -323,6 +323,12 @@ func (h *Handler) updateStackTyped(ctx context.Context, req *updateStackReq) (*u
 	}
 	previous := captureStackGeneration(stack)
 
+	// An update may carry no template at all, meaning "reuse the stack's",
+	// so resolveTypedTemplateBody is consulted only when a URL was given.
+	// The inline size check therefore cannot ride along with it.
+	if err := checkInlineTemplateSize(req.TemplateBody); err != nil {
+		return nil, cfnerr("ValidationError", err.Error(), http.StatusBadRequest)
+	}
 	templateBody := req.TemplateBody
 	if req.TemplateURL != "" {
 		var tplErr error
@@ -795,6 +801,11 @@ func (h *Handler) describeStackEventsTyped(ctx context.Context, req *describeSta
 }
 
 func (h *Handler) getTemplateSummaryTyped(ctx context.Context, req *getTemplateSummaryReq) (*getTemplateSummaryResp, *protocol.AWSError) {
+	// As in updateStackTyped: the inline body bypasses
+	// resolveTypedTemplateBody, so it is size-checked here.
+	if err := checkInlineTemplateSize(req.TemplateBody); err != nil {
+		return nil, cfnerr("ValidationError", err.Error(), http.StatusBadRequest)
+	}
 	templateBody := req.TemplateBody
 
 	if templateBody == "" && req.TemplateURL != "" {
@@ -952,7 +963,12 @@ func typedCollectOptionalTags(members *[]cfnTagMember) []Tag {
 	return typedCollectTags(*members)
 }
 
+// resolveTypedTemplateBody is the typed path's resolveTemplateBody, and
+// enforces the same inline size cap for the callers that reach it.
 func (h *Handler) resolveTypedTemplateBody(ctx context.Context, templateBody, templateURL string) (string, error) {
+	if err := checkInlineTemplateSize(templateBody); err != nil {
+		return "", err
+	}
 	if templateBody != "" {
 		return templateBody, nil
 	}
@@ -972,5 +988,9 @@ func (h *Handler) resolveTypedTemplateBody(ctx context.Context, templateBody, te
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch template from %s: %w", templateURL, err)
 	}
-	return rec.Body.String(), nil
+	fetched := rec.Body.String()
+	if err := checkResolvedTemplateSize(fetched); err != nil {
+		return "", err
+	}
+	return fetched, nil
 }

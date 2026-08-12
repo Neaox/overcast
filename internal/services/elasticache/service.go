@@ -72,7 +72,7 @@ func (s *Service) SetVPCResolver(r VPCNetworkResolver) {
 func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.docker = dc
 	s.handler.puller = docker.NewImagePuller(dc)
-	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.ElastiCacheKeepContainers)
+	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.ElastiCacheKeepContainers, s.handler.instances.Resolve)
 	s.handler.gc.StartRemoveLoop(s.handler.bgCtx)
 	s.handler.gc.Sweep(serviceName) // clean up orphaned containers from previous runs
 	s.handler.dockerReady.Store(true)

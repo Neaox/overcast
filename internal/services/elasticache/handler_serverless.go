@@ -440,7 +440,7 @@ func (h *Handler) startServerlessCacheContainer(ctx context.Context, c *Serverle
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        image,
 			ExposedPorts: map[string]struct{}{containerPort: {}},
-			Labels:       docker.ManagedLabels(serviceName, resourceLabel),
+			Labels:       h.instances.ManagedLabels(ctx, serviceName, resourceLabel),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
 			NetworkMode: dataplane.Primary(h.cfg),
