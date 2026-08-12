@@ -19,7 +19,6 @@ import (
 	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
-	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -511,11 +510,16 @@ func (h *Handler) efsMountSkipReason() (msg, hint string) {
 // here that cannot be undone.
 const volumeScopeLabel = "overcast.ecs.volume-scope"
 
-// volumeRegionLabel records the region the owning task is stored under. The
-// managed resource ID is "cluster/taskID", which does not identify a task on
-// its own: the same cluster and task ID in another region is a different task.
-// The sweep needs the region to ask whether the owner still exists, and
-// guessing it wrong there would delete a live task's volumes.
+// volumeRegionLabel records the region the owning task is stored under, as
+// provenance for anyone reading `docker volume inspect`: the managed resource
+// ID is "cluster/taskID", and the same cluster and task ID in another region is
+// a different task.
+//
+// Nothing in Overcast reads it. It was added when the orphan sweep resolved
+// volumes back to task records and needed a region to do the lookup in; the
+// sweep now asks the daemon which volumes are referenced instead, which is
+// both simpler and correct across instances. Kept because the label is free
+// and the resource ID alone is ambiguous to a human.
 const volumeRegionLabel = "overcast.ecs.region"
 
 // taskVolumeName names the Docker volume backing a task-lifetime volume — a
@@ -722,32 +726,23 @@ func (h *Handler) sweepOrphanedTaskVolumes(ctx context.Context) {
 	if h.docker == nil {
 		return
 	}
-	volumes, err := h.docker.ListVolumes(ctx, serviceName)
+	// Only volumes no container references. Whether the owning task is still
+	// in *this* instance's records is the wrong question: a second Overcast on
+	// the same daemon keeps its own records, so each instance would see the
+	// other's live task volumes as abandoned and delete them out from under a
+	// running task. The daemon's own reference count is the one answer every
+	// instance agrees on, and it is also correct for the case this sweep
+	// exists for — a process killed before it could clean up leaves containers
+	// that the container sweep has already removed by the time this runs.
+	volumes, err := h.docker.ListUnusedVolumes(ctx, serviceName)
 	if err != nil {
 		h.log.Warn("ecs: list volumes for orphan sweep", zap.Error(err))
 		return
 	}
 	for _, v := range volumes {
+		// Shared-scope volumes outlive every task by design and are never
+		// swept, however long they sit unreferenced.
 		if v.Labels[volumeScopeLabel] != "task" {
-			continue
-		}
-		clusterName, taskID, ok := strings.Cut(v.ResourceID(), "/")
-		if !ok {
-			continue
-		}
-		// The owner is only identified by cluster and task ID *within a
-		// region*, so a volume that does not say which region it belongs to
-		// cannot be shown to be an orphan. Leave it: an unswept volume costs
-		// disk, a wrongly swept one costs a running task its data.
-		region := v.Labels[volumeRegionLabel]
-		if region == "" {
-			continue
-		}
-		// A task that still exists in any state keeps its volumes: a STOPPED
-		// record is still readable through DescribeTasks, and its containers
-		// may be retained under ECS_KEEP_CONTAINERS.
-		regionCtx := middleware.ContextWithRegion(ctx, region)
-		if task, aerr := h.store.getTask(regionCtx, clusterName, taskID); aerr == nil && task != nil {
 			continue
 		}
 		h.log.Info("ecs: removing orphaned task volume", zap.String("volume", v.Name))
