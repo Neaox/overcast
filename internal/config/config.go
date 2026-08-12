@@ -590,9 +590,26 @@ type Config struct {
 	// in shared or production environments.
 	Debug bool
 
-	// DebugTraceBuffer is the capacity of the request-trace ring buffer
-	// (OVERCAST_DEBUG_TRACE_BUFFER). Only read when Debug is true.
+	// DebugTraceBuffer is the number of user-facing request traces retained
+	// unconditionally — the floor (OVERCAST_DEBUG_TRACE_BUFFER). Only read when
+	// Debug is true.
 	DebugTraceBuffer int
+
+	// DebugTraceCeiling bounds how far a burst may grow retention past the
+	// floor (OVERCAST_DEBUG_TRACE_CEILING). A CDK deploy pushes thousands of
+	// requests through in a couple of minutes; the floor alone keeps the
+	// rollback noise and discards the error that caused it.
+	DebugTraceCeiling int
+
+	// DebugTraceWindow is how long traces above the floor survive
+	// (OVERCAST_DEBUG_TRACE_WINDOW). It is sized for the gap between a deploy
+	// failing and somebody opening the trace UI, not for the deploy itself.
+	DebugTraceWindow time.Duration
+
+	// DebugTracePinned caps the traces retained because they went wrong
+	// (OVERCAST_DEBUG_TRACE_PINNED). Those are exempt from both the floor and
+	// the window: a failure is what someone comes back for.
+	DebugTracePinned int
 
 	// TLSCertFile is the path to the TLS certificate file.
 	// When set (together with TLSKeyFile), the server uses HTTPS.
@@ -1045,8 +1062,11 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	OVERCAST_HOT_RELOAD                false   (umbrella for every compute service)
 //	OVERCAST_LAMBDA_HOT_RELOAD         <OVERCAST_HOT_RELOAD>
 //	OVERCAST_DEBUG                     false
-//	OVERCAST_DEBUG_TRACE_BUFFER        1000    (request-trace ring buffer; only read when
-//	                                           OVERCAST_DEBUG is on)
+//	OVERCAST_DEBUG_TRACE_BUFFER        1000    (traces always retained — the floor; only read
+//	                                           when OVERCAST_DEBUG is on)
+//	OVERCAST_DEBUG_TRACE_CEILING       10000   (how far a burst may grow retention)
+//	OVERCAST_DEBUG_TRACE_WINDOW        1h      (how long overflow above the floor survives)
+//	OVERCAST_DEBUG_TRACE_PINNED        1000    (traces kept because they went wrong)
 //	OVERCAST_TLS                       ""    (auto = mint from the local overcast CA; serves API + web UI over HTTPS/h2)
 //	OVERCAST_TLS_CERT                  ""
 //	OVERCAST_TLS_KEY                   ""
@@ -1467,6 +1487,13 @@ func Load() (*Config, error) {
 	// Debug endpoints
 	cfg.Debug = envBool("OVERCAST_DEBUG", false)
 	cfg.DebugTraceBuffer = envInt("OVERCAST_DEBUG_TRACE_BUFFER", 1000)
+	cfg.DebugTraceCeiling = envInt("OVERCAST_DEBUG_TRACE_CEILING", 10000)
+	cfg.DebugTracePinned = envInt("OVERCAST_DEBUG_TRACE_PINNED", 1000)
+	traceWindowStr := envOr("OVERCAST_DEBUG_TRACE_WINDOW", "1h")
+	cfg.DebugTraceWindow, err = time.ParseDuration(traceWindowStr)
+	if err != nil {
+		return nil, fmt.Errorf("config: OVERCAST_DEBUG_TRACE_WINDOW %q is not a valid duration", traceWindowStr)
+	}
 
 	// TLS
 	cfg.TLSCertFile = os.Getenv("OVERCAST_TLS_CERT")

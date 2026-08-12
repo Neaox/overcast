@@ -182,7 +182,10 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs                                                          |
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below      |
 | `OVERCAST_DEBUG`                 | `false`                | Enable `/_overcast/debug/*` endpoints                                                         |
-| `OVERCAST_DEBUG_TRACE_BUFFER`    | `1000`                 | Request traces held in the in-memory ring buffer. Only read when `OVERCAST_DEBUG=true` |
+| `OVERCAST_DEBUG_TRACE_BUFFER`    | `1000`                 | User-facing request traces always retained — the floor. Only read when `OVERCAST_DEBUG=true` |
+| `OVERCAST_DEBUG_TRACE_CEILING`   | `10000`                | How far a burst may grow retention past the floor |
+| `OVERCAST_DEBUG_TRACE_WINDOW`    | `1h`                   | How long traces above the floor survive before being reclaimed |
+| `OVERCAST_DEBUG_TRACE_PINNED`    | `1000`                 | Traces kept because they went wrong, exempt from the floor and the window |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
 | `OVERCAST_ENFORCE_IAM`           | `false`                | Evaluate the calling principal's IAM policies before each request and return AWS-shaped `AccessDenied` when they do not allow it. **Off by default**; with it off nothing is evaluated and no policy is read. See [iam.md § Request-time enforcement](./services/iam.md#request-time-enforcement-opt-in) |
 | `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests that exceed their usage plan's throttle or quota with AWS's `429`. Off by default: the limits are measured and reported (`GetUsage`, `apigateway:Throttled` events) but never rejected — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
@@ -490,8 +493,19 @@ Every response carries a request ID (`x-amzn-requestid` for most services,
 | `/_overcast/debug/traces`            | GET    | Paginated list of recent traces; filterable by `?service=`, `?method=`, `?path=`, `?status=`, `?search=` |
 | `/_overcast/debug/traces/count`      | GET    | Current trace buffer count and capacity               |
 
-Traces are held in a ring buffer sized by `OVERCAST_DEBUG_TRACE_BUFFER`
-(default 1000); the oldest is evicted once it is full. A trace records each
+Traces are retained under three rules, so that the request explaining a failure is
+still there when you go looking, without your having configured anything first:
+
+1. The newest `OVERCAST_DEBUG_TRACE_BUFFER` traces (default 1000) are always kept.
+2. Beyond that, a burst is kept for `OVERCAST_DEBUG_TRACE_WINDOW` (default 1h), up to
+   `OVERCAST_DEBUG_TRACE_CEILING` (default 10000). A `cdk deploy` pushes thousands of
+   requests through in a couple of minutes, and the floor alone would keep the
+   rollback traffic and discard the error that started it.
+3. Traces that went wrong — a 4xx/5xx, an AWS error code, or a failed internal hop —
+   are exempt from both, up to `OVERCAST_DEBUG_TRACE_PINNED` (default 1000).
+
+Internal polling (health checks, the console's own requests) is retained separately
+and can never evict a request you made. A trace records each
 internal service-to-service hop a request made, and captures a goroutine stack
 for the first 20 hops plus the first 20 hops that failed — a CloudFormation or
 CDK deploy dispatches hundreds of hops through one trace, and a stack for every

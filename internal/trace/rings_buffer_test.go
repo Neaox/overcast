@@ -52,7 +52,10 @@ func TestBuffer_internalRingIsCappedBothWays(t *testing.T) {
 		{"proportional below the absolute cap", 50, 10},
 		{"default floor sits exactly on the cap", 1000, maxInternalRing},
 		{"a raised floor does not raise it further", 10000, maxInternalRing},
-		{"a tiny floor still keeps one", 3, 1},
+		// Below five, the proportional share rounds to nothing — and that is
+		// the right answer: a buffer this small should spend every slot it has
+		// on requests somebody made, not on the UI's own polling.
+		{"a tiny floor keeps none", 3, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := NewBuffer(tc.floor).internal.cap(); got != tc.want {
