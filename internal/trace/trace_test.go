@@ -31,8 +31,8 @@ func TestSetRequestBody_truncatedCapture(t *testing.T) {
 	if len(entry.RequestBody) != len(body) {
 		t.Fatalf("len(RequestBody) = %d, want %d", len(entry.RequestBody), len(body))
 	}
-	if !entry.RequestBodyTruncated {
-		t.Error("expected RequestBodyTruncated true")
+	if entry.RequestBodyOmitted != OmitSize {
+		t.Errorf("RequestBodyOmitted = %q, want %q", entry.RequestBodyOmitted, OmitSize)
 	}
 	if entry.RequestSize != 4096 {
 		t.Errorf("RequestSize = %d, want 4096", entry.RequestSize)
@@ -68,8 +68,8 @@ func TestSetResponse_truncationDoesNotAliasOriginalBackingArray(t *testing.T) {
 	if len(entry.ResponseBody) != maxBody {
 		t.Fatalf("len(ResponseBody) = %d, want %d", len(entry.ResponseBody), maxBody)
 	}
-	if !entry.ResponseBodyTruncated {
-		t.Error("expected ResponseBodyTruncated true")
+	if entry.ResponseBodyOmitted != OmitSize {
+		t.Errorf("ResponseBodyOmitted = %q, want %q", entry.ResponseBodyOmitted, OmitSize)
 	}
 	if got := cap(rec.entry.ResponseBody); got >= len(body) {
 		t.Errorf("cap(ResponseBody) = %d, aliases the %d-byte original backing array", got, len(body))
@@ -105,8 +105,8 @@ func TestAddHop_oversizedBodiesAreCappedAndCopied(t *testing.T) {
 	if len(h.ResponseBody) != MaxHopBody {
 		t.Errorf("len(hop ResponseBody) = %d, want %d", len(h.ResponseBody), MaxHopBody)
 	}
-	if !h.RequestBodyTruncated || !h.ResponseBodyTruncated {
-		t.Errorf("truncation flags = (%t, %t), want (true, true)", h.RequestBodyTruncated, h.ResponseBodyTruncated)
+	if h.RequestBodyOmitted != OmitSize || h.ResponseBodyOmitted != OmitSize {
+		t.Errorf("omission reasons = (%q, %q), want both %q", h.RequestBodyOmitted, h.ResponseBodyOmitted, OmitSize)
 	}
 	stored := rec.entry.Hops[0]
 	if got := cap(stored.RequestBody); got >= len(big) {
@@ -149,20 +149,21 @@ func TestAddHop_bodyBudgetDropsBodiesNotHops(t *testing.T) {
 		}
 	}
 
-	// And: bodies stop being retained once the budget is spent, flagged with
-	// the same truncation marker the per-hop cap uses
+	// And: bodies stop being retained once the budget is spent, marked with the
+	// budget as the reason — deliberately not the per-hop cap's OmitSize, since
+	// this loss leaves no prefix behind for a reader to look at
 	kept, dropped := 0, 0
 	for _, h := range hops {
 		if len(h.RequestBody) > 0 {
 			kept++
-			if h.RequestBodyTruncated {
-				t.Error("a retained body was flagged truncated")
+			if h.RequestBodyOmitted != OmitNone {
+				t.Errorf("a retained body was marked omitted (%q)", h.RequestBodyOmitted)
 			}
 			continue
 		}
 		dropped++
-		if !h.RequestBodyTruncated {
-			t.Error("a dropped body was not flagged truncated")
+		if h.RequestBodyOmitted != OmitTraceBudget {
+			t.Errorf("a dropped body was marked %q, want %q", h.RequestBodyOmitted, OmitTraceBudget)
 		}
 	}
 	if kept != MaxHopBodyBytes/MaxHopBody {
@@ -182,10 +183,11 @@ func TestAddHop_bodylessHopsSpendNoBudget(t *testing.T) {
 		rec.AddHop(Hop{Service: "sqs", Operation: "GetQueueUrl", ResponseStatus: 200})
 	}
 
-	// Then: none of them is flagged truncated
+	// Then: none of them is marked as having lost a body
 	for i, h := range rec.Entry().Hops {
-		if h.RequestBodyTruncated || h.ResponseBodyTruncated {
-			t.Fatalf("hop %d flagged truncated despite carrying no body", i)
+		if h.RequestBodyOmitted != OmitNone || h.ResponseBodyOmitted != OmitNone {
+			t.Fatalf("hop %d marked omitted despite carrying no body: (%q, %q)",
+				i, h.RequestBodyOmitted, h.ResponseBodyOmitted)
 		}
 	}
 }
@@ -199,7 +201,8 @@ func TestAddHop_smallBodiesAreStoredVerbatim(t *testing.T) {
 	if string(h.RequestBody) != "req" || string(h.ResponseBody) != "resp" {
 		t.Errorf("hop bodies = (%q, %q), want (req, resp)", h.RequestBody, h.ResponseBody)
 	}
-	if h.RequestBodyTruncated || h.ResponseBodyTruncated {
-		t.Error("small hop bodies must not be flagged truncated")
+	if h.RequestBodyOmitted != OmitNone || h.ResponseBodyOmitted != OmitNone {
+		t.Errorf("small hop bodies must not be marked omitted, got (%q, %q)",
+			h.RequestBodyOmitted, h.ResponseBodyOmitted)
 	}
 }

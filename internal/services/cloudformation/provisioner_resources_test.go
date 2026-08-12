@@ -41,9 +41,9 @@ func TestInternalRequest_oversizedHopBodiesAreCapped(t *testing.T) {
 	if got := len(hops[0].ResponseBody); got != trace.MaxHopBody {
 		t.Errorf("len(hop ResponseBody) = %d, want %d", got, trace.MaxHopBody)
 	}
-	if !hops[0].RequestBodyTruncated || !hops[0].ResponseBodyTruncated {
-		t.Errorf("truncation flags = (%t, %t), want (true, true)",
-			hops[0].RequestBodyTruncated, hops[0].ResponseBodyTruncated)
+	if hops[0].RequestBodyOmitted != trace.OmitSize || hops[0].ResponseBodyOmitted != trace.OmitSize {
+		t.Errorf("omission reasons = (%q, %q), want both %q",
+			hops[0].RequestBodyOmitted, hops[0].ResponseBodyOmitted, trace.OmitSize)
 	}
 }
 
