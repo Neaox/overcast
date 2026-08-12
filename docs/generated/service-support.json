@@ -4179,7 +4179,7 @@
           "operation": "RegisterTaskDefinition",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Family:revision versioning; Fargate: validates awsvpc networkMode, cpu/memory required with valid combos, rejects host.sourcePath and dockerVolumeConfiguration as AWS does; all four volume shapes honoured at placement — efsVolumeConfiguration (live mode), host.sourcePath bind mounts (EC2 launch type), dockerVolumeConfiguration (task and shared scope, autoprovision), and name-only scratch volumes shared between containers"
+          "notes": "Family:revision versioning; Fargate: validates awsvpc networkMode, cpu/memory required with valid combos, rejects host.sourcePath and dockerVolumeConfiguration as AWS does; all four volume shapes honoured at placement (EFS, host.sourcePath binds, dockerVolumeConfiguration, name-only scratch); tags stored against the revision's ARN, including overcast:hot-reload-path"
         },
         {
           "operation": "RunTask",

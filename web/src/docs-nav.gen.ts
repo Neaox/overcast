@@ -2806,6 +2806,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Hot reload — editing local source inside a task",
+        "id": "hot-reload-editing-local-source-inside-a-task"
+      },
+      {
+        "depth": 2,
         "text": "EFS volumes",
         "id": "efs-volumes"
       },

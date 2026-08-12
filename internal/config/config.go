@@ -419,9 +419,17 @@ type Config struct {
 	// LAMBDA_PROACTIVE_INIT. Default false while the feature beds in.
 	LambdaProactiveInit bool
 
+	// HotReload is the umbrella opt-in for bind-mount source reload across every
+	// compute service, so a developer turns the inner loop on once rather than
+	// learning a variable per service. Per-service fields below override it in
+	// either direction. Corresponds to env var OVERCAST_HOT_RELOAD.
+	// Default false.
+	HotReload bool
+
 	// LambdaHotReload enables bind-mount based source reload for functions that
 	// opt in via the overcast:hot-reload-path function tag.
-	// Corresponds to env var OVERCAST_LAMBDA_HOT_RELOAD. Default false.
+	// Corresponds to env var OVERCAST_LAMBDA_HOT_RELOAD, defaulting to
+	// HotReload when that variable is unset.
 	LambdaHotReload bool
 
 	// LambdaFetchRemoteLayers enables downloading layer content from real AWS
@@ -456,9 +464,17 @@ type Config struct {
 	ECSDockerSocket string
 
 	// ECSKeepContainers controls whether Docker containers are removed when
-	// an ECS task stops. Set to true for post-mortem inspection.
+	// an ECS task stops. Set to true for post-mortem inspection. Volumes the
+	// task owns are kept with them.
 	// Corresponds to env var ECS_KEEP_CONTAINERS. Default false.
 	ECSKeepContainers bool
+
+	// ECSHotReload enables bind-mount source reload for task definitions that
+	// opt in via an overcast:hot-reload-path tag, redirecting a declared
+	// scratch volume at a host path.
+	// Corresponds to env var OVERCAST_ECS_HOT_RELOAD, defaulting to HotReload
+	// when that variable is unset.
+	ECSHotReload bool
 
 	// ECRRegistryPort is the host port the shared ECR registry container asks
 	// for. A fixed, well-known port keeps repositoryUri stable across restarts
@@ -1026,7 +1042,8 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           timeout; values below 1s are raised to 1s)
 //	OVERCAST_LOG_LEVEL                 info    (trace | debug | info | warn | error)
 //	OVERCAST_SHUTDOWN_TIMEOUT          5s
-//	OVERCAST_LAMBDA_HOT_RELOAD         false
+//	OVERCAST_HOT_RELOAD                false   (umbrella for every compute service)
+//	OVERCAST_LAMBDA_HOT_RELOAD         <OVERCAST_HOT_RELOAD>
 //	OVERCAST_DEBUG                     false
 //	OVERCAST_DEBUG_TRACE_BUFFER        1000    (request-trace ring buffer; only read when
 //	                                           OVERCAST_DEBUG is on)
@@ -1081,6 +1098,7 @@ func ServiceOverrideIneffective(service string) (reason string, ok bool) {
 //	                                           and are no longer read.)
 //	ECS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET> (default: same as Lambda)
 //	ECS_KEEP_CONTAINERS                false
+//	OVERCAST_ECS_HOT_RELOAD            <OVERCAST_HOT_RELOAD>
 //	RDS_DOCKER_SOCKET                  <LAMBDA_DOCKER_SOCKET> (default: same as Lambda)
 //	RDS_PORT_BASE                      33060
 //	RDS_KEEP_CONTAINERS                false
@@ -1386,7 +1404,12 @@ func Load() (*Config, error) {
 		cfg.LambdaTarCacheMB = 0
 	}
 	cfg.LambdaProactiveInit = envBool("LAMBDA_PROACTIVE_INIT", false)
-	cfg.LambdaHotReload = envBool("OVERCAST_LAMBDA_HOT_RELOAD", false)
+	// Per-service hot reload inherits the umbrella when its own variable is
+	// unset, and overrides it when set — including opting a single service out
+	// of an umbrella true, since envBool returns false for an explicit "false"
+	// and the fallback only for an absent variable.
+	cfg.HotReload = envBool("OVERCAST_HOT_RELOAD", false)
+	cfg.LambdaHotReload = envBool("OVERCAST_LAMBDA_HOT_RELOAD", cfg.HotReload)
 	cfg.LambdaFetchRemoteLayers = envBool("LAMBDA_FETCH_REMOTE_LAYERS", false)
 	cfg.LambdaLayerCacheDir = envOr("LAMBDA_LAYER_CACHE_DIR", "")
 	cfg.LambdaRemoteAWSAccessKeyID = envOr("LAMBDA_REMOTE_AWS_ACCESS_KEY_ID", "")
@@ -1403,6 +1426,7 @@ func Load() (*Config, error) {
 	// ECS container runtime — defaults fall back to Lambda socket
 	cfg.ECSDockerSocket = envOr("ECS_DOCKER_SOCKET", cfg.LambdaDockerSocket)
 	cfg.ECSKeepContainers = envBool("ECS_KEEP_CONTAINERS", false)
+	cfg.ECSHotReload = envBool("OVERCAST_ECS_HOT_RELOAD", cfg.HotReload)
 
 	// ECR registry — see the field's comment for why the default is pinned.
 	cfg.ECRRegistryPort = envInt("OVERCAST_ECR_REGISTRY_PORT", 4510)

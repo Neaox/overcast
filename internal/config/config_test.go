@@ -962,6 +962,52 @@ func TestLoad_lambdaHotReloadEnabled(t *testing.T) {
 	}
 }
 
+// TestLoad_hotReloadInheritance verifies the umbrella/override relationship
+// between OVERCAST_HOT_RELOAD and the per-service flags. The interesting case
+// is the last one: an explicit "false" must beat an umbrella "true", which is
+// what lets a developer run one service's containers from an image while the
+// rest hot reload. That behaviour rests entirely on envBool returning its
+// fallback only for an absent variable, so it is pinned here.
+func TestLoad_hotReloadInheritance(t *testing.T) {
+	tests := []struct {
+		name                  string
+		umbrella, lambda, ecs string
+		wantLambda, wantECS   bool
+	}{
+		{name: "nothing set"},
+		{name: "umbrella on", umbrella: "true", wantLambda: true, wantECS: true},
+		{name: "lambda only", lambda: "true", wantLambda: true},
+		{name: "ecs only", ecs: "true", wantECS: true},
+		{name: "umbrella off, ecs on", umbrella: "false", ecs: "true", wantECS: true},
+		{name: "umbrella on, lambda opted out", umbrella: "true", lambda: "false", wantECS: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearEnv(t)
+			if tc.umbrella != "" {
+				t.Setenv("OVERCAST_HOT_RELOAD", tc.umbrella)
+			}
+			if tc.lambda != "" {
+				t.Setenv("OVERCAST_LAMBDA_HOT_RELOAD", tc.lambda)
+			}
+			if tc.ecs != "" {
+				t.Setenv("OVERCAST_ECS_HOT_RELOAD", tc.ecs)
+			}
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.LambdaHotReload != tc.wantLambda {
+				t.Errorf("LambdaHotReload = %v, want %v", cfg.LambdaHotReload, tc.wantLambda)
+			}
+			if cfg.ECSHotReload != tc.wantECS {
+				t.Errorf("ECSHotReload = %v, want %v", cfg.ECSHotReload, tc.wantECS)
+			}
+		})
+	}
+}
+
 // TestLoad_hostBinding verifies custom host binding.
 func TestLoad_hostBinding(t *testing.T) {
 	// Given: OVERCAST_HOST is set to localhost only

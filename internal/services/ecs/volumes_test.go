@@ -83,7 +83,7 @@ func TestContainerMounts(t *testing.T) {
 	td := testTaskDef()
 	cd := &td.ContainerDefinitions[0]
 
-	got := h.containerMounts(context.Background(), td, cd, testTaskID)
+	got := h.containerMounts(context.Background(), td, cd, testTaskID, nil)
 
 	// One per mount point, less the unresolvable EFS volume and the mount
 	// point naming a volume the definition does not declare.
@@ -130,7 +130,7 @@ func TestContainerMounts_withoutEFSResolver(t *testing.T) {
 	h := testHandler()
 	td := testTaskDef()
 
-	got := h.containerMounts(context.Background(), td, &td.ContainerDefinitions[0], testTaskID)
+	got := h.containerMounts(context.Background(), td, &td.ContainerDefinitions[0], testTaskID, nil)
 
 	if len(got) != 5 {
 		t.Fatalf("expected the 5 non-EFS mounts, got %d: %+v", len(got), got)
@@ -150,7 +150,7 @@ func TestContainerMounts_noMountPoints(t *testing.T) {
 	h.efsResolver = resolvedEFS()
 	td := testTaskDef()
 
-	if got := h.containerMounts(context.Background(), td, &ContainerDefinition{Name: "plain"}, testTaskID); got != nil {
+	if got := h.containerMounts(context.Background(), td, &ContainerDefinition{Name: "plain"}, testTaskID, nil); got != nil {
 		t.Fatalf("expected nil mounts for a container without mount points, got %v", got)
 	}
 }
