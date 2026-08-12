@@ -23,7 +23,7 @@ export function healthQueryOptions() {
 }
 
 /**
- * The outcome of one /_debug/metrics poll: the diagnostics, or the reason
+ * The outcome of one /_overcast/debug/metrics poll: the diagnostics, or the reason
  * they can't be read right now (`reason` is already human-readable — for the
  * usual case, debug mode being off, it is the server's own explanation).
  */
@@ -32,7 +32,7 @@ export type DebugMetricsResult =
   | { available: false; reason: string }
 
 /**
- * GET /_debug/metrics, polled — storage diagnostics (live journal mode,
+ * GET /_overcast/debug/metrics, polled — storage diagnostics (live journal mode,
  * flush history, data-dir probe) and the server-computed advisories array.
  *
  * Unavailability resolves as data rather than rejecting, for two reasons.

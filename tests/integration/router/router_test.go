@@ -356,7 +356,7 @@ func TestRouter_headerlessS3MultipartPathMatchingRPCGrammar_remainsReachable(t *
 func TestDebugHealth_returnsOK(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	resp, err := http.Get(srv.URL + "/_debug/health")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/health")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +375,7 @@ func TestDebugHealth_returnsOK(t *testing.T) {
 func TestDebugHealth_notMountedWhenDisabled(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(false))
 
-	resp, err := http.Get(srv.URL + "/_debug/health")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/health")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestDebugHealth_notMountedWhenDisabled(t *testing.T) {
 func TestDebugConfig_returnsConfig(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true), helpers.WithRegion("eu-central-1"))
 
-	resp, err := http.Get(srv.URL + "/_debug/config")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/config")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestDebugConfig_returnsConfig(t *testing.T) {
 func TestDebugState_returnsJSON(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	resp, err := http.Get(srv.URL + "/_debug/state")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/state")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestDebugState_returnsJSON(t *testing.T) {
 func TestDebugStateNamespace_returnsJSON(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	resp, err := http.Get(srv.URL + "/_debug/state/s3:buckets")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/state/s3:buckets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestDebugReset_wipesState(t *testing.T) {
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 
 	// Reset all state.
-	resetResp, err := http.Post(srv.URL+"/_debug/reset", "application/json", nil)
+	resetResp, err := http.Post(srv.URL+"/_overcast/debug/reset", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,7 +465,7 @@ func TestDebugReset_wipesState(t *testing.T) {
 func TestDebugResetService_knownService(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	resp, err := http.Post(srv.URL+"/_debug/reset/s3", "application/json", nil)
+	resp, err := http.Post(srv.URL+"/_overcast/debug/reset/s3", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func TestDebugResetService_knownService(t *testing.T) {
 func TestDebugResetService_unknownService(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	resp, err := http.Post(srv.URL+"/_debug/reset/unknown-service", "application/json", nil)
+	resp, err := http.Post(srv.URL+"/_overcast/debug/reset/unknown-service", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestDebugResetService_unknownService(t *testing.T) {
 func TestDebugMetrics_returnsJSON(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	resp, err := http.Get(srv.URL + "/_debug/metrics")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/metrics")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestDebugMetrics_includesAdvisoriesArray(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
 	// When: the metrics endpoint is requested.
-	resp, err := http.Get(srv.URL + "/_debug/metrics")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/metrics")
 	if err != nil {
 		t.Fatal(err)
 	}

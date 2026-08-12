@@ -262,7 +262,7 @@ func WithAccountID(id string) Option {
 	}
 }
 
-// WithDebug enables the /_debug/* endpoint namespace on the test server.
+// WithDebug enables the /_overcast/debug/* endpoint namespace on the test server.
 func WithDebug(enabled bool) Option {
 	return func(so *serverOptions) {
 		so.cfg.Debug = enabled

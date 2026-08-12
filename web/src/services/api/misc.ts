@@ -24,7 +24,7 @@ export const health = {
 
 /**
  * Storage diagnostics + server-computed advisories behind the Metrics &
- * Health page (GET /_debug/metrics, proxied at /api/debug/metrics). Only
+ * Health page (GET /_overcast/debug/metrics, proxied at /api/debug/metrics). Only
  * available when the emulator has OVERCAST_DEBUG=true — a disabled debug
  * namespace responds 404 with `{"error":"DebugDisabled", ...}`, which
  * apiFetch turns into a rejected promise. debugMetricsQueryOptions in
@@ -54,7 +54,7 @@ export const inbox = {
 export type DebugStateSummary = Record<string, string[]>
 export type DebugNamespaceValues = Record<string, string>
 
-/** Paginated response shape of GET /_debug/state/{namespace}. */
+/** Paginated response shape of GET /_overcast/debug/state/{namespace}. */
 export type DebugNamespacePage = {
   values: DebugNamespaceValues
   /** Exclusive cursor for the next page; absent/empty on the last page. */
@@ -86,7 +86,7 @@ export const debugState = {
     )
   },
   /**
-   * Fetches a single key's raw value via `GET /_debug/state/{namespace}?key=`,
+   * Fetches a single key's raw value via `GET /_overcast/debug/state/{namespace}?key=`,
    * bypassing pagination entirely. Used as a lazy fallback when a deep-linked
    * key hasn't appeared in any loaded page yet (see `debug-page.tsx`).
    *
@@ -118,7 +118,7 @@ export const debugState = {
 }
 
 /**
- * Query string for `GET /_debug/traces`, including the leading `?` (empty when
+ * Query string for `GET /_overcast/debug/traces`, including the leading `?` (empty when
  * there is nothing to send).
  *
  * `method` and `status` are **repeated** params rather than one comma-joined

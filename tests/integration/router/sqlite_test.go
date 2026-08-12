@@ -56,7 +56,7 @@ func TestDebugReset_withSQLiteStore(t *testing.T) {
 	helpers.AssertStatus(t, createResp, http.StatusOK)
 
 	// Reset via debug endpoint — exercises resetAllNamespaces.
-	resetResp, err := http.Post(srv.URL+"/_debug/reset", "application/json", nil)
+	resetResp, err := http.Post(srv.URL+"/_overcast/debug/reset", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

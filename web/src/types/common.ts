@@ -128,7 +128,7 @@ export interface StoreCounters {
 
 /**
  * One reporting store's storage diagnostics, as returned by
- * GET /_debug/metrics's `stores` array (internal/state.DebugMetrics). A
+ * GET /_overcast/debug/metrics's `stores` array (internal/state.DebugMetrics). A
  * *state.NamespacedStore wrapping more than one distinct backend yields more
  * than one entry here — see that type's Go doc comment for why.
  */
@@ -157,7 +157,7 @@ export interface DebugMetrics {
 export type AdvisorySeverity = "info" | "warning" | "critical"
 
 /**
- * One server-computed diagnostic surfaced by GET /_debug/metrics's
+ * One server-computed diagnostic surfaced by GET /_overcast/debug/metrics's
  * `advisories` array (internal/router/advisories.go). The web UI renders
  * these generically — a future rule added server-side needs no UI change.
  */
@@ -170,7 +170,7 @@ export interface Advisory {
   docsPath?: string
 }
 
-/** Response body of GET /_debug/metrics. */
+/** Response body of GET /_overcast/debug/metrics. */
 export interface DebugMetricsResponse {
   stores: DebugMetrics[]
   advisories: Advisory[]

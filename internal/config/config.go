@@ -311,7 +311,7 @@ type Config struct {
 	// LogLevel controls log verbosity: "trace", "debug", "info", "warn", "error"
 	// (case-insensitive). "trace" is Overcast-specific — it sits below zap's
 	// built-in "debug" and covers periodic machine chatter (health-check and
-	// /_debug/* request logs, flush/checkpoint/maintenance/sweep cycle logs,
+	// /_overcast/debug/* request logs, flush/checkpoint/maintenance/sweep cycle logs,
 	// pool internals); see serviceutil.ParseLevel and CONTRIBUTING.md § Log
 	// levels. Default "info".
 	LogLevel string
@@ -585,7 +585,7 @@ type Config struct {
 	// startup warning. Corresponds to env var OVERCAST_EC2_VPC_STRATEGY.
 	EC2VPCNetworkStrategy string
 
-	// Debug enables the /_debug/* endpoint namespace.
+	// Debug enables the /_overcast/debug/* endpoint namespace.
 	// These endpoints expose internal state and should never be enabled
 	// in shared or production environments.
 	Debug bool
@@ -920,7 +920,7 @@ func AllServices() []string {
 //
 // This function is the single source of truth for that mapping. It is used
 // by both the per-service storage override routing in cmd/overcast's serve
-// command and the /_debug endpoints in internal/router — state.NamespacedStore
+// command and the /_overcast/debug endpoints in internal/router — state.NamespacedStore
 // (internal/state/namespaced.go) routes purely on namespace prefix, not on
 // config service name, so any caller that keys a NamespacedStore route map
 // (or unwraps one) by config service name instead of this prefix will build

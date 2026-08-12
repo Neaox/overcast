@@ -1,6 +1,6 @@
 /**
  * AdvisoriesList — renders the server-computed `advisories` array from
- * GET /_debug/metrics (see internal/router/advisories.go) generically: an
+ * GET /_overcast/debug/metrics (see internal/router/advisories.go) generically: an
  * icon/color driven only by `severity`, then title/detail/optional docs
  * link. A future advisory rule added server-side needs zero changes here —
  * this component never branches on `code`.

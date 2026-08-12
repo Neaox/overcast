@@ -16,7 +16,7 @@ type debugVPCItem struct {
 
 // DebugVPCsHandler returns an http.HandlerFunc that writes the current VPC
 // state as JSON, including internal networking fields not visible in the
-// standard DescribeVpcs response. Used at /_debug/ec2/vpcs.
+// standard DescribeVpcs response. Used at /_overcast/debug/ec2/vpcs.
 func (s *Service) DebugVPCsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vpcs, aerr := s.handler.store.listVPCs(r.Context())

@@ -107,7 +107,7 @@ func (m *goroutineMonitor) run() {
 			if !lastDump.IsZero() && time.Since(lastDump) < m.cooldown {
 				m.logger.Warn("goroutine leak still present",
 					zap.Int("total_goroutines", total),
-					zap.String("pprof_tip", "curl 'http://localhost:4566/_debug/pprof/goroutine?debug=2'"),
+					zap.String("pprof_tip", "curl 'http://localhost:4566/_overcast/debug/pprof/goroutine?debug=2'"),
 				)
 				continue
 			}
@@ -128,7 +128,7 @@ func (m *goroutineMonitor) run() {
 				zap.Int("old_goroutines", old),
 				zap.Int("total_goroutines", total),
 				zap.Duration("age_threshold", m.ageThreshold),
-				zap.String("pprof_tip", "curl 'http://localhost:4566/_debug/pprof/goroutine?debug=2'"),
+				zap.String("pprof_tip", "curl 'http://localhost:4566/_overcast/debug/pprof/goroutine?debug=2'"),
 				zap.String("stacks", stacks),
 			)
 			lastDump = time.Now()

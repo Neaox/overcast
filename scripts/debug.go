@@ -101,11 +101,11 @@ func cmdGoroutines(args []string) {
 	if len(args) > 0 && args[0] == "full" {
 		debug = "2"
 	}
-	get(fmt.Sprintf("/_debug/pprof/goroutine?debug=%s", debug))
+	get(fmt.Sprintf("/_overcast/debug/pprof/goroutine?debug=%s", debug))
 }
 
 func cmdHeap(args []string) {
-	get("/_debug/pprof/heap?debug=1")
+	get("/_overcast/debug/pprof/heap?debug=1")
 }
 
 func cmdCPU(args []string) {
@@ -116,7 +116,7 @@ func cmdCPU(args []string) {
 	outFile := "cpu.prof"
 	fmt.Fprintf(os.Stderr, "Capturing CPU profile for %ss → %s ...\n", seconds, outFile)
 
-	resp, err := httpClient().Get(base + "/_debug/pprof/profile?seconds=" + seconds)
+	resp, err := httpClient().Get(base + "/_overcast/debug/pprof/profile?seconds=" + seconds)
 	if err != nil {
 		fatal("request failed: %v", err)
 	}
@@ -141,11 +141,11 @@ func cmdCPU(args []string) {
 }
 
 func cmdHealth(_ []string) {
-	get("/_debug/health")
+	get("/_overcast/debug/health")
 }
 
 func cmdConfig(_ []string) {
-	get("/_debug/config")
+	get("/_overcast/debug/config")
 }
 
 func cmdMetrics(_ []string) {
@@ -154,14 +154,14 @@ func cmdMetrics(_ []string) {
 
 func cmdState(args []string) {
 	if len(args) > 0 {
-		get("/_debug/state/" + args[0])
+		get("/_overcast/debug/state/" + args[0])
 	} else {
-		get("/_debug/state")
+		get("/_overcast/debug/state")
 	}
 }
 
 func cmdReset(args []string) {
-	path := "/_debug/reset"
+	path := "/_overcast/debug/reset"
 	if len(args) > 0 {
 		path += "/" + args[0]
 	}
@@ -181,7 +181,7 @@ func cmdPprof(args []string) {
 		fmt.Fprintln(os.Stderr, "Profiles: goroutine, heap, allocs, block, mutex, threadcreate")
 		os.Exit(1)
 	}
-	get("/_debug/pprof/" + args[0] + "?debug=1")
+	get("/_overcast/debug/pprof/" + args[0] + "?debug=1")
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────

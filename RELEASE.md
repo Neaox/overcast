@@ -372,10 +372,10 @@ For an alpha release:
    docker run --rm -d --name overcast-smoke -p 4576:4566 -p 4577:4567 ghcr.io/neaox/overcast-slim:<version>
    curl -sf http://localhost:4576/_overcast/health
 
-   # It is a *slim* image only if both of these hold. /_mcp is registered in
+   # It is a *slim* image only if both of these hold. /_overcast/mcp is registered in
    # !slim builds only, so anything but 404 means the console binary shipped
    # under the slim tag — which is what #798 was, undetected for two releases.
-   curl -s -o /dev/null -w '%{http_code}\n' http://localhost:4576/_mcp   # 404
+   curl -s -o /dev/null -w '%{http_code}\n' http://localhost:4576/_overcast/mcp   # 404
    curl -s http://localhost:4577/                                        # web UI not included in slim build
 
    docker stop overcast-smoke

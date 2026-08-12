@@ -9,7 +9,7 @@ still intentionally left for later.
 The two servers are:
 
 - the workspace MCP server, started from `cmd/overcast-mcp`
-- the runtime MCP server, exposed by a running Overcast instance at `/_mcp`
+- the runtime MCP server, exposed by a running Overcast instance at `/_overcast/mcp`
 
 They share one protocol core in `internal/mcp`, but they are different
 deployment units with different responsibilities.
@@ -50,7 +50,7 @@ Purpose:
 Launch model:
 
 - Served by the running Overcast process itself.
-- Mounted at `/_mcp` in non-slim builds only.
+- Mounted at `/_overcast/mcp` in non-slim builds only.
 
 Source of truth:
 
@@ -102,7 +102,7 @@ Separate ownership:
 
 - `cmd/overcast-mcp` builds the standalone workspace server.
 - `internal/router/mcp_routes.go` mounts the runtime server into Overcast.
-- The workspace binary must not ship runtime `/_mcp` HTTP handlers.
+- The workspace binary must not ship runtime `/_overcast/mcp` HTTP handlers.
 - The runtime server must remain attached to the running Overcast instance and
   its state store.
 
@@ -125,12 +125,12 @@ Operational boundary:
 
 ### Runtime MCP transport
 
-- Primary transport: Streamable HTTP at `/_mcp`
+- Primary transport: Streamable HTTP at `/_overcast/mcp`
 - Supported methods:
-  - `GET /_mcp` for SSE streams
-  - `POST /_mcp` for JSON-RPC request/response and SSE response mode
-  - `DELETE /_mcp` for session termination
-  - `GET /_mcp/sse` as a legacy compatibility endpoint
+  - `GET /_overcast/mcp` for SSE streams
+  - `POST /_overcast/mcp` for JSON-RPC request/response and SSE response mode
+  - `DELETE /_overcast/mcp` for session termination
+  - `GET /_overcast/mcp/sse` as a legacy compatibility endpoint
 - Available only in non-slim builds
 
 ### Local-only posture

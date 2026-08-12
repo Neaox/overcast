@@ -231,7 +231,7 @@ type DebugMetricsOptions struct {
 	// DebugMetrics.NamespaceRowCounts. For TierCached namespaces this issues
 	// one SQL COUNT(*) per namespace currently known to the store — cheap
 	// enough for an on-demand debug call, but not something to compute
-	// unconditionally on every /_debug/metrics hit, so callers opt in.
+	// unconditionally on every /_overcast/debug/metrics hit, so callers opt in.
 	IncludeNamespaceRowCounts bool
 }
 
@@ -251,7 +251,7 @@ type DebugFlushRecord struct {
 }
 
 // DebugMetrics is a snapshot of storage-layer diagnostics for
-// GET /_debug/metrics (storage-plan.md item 3.6): recent flush history, the
+// GET /_overcast/debug/metrics (storage-plan.md item 3.6): recent flush history, the
 // one-time TierHot seed duration, the pending write-ahead log's on-disk
 // size, and — only when DebugMetricsOptions.IncludeNamespaceRowCounts is
 // set — per-namespace row counts.
@@ -432,7 +432,7 @@ type DebugMetricsReporter interface {
 // unrelated seed durations, would produce a number that doesn't correspond
 // to anything real. So instead of one merged snapshot, this returns one
 // snapshot per distinct underlying store and lets the caller (the
-// /_debug/metrics handler) render them as a list. It also doesn't follow
+// /_overcast/debug/metrics handler) render them as a list. It also doesn't follow
 // NotReadyReporter's direct-implementation-on-NamespacedStore approach,
 // since NotReady's single boolean OR *is* meaningful to compute directly on
 // the wrapper, whereas "the" DebugMetrics of a NamespacedStore isn't a

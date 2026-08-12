@@ -361,7 +361,7 @@ go func() {
 - Any background poller (future event source mapping) must stop on server shutdown.
 
 **How to detect:** `runtime.NumGoroutine()` in tests. The `goleak` linter.
-The `/_debug/health` endpoint will include goroutine count when implemented.
+The `/_overcast/debug/health` endpoint will include goroutine count when implemented.
 
 ### 2. Context not propagated
 

@@ -110,7 +110,7 @@ func TestHybridStore_RetrySQLiteGet_IncrementsReadRetryCount(t *testing.T) {
 
 // TestHybridStore_DebugMetrics_ExposesReadCounters proves the read-retry and
 // read-timeout counters surface through DebugMetrics (and therefore
-// GET /_debug/metrics — see internal/router/debug.go's debugMetrics, which
+// GET /_overcast/debug/metrics — see internal/router/debug.go's debugMetrics, which
 // forwards state.DebugMetrics verbatim).
 func TestHybridStore_DebugMetrics_ExposesReadCounters(t *testing.T) {
 	s, err := NewHybridStore(t.TempDir(), time.Hour)

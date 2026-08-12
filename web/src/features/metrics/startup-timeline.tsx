@@ -191,7 +191,7 @@ const PHASE_DESCRIPTIONS: Record<string, string> = {
   "bus: init":
     "Initialise the internal event bus used for cross-service notifications " +
     "(e.g. S3 → Lambda trigger fan-out).",
-  "MCP: init": "Register the runtime MCP surface (/_mcp) and its tool implementations.",
+  "MCP: init": "Register the runtime MCP surface (/_overcast/mcp) and its tool implementations.",
 }
 
 // ─── Time axis ───────────────────────────────────────────────────────────────

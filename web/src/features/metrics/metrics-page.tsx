@@ -4,7 +4,7 @@
  * Top: a health strip (storage mode, healthy/degraded status, live journal
  * mode, last flush) and a server-computed advisories list (see
  * internal/router/advisories.go) — both sourced from GET /_overcast/health (always
- * available) and GET /_debug/metrics (debug-gated; degrades gracefully when
+ * available) and GET /_overcast/debug/metrics (debug-gated; degrades gracefully when
  * OVERCAST_DEBUG is off — see HealthStrip and AdvisoriesList).
  *
  * Below: the original live Go runtime metrics. Polls /_overcast/metrics every 3

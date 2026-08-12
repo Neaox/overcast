@@ -64,7 +64,7 @@ services:
 | `DEFAULT_REGION`  | `OVERCAST_DEFAULT_REGION`                | Default: `us-east-1`                                              |
 | `GATEWAY_LISTEN`  | `OVERCAST_HOST:OVERCAST_PORT`            | Split into two variables                                          |
 | —                 | `OVERCAST_STATE`                         | Explicit backend override; unset defaults to `auto`, which — like LocalStack's `DATA_DIR` presence — resolves to persistent (`hybrid`) when a volume/data dir is present, `memory` otherwise. **Not in the `overcast-slim` image or the `overcastd` binaries:** they exclude SQLite, so `auto` there is always `memory` and durability needs `OVERCAST_STATE=wal` — see [storage.md § Builds without SQLite](./storage.md#builds-without-sqlite) |
-| —                 | `OVERCAST_DEBUG=true`                    | Enable `/_debug/*` endpoints                                      |
+| —                 | `OVERCAST_DEBUG=true`                    | Enable `/_overcast/debug/*` endpoints                                      |
 | —                 | `OVERCAST_TLS_CERT` / `OVERCAST_TLS_KEY` | HTTPS support                                                     |
 
 ---
@@ -74,12 +74,12 @@ services:
 | LocalStack                       | overcast                  | Notes                          |
 | -------------------------------- | ------------------------- | ------------------------------ |
 | `/_localstack/health`            | `/_overcast/health`                | Always enabled                 |
-| `/_localstack/health` (detailed) | `/_debug/health`          | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/health` (detailed) | `/_overcast/debug/health`          | Requires `OVERCAST_DEBUG=true` |
 | `/_localstack/init`              | `/_overcast/init`         | Always enabled                 |
 | `/_localstack/init/{stage}`      | `/_overcast/init/{stage}` | Always enabled                 |
-| `/_localstack/state/reset`       | `/_debug/reset`           | Requires `OVERCAST_DEBUG=true` |
-| `/_localstack/info`              | `/_debug/config`          | Requires `OVERCAST_DEBUG=true` |
-| `/_localstack/state`             | `/_debug/state`           | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/state/reset`       | `/_overcast/debug/reset`           | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/info`              | `/_overcast/debug/config`          | Requires `OVERCAST_DEBUG=true` |
+| `/_localstack/state`             | `/_overcast/debug/state`           | Requires `OVERCAST_DEBUG=true` |
 
 ---
 
@@ -294,6 +294,6 @@ does not persist across container restarts.
 1. Check `docs/services/<service>.md` — the operation may not yet be emulated.
 2. Run with `OVERCAST_LOG_LEVEL=debug` to see exactly what request came in and
    what response went out.
-3. Use `/_debug/state` to inspect the stored state.
+3. Use `/_overcast/debug/state` to inspect the stored state.
 4. If the operation is listed as ✅ Supported, open an issue with a minimal
    reproduction case.

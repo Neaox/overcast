@@ -14,15 +14,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// registerMCPRoutes mounts the runtime MCP surface at /_mcp for non-slim builds.
+// registerMCPRoutes mounts the runtime MCP surface at /_overcast/mcp for non-slim builds.
 //
 // Transport: Streamable HTTP (MCP 2025-11-25 §6.1).
-//   - POST /_mcp        — JSON-RPC request/response; SSE response mode when client
+//   - POST /_overcast/mcp        — JSON-RPC request/response; SSE response mode when client
 //     sends Accept: text/event-stream.
-//   - GET /_mcp         — SSE stream for server-initiated messages (requires
+//   - GET /_overcast/mcp         — SSE stream for server-initiated messages (requires
 //     Accept: text/event-stream).
-//   - DELETE /_mcp      — explicit session termination.
-//   - GET /_mcp/sse     — legacy SSE compatibility endpoint for older clients.
+//   - DELETE /_overcast/mcp      — explicit session termination.
+//   - GET /_overcast/mcp/sse     — legacy SSE compatibility endpoint for older clients.
 //
 // Session strategy (initial phase): stateless by default.
 // The server issues MCP-Session-Id tokens and tracks them in memory for the
@@ -34,7 +34,7 @@ import (
 // configured bearer token (OVERCAST_MCP_AUTH_TOKEN) on all HTTP endpoints.
 //
 // The slim build tag excludes this file entirely so overcast-slim never
-// exposes /_mcp.
+// exposes /_overcast/mcp.
 func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus *events.Bus, _ *zap.Logger) {
 	provider := mcp.NewRuntimeProvider(cfg, store)
 	provider.AttachEventBus(bus)
@@ -44,11 +44,11 @@ func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus 
 		runtimeMCP.SetBearerAuthToken(cfg.MCPAuthToken)
 	}
 	root := runtimeMCP.RootHandler()
-	strip := http.StripPrefix("/_mcp", root)
-	r.Mount("/_mcp", strip)
+	strip := http.StripPrefix("/_overcast/mcp", root)
+	r.Mount("/_overcast/mcp", strip)
 
 	// Explicitly route the base path without trailing slash so clients can use
-	// /_mcp and /_mcp/ interchangeably.
+	// /_overcast/mcp and /_overcast/mcp/ interchangeably.
 	rootPath := func(w http.ResponseWriter, req *http.Request) {
 		rewritten := req.Clone(req.Context())
 		urlCopy := *req.URL
@@ -57,7 +57,7 @@ func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus 
 		rewritten.URL = &urlCopy
 		root.ServeHTTP(w, rewritten)
 	}
-	r.MethodFunc(http.MethodGet, "/_mcp", rootPath)
-	r.MethodFunc(http.MethodPost, "/_mcp", rootPath)
-	r.MethodFunc(http.MethodDelete, "/_mcp", rootPath)
+	r.MethodFunc(http.MethodGet, "/_overcast/mcp", rootPath)
+	r.MethodFunc(http.MethodPost, "/_overcast/mcp", rootPath)
+	r.MethodFunc(http.MethodDelete, "/_overcast/mcp", rootPath)
 }

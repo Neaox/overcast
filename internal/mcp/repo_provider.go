@@ -154,15 +154,15 @@ func (p *RepoProvider) Tools() []Tool {
 		{Name: "repo_test_targets", Description: "Recommend focused test packages and commands based on changed paths or a service name.", InputSchema: json.RawMessage(`{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"service":{"type":"string"}}}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"unit_packages":{"type":"array","items":{"type":"string"}},"integration_packages":{"type":"array","items":{"type":"string"}},"test_file_map":{"type":"object","additionalProperties":{"type":"array","items":{"type":"string"}}},"recommended_commands":{"type":"array","items":{"type":"string"}}},"required":["unit_packages","integration_packages","test_file_map","recommended_commands"]}`)},
 		{Name: "repo_compat_rerun_subset", Description: "Run a bounded compatibility test subset using an allowlisted suite set for safe debug iteration.", InputSchema: json.RawMessage(`{"type":"object","properties":{"suites":{"type":"array","items":{"type":"string"}},"endpoint":{"type":"string"},"timeout_seconds":{"type":"integer"},"max_output_lines":{"type":"integer"}},"required":["suites"]}`), Annotations: map[string]any{"readOnlyHint": false}, Execution: map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"suites":{"type":"array","items":{"type":"string"}},"endpoint":{"type":"string"},"command":{"type":"array","items":{"type":"string"}},"success":{"type":"boolean"},"exit_code":{"type":"integer"},"duration_ms":{"type":"integer"},"output_preview":{"type":"array","items":{"type":"string"}},"truncated":{"type":"boolean"}},"required":["suites","endpoint","command","success","exit_code","duration_ms","output_preview","truncated"]}`)},
 		{Name: "runtime_list_instances", Description: "List external Overcast runtime instances available for probing (e.g., localstack, compose services). Via Workspace MCP delegation to probe/debug Overcast instances.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoints":{"type":"array","items":{"type":"string"}}}}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"count":{"type":"integer"},"instances":{"type":"array","items":{"type":"object","properties":{"base_url":{"type":"string"},"health_url":{"type":"string"},"mcp_url":{"type":"string"},"role":{"type":"string"},"source":{"type":"string"},"sources":{"type":"array","items":{"type":"string"}},"host":{"type":"string"},"port":{"type":"string"},"endpoint_kind":{"type":"string"},"container_hint":{"type":"boolean"}},"required":["base_url","health_url","mcp_url","role","source","sources","host","port","endpoint_kind","container_hint"]}},"discovery_context":{"type":"object","properties":{"in_container":{"type":"boolean"},"container_signal":{"type":"string"},"compose_files":{"type":"array","items":{"type":"string"}},"compose_published_4566":{"type":"boolean"},"compose_overcast_service":{"type":"boolean"},"docker_compose_probe":{"type":"string"},"docker_compose_detected":{"type":"boolean"},"docker_compose_services":{"type":"array","items":{"type":"string"}},"docker_compose_overcast_running":{"type":"boolean"},"docker_compose_overcast_published_ports":{"type":"array","items":{"type":"integer"}},"docker_compose_error":{"type":"string"}}},"note":{"type":"string"}},"required":["count","instances"]}`)},
-		{Name: "runtime_probe_instance", Description: "Probe an external Overcast instance for /_overcast/health and /_mcp availability. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"timeout_ms":{"type":"integer"},"force_refresh":{"type":"boolean"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"base_url":{"type":"string"},"health_url":{"type":"string"},"mcp_url":{"type":"string"},"reachable":{"type":"boolean"},"health_ok":{"type":"boolean"},"mcp_available":{"type":"boolean"},"summary":{"type":"string"},"health_status":{"type":"integer"},"mcp_protocol_version":{"type":"string"},"tool_count":{"type":"integer"},"tool_sample":{"type":"array","items":{"type":"string"}},"errors":{"type":"array","items":{"type":"string"}},"cache":{"type":"object","properties":{"hit":{"type":"boolean"},"age_ms":{"type":"integer"},"ttl_ms":{"type":"integer"}},"required":["hit"]}},"required":["base_url","health_url","mcp_url","reachable","health_ok","mcp_available","summary"]}`)},
+		{Name: "runtime_probe_instance", Description: "Probe an external Overcast instance for /_overcast/health and /_overcast/mcp availability. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"timeout_ms":{"type":"integer"},"force_refresh":{"type":"boolean"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"base_url":{"type":"string"},"health_url":{"type":"string"},"mcp_url":{"type":"string"},"reachable":{"type":"boolean"},"health_ok":{"type":"boolean"},"mcp_available":{"type":"boolean"},"summary":{"type":"string"},"health_status":{"type":"integer"},"mcp_protocol_version":{"type":"string"},"tool_count":{"type":"integer"},"tool_sample":{"type":"array","items":{"type":"string"}},"errors":{"type":"array","items":{"type":"string"}},"cache":{"type":"object","properties":{"hit":{"type":"boolean"},"age_ms":{"type":"integer"},"ttl_ms":{"type":"integer"}},"required":["hit"]}},"required":["base_url","health_url","mcp_url","reachable","health_ok","mcp_available","summary"]}`)},
 		{Name: "runtime_refresh_probe_cache", Description: "Refresh or clear cached runtime probe results in Workspace MCP. Safe mutating action for live-instance debug loops.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"clear_all":{"type":"boolean"}}}`), Annotations: map[string]any{"readOnlyHint": false}, Execution: map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"cleared":{"type":"integer"},"remaining":{"type":"integer"},"scope":{"type":"string"},"endpoint":{"type":"string"}},"required":["cleared","remaining","scope"]}`)},
 		{Name: "runtime_mcp_call", Description: "Call an MCP method on an external Overcast instance. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"method":{"type":"string"},"params":{},"id":{}},"required":["endpoint","method"]}`), Annotations: map[string]any{"readOnlyHint": false}, Execution: map[string]any{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"response":{}},"required":["endpoint","response"]}`)},
 		{Name: "runtime_list_services", Description: "List enabled services on an external Overcast instance with state metadata. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"services":{"type":"array","items":{"type":"object"}},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
 		{Name: "runtime_get_health", Description: "Fetch /_overcast/health from an external Overcast instance and return the full health JSON. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"response":{},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
-		{Name: "runtime_get_config", Description: "Fetch /_debug/config from an external Overcast instance (requires debug mode on target) and return the config JSON. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"debug_required":{"type":"boolean"},"response":{},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
-		{Name: "runtime_get_service_state", Description: "Fetch /_debug/state or /_debug/state/{namespace} from an external Overcast instance. Returns bounded key/value snapshot. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"namespace":{"type":"string"},"key_pattern":{"type":"string"},"limit":{"type":"integer"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"namespace":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"debug_required":{"type":"boolean"},"count":{"type":"integer"},"truncated":{"type":"boolean"},"limit":{"type":"integer"},"entries":{},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
+		{Name: "runtime_get_config", Description: "Fetch /_overcast/debug/config from an external Overcast instance (requires debug mode on target) and return the config JSON. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"debug_required":{"type":"boolean"},"response":{},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
+		{Name: "runtime_get_service_state", Description: "Fetch /_overcast/debug/state or /_overcast/debug/state/{namespace} from an external Overcast instance. Returns bounded key/value snapshot. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"namespace":{"type":"string"},"key_pattern":{"type":"string"},"limit":{"type":"integer"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"namespace":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"debug_required":{"type":"boolean"},"count":{"type":"integer"},"truncated":{"type":"boolean"},"limit":{"type":"integer"},"entries":{},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
 		{Name: "runtime_get_recent_events", Description: "Return bounded recent runtime events from an external Overcast instance. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"source":{"type":"string"},"type":{"type":"string"},"limit":{"type":"integer"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"limit":{"type":"integer"},"count":{"type":"integer"},"truncated":{"type":"boolean"},"events":{"type":"array","items":{"type":"object"}},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
-		{Name: "runtime_probe_kv_store", Description: "Probe bounded key/value state from /_debug/state or /_debug/state/{namespace} with filtering and cursor paging. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"namespace":{"type":"string"},"key_pattern":{"type":"string"},"limit":{"type":"integer"},"cursor":{"type":"string"},"include_values":{"type":"boolean"},"preview_bytes":{"type":"integer"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"namespace":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"debug_required":{"type":"boolean"},"limit":{"type":"integer"},"cursor":{"type":"string"},"next_cursor":{"type":"string"},"count":{"type":"integer"},"total_matched":{"type":"integer"},"truncated":{"type":"boolean"},"entries":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"value_preview":{"type":"string"},"value":{}},"required":["key"]}},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
+		{Name: "runtime_probe_kv_store", Description: "Probe bounded key/value state from /_overcast/debug/state or /_overcast/debug/state/{namespace} with filtering and cursor paging. Via Workspace MCP delegation.", InputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"namespace":{"type":"string"},"key_pattern":{"type":"string"},"limit":{"type":"integer"},"cursor":{"type":"string"},"include_values":{"type":"boolean"},"preview_bytes":{"type":"integer"},"timeout_ms":{"type":"integer"}},"required":["endpoint"]}`), Annotations: map[string]any{"readOnlyHint": true}, Execution: map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true}, OutputSchema: json.RawMessage(`{"type":"object","properties":{"endpoint":{"type":"string"},"namespace":{"type":"string"},"reachable":{"type":"boolean"},"status_code":{"type":"integer"},"ok":{"type":"boolean"},"debug_required":{"type":"boolean"},"limit":{"type":"integer"},"cursor":{"type":"string"},"next_cursor":{"type":"string"},"count":{"type":"integer"},"total_matched":{"type":"integer"},"truncated":{"type":"boolean"},"entries":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"value_preview":{"type":"string"},"value":{}},"required":["key"]}},"error":{"type":"string"}},"required":["endpoint","reachable"]}`)},
 		{Name: "repo_list_files", Description: "List files under a workspace-relative path with bounded results. Useful for token-efficient context gathering.", InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"max_results":{"type":"integer"},"include_hidden":{"type":"boolean"}}}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"base":{"type":"string"},"count":{"type":"integer"},"files":{"type":"array","items":{"type":"string"}},"max_results":{"type":"integer"}},"required":["base","count","files","max_results"]}`)},
 		{Name: "repo_read_file_snippet", Description: "Read a specific line range from a workspace file.", InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path"]}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"},"line_count":{"type":"integer"},"content":{"type":"string"}},"required":["path","start_line","end_line","line_count","content"]}`)},
 		{Name: "repo_service_capabilities", Description: "Return per-operation capability details (status, category, notes) for a service. Requires dev build.", InputSchema: json.RawMessage(`{"type":"object","properties":{"service":{"type":"string"}},"required":["service"]}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"service":{"type":"string"},"count":{"type":"integer"},"operations":{"type":"array","items":{"type":"object","properties":{"operation":{"type":"string"},"category":{"type":"string"},"status":{"type":"string"},"notes":{"type":"string"}},"required":["operation","category","status"]}}},"required":["service","count","operations"]}`)},
@@ -1234,7 +1234,7 @@ func (p *RepoProvider) toolRuntimeListInstances(_ context.Context, params json.R
 		out = append(out, map[string]any{
 			"base_url":       base,
 			"health_url":     buildEndpointPath(base, "/_overcast/health"),
-			"mcp_url":        buildEndpointPath(base, "/_mcp"),
+			"mcp_url":        buildEndpointPath(base, "/_overcast/mcp"),
 			"role":           "probe_target",
 			"source":         candidate.source,
 			"sources":        []string{candidate.source},
@@ -1725,7 +1725,7 @@ func (p *RepoProvider) toolRuntimeProbeInstance(ctx context.Context, params json
 	out := map[string]any{
 		"base_url":      base,
 		"health_url":    buildEndpointPath(base, "/_overcast/health"),
-		"mcp_url":       buildEndpointPath(base, "/_mcp"),
+		"mcp_url":       buildEndpointPath(base, "/_overcast/mcp"),
 		"reachable":     false,
 		"health_ok":     false,
 		"mcp_available": false,
@@ -1753,7 +1753,7 @@ func (p *RepoProvider) toolRuntimeProbeInstance(ctx context.Context, params json
 			"clientInfo":      map[string]any{"name": "overcast-workspace-mcp", "version": "1.0.0"},
 		},
 	}
-	initResp, initErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_mcp"), initBody)
+	initResp, initErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), initBody)
 	if initErr != nil {
 		errors = append(errors, "mcp initialize failed: "+initErr.Error())
 	} else {
@@ -1767,9 +1767,9 @@ func (p *RepoProvider) toolRuntimeProbeInstance(ctx context.Context, params json
 		// Per spec, the client must send notifications/initialized after initialize.
 		// Without this the server stays in initDone=true, ready=false state, which
 		// blocks all subsequent callers with a lifecycle error.
-		_, _ = doJSONRPC(ctx, client, buildEndpointPath(base, "/_mcp"), map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+		_, _ = doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
 		toolsBody := map[string]any{"jsonrpc": "2.0", "id": "probe-tools", "method": "tools/list"}
-		toolsResp, toolsErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_mcp"), toolsBody)
+		toolsResp, toolsErr := doJSONRPC(ctx, client, buildEndpointPath(base, "/_overcast/mcp"), toolsBody)
 		if toolsErr != nil {
 			errors = append(errors, "mcp tools/list failed: "+toolsErr.Error())
 		} else {
@@ -1968,7 +1968,7 @@ func (p *RepoProvider) toolRuntimeMCPCall(ctx context.Context, params json.RawMe
 		body["params"] = parsed
 	}
 	mcpClient := &http.Client{Timeout: 5 * time.Second}
-	mcpEndpointURL := buildEndpointPath(base, "/_mcp")
+	mcpEndpointURL := buildEndpointPath(base, "/_overcast/mcp")
 	// Do the MCP lifecycle handshake before operation requests. Skip for lifecycle
 	// and notification methods — callers may be managing those explicitly.
 	method := strings.TrimSpace(args.Method)
@@ -2007,7 +2007,7 @@ func (p *RepoProvider) toolRuntimeGetHealth(ctx context.Context, params json.Raw
 		timeout = time.Duration(args.TimeoutMS) * time.Millisecond
 	}
 	client := &http.Client{Timeout: timeout}
-	endpointURL := buildEndpointPath(base, "/_mcp")
+	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
 	doMCPEnsureReady(ctx, client, endpointURL)
 	body := map[string]any{
 		"jsonrpc": "2.0",
@@ -2072,7 +2072,7 @@ func (p *RepoProvider) toolRuntimeListServices(ctx context.Context, params json.
 		timeout = time.Duration(args.TimeoutMS) * time.Millisecond
 	}
 	client := &http.Client{Timeout: timeout}
-	endpointURL := buildEndpointPath(base, "/_mcp")
+	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
 	doMCPEnsureReady(ctx, client, endpointURL)
 	body := map[string]any{
 		"jsonrpc": "2.0",
@@ -2140,7 +2140,7 @@ func (p *RepoProvider) toolRuntimeGetConfig(ctx context.Context, params json.Raw
 		timeout = time.Duration(args.TimeoutMS) * time.Millisecond
 	}
 	client := &http.Client{Timeout: timeout}
-	endpointURL := buildEndpointPath(base, "/_mcp")
+	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
 	doMCPEnsureReady(ctx, client, endpointURL)
 	body := map[string]any{
 		"jsonrpc": "2.0",
@@ -2214,7 +2214,7 @@ func (p *RepoProvider) toolRuntimeGetServiceState(ctx context.Context, params js
 		timeout = time.Duration(args.TimeoutMS) * time.Millisecond
 	}
 	client := &http.Client{Timeout: timeout}
-	endpointURL := buildEndpointPath(base, "/_mcp")
+	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
 	doMCPEnsureReady(ctx, client, endpointURL)
 	callArgs := map[string]any{}
 	if ns := strings.TrimSpace(args.Namespace); ns != "" {
@@ -2317,7 +2317,7 @@ func (p *RepoProvider) toolRuntimeGetRecentEvents(ctx context.Context, params js
 	}
 
 	client := &http.Client{Timeout: timeout}
-	endpointURL := buildEndpointPath(base, "/_mcp")
+	endpointURL := buildEndpointPath(base, "/_overcast/mcp")
 	doMCPEnsureReady(ctx, client, endpointURL)
 	body := map[string]any{
 		"jsonrpc": "2.0",
@@ -2423,7 +2423,7 @@ func (p *RepoProvider) toolRuntimeProbeKVStore(ctx context.Context, params json.
 		},
 	}
 	client := &http.Client{Timeout: timeout}
-	kvEndpointURL := buildEndpointPath(base, "/_mcp")
+	kvEndpointURL := buildEndpointPath(base, "/_overcast/mcp")
 	doMCPEnsureReady(ctx, client, kvEndpointURL)
 	resp, err := doJSONRPC(ctx, client, kvEndpointURL, body)
 	if err != nil {
@@ -2735,11 +2735,11 @@ func classifyEndpoint(path string) string {
 	switch {
 	case strings.HasPrefix(path, "/_overcast/health"):
 		return "health"
-	case strings.HasPrefix(path, "/_debug"):
+	case strings.HasPrefix(path, "/_overcast/debug"):
 		return "debug"
 	case strings.HasPrefix(path, "/_overcast/topology"):
 		return "topology"
-	case strings.HasPrefix(path, "/_mcp") || strings.HasPrefix(path, "/mcp"):
+	case strings.HasPrefix(path, "/_overcast/mcp") || strings.HasPrefix(path, "/mcp"):
 		return "mcp"
 	default:
 		return "internal"

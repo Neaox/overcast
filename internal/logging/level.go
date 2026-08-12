@@ -33,7 +33,7 @@ import (
 //     detail).
 //   - TRACE is time-driven or machinery-scoped: a line fires because time
 //     passed or infrastructure cycled — health/readiness probe request logs,
-//     /_debug/* polling request logs, per-tick flush/checkpoint/
+//     /_overcast/debug/* polling request logs, per-tick flush/checkpoint/
 //     maintenance/sweep cycle logs, buffer/pool internals — regardless of
 //     what any client did.
 //

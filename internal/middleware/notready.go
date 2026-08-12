@@ -64,11 +64,12 @@ func NotReady(store state.Store) func(http.Handler) http.Handler {
 // leading underscore, a convention no real AWS service path uses.
 //
 // It stays the broad "/_" test rather than router.InternalPrefix until
-// docs/plans/non-canonical-url-namespace.md finishes: phase 2 moved the router
-// roots, but /_debug, /_cognito, /_lambda and the rest are still outside the
-// namespace, and exempting only /_overcast/ would start gating them mid-
-// migration. The remaining paths are listed in that plan's unmigratedRoutes
-// ratchet; when it empties, this becomes the prefix test.
+// docs/plans/non-canonical-url-namespace.md finishes. Phases 2 and 3 moved the
+// router roots, the debug namespace and MCP, but /_cognito, /_lambda, /_ecs,
+// /_rds and the data-plane prefixes are still outside the namespace, and
+// exempting only /_overcast/ would start gating them mid-migration. What is
+// left is listed in that plan's unmigratedRoutes ratchet; when it empties,
+// this becomes the prefix test.
 //
 // (router.InternalPrefix is not referenced here in any case — router imports
 // middleware, so the dependency only runs the other way.)

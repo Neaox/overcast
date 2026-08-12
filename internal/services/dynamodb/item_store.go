@@ -85,7 +85,7 @@ type itemBackend interface {
 	// the sweeper to fetch only expired items instead of scanning every item.
 	scanExpiredTTL(ctx context.Context, tableName, ttlAttr string, cutoffUnix int64) ([]Item, error)
 
-	// debugScan returns raw item rows for /_debug/state/dynamodb:items.
+	// debugScan returns raw item rows for /_overcast/debug/state/dynamodb:items.
 	debugScan(ctx context.Context) ([]debugItemRecord, error)
 
 	// debugDeleteAll removes all item rows for debug reset operations.

@@ -521,7 +521,7 @@ Everything above is observable. Take the request ID the script printed and ask
 for its trace:
 
 ```bash
-curl -s http://localhost:4566/_debug/trace/<request-id> | jq
+curl -s http://localhost:4566/_overcast/debug/trace/<request-id> | jq
 ```
 
 You get the request and response as they actually were — headers, bodies — plus
@@ -958,7 +958,7 @@ four things:
 - **Failures are real failures.** A missing queue produces SQS's own error,
   not a nil the caller forgot to check. Silent no-ops are the failure mode this
   pattern exists to prevent.
-- **The hop is traceable.** Each one is recorded, so `/_debug/trace/{id}`
+- **The hop is traceable.** Each one is recorded, so `/_overcast/debug/trace/{id}`
   renders a CloudFormation deploy as the nested call chain it actually is. A
   direct Go call would not appear at all.
 - **The caller needs no knowledge of the destination.** Dispatching to an
@@ -1148,7 +1148,7 @@ goes instead.
 
 The main additives:
 
-- **Request tracing** (`/_debug/trace/{requestId}`). Run with
+- **Request tracing** (`/_overcast/debug/trace/{requestId}`). Run with
   `OVERCAST_DEBUG=true` and every request is captured with headers, bodies,
   and — most usefully — every
   *internal service-to-service hop* it triggered. A CDK deploy fans out into
@@ -1180,10 +1180,10 @@ The main additives:
 - **Split-horizon DNS.** Public wildcard domains resolving to `127.0.0.1`, so
   one URL works from both the host and inside containers — a problem AWS
   structurally never has.
-- **An MCP server** at `/_mcp`, exposing instance state and a bounded set of
+- **An MCP server** at `/_overcast/mcp`, exposing instance state and a bounded set of
   actions to AI agents.
 - **Honesty surfaces**: per-service tiers on `/_overcast/health`, the
-  `x-emulator-unsupported` header, and `/_debug/config` with secrets redacted.
+  `x-emulator-unsupported` header, and `/_overcast/debug/config` with secrets redacted.
 
 ---
 

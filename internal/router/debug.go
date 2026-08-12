@@ -31,27 +31,27 @@ type debugEC2Provider interface {
 // DebugStateProvider is implemented by services with data outside the
 // generic kv store (a dedicated SQL table, e.g. DynamoDB items or CloudWatch
 // Logs events) that still needs to appear as a virtual namespace in
-// /_debug/state and be clearable via /_debug/reset. See storage-plan.md
+// /_overcast/debug/state and be clearable via /_overcast/debug/reset. See storage-plan.md
 // item 2.3 — the raw state debugger only enumerates the generic kv store by
-// default, so a dedicated table is invisible (and immune to /_debug/reset)
+// default, so a dedicated table is invisible (and immune to /_overcast/debug/reset)
 // without one of these.
 //
 // The router holds a slice of these (one per opted-in service) instead of
 // hardcoding a single provider — see debugHandlers.
 type DebugStateProvider interface {
-	// DebugNamespace is the virtual namespace name shown in /_debug/state's
+	// DebugNamespace is the virtual namespace name shown in /_overcast/debug/state's
 	// top-level listing (e.g. "dynamodb:items", "logs:events").
 	DebugNamespace() string
 	// DebugStateKeys returns every key in this virtual namespace (used by
-	// the top-level /_debug/state listing's key list).
+	// the top-level /_overcast/debug/state listing's key list).
 	DebugStateKeys(ctx context.Context) ([]string, error)
-	// DebugStateValues returns key->raw-value for /_debug/state/<namespace>.
+	// DebugStateValues returns key->raw-value for /_overcast/debug/state/<namespace>.
 	DebugStateValues(ctx context.Context) (map[string]string, error)
 	// DebugResetState clears all data in this provider's dedicated storage.
 	DebugResetState(ctx context.Context) error
 }
 
-// debugHandlers registers the /_debug/* endpoint namespace.
+// debugHandlers registers the /_overcast/debug/* endpoint namespace.
 // These are only mounted when cfg.Debug == true.
 //
 // Equivalent to LocalStack's /_localstack/* endpoints — useful for:
@@ -184,7 +184,7 @@ const (
 	debugStateTruncatedSuffix   = "...(truncated)"
 )
 
-// debugState (the top-level /_debug/state namespace listing) intentionally
+// debugState (the top-level /_overcast/debug/state namespace listing) intentionally
 // stays unpaginated (storage-plan.md item 3.13). It returns namespace -> key
 // list only, never values — a bare key list for even a very large namespace
 // (sqs:messages, logs:events) is orders of magnitude smaller than the
@@ -230,7 +230,7 @@ func debugState(store state.Store, providers []DebugStateProvider) http.HandlerF
 }
 
 // debugStateNamespacePage is the paginated response shape for
-// GET /_debug/state/{namespace} (storage-plan.md item 3.13, backend half).
+// GET /_overcast/debug/state/{namespace} (storage-plan.md item 3.13, backend half).
 //
 // Contract for consumers (e.g. the web debug UI):
 //   - Query params: ?after=<key> (exclusive cursor, omit/empty for the first
@@ -521,7 +521,7 @@ func debugProvidersForServicePrefix(providers []DebugStateProvider, prefix strin
 	return matched
 }
 
-// debugMetricsResponse is the JSON body for GET /_debug/metrics
+// debugMetricsResponse is the JSON body for GET /_overcast/debug/metrics
 // (storage-plan.md item 3.6). Stores is one entry per distinct underlying
 // store that implements state.DebugMetricsReporter — see
 // state.DebugMetricsSnapshot's doc comment for why a *state.NamespacedStore

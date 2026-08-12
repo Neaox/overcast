@@ -45,33 +45,7 @@ var nonManifestRoutes = map[string]string{
 var unmigratedRoutes = map[string]string{
 	// Phase 2 is done: the router-owned roots now live under InternalPrefix.
 
-	// Phase 3 — build-tag-gated namespaces, isolated from service code.
-	// /_debug/* is registered only when Debug is on, which is why this gate
-	// builds its router with it enabled.
-	"/_debug/config":             "phase 3 -> /_overcast/debug/config",
-	"/_debug/ec2/vpcs":           "phase 3 -> /_overcast/debug/ec2/vpcs",
-	"/_debug/health":             "phase 3 -> /_overcast/debug/health",
-	"/_debug/metrics":            "phase 3 -> /_overcast/debug/metrics",
-	"/_debug/pprof":              "phase 3 -> /_overcast/debug/pprof",
-	"/_debug/pprof/allocs":       "phase 3 -> /_overcast/debug/pprof/allocs",
-	"/_debug/pprof/block":        "phase 3 -> /_overcast/debug/pprof/block",
-	"/_debug/pprof/cmdline":      "phase 3 -> /_overcast/debug/pprof/cmdline",
-	"/_debug/pprof/goroutine":    "phase 3 -> /_overcast/debug/pprof/goroutine",
-	"/_debug/pprof/heap":         "phase 3 -> /_overcast/debug/pprof/heap",
-	"/_debug/pprof/mutex":        "phase 3 -> /_overcast/debug/pprof/mutex",
-	"/_debug/pprof/profile":      "phase 3 -> /_overcast/debug/pprof/profile",
-	"/_debug/pprof/symbol":       "phase 3 -> /_overcast/debug/pprof/symbol",
-	"/_debug/pprof/threadcreate": "phase 3 -> /_overcast/debug/pprof/threadcreate",
-	"/_debug/pprof/trace":        "phase 3 -> /_overcast/debug/pprof/trace",
-	"/_debug/reset":              "phase 3 -> /_overcast/debug/reset",
-	"/_debug/reset/{service}":    "phase 3 -> /_overcast/debug/reset/{service}",
-	"/_debug/state":              "phase 3 -> /_overcast/debug/state",
-	"/_debug/state/{namespace}":  "phase 3 -> /_overcast/debug/state/{namespace}",
-	"/_debug/trace/{requestId}":  "phase 3 -> /_overcast/debug/trace/{requestId}",
-	"/_debug/traces":             "phase 3 -> /_overcast/debug/traces",
-	"/_debug/traces/count":       "phase 3 -> /_overcast/debug/traces/count",
-	"/_debug/traces/search":      "phase 3 -> /_overcast/debug/traces/search",
-	"/_mcp/*":                    "phase 3 -> /_overcast/mcp; excluded by the slim build",
+	// Phase 3 is done: /_overcast/debug/* and /_overcast/mcp are namespaced.
 
 	// Phase 4 — service admin and console-only endpoints. The web UI is the
 	// only consumer, so these move without touching a URL any SDK holds.
@@ -147,14 +121,17 @@ var unmigratedRoutes = map[string]string{
 	"/2020-05-31/distribution/{id}/monitoring-subscription": "delete: redundant alias of the modeled plural path, which is also registered",
 }
 
-// buildTagGatedRoutes are ratchet entries that some build configurations do
-// not register, so their absence is not a debt someone paid without saying so.
-// CI runs the suite under -tags slim,dev as well as -tags dev, and
-// mcp_routes_slim.go registers nothing — the slim binary deliberately exposes
-// no MCP surface. Mirrors buildTagGatedRouteFamilies in
-// internal/middleware/detectservice_routes_test.go, which exists for the same
-// reason.
-var buildTagGatedRoutes = map[string]bool{"/_mcp/*": true}
+// buildTagGatedRoutes are ledger entries that some build configurations do not
+// register, so their absence is not a debt someone paid without saying so.
+//
+// Empty since phase 3: its only entry was /_mcp/*, which mcp_routes_slim.go
+// does not register, and that route is now inside the namespace and out of the
+// ratchet. The mechanism stays because the next build-tag-gated route to enter
+// either ledger needs it, and rediscovering why a slim run reported a phantom
+// stale entry is the expensive way to learn it. Mirrors
+// buildTagGatedRouteFamilies in
+// internal/middleware/detectservice_routes_test.go.
+var buildTagGatedRoutes = map[string]bool{}
 
 // TestNoRouteIsRegisteredOutsideTheNamespace is the route-to-model direction of
 // the manifest gates, and the enforceable form of the rule in
@@ -171,7 +148,7 @@ var buildTagGatedRoutes = map[string]bool{"/_mcp/*": true}
 // name-only check cannot see.
 func TestNoRouteIsRegisteredOutsideTheNamespace(t *testing.T) {
 	// Given: every route the router registers, and every URI the models bind.
-	// Debug is on because the /_debug/* namespace is registered behind it, and
+	// Debug is on because the /_overcast/debug/* namespace is registered behind it, and
 	// a namespace gate that cannot see a whole namespace is not a gate.
 	routes := inventoryWith(t, func(cfg *config.Config) { cfg.Debug = true })
 	modeled := newModeledURIIndex()

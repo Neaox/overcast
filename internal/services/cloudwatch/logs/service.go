@@ -77,13 +77,13 @@ const debugEventsScanLimit = 500
 // DebugNamespace returns the virtual raw-state namespace name for CloudWatch
 // Logs events, implementing router.DebugStateProvider. Log events live in
 // the dedicated logs_events SQL table (or the in-memory equivalent), not the
-// generic kv store, so without this they'd be invisible to /_debug/state and
-// exempt from /_debug/reset — mirrors DynamoDB's "dynamodb:items" virtual
+// generic kv store, so without this they'd be invisible to /_overcast/debug/state and
+// exempt from /_overcast/debug/reset — mirrors DynamoDB's "dynamodb:items" virtual
 // namespace (internal/services/dynamodb/service.go).
 func (s *Service) DebugNamespace() string { return "logs:events" }
 
 // DebugStateKeys returns up to debugEventsScanLimit virtual keys for
-// /_debug/state's top-level listing.
+// /_overcast/debug/state's top-level listing.
 func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {
 	records, _, err := s.handler.store.backend.debugScan(ctx, debugEventsScanLimit)
 	if err != nil {
@@ -118,7 +118,7 @@ func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, erro
 	return values, nil
 }
 
-// DebugResetState deletes every persisted log event, for /_debug/reset.
+// DebugResetState deletes every persisted log event, for /_overcast/debug/reset.
 func (s *Service) DebugResetState(ctx context.Context) error {
 	return s.handler.store.backend.debugDeleteAll(ctx)
 }

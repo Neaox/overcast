@@ -33,7 +33,7 @@ func TestTrace(t *testing.T) {
 			t.Fatal("expected request ID header")
 		}
 
-		traceResp, err := http.Get(srv.URL + "/_debug/trace/" + reqID)
+		traceResp, err := http.Get(srv.URL + "/_overcast/debug/trace/" + reqID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,7 +65,7 @@ func TestTrace(t *testing.T) {
 	})
 
 	t.Run("notFound", func(t *testing.T) {
-		resp, err := http.Get(srv.URL + "/_debug/trace/nonexistent")
+		resp, err := http.Get(srv.URL + "/_overcast/debug/trace/nonexistent")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,7 +89,7 @@ func TestTrace(t *testing.T) {
 		}
 		resp.Body.Close()
 
-		listResp, err := http.Get(srv.URL + "/_debug/traces")
+		listResp, err := http.Get(srv.URL + "/_overcast/debug/traces")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,7 +115,7 @@ func TestTrace(t *testing.T) {
 		}
 		resp.Body.Close()
 
-		countResp, err := http.Get(srv.URL + "/_debug/traces/count")
+		countResp, err := http.Get(srv.URL + "/_overcast/debug/traces/count")
 		if err != nil {
 			t.Fatal(err)
 		}

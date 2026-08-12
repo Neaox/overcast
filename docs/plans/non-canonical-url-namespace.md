@@ -1,6 +1,6 @@
 # One namespace for every non-canonical URL: `/_overcast/`
 
-> Status: **in progress** — phases 0, 0b, 1 and 2 done.
+> Status: **in progress** — phases 0, 0b, 1, 2 and 3 done. Phases 4-6 remain.
 > The rule is enforced from phase 1 onward by
 > `TestNoRouteIsRegisteredOutsideTheNamespace`, against the `unmigratedRoutes`
 > ratchet that phases 2–6 empty. Open questions all decided (§4.3, §8).
@@ -52,8 +52,8 @@ against every `/_`-literal in the tree.
 | ~~`/_events`~~ | ✅ phase 2 | `/_overcast/events` |
 | ~~`/_events/request/{requestId}`~~ | ✅ phase 2 | `/_overcast/events/request/{requestId}` |
 | ~~`/_internal/domains/watch`~~ | ✅ phase 2 | `/_overcast/domains/watch` |
-| `/_debug` + `/_debug/*` (only when `cfg.Debug`) | [router.go:275](../../internal/router/router.go) | `/_overcast/debug/*` |
-| `/_mcp` + `/_mcp/*` (excluded by `slim`) | [mcp_routes.go:47](../../internal/router/mcp_routes.go) | `/_overcast/mcp` |
+| ~~`/_debug` + `/_debug/*`~~ (only when `cfg.Debug`) | ✅ phase 3 | `/_overcast/debug/*` |
+| ~~`/_mcp` + `/_mcp/*`~~ (excluded by `slim`) | ✅ phase 3 | `/_overcast/mcp` |
 | `GET /_overcast/init`, `/_overcast/init/{stage}` | [router.go:204](../../internal/router/router.go) | unchanged |
 | `GET /_overcast/ca.pem` | [trust/remote.go:35](../../internal/hostbridge/trust/remote.go) | unchanged |
 | `/_overcast/inbox/*` | [router.go:577](../../internal/router/router.go) | `/_overcast/ses/inbox/*` — see §4.2 |
@@ -412,9 +412,14 @@ Alongside it, `unmigratedRoutes` is the **ratchet**: every path that breaks the
 rule today, keyed to the phase that retires it. 68 entries at the time of
 writing. It only shrinks — the gate fails on an entry that is no longer
 registered, so a phase cannot move a route and quietly leave the ledger behind.
-`buildTagGatedRoutes` exempts the entries some build configurations do not
-register (`/_mcp/*` under `slim`), mirroring `buildTagGatedRouteFamilies` in
-`internal/middleware/detectservice_routes_test.go`.
+`buildTagGatedRoutes` exempts entries some build configurations do not
+register, mirroring `buildTagGatedRouteFamilies` in
+`internal/middleware/detectservice_routes_test.go`. **Both are empty as of
+phase 3**: each held only the MCP route, and moving it to `/_overcast/mcp` put
+it inside a family that every configuration registers. A slim build now loses
+some routes within `/_overcast` rather than a whole family, which is one more
+thing the namespace makes true by construction. The maps stay for the next
+route that is genuinely build-gated.
 
 Both ledgers are checked for staleness, and the recorded reason is quoted when
 one goes stale. An entry naming a path nothing registers is worse than
@@ -556,7 +561,7 @@ One PR per phase; Go, web, docs and tests in the same commit.
 | **0b** | ✅ **Done.** Pin the internal-vs-client-traffic classification in both allowlists, data-plane paths included (§5). No routes move. | The one regression in this plan that fails silently. Cheaper to write down before the move than to diagnose after it. |
 | **1** | ✅ **Done.** Gate 9 (§5) landed with every current violation in the `unmigratedRoutes` ratchet, plus `router.InternalPrefix`. No routes moved. | The rule is enforced from day one; every later phase shrinks the ratchet instead of racing it. |
 | **2** | ✅ **Done.** Router roots: `/_health`, `/_metrics`, `/_topology`, `/_/info`, `/_events`, `/_internal/domains/watch`, plus `overcast-mcp`'s own `/_health`. Predicates, web, 4 healthchecks, `cmd/compat/launch.go`. | Highest-traffic, lowest-risk: no minted URLs. |
-| **3** | `/_debug/*` → `/_overcast/debug/*`; `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
+| **3** | ✅ **Done.** `/_debug/*` → `/_overcast/debug/*` (23 routes, pprof included); `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
 | **4** | Service admin: `/_lambda/*`, `/_ecs/*`, `/_rds/*`, and `/_overcast/inbox` → `/_overcast/ses/inbox`. | Console-only consumers. |
 | **5** | Service data plane: `/_apigateway`, `/_appsync`, `/_cloudfront`, `/_elb`, `/_lambda/url-invoke`, `/_cognito`. Rewrite sites, URL-minting code, `docs/networking.md`. | The only phase that changes URLs Overcast hands to callers. |
 | **6** | Cognito discovery to the AWS shape (§4.3), with the top-level label-route overlap test. Delete `internalService`, collapse `detectService`, empty the ratchet down to the five allowlist groups, update `manifest-enforcement.md`. | The payoff. |

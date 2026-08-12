@@ -1,6 +1,6 @@
 # Trace search — finding a request by what it says, not just what it is
 
-> **Status:** all three phases complete and verified in a browser against a built image. Phase 1 — `Recorder.MatchesSearch`, benchmarked. Phase 2 — `Buffer.DeepSearch`, `GET /_debug/traces/search`, the bff proxy. Phase 3 — `useDeepSearch`, match rows with excerpts, the `hop` deep link, and the corrected empty state.
+> **Status:** all three phases complete and verified in a browser against a built image. Phase 1 — `Recorder.MatchesSearch`, benchmarked. Phase 2 — `Buffer.DeepSearch`, `GET /_overcast/debug/traces/search`, the bff proxy. Phase 3 — `useDeepSearch`, match rows with excerpts, the `hop` deep link, and the corrected empty state.
 >
 > One thing this document did not predict, recorded because it cost a debugging round: **TanStack Pacer takes no reactive state subscription unless you give `useDebouncedValue` a selector.** Without one the settled value updates inside the debouncer and never re-renders the component, so the search runs once — for whatever the query happened to be at the last unrelated render — and never again. It looks like a caching bug and is not one.
 > **Scope:** `internal/trace/`, `internal/router/debug.go`, `internal/bff/bff.go`, `web/src/routes/debug/traces/`.
@@ -51,7 +51,7 @@ Implementation notes worth keeping:
 
 ### 2.1 Not a job. A paginated read.
 
-The tempting design is a search job: `POST /_debug/traces/search` returns an ID, the client polls it. Rejected — it puts state on the server that has to be garbage-collected, and it races with the ring evicting the very traces the job is walking.
+The tempting design is a search job: `POST /_overcast/debug/traces/search` returns an ID, the client polls it. Rejected — it puts state on the server that has to be garbage-collected, and it races with the ring evicting the very traces the job is walking.
 
 Instead the deep scan is **another page-shaped read**, like the list already is. One request scans backwards from a cursor until it exhausts a work budget, and returns what it found plus the next cursor. The client keeps asking until the cursor is empty.
 

@@ -33,7 +33,7 @@ import (
 )
 
 // RuntimeProvider exposes live-instance tools and resources to MCP clients
-// connecting directly to a running Overcast instance at /_mcp.
+// connecting directly to a running Overcast instance at /_overcast/mcp.
 //
 // The runtime MCP is currently local-only (protected by Origin validation in
 // the shared server) and does not require authentication. This posture is

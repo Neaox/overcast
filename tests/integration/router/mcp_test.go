@@ -3,7 +3,7 @@
 // The runtime MCP endpoint only exists in non-slim builds:
 // internal/router/mcp_routes.go carries //go:build !slim, and its slim twin
 // makes registerMCPRoutes a deliberate no-op. Under -tags slim there is no
-// /_mcp route, so these requests correctly fall through to the S3 catch-all
+// /_overcast/mcp route, so these requests correctly fall through to the S3 catch-all
 // and return a 501 NotImplemented. Guarding the file rather than the assertion
 // mirrors internal/router/mcp_routes_test.go, which guards its subject the
 // same way.
@@ -33,7 +33,7 @@ func TestRuntimeMCPInitialize_returnsToolsCapability(t *testing.T) {
 		},
 	})
 
-	resp, err := http.Post(srv.URL+"/_mcp/", "application/json", bytes.NewReader(payload))
+	resp, err := http.Post(srv.URL+"/_overcast/mcp/", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}

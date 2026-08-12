@@ -78,7 +78,7 @@ func TestDebugState_includesAppSyncAndAPIGatewayNamespaces(t *testing.T) {
 	}
 
 	// When: the raw state summary is requested.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/state", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state", nil)
 	rec := httptest.NewRecorder()
 	debugState(store, nil).ServeHTTP(rec, req)
 
@@ -102,7 +102,7 @@ func TestDebugState_includesDynamoDBItemsVirtualNamespace(t *testing.T) {
 	providers := []DebugStateProvider{dynamo}
 
 	// When: the raw state summary is requested.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/state", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state", nil)
 	rec := httptest.NewRecorder()
 	debugState(store, providers).ServeHTTP(rec, req)
 
@@ -116,7 +116,7 @@ func TestDebugState_includesDynamoDBItemsVirtualNamespace(t *testing.T) {
 	}
 
 	// And: fetching that namespace returns raw item JSON values.
-	req = httptest.NewRequest(http.MethodGet, "/_debug/state/dynamodb:items", nil)
+	req = httptest.NewRequest(http.MethodGet, "/_overcast/debug/state/dynamodb:items", nil)
 	rec = httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("namespace", "dynamodb:items")
@@ -140,7 +140,7 @@ func TestDebugState_includesSQSMessagesNamespace(t *testing.T) {
 	}
 
 	// When: the raw state summary is requested.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/state", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state", nil)
 	rec := httptest.NewRecorder()
 	debugState(store, nil).ServeHTTP(rec, req)
 
@@ -164,7 +164,7 @@ func TestDebugStateNamespace_truncatesLargeValues(t *testing.T) {
 	}
 
 	// When: the raw state namespace is requested.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/state/lambda:layers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state/lambda:layers", nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("namespace", "lambda:layers")
@@ -205,7 +205,7 @@ func TestDebugStateNamespace_truncatesLargePlainTextValues(t *testing.T) {
 	}
 
 	// When: the raw state namespace is requested.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/state/debug:plain", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state/debug:plain", nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("namespace", "debug:plain")
@@ -240,7 +240,7 @@ func TestDebugStateNamespaceKey_returnsRawJSONValue(t *testing.T) {
 	}
 
 	// When: the selected value is requested directly.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/state/lambda:layers?key="+key, nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state/lambda:layers?key="+key, nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("namespace", "lambda:layers")
@@ -268,7 +268,7 @@ func TestDebugStateNamespaceKey_returnsRawTextValue(t *testing.T) {
 	}
 
 	// When: the selected value is requested directly.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/state/debug:plain?key=record", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state/debug:plain?key=record", nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("namespace", "debug:plain")
@@ -320,7 +320,7 @@ func TestDebugResetService_dynamodbClearsVirtualItems(t *testing.T) {
 	dynamo := &resetCountingDynamoDebugProvider{}
 
 	// When: the DynamoDB debug reset endpoint runs.
-	req := httptest.NewRequest(http.MethodPost, "/_debug/reset/dynamodb", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset/dynamodb", nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("service", "dynamodb")
@@ -357,7 +357,7 @@ func TestDebugReset_clearsStateAcrossNamespacedStoreOverrides(t *testing.T) {
 	}
 
 	// When the global debug reset endpoint is invoked with the wrapped store...
-	req := httptest.NewRequest(http.MethodPost, "/_debug/reset", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset", nil)
 	rec := httptest.NewRecorder()
 	debugReset(ns, nil).ServeHTTP(rec, req)
 
@@ -403,7 +403,7 @@ func TestResetStore_recursesIntoNamespacedStoreUnderlyingStores(t *testing.T) {
 // equivalent of TestDebugState_includesDynamoDBItemsVirtualNamespace —
 // storage-plan.md 2.3 requires log events (now stored in a dedicated
 // logs_events SQL table, not the generic kv store) to stay visible to
-// /_debug/state via the same DebugStateProvider mechanism DynamoDB uses.
+// /_overcast/debug/state via the same DebugStateProvider mechanism DynamoDB uses.
 func TestDebugState_includesLogsEventsVirtualNamespace(t *testing.T) {
 	// Given: CloudWatch Logs has event data in its dedicated event backend.
 	store := state.NewMemoryStore()
@@ -411,7 +411,7 @@ func TestDebugState_includesLogsEventsVirtualNamespace(t *testing.T) {
 	providers := []DebugStateProvider{logsProvider}
 
 	// When: the raw state summary is requested.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/state", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state", nil)
 	rec := httptest.NewRecorder()
 	debugState(store, providers).ServeHTTP(rec, req)
 
@@ -425,7 +425,7 @@ func TestDebugState_includesLogsEventsVirtualNamespace(t *testing.T) {
 	}
 
 	// And: fetching that namespace returns raw event JSON values.
-	req = httptest.NewRequest(http.MethodGet, "/_debug/state/logs:events", nil)
+	req = httptest.NewRequest(http.MethodGet, "/_overcast/debug/state/logs:events", nil)
 	rec = httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("namespace", "logs:events")
@@ -445,7 +445,7 @@ func TestDebugState_includesLogsEventsVirtualNamespace(t *testing.T) {
 
 // TestDebugResetService_logsClearsVirtualEvents mirrors
 // TestDebugResetService_dynamodbClearsVirtualItems for the "logs" service
-// prefix, proving /_debug/reset/logs clears the dedicated event backend too.
+// prefix, proving /_overcast/debug/reset/logs clears the dedicated event backend too.
 func TestDebugResetService_logsClearsVirtualEvents(t *testing.T) {
 	// Given: CloudWatch Logs has group metadata in state.Store and event data
 	// in its virtual backend.
@@ -457,7 +457,7 @@ func TestDebugResetService_logsClearsVirtualEvents(t *testing.T) {
 	logsProvider := &resetCountingLogsDebugProvider{}
 
 	// When: the logs debug reset endpoint runs.
-	req := httptest.NewRequest(http.MethodPost, "/_debug/reset/logs", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset/logs", nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("service", "logs")
@@ -477,7 +477,7 @@ func TestDebugResetService_logsClearsVirtualEvents(t *testing.T) {
 	}
 }
 
-// TestDebugReset_clearsMultipleProviders proves /_debug/reset clears every
+// TestDebugReset_clearsMultipleProviders proves /_overcast/debug/reset clears every
 // registered DebugStateProvider, not just one hardcoded service — the
 // generalization this test file's other multi-provider tests underwrite.
 func TestDebugReset_clearsMultipleProviders(t *testing.T) {
@@ -485,7 +485,7 @@ func TestDebugReset_clearsMultipleProviders(t *testing.T) {
 	dynamo := &resetCountingDynamoDebugProvider{}
 	logsProvider := &resetCountingLogsDebugProvider{}
 
-	req := httptest.NewRequest(http.MethodPost, "/_debug/reset", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset", nil)
 	rec := httptest.NewRecorder()
 	debugReset(store, []DebugStateProvider{dynamo, logsProvider}).ServeHTTP(rec, req)
 
@@ -509,7 +509,7 @@ func TestDebugResetService_dynamodbUnaffectedByOtherProviders(t *testing.T) {
 	dynamo := &resetCountingDynamoDebugProvider{}
 	logsProvider := &resetCountingLogsDebugProvider{}
 
-	req := httptest.NewRequest(http.MethodPost, "/_debug/reset/dynamodb", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/debug/reset/dynamodb", nil)
 	rec := httptest.NewRecorder()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("service", "dynamodb")
@@ -527,7 +527,7 @@ func TestDebugResetService_dynamodbUnaffectedByOtherProviders(t *testing.T) {
 	}
 }
 
-// ---- 3.13: /_debug/state/{namespace} pagination -----------------------------
+// ---- 3.13: /_overcast/debug/state/{namespace} pagination -----------------------------
 
 func TestDebugStateNamespace_paginatesStoreBackedNamespace(t *testing.T) {
 	// Given: a namespace with three keys.
@@ -661,12 +661,12 @@ func TestDebugStateNamespace_paginatesProviderBackedNamespace(t *testing.T) {
 	}
 }
 
-// fetchDebugStateNamespacePage issues a GET /_debug/state/{namespace} request
+// fetchDebugStateNamespacePage issues a GET /_overcast/debug/state/{namespace} request
 // with the given after/limit query parameters and decodes the paginated
 // response.
 func fetchDebugStateNamespacePage(t *testing.T, store state.Store, providers []DebugStateProvider, namespace, after, limit string) debugStateNamespacePage {
 	t.Helper()
-	url := "/_debug/state/" + namespace + "?"
+	url := "/_overcast/debug/state/" + namespace + "?"
 	if after != "" {
 		url += "after=" + after + "&"
 	}
@@ -689,7 +689,7 @@ func fetchDebugStateNamespacePage(t *testing.T, store state.Store, providers []D
 	return page
 }
 
-// ---- 3.6: /_debug/metrics ----------------------------------------------------
+// ---- 3.6: /_overcast/debug/metrics ----------------------------------------------------
 
 // TestDebugMetrics_reportsCountersForMemoryStore proves MemoryStore — which
 // has no async write path, background seed, or persistent backend — still
@@ -710,7 +710,7 @@ func TestDebugMetrics_reportsCountersForMemoryStore(t *testing.T) {
 	cfg := &config.Config{State: config.StateBackendMemory}
 
 	// When: the metrics endpoint is requested.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/metrics", nil)
 	rec := httptest.NewRecorder()
 	debugMetrics(cfg, store).ServeHTTP(rec, req)
 
@@ -748,7 +748,7 @@ func TestDebugMetrics_advisoriesReflectMemoryModeAndAreNeverNull(t *testing.T) {
 	cfg := &config.Config{State: config.StateBackendMemory}
 
 	// When: the metrics endpoint is requested.
-	req := httptest.NewRequest(http.MethodGet, "/_debug/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/metrics", nil)
 	rec := httptest.NewRecorder()
 	debugMetrics(cfg, store).ServeHTTP(rec, req)
 

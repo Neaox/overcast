@@ -72,14 +72,14 @@ func TestRuntimeMCPRoutes_RemoteExposureRequiresBearerToken(t *testing.T) {
 		},
 	})
 
-	unauthReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_mcp", strings.NewReader(string(initBody)))
+	unauthReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(string(initBody)))
 	if err != nil {
 		t.Fatalf("new unauth request: %v", err)
 	}
 	unauthReq.Header.Set("Content-Type", "application/json")
 	unauthResp, err := http.DefaultClient.Do(unauthReq)
 	if err != nil {
-		t.Fatalf("POST /_mcp unauthenticated: %v", err)
+		t.Fatalf("POST /_overcast/mcp unauthenticated: %v", err)
 	}
 	defer unauthResp.Body.Close()
 	if unauthResp.StatusCode != http.StatusUnauthorized {
@@ -89,7 +89,7 @@ func TestRuntimeMCPRoutes_RemoteExposureRequiresBearerToken(t *testing.T) {
 		t.Fatalf("WWW-Authenticate = %q, want bearer challenge", got)
 	}
 
-	authReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_mcp", strings.NewReader(string(initBody)))
+	authReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(string(initBody)))
 	if err != nil {
 		t.Fatalf("new auth request: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestRuntimeMCPRoutes_RemoteExposureRequiresBearerToken(t *testing.T) {
 	authReq.Header.Set("Authorization", "Bearer test-token")
 	authResp, err := http.DefaultClient.Do(authReq)
 	if err != nil {
-		t.Fatalf("POST /_mcp authenticated: %v", err)
+		t.Fatalf("POST /_overcast/mcp authenticated: %v", err)
 	}
 	defer authResp.Body.Close()
 	if authResp.StatusCode != http.StatusOK {
@@ -118,14 +118,14 @@ func TestRuntimeMCPRoutes_InitializeAndSessionLifecycle(t *testing.T) {
 			"clientInfo":      map[string]any{"name": "router-test", "version": "1.0"},
 		},
 	})
-	initReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_mcp", strings.NewReader(string(initBody)))
+	initReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(string(initBody)))
 	if err != nil {
 		t.Fatalf("new initialize request: %v", err)
 	}
 	initReq.Header.Set("Content-Type", "application/json")
 	initResp, err := http.DefaultClient.Do(initReq)
 	if err != nil {
-		t.Fatalf("POST /_mcp initialize: %v", err)
+		t.Fatalf("POST /_overcast/mcp initialize: %v", err)
 	}
 	defer initResp.Body.Close()
 	if initResp.StatusCode != http.StatusOK {
@@ -136,21 +136,21 @@ func TestRuntimeMCPRoutes_InitializeAndSessionLifecycle(t *testing.T) {
 		t.Fatal("initialize response missing MCP-Session-Id")
 	}
 
-	delReq, err := http.NewRequest(http.MethodDelete, srv.URL+"/_mcp", nil)
+	delReq, err := http.NewRequest(http.MethodDelete, srv.URL+"/_overcast/mcp", nil)
 	if err != nil {
 		t.Fatalf("new delete request: %v", err)
 	}
 	delReq.Header.Set("MCP-Session-Id", sid)
 	delResp, err := http.DefaultClient.Do(delReq)
 	if err != nil {
-		t.Fatalf("DELETE /_mcp: %v", err)
+		t.Fatalf("DELETE /_overcast/mcp: %v", err)
 	}
 	defer delResp.Body.Close()
 	if delResp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete status = %d, want 204", delResp.StatusCode)
 	}
 
-	getReq, err := http.NewRequest(http.MethodGet, srv.URL+"/_mcp", nil)
+	getReq, err := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/mcp", nil)
 	if err != nil {
 		t.Fatalf("new streamable GET request: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestRuntimeMCPRoutes_InitializeAndSessionLifecycle(t *testing.T) {
 	getReq.Header.Set("MCP-Session-Id", sid)
 	getResp, err := http.DefaultClient.Do(getReq)
 	if err != nil {
-		t.Fatalf("GET /_mcp with deleted session: %v", err)
+		t.Fatalf("GET /_overcast/mcp with deleted session: %v", err)
 	}
 	defer getResp.Body.Close()
 	if getResp.StatusCode != http.StatusBadRequest {
@@ -169,13 +169,13 @@ func TestRuntimeMCPRoutes_InitializeAndSessionLifecycle(t *testing.T) {
 func TestRuntimeMCPRoutes_StreamableGetRequiresAcceptHeader(t *testing.T) {
 	srv := newMCPRouterTestServer(t)
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/_mcp", nil)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/mcp", nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("GET /_mcp: %v", err)
+		t.Fatalf("GET /_overcast/mcp: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotAcceptable {
@@ -190,8 +190,8 @@ func TestRuntimeMCPRoutes_StreamableGetAndLegacySSE_Connect(t *testing.T) {
 		name string
 		path string
 	}{
-		{name: "streamable-get", path: "/_mcp"},
-		{name: "legacy-sse", path: "/_mcp/sse"},
+		{name: "streamable-get", path: "/_overcast/mcp"},
+		{name: "legacy-sse", path: "/_overcast/mcp/sse"},
 	}
 
 	for _, tt := range tests {
@@ -227,7 +227,7 @@ func TestRuntimeMCPRoutes_StreamableGetAndLegacySSE_Connect(t *testing.T) {
 func TestRuntimeMCPRoutes_RejectForbiddenOrigin(t *testing.T) {
 	srv := newMCPRouterTestServer(t)
 
-	postReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	postReq, err := http.NewRequest(http.MethodPost, srv.URL+"/_overcast/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
 	if err != nil {
 		t.Fatalf("new POST request: %v", err)
 	}
@@ -235,14 +235,14 @@ func TestRuntimeMCPRoutes_RejectForbiddenOrigin(t *testing.T) {
 	postReq.Header.Set("Origin", "https://evil.example")
 	postResp, err := http.DefaultClient.Do(postReq)
 	if err != nil {
-		t.Fatalf("POST /_mcp with forbidden origin: %v", err)
+		t.Fatalf("POST /_overcast/mcp with forbidden origin: %v", err)
 	}
 	defer postResp.Body.Close()
 	if postResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("POST status = %d, want 403", postResp.StatusCode)
 	}
 
-	getReq, err := http.NewRequest(http.MethodGet, srv.URL+"/_mcp", nil)
+	getReq, err := http.NewRequest(http.MethodGet, srv.URL+"/_overcast/mcp", nil)
 	if err != nil {
 		t.Fatalf("new GET request: %v", err)
 	}
@@ -250,21 +250,21 @@ func TestRuntimeMCPRoutes_RejectForbiddenOrigin(t *testing.T) {
 	getReq.Header.Set("Origin", "https://evil.example")
 	getResp, err := http.DefaultClient.Do(getReq)
 	if err != nil {
-		t.Fatalf("GET /_mcp with forbidden origin: %v", err)
+		t.Fatalf("GET /_overcast/mcp with forbidden origin: %v", err)
 	}
 	defer getResp.Body.Close()
 	if getResp.StatusCode != http.StatusForbidden {
 		t.Fatalf("GET status = %d, want 403", getResp.StatusCode)
 	}
 
-	delReq, err := http.NewRequest(http.MethodDelete, srv.URL+"/_mcp", nil)
+	delReq, err := http.NewRequest(http.MethodDelete, srv.URL+"/_overcast/mcp", nil)
 	if err != nil {
 		t.Fatalf("new DELETE request: %v", err)
 	}
 	delReq.Header.Set("Origin", "https://evil.example")
 	delResp, err := http.DefaultClient.Do(delReq)
 	if err != nil {
-		t.Fatalf("DELETE /_mcp with forbidden origin: %v", err)
+		t.Fatalf("DELETE /_overcast/mcp with forbidden origin: %v", err)
 	}
 	defer delResp.Body.Close()
 	if delResp.StatusCode != http.StatusForbidden {

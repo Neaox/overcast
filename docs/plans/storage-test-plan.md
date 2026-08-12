@@ -125,8 +125,8 @@ UI, Docker packaging.
 4. **Web UI (Raw State Debugger, Wave 3):** against a namespace with >1 000 keys — initial page
    loads 500, scrolling fetches more, tree view collapses/expands under virtualization, key
    search shows the "Load more" affordance instead of auto-paging, deep-link to a key on an
-   unloaded page resolves via the single-key fallback, `/_debug/reset` clears virtual namespaces
-   (logs/DynamoDB) too. Check `/_debug/metrics?includeRowCounts=true` shows flush history and
+   unloaded page resolves via the single-key fallback, `/_overcast/debug/reset` clears virtual namespaces
+   (logs/DynamoDB) too. Check `/_overcast/debug/metrics?includeRowCounts=true` shows flush history and
    sane counts while the burst from step 2 is running.
 5. **Compat suite:** run the `rust-sdk-compat` image job if the release includes it.
 
@@ -142,7 +142,7 @@ UI, Docker packaging.
    (kill the listener) runs the same cleanup tail (CloudWatch Logs `Stop` flush included).
 3. **Long-run soak (optional):** leave the daemon under light CDK/SDK traffic for a few hours;
    confirm RSS and `overcast.db` size plateau (retention sweeps + auto_vacuum), no goroutine
-   growth in `/_debug/pprof/goroutine`.
+   growth in `/_overcast/debug/pprof/goroutine`.
 
 ---
 

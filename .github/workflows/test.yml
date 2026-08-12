@@ -836,7 +836,7 @@ jobs:
       # console one at runtime. The Dockerfile already asserts the same thing
       # statically against the compiled binary; this checks the assembled
       # image actually behaves that way, which is the form the bug was
-      # reported in (#798): /_mcp answered 406 rather than 404, and the UI
+      # reported in (#798): /_overcast/mcp answered 406 rather than 404, and the UI
       # port served the SPA, for several releases of a supposedly slim image.
       - name: Smoke test (slim)
         if: env.RUN_BUILD == 'true' && matrix.image == 'slim'
@@ -851,9 +851,9 @@ jobs:
 
           # 404 because internal/router/mcp_routes.go is !slim only. Any other
           # status means the route is registered, i.e. this is not a slim build.
-          mcp=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4566/_mcp)
+          mcp=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4566/_overcast/mcp)
           if [[ "$mcp" != "404" ]]; then
-            echo "slim image answers $mcp on /_mcp, expected 404 — /_mcp is registered, so this is not a slim build" >&2
+            echo "slim image answers $mcp on /_overcast/mcp, expected 404 — /_overcast/mcp is registered, so this is not a slim build" >&2
             exit 1
           fi
 
@@ -882,9 +882,9 @@ jobs:
           # Registered, so anything but 404. A bare GET without an SSE Accept
           # header is refused with 406 by the MCP transport — that refusal is
           # itself the evidence the route exists.
-          mcp=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4566/_mcp)
+          mcp=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4566/_overcast/mcp)
           if [[ "$mcp" == "404" ]]; then
-            echo "console image answers 404 on /_mcp — the runtime MCP surface is missing" >&2
+            echo "console image answers 404 on /_overcast/mcp — the runtime MCP surface is missing" >&2
             exit 1
           fi
 

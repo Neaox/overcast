@@ -12,7 +12,7 @@ package cloudformation_test
 // operation for exactly this purpose. When the caller sends one it is theirs;
 // when they send none — the CDK CLI sends none — Overcast fills it with the
 // request ID of the call that started the operation, which is the ID its trace
-// is stored under and the one /_debug/trace/{requestId} is keyed by.
+// is stored under and the one /_overcast/debug/trace/{requestId} is keyed by.
 
 import (
 	"encoding/xml"

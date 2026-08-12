@@ -230,7 +230,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	// ---- Debug dependencies ---------------------------------------------------
 	// ec2Svc is constructed before the rest of the services because the debug
-	// namespace exposes EC2 internals (/_debug/ec2/vpcs). Its constructor has no
+	// namespace exposes EC2 internals (/_overcast/debug/ec2/vpcs). Its constructor has no
 	// startup side-effects — see docs/dev/performance.md § Startup budget.
 	ec2Svc := ec2.New(cfg, store, logger, clk)
 
@@ -283,14 +283,14 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// logsSvc is constructed here (ahead of its usual place in the service
 	// registry order below) because the debug namespace below needs it as a
 	// DebugStateProvider (its events live in a dedicated logs_events SQL
-	// table — see storage-plan.md 2.3 — invisible to /_debug/state without
+	// table — see storage-plan.md 2.3 — invisible to /_overcast/debug/state without
 	// this). Its constructor has no startup side-effects, same as ec2Svc
 	// above — see docs/dev/performance.md § Startup budget.
 	logsSvc := logs.New(cfg, store, logger, clk)
 	prof.mark("  new: logs")
 	if cfg.Debug {
 		debugProviders := []DebugStateProvider{ddbSvc, logsSvc, sqsSvc}
-		r.Route("/_debug", debugHandlers(cfg, store, ec2Svc, debugProviders, traceBuf))
+		r.Route("/_overcast/debug", debugHandlers(cfg, store, ec2Svc, debugProviders, traceBuf))
 	}
 	lambdaSvc := lambda.New(cfg, store, logger, clk)
 	prof.mark("  new: lambda")

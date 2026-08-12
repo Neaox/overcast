@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@/test/render"
 import { server } from "@/test/server"
 import { DebugPage } from "./debug-page"
 
-/** Wraps a flat key->value map in the paginated /_debug/state/{ns} response shape. */
+/** Wraps a flat key->value map in the paginated /_overcast/debug/state/{ns} response shape. */
 const namespacePage = (values: Record<string, string>, nextKey?: string) =>
   HttpResponse.json({ values, ...(nextKey ? { nextKey } : {}) })
 
@@ -286,7 +286,7 @@ describe("DebugPage", () => {
     render(<DebugPage initialNamespace="sqs:queues" initialKey="missing-key" />)
 
     // Then: the value is fetched via the single-key endpoint and rendered,
-    // without needing "missing-key" to appear in any /_debug/state/{ns} page.
+    // without needing "missing-key" to appear in any /_overcast/debug/state/{ns} page.
     expect(await screen.findByText('"fallback"')).toBeInTheDocument()
   })
 

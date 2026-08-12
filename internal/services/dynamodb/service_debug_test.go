@@ -13,7 +13,7 @@ import (
 // storage encoding lands, itemBackend.debugScan's HashKey/SortKey fields
 // come straight from the storage key — which is now encodeOrderableNumber's
 // fixed-width, mostly-non-decimal-looking form for a Number-typed key
-// attribute, not the original "50". /_debug/state/dynamodb:items must keep
+// attribute, not the original "50". /_overcast/debug/state/dynamodb:items must keep
 // showing the original decimal text; debugScanRawDisplay (service.go) is
 // what re-derives it from the item's own attributes via the table schema.
 func TestDebugScanRawDisplay_NumberKey_ShowsRawDecimalNotEncodedForm(t *testing.T) {
@@ -74,7 +74,7 @@ func TestDebugScanRawDisplay_NumberKey_ShowsRawDecimalNotEncodedForm(t *testing.
 	// Item rows are keyed by the region-qualified table key
 	// (dynamoStore.tableKey — issue #673), so the debug key names the region
 	// too. That is deliberate rather than incidental: two same-named tables in
-	// different regions now hold different items, and /_debug/state has to be
+	// different regions now hold different items, and /_overcast/debug/state has to be
 	// able to tell them apart.
 	const wantKey = "us-east-1/scores/g1/50"
 	if _, ok := values[wantKey]; !ok {

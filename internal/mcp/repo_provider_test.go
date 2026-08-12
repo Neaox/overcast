@@ -606,7 +606,7 @@ func TestRepoEndpointMapGroupsInternalRoutes(t *testing.T) {
 func sample(r interface{Get(string, any); Route(string, any)}) {
 	r.Get("/_overcast/health", nil)
 	r.Get("/_overcast/topology", nil)
-	r.Route("/_debug", nil)
+	r.Route("/_overcast/debug", nil)
 }
 `)
 	out, err := provider.toolEndpointMap(context.Background(), nil)
@@ -621,7 +621,7 @@ func sample(r interface{Get(string, any); Route(string, any)}) {
 	if len(endpoints["topology"]) != 1 || endpoints["topology"][0] != "/_overcast/topology" {
 		t.Fatalf("unexpected topology endpoints: %#v", endpoints["topology"])
 	}
-	if len(endpoints["debug"]) != 1 || endpoints["debug"][0] != "/_debug" {
+	if len(endpoints["debug"]) != 1 || endpoints["debug"][0] != "/_overcast/debug" {
 		t.Fatalf("unexpected debug endpoints: %#v", endpoints["debug"])
 	}
 }
@@ -988,7 +988,7 @@ func TestRuntimeProbeInstanceReportsHealthAndMCP(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/_overcast/health":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"ok":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/_mcp":
+		case r.Method == http.MethodPost && r.URL.Path == "/_overcast/mcp":
 			var req map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			method, _ := req["method"].(string)
@@ -1076,7 +1076,7 @@ func TestRuntimeProbeInstanceUsesCacheAndForceRefresh(t *testing.T) {
 			callCount++
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"ok":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/_mcp":
+		case r.Method == http.MethodPost && r.URL.Path == "/_overcast/mcp":
 			var req map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			method, _ := req["method"].(string)
@@ -1147,7 +1147,7 @@ func TestRuntimeRefreshProbeCacheClearsEndpointAndAll(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/_overcast/health":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"ok":true}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/_mcp":
+		case r.Method == http.MethodPost && r.URL.Path == "/_overcast/mcp":
 			var req map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			method, _ := req["method"].(string)
@@ -1203,7 +1203,7 @@ func TestRuntimeMCPCallProxiesRequest(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1237,7 +1237,7 @@ func TestRuntimeListServicesDelegatesViaMCP(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1278,7 +1278,7 @@ func TestRuntimeGetHealthReturnsHealthJSON(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1339,7 +1339,7 @@ func TestRuntimeGetConfigReturnsConfigJSON(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1378,7 +1378,7 @@ func TestRuntimeGetConfigIndicatesDebugRequired(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1407,7 +1407,7 @@ func TestRuntimeGetServiceStateReturnsBoundedEntries(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1423,7 +1423,7 @@ func TestRuntimeGetServiceStateReturnsBoundedEntries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Without namespace — uses /_debug/state.
+	// Without namespace — uses /_overcast/debug/state.
 	params, _ := json.Marshal(map[string]any{"endpoint": srv.URL, "limit": 10})
 	out, err := provider.toolRuntimeGetServiceState(context.Background(), params)
 	if err != nil {
@@ -1449,7 +1449,7 @@ func TestRuntimeGetServiceStateAppliesKeyPattern(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1480,7 +1480,7 @@ func TestRuntimeGetRecentEventsDelegatesViaMCP(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1524,7 +1524,7 @@ func TestRuntimeGetRecentEventsReturnsWrapperErrorOnMCPFailure(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1559,7 +1559,7 @@ func TestRuntimeProbeKVStoreSupportsCursorAndLimit(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1611,7 +1611,7 @@ func TestRuntimeProbeKVStoreIncludesValueWhenRequested(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -1664,7 +1664,7 @@ func TestRuntimeProbeKVStoreReturnsWrapperErrorOnMCPFailure(t *testing.T) {
 	provider := NewRepoProvider(root)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/_mcp" {
+		if r.Method != http.MethodPost || r.URL.Path != "/_overcast/mcp" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
