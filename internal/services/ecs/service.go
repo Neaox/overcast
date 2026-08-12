@@ -59,6 +59,11 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.gc.StartRemoveLoop(context.Background())
 	s.handler.gc.Sweep(serviceName) // clean up orphaned containers from previous runs
 	s.handler.dockerReady.Store(true)
+
+	// Volumes second, and in the background: task-scoped volumes whose task did
+	// not survive the last run are only removable once the container sweep
+	// above has released them, and neither should hold up wiring Docker.
+	go s.handler.sweepOrphanedTaskVolumes(context.Background())
 }
 
 // SetImageResolver wires the registry resolver used when a container image

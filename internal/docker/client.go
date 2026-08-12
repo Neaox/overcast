@@ -169,9 +169,14 @@ type HostConfig struct {
 
 // Mount is one entry of HostConfig.Mounts (Engine API mounts specification).
 type Mount struct {
-	// Type is "volume", "bind", or "tmpfs"; Overcast uses "volume".
-	Type     string `json:"Type"`
-	Source   string `json:"Source"` // volume name (for Type "volume")
+	// Type is "volume", "bind", or "tmpfs"; Overcast uses "volume" and "bind".
+	Type string `json:"Type"`
+	// Source is the volume name for Type "volume", or an absolute path on the
+	// daemon's host for Type "bind". A bind whose source does not exist is
+	// rejected by the daemon rather than created — which is what makes a
+	// mistyped host path a visible failure instead of an empty directory
+	// silently shadowing the container's own.
+	Source   string `json:"Source"`
 	Target   string `json:"Target"` // absolute path inside the container
 	ReadOnly bool   `json:"ReadOnly,omitempty"`
 	// VolumeOptions apply when Type is "volume".
@@ -1172,24 +1177,78 @@ func (v *VolumeSummary) Service() string { return v.Labels[LabelService] }
 func (v *VolumeSummary) ResourceID() string { return v.Labels[LabelResourceID] }
 
 type createVolumeRequest struct {
-	Name   string            `json:"Name"`
-	Labels map[string]string `json:"Labels,omitempty"`
+	Name       string            `json:"Name"`
+	Driver     string            `json:"Driver,omitempty"`
+	DriverOpts map[string]string `json:"DriverOpts,omitempty"`
+	Labels     map[string]string `json:"Labels,omitempty"`
+}
+
+// VolumeOptions are the non-name properties of a volume. The zero value asks
+// for the daemon's defaults, which is what every caller wanted before ECS
+// needed to honour a task definition's dockerVolumeConfiguration.
+type VolumeOptions struct {
+	// Driver selects the volume plugin. Empty means Docker's "local".
+	Driver string
+	// DriverOpts are passed to the driver verbatim. The local driver reads
+	// type/o/device here, which is how a named volume can be backed by a bind.
+	DriverOpts map[string]string
+	Labels     map[string]string
 }
 
 // CreateVolume creates a named Docker volume. Creating an existing name is a
 // no-op on the daemon side (Docker returns the existing volume), which makes
 // this safe to call from reconciliation paths.
 func (d *Client) CreateVolume(ctx context.Context, name string, labels map[string]string) error {
+	return d.CreateVolumeWithOptions(ctx, name, VolumeOptions{Labels: labels})
+}
+
+// CreateVolumeWithOptions is CreateVolume with a driver and driver options.
+//
+// Note the daemon's idempotency has a limit: creating an existing name returns
+// the existing volume *as it is*, so options are applied on first creation
+// only. A caller that needs different options must remove the volume first.
+func (d *Client) CreateVolumeWithOptions(ctx context.Context, name string, opts VolumeOptions) error {
 	if err := d.acquireOp(ctx); err != nil {
 		return fmt.Errorf("create volume %s: %w", name, err)
 	}
 	defer d.releaseOp()
 
-	req := createVolumeRequest{Name: name, Labels: labels}
+	req := createVolumeRequest{
+		Name:       name,
+		Driver:     opts.Driver,
+		DriverOpts: opts.DriverOpts,
+		Labels:     opts.Labels,
+	}
 	if err := d.doJSON(ctx, http.MethodPost, "/v1.45/volumes/create", req, nil); err != nil {
 		return fmt.Errorf("create volume %s: %w", name, err)
 	}
 	return nil
+}
+
+// VolumeExists reports whether a volume of this name exists on the daemon.
+//
+// ListVolumes cannot answer this: it filters on the managed label, so a volume
+// a user created themselves is invisible to it — and that volume is precisely
+// what a dockerVolumeConfiguration with autoprovision=false expects to find.
+func (d *Client) VolumeExists(ctx context.Context, name string) (bool, error) {
+	if err := d.acquireOp(ctx); err != nil {
+		return false, fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+	defer d.releaseOp()
+
+	resp, err := d.doRequest(ctx, http.MethodGet, "/v1.45/volumes/"+url.PathEscape(name), nil)
+	if err != nil {
+		return false, fmt.Errorf("inspect volume %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("inspect volume %s: status %d", name, resp.StatusCode)
+	}
 }
 
 // RemoveVolume removes a named Docker volume. A missing volume is not an

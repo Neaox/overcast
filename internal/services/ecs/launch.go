@@ -219,6 +219,12 @@ func stoppedReasonFor(err error) string {
 		return "CannotPullContainerError: " + msg
 	case strings.Contains(msg, "create container"), strings.Contains(msg, "start container"):
 		return "CannotStartContainerError: " + msg
+	// Volumes are checked before "network" because a volume failure's message
+	// can mention a driver named after a network filesystem (an NFS-backed
+	// dockerVolumeConfiguration is the common one), and AWS reports both
+	// classes under the same code anyway.
+	case strings.Contains(msg, "volume"):
+		return "ResourceInitializationError: " + msg
 	case strings.Contains(msg, "network"):
 		return "ResourceInitializationError: " + msg
 	default:

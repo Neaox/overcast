@@ -63,13 +63,63 @@ type registerTaskDefinitionRequest struct {
 }
 
 // validateTaskVolumes rejects container mount points that reference a volume
-// the task definition does not declare, matching AWS's ClientException.
-func validateTaskVolumes(volumes []TaskVolume, containers []ContainerDefinition) *protocol.AWSError {
+// the task definition does not declare, matching AWS's ClientException, and
+// enforces the volume-type rules AWS enforces at registration.
+//
+// fargate must be the task definition's own Fargate compatibility: two of the
+// rules below exist only for Fargate, and getting them wrong in either
+// direction is worse than not having them. Accepting what AWS rejects lets a
+// task definition pass here and fail its first real deploy — the failure an
+// emulator exists to prevent — so these are not gated by any flag.
+func validateTaskVolumes(volumes []TaskVolume, containers []ContainerDefinition, fargate bool) *protocol.AWSError {
 	names := make(map[string]struct{}, len(volumes))
 	for _, v := range volumes {
 		names[v.Name] = struct{}{}
 	}
 	for _, v := range volumes {
+		if v.configCount() > 1 {
+			return &protocol.AWSError{
+				Code:       "ClientException",
+				Message:    fmt.Sprintf("Volume '%s': only one volume configuration may be specified.", v.Name),
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		if fargate && v.Host != nil && v.Host.SourcePath != "" {
+			// Verbatim from AWS. Fargate has no container instance to bind a
+			// path from, and this is the message a real RegisterTaskDefinition
+			// returns; callers switch on it, so it is reproduced exactly.
+			return &protocol.AWSError{
+				Code:       "ClientException",
+				Message:    "host.sourcePath should not be set for volumes in Fargate",
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		if fargate && v.DockerVolumeConfiguration != nil {
+			return &protocol.AWSError{
+				Code:       "ClientException",
+				Message:    fmt.Sprintf("Volume '%s': dockerVolumeConfiguration is not supported for tasks using the Fargate launch type.", v.Name),
+				HTTPStatus: http.StatusBadRequest,
+			}
+		}
+		if dvc := v.DockerVolumeConfiguration; dvc != nil {
+			// AWS: a task-scoped volume is created and destroyed with the task,
+			// so provisioning it ahead of time is meaningless rather than
+			// merely redundant.
+			if strings.EqualFold(dvc.Scope, "task") && dvc.Autoprovision {
+				return &protocol.AWSError{
+					Code:       "ClientException",
+					Message:    fmt.Sprintf("Volume '%s': autoprovision must be omitted or false when scope is 'task'.", v.Name),
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+			if dvc.Scope != "" && !strings.EqualFold(dvc.Scope, "task") && !strings.EqualFold(dvc.Scope, "shared") {
+				return &protocol.AWSError{
+					Code:       "ClientException",
+					Message:    fmt.Sprintf("Volume '%s': scope must be 'task' or 'shared'.", v.Name),
+					HTTPStatus: http.StatusBadRequest,
+				}
+			}
+		}
 		cfg := v.EFSVolumeConfiguration
 		if cfg == nil || cfg.AuthorizationConfig == nil || cfg.AuthorizationConfig.AccessPointId == "" {
 			continue
@@ -622,7 +672,7 @@ func (h *Handler) registerTaskDefinitionTyped(ctx context.Context, req *register
 			req.NetworkMode = "awsvpc"
 		}
 	}
-	if aerr := validateTaskVolumes(req.Volumes, req.ContainerDefinitions); aerr != nil {
+	if aerr := validateTaskVolumes(req.Volumes, req.ContainerDefinitions, isFargate(req.RequiresCompatibilities)); aerr != nil {
 		return nil, aerr
 	}
 	rev, aerr := h.store.nextRevision(ctx, req.Family)
