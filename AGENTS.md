@@ -312,6 +312,7 @@ Agents most often trip on these — check before finishing:
 
 - **Committing without reading the diff** — green checks do not tell you the diff is the change you meant to make. See [Self-review the diff](#self-review-the-diff-before-committing-or-pushing)
 - **Creating non-AWS endpoints or custom response fields** — the AWS SDK must work unmodified
+- **Inventing a path** — every route is either a binding the pinned manifest models (copy the `URI` from `internal/awsapi/manifest.gen.go`) or lives under `/_overcast/`. Never nest an invented sub-resource inside a modeled prefix: `/2015-03-31/functions/{name}/source` reads as an AWS binding, is not one, and collides the day AWS models it. `TestNoRouteIsRegisteredOutsideTheNamespace` fails the build on either mistake — see [CONTRIBUTING.md § How to add an endpoint](./CONTRIBUTING.md#how-to-add-an-endpoint)
 - **Changing wire formats without tests** — request/response shapes are the compatibility contract
 - **Forgetting `make docs`** after capability changes — generated tables will drift
 - **Forgetting `make aws-models-check`** after capability or operation-routing changes — the AWS operation coverage CI job will fail

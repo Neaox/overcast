@@ -154,6 +154,24 @@ Both flows share the same verification, docs, and web UI phases.
 
 ## Phase 1 — Adding an Endpoint
 
+### Step 1.0 — Decide the path, and get it right first
+
+Every path Overcast serves is either a binding the pinned AWS manifest models
+or lives under `/_overcast/`. There is no third category, and CI enforces it
+(`TestNoRouteIsRegisteredOutsideTheNamespace`).
+
+- **Emulating an AWS operation:** copy the `URI` from
+  `internal/awsapi/manifest.gen.go`. Do not infer the path from AWS docs and do
+  not invent one — an operation served on an invented binding passes every
+  status check while being unreachable from any SDK, which is what #793, #815
+  and #854–#860 all were.
+- **Emulator-only endpoint** (admin, debug, console-facing, or the data plane
+  of an emulated workload): `/_overcast/<service>/<resource>/…`.
+
+**Never nest an invented sub-resource inside a modeled prefix.** It reads as an
+AWS binding, is not one, and a `grep` for `/_` will not find it. Full rule and
+rationale: [CONTRIBUTING.md § How to add an endpoint](../../../CONTRIBUTING.md#how-to-add-an-endpoint).
+
 ### Step 1.1 — Write a Failing Test (TDD)
 
 Tests follow the **Given/When/Then** pattern. See [tests/AGENTS.md](../../../tests/AGENTS.md).

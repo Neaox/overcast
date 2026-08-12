@@ -1235,6 +1235,47 @@ manifest.
 
 ## How to add an endpoint
 
+> ### Where the route may live — one rule, enforced in CI
+>
+> **Every path Overcast serves on the AWS API listener is either a binding the
+> pinned AWS manifest models, or it lives under `/_overcast/`. There is no
+> third category.**
+>
+> - **Emulating an AWS operation?** Serve it at the method and URI the model
+>   binds. Look the operation up in `internal/awsapi/manifest.gen.go` and copy
+>   its `URI` — do not infer it from the AWS docs, and do not invent one.
+> - **Anything else** — health, metrics, debug, per-service admin APIs, the
+>   data plane of an emulated workload — goes under
+>   `/_overcast/<service>/<resource>/…`.
+>
+> The prefix is reserved by an S3 naming rule rather than by convention: a
+> bucket name cannot begin with an underscore, so no request AWS models can
+> ever collide with it. It is the only prefix with that property, which is why
+> there is one rather than the sixteen roots it replaced.
+>
+> **Do not nest an invented sub-resource inside a modeled prefix.** A path like
+> `/2015-03-31/functions/{name}/source` reads as an AWS binding and is not one.
+> That is worse than an obviously-ours path: it misleads anyone reading the
+> routing table, and it collides the day AWS models that sub-resource. It is
+> also invisible to a `grep` for `/_`, which is how several of these went
+> unnoticed until the gate below reported them.
+>
+> **The gate:** `TestNoRouteIsRegisteredOutsideTheNamespace`
+> (`internal/router`, `-tags dev`; run by `make aws-models-check`, which CI
+> runs on every PR) walks every registered route and fails on anything that is
+> neither modeled nor namespaced. It reports the offending pattern and what to
+> do about it. If you have a genuine exception, add it to `nonManifestRoutes`
+> with the reason recorded as the map value — the review question is always
+> *"why is this not under `/_overcast/`?"*
+>
+> Two consequences worth knowing before you pick a path, because they are not
+> only about naming: what a request is classified as for **tracing** and for
+> **IAM enforcement** is decided from the path, by allowlists in
+> `internal/trace` and `internal/middleware`. Moving a route can therefore
+> change whether it appears in the trace UI and whether it is authorized. See
+> [docs/plans/non-canonical-url-namespace.md](./docs/plans/non-canonical-url-namespace.md)
+> §4.5 and §5 — both were found the hard way.
+
 1. Write a **failing test** in `tests/integration/<service>/<service>_test.go` (GWT form)
 2. **For new services using the typed pattern** (see [How to add a service](#how-to-add-a-service)):
    - Add request/response types and the codec-agnostic handler function to `typed_logic.go`
