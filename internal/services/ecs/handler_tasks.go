@@ -734,6 +734,10 @@ func (h *Handler) sweepOrphanedTaskVolumes(ctx context.Context) {
 	// instance agrees on, and it is also correct for the case this sweep
 	// exists for — a process killed before it could clean up leaves containers
 	// that the container sweep has already removed by the time this runs.
+	//
+	// It subsumes the ECS_KEEP_CONTAINERS case for free: a container kept for
+	// post-mortem inspection still references its volumes, so they are not
+	// dangling and survive with it. That took an explicit exemption before.
 	volumes, err := h.docker.ListUnusedVolumes(ctx, serviceName)
 	if err != nil {
 		h.log.Warn("ecs: list volumes for orphan sweep", zap.Error(err))
