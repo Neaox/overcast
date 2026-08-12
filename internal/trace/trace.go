@@ -373,6 +373,24 @@ func (r *Recorder) AddHop(h Hop) string {
 	return h.ID
 }
 
+// hopRequestIDList returns the request IDs of the calls this trace dispatched.
+// It is what family pinning follows to keep a failure's calls alongside it.
+func (r *Recorder) hopRequestIDList() []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.hopRequestIDs) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(r.hopRequestIDs))
+	for id := range r.hopRequestIDs {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // bodies returns copies of the request and response bodies and their omission
 // reasons. It is what a parent's hop resolves against, so it copies for the
 // same reason Entry does: the caller holds the result while the recorder is

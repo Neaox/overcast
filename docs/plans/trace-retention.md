@@ -345,9 +345,16 @@ nor the counters have yet, and because one reviewable change is worth more than 
   `Buffer.Settle`, called by the middleware after the response is recorded — the plan's "do not
   account for it on the write path" made concrete. Every index deletion routes through `dropLocked`
   so the total cannot ratchet shut, which is the failure mode that would be silent.
-- **Family pinning.** A pinned parent does not yet pin the calls it made, so its hop bodies can
-  report `evicted`. Phase 3 is what makes that survivable: the hop keeps its metadata and the notice
-  says the body is gone rather than rendering an empty panel.
+- ~~**Family pinning.**~~ ✅ shipped. `pinFamilyLocked` keeps the calls a pinned failure made, so its
+  hops resolve their bodies instead of reporting `evicted`. The family rides along in whatever room
+  the pinned ring has spare and **never displaces another failure** — two failures are two things
+  somebody may come back for. A deploy with more calls than there is room keeps the ones that fit,
+  and the rest degrade to `evicted`, which the UI already explains.
+
+  This is what makes a trace reachable from two rings at once, so both iterators now skip the pinned
+  copy of a still-live trace. The first version of that test did not actually reach dual membership —
+  it evicted the children along with the parent — and passed against an implementation that listed
+  those traces twice.
 - **The retention counters and their UI** — the terminal bar at the end of the list, and the
   *kept: error* badge. Both want the same size accounting as the backstop.
 
