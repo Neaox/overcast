@@ -273,6 +273,64 @@ func TestInternalService(t *testing.T) {
 	}
 }
 
+// TestIsOperationalPollPath pins which paths are demoted to TRACE. It is the
+// logging half of the same judgement trace.isInternalPath makes for the trace
+// ring buffer, and the two are meant to agree — trace.go's doc comment says so
+// explicitly — so they are pinned in the same terms.
+//
+// The set is deliberately narrower than "starts with /_": a path is demoted
+// only when the request fires because time passed and infrastructure polled,
+// never because a client did something. Everything Overcast serves under "/_"
+// on behalf of an emulated workload is the second kind and must stay at INFO,
+// which is what the user cases below are for.
+//
+// Written down now because docs/plans/non-canonical-url-namespace.md moves
+// every one of these paths under /_overcast/. Today the distinction survives
+// on the accident that data-plane routes sit on first segments nobody thought
+// to demote; after the move it has to be carried deliberately, and a test that
+// already says what the answer is turns that into a failure rather than a
+// silently quieter log.
+func TestIsOperationalPollPath(t *testing.T) {
+	polled := []string{
+		"/_health",
+		"/_debug",
+		"/_debug/state",
+		"/_debug/traces",
+		"/_debug/traces/search",
+	}
+	for _, p := range polled {
+		if !isOperationalPollPath(p) {
+			t.Errorf("isOperationalPollPath(%q) = false, want true", p)
+		}
+	}
+
+	client := []string{
+		"/",
+		"/my-bucket/key",
+		"/2015-03-31/functions",
+		"/_debugfoo",
+		"/_overcast/init",
+
+		// Data plane: a real client's request, however it is spelled. Same
+		// set as trace.TestIsInternalPathSeparatesPollingFromClientTraffic —
+		// the two predicates are meant to agree, so they are given the same
+		// paths to agree about.
+		"/_appsync/abc123/graphql",
+		"/_appsync/abc123/realtime",
+		"/_apigateway/execute-api/abc123/us-east-1/test/hello",
+		"/_lambda/url-invoke/abc123/",
+		"/_cloudfront/E123456789/index.html",
+		"/_elb/healthz",
+		"/_cognito/us-east-1_abc123/login",
+		"/_cognito/us-east-1_abc123/oauth2/token",
+	}
+	for _, p := range client {
+		if isOperationalPollPath(p) {
+			t.Errorf("isOperationalPollPath(%q) = true, want false", p)
+		}
+	}
+}
+
 func TestLogger_healthCheckLogsAtTrace(t *testing.T) {
 	// Given: a /_health request (polled every few seconds by Docker/K8s
 	// healthchecks) and a real AWS API call (SQS CreateQueue) through the
