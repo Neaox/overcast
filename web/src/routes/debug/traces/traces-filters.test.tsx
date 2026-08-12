@@ -158,7 +158,11 @@ describe("Request Traces filters", () => {
     expect(await screen.findByText(TRACE.requestId)).toBeInTheDocument()
     const entriesBefore = router.history.length
 
-    await user.type(await screen.findByPlaceholderText(/Search by request ID/), "bucket")
+    // By accessible name, not by placeholder: the placeholder states what
+    // search currently covers and is rewritten every time that grows, which is
+    // how this test came to be looking for a box that no longer described
+    // itself that way.
+    await user.type(await screen.findByRole("textbox", { name: /search traces/i }), "bucket")
 
     await waitFor(() => {
       expect(router.state.location.search).toMatchObject({ search: "bucket" })

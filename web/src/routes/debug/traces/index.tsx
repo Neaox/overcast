@@ -228,7 +228,22 @@ function TracesPage() {
             docs/plans/trace-deep-search.md — and promising those here would be
             worse than the narrower promise it makes.
           */}
-          <Input className="pl-8" placeholder="Search ID, path, service, operation, error…" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+          {/*
+            The accessible name is deliberately separate from the placeholder.
+            The placeholder is prose that changes whenever the search grows —
+            it just did, and it broke the one test that reached for the box by
+            reading it. A screen reader needs a name here regardless, so the
+            label serves both: a stable handle for tests and the thing that
+            makes an unlabelled input announce as something other than "edit
+            text".
+          */}
+          <Input
+            className="pl-8"
+            aria-label="Search traces"
+            placeholder="Search ID, path, service, operation, error…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
         </div>
         <CheckboxFilterDropdown {...serviceFilter} />
         <CheckboxFilterDropdown {...statusFilter} />
