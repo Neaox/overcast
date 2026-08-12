@@ -2801,6 +2801,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "Volumes",
+        "id": "volumes"
+      },
+      {
+        "depth": 2,
         "text": "EFS volumes",
         "id": "efs-volumes"
       },

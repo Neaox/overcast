@@ -42,6 +42,10 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 		return
 	}
 
+	// The task is fully stopped, so its task-lifetime volumes have no reader
+	// left. Shared-scope volumes are left alone; see removeTaskVolumes.
+	h.removeTaskVolumes(ctx, clusterName, taskID)
+
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.ECSTaskStopped,

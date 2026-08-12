@@ -122,12 +122,63 @@ type EphemeralStorage struct {
 	SizeInGiB int `json:"sizeInGiB"`
 }
 
-// TaskVolume is a named volume in a task definition. Only EFS-backed volumes
-// have runtime behaviour in Overcast (mounted in EFS live mode); other volume
-// types are stored and echoed.
+// TaskVolume is a named volume in a task definition. At most one configuration
+// may be set; a volume carrying none is AWS's scratch volume, a directory
+// created for the task and shared by the containers that mount it.
+//
+// The zero-configuration case is not an omission: it is what an nginx sidecar
+// and an application container use to share a document root, and it is the one
+// volume shape Fargate allows besides EFS.
 type TaskVolume struct {
-	Name                   string                  `json:"name"`
-	EFSVolumeConfiguration *EFSVolumeConfiguration `json:"efsVolumeConfiguration,omitempty"`
+	Name                      string                     `json:"name"`
+	Host                      *HostVolumeProperties      `json:"host,omitempty"`
+	DockerVolumeConfiguration *DockerVolumeConfiguration `json:"dockerVolumeConfiguration,omitempty"`
+	EFSVolumeConfiguration    *EFSVolumeConfiguration    `json:"efsVolumeConfiguration,omitempty"`
+}
+
+// HostVolumeProperties is AWS's bind-mount volume. SourcePath names a path on
+// the container instance — locally, on the Docker daemon's host. Empty, the
+// volume is a scratch directory, which is how Fargate task definitions declare
+// one (Fargate rejects sourcePath outright).
+type HostVolumeProperties struct {
+	SourcePath string `json:"sourcePath,omitempty"`
+}
+
+// DockerVolumeConfiguration is a Docker-managed volume, supported by AWS only
+// under the EC2 launch type.
+//
+// Scope decides the lifetime: "task" volumes are created with the task and
+// removed with it, "shared" volumes outlive it and are never removed by ECS —
+// on a real container instance they persist until an operator deletes them, and
+// the same holds here, where the developer's Docker daemon *is* the instance.
+// Autoprovision applies to shared scope alone: false requires the volume to
+// already exist, which is how a pre-created volume is adopted.
+type DockerVolumeConfiguration struct {
+	Scope         string            `json:"scope,omitempty"`
+	Autoprovision bool              `json:"autoprovision,omitempty"`
+	Driver        string            `json:"driver,omitempty"`
+	DriverOpts    map[string]string `json:"driverOpts,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+}
+
+// configCount reports how many volume configurations are set, which AWS caps
+// at one.
+func (v TaskVolume) configCount() int {
+	n := 0
+	// A host block with no sourcePath is a scratch volume, not a configuration:
+	// CDK emits `host: {}` for a plain shared volume, and rejecting that as a
+	// conflict would break every task definition that shares a directory
+	// between containers the way AWS documents.
+	if v.Host != nil && v.Host.SourcePath != "" {
+		n++
+	}
+	if v.DockerVolumeConfiguration != nil {
+		n++
+	}
+	if v.EFSVolumeConfiguration != nil {
+		n++
+	}
+	return n
 }
 
 // EFSVolumeConfiguration mirrors the AWS shape referencing an EFS file system.

@@ -216,6 +216,39 @@ Without it a crash-looping task explains itself nowhere: the container is gone
 before `docker logs` can reach it. `GET /_ecs/tasks/{taskArn}/logs/{container}`
 remains available as an emulator-only tail of a *running* container.
 
+## Volumes
+
+A task definition's volumes are honoured at placement in all four shapes AWS
+models, and the rules that decide which shapes are legal are AWS's own — a task
+definition real ECS rejects is rejected here too, so a template cannot pass
+locally and fail its first real deploy.
+
+| Volume shape | What a task gets |
+| --- | --- |
+| No configuration, or an empty `host` block | A scratch volume shared by every container that mounts it — the way an nginx sidecar and an application container share a document root. Valid on Fargate. |
+| `host.sourcePath` | A bind mount from that path on the container instance, which locally is the Docker daemon's host. **EC2 launch type only** — Fargate rejects it, as AWS does, with `host.sourcePath should not be set for volumes in Fargate`. |
+| `dockerVolumeConfiguration` | A Docker volume. `scope: task` (the default) lives and dies with the task; `scope: shared` outlives it and is never removed by Overcast, exactly as ECS never removes one from a container instance. `driver` and `driverOpts` reach Docker unchanged. **EC2 launch type only.** |
+| `efsVolumeConfiguration` | The Docker volume backing the file system — see below. |
+
+A shared-scope volume is named as the task definition names it, because that is
+the name it has on a container instance. With `autoprovision: false` it must
+already exist and the task fails to start if it does not, which is what AWS
+does — and which makes it the supported way to hand a task a volume you
+prepared yourself:
+
+```bash
+docker volume create --driver local \
+  --opt type=none --opt o=bind --opt device=/srv/app-data \
+  app-data
+```
+
+Task-lifetime volumes are named `overcast-ecs-task-<task-id>-<volume-name>` and
+are removed when the task stops; a volume still held by a container that has not
+finished dying is retried, and anything left behind by a killed process is swept
+at the next startup. `ECS_KEEP_CONTAINERS=true` keeps volumes as well as
+containers — a container kept for post-mortem inspection with its volumes
+deleted cannot answer the question it was kept for.
+
 ## EFS volumes
 
 `efsVolumeConfiguration` mounts need EFS live mode, which backs each file
@@ -316,7 +349,7 @@ to call back into the emulator:
 | `PutAttributes`                 | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_PutAttributes.html)                 |
 | `PutClusterCapacityProviders`   | ✅ Supported   | Associates providers and default strategy with a cluster                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_PutClusterCapacityProviders.html)   |
 | `RegisterContainerInstance`     | ✅ Supported   | Metadata-only; auto-generates ARN; status ACTIVE; agentConnected true                                                                                                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RegisterContainerInstance.html)     |
-| `RegisterTaskDefinition`        | ✅ Supported   | Family:revision versioning; Fargate: validates awsvpc networkMode, cpu/memory required with valid combos; volumes with efsVolumeConfiguration and container mountPoints supported (EFS volumes mounted in live mode)                                                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RegisterTaskDefinition.html)        |
+| `RegisterTaskDefinition`        | ✅ Supported   | Family:revision versioning; Fargate: validates awsvpc networkMode, cpu/memory required with valid combos, rejects host.sourcePath and dockerVolumeConfiguration as AWS does; all four volume shapes honoured at placement — efsVolumeConfiguration (live mode), host.sourcePath bind mounts (EC2 launch type), dockerVolumeConfiguration (task and shared scope, autoprovision), and name-only scratch volumes shared between containers          | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RegisterTaskDefinition.html)        |
 | `RunTask`                       | ✅ Supported   | Docker-backed when available, metadata-only when no container runtime is wired; a task whose containers fail to start is STOPPED with stopCode TaskFailedToStart rather than reported RUNNING; async state transitions; networkConfiguration required when the task definition's networkMode is awsvpc, synthetic ENI attachment returned, platformVersion defaults to LATEST                                                                     | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RunTask.html)                       |
 | `StartTask`                     | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StartTask.html)                     |
 | `StopTask`                      | ✅ Supported   | Stops Docker containers; sets STOPPED with stopCode UserInitiated; cancels pending transitions                                                                                                                                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_StopTask.html)                      |

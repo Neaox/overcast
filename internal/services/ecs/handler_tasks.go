@@ -19,6 +19,7 @@ import (
 	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
@@ -311,6 +312,19 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 	// can look up the task.
 	resourceID := clusterName + "/" + taskID
 
+	// Volumes before containers: a mount naming a volume that does not exist
+	// fails container creation, and provisioning once here rather than per
+	// container keeps the daemon calls to a single pass. The failure is
+	// attributed to the first container, which is the one whose creation would
+	// have hit it.
+	if err := h.provisionTaskVolumes(ctx, td, clusterName, taskID); err != nil {
+		name := ""
+		if len(td.ContainerDefinitions) > 0 {
+			name = td.ContainerDefinitions[0].Name
+		}
+		return containerFailure(name, "ecs: %w", err)
+	}
+
 	// Every failure below belongs to the container being placed when it happens,
 	// and is returned naming it: the reason is recorded against that container
 	// alone, as ECS does, not against every container in the task.
@@ -379,7 +393,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			// notifier schedules removal immediately after capturing it.
 			HostConfig: &docker.HostConfig{AutoRemove: false,
 				Privileged:   cd.Privileged != nil && *cd.Privileged,
-				Mounts:       h.efsMountsForContainer(ctx, td, &td.ContainerDefinitions[i]),
+				Mounts:       h.containerMounts(ctx, td, &td.ContainerDefinitions[i], taskID),
 				NetworkMode:  dataplane.Primary(h.cfg),
 				PortBindings: portBindings,
 				ExtraHosts:   endpoint.ExtraHosts(),
@@ -465,20 +479,6 @@ func mergeDockerLabels(managed, extra map[string]string) map[string]string {
 	return merged
 }
 
-// containerEndpoint returns the endpoint mapper for ECS task containers,
-// resolving Overcast's container-reachable address once on first use. Resolving
-// lazily rather than at SetDocker time keeps the ordering honest: the address
-// may be Overcast's own IP on the ECS network, which only exists once the
-// network has been created.
-// efsMountsForContainer resolves a container's mount points against the task
-// definition's EFS-backed volumes, returning Docker volume mounts. The mount
-// is scoped by a volume Subpath from either the authorization access point's
-// root directory or the efsVolumeConfiguration's rootDirectory. Non-EFS
-// volumes and unresolvable references (EFS mock mode, Docker down, unknown
-// IDs) are skipped with a warning so the task still starts — mirroring the
-// best-effort posture of EFS live mode. A rootDirectory subpath that does not
-// exist in the volume makes the container start fail, which mirrors AWS's
-// mount failure for missing root directories.
 // efsMountSkipReason explains why an EFS volume could not be resolved, which
 // is almost always the mode EFS is running in rather than anything wrong with
 // the task definition. The three causes need different things from the reader,
@@ -497,8 +497,276 @@ func (h *Handler) efsMountSkipReason() (msg, hint string) {
 	}
 }
 
-func (h *Handler) efsMountsForContainer(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition) []docker.Mount {
-	if len(cd.MountPoints) == 0 || h.efsResolver == nil {
+// volumeScopeLabel records whether an Overcast-created ECS volume lives for the
+// task or outlives it. The sweep reads it: a shared-scope volume must survive
+// the task that first mounted it, exactly as it does on a container instance,
+// and deleting a developer's data because a task stopped is the one mistake
+// here that cannot be undone.
+const volumeScopeLabel = "overcast.ecs.volume-scope"
+
+// volumeRegionLabel records the region the owning task is stored under. The
+// managed resource ID is "cluster/taskID", which does not identify a task on
+// its own: the same cluster and task ID in another region is a different task.
+// The sweep needs the region to ask whether the owner still exists, and
+// guessing it wrong there would delete a live task's volumes.
+const volumeRegionLabel = "overcast.ecs.region"
+
+// taskVolumeName names the Docker volume backing a task-lifetime volume — a
+// scratch volume or a dockerVolumeConfiguration with task scope, which are the
+// same object with different amounts of configuration.
+func taskVolumeName(taskID, volumeName string) string {
+	id := taskID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return "overcast-ecs-task-" + id + "-" + volumeName
+}
+
+// dockerVolumeScope reads a dockerVolumeConfiguration's scope, defaulting to
+// AWS's default of "task".
+func dockerVolumeScope(dvc *DockerVolumeConfiguration) string {
+	if dvc != nil && strings.EqualFold(dvc.Scope, "shared") {
+		return "shared"
+	}
+	return "task"
+}
+
+// mountedVolumes returns the task definition's volumes that at least one
+// container actually mounts, in declaration order. A declared but unmounted
+// volume is not provisioned: it would be a Docker volume nothing can reach.
+//
+// Order matters for the caller: provisioning stops at the first failure, and
+// iterating a map would make *which* failure a task reports vary between runs.
+func mountedVolumes(td *TaskDefinition) []*TaskVolume {
+	wanted := make(map[string]struct{})
+	for i := range td.ContainerDefinitions {
+		for _, mp := range td.ContainerDefinitions[i].MountPoints {
+			wanted[mp.SourceVolume] = struct{}{}
+		}
+	}
+	out := make([]*TaskVolume, 0, len(wanted))
+	for i := range td.Volumes {
+		v := &td.Volumes[i]
+		if _, ok := wanted[v.Name]; ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// provisionTaskVolumes creates the Docker volumes a task's mounts need, before
+// any container is created. Doing it here rather than per container keeps the
+// daemon calls to one pass and leaves containerMounts a pure function.
+//
+// EFS volumes are not provisioned here — the EFS service owns their lifetime.
+// A failure is returned rather than warned about: unlike a missing EFS mount,
+// which degrades to a container writing into its own layer, a volume the task
+// definition asked for and did not get is a task that will not do what it says.
+func (h *Handler) provisionTaskVolumes(ctx context.Context, td *TaskDefinition, clusterName, taskID string) error {
+	if h.docker == nil {
+		return nil
+	}
+	for _, v := range mountedVolumes(td) {
+		dvc := v.DockerVolumeConfiguration
+		if v.EFSVolumeConfiguration != nil || (v.Host != nil && v.Host.SourcePath != "") {
+			continue
+		}
+		if dvc != nil && dockerVolumeScope(dvc) == "shared" {
+			if err := h.provisionSharedVolume(ctx, v.Name, dvc); err != nil {
+				return err
+			}
+			continue
+		}
+		opts := docker.VolumeOptions{
+			Labels: h.volumeLabels(ctx, clusterName+"/"+taskID, "task", dvc),
+		}
+		if dvc != nil {
+			opts.Driver = dvc.Driver
+			opts.DriverOpts = dvc.DriverOpts
+		}
+		if err := h.docker.CreateVolumeWithOptions(ctx, taskVolumeName(taskID, v.Name), opts); err != nil {
+			return fmt.Errorf("volume %s: %w", v.Name, err)
+		}
+	}
+	return nil
+}
+
+// volumeLabels builds the labels an Overcast-created ECS volume carries: the
+// managed set the sweep finds it by, the scope that decides whether it may ever
+// be removed, the region that identifies its owner, and last the task
+// definition's own labels — which are additive and never override Overcast's,
+// since the sweep depends on those meaning what they say.
+func (h *Handler) volumeLabels(ctx context.Context, resourceID, scope string, dvc *DockerVolumeConfiguration) map[string]string {
+	managed := docker.ManagedLabels(serviceName, resourceID)
+	managed[volumeScopeLabel] = scope
+	managed[volumeRegionLabel] = h.store.region(ctx)
+	var extra map[string]string
+	if dvc != nil {
+		extra = dvc.Labels
+	}
+	// Same precedence as a container's labels, and the same helper: Overcast's
+	// win over the definition's.
+	return mergeDockerLabels(managed, extra)
+}
+
+// provisionSharedVolume handles a shared-scope dockerVolumeConfiguration: the
+// volume is named as the task definition names it, because on a container
+// instance that is the name it has, and a pre-created volume is meant to be
+// found by it. autoprovision=false requires it to already exist — AWS fails the
+// placement otherwise, and so does this.
+func (h *Handler) provisionSharedVolume(ctx context.Context, name string, dvc *DockerVolumeConfiguration) error {
+	if !dvc.Autoprovision {
+		exists, err := h.docker.VolumeExists(ctx, name)
+		if err != nil {
+			return fmt.Errorf("volume %s: %w", name, err)
+		}
+		if !exists {
+			return fmt.Errorf("volume %s: shared volume does not exist and autoprovision is false; create it with `docker volume create %s` or set autoprovision", name, name)
+		}
+		// Adopted as found: not labelled, not owned, never swept.
+		return nil
+	}
+	if err := h.docker.CreateVolumeWithOptions(ctx, name, docker.VolumeOptions{
+		Driver:     dvc.Driver,
+		DriverOpts: dvc.DriverOpts,
+		Labels:     h.volumeLabels(ctx, name, "shared", dvc),
+	}); err != nil {
+		return fmt.Errorf("volume %s: %w", name, err)
+	}
+	return nil
+}
+
+// removeTaskVolumes removes the task-lifetime volumes placed for a task.
+//
+// The volumes are found by their labels rather than by re-reading the task
+// definition: a definition can be deregistered while its tasks still run, and
+// the labels are on the objects being removed. Shared-scope volumes carry a
+// different scope label and are deliberately left — ECS never removes them
+// either, and on a container instance they are exactly the volumes that are
+// meant to outlive the task.
+//
+// Best-effort and retried: Docker refuses to remove a volume any container
+// still references, including a stopped one, and container removal is itself
+// asynchronous (the GC schedules it). So the first attempt commonly races the
+// container's removal and fails; a few spaced retries cover the normal window,
+// and the startup sweep remains the backstop.
+func (h *Handler) removeTaskVolumes(ctx context.Context, clusterName, taskID string) {
+	h.removeTaskVolumesAttempt(ctx, clusterName, taskID, 0)
+}
+
+// Volume removal retry policy, mirroring EFS's: a volume still held by a
+// container that has not finished dying fails with 409, and the container GC's
+// own backoff runs on a similar timescale.
+const (
+	taskVolumeRemoveRetries    = 3
+	taskVolumeRemoveRetryDelay = 15 * time.Second
+)
+
+func (h *Handler) removeTaskVolumesAttempt(ctx context.Context, clusterName, taskID string, attempt int) {
+	if h.docker == nil || clusterName == "" || taskID == "" {
+		return
+	}
+	if h.cfg != nil && h.cfg.ECSKeepContainers {
+		// A container kept for post-mortem inspection with its volumes deleted
+		// cannot answer the question it was kept for.
+		return
+	}
+	volumes, err := h.docker.ListVolumes(ctx, serviceName)
+	if err != nil {
+		h.log.Warn("ecs: list volumes for task cleanup", zap.String("task", taskID), zap.Error(err))
+		return
+	}
+	resourceID := clusterName + "/" + taskID
+	remaining := false
+	for _, v := range volumes {
+		if v.Labels[volumeScopeLabel] != "task" || v.ResourceID() != resourceID {
+			continue
+		}
+		if err := h.docker.RemoveVolume(ctx, v.Name, true); err != nil {
+			remaining = true
+			h.log.Debug("ecs: remove task volume failed — will retry",
+				zap.String("task", taskID), zap.String("volume", v.Name),
+				zap.Int("attempt", attempt+1), zap.Error(err))
+		}
+	}
+	if !remaining {
+		return
+	}
+	if attempt >= taskVolumeRemoveRetries {
+		h.log.Warn("ecs: task volumes still present after retries — orphaned until the next startup sweep",
+			zap.String("task", taskID))
+		return
+	}
+	h.scheduler.AfterScoped(h.store.region(ctx), taskID, "volume-remove", taskVolumeRemoveRetryDelay,
+		func(bgCtx context.Context) {
+			h.removeTaskVolumesAttempt(bgCtx, clusterName, taskID, attempt+1)
+		})
+}
+
+// sweepOrphanedTaskVolumes removes task-scoped volumes whose task is gone —
+// the backstop for a process killed between a task stopping and its volumes
+// being removed. Shared-scope volumes are never considered.
+func (h *Handler) sweepOrphanedTaskVolumes(ctx context.Context) {
+	if h.docker == nil {
+		return
+	}
+	volumes, err := h.docker.ListVolumes(ctx, serviceName)
+	if err != nil {
+		h.log.Warn("ecs: list volumes for orphan sweep", zap.Error(err))
+		return
+	}
+	for _, v := range volumes {
+		if v.Labels[volumeScopeLabel] != "task" {
+			continue
+		}
+		clusterName, taskID, ok := strings.Cut(v.ResourceID(), "/")
+		if !ok {
+			continue
+		}
+		// The owner is only identified by cluster and task ID *within a
+		// region*, so a volume that does not say which region it belongs to
+		// cannot be shown to be an orphan. Leave it: an unswept volume costs
+		// disk, a wrongly swept one costs a running task its data.
+		region := v.Labels[volumeRegionLabel]
+		if region == "" {
+			continue
+		}
+		// A task that still exists in any state keeps its volumes: a STOPPED
+		// record is still readable through DescribeTasks, and its containers
+		// may be retained under ECS_KEEP_CONTAINERS.
+		regionCtx := middleware.ContextWithRegion(ctx, region)
+		if task, aerr := h.store.getTask(regionCtx, clusterName, taskID); aerr == nil && task != nil {
+			continue
+		}
+		h.log.Info("ecs: removing orphaned task volume", zap.String("volume", v.Name))
+		if err := h.docker.RemoveVolume(ctx, v.Name, true); err != nil {
+			h.log.Warn("ecs: remove orphaned task volume failed", zap.String("volume", v.Name), zap.Error(err))
+		}
+	}
+}
+
+// containerMounts resolves a container's mount points against the task
+// definition's volumes, in mountPoints order, returning the Docker mounts to
+// attach. It is pure: every volume it names has already been provisioned by
+// provisionTaskVolumes.
+//
+// Each volume shape maps to what it means on AWS:
+//
+//   - efsVolumeConfiguration — the Docker volume backing the file system,
+//     scoped by a Subpath from the access point's root directory or the
+//     configuration's rootDirectory. Unresolvable references (EFS mock mode,
+//     Docker down, unknown IDs) are skipped with a warning so the task still
+//     starts, mirroring the best-effort posture of EFS live mode.
+//   - host.sourcePath — a bind to a path on the container instance. Only
+//     reachable under the EC2 launch type; Fargate is rejected at registration.
+//   - anything else (name only, or an empty host block, or a
+//     dockerVolumeConfiguration) — a Docker volume, per-task or shared.
+//
+// A mount point naming a volume the definition does not declare is skipped;
+// registration rejects that, so reaching it means a task definition stored
+// before the rule existed.
+func (h *Handler) containerMounts(ctx context.Context, td *TaskDefinition, cd *ContainerDefinition, taskID string) []docker.Mount {
+	if len(cd.MountPoints) == 0 {
 		return nil
 	}
 	volumesByName := make(map[string]*TaskVolume, len(td.Volumes))
@@ -508,41 +776,80 @@ func (h *Handler) efsMountsForContainer(ctx context.Context, td *TaskDefinition,
 	mounts := make([]docker.Mount, 0, len(cd.MountPoints))
 	for _, mp := range cd.MountPoints {
 		v := volumesByName[mp.SourceVolume]
-		if v == nil || v.EFSVolumeConfiguration == nil {
-			h.log.Warn("ecs: mount point skipped — source volume is not EFS-backed",
+		if v == nil {
+			h.log.Warn("ecs: mount point skipped — the task definition declares no such volume",
 				zap.String("container", cd.Name), zap.String("volume", mp.SourceVolume))
 			continue
 		}
-		cfg := v.EFSVolumeConfiguration
-		var volume, subpath string
-		var ok bool
-		if cfg.AuthorizationConfig != nil && cfg.AuthorizationConfig.AccessPointId != "" {
-			volume, subpath, ok = h.efsResolver.EFSVolumeForAccessPointID(ctx, cfg.AuthorizationConfig.AccessPointId)
-		} else {
-			volume, ok = h.efsResolver.EFSVolumeForFileSystem(ctx, cfg.FileSystemId)
-			subpath = strings.Trim(cfg.RootDirectory, "/")
+		switch {
+		case v.EFSVolumeConfiguration != nil:
+			m, ok := h.efsMount(ctx, v.EFSVolumeConfiguration, cd, mp)
+			if !ok {
+				continue
+			}
+			mounts = append(mounts, m)
+		case v.Host != nil && v.Host.SourcePath != "":
+			mounts = append(mounts, docker.Mount{
+				Type:     "bind",
+				Source:   v.Host.SourcePath,
+				Target:   mp.ContainerPath,
+				ReadOnly: mp.ReadOnly,
+			})
+		default:
+			source := taskVolumeName(taskID, v.Name)
+			if v.DockerVolumeConfiguration != nil && dockerVolumeScope(v.DockerVolumeConfiguration) == "shared" {
+				source = v.Name
+			}
+			mounts = append(mounts, docker.Mount{
+				Type:     "volume",
+				Source:   source,
+				Target:   mp.ContainerPath,
+				ReadOnly: mp.ReadOnly,
+			})
 		}
-		if !ok {
-			msg, hint := h.efsMountSkipReason()
-			h.log.Warn(msg,
-				zap.String("container", cd.Name),
-				zap.String("file_system", cfg.FileSystemId),
-				zap.String("container_path", mp.ContainerPath),
-				zap.String("consequence", "the container starts without the mount: writes to "+mp.ContainerPath+" go to its own writable layer and are lost when the task stops, and nothing is shared with other tasks"),
-				zap.String("hint", hint))
-			continue
-		}
-		m := docker.Mount{Type: "volume", Source: volume, Target: mp.ContainerPath, ReadOnly: mp.ReadOnly}
-		if subpath != "" {
-			m.VolumeOptions = &docker.MountVolumeOptions{Subpath: subpath}
-		}
-		mounts = append(mounts, m)
 	}
 	if len(mounts) == 0 {
 		return nil
 	}
 	return mounts
 }
+
+// efsMount resolves one EFS-backed mount point. ok is false when the file
+// system cannot be resolved, which is a warning rather than a failure.
+func (h *Handler) efsMount(ctx context.Context, cfg *EFSVolumeConfiguration, cd *ContainerDefinition, mp MountPoint) (docker.Mount, bool) {
+	if h.efsResolver == nil {
+		return docker.Mount{}, false
+	}
+	var volume, subpath string
+	var ok bool
+	if cfg.AuthorizationConfig != nil && cfg.AuthorizationConfig.AccessPointId != "" {
+		volume, subpath, ok = h.efsResolver.EFSVolumeForAccessPointID(ctx, cfg.AuthorizationConfig.AccessPointId)
+	} else {
+		volume, ok = h.efsResolver.EFSVolumeForFileSystem(ctx, cfg.FileSystemId)
+		subpath = strings.Trim(cfg.RootDirectory, "/")
+	}
+	if !ok {
+		msg, hint := h.efsMountSkipReason()
+		h.log.Warn(msg,
+			zap.String("container", cd.Name),
+			zap.String("file_system", cfg.FileSystemId),
+			zap.String("container_path", mp.ContainerPath),
+			zap.String("consequence", "the container starts without the mount: writes to "+mp.ContainerPath+" go to its own writable layer and are lost when the task stops, and nothing is shared with other tasks"),
+			zap.String("hint", hint))
+		return docker.Mount{}, false
+	}
+	m := docker.Mount{Type: "volume", Source: volume, Target: mp.ContainerPath, ReadOnly: mp.ReadOnly}
+	if subpath != "" {
+		m.VolumeOptions = &docker.MountVolumeOptions{Subpath: subpath}
+	}
+	return m, true
+}
+
+// containerEndpoint returns the endpoint mapper for ECS task containers,
+// resolving Overcast's container-reachable address once on first use. Resolving
+// lazily rather than at SetDocker time keeps the ordering honest: the address
+// may be Overcast's own IP on the ECS network, which only exists once the
+// network has been created.
 
 func (h *Handler) containerEndpoint(ctx context.Context) *containerendpoint.Mapper {
 	h.endpointOnce.Do(func() {

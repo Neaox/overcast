@@ -451,7 +451,7 @@ func (h *Handler) RegisterTaskDefinition(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
-	if aerr := validateTaskVolumes(req.Volumes, req.ContainerDefinitions); aerr != nil {
+	if aerr := validateTaskVolumes(req.Volumes, req.ContainerDefinitions, isFargate(req.RequiresCompatibilities)); aerr != nil {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
