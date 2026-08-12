@@ -186,7 +186,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_DEBUG_TRACE_CEILING`   | `10000`                | How far a burst may grow retention past the floor |
 | `OVERCAST_DEBUG_TRACE_WINDOW`    | `1h`                   | How long traces above the floor survive before being reclaimed |
 | `OVERCAST_DEBUG_TRACE_PINNED`    | `1000`                 | Traces kept because they went wrong, exempt from the floor and the window |
-| `OVERCAST_DEBUG_TRACE_BYTES_MB`  | `512`                  | Retained request/response body budget. Reclaims the burst down to the floor; never below it |
+| `OVERCAST_DEBUG_TRACE_BYTES_MB`  | `512`                  | Retained request/response body budget. Reclaims ordinary overflow first, then the oldest kept failures; never below the floor |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
 | `OVERCAST_ENFORCE_IAM`           | `false`                | Evaluate the calling principal's IAM policies before each request and return AWS-shaped `AccessDenied` when they do not allow it. **Off by default**; with it off nothing is evaluated and no policy is read. See [iam.md § Request-time enforcement](./services/iam.md#request-time-enforcement-opt-in) |
 | `OVERCAST_ENFORCE_APIGATEWAY_THROTTLE` | `false`          | Reject API Gateway requests that exceed their usage plan's throttle or quota with AWS's `429`. Off by default: the limits are measured and reported (`GetUsage`, `apigateway:Throttled` events) but never rejected — see [API Gateway](./services/apigateway.md#usage-plan-throttling-and-quotas) |
@@ -503,7 +503,9 @@ still there when you go looking, without your having configured anything first:
    requests through in a couple of minutes, and the floor alone would keep the
    rollback traffic and discard the error that started it.
 3. Traces that went wrong — a 4xx/5xx, an AWS error code, or a failed internal hop —
-   are exempt from both, up to `OVERCAST_DEBUG_TRACE_PINNED` (default 1000).
+   are exempt from both, up to `OVERCAST_DEBUG_TRACE_PINNED` (default 1000). They are
+   not exempt from the memory budget: under real pressure the oldest kept failures are
+   surrendered last, after every ordinary trace above the floor.
 
 Internal polling (health checks, the console's own requests) is retained separately
 and can never evict a request you made. A trace records each

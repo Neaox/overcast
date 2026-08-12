@@ -35,10 +35,15 @@ type RetentionPolicy struct {
 	// DescribeStacks polls are tens of megabytes, while ten thousand 1 MiB
 	// uploads are ten gigabytes — and a seeding script does exactly that.
 	//
-	// This is a backstop on the *burst*, not an override of rule 1. It reclaims
-	// down to the floor and stops: a floor that is itself over budget is the
-	// operator's own configuration, and silently discarding what they asked to
-	// keep would be the worse failure.
+	// It reclaims cheapest-first: ordinary overflow above the floor, then
+	// pinned failures oldest-first once there is nothing cheaper left. Rule 1
+	// still wins outright — it never reclaims below the floor, because a floor
+	// that is itself over budget is the operator's own configuration.
+	//
+	// Failures being reclaimable is deliberate, and a correction. While they
+	// were exempt this was not a bound at all: pinned retention is capped by
+	// count, so the worst case was Pinned traces of up to ~2 MiB each — around
+	// 2 GB at the shipped defaults — however small this was set.
 	Bytes int64
 }
 

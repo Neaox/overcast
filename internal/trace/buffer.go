@@ -196,21 +196,46 @@ func (b *Buffer) Cull() {
 // enforceBytesLocked reclaims the oldest live traces until the retained bodies
 // fit the budget, stopping at the floor.
 //
-// Stopping there is the point. The backstop exists to make the *ceiling* safe,
-// not to overrule rule 1: a floor that is itself over budget is the operator's
-// own configuration, and silently discarding what they asked to keep would be
-// the worse failure. Pinned traces are not reclaimed here either — they are
-// what somebody came back for. Callers must hold b.mu.
+// The order is the whole design: ordinary overflow above the floor goes first,
+// and a pinned failure is surrendered only when there is nothing cheaper left.
+// Rule 1 still wins outright — the floor is a promise, and a floor that is
+// itself over budget is the operator's own configuration.
+//
+// **Pinned traces are reclaimable, and were not before.** Exempting them meant
+// the budget was not a bound at all: pinned retention is capped by *count*, so
+// the worst case was PinnedLimit traces of up to ~2 MiB each — around 2 GB at
+// the shipped defaults — however small the byte budget was set. Someone
+// lowering it because their machine was struggling would have found it did
+// nothing about the memory actually being held, which is the one job it has.
+// Callers must hold b.mu.
 func (b *Buffer) enforceBytesLocked() {
 	if b.policy.Bytes <= 0 {
 		return
 	}
+	// Ordinary overflow first. retireLocked may pin what it pops, which
+	// reclaims nothing — that is fine here, because the pinned ring is the next
+	// thing this drains.
 	for b.bytes > b.policy.Bytes && b.live.len() > b.policy.Floor {
 		s := b.live.popOldest()
 		if s == nil {
 			return
 		}
 		b.retireLocked(s, dropBytes)
+	}
+	// Then failures, oldest first. Popping is what makes this terminate, so a
+	// slot still reachable from the live ring is popped too: it merely loses
+	// its pin, survives until the live ring evicts it, and is re-pinned then if
+	// it still qualifies and there is room.
+	for b.bytes > b.policy.Bytes && b.pinned.len() > 0 {
+		s := b.pinned.popOldest()
+		if s == nil {
+			return
+		}
+		s.inPinned = false
+		if s.inLive {
+			continue
+		}
+		b.dropLocked(s)
 	}
 }
 
