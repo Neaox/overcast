@@ -19,8 +19,9 @@ import (
 
 // detectService infers the AWS service from a request using the same signals
 // the real AWS SDKs embed: X-Amz-Target prefix (JSON services), well-known URL
-// prefixes (Lambda REST API), the Authorization Credential scope (Query-protocol
-// services such as IAM, STS, SNS, EC2), and finally S3 as a fallback.
+// prefixes (Lambda REST API), the Smithy RPC v2 URI and its Smithy-Protocol
+// header, the Authorization Credential scope (Query-protocol services such as
+// IAM, STS, SNS, EC2), and finally S3 as a fallback.
 // An optional body parameter enables Query-protocol Action-param detection.
 //
 // What it answers is not only a log label. IAM enforcement builds the action it
@@ -71,12 +72,22 @@ import (
 //     That is a narrower rule than deriving the switch: it costs nothing for
 //     unsigned traffic and answers the signed case correctly.
 //
-// Two tests cover what that leaves open, both by walking the real router.
+// Three tests cover what that leaves open. Two walk the real router:
 // TestDetectServiceClassifiesEveryRegisteredRouteFamily fails when a service
 // registers a path family the switch has never been told about, classifying
 // unsigned. TestDetectServiceClassifiesEverySignedRouteByItsSigningName signs
 // each route the way the pinned models say that binding is signed, which is the
 // case the switch does not decide and step 3 does.
+//
+// Both vary only the path, so neither can say anything about the protocols that
+// name the service in the request *content* rather than its URL — the wires
+// steps 1, 2d and 3b read. TestClassifiesEveryDeclaredOperationOnItsContentWire
+// is that third axis: it sweeps every operation the capability registry
+// declares against the shapes the models say a client addresses it with, it
+// asserts the operation as well as the service, and it runs each case through
+// the two middlewares that do the labelling rather than calling this function —
+// because the failure it exists to catch is a caller that classifies with less
+// than it has, which a direct call cannot reproduce.
 func detectService(r *http.Request, body ...[]byte) string {
 	// 1. X-Amz-Target — use the generated AWS operation registry for
 	// accurate service mapping across all JSON-protocol services.
@@ -217,6 +228,19 @@ func detectService(r *http.Request, body ...[]byte) string {
 		return internalService(r.URL.Path)
 	}
 
+	// 2d. Smithy RPC v2 — /service/{serviceShape}/operation/{operation}, where
+	// the path names both outright.
+	//
+	// Gated on the Smithy-Protocol header, and that gate is the whole content
+	// of this step rather than a detail of it: without the header the router
+	// hands this exact path to S3 (smithyRPCDispatch), where "service" is an
+	// ordinary bucket name and the object key is the rest — so s3 is then the
+	// correct answer, and claiming the prefix unconditionally would take a
+	// genuine S3 request away from it.
+	if claim, ok := smithyRPCClaim(r); ok && claim.Service != "" {
+		return middlewareServiceKey(claim.Service)
+	}
+
 	// 3. Authorization Credential scope — covers Query-protocol services
 	// (IAM, STS, SNS, EC2, CloudFormation, RDS, …) where there is no
 	// X-Amz-Target header and no distinguishing URL path.
@@ -230,7 +254,15 @@ func detectService(r *http.Request, body ...[]byte) string {
 	if len(body) > 0 && len(body[0]) > 0 && bytes.Contains(body[0][:min(len(body[0]), 256)], []byte("Action=")) {
 		values, err := url.ParseQuery(string(body[0]))
 		if err == nil {
-			if claim, ok := awsapi.NewRegistry().ClaimQuery(values.Get("Version"), values.Get("Action")); ok {
+			// claim.Service != "" for the same reason step 1 checks it: the
+			// generated index blanks the service of an action several modeled
+			// services declare rather than guess between them, and returning
+			// that blank labelled the request with the empty string — which is
+			// not a service key, reaches IAM enforcement as one, and is not
+			// even the documented s3 fall-through. RDS is the live case, its
+			// whole Query surface sharing an API version with DocumentDB and
+			// Neptune.
+			if claim, ok := awsapi.NewRegistry().ClaimQuery(values.Get("Version"), values.Get("Action")); ok && claim.Service != "" {
 				return middlewareServiceKey(claim.Service)
 			}
 		}
@@ -240,6 +272,45 @@ func detectService(r *http.Request, body ...[]byte) string {
 	// virtual-hosted URLs with no distinguishing header, so there is no
 	// positive signal to match on.
 	return "s3"
+}
+
+// smithyRPCClaim classifies a Smithy RPC v2 request from its URI and the
+// Smithy-Protocol header, the same two signals the router's smithyRPCDispatch
+// resolves the request with. Both have to read the wire the same way: the
+// router deciding a request is RPC v2 while the classifier calls it S3 is how
+// a whole protocol comes to be logged, traced and IAM-authorised as something
+// it is not.
+//
+// The RPC v2 URI is fixed by the protocol at /service/{service}/operation/{op},
+// so it is parsed here rather than read from chi's route parameters — this
+// middleware runs before routing, and on requests chi never matches at all.
+//
+// It answers only for shapes the pinned models bind on RPC v2, which today is
+// CloudWatch alone among the services Overcast implements. The router will also
+// dispatch /service/{name} to a service by its own registered name, which is a
+// wider door than the models describe, but no SDK walks through it: a client
+// sends RPC v2 only for a service whose model declares the protocol. An
+// unmodeled shape keeps the s3 fall-through, which is what the request would
+// have been called before this step existed.
+func smithyRPCClaim(r *http.Request) (awsapi.Claim, bool) {
+	var wire awsapi.Protocol
+	switch header := strings.TrimSpace(r.Header.Get("Smithy-Protocol")); {
+	case strings.EqualFold(header, "rpc-v2-cbor"):
+		wire = awsapi.ProtocolRPCV2CBOR
+	case strings.EqualFold(header, "rpc-v2-json"):
+		wire = awsapi.ProtocolRPCV2JSON
+	default:
+		return awsapi.Claim{}, false
+	}
+	rest, found := strings.CutPrefix(r.URL.Path, "/service/")
+	if !found {
+		return awsapi.Claim{}, false
+	}
+	serviceShape, operation, found := strings.Cut(rest, "/operation/")
+	if !found || serviceShape == "" || operation == "" || strings.Contains(operation, "/") {
+		return awsapi.Claim{}, false
+	}
+	return awsapi.NewRegistry().ClaimRPC(wire, serviceShape, operation)
 }
 
 // isLambdaAPIVersionPrefix reports whether a path is under one of Lambda's
@@ -396,9 +467,10 @@ func detectOperation(r *http.Request, body ...[]byte) string {
 //  1. X-Amz-Target suffix  ("AmazonSQS.CreateQueue" → "CreateQueue")
 //  2. x-id query param     ("?x-id=ListBuckets"     → "ListBuckets")
 //  3. Query-protocol Action parameter (needs the body)
-//  4. Method + path, resolved against svc
+//  4. Smithy RPC v2 operation label in the URI
+//  5. Method + path, resolved against svc
 //
-// Step 4 is where this used to go wrong. It ran one flat switch whose Lambda
+// Step 5 is where this used to go wrong. It ran one flat switch whose Lambda
 // arm handled two methods under one path prefix and whose S3 arm was reachable
 // by anything the arms above it failed to claim, so every other Lambda method
 // and API version was labelled — and metered — as an S3 object operation.
@@ -439,6 +511,13 @@ func detectOperationForService(r *http.Request, svc string, body ...[]byte) stri
 		}
 	}
 
+	// 4. Smithy RPC v2 names the operation in the URI. Resolved through the
+	// registry rather than taken from the path so the answer is a modeled
+	// operation name and not whatever a caller put there.
+	if claim, ok := smithyRPCClaim(r); ok && claim.Operation != "" {
+		return claim.Operation
+	}
+
 	switch r.URL.Path {
 	case "/_events":
 		return "Subscribe"
@@ -461,7 +540,7 @@ func detectOperationForService(r *http.Request, svc string, body ...[]byte) stri
 		return ""
 	}
 
-	// 4. Method + path, resolved against the classified service.
+	// 5. Method + path, resolved against the classified service.
 	if svc != "s3" {
 		return restOperation(svc, r.Method, r.URL.Path, r.URL.RawQuery)
 	}
