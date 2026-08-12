@@ -45,6 +45,12 @@ type Handler struct {
 	ops               map[string]http.HandlerFunc
 	typedOp           map[string]op.Operation
 
+	// instances scopes container sweeps to the containers this instance
+	// created. Load-bearing for RDS beyond tidiness: an engine container holds
+	// the database in its writable layer, so a sweep that misjudges ownership
+	// destroys another Overcast's data. See docker.LabelInstance.
+	instances *serviceutil.InstanceDomain
+
 	// One writer at a time per record — see locks.go.
 	instanceLocks serviceutil.RecordLocks
 	clusterLocks  serviceutil.RecordLocks
@@ -64,6 +70,7 @@ func newHandler(cfg *config.Config, store *rdsStore, log *serviceutil.ServiceLog
 		log:       log,
 		clk:       clk,
 		scheduler: lifecycle.NewScheduler(clk),
+		instances: serviceutil.NewInstanceDomain(store.store, nsInstance),
 	}
 	h.initOps()
 	return h
@@ -741,7 +748,7 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 			Image:        image,
 			Env:          env,
 			ExposedPorts: map[string]struct{}{containerPort: {}},
-			Labels:       docker.ManagedLabels("rds", inst.DBInstanceIdentifier),
+			Labels:       h.instances.ManagedLabels(ctx, serviceName, inst.DBInstanceIdentifier),
 		},
 		// No AutoRemove: StopDBInstance stops this container on purpose and keeps
 		// its ID so StartDBInstance can bring it back, which AutoRemove makes

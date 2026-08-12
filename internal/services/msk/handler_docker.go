@@ -116,7 +116,7 @@ func (h *Handler) startClusterContainer(ctx context.Context, clusterARN string) 
 				"--check=false",
 			},
 			ExposedPorts: map[string]struct{}{containerPort: {}},
-			Labels:       docker.ManagedLabels(serviceName, clusterARN),
+			Labels:       h.instances.ManagedLabels(ctx, serviceName, clusterARN),
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
 			NetworkMode: dataplane.Primary(h.cfg),

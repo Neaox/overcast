@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -85,18 +86,19 @@ type heldPort interface {
 type lifecycleDaemon struct {
 	srv *httptest.Server
 
-	mu         sync.Mutex
-	autoRemove bool // what the create request asked for
-	exists     bool // whether the daemon still has the container
-	running    bool
-	starts     int  // successful start requests
-	creates    int  // create-container requests
-	failCreate bool // reject creates, so a rebuild cannot succeed
-	failStart  bool // reject starts, as when the daemon is going away
-	resourceID string
-	createEnv  []string
-	archive    []byte
-	requests   []string
+	mu           sync.Mutex
+	autoRemove   bool // what the create request asked for
+	exists       bool // whether the daemon still has the container
+	running      bool
+	starts       int  // successful start requests
+	creates      int  // create-container requests
+	failCreate   bool // reject creates, so a rebuild cannot succeed
+	failStart    bool // reject starts, as when the daemon is going away
+	resourceID   string
+	createLabels map[string]string
+	createEnv    []string
+	archive      []byte
+	requests     []string
 
 	execCmds     [][]string // Cmd of every exec create, in order
 	execEnvs     [][]string // Env of every exec create, in order
@@ -322,6 +324,7 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 			d.creates++
 			refuse := d.failCreate
 			d.resourceID = req.Labels[docker.LabelResourceID]
+			d.createLabels = maps.Clone(req.Labels)
 			d.createEnv = append([]string(nil), req.Env...)
 			d.requests = append(d.requests, "create")
 			if req.HostConfig != nil {
@@ -617,6 +620,31 @@ func newLifecycleHandler(t *testing.T, d *lifecycleDaemon) *Handler {
 		h.dockerWg.Wait()
 	})
 	return h
+}
+
+// The wiring the docker package's sweep tests cannot see. Those prove that a
+// sweep scoped to an identity spares another instance's containers; this proves
+// RDS actually stamps that identity when it creates one. Without the stamp the
+// scoping still holds, but in the other direction: the GC would recognise none
+// of its own containers and clean up nothing it ever created.
+func TestCreateDBInstance_stampsTheSweepIdentityOnItsContainer(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+
+	createRunningInstance(t, h, "lifecycle-identity")
+
+	d.mu.Lock()
+	labels := maps.Clone(d.createLabels)
+	d.mu.Unlock()
+
+	want := h.instances.Resolve(context.Background())
+	if want == "" {
+		t.Fatal("the handler resolved no sweep identity, so its containers can never be swept")
+	}
+	if got := labels[docker.LabelInstance]; got != want {
+		t.Errorf("container labelled %s=%q, want %q — the GC sweeps on this value",
+			docker.LabelInstance, got, want)
+	}
 }
 
 func useMockLifecycleClock(t *testing.T, h *Handler) *clock.Mock {
@@ -1453,7 +1481,7 @@ func TestDeleteDBInstance_removesItsContainer(t *testing.T) {
 
 	gcCtx, cancelGC := context.WithCancel(context.Background())
 	t.Cleanup(cancelGC)
-	h.gc = docker.NewGC(h.docker, zap.NewNop(), false)
+	h.gc = docker.NewGC(h.docker, zap.NewNop(), false, h.instances.Resolve)
 	h.gc.StartRemoveLoop(gcCtx)
 
 	const id = "lifecycle-delete"

@@ -392,7 +392,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 				WorkingDir:   cd.WorkingDirectory,
 				User:         cd.User,
 				ExposedPorts: exposedPorts,
-				Labels:       mergeDockerLabels(docker.ManagedLabels("ecs", resourceID), cd.DockerLabels),
+				Labels:       mergeDockerLabels(h.instances.ManagedLabels(ctx, serviceName, resourceID), cd.DockerLabels),
 			},
 			// Keep the container through Docker's die event so the final bounded
 			// log tail can be retained for post-mortem diagnostics. The exit

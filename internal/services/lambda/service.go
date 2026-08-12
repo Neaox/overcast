@@ -459,6 +459,10 @@ type Service struct {
 	esmDelivery *esmDeliveryManager // nil until InitESMDelivery is called
 	initWg      sync.WaitGroup      // signals when the first Docker probe has reported
 	gc          *docker.GC          // nil until Docker init completes
+	// instances scopes container sweeps to the containers this instance
+	// created, so one Overcast's shutdown does not kill another's warm runtime
+	// containers mid-invocation. See docker.LabelInstance.
+	instances *serviceutil.InstanceDomain
 	// stop is closed by Stop; it ends the background re-probe loop that runs
 	// when Docker was not available at startup.
 	stop     chan struct{}
@@ -697,6 +701,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		stop:                make(chan struct{}),
 		probe:               docker.Probe,
 		dockerRetryInterval: dockerRetryInterval,
+		instances:           serviceutil.NewInstanceDomain(store, nsInstance),
 	}
 
 	// Probe Docker in the background so startup of other services is not delayed.
@@ -799,7 +804,7 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	dc := result.Client
 
 	// Create Docker GC so Stop() can sweep orphaned Lambda containers.
-	s.gc = docker.NewGC(dc, s.log.ZapLogger(), false)
+	s.gc = docker.NewGC(dc, s.log.ZapLogger(), false, s.instances.Resolve)
 	s.gc.StartRemoveLoop(context.Background())
 	// At startup, immediately clean up any orphaned containers from prior
 	// crashes that left containers stuck in "created" or "exited" state.
@@ -841,7 +846,7 @@ func (s *Service) wireDockerRuntime(cfg *config.Config, clk clock.Clock, rr *run
 	// delays other services).
 	limits := resolveRuntimeLimits(context.Background(), cfg, dc, log)
 
-	containerRuntime := NewContainerRuntime(cfg, clk, dc, s.gc, runtimeAPI, log, limits.maxConcurrentStarts)
+	containerRuntime := NewContainerRuntime(cfg, clk, dc, s.gc, runtimeAPI, log, limits.maxConcurrentStarts, s.instances)
 
 	// When a container's RIC issues its first GET /next, throttle the
 	// INIT-burst CPU down to the steady-state proportional allocation. The

@@ -33,6 +33,8 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/state"
 	"go.uber.org/zap"
 )
 
@@ -194,7 +196,8 @@ func newECRContainerRuntime(t *testing.T, daemon *recordingDaemon) *ContainerRun
 
 	cfg := &config.Config{Region: "us-east-1"}
 	dc := docker.NewClient("tcp://"+daemon.Listener.Addr().String(), zap.NewNop())
-	cr := NewContainerRuntime(cfg, clk, dc, nil, runtimeAPI, zap.NewNop(), 1)
+	cr := NewContainerRuntime(cfg, clk, dc, nil, runtimeAPI, zap.NewNop(), 1,
+		serviceutil.NewInstanceDomain(state.NewMemoryStore(), nsInstance))
 	cr.SetImageResolver(stubImageResolver{requested: cdkImageURI, served: servedReference()})
 	return cr
 }

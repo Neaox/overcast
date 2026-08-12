@@ -69,11 +69,14 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	}
 	s.handler.docker = dc
 	s.handler.puller = docker.NewImagePuller(dc)
-	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.RDSKeepContainers)
+	s.handler.gc = docker.NewGC(dc, s.log.ZapLogger(), s.handler.cfg.RDSKeepContainers, s.handler.instances.Resolve)
 	s.handler.gc.StartRemoveLoop(context.Background())
-	// Sweep only what no instance still claims. A stopped DB instance keeps its
-	// container across restarts so StartDBInstance has something to start; a
-	// blanket sweep stranded it. See GC.SweepExcept.
+	// Sweep only this Overcast's own containers, and among those only what no
+	// DB instance still claims. A stopped DB instance keeps its container
+	// across restarts so StartDBInstance has something to start; a blanket
+	// sweep stranded it, and the veto alone did not save another Overcast's
+	// instances, since this store has no record of them to veto on. See
+	// GC.SweepExcept.
 	s.handler.gc.SweepExcept(serviceName, s.handler.instanceOwnsContainer)
 	s.handler.dockerReady.Store(true)
 }
