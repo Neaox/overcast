@@ -2,8 +2,11 @@ package helpers
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -43,57 +46,51 @@ func ReserveTCPPort(t *testing.T) int {
 // about Overcast, so it is a gate rather than a failure. Any other login error
 // is real and fails.
 //
-// The matching logout is not tidiness — it is the difference between a suite
-// that cleans up after itself and one that degrades the machine it runs on.
-// `docker login` records the credential per registry address, in two places at
-// once: an `auths` key in ~/.docker/config.json, and an entry in the platform
-// credential store named by `credsStore` (Windows Credential Manager, the macOS
-// keychain, libsecret). Every registry here is `localhost:<ephemeral port>`, so
-// each run of each test mints an address that will never be seen again and
-// leaves an entry behind for it — permanently, accumulating across every run by
-// every contributor.
+// The login is given a credential store of its own, which is what keeps this
+// suite from both degrading the machine it runs on and flaking against itself.
 //
-// That has a hard ceiling. A saturated Windows credential store fails the next
-// login with "Not enough memory resources are available to process this
-// command", which reads as a machine problem rather than as this suite's litter
-// and takes every Docker-gated test down with it. It was found at ~200 entries
-// on a development machine.
+// By default `docker login` records the credential per registry address in two
+// shared places at once: an `auths` key in ~/.docker/config.json, and an entry
+// in the platform credential store named by `credsStore` (Windows Credential
+// Manager, the macOS keychain, libsecret). Every registry here is
+// `localhost:<ephemeral port>`, so each run mints an address that will never be
+// seen again and leaves an entry behind for it, accumulating across every run
+// by every contributor. That has a hard ceiling: a saturated Windows credential
+// store fails the next login with "Not enough memory resources are available to
+// process this command", which reads as a machine problem rather than as this
+// suite's litter and takes every Docker-gated test down with it. Found at ~200
+// entries on a development machine.
 //
-// So the test logs out of what it logged in to. `docker logout` is the
-// supported way to remove both records and normalises the scheme, so the same
-// proxyEndpoint string the login was given matches what was stored.
+// Logging out again was the first fix and it was not enough, in a way worth
+// recording because the failure it caused looked like someone else's. Three
+// tests across two packages log in, `go test` runs packages concurrently, and
+// login and logout are both read-modify-writes of shared state — so on CI,
+// where runners configure no credsStore and the credential really is just a key
+// in one JSON file, a logout could write back a snapshot taken before a
+// concurrent login and erase a credential still in use. That surfaces as `docker
+// pull` failing with "no basic auth credentials" in whichever package lost the
+// race. Adding the logout is what introduced a writer that *removes* entries;
+// before it, concurrent logins only ever added.
 //
-// It is an improvement rather than a cure, and the shape of what is left
-// matters. Measured on Windows with Docker Desktop: a single test leaks
-// nothing, and a serial run of the ECR and ECS suites leaks nothing, where
-// before this every login leaked. Run concurrently the cleanup often does not
-// take — around three entries survived running those two packages together,
-// and around fifteen survived a full `go test ./...` on a loaded machine. The
-// credential helper is a separate process mutating one shared store, and the
-// logout is best-effort with a bounded timeout, so under contention it races or
-// gives up. Unbounded growth is now bounded growth, which is worth having and
-// is not the same as fixed.
-//
-// Two things were tried and rejected, so they are not re-attempted: isolating
-// DOCKER_CONFIG to a temp directory (with no config.json the CLI *detects* the
-// platform helper rather than falling back to a file store, and Docker Desktop
-// maintains ~/.docker/config.json itself regardless), and reading the residue
-// as a shared-file race in config.json (it is the helper, not the file). If
-// this needs to be airtight, the promising direction is forcing the file store
-// with an explicit empty `credHelpers` entry for the registry, which removes
-// the shared store from the picture entirely — untested here for want of a
-// live registry to log in to.
+// Which fix works depends on where the credential actually lands, and the two
+// cases want opposite things — so isolateDockerConfig decides per machine and
+// the logout covers what isolation cannot reach. See both for the measurements.
 func DockerLoginOrSkip(t *testing.T, proxy, user, password string) {
 	t.Helper()
-	// Registered before the login so a partial one — the credential stored, the
-	// command still reporting failure — is cleaned up too. Logging out of a
-	// registry that was never logged in to is a no-op, and this runs on a fresh
-	// context because t's is already cancelled by cleanup time.
+	isolateDockerConfig(t)
+
+	// Registered after any isolation so a partial login — the credential stored,
+	// the command still reporting failure — is cleaned up too, and so that
+	// DOCKER_CONFIG is still set while this runs: cleanups are LIFO and
+	// t.Setenv's own restore was registered first. Logging out of a registry
+	// that was never logged in to is a no-op, and this runs on a fresh context
+	// because t's is already cancelled by cleanup time.
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = exec.CommandContext(ctx, "docker", "logout", proxy).Run()
 	})
+
 	cmd := exec.CommandContext(t.Context(), "docker", "login", proxy, "-u", user, "--password-stdin")
 	cmd.Stdin = strings.NewReader(password + "\n")
 	out, err := cmd.CombinedOutput()
@@ -107,6 +104,108 @@ func DockerLoginOrSkip(t *testing.T, proxy, user, password string) {
 		t.Skipf("docker daemon will not talk plain HTTP to %s: %s", proxy, strings.TrimSpace(msg))
 	}
 	t.Fatalf("docker login %s: %v\n%s", proxy, err, out)
+}
+
+// isolateDockerConfig points DOCKER_CONFIG at a directory belonging to this
+// test, on the machines where that is the fix and only there.
+//
+// Where the credential is a key in ~/.docker/config.json and nothing else — CI
+// runners, which configure no credential helper — the shared file is the whole
+// problem. Three tests across two packages log in, `go test` runs packages
+// concurrently, and login and logout are both read-modify-writes of that one
+// file, so a logout can write back a snapshot taken before a concurrent login
+// and erase a credential still in use. It surfaces as `docker pull` failing with
+// "no basic auth credentials" in whichever package lost the race. Giving each
+// test process its own config removes the sharing rather than trying to time it,
+// and t.TempDir then takes the credential away with the directory.
+//
+// Where a credential helper owns the credential, isolating the config is worse
+// than doing nothing, which is why this is conditional rather than always on.
+// Measured on Windows with Docker Desktop, counting `localhost:<port>` entries
+// added to Windows Credential Manager by a single ECR run: not isolating leaks
+// none, isolating while still logging out leaks one to three, and isolating with
+// the logout dropped leaks four. Desktop's CLI reaches the helper whatever this
+// config says, so the login lands there — while `docker logout`, reading the
+// same isolated config, looks for the credential in the file store and does not
+// reliably remove what the helper holds. Isolation breaks the cleanup without
+// moving the credential, and the entries accumulate to a hard ceiling: a
+// saturated store fails the next login with
+// "Not enough memory resources are available to process this command", which
+// reads as a machine problem rather than as this suite's litter and takes every
+// Docker-gated test down with it. Found at ~200 entries on a development
+// machine. So on those machines nothing is isolated and the logout keeps
+// working exactly as it did.
+//
+// t.Setenv rather than an env slice on each command, deliberately: every
+// `docker` the test runs afterwards inherits the setting through os.Environ(),
+// including the ones in each package's own exec wrappers. Threading it through
+// every call site instead would turn a missed one into a confusing auth failure
+// rather than a compile error. It also means this cannot be called from a
+// parallel test, which Go enforces for us.
+func isolateDockerConfig(t *testing.T) {
+	t.Helper()
+	// A second login in the same test joins the first rather than isolating
+	// again. Isolating again would point DOCKER_CONFIG at a fresh directory and
+	// strand the credential the first login just stored, which is an auth
+	// failure some distance from its cause. No test logs in twice today; this is
+	// so that one may.
+	if dir := os.Getenv("DOCKER_CONFIG"); dir != "" {
+		if _, err := os.Stat(filepath.Join(dir, isolatedConfigMarker)); err == nil {
+			return
+		}
+	}
+	if dockerUsesCredentialHelper() {
+		return
+	}
+	dir := t.TempDir()
+	// An explicit empty credsStore is the point of writing this file at all:
+	// given an empty directory the CLI goes looking for a platform helper
+	// instead of falling back to the file store.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"auths":{},"credsStore":""}`), 0o600); err != nil {
+		t.Fatalf("write an isolated docker config: %v", err)
+	}
+	// Names this directory as ours. The config alone cannot: one written here
+	// and one belonging to a machine that simply has no helper read the same.
+	if err := os.WriteFile(filepath.Join(dir, isolatedConfigMarker), nil, 0o600); err != nil {
+		t.Fatalf("mark the isolated docker config: %v", err)
+	}
+	t.Setenv("DOCKER_CONFIG", dir)
+}
+
+// isolatedConfigMarker names a DOCKER_CONFIG directory as one isolateDockerConfig
+// created. Docker ignores files it does not recognise, so this sits harmlessly
+// beside config.json.
+const isolatedConfigMarker = ".overcast-isolated"
+
+// dockerUsesCredentialHelper reports whether the Docker CLI on this machine
+// hands credentials to a helper process rather than writing them to its config
+// file.
+//
+// Unreadable or absent config means no helper, which is the CI shape and the
+// safe way round: the cost of isolating when a helper is present is leaked
+// credentials, and the cost of not isolating when one is absent is the flake
+// this exists to stop.
+func dockerUsesCredentialHelper() bool {
+	dir := os.Getenv("DOCKER_CONFIG")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		dir = filepath.Join(home, ".docker")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		CredsStore  string            `json:"credsStore"`
+		CredHelpers map[string]string `json:"credHelpers"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return false
+	}
+	return cfg.CredsStore != "" || len(cfg.CredHelpers) > 0
 }
 
 // removeTestNetworks deletes the Docker networks a test server minted for
