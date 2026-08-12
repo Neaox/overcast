@@ -148,6 +148,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 		EngineVersion:          engineVersion,
 		SnapshotRetentionLimit: snapshotRetention,
 		ConfigurationEndpoint:  endpoint,
+		CacheSubnetGroupName:   r.FormValue("CacheSubnetGroupName"),
 	}
 
 	// If a primary cluster ID was specified, register it as a member.

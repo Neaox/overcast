@@ -44,18 +44,21 @@ Supported engines: **redis** (`redis:6`, `redis:7`), **valkey** (`valkey/valkey:
 
 ## VPC placement
 
-A cache cluster created with a `CacheSubnetGroupName` lands on that subnet
-group's VPC network and nothing else, so a Lambda or ECS task outside the VPC
-cannot reach it — as on AWS, where ElastiCache is never publicly accessible and
-has no `PubliclyAccessible` escape hatch. Put the caller in the same VPC.
+A cache cluster or replication group created with a `CacheSubnetGroupName`
+lands on that subnet group's VPC network and nothing else, so a Lambda or ECS
+task outside the VPC cannot reach it — as on AWS, where ElastiCache is never
+publicly accessible and has no `PubliclyAccessible` escape hatch. Put the caller
+in the same VPC.
 
-Two gaps to know about:
+`CreateCacheCluster`, `CreateReplicationGroup` and the CloudFormation resources
+for both accept the field. A serverless cache carries subnet IDs directly
+instead, and resolves its VPC from the first one that names it.
 
-- **Replication groups ignore `CacheSubnetGroupName`.** It is discarded before
-  it reaches the record, so a replication group always lands on the default
-  plane and is reachable from everywhere. That is more permissive than AWS, not
-  less, so nothing breaks — but do not rely on it to isolate anything.
-- CloudFormation does not forward `CacheSubnetGroupName` either.
+Create either without a subnet group and it stays on the default plane, where
+everything can reach it — which is what AWS does with a cache outside a VPC too.
+
+`CacheSubnetGroupName` is a create-only parameter: AWS does not return it on the
+`ReplicationGroup` shape, so neither does Overcast.
 
 See [Networking § Lambda, ECS and VPCs](../networking.md) for the full picture
 and for what a refused connection looks like.
@@ -76,31 +79,31 @@ and for what a refused connection looks like.
 
 ### General
 
-| Operation                      | Status         | Notes                                                                                                                             | AWS Docs                                                                                                        |
-| ------------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `AddTagsToResource`            | ✅ Supported   | ARN-scoped tag storage                                                                                                            | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_AddTagsToResource.html)            |
-| `CreateCacheCluster`           | ✅ Supported   | Docker-backed (redis/valkey/memcached); async creating→available via TCP health check; port auto-alloc                            | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateCacheCluster.html)           |
-| `CreateCacheParameterGroup`    | ✅ Supported   | Stores name, family, description, and ARN                                                                                         | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateCacheParameterGroup.html)    |
-| `CreateCacheSubnetGroup`       | ✅ Supported   | Stores name, description, and subnet IDs                                                                                          | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateCacheSubnetGroup.html)       |
-| `CreateReplicationGroup`       | ✅ Supported   | Docker-backed (single primary node); async creating→available via TCP health check                                                | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateReplicationGroup.html)       |
-| `CreateServerlessCache`        | ✅ Supported   | Docker-backed (redis/valkey/memcached); async creating→available via TCP health check; CloudFormation ServerlessCache supported   | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateServerlessCache.html)        |
-| `DeleteCacheCluster`           | ✅ Supported   | Sets status to "deleting"; stops and removes Docker container asynchronously                                                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteCacheCluster.html)           |
-| `DeleteCacheParameterGroup`    | ✅ Supported   | Removes stored parameter group                                                                                                    | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteCacheParameterGroup.html)    |
-| `DeleteCacheSubnetGroup`       | ✅ Supported   | Removes stored subnet group                                                                                                       | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteCacheSubnetGroup.html)       |
-| `DeleteReplicationGroup`       | ✅ Supported   | Sets status to "deleting"; stops and removes Docker container asynchronously                                                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteReplicationGroup.html)       |
-| `DeleteServerlessCache`        | ✅ Supported   | Sets status to "deleting"; stops and removes Docker container asynchronously                                                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteServerlessCache.html)        |
-| `DescribeCacheClusters`        | ✅ Supported   | List all or filter by CacheClusterId                                                                                              | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheClusters.html)        |
-| `DescribeCacheEngineVersions`  | ❌ Unsupported | stub; returns 501                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheEngineVersions.html)  |
-| `DescribeCacheParameterGroups` | ✅ Supported   | List all or filter by name                                                                                                        | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheParameterGroups.html) |
-| `DescribeCacheParameters`      | ✅ Supported   | Returns curated static parameters for the group's family; supports Source filter and MaxRecords/Marker pagination                 | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheParameters.html)      |
-| `DescribeCacheSubnetGroups`    | ✅ Supported   | List all or filter by name                                                                                                        | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheSubnetGroups.html)    |
-| `DescribeReplicationGroups`    | ✅ Supported   | List all or filter by ReplicationGroupId                                                                                          | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeReplicationGroups.html)    |
-| `DescribeServerlessCaches`     | ✅ Supported   | List all or filter by ServerlessCacheName                                                                                         | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeServerlessCaches.html)     |
-| `ListTagsForResource`          | ✅ Supported   | Returns all tags for an ARN                                                                                                       | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ListTagsForResource.html)          |
-| `ModifyCacheCluster`           | ✅ Supported   | Metadata-only; updates nodeType, engineVersion, numNodes, parameterGroup; modifying→available                                     | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyCacheCluster.html)           |
-| `ModifyReplicationGroup`       | ✅ Supported   | Metadata-only; updates description, nodeType, failover, multiAZ; modifying→available                                              | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyReplicationGroup.html)       |
-| `ModifyServerlessCache`        | ✅ Supported   | Metadata-only; updates description, engine/version, usage limits, security groups, snapshots, and user group; modifying→available | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyServerlessCache.html)        |
-| `RebootCacheCluster`           | ❌ Unsupported | stub; returns 501                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_RebootCacheCluster.html)           |
-| `RemoveTagsFromResource`       | ✅ Supported   | Removes specific tag keys                                                                                                         | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_RemoveTagsFromResource.html)       |
+| Operation                      | Status         | Notes                                                                                                                                                  | AWS Docs                                                                                                        |
+| ------------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `AddTagsToResource`            | ✅ Supported   | ARN-scoped tag storage                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_AddTagsToResource.html)            |
+| `CreateCacheCluster`           | ✅ Supported   | Docker-backed (redis/valkey/memcached); async creating→available via TCP health check; port auto-alloc                                                 | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateCacheCluster.html)           |
+| `CreateCacheParameterGroup`    | ✅ Supported   | Stores name, family, description, and ARN                                                                                                              | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateCacheParameterGroup.html)    |
+| `CreateCacheSubnetGroup`       | ✅ Supported   | Stores name, description, and subnet IDs                                                                                                               | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateCacheSubnetGroup.html)       |
+| `CreateReplicationGroup`       | ✅ Supported   | Docker-backed (single primary node); async creating→available via TCP health check; `CacheSubnetGroupName` places the group in that subnet group's VPC | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateReplicationGroup.html)       |
+| `CreateServerlessCache`        | ✅ Supported   | Docker-backed (redis/valkey/memcached); async creating→available via TCP health check; CloudFormation ServerlessCache supported                        | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_CreateServerlessCache.html)        |
+| `DeleteCacheCluster`           | ✅ Supported   | Sets status to "deleting"; stops and removes Docker container asynchronously                                                                           | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteCacheCluster.html)           |
+| `DeleteCacheParameterGroup`    | ✅ Supported   | Removes stored parameter group                                                                                                                         | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteCacheParameterGroup.html)    |
+| `DeleteCacheSubnetGroup`       | ✅ Supported   | Removes stored subnet group                                                                                                                            | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteCacheSubnetGroup.html)       |
+| `DeleteReplicationGroup`       | ✅ Supported   | Sets status to "deleting"; stops and removes Docker container asynchronously                                                                           | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteReplicationGroup.html)       |
+| `DeleteServerlessCache`        | ✅ Supported   | Sets status to "deleting"; stops and removes Docker container asynchronously                                                                           | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DeleteServerlessCache.html)        |
+| `DescribeCacheClusters`        | ✅ Supported   | List all or filter by CacheClusterId                                                                                                                   | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheClusters.html)        |
+| `DescribeCacheEngineVersions`  | ❌ Unsupported | stub; returns 501                                                                                                                                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheEngineVersions.html)  |
+| `DescribeCacheParameterGroups` | ✅ Supported   | List all or filter by name                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheParameterGroups.html) |
+| `DescribeCacheParameters`      | ✅ Supported   | Returns curated static parameters for the group's family; supports Source filter and MaxRecords/Marker pagination                                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheParameters.html)      |
+| `DescribeCacheSubnetGroups`    | ✅ Supported   | List all or filter by name                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeCacheSubnetGroups.html)    |
+| `DescribeReplicationGroups`    | ✅ Supported   | List all or filter by ReplicationGroupId                                                                                                               | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeReplicationGroups.html)    |
+| `DescribeServerlessCaches`     | ✅ Supported   | List all or filter by ServerlessCacheName                                                                                                              | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_DescribeServerlessCaches.html)     |
+| `ListTagsForResource`          | ✅ Supported   | Returns all tags for an ARN                                                                                                                            | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ListTagsForResource.html)          |
+| `ModifyCacheCluster`           | ✅ Supported   | Metadata-only; updates nodeType, engineVersion, numNodes, parameterGroup; modifying→available                                                          | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyCacheCluster.html)           |
+| `ModifyReplicationGroup`       | ✅ Supported   | Metadata-only; updates description, nodeType, failover, multiAZ; modifying→available                                                                   | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyReplicationGroup.html)       |
+| `ModifyServerlessCache`        | ✅ Supported   | Metadata-only; updates description, engine/version, usage limits, security groups, snapshots, and user group; modifying→available                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_ModifyServerlessCache.html)        |
+| `RebootCacheCluster`           | ❌ Unsupported | stub; returns 501                                                                                                                                      | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_RebootCacheCluster.html)           |
+| `RemoveTagsFromResource`       | ✅ Supported   | Removes specific tag keys                                                                                                                              | [docs](https://docs.aws.amazon.com/AmazonElastiCache/latest/APIReference/API_RemoveTagsFromResource.html)       |
 
 <!-- END overcast:capabilities -->

@@ -905,17 +905,12 @@ func (h *Handler) startReplicationGroupContainer(ctx context.Context, rg *Replic
 		return fmt.Errorf("create container: %w", err)
 	}
 
-	// A replication group record carries no CacheSubnetGroupName — it is
-	// discarded at the wire by both the Query handler and the typed request, and
-	// CloudFormation does not forward it either — so there is no VPC to derive
-	// and the group lands on the default plane.
-	//
-	// Now that placement restricts, this is the one container-backed resource
-	// that cannot be placed in a VPC at all. It errs permissive rather than
-	// restrictive: the group is reachable from everywhere, so nothing breaks,
-	// but it also cannot be isolated. Carrying the field through the three
-	// layers that drop it is the fix; see docs/plans/container-network-topology.md §11.
-	if err := h.attachToDataPlane(ctx, containerID, "", h.replicationGroupEndpointAliases(rg)); err != nil {
+	// Placed in the VPC its subnet group belongs to, the same way a cache
+	// cluster is. A group created without one resolves to no VPC and stays on
+	// the default plane, which is where AWS puts a cache outside a VPC too.
+	if err := h.attachToDataPlane(ctx, containerID,
+		h.vpcForSubnetGroup(ctx, rg.CacheSubnetGroupName),
+		h.replicationGroupEndpointAliases(rg)); err != nil {
 		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
 		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
 		return fmt.Errorf("ElastiCache %s: %w", rg.ReplicationGroupId, err)

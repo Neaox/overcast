@@ -2481,6 +2481,12 @@ func (h *elastiCacheReplicationGroupHandler) Create(ctx context.Context, router 
 	if v := props["MultiAZEnabled"]; v != nil {
 		params["MultiAZEnabled"] = cfnScalarString(v)
 	}
+	// What places the group in a VPC. CDK's elasticache constructs put the
+	// subnet group on the replication group itself, so dropping it here left
+	// the cache outside the VPC the rest of the stack was in.
+	if v, _ := props["CacheSubnetGroupName"].(string); v != "" {
+		params["CacheSubnetGroupName"] = v
+	}
 
 	rec, err := internalQuery(ctx, router, rCtx.Region, params)
 	if err != nil {

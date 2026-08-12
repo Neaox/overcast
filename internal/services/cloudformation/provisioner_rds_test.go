@@ -153,12 +153,15 @@ func (f *fakeRDS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// newRDSTestProvisioner wires a provisioner to a scripted RDS endpoint. The
+// newTestProvisioner wires a provisioner to a scripted AWS endpoint. The RDS
 // tests go through the provisioner rather than calling a handler directly
 // because the wait is the provisioner's to run — a handler that implements
 // Stabilize but is never asked to would pass a handler-level test and still
 // complete the resource early.
-func newRDSTestProvisioner(t *testing.T, router http.Handler) (*provisioner, *resolveContext) {
+//
+// Nothing here is RDS-specific: the router is whatever the caller scripts, so
+// any resource handler's Create can be driven through it.
+func newTestProvisioner(t *testing.T, router http.Handler) (*provisioner, *resolveContext) {
 	t.Helper()
 	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
 	clk := clock.New()
@@ -194,7 +197,7 @@ func rdsInstanceProps(id string) map[string]any {
 func TestRDSDBInstanceCreate_waitsForTheInstanceToBecomeAvailable(t *testing.T) {
 	// Given: a database that is still creating for its first two status checks
 	f := &fakeRDS{statuses: []string{"creating", "creating", "available"}}
-	p, rCtx := newRDSTestProvisioner(t, f)
+	p, rCtx := newTestProvisioner(t, f)
 
 	// When: CloudFormation provisions it
 	id, err := p.provisionResource(context.Background(), "Database",
@@ -231,7 +234,7 @@ func TestRDSDBInstanceCreate_failsWithTheDatabasesOwnReason(t *testing.T) {
 			"The DB instance creation failed. the database container exited with code 1 — see the instance logs.",
 		},
 	}
-	p, rCtx := newRDSTestProvisioner(t, f)
+	p, rCtx := newTestProvisioner(t, f)
 
 	// When: CloudFormation provisions it
 	id, err := p.provisionResource(context.Background(), "Database",
@@ -257,7 +260,7 @@ func TestRDSDBInstanceCreate_failsWithTheDatabasesOwnReason(t *testing.T) {
 func TestRDSDBInstanceCreate_failsWhenTheInstanceDisappears(t *testing.T) {
 	// Given: an instance that is gone by the time the wait looks for it
 	f := &fakeRDS{gone: true}
-	p, rCtx := newRDSTestProvisioner(t, f)
+	p, rCtx := newTestProvisioner(t, f)
 
 	// When: CloudFormation provisions it
 	_, err := p.provisionResource(context.Background(), "Database",
@@ -277,7 +280,7 @@ func TestRDSDBInstanceCreate_failsWhenTheInstanceDisappears(t *testing.T) {
 func TestRDSDBInstanceUpdate_waitsForTheModificationToSettle(t *testing.T) {
 	// Given: an instance that spends a status check in "modifying"
 	f := &fakeRDS{statuses: []string{"modifying", "available"}}
-	p, rCtx := newRDSTestProvisioner(t, f)
+	p, rCtx := newTestProvisioner(t, f)
 
 	props := rdsInstanceProps("appdb")
 	props["MasterUserPassword"] = "rotated-password"
@@ -310,7 +313,7 @@ func TestRDSDBInstanceUpdate_waitsForTheModificationToSettle(t *testing.T) {
 func TestRDSDBInstanceUpdate_failureToSettleIsNotAnsweredByReplacement(t *testing.T) {
 	// Given: an instance that goes to "failed" after being modified
 	f := &fakeRDS{statuses: []string{"failed"}}
-	p, rCtx := newRDSTestProvisioner(t, f)
+	p, rCtx := newTestProvisioner(t, f)
 
 	props := rdsInstanceProps("appdb")
 	props["DBInstanceClass"] = "db.t3.small"
@@ -341,7 +344,7 @@ func TestRDSDBInstanceCreate_forwardsPubliclyAccessible(t *testing.T) {
 	// Given: a template that puts the instance in a subnet group but asks for it
 	// to stay publicly accessible
 	f := &fakeRDS{}
-	p, rCtx := newRDSTestProvisioner(t, f)
+	p, rCtx := newTestProvisioner(t, f)
 	props := rdsInstanceProps("appdb")
 	props["DBSubnetGroupName"] = "app-subnets"
 	props["PubliclyAccessible"] = true
@@ -369,7 +372,7 @@ func TestRDSDBInstanceCreate_forwardsPubliclyAccessible(t *testing.T) {
 func TestRDSDBClusterCreate_waitsForTheClusterToBecomeAvailable(t *testing.T) {
 	// Given: a cluster that is still creating for its first status check
 	f := &fakeRDS{statuses: []string{"creating", "available"}}
-	p, rCtx := newRDSTestProvisioner(t, f)
+	p, rCtx := newTestProvisioner(t, f)
 
 	// When: CloudFormation provisions it
 	id, err := p.provisionResource(context.Background(), "Cluster",
