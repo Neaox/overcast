@@ -63,7 +63,7 @@ func (s *Service) runSubdirHelper(ctx context.Context, volume, subpath string, c
 			Image:      efsHelperImage,
 			Entrypoint: []string{"/bin/sh", "-c"},
 			Cmd:        []string{script},
-			Labels:     docker.ManagedLabels(serviceName, volume),
+			Labels:     s.managedLabels(ctx, volume),
 		},
 		HostConfig: &docker.HostConfig{
 			Mounts: []docker.Mount{{Type: "volume", Source: volume, Target: "/v"}},

@@ -351,10 +351,13 @@ func TestReconcileVolumes_healsAndSweeps(t *testing.T) {
 			t.Fatalf("seed file system: %v", err)
 		}
 	}
-	// …and one orphaned managed volume with no record behind it.
+	// …and one orphaned volume of this instance's own, with no record behind
+	// it. It carries this instance's identity, which is what makes it
+	// provably litter rather than merely unrecognised — see the scoping tests
+	// below.
 	fd.listed = []docker.VolumeSummary{
-		{Name: volumeName("fs-orphan0000000000"), Labels: docker.ManagedLabels("efs", "fs-orphan0000000000")},
-		{Name: volumeName("fs-aaaaaaaaaaaaaaaaa"), Labels: docker.ManagedLabels("efs", "fs-aaaaaaaaaaaaaaaaa")},
+		{Name: volumeName("fs-orphan0000000000"), Labels: svc.managedLabels(ctx, "fs-orphan0000000000")},
+		{Name: volumeName("fs-aaaaaaaaaaaaaaaaa"), Labels: svc.managedLabels(ctx, "fs-aaaaaaaaaaaaaaaaa")},
 	}
 
 	svc.reconcileVolumes(ctx)
@@ -366,5 +369,124 @@ func TestReconcileVolumes_healsAndSweeps(t *testing.T) {
 	removed := fd.removedVolumes()
 	if len(removed) != 1 || removed[0] != volumeName("fs-orphan0000000000") {
 		t.Fatalf("expected only the orphan removed, got %v", removed)
+	}
+}
+
+// ─── Sweep scoping ────────────────────────────────────────────────────────────
+//
+// Two Overcast instances share one Docker daemon and keep separate stores, so
+// "no record of this file system" means nothing about whether the volume is
+// wanted. In live mode these volumes hold the user's actual file data, which
+// makes getting it wrong data loss rather than lost scratch space.
+
+// The regression. A volume belonging to a file system this instance has never
+// heard of — another Overcast's, still serving it — must survive the sweep.
+func TestReconcileVolumes_leavesVolumesOwnedByAnotherInstance(t *testing.T) {
+	fd := newFakeVolumeDaemon(t)
+	svc := newLiveTestService(t, fd, config.EFSModeLive)
+	ctx := context.Background()
+
+	foreign := docker.ManagedLabels(serviceName, "fs-otherinstance00")
+	foreign[docker.LabelInstance] = "11111111-2222-3333-4444-555555555555"
+	fd.listed = []docker.VolumeSummary{
+		{Name: volumeName("fs-otherinstance00"), Labels: foreign},
+	}
+
+	svc.reconcileVolumes(ctx)
+
+	if removed := fd.removedVolumes(); len(removed) != 0 {
+		t.Fatalf("another instance's live EFS volume was removed: %v", removed)
+	}
+}
+
+// A volume from a version of Overcast that predates the identity label has no
+// owner to establish, and "cannot establish" resolves to "leave it alone".
+func TestReconcileVolumes_leavesUnlabelledVolumes(t *testing.T) {
+	fd := newFakeVolumeDaemon(t)
+	svc := newLiveTestService(t, fd, config.EFSModeLive)
+	ctx := context.Background()
+
+	fd.listed = []docker.VolumeSummary{
+		{Name: volumeName("fs-nolabel00000000"), Labels: docker.ManagedLabels(serviceName, "fs-nolabel00000000")},
+	}
+
+	svc.reconcileVolumes(ctx)
+
+	if removed := fd.removedVolumes(); len(removed) != 0 {
+		t.Fatalf("expected an unlabelled volume to be left alone, removed %v", removed)
+	}
+}
+
+// The sweep still does the job it exists for: a volume this instance stamped
+// as its own, whose file system is gone from a store that outlived the
+// process, is provably litter.
+func TestReconcileVolumes_removesItsOwnOrphan(t *testing.T) {
+	fd := newFakeVolumeDaemon(t)
+	svc := newLiveTestService(t, fd, config.EFSModeLive)
+	ctx := context.Background()
+
+	fd.listed = []docker.VolumeSummary{
+		{Name: volumeName("fs-myorphan0000000"), Labels: svc.managedLabels(ctx, "fs-myorphan0000000")},
+	}
+
+	svc.reconcileVolumes(ctx)
+
+	want := volumeName("fs-myorphan0000000")
+	if removed := fd.removedVolumes(); len(removed) != 1 || removed[0] != want {
+		t.Fatalf("expected %q swept, got %v", want, removed)
+	}
+}
+
+// The identity is read from the store, so its lifetime is the store's. Two
+// services over one store — two processes pointed at the same data directory —
+// share a sweep domain, because they share the records that say what is still
+// wanted. Over separate stores they share nothing.
+func TestSweepDomain_followsTheStoreNotTheProcess(t *testing.T) {
+	ctx := context.Background()
+	newSvc := func(st state.Store) *Service {
+		return New(
+			&config.Config{Region: "us-east-1", AccountID: "000000000000", EFSMode: config.EFSModeLive},
+			st, zap.NewNop(), clock.New(),
+		)
+	}
+
+	shared := state.NewMemoryStore()
+	a, b := newSvc(shared), newSvc(shared)
+	if a.sweepDomain(ctx) == "" {
+		t.Fatal("expected an identity to be minted")
+	}
+	if a.sweepDomain(ctx) != b.sweepDomain(ctx) {
+		t.Fatalf("instances sharing a store must share a sweep domain: %q vs %q",
+			a.sweepDomain(ctx), b.sweepDomain(ctx))
+	}
+
+	if c := newSvc(state.NewMemoryStore()); c.sweepDomain(ctx) == a.sweepDomain(ctx) {
+		t.Fatal("instances with separate stores must not share a sweep domain")
+	}
+}
+
+// The memory backend's answer, pinned because it is the first thing a reader
+// asks. The store is empty at startup, so every file system is unknown — but
+// the identity is gone too, so the previous run's volumes are outside this
+// instance's domain and nothing is swept. Before this change the empty store
+// meant every EFS volume on the daemon was deleted on every restart.
+func TestReconcileVolumes_memoryBackedRestartKeepsPreviousRunsVolumes(t *testing.T) {
+	fd := newFakeVolumeDaemon(t)
+	ctx := context.Background()
+
+	before := newLiveTestService(t, fd, config.EFSModeLive)
+	stamped := before.managedLabels(ctx, "fs-previousrun0000")
+
+	// The restart: a new process over a new in-memory store, holding no record
+	// of the file system and no memory of who created its volume.
+	after := newLiveTestService(t, fd, config.EFSModeLive)
+	fd.listed = []docker.VolumeSummary{
+		{Name: volumeName("fs-previousrun0000"), Labels: stamped},
+	}
+
+	after.reconcileVolumes(ctx)
+
+	if removed := fd.removedVolumes(); len(removed) != 0 {
+		t.Fatalf("a memory-backed restart deleted the previous run's file data: %v", removed)
 	}
 }

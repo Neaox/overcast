@@ -26,8 +26,13 @@ EFS supports two modes:
 - `live` (default): each file system is backed by a named Docker volume
   (`overcast-efs-<FileSystemId>`), created on `CreateFileSystem` and removed on
   `DeleteFileSystem`. On startup, volumes are reconciled against persisted file
-  systems (missing volumes are recreated; orphaned managed volumes are
-  removed). `EFS_DOCKER_SOCKET` overrides the Docker socket (defaults to the
+  systems: missing volumes are recreated, and volumes this instance created
+  whose file system is gone are removed. The sweep is scoped to volumes
+  carrying this instance's identity, so two Overcasts sharing a Docker daemon
+  cannot delete each other's file data; with the default `memory` state backend
+  that identity is minted afresh on every start, so a restart sweeps nothing at
+  all and orphans wait for `docker volume prune --filter
+  label=overcast.managed=true`. `EFS_DOCKER_SOCKET` overrides the Docker socket (defaults to the
   Lambda socket). Volume operations are best-effort: the control plane keeps
   working when Docker is unavailable, and reconciliation heals the gap when it
   returns.

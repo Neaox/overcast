@@ -123,6 +123,27 @@ const (
 	// LabelResourceID identifies the logical resource that owns the
 	// Docker resource (e.g. function name, ECS task ID, VPC ID).
 	LabelResourceID = "overcast.resource-id"
+	// LabelInstance identifies the Overcast instance that created the
+	// resource, so a sweep can tell its own litter from a resource another
+	// instance on the same daemon is still using.
+	//
+	// A sweep that decides a resource is abandoned by failing to find its
+	// owner in the sweeping instance's own records is wrong the moment two
+	// Overcasts share a daemon: they keep separate records, so each sees the
+	// other's live resources as abandoned. Where the daemon can answer the
+	// question instead — a volume no container references is dangling — prefer
+	// that (see ListUnusedVolumes). Where it cannot, because being
+	// unreferenced is the resource's normal resting state, this label is how
+	// a sweep stays inside its own scope.
+	//
+	// The value is the identity of the *state store* that owns the resource,
+	// not of the process: instances sharing a data directory share records, so
+	// they share a sweep domain. See serviceutil.InstanceIdentity.
+	//
+	// Absence is not permission. A resource without this label predates the
+	// label or belongs to something else; either way its owner cannot be
+	// established, so it must not be swept.
+	LabelInstance = "overcast.instance"
 )
 
 // ManagedLabels returns the standard Overcast labels for a Docker resource.
@@ -379,6 +400,10 @@ func (c *ContainerSummary) Service() string { return c.Labels[LabelService] }
 
 // ResourceID returns the overcast.resource-id label value (empty string if not set).
 func (c *ContainerSummary) ResourceID() string { return c.Labels[LabelResourceID] }
+
+// Instance returns the overcast.instance label value (empty string if not
+// set). See LabelInstance.
+func (c *ContainerSummary) Instance() string { return c.Labels[LabelInstance] }
 
 // FirstName returns the primary container name without the leading slash.
 func (c *ContainerSummary) FirstName() string {
@@ -1175,6 +1200,10 @@ func (v *VolumeSummary) Service() string { return v.Labels[LabelService] }
 
 // ResourceID returns the owning resource ID from the managed labels.
 func (v *VolumeSummary) ResourceID() string { return v.Labels[LabelResourceID] }
+
+// Instance returns the owning Overcast instance's identity from the managed
+// labels, or "" when the volume does not carry one. See LabelInstance.
+func (v *VolumeSummary) Instance() string { return v.Labels[LabelInstance] }
 
 type createVolumeRequest struct {
 	Name       string            `json:"Name"`

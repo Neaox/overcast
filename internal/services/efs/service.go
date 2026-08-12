@@ -61,6 +61,11 @@ type Service struct {
 	// ("volume/subpath" → struct{}) so repeat mounts skip the helper run.
 	materialized sync.Map
 
+	// instanceMu guards instanceID, the sweep-domain identity stamped into
+	// every volume and container this instance creates. See sweepDomain.
+	instanceMu sync.Mutex
+	instanceID string
+
 	// nfsMu serializes host-port reservations for mount-target NFS exports;
 	// nfsWg tracks in-flight export starts so Stop waits for them. See
 	// live_nfs.go.

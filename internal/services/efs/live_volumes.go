@@ -58,13 +58,41 @@ func (s *Service) volumesActive() bool {
 	return s.liveModeEnabled() && s.dockerReady.Load()
 }
 
+// sweepDomain returns the identity stamped into every volume and container
+// this instance creates, and the only value a sweep here may act on. Memoized
+// after the first successful resolution; a failed one is not cached, so a
+// store that is briefly unavailable does not disable sweeping for the life of
+// the process.
+//
+// "" means ownership cannot be established — callers stamp nothing and sweep
+// nothing.
+func (s *Service) sweepDomain(ctx context.Context) string {
+	s.instanceMu.Lock()
+	defer s.instanceMu.Unlock()
+	if s.instanceID == "" {
+		s.instanceID = serviceutil.InstanceIdentity(ctx, s.store, nsInstance)
+	}
+	return s.instanceID
+}
+
+// managedLabels returns the standard labels plus this instance's sweep-domain
+// identity, which is what later lets reconciliation tell a volume or container
+// it created from one belonging to another Overcast on the same daemon.
+func (s *Service) managedLabels(ctx context.Context, resourceID string) map[string]string {
+	labels := docker.ManagedLabels(serviceName, resourceID)
+	if domain := s.sweepDomain(ctx); domain != "" {
+		labels[docker.LabelInstance] = domain
+	}
+	return labels
+}
+
 // ensureVolume creates the backing volume for a file system. Safe to repeat:
 // Docker's volume create is idempotent by name.
 func (s *Service) ensureVolume(ctx context.Context, fsID string) {
 	if !s.volumesActive() {
 		return
 	}
-	if err := s.docker.CreateVolume(ctx, volumeName(fsID), docker.ManagedLabels(serviceName, fsID)); err != nil {
+	if err := s.docker.CreateVolume(ctx, volumeName(fsID), s.managedLabels(ctx, fsID)); err != nil {
 		s.log.Warn("efs: create volume failed — file system remains metadata-only",
 			zap.String("file_system", fsID), zap.Error(err))
 	}
@@ -165,8 +193,39 @@ func (s *Service) EFSVolumeForFileSystem(ctx context.Context, fileSystemID strin
 }
 
 // reconcileVolumes aligns Docker volumes with persisted file systems across
-// every region: file systems missing their volume get one, and managed
-// volumes whose file system no longer exists are removed. Idempotent.
+// every region: file systems missing their volume get one, and this instance's
+// own volumes whose file system no longer exists are removed. Idempotent.
+//
+// "This instance's own" is load-bearing, and is why the sweep matches on
+// docker.LabelInstance rather than on the absence of a file-system record.
+// Records are per-instance and the daemon is shared, so a second Overcast sees
+// the first's file systems as file systems that do not exist. In live mode
+// these volumes hold the user's actual file data — Lambda FileSystemConfigs
+// and ECS efsVolumeConfiguration mounts read and write them — so getting this
+// wrong destroys data rather than scratch space.
+//
+// ECS solved the same problem by asking the daemon for dangling volumes
+// (docker.ListUnusedVolumes), which does not transfer here. A task-scoped
+// volume is referenced for its task's whole life, so unreferenced means
+// finished with. A file system outlives every task that mounts it, so at rest
+// no container references it: unreferenced is an EFS volume's normal state,
+// and sweeping on it would delete nearly all of them.
+//
+// The memory backend, which is the default, deserves the explicit answer
+// because it is the first thing this raises: there, the identity is minted
+// fresh on every start, so nothing that predates the process is ever in scope
+// and the sweep removes nothing at all. Before this change it did the
+// opposite — an empty store meant every file system was unknown, so every
+// startup deleted every EFS volume on the daemon. That is deliberate, not an
+// oversight. The tempting argument for the old behaviour is that the control
+// plane's records really are gone, so the data is unreachable; but it is
+// unreachable only through the API. `docker run -v overcast-efs-fs-…:/data`
+// still gets the files back, and `docker volume prune --filter
+// label=overcast.managed=true` still removes them when that is what the user
+// wants. Deleting the only copy at startup, with no user action, is not a
+// choice an emulator gets to make on the user's behalf — the more so because
+// a memory-backed instance cannot distinguish its own stale volume from a
+// volume another instance is actively serving.
 func (s *Service) reconcileVolumes(ctx context.Context) {
 	if !s.volumesActive() {
 		return
@@ -193,12 +252,24 @@ func (s *Service) reconcileVolumes(ctx context.Context) {
 		s.log.Warn("efs: volume reconciliation: list volumes", zap.Error(err))
 		return
 	}
+	domain := s.sweepDomain(ctx)
 	for _, v := range volumes {
 		fsID := v.ResourceID()
 		if fsID == "" {
 			continue
 		}
 		if _, ok := known[fsID]; ok {
+			continue
+		}
+		// Unknown to this instance is not the same as abandoned. Only a volume
+		// this instance stamped as its own is provably litter; anything else
+		// is another Overcast's live file data, or a volume from a version
+		// that predates the label, and neither is ours to delete. An unswept
+		// volume costs disk until someone prunes it; a wrongly swept one costs
+		// the user their files.
+		if domain == "" || v.Instance() != domain {
+			s.log.Debug("efs: leaving volume owned by another instance",
+				zap.String("volume", v.Name), zap.String("owner", v.Instance()))
 			continue
 		}
 		s.log.Info("efs: removing orphaned volume", zap.String("volume", v.Name))

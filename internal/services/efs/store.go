@@ -21,6 +21,9 @@ const (
 	nsTags         = "efs:tags"
 	nsPolicies     = "efs:policies"
 	nsPreferences  = "efs:preferences"
+	// nsInstance holds this instance's sweep-domain identity. See
+	// Service.sweepDomain.
+	nsInstance = "efs:instance"
 )
 
 // ─── Persisted records ────────────────────────────────────────────────────────
