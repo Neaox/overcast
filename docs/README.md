@@ -31,7 +31,7 @@ see the [root README](../README.md).
 - [Service names](#service-names) — every service name and the CDK module it corresponds to
 - [Log levels](#log-levels) — `OVERCAST_LOG_LEVEL` values and what each one shows
 - [Persistence](#persistence) — storage backends
-- [HTTPS / TLS](#https--tls) — browser-trusted HTTPS and HTTP/2 in two commands; see [HTTPS and HTTP/2](./https.md)
+- [HTTPS / TLS](#https-tls) — browser-trusted HTTPS and HTTP/2 in two commands; see [HTTPS and HTTP/2](./https.md)
 - [Debug endpoints](#debug-endpoints) — health, metrics, state dump, pprof
 - [Event pipelines](#event-pipelines) — SNS→SQS, SQS→Lambda, DynamoDB Streams
 - [Web management console](#web-management-console) — built-in dashboard

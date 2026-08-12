@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -109,6 +110,16 @@ type weightedDoc struct {
 	// docssearch.ScoreDocument.
 	BodyText  string
 	CodeSpans []string
+	// Links are the document's Markdown link destinations, for the anchor
+	// check. They are not indexed and never reach an artifact.
+	Links []docLink
+}
+
+// docLink is one Markdown link destination and where it was written, so a
+// broken anchor can be reported as file:line.
+type docLink struct {
+	Dest string
+	Line int
 }
 
 func main() {
@@ -144,6 +155,12 @@ func main() {
 	if *check {
 		if frontmatterChanges > 0 {
 			fatal(fmt.Errorf("%d docs are missing frontmatter; run go run ./scripts/docs-index.go --write-frontmatter --write-nav", frontmatterChanges))
+		}
+		// Anchors are checked here rather than in validateDocs because a
+		// broken one is a doc bug, not an index bug: it must not stop
+		// --write-nav from regenerating the index that proves the fix.
+		if err := checkAnchors(docs); err != nil {
+			fatal(err)
 		}
 		entries := make([]docEntry, 0, len(docs))
 		for _, doc := range docs {
@@ -296,7 +313,7 @@ func collectDocs(writeFrontmatter, refreshFrontmatter bool) ([]weightedDoc, int,
 		if !writeFrontmatter && !ok {
 			bodyForIndex = string(raw)
 		}
-		entries = append(entries, buildEntry(path, meta, bodyForIndex))
+		entries = append(entries, buildEntry(path, meta, bodyForIndex, frontmatterLines(string(raw), bodyForIndex)))
 	}
 
 	return entries, missingFrontmatter, nil
@@ -471,7 +488,7 @@ func renderFrontmatter(meta docMeta) string {
 	return b.String()
 }
 
-func buildEntry(path string, meta docMeta, body string) weightedDoc {
+func buildEntry(path string, meta docMeta, body string, lineOffset int) weightedDoc {
 	entry := docEntry{
 		Path:        filepath.ToSlash(path),
 		Href:        strings.TrimPrefix(filepath.ToSlash(path), "docs/"),
@@ -482,7 +499,16 @@ func buildEntry(path string, meta docMeta, body string) weightedDoc {
 		Headings:    extractHeadings(body),
 	}
 	content := markdownFields(body)
-	return weightedDoc{Entry: entry, BodyText: content.Prose, CodeSpans: content.Code}
+	return weightedDoc{Entry: entry, BodyText: content.Prose, CodeSpans: content.Code, Links: extractLinks(body, lineOffset)}
+}
+
+// frontmatterLines is how many lines body sits below the start of raw, so a
+// link's line number matches the file rather than the post-frontmatter body.
+func frontmatterLines(raw, body string) int {
+	if !strings.HasSuffix(raw, body) {
+		return 0
+	}
+	return strings.Count(raw[:len(raw)-len(body)], "\n")
 }
 
 // searchFields is what the scorer sees: the entry's metadata plus the prose
@@ -585,6 +611,124 @@ func markdownFields(raw string) markdownContent {
 		return ast.WalkContinue, nil
 	})
 	return markdownContent{Text: strings.Join(all, "\n"), Prose: strings.Join(prose, "\n"), Code: code}
+}
+
+// extractLinks collects every Markdown link destination in a document, with
+// the line it was written on. The Markdown parse — rather than a regexp — is
+// what keeps a link-shaped string inside a fenced example or a code span from
+// being reported as a broken anchor.
+func extractLinks(body string, lineOffset int) []docLink {
+	source := []byte(body)
+	doc := md.Parser().Parse(text.NewReader(source))
+	var out []docLink
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		link, ok := n.(*ast.Link)
+		if !ok {
+			return ast.WalkContinue, nil
+		}
+		out = append(out, docLink{Dest: string(link.Destination), Line: lineOffset + lineOf(source, firstTextOffset(n))})
+		return ast.WalkContinue, nil
+	})
+	return out
+}
+
+// firstTextOffset is the byte offset of a node's first text descendant, which
+// is the closest thing an inline node has to a source position.
+func firstTextOffset(n ast.Node) int {
+	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+		if t, ok := child.(*ast.Text); ok {
+			return t.Segment.Start
+		}
+		if off := firstTextOffset(child); off >= 0 {
+			return off
+		}
+	}
+	return -1
+}
+
+func lineOf(source []byte, offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	return 1 + bytes.Count(source[:offset], []byte("\n"))
+}
+
+// checkAnchors verifies that every in-page anchor a published doc writes
+// resolves to a heading the docs browser actually renders an id for.
+//
+// Only links into published docs are checked. docs/plans/, docs/dev/, AGENTS.md
+// and the root README are read on GitHub, whose slugger differs — it drops a
+// character like an em dash and keeps the spaces on either side, so
+// "Data dir placement — avoid …" becomes "#data-dir-placement--avoid-…" there
+// and "#data-dir-placement-avoid-…" here. Published docs must use this file's
+// slug, the one web/src/routes/docs.tsx computes; links out to GitHub-read
+// files must use GitHub's, and are left alone.
+//
+// The docs browser only assigns ids to h2 and h3 (see the ReactMarkdown
+// component overrides), and it strips a leading h1 that repeats the page
+// title, so an anchor to any other depth is dead there even though the heading
+// exists.
+func checkAnchors(docs []weightedDoc) error {
+	byPath := make(map[string][]heading, len(docs))
+	for _, doc := range docs {
+		byPath[doc.Entry.Path] = doc.Entry.Headings
+	}
+
+	problems := []string{}
+	for _, doc := range docs {
+		for _, link := range doc.Links {
+			target, fragment, hasFragment := strings.Cut(link.Dest, "#")
+			if !hasFragment || fragment == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
+				continue
+			}
+			targetPath := doc.Entry.Path
+			if target != "" {
+				targetPath = path.Join(path.Dir(doc.Entry.Path), target)
+			}
+			headings, published := byPath[targetPath]
+			if !published {
+				continue
+			}
+			where := fmt.Sprintf("%s:%d: [#%s]", doc.Entry.Path, link.Line, fragment)
+			if target != "" {
+				where += " -> " + targetPath
+			}
+			found := false
+			for _, h := range headings {
+				if h.ID != fragment {
+					continue
+				}
+				found = true
+				if h.Depth < 2 || h.Depth > 3 {
+					problems = append(problems, fmt.Sprintf("%s: heading %q is h%d; the docs browser only gives h2 and h3 an id", where, h.Text, h.Depth))
+				}
+				break
+			}
+			if !found {
+				problems = append(problems, fmt.Sprintf("%s: no such heading%s", where, suggestHeading(headings, fragment)))
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("broken in-page anchor links:\n\t%s", strings.Join(problems, "\n\t"))
+	}
+	return nil
+}
+
+// suggestHeading names the heading a broken anchor most likely meant: one
+// whose id differs only in its hyphens, which is what a GitHub-shaped anchor
+// pasted into a published doc looks like.
+func suggestHeading(headings []heading, fragment string) string {
+	want := strings.ReplaceAll(fragment, "-", "")
+	for _, h := range headings {
+		if strings.ReplaceAll(h.ID, "-", "") == want {
+			return "; did you mean #" + h.ID + " ?"
+		}
+	}
+	return ""
 }
 
 func renderNav(entries []docEntry) ([]byte, error) {

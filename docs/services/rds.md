@@ -185,7 +185,7 @@ instance's own fields and the writer lands outside the VPC its application is
 in, and is refused for a missing `MasterUsername` before it gets that far.
 
 An inherited subnet group counts as the instance's own for the
-`PubliclyAccessible` defaults under [Reachability](#reachability--publiclyaccessible),
+`PubliclyAccessible` defaults under [Reachability](#reachability-publiclyaccessible),
 so a member of a cluster in a subnet group is private by default.
 Set `PubliclyAccessible=true` on the member — not the cluster — to reach it from
 outside.
@@ -292,7 +292,7 @@ the container boundary:
 So a value read from a stack output on the host and a value read inside a task
 name the same database and both connect. Full mechanism, and the one caveat
 about `Endpoint.Port` crossing into container environment, in
-[networking.md](../networking.md#data-plane-endpoints--rds-and-anything-else-that-is-a-container).
+[networking.md](../networking.md#data-plane-endpoints-rds-and-anything-else-that-is-a-container).
 
 ### Aurora emulation
 

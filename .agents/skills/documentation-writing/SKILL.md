@@ -302,6 +302,7 @@ Recognise these in your own draft and in review:
 | `.agents/skills/*` | agents | — | exempt |
 
 - **Editing a published doc means running `make docs-index` and committing the result.** CI fails otherwise. `docs/dev/` and `docs/plans/` are skipped by the indexer.
+- **An anchor into a published doc uses the docs browser's slug, not GitHub's.** A run of non-alphanumerics collapses to ONE hyphen there, so "HTTPS / TLS" is `#https-tls` and "Data dir placement — avoid …" is `#data-dir-placement-avoid-…`; GitHub's slugger would keep the doubled hyphen. Anchors into `docs/dev/`, `docs/plans/`, `AGENTS.md` and the root README are read on GitHub and keep GitHub's form. `make docs-check` validates the published side against the real heading ids and names the id you meant.
 - **A Markdown-only change needs no test run.**
 - **Published docs and root files are in changelog scope** — add a fragment or comment `/no-changelog docs-only: …` on the PR, **before** waiting on checks.
 - **`AGENTS.md` is only for what matters because an agent is executing autonomously.** If a human would need it too, it belongs in `CONTRIBUTING.md` with a link from `AGENTS.md`.
