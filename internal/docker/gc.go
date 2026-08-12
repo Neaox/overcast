@@ -341,7 +341,14 @@ func (g *GC) Sweep(service string) {
 // Deleting a container whose owner cannot be established is not a choice worth
 // the disk it reclaims; `docker rm $(docker ps -aq --filter
 // label=overcast.managed=true)` reclaims it on request.
+//
+// KeepContainers disables the sweep outright. A container held back for
+// post-mortem inspection is usually inspected after a restart, which is exactly
+// when this runs.
 func (g *GC) SweepExcept(service string, keep func(resourceID string) bool) {
+	if g.keeps {
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()

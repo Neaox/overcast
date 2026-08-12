@@ -176,6 +176,25 @@ func TestSweepExcept_neverTouchesRunningContainers(t *testing.T) {
 	}
 }
 
+// KeepContainers exists for post-mortem inspection, and the inspection usually
+// happens after a restart — so the startup sweep has to honour it too. Every
+// other removal path already did; this one removed the evidence the flag was
+// set to preserve, the first time Overcast came back up.
+func TestSweepExcept_keepContainersSurvivesRestart(t *testing.T) {
+	stopped := managedContainer("post-mortem-container", "crashed-task", "exited")
+	d := newSweepDaemon(t, []ContainerSummary{stopped})
+
+	client := NewClient("tcp://"+d.srv.Listener.Addr().String(), zap.NewNop())
+	gc := NewGC(client, zap.NewNop(), true, fixedDomain(thisInstance))
+
+	gc.Sweep("ecs")
+
+	time.Sleep(200 * time.Millisecond)
+	if d.wasRemoved("post-mortem-container") {
+		t.Error("startup sweep removed a container KeepContainers asked to keep")
+	}
+}
+
 // Sweep keeps its old meaning for callers with no attachment to their
 // containers, so the services that recreate compute on demand are unaffected.
 func TestSweep_withoutAVetoStillRemovesStoppedContainers(t *testing.T) {
