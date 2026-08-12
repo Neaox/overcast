@@ -285,13 +285,22 @@ func detectService(r *http.Request, body ...[]byte) string {
 // so it is parsed here rather than read from chi's route parameters — this
 // middleware runs before routing, and on requests chi never matches at all.
 //
-// It answers only for shapes the pinned models bind on RPC v2, which today is
-// CloudWatch alone among the services Overcast implements. The router will also
-// dispatch /service/{name} to a service by its own registered name, which is a
-// wider door than the models describe, but no SDK walks through it: a client
-// sends RPC v2 only for a service whose model declares the protocol. An
-// unmodeled shape keeps the s3 fall-through, which is what the request would
-// have been called before this step existed.
+// Resolution follows the router's, in its order. The registry leads, because a
+// modeled binding names the operation as the models spell it. When the models
+// bind nothing — which is almost always, since they describe RPC v2 for one
+// service Overcast implements — the label is tried as an Overcast service key,
+// because that is the next thing smithyRPCServiceFor tries and it is a door
+// that is genuinely open: `/service/ecs/operation/ListClusters` answers CBOR
+// today, and ECS appears nowhere in the models' RPC v2 bindings. On that branch
+// the router never reaches SupportedProtocols either, so following the models
+// alone here left every such request labelled s3 with no operation — and IAM
+// enforcement's unnamed-action branch lets those through.
+//
+// The operation is then taken from the URI as the caller wrote it, which is the
+// same trust step 2 of detectOperationForService makes of `x-id`. It is not a
+// licence to mislabel: the router dispatches on this very label, so what the
+// classifier names and what answers the request are the same service by
+// construction.
 func smithyRPCClaim(r *http.Request) (awsapi.Claim, bool) {
 	var wire awsapi.Protocol
 	switch header := strings.TrimSpace(r.Header.Get("Smithy-Protocol")); {
@@ -310,7 +319,24 @@ func smithyRPCClaim(r *http.Request) (awsapi.Claim, bool) {
 	if !found || serviceShape == "" || operation == "" || strings.Contains(operation, "/") {
 		return awsapi.Claim{}, false
 	}
-	return awsapi.NewRegistry().ClaimRPC(wire, serviceShape, operation)
+	// A modeled claim leads because it spells the operation as the models do,
+	// but only when it names a service. An ambiguous one does not, and the
+	// label below still does — the same reasoning smithyRPCServiceFor applies
+	// by resolving the label against its dispatchers before it reads the claim
+	// at all. The models bind no colliding RPC v2 operation today, so this is a
+	// bridge for a model refresh rather than a live path; without it such a
+	// refresh would quietly move a whole service back to the s3 fallback.
+	if claim, ok := awsapi.NewRegistry().ClaimRPC(wire, serviceShape, operation); ok && claim.Service != "" {
+		return claim, true
+	}
+	if key := serviceIdentityForRPCLabel(serviceShape); key != "" {
+		return awsapi.Claim{
+			Service:   key,
+			Operation: operation,
+			Protocol:  wire,
+		}, true
+	}
+	return awsapi.Claim{}, false
 }
 
 // isLambdaAPIVersionPrefix reports whether a path is under one of Lambda's
@@ -401,6 +427,41 @@ func middlewareServiceKey(s string) string {
 		return "logs"
 	}
 	return s
+}
+
+// middlewareServiceKeyOrigin is middlewareServiceKey backwards: it maps a key
+// this package answers with to the identity the generated registry knows it by.
+//
+// Only one key is renamed, so this is one case — but it has to exist, because a
+// Smithy RPC v2 label arrives already written in *this* package's namespace.
+// "/service/logs/..." is what the router dispatches, and asking the registry
+// whether "logs" is a service gets no for a name that plainly is one.
+func middlewareServiceKeyOrigin(s string) string {
+	if s == "logs" {
+		return "cloudwatch-logs"
+	}
+	return s
+}
+
+// serviceIdentityForRPCLabel resolves a Smithy RPC v2 `{service}` URI label to
+// the key this package classifies with, or "" when it names no service.
+//
+// The label can arrive in any of the three namespaces a service has, so each is
+// tried in turn against the registry's notion of a real service. Order matters
+// once: the label is treated as a key before it is treated as a modeled
+// identity, because those two readings disagree for WAF — "waf" is Overcast's
+// key for WAF v2, and is also the modeled identity of WAF *Classic*, which
+// serviceAliases deliberately diverts to "waf-classic". Reading the label as a
+// model identity first would answer with the unimplemented classic service for
+// every v2 request.
+func serviceIdentityForRPCLabel(label string) string {
+	label = strings.ToLower(label)
+	for _, candidate := range []string{middlewareServiceKeyOrigin(label), awsapi.ServiceKey(label)} {
+		if awsapi.IsServiceKey(candidate) {
+			return middlewareServiceKey(candidate)
+		}
+	}
+	return ""
 }
 
 // internalService maps an emulator-internal /_-prefixed path to the service

@@ -251,6 +251,33 @@ func writeRegistryIndexes(out *bytes.Buffer, operations []operation) {
 	writeQueryIndex(out, queries)
 	writeRESTTrie(out, rest)
 	writeRPCIndex(out, rpc)
+	writeModelServiceIndex(out, operations)
+}
+
+// writeModelServiceIndex emits every modeled service identity, sorted, so the
+// registry can answer whether a name is a service at all.
+//
+// Smithy RPC v2 carries the service in a URI label rather than a header or a
+// path prefix, and a label naming no service must not be believed. The other
+// indexes answer that question incidentally — a target or an (Action, Version)
+// pair either resolves or does not — but a service label has nothing attached
+// to it to resolve against.
+func writeModelServiceIndex(out *bytes.Buffer, operations []operation) {
+	seen := make(map[string]bool, len(operations))
+	services := make([]string, 0, 512)
+	for _, op := range operations {
+		if op.Service == "" || seen[op.Service] {
+			continue
+		}
+		seen[op.Service] = true
+		services = append(services, op.Service)
+	}
+	sort.Strings(services)
+	out.WriteString("\nvar modelServices = []string{\n")
+	for _, service := range services {
+		fmt.Fprintf(out, "\t%q,\n", service)
+	}
+	out.WriteString("}\n")
 }
 
 func writeTargetIndex(out *bytes.Buffer, operations []operation) {

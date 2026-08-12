@@ -177,18 +177,20 @@ func bindingProbes(service string, binding awsapi.Operation) []wireProbe {
 		// outright, and the router dispatches on exactly that pair. The header
 		// is what makes it RPC v2 rather than an S3 object read of
 		// "operation/X" in a bucket called "service" — see smithyRPCClaim.
-		uri := "/service/" + binding.ServiceShape + "/operation/" + binding.Name
-		probes = append(probes, wireProbe{
-			shape:   "rpcv2",
-			service: service,
-			op:      binding.Name,
-			build: func() *http.Request {
-				r := httptest.NewRequest(http.MethodPost, uri, strings.NewReader(""))
-				r.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
-				r.Header.Set("Content-Type", "application/cbor")
-				return r
-			},
-		})
+		probes = append(probes, rpcProbe(service, binding.ServiceShape, binding.Name))
+	}
+	if binding.TargetPrefix != "" {
+		// The same wire addressed by Overcast's own service key, which is the
+		// spelling the router answers for every service registered as a
+		// TargetDispatcher — `/service/ecs/operation/ListClusters` is a passing
+		// integration test, and ECS is nowhere in the models' RPC v2 bindings.
+		//
+		// So this is not a hypothetical door. The router resolves the label
+		// against its dispatchers before it consults the registry, and on that
+		// branch it never reaches SupportedProtocols either. Keying the probe
+		// on TargetPrefix is what makes the set here the same set: a service
+		// gets an RPC v2 dispatcher entry exactly when it is a TargetDispatcher.
+		probes = append(probes, rpcProbe(service, service, binding.Name))
 	}
 	if queryVersion, ok := overcastQueryVersion(service, binding); ok {
 		// Unsigned, which is the case that matters: an SDK sends a credential
@@ -209,6 +211,24 @@ func bindingProbes(service string, binding awsapi.Operation) []wireProbe {
 		})
 	}
 	return probes
+}
+
+// rpcProbe builds the Smithy RPC v2 request for one operation, addressed by the
+// given `{service}` label. The protocol fixes the URI shape, so the label is
+// the only thing that varies between the spellings a caller can use.
+func rpcProbe(service, label, operation string) wireProbe {
+	uri := "/service/" + label + "/operation/" + operation
+	return wireProbe{
+		shape:   "rpcv2 " + label,
+		service: service,
+		op:      operation,
+		build: func() *http.Request {
+			r := httptest.NewRequest(http.MethodPost, uri, strings.NewReader(""))
+			r.Header.Set("Smithy-Protocol", "rpc-v2-cbor")
+			r.Header.Set("Content-Type", "application/cbor")
+			return r
+		},
+	}
 }
 
 // overcastQueryVersion reports the API version an unsigned Query request to this

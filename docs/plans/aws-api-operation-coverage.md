@@ -163,6 +163,14 @@ completes the generated ownership surface:
   `ServiceDisabled` branch this route used to carry was removed with it.)
   The Smithy protocol header is required evidence: a headerless S3 multipart
   request with the same legal path grammar delegates to S3; and
+- a sorted `modelServices` index lists every modeled service identity, so
+  `IsServiceKey` can answer whether a name is a service at all. RPC v2 is the
+  one protocol that names its service in a URI label rather than attaching it
+  to something resolvable, and the router dispatches that label against its own
+  registered services before the registry is consulted — so `/service/ecs/…`
+  answers CBOR for a service the models bind no RPC v2 operation on. The
+  classifier reads the label the same way, and a label naming no service is not
+  believed; and
 - generated corpus tests require every non-S3 operation and every additive RPC
   trait to resolve through a target, Query, REST, or RPC ownership index.
 
