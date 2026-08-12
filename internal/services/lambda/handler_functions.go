@@ -2041,6 +2041,10 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
+	// The asynchronous invocation settings belong to the function, so they go
+	// with it — otherwise a later function of the same name inherits a retry
+	// policy and destinations nobody configured for it.
+	h.ls.deleteEventInvokeConfigsForFunction(ctx, name)
 	h.forgetS3SyncFunction(fn)
 
 	// Evict the warm instances so the containers stop immediately.
@@ -2699,38 +2703,103 @@ func (h *Handler) invokeAsync(fn *Function, rt Runtime, payload []byte) {
 	bgCtx := middleware.ContextWithRegion(context.Background(), region)
 	ctx := bgCtx
 
+	// The function's own asynchronous invocation settings, if it has any. Read
+	// once, so a configuration changed mid-flight applies to the next event —
+	// as on AWS — rather than to this one's remaining retries.
+	eventInvoke := h.eventInvokeConfigFor(bgCtx, fn)
+	attempts := asyncInvokeAttempts(eventInvoke)
+	accepted := h.clk.Now()
+
 	for attempt := 1; ; attempt++ {
 		outcome := h.invokeAsyncOnce(ctx, fn, rt, payload)
 		if outcome.succeeded {
+			h.deliverAsyncDestination(bgCtx, fn, eventInvoke, payload, outcome, attempt, true)
 			return
 		}
-		if !outcome.retryable || attempt >= asyncInvokeAttempts {
-			h.deadLetterAsyncFailure(bgCtx, fn, payload, outcome.requestID, outcome.errorMessage, attempt)
+		aged := h.eventAgedOut(eventInvoke, accepted)
+		if !outcome.retryable || attempt >= attempts || aged {
+			if aged {
+				h.log.Warn("invokeAsync: event outlived MaximumEventAgeInSeconds, no further retries",
+					zap.String("function", fn.Name), zap.Int("attempt", attempt))
+			}
+			h.failAsyncInvocation(bgCtx, fn, eventInvoke, payload, outcome, attempt)
 			return
 		}
 		h.log.Debug("invokeAsync: retrying a failed event",
 			zap.String("function", fn.Name),
 			zap.Int("attempt", attempt),
-			zap.Int("of", asyncInvokeAttempts),
+			zap.Int("of", attempts),
 			zap.String("error", outcome.errorMessage))
 		select {
 		case <-h.clk.After(asyncRetryBackoff(attempt)):
 		case <-ctx.Done():
-			h.deadLetterAsyncFailure(bgCtx, fn, payload, outcome.requestID, outcome.errorMessage, attempt)
+			h.failAsyncInvocation(bgCtx, fn, eventInvoke, payload, outcome, attempt)
 			return
 		}
 	}
 }
 
-// asyncInvokeAttempts is how many times an InvocationType=Event invocation is
-// run in total before its event is dead-lettered: AWS's default of the initial
-// attempt plus two retries.
+// failAsyncInvocation runs everything that happens once an event has failed for
+// the last time: the on-failure destination gets an invocation record, and the
+// dead-letter queue gets the event itself.
 //
-// It is not configurable, because the API that configures it is not
-// implemented: MaximumRetryAttempts belongs to PutFunctionEventInvokeConfig,
-// and a function with no event-invoke config gets AWS's default — which is what
-// every function here has.
-const asyncInvokeAttempts = 3
+// Both, when both are configured. AWS is explicit that they are alternatives a
+// caller may use together — "You can configure destinations in addition to or
+// instead of a dead-letter queue" — so delivering to only one would drop a
+// record the caller asked for.
+func (h *Handler) failAsyncInvocation(ctx context.Context, fn *Function, cfg *EventInvokeConfig, payload []byte, outcome asyncInvokeOutcome, attempts int) {
+	h.deliverAsyncDestination(ctx, fn, cfg, payload, outcome, attempts, false)
+	h.deadLetterAsyncFailure(ctx, fn, payload, outcome.requestID, outcome.errorMessage, attempts)
+}
+
+// defaultAsyncInvokeAttempts is how many times an InvocationType=Event
+// invocation runs when the function has no event-invoke configuration: AWS's
+// default of the initial attempt plus two retries.
+const defaultAsyncInvokeAttempts = 3
+
+// asyncInvokeAttempts is how many times an event runs in total — one, plus the
+// retries the function's configuration allows.
+//
+// MaximumRetryAttempts of 0 is a real setting meaning "do not retry", which is
+// why the stored value is a pointer: an absent one takes AWS's default of two,
+// and collapsing the two would turn "do not retry" into "retry twice".
+func asyncInvokeAttempts(cfg *EventInvokeConfig) int {
+	if cfg == nil || cfg.MaximumRetryAttempts == nil {
+		return defaultAsyncInvokeAttempts
+	}
+	return *cfg.MaximumRetryAttempts + 1
+}
+
+// eventAgedOut reports whether the event has been in flight longer than the
+// function's MaximumEventAgeInSeconds, which ends the retries independently of
+// how many are left.
+//
+// A function with no configured age never ages out here. AWS's own default is
+// six hours, and an emulator that discarded an event after six hours of
+// retrying would be describing a schedule it does not run: these retries are
+// seconds apart, so nothing would ever reach it. Configuring an age is the only
+// way to see this fire, which is what the setting is for.
+func (h *Handler) eventAgedOut(cfg *EventInvokeConfig, accepted time.Time) bool {
+	if cfg == nil || cfg.MaximumEventAgeInSeconds == nil {
+		return false
+	}
+	maxAge := time.Duration(*cfg.MaximumEventAgeInSeconds) * time.Second
+	return h.clk.Now().Sub(accepted) >= maxAge
+}
+
+// eventInvokeConfigFor loads the function's asynchronous invocation settings,
+// treating a read failure as "unconfigured": an event that has already been
+// answered 202 is better run under AWS's defaults than dropped because a store
+// read failed.
+func (h *Handler) eventInvokeConfigFor(ctx context.Context, fn *Function) *EventInvokeConfig {
+	cfg, aerr := h.ls.getEventInvokeConfig(ctx, fn.Name, "")
+	if aerr != nil {
+		h.log.Warn("invokeAsync: could not read the event invoke config; using AWS defaults",
+			zap.String("function", fn.Name), zap.String("error", aerr.Message))
+		return nil
+	}
+	return cfg
+}
 
 // asyncRetryBackoff is how long to wait before the given attempt's retry.
 //
@@ -2757,6 +2826,12 @@ type asyncInvokeOutcome struct {
 	retryable    bool
 	requestID    string
 	errorMessage string
+	// responsePayload is what the handler returned — the body on success, the
+	// error document on a function error. An asynchronous invocation
+	// destination reports it as the record's responsePayload; a dead-letter
+	// queue never sees it, because a DLQ carries the event rather than the
+	// response.
+	responsePayload []byte
 }
 
 // invokeAsyncOnce runs a single attempt: acquire an execution environment, wait
@@ -2816,12 +2891,18 @@ func (h *Handler) invokeAsyncOnce(ctx context.Context, fn *Function, rt Runtime,
 	if result != nil && result.FunctionError != "" {
 		h.log.Debug("invokeAsync: function error", zap.String("function", fn.Name), zap.String("function_error", result.FunctionError))
 		return asyncInvokeOutcome{
-			retryable:    true,
-			requestID:    result.RequestID,
-			errorMessage: invocationFailureReasonFromResult(result),
+			retryable:       true,
+			requestID:       result.RequestID,
+			errorMessage:    invocationFailureReasonFromResult(result),
+			responsePayload: result.Payload,
 		}
 	}
-	return asyncInvokeOutcome{succeeded: true}
+	out := asyncInvokeOutcome{succeeded: true}
+	if result != nil {
+		out.requestID = result.RequestID
+		out.responsePayload = result.Payload
+	}
+	return out
 }
 
 // deadLetterAsyncFailure sends a failed asynchronous invocation to the

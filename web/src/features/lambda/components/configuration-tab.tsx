@@ -166,10 +166,10 @@ function AsyncInvokeSection({ fn }: { fn: LambdaFunction }) {
           </DefinitionList>
           <p className="text-xs text-fg-muted">
             {savedTarget
-              ? "A failed invocation is retried twice before the event is sent here, matching AWS's defaults."
-              : "A failed invocation is retried twice, matching AWS's defaults. With no dead-letter queue the event is then dropped."}{" "}
-            The retry policy is not configurable — Overcast does not emulate
-            PutFunctionEventInvokeConfig.
+              ? "A failed invocation is retried before the event is sent here — twice by default, matching AWS."
+              : "A failed invocation is retried twice by default, matching AWS. With no dead-letter queue the event is then dropped."}{" "}
+            Change the retry policy, or add on-success and on-failure destinations, with
+            PutFunctionEventInvokeConfig; this page edits the dead-letter target only.
           </p>
         </div>
       )}

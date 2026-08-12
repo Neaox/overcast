@@ -33,30 +33,32 @@ containers, communicate with the Lambda Runtime API, and return real response pa
 
 ## Known limitations
 
-- **Asynchronous invocation retries are AWS's, but the retry policy is not
-  configurable.** An `InvocationType: Event` invocation whose function returns
-  an error is run up to two more times, one second after the first attempt and
-  two after the second, matching AWS's default and its documented exponential
-  interval. When the last attempt fails, a function with a `DeadLetterConfig`
-  gets the original event on the target SQS queue or SNS topic, carrying the
-  `RequestID`, `ErrorCode` and `ErrorMessage` message attributes AWS documents;
-  without one the failure reaches the function's logs and nothing else. What is
-  missing is `PutFunctionEventInvokeConfig`, so `MaximumRetryAttempts` and
-  `MaximumEventAgeInSeconds` cannot be changed from AWS's defaults, and an event
-  is never aged out — only the attempt count ends a retry here. All of this
-  applies equally to events arriving from S3 notifications, EventBridge and
-  Scheduler targets, and SNS `lambda` subscriptions, which share the same async
-  path.
+- **Asynchronous invocation is configurable, and only the event queue is
+  missing.** `PutFunctionEventInvokeConfig` and its family are implemented, so
+  `MaximumRetryAttempts` (0-2) and `MaximumEventAgeInSeconds` (60-21600) apply
+  per function, version or alias; a function with no configuration gets AWS's
+  defaults of two retries, one second after the first attempt and two after the
+  second. On-success and on-failure **destinations** receive AWS's invocation
+  record — the envelope naming the request, the condition, the attempt count and
+  the function's response — and a `DeadLetterConfig` receives the event itself,
+  so a function configured with both gets both, as on AWS. All of this applies
+  equally to events arriving from S3 notifications, EventBridge and Scheduler
+  targets, and SNS `lambda` subscriptions, which share the same async path.
+  - **`MaximumEventAgeInSeconds` is honoured but rarely reachable.** On AWS the
+    age is mostly spent waiting in the asynchronous event queue; Overcast has no
+    such queue and starts the first attempt immediately, so with AWS's retry
+    schedule of one and two seconds an event only outlives its minimum sixty
+    seconds if the handler itself is slow. It is enforced from when the
+    invocation was accepted, so a long-running handler does age out.
   - A function throttled by its own reserved concurrency is the documented
     exception and is not retried by this loop: AWS sends those events to the
     dead-letter queue "without any retries", and Overcast does the same once the
     invocation has waited out its concurrency back-off.
-- `PutFunctionEventInvokeConfig` on-failure and on-success **destinations** are
-  still not applied outside event source mappings. A destination is a different
-  feature from a dead-letter queue: it receives the invocation record envelope,
-  and it can be a Lambda function, an EventBridge bus or an S3 bucket as well as
-  a queue or a topic, where a dead-letter queue only ever receives the event
-  itself.
+  - **An S3 destination is refused.** AWS allows an S3 bucket as an *on-failure*
+    destination; Overcast answers `501` rather than accepting the configuration
+    and writing no object. An S3 *on-success* destination is rejected with
+    `InvalidParameterValueException`, which is what AWS does — S3 is on-failure
+    only.
 - **`TracingConfig`, `EphemeralStorage` and `KMSKeyArn` are recorded, not
   honoured.** All three are validated against AWS's own constraints, stored, and
   returned by `GetFunction`, `GetFunctionConfiguration`, `CreateFunction` and
@@ -888,6 +890,7 @@ the only way to read them back.
 | Function URLs               | 5            |                |
 | Event source mappings       | 5            |                |
 | Layers                      | 5            |                |
+| Asynchronous invocation     | 5            |                |
 | Concurrency & configuration | 7            |                |
 | Tags                        | 3            |                |
 
@@ -931,11 +934,11 @@ the only way to read them back.
 
 ### Invocation
 
-| Operation                  | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | AWS Docs                                                                               |
-| -------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| `Invoke`                   | ✅ Supported   | Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried twice (1s then 2s, AWS's default) and then delivered to the function's DeadLetterConfig target; the retry policy itself is not configurable because PutFunctionEventInvokeConfig is not implemented | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)                   |
-| `InvokeAsync`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeAsync.html)              |
-| `InvokeWithResponseStream` | ✅ Supported   | Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeWithResponseStream.html) |
+| Operation                  | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | AWS Docs                                                                               |
+| -------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `Invoke`                   | ✅ Supported   | Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried per the function's FunctionEventInvokeConfig (AWS's default of twice, 1s then 2s, when unconfigured) and then delivered to its on-failure destination and its DeadLetterConfig target | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html)                   |
+| `InvokeAsync`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeAsync.html)              |
+| `InvokeWithResponseStream` | ✅ Supported   | Invokes synchronously, wraps result in AWS event stream binary encoding (initial-response → PayloadChunk → InvokeComplete); RequestResponse only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_InvokeWithResponseStream.html) |
 
 ### Aliases & versions
 
@@ -978,6 +981,16 @@ the only way to read them back.
 | `ListLayerVersions`   | ✅ Supported | Returns all versions for a layer, newest first                  | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListLayerVersions.html)   |
 | `ListLayers`          | ✅ Supported | Returns distinct layer names with their latest matching version | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListLayers.html)          |
 | `DeleteLayerVersion`  | ✅ Supported | Removes the specific layer version; 404 if not found            | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteLayerVersion.html)  |
+
+### Asynchronous invocation
+
+| Operation                         | Status       | Notes                                                                                                                                                                                                                                                                                                                                                                                                                         | AWS Docs                                                                                      |
+| --------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `PutFunctionEventInvokeConfig`    | ✅ Supported | Overwrites the configuration, removing members the request omits; MaximumRetryAttempts and MaximumEventAgeInSeconds are validated against AWS's ranges and honoured by the async invoke path; SQS, SNS, Lambda and EventBridge destinations receive AWS's invocation record; an S3 on-failure destination returns 501 because the record is not written to S3, and an S3 on-success destination is rejected as AWS rejects it | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_PutFunctionEventInvokeConfig.html)    |
+| `UpdateFunctionEventInvokeConfig` | ✅ Supported | Partial update; members the request omits keep their stored value, which is the only difference from Put                                                                                                                                                                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_UpdateFunctionEventInvokeConfig.html) |
+| `GetFunctionEventInvokeConfig`    | ✅ Supported | ResourceNotFoundException when the function has no configuration; LastModified is Unix seconds, as AWS returns for this resource                                                                                                                                                                                                                                                                                              | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_GetFunctionEventInvokeConfig.html)    |
+| `DeleteFunctionEventInvokeConfig` | ✅ Supported | Returns 204; ResourceNotFoundException when there is no configuration to delete                                                                                                                                                                                                                                                                                                                                               | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_DeleteFunctionEventInvokeConfig.html) |
+| `ListFunctionEventInvokeConfigs`  | ✅ Supported | Every qualifier's configuration for the function; MaxItems is validated but the result is a single page, so NextMarker is never returned                                                                                                                                                                                                                                                                                      | [docs](https://docs.aws.amazon.com/lambda/latest/dg/API_ListFunctionEventInvokeConfigs.html)  |
 
 ### Concurrency & configuration
 

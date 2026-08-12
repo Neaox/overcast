@@ -99,7 +99,7 @@ For a shorter overview, start with the [service reference index](./services/READ
 | S3               | [s3.md](./services/s3.md)                           | 53  | Comprehensive / broad support |
 | SQS              | [sqs.md](./services/sqs.md)                         | 21  | Comprehensive / broad support |
 | DynamoDB         | [dynamodb.md](./services/dynamodb.md)               | 28  | Comprehensive / broad support |
-| Lambda           | [lambda.md](./services/lambda.md)                   | 54  | Comprehensive / broad support |
+| Lambda           | [lambda.md](./services/lambda.md)                   | 59  | Comprehensive / broad support |
 | API Gateway      | [apigateway.md](./services/apigateway.md)           | 106 | Comprehensive / broad support |
 | AppSync          | [appsync.md](./services/appsync.md)                 | 82  | Comprehensive / broad support |
 | CloudFront       | [cloudfront.md](./services/cloudfront.md)           | 89  | Comprehensive / broad support |

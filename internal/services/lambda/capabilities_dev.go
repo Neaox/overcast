@@ -52,7 +52,7 @@ func init() {
 
 		// Invocation
 		capabilities.Capability{Service: "lambda", Operation: "Invoke", Category: "Invocation",
-			Status: capabilities.StatusSupported, Notes: "Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried twice (1s then 2s, AWS's default) and then delivered to the function's DeadLetterConfig target; the retry policy itself is not configurable because PutFunctionEventInvokeConfig is not implemented"},
+			Status: capabilities.StatusSupported, Notes: "Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried per the function's FunctionEventInvokeConfig (AWS's default of twice, 1s then 2s, when unconfigured) and then delivered to its on-failure destination and its DeadLetterConfig target"},
 		capabilities.Capability{Service: "lambda", Operation: "InvokeAsync", Category: "Invocation",
 			Status: capabilities.StatusUnsupported, Notes: "stub; returns 501"},
 		capabilities.Capability{Service: "lambda", Operation: "InvokeWithResponseStream", Category: "Invocation",
@@ -109,6 +109,18 @@ func init() {
 			Status: capabilities.StatusSupported, Notes: "Returns distinct layer names with their latest matching version"},
 		capabilities.Capability{Service: "lambda", Operation: "DeleteLayerVersion", Category: "Layers",
 			Status: capabilities.StatusSupported, Notes: "Removes the specific layer version; 404 if not found"},
+
+		// Asynchronous invocation configuration
+		capabilities.Capability{Service: "lambda", Operation: "PutFunctionEventInvokeConfig", Category: "Asynchronous invocation",
+			Status: capabilities.StatusSupported, Notes: "Overwrites the configuration, removing members the request omits; MaximumRetryAttempts and MaximumEventAgeInSeconds are validated against AWS's ranges and honoured by the async invoke path; SQS, SNS, Lambda and EventBridge destinations receive AWS's invocation record; an S3 on-failure destination returns 501 because the record is not written to S3, and an S3 on-success destination is rejected as AWS rejects it"},
+		capabilities.Capability{Service: "lambda", Operation: "UpdateFunctionEventInvokeConfig", Category: "Asynchronous invocation",
+			Status: capabilities.StatusSupported, Notes: "Partial update; members the request omits keep their stored value, which is the only difference from Put"},
+		capabilities.Capability{Service: "lambda", Operation: "GetFunctionEventInvokeConfig", Category: "Asynchronous invocation",
+			Status: capabilities.StatusSupported, Notes: "ResourceNotFoundException when the function has no configuration; LastModified is Unix seconds, as AWS returns for this resource"},
+		capabilities.Capability{Service: "lambda", Operation: "DeleteFunctionEventInvokeConfig", Category: "Asynchronous invocation",
+			Status: capabilities.StatusSupported, Notes: "Returns 204; ResourceNotFoundException when there is no configuration to delete"},
+		capabilities.Capability{Service: "lambda", Operation: "ListFunctionEventInvokeConfigs", Category: "Asynchronous invocation",
+			Status: capabilities.StatusSupported, Notes: "Every qualifier's configuration for the function; MaxItems is validated but the result is a single page, so NextMarker is never returned"},
 
 		// Concurrency & configuration
 		capabilities.Capability{Service: "lambda", Operation: "PutFunctionConcurrency", Category: "Concurrency & configuration",

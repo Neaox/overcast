@@ -89,9 +89,9 @@ describe("ConfigurationTab", () => {
   })
 
   // The dead-letter target is the only part of a function's asynchronous
-  // invocation config that Overcast lets you change, so the section shows it
-  // and says plainly that the retry policy is fixed — rather than offering
-  // fields the emulator would accept and ignore.
+  // invocation config this page edits. The rest is configurable, just not from
+  // here, so the section has to name the API that does it — otherwise the page
+  // reads as though the retry policy were fixed, which it no longer is.
   describe("the asynchronous invocation section", () => {
     // The target renders as an ArnLink, which is a router link — so these two
     // need the router harness rather than the bare query seeds.
@@ -114,9 +114,12 @@ describe("ConfigurationTab", () => {
       expect(screen.queryByRole("button", { name: "Remove DLQ" })).not.toBeInTheDocument()
     })
 
-    it("says the retry policy is fixed, so nobody goes looking for the setting", () => {
+    // The policy became configurable, so the note has to point at the API that
+    // changes it — and say that this page is not where you do it.
+    it("names the API that changes the retry policy", () => {
       renderWithData(<ConfigurationTab fn={fn} />, baseSeeds)
-      expect(screen.getByText(/not configurable/)).toBeInTheDocument()
+      expect(screen.getByText(/PutFunctionEventInvokeConfig/)).toBeInTheDocument()
+      expect(screen.getByText(/edits the dead-letter target only/)).toBeInTheDocument()
     })
 
     // Without a target the retries still happen, so the note has to say what
@@ -128,9 +131,7 @@ describe("ConfigurationTab", () => {
 
     it("says the event is sent to the target when there is one", async () => {
       renderTab(TabWithDeadLetterQueue)
-      expect(
-        await screen.findByText(/retried twice before the event is sent here/),
-      ).toBeInTheDocument()
+      expect(await screen.findByText(/retried before the event is sent here/)).toBeInTheDocument()
     })
   })
 })

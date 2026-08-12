@@ -130,7 +130,7 @@ func (i *failingInstance) Invoke(context.Context, []byte, InvokeOptions) (*Invok
 	// configured one is used for the attempt that ends up dead-lettered so the
 	// test can name the value it expects on the message.
 	requestID := fmt.Sprintf("%s-attempt-%d", i.rt.requestID, attempt)
-	if attempt == asyncInvokeAttempts {
+	if attempt == defaultAsyncInvokeAttempts {
 		requestID = i.rt.requestID
 	}
 	return &InvokeResult{
@@ -222,7 +222,7 @@ func (f *deadLetterFixture) invokeAsyncAndDrain(t *testing.T, event string) {
 		if time.Now().After(deadline) {
 			t.Fatal("timed out waiting for the asynchronous invocation to drain")
 		}
-		f.clk.Add(asyncRetryBackoff(asyncInvokeAttempts))
+		f.clk.Add(asyncRetryBackoff(defaultAsyncInvokeAttempts))
 		time.Sleep(time.Millisecond)
 	}
 }
