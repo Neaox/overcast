@@ -243,7 +243,7 @@ back empty. `SourceIdentifier`, `SourceType`, `EventCategories`,
 returned oldest-first. Overcast only records `db-instance` events, so a query
 for another source type is an empty list rather than an error.
 
-### Instance logs — `GET /_rds/instances/{id}/logs`
+### Instance logs — `GET /_overcast/rds/instances/{id}/logs`
 
 An emulator-only endpoint (not part of the AWS API) that the web UI's Logs tab
 renders. It returns the container's live output when there is a container, and

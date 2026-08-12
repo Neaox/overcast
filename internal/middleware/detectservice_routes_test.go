@@ -88,21 +88,26 @@ var registeredRouteClassification = map[string]string{
 	//
 	// These are collapsing into "/_overcast" as
 	// docs/plans/non-canonical-url-namespace.md runs. Phase 2 retired "/_",
-	// "/_internal", "/_health", "/_metrics", "/_topology" and "/_events" —
-	// which is why /_overcast now answers for more services than any other
-	// family and gains one whenever a phase lands. It is multi-valued because
-	// it is a directory with several owners under it (/_overcast/cognito,
-	// /_overcast/inbox, /_overcast/events, …), not because anything is
-	// ambiguous: internalService reads the owner from the second segment.
+	// "/_internal", "/_health", "/_metrics", "/_topology" and "/_events";
+	// phase 3 took "/_mcp"; phase 4 took "/_ecs" and "/_rds" outright and
+	// moved the Lambda admin routes off "/_lambda", leaving only url-invoke
+	// there for phase 5.
+	//
+	// That is why /_overcast answers for more services than any other family
+	// and gains one whenever a phase lands. It is multi-valued because it is a
+	// directory with several owners under it (/_overcast/cognito,
+	// /_overcast/ses/inbox, /_overcast/events, …), not because anything is
+	// ambiguous: internalService reads the owner from the second segment, and
+	// this list growing is that switch converging on exactly that rule.
 	"/_apigateway": "internal",
 	"/_appsync":    "appsync",
 	"/_cloudfront": "cloudfront",
 	"/_cognito":    "cognito",
-	"/_ecs":        "ecs",
 	"/_elb":        "internal",
-	"/_lambda":     "lambda",
-	"/_overcast":   "cognito|events|internal|metrics|secretsmanager|ses",
-	"/_rds":        "internal",
+	// Only /_lambda/url-invoke is left under this family; phase 4 moved the
+	// rest, and phase 5 takes the data plane.
+	"/_lambda":   "lambda",
+	"/_overcast": "cognito|ecs|eks|events|internal|lambda|metrics|rds|secretsmanager|ses",
 
 	// Undated literals the prefix switch claims. /applications is shared by
 	// AppConfig and AppRegistry; unsigned it resolves to AppRegistry, which

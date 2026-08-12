@@ -16,7 +16,7 @@ function emulatorUrl(c: { req: { header: (k: string) => string | undefined } }) 
 rdsRoutes.get("/instances/:id/logs", async (c) => {
   const baseUrl = emulatorUrl(c)
   const id = c.req.param("id")
-  const res = await fetch(`${baseUrl}/_rds/instances/${encodeURIComponent(id)}/logs`)
+  const res = await fetch(`${baseUrl}/_overcast/rds/instances/${encodeURIComponent(id)}/logs`)
   const data = await res.json()
   return c.json(data, res.status as 200)
 })

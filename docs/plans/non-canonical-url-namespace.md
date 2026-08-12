@@ -1,6 +1,7 @@
 # One namespace for every non-canonical URL: `/_overcast/`
 
-> Status: **in progress** — phases 0, 0b, 1, 2 and 3 done. Phases 4-6 remain.
+> Status: **in progress** — phases 0, 0b, 1, 2, 3 and 4 done. Phases 5 and 6
+> remain, and phase 6 grew: see §4.5.
 > The rule is enforced from phase 1 onward by
 > `TestNoRouteIsRegisteredOutsideTheNamespace`, against the `unmigratedRoutes`
 > ratchet that phases 2–6 empty. Open questions all decided (§4.3, §8).
@@ -381,6 +382,38 @@ Alpha, and you said so. A redirect layer would have to live in the same three
 predicates this change exists to delete. Clean break, one breaking-change
 CHANGELOG fragment.
 
+### 4.5 What phase 4 could not move, and why
+
+**The four console-only Lambda endpoints stay at `/2015-03-31/functions/{name}/…`
+until phase 6.** The move was made and backed out.
+
+`shouldBypassIAM` exempts every path starting with `/_`. That is fine for
+health, metrics and the debug namespace, which carry no authorization of their
+own. It is not fine for these four: `source` reads and writes a function's
+code, and `test-events` writes saved payloads, and they are authorized
+per-function.
+`TestIAMEnforce_enabled_lambdaTestEventsPathDeniesNonMatchingFunction` pins
+exactly that — a policy allowing `lambda:PutTestEvent` on one function must not
+authorize another — and moving the routes under the prefix made that test fail
+by making the check disappear.
+
+So the namespace rule and the IAM bypass currently disagree about what `/_`
+means, and phase 4 is where that surfaced as a real consequence rather than a
+note. Two things follow:
+
+1. These four are recorded in `unmigratedRoutes` against **phase 6**, not
+   phase 4, with the blocking reason in the entry.
+2. Phase 6 now has to do more than tidy predicates. It has to make "internal"
+   and "unauthenticated" separable — which is the same conclusion §5's
+   route-marker option reached from the tracing side, arrived at independently
+   from the authorization side. That agreement is the strongest argument yet
+   for option 3.
+
+The other invented paths the gate found *did* move: EKS's `kubeconfig` is an
+emulator extension no SDK sends, and its IAM action was never inferable
+(`restOperation` returns nothing for it), so relocating it removed no control
+that existed.
+
 ## 5. Enforcement — the point of the exercise
 
 ### Gate 9: every registered route is modeled or namespaced
@@ -562,7 +595,7 @@ One PR per phase; Go, web, docs and tests in the same commit.
 | **1** | ✅ **Done.** Gate 9 (§5) landed with every current violation in the `unmigratedRoutes` ratchet, plus `router.InternalPrefix`. No routes moved. | The rule is enforced from day one; every later phase shrinks the ratchet instead of racing it. |
 | **2** | ✅ **Done.** Router roots: `/_health`, `/_metrics`, `/_topology`, `/_/info`, `/_events`, `/_internal/domains/watch`, plus `overcast-mcp`'s own `/_health`. Predicates, web, 4 healthchecks, `cmd/compat/launch.go`. | Highest-traffic, lowest-risk: no minted URLs. |
 | **3** | ✅ **Done.** `/_debug/*` → `/_overcast/debug/*` (23 routes, pprof included); `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
-| **4** | Service admin: `/_lambda/*`, `/_ecs/*`, `/_rds/*`, and `/_overcast/inbox` → `/_overcast/ses/inbox`. | Console-only consumers. |
+| **4** | ✅ **Done.** Service admin: `/_lambda/{instances,runtimes,layers}`, `/_ecs/*`, `/_rds/*`, EKS's `kubeconfig`, and `/_overcast/inbox` → `/_overcast/ses/inbox`. **The four console-only Lambda endpoints did not move — see §4.5.** | Console-only consumers. |
 | **5** | Service data plane: `/_apigateway`, `/_appsync`, `/_cloudfront`, `/_elb`, `/_lambda/url-invoke`, `/_cognito`. Rewrite sites, URL-minting code, `docs/networking.md`. | The only phase that changes URLs Overcast hands to callers. |
 | **6** | Cognito discovery to the AWS shape (§4.3), with the top-level label-route overlap test. Delete `internalService`, collapse `detectService`, empty the ratchet down to the five allowlist groups, update `manifest-enforcement.md`. | The payoff. |
 

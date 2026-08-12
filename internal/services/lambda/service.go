@@ -1299,7 +1299,11 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// InvokeWithResponseStream uses a different API version path.
 	const streamBase = "/2021-11-15"
 	r.Post(streamBase+"/functions/{name}/response-streaming-invocations", s.handler.InvokeWithResponseStream)
-	// Emulator-only: SSE invoke with progress events for the web UI.
+	// Emulator-only: SSE invoke with progress events for the web UI. These
+	// four endpoints sit inside AWS's prefix rather than under /_overcast/
+	// because "/_" is what shouldBypassIAM exempts, and they carry a
+	// resource-scoped IAM check. Phase 6 of
+	// docs/plans/non-canonical-url-namespace.md moves them.
 	r.Post(apiBase+"/functions/{name}/invoke-with-progress", s.handler.InvokeFunctionSSE)
 	// Versions.
 	r.Post(apiBase+"/functions/{name}/versions", s.handler.PublishVersion)
@@ -1342,11 +1346,11 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Delete(tagBase+"/tags/{ResourceARN}", s.handler.untagResource)
 
 	// Emulator-specific: list warm/running instances for the topology map UI.
-	r.Get("/_lambda/instances", s.handler.ListInstances)
+	r.Get("/_overcast/lambda/instances", s.handler.ListInstances)
 	// Emulator-specific: runtime catalog for the web UI.
-	r.Get("/_lambda/runtimes", s.handler.ListRuntimes)
+	r.Get("/_overcast/lambda/runtimes", s.handler.ListRuntimes)
 	// Emulator-specific: layer zip metadata for the web UI.
-	r.Get("/_lambda/layers/{layerName}/versions/{versionNumber}/metadata", s.handler.GetLayerVersionMetadata)
+	r.Get("/_overcast/lambda/layers/{layerName}/versions/{versionNumber}/metadata", s.handler.GetLayerVersionMetadata)
 
 	// Host-based invoke (lambda-url Host header) — see handler_url.go's
 	// Service.HostRouteRewrite. Matches any HTTP method: real Lambda

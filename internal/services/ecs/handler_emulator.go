@@ -1,6 +1,6 @@
 package ecs
 
-// handler_emulator.go — Emulator-only endpoints behind /_ecs/ prefix.
+// handler_emulator.go — Emulator-only endpoints behind /_overcast/ecs/ prefix.
 // These are NOT part of the AWS API surface.
 
 import (

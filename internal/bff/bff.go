@@ -135,7 +135,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/debug/traces", handleDebugTraces)
 	r.Get("/api/debug/traces/count", handleDebugTraceCount)
 	r.Get("/api/debug/traces/search", handleDebugTraceSearch)
-	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_lambda/runtimes"))
+	r.Get("/api/lambda/runtimes", proxyJSONHandler("/_overcast/lambda/runtimes"))
 	r.Get("/api/lambda/instances", handleLambdaInstances)
 	r.Get("/api/lambda/functions/{name}/source", handleLambdaSourceGet)
 	r.Put("/api/lambda/functions/{name}/source", handleLambdaSourcePut)
@@ -1021,7 +1021,7 @@ func handleSQSPeek(w http.ResponseWriter, r *http.Request) {
 
 func handleLambdaInstances(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
-	resp, err := doGet(r.Context(), ep+"/_lambda/instances")
+	resp, err := doGet(r.Context(), ep+"/_overcast/lambda/instances")
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"instances": []any{}})
@@ -1218,7 +1218,7 @@ func handleECSTaskLogs(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	taskArn := chi.URLParam(r, "taskArn")
 	container := chi.URLParam(r, "container")
-	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_ecs/tasks/%s/logs/%s",
+	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_overcast/ecs/tasks/%s/logs/%s",
 		ep, url.PathEscape(taskArn), url.PathEscape(container)))
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
@@ -1235,7 +1235,7 @@ func handleECSTaskLogs(w http.ResponseWriter, r *http.Request) {
 func handleECSClusterTasks(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	cluster := chi.URLParam(r, "cluster")
-	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_ecs/clusters/%s/tasks",
+	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_overcast/ecs/clusters/%s/tasks",
 		ep, url.PathEscape(cluster)))
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
@@ -1309,7 +1309,7 @@ func proxyConsoleFeed(w http.ResponseWriter, r *http.Request, path string, param
 
 func handleMailList(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
-	u := ep + "/_overcast/inbox/messages"
+	u := ep + "/_overcast/ses/inbox/messages"
 	if limit := r.URL.Query().Get("limit"); limit != "" {
 		u += "?limit=" + url.QueryEscape(limit)
 	}
@@ -1329,7 +1329,7 @@ func handleMailList(w http.ResponseWriter, r *http.Request) {
 func handleMailGet(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	id := chi.URLParam(r, "id")
-	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_overcast/inbox/messages/%s", ep, url.PathEscape(id)))
+	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_overcast/ses/inbox/messages/%s", ep, url.PathEscape(id)))
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "mail fetch failed")
 		return
@@ -1345,7 +1345,7 @@ func handleMailGet(w http.ResponseWriter, r *http.Request) {
 func handleMailDeleteAll(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodDelete,
-		ep+"/_overcast/inbox/messages", nil)
+		ep+"/_overcast/ses/inbox/messages", nil)
 	resp, err := bffHTTPClient.Do(req)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "mail clear failed")
@@ -1359,7 +1359,7 @@ func handleMailDeleteOne(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	id := chi.URLParam(r, "id")
 	req, _ := http.NewRequestWithContext(r.Context(), http.MethodDelete,
-		fmt.Sprintf("%s/_overcast/inbox/messages/%s", ep, url.PathEscape(id)), nil)
+		fmt.Sprintf("%s/_overcast/ses/inbox/messages/%s", ep, url.PathEscape(id)), nil)
 	resp, err := bffHTTPClient.Do(req)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "mail delete failed")
@@ -1374,7 +1374,7 @@ func handleMailDeleteOne(w http.ResponseWriter, r *http.Request) {
 func handleRDSLogs(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpoint(r)
 	id := chi.URLParam(r, "id")
-	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_rds/instances/%s/logs", ep, url.PathEscape(id)))
+	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_overcast/rds/instances/%s/logs", ep, url.PathEscape(id)))
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
 		return

@@ -1,7 +1,7 @@
 /**
  * Runtime picker data, derived from the emulator's runtime catalog.
  *
- * The catalog (`GET /_lambda/runtimes`) is generated from the same table the
+ * The catalog (`GET /_overcast/lambda/runtimes`) is generated from the same table the
  * Lambda service validates CreateFunction against, so this module never
  * hard-codes a runtime: keeping a list here is exactly the drift that let the
  * UI offer runtimes the API refused.

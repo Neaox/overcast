@@ -591,8 +591,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	outbound := smtp.NewMockOutboundCapture(mailStore, publishInbox)
 	snsSvc.InitOutboundCapture(outbound)
 
-	// Expose the inbox capture API under /_overcast/inbox/.
-	r.Route("/_overcast/inbox", inboxHandlers(mailStore))
+	// Expose the inbox capture API under /_overcast/ses/inbox/.
+	r.Route("/_overcast/ses/inbox", inboxHandlers(mailStore))
 
 	var mailerHost string
 	var mailerPort int

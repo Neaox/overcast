@@ -120,8 +120,8 @@ func (s *Service) Name() string { return serviceName }
 
 // RegisterRoutes satisfies router.Service. Registers emulator-only endpoints.
 func (s *Service) RegisterRoutes(r chi.Router) {
-	r.Get("/_ecs/tasks/{taskArn}/logs/{container}", s.handler.GetTaskContainerLogs)
-	r.Get("/_ecs/clusters/{cluster}/tasks", s.handler.ListClusterTasks)
+	r.Get("/_overcast/ecs/tasks/{taskArn}/logs/{container}", s.handler.GetTaskContainerLogs)
+	r.Get("/_overcast/ecs/clusters/{cluster}/tasks", s.handler.ListClusterTasks)
 }
 
 // Stop cancels pending lifecycle transitions and cleans up Docker containers

@@ -469,22 +469,38 @@ func serviceIdentityForRPCLabel(label string) string {
 // definitively not an S3 request and must not fall through to the S3 fallback.
 func internalService(path string) string {
 	switch {
+	// Still-unnamespaced prefixes. /_lambda is only url-invoke now; phase 5
+	// moves it, along with /_cognito, /_appsync and /_cloudfront.
 	case strings.HasPrefix(path, "/_cognito"):
 		return "cognito"
-	case strings.HasPrefix(path, "/_ecs"):
-		return "ecs"
 	case strings.HasPrefix(path, "/_lambda"):
 		return "lambda"
 	case strings.HasPrefix(path, "/_appsync"):
 		return "appsync"
 	case strings.HasPrefix(path, "/_cloudfront"):
 		return "cloudfront"
+
+	// Namespaced. Every one of these is "/_overcast/" plus the owner, which is
+	// the shape the whole switch collapses into once phase 5 lands and there is
+	// nothing above this line: strings.Split(path, "/")[2].
 	case strings.HasPrefix(path, "/_overcast/cognito"):
 		return "cognito"
 	case strings.HasPrefix(path, "/_overcast/secretsmanager"):
 		return "secretsmanager"
-	case strings.HasPrefix(path, "/_overcast/inbox"):
+	case strings.HasPrefix(path, "/_overcast/ses"):
+		// The mail inbox and the SES admin identity routes. Only the inbox was
+		// named here before phase 4 moved it from /_overcast/inbox, so
+		// /_overcast/ses/identities — already under this prefix — fell through
+		// and was logged as "internal". Both are SES now.
 		return "ses"
+	case strings.HasPrefix(path, "/_overcast/ecs"):
+		return "ecs"
+	case strings.HasPrefix(path, "/_overcast/lambda"):
+		return "lambda"
+	case strings.HasPrefix(path, "/_overcast/rds"):
+		return "rds"
+	case strings.HasPrefix(path, "/_overcast/eks"):
+		return "eks"
 	default:
 		return "internal"
 	}

@@ -443,7 +443,7 @@ Landed (`tar_cache.go`, container_runtime.go):
   `PrefillArtifacts` — code and layer tars are pre-built in the background
   once a deploy settles, so even the **first** cold start of a new code
   version skips the fetch and conversion. The cache's entry count, bytes,
-  and budget are reported on `GET /_lambda/instances` (`tarCache`).
+  and budget are reported on `GET /_overcast/lambda/instances` (`tarCache`).
 - **Bootstrap tar**: built once (`sync.OnceValues`).
 - **CA bundle tar**: built once per process — certs are minted before the
   Lambda runtime exists and never rotate within a process (verified).

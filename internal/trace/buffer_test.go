@@ -651,8 +651,8 @@ func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 		"/_overcast/debug/state/sqs:queues",
 		"/_overcast/events",
 		"/_overcast/events/request",
-		"/_overcast/inbox",
-		"/_overcast/inbox/messages",
+		"/_overcast/ses/inbox",
+		"/_overcast/ses/inbox/messages",
 		"/_overcast/info",
 	}
 	for _, p := range internal {

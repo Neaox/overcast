@@ -53,11 +53,11 @@ func TestDetectService(t *testing.T) {
 		{name: "debug", method: "GET", path: "/_overcast/debug/store", want: "internal"},
 		{name: "cognito oauth", method: "GET", path: "/_cognito/us-east-1_ABC/oauth2/authorize", want: "cognito"},
 		{name: "cognito login", method: "POST", path: "/_cognito/us-east-1_ABC/login", want: "cognito"},
-		{name: "ecs tasks", method: "GET", path: "/_ecs/clusters/default/tasks", want: "ecs"},
-		{name: "lambda instances", method: "GET", path: "/_lambda/instances", want: "lambda"},
+		{name: "ecs tasks", method: "GET", path: "/_overcast/ecs/clusters/default/tasks", want: "ecs"},
+		{name: "lambda instances", method: "GET", path: "/_overcast/lambda/instances", want: "lambda"},
 		{name: "cloudfront proxy", method: "GET", path: "/_cloudfront/EDIST123/index.html", want: "cloudfront"},
 		{name: "secretsmanager internal", method: "GET", path: "/_overcast/secretsmanager/secrets", want: "secretsmanager"},
-		{name: "mail internal", method: "GET", path: "/_overcast/inbox/messages", want: "ses"},
+		{name: "mail internal", method: "GET", path: "/_overcast/ses/inbox/messages", want: "ses"},
 
 		// Host-routed AWS-style addresses (execute-api / lambda-url /
 		// appsync-api Host subdomains) — see hostroute.go. Labelled from the
@@ -164,7 +164,7 @@ func TestDetectOperation(t *testing.T) {
 		{name: "info", method: "GET", path: "/_overcast/info", want: ""},
 		{name: "cognito oauth", method: "GET", path: "/_cognito/us-east-1_ABC/oauth2/authorize", want: ""},
 		{name: "cognito debug token", method: "GET", path: "/_cognito/us-east-1_ABC/debug/token", want: ""},
-		{name: "lambda instances", method: "GET", path: "/_lambda/instances", want: ""},
+		{name: "lambda instances", method: "GET", path: "/_overcast/lambda/instances", want: ""},
 		{name: "debug store", method: "GET", path: "/_overcast/debug/store/s3", want: ""},
 
 		// S3 heuristics — should still work for real S3 paths
@@ -246,15 +246,15 @@ func TestInternalService(t *testing.T) {
 	}{
 		{"/_cognito/pool/oauth2/authorize", "cognito"},
 		{"/_cognito/pool/login", "cognito"},
-		{"/_ecs/clusters/default/tasks", "ecs"},
-		{"/_ecs/tasks/arn/logs/main", "ecs"},
-		{"/_lambda/instances", "lambda"},
-		{"/_lambda/runtimes", "lambda"},
+		{"/_overcast/ecs/clusters/default/tasks", "ecs"},
+		{"/_overcast/ecs/tasks/arn/logs/main", "ecs"},
+		{"/_overcast/lambda/instances", "lambda"},
+		{"/_overcast/lambda/runtimes", "lambda"},
 		{"/_appsync/api-id/graphql", "appsync"},
 		{"/_cloudfront/EDIST/index.html", "cloudfront"},
 		{"/_overcast/secretsmanager/secrets", "secretsmanager"},
 		{"/_overcast/secretsmanager/secrets/id/value", "secretsmanager"},
-		{"/_overcast/inbox/messages", "ses"},
+		{"/_overcast/ses/inbox/messages", "ses"},
 		{"/_overcast/health", "internal"},
 		{"/_overcast/topology", "internal"},
 		{"/_overcast/info", "internal"},

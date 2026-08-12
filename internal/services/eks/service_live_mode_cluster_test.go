@@ -244,7 +244,7 @@ func TestLiveModeUpdateKubeconfigBlocksMockRecord(t *testing.T) {
 	r := chi.NewRouter()
 	svc.RegisterRoutes(r)
 
-	req := httptest.NewRequest(http.MethodPost, "/clusters/"+legacyMockClusterName+"/kubeconfig", nil)
+	req := httptest.NewRequest(http.MethodPost, "/_overcast/eks/clusters/"+legacyMockClusterName+"/kubeconfig", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 

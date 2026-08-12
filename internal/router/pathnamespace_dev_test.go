@@ -47,28 +47,20 @@ var unmigratedRoutes = map[string]string{
 
 	// Phase 3 is done: /_overcast/debug/* and /_overcast/mcp are namespaced.
 
-	// Phase 4 — service admin and console-only endpoints. The web UI is the
-	// only consumer, so these move without touching a URL any SDK holds.
-	"/_lambda/instances": "phase 4 -> /_overcast/lambda/instances",
-	"/_lambda/runtimes":  "phase 4 -> /_overcast/lambda/runtimes",
-	"/_lambda/layers/{layerName}/versions/{versionNumber}/metadata": "phase 4 -> /_overcast/lambda/layers/...",
-	"/_ecs/clusters/{cluster}/tasks":                                "phase 4 -> /_overcast/ecs/clusters/{cluster}/tasks",
-	"/_ecs/tasks/{taskArn}/logs/{container}":                        "phase 4 -> /_overcast/ecs/tasks/{taskArn}/logs/{container}",
-	"/_rds/instances/{instanceId}/logs":                             "phase 4 -> /_overcast/rds/instances/{instanceId}/logs",
-	// Emulator-only endpoints hung off Lambda's modeled prefix, for the web
-	// UI's function editor and Test tab (see overcastRESTOperation in
-	// internal/middleware/restoperation.go). The leading segments are AWS's,
-	// which is exactly why the audit's "/_" grep missed them and this gate
-	// did not: nesting an invented path inside a modeled prefix hides it.
-	"/2015-03-31/functions/{name}/source":                  "phase 4 -> /_overcast/lambda/functions/{name}/source",
-	"/2015-03-31/functions/{name}/test-events":             "phase 4 -> /_overcast/lambda/functions/{name}/test-events",
-	"/2015-03-31/functions/{name}/test-events/{eventName}": "phase 4 -> /_overcast/lambda/functions/{name}/test-events/{eventName}",
-	"/2015-03-31/functions/{name}/invoke-with-progress":    "phase 4 -> /_overcast/lambda/functions/{name}/invoke-with-progress",
-	// EKS UpdateKubeconfig, which its own capability row calls an emulator
-	// extension rather than an AWS operation: `aws eks update-kubeconfig` is a
-	// CLI-side command that calls DescribeCluster and writes the file locally,
-	// so no SDK sends this request at all.
-	"/clusters/{name}/kubeconfig": "phase 4 -> /_overcast/eks/clusters/{name}/kubeconfig",
+	// Phase 4 is done for the service admin routes. These four did not move
+	// with them, and the reason is worth keeping: "/_" is not only the
+	// namespace marker, it is also what shouldBypassIAM exempts. These carry a
+	// real resource-scoped authorization check — a policy allowing
+	// lambda:PutTestEvent on one function must not authorize another, which
+	// TestIAMEnforce_enabled_lambdaTestEventsPathDeniesNonMatchingFunction
+	// pins — and moving them under the prefix silently removed it. They go in
+	// phase 6, with the predicate rework that lets an internal path still be
+	// authorized. Until then they stay where AWS's own routes are, which is
+	// its own kind of wrong, and the lesser one.
+	"/2015-03-31/functions/{name}/source":                  "phase 6 -> /_overcast/lambda/functions/{name}/source (blocked: IAM bypass)",
+	"/2015-03-31/functions/{name}/test-events":             "phase 6 -> /_overcast/lambda/functions/{name}/test-events (blocked: IAM bypass)",
+	"/2015-03-31/functions/{name}/test-events/{eventName}": "phase 6 -> /_overcast/lambda/functions/{name}/test-events/{eventName} (blocked: IAM bypass)",
+	"/2015-03-31/functions/{name}/invoke-with-progress":    "phase 6 -> /_overcast/lambda/functions/{name}/invoke-with-progress (blocked: IAM bypass)",
 
 	// Phase 5 — the data plane. These are the paths host addressing rewrites
 	// to, and they appear in URLs Overcast mints and hands back to callers, so
@@ -262,7 +254,7 @@ func TestModeledURIIndex_covers(t *testing.T) {
 		"/2015-03-31/functions/{name}/source",                   // web UI function editor
 		"/2015-03-31/functions/{name}/test-events",              // web UI Test tab
 		"/2020-05-31/distribution/{id}/monitoring-subscription", // singular: the redundant alias
-		"/clusters/{name}/kubeconfig",                           // EKS emulator extension
+		"/_overcast/eks/clusters/{name}/kubeconfig",             // EKS emulator extension
 		"/{region}/{poolId}/.well-known/jwks.json",              // region-prefixed OIDC discovery
 		"/nothing/aws/ever/modeled",
 	}

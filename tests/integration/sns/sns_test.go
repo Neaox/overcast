@@ -826,7 +826,7 @@ func TestPublish_deliversToEmailSubscriber(t *testing.T) {
 		Body    string   `json:"textBody"`
 	}
 	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
-		mailResp, err := http.Get(srv.URL + "/_overcast/inbox/messages")
+		mailResp, err := http.Get(srv.URL + "/_overcast/ses/inbox/messages")
 		if err != nil {
 			return false
 		}
@@ -867,7 +867,7 @@ func TestPublish_deliversToEmailJSONSubscriber(t *testing.T) {
 		Body string `json:"textBody"`
 	}
 	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
-		mailResp, err := http.Get(srv.URL + "/_overcast/inbox/messages")
+		mailResp, err := http.Get(srv.URL + "/_overcast/ses/inbox/messages")
 		if err != nil {
 			return false
 		}
@@ -915,7 +915,7 @@ func TestPublish_deliversToSMSSubscriber(t *testing.T) {
 		Body string   `json:"textBody"`
 	}
 	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
-		mailResp, err := http.Get(srv.URL + "/_overcast/inbox/messages")
+		mailResp, err := http.Get(srv.URL + "/_overcast/ses/inbox/messages")
 		if err != nil {
 			return false
 		}
@@ -951,7 +951,7 @@ func TestMailCapture_clearAndDelete(t *testing.T) {
 		ID string `json:"id"`
 	}
 	helpers.Eventually(t, 2*time.Second, 10*time.Millisecond, func() bool {
-		listResp, _ := http.Get(srv.URL + "/_overcast/inbox/messages")
+		listResp, _ := http.Get(srv.URL + "/_overcast/ses/inbox/messages")
 		msgs = nil
 		helpers.DecodeJSON(t, listResp, &msgs)
 		listResp.Body.Close()
@@ -959,7 +959,7 @@ func TestMailCapture_clearAndDelete(t *testing.T) {
 	}, "timed out waiting for 2 captured emails")
 
 	// Delete one.
-	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/_overcast/inbox/messages/"+msgs[0].ID, nil)
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/_overcast/ses/inbox/messages/"+msgs[0].ID, nil)
 	delResp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("DELETE message: %v", err)
@@ -967,7 +967,7 @@ func TestMailCapture_clearAndDelete(t *testing.T) {
 	delResp.Body.Close()
 	helpers.AssertStatus(t, delResp, http.StatusNoContent)
 
-	listResp2, _ := http.Get(srv.URL + "/_overcast/inbox/messages")
+	listResp2, _ := http.Get(srv.URL + "/_overcast/ses/inbox/messages")
 	var msgs2 []struct {
 		ID string `json:"id"`
 	}
@@ -978,11 +978,11 @@ func TestMailCapture_clearAndDelete(t *testing.T) {
 	}
 
 	// Clear all.
-	clearReq, _ := http.NewRequest(http.MethodDelete, srv.URL+"/_overcast/inbox/messages", nil)
+	clearReq, _ := http.NewRequest(http.MethodDelete, srv.URL+"/_overcast/ses/inbox/messages", nil)
 	clearResp, _ := http.DefaultClient.Do(clearReq)
 	clearResp.Body.Close()
 
-	listResp3, _ := http.Get(srv.URL + "/_overcast/inbox/messages")
+	listResp3, _ := http.Get(srv.URL + "/_overcast/ses/inbox/messages")
 	var msgs3 []struct{}
 	helpers.DecodeJSON(t, listResp3, &msgs3)
 	listResp3.Body.Close()

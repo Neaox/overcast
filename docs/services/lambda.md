@@ -168,7 +168,7 @@ still supports. A deprecated-but-deployable runtime is pulled on demand at its
 first cold start instead, so enabling the seed does not download several extra
 gigabytes of end-of-life images.
 
-`GET /_lambda/runtimes` (emulator-only, used by the web UI) returns the catalog
+`GET /_overcast/lambda/runtimes` (emulator-only, used by the web UI) returns the catalog
 with each runtime's `supported`, `deprecated`, `createBlocked` and
 `updateBlocked` flags.
 
@@ -328,7 +328,7 @@ If a warm container disappears without Overcast asking â€” you removed it w
 reports it and the environment is dropped from the warm set right away, so the
 next invocation is an ordinary cold start.
 
-The web UI's system map and the `GET /_lambda/instances` endpoint report one
+The web UI's system map and the `GET /_overcast/lambda/instances` endpoint report one
 entry per execution environment, so a function serving five concurrent
 invocations shows five instances. A retired environment stops being listed at
 the moment it is retired rather than lingering until the idle timeout.
