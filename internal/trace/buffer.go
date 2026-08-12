@@ -17,6 +17,19 @@ import (
 // minutes of polling at the rate the UI and the health check run at.
 const maxInternalRing = 200
 
+// maxFamilyShare is the fraction of the pinned ring a failure's calls may
+// occupy, as a divisor: 2 means at most half.
+//
+// Pinning a failure also pins the calls it made, and a CDK deploy makes
+// thousands of them. Without a share limit one deploy fills the ring, and every
+// failure arriving afterwards pushes an older failure out — the family
+// displacing failures a step later rather than at the moment it was pinned,
+// which is the loophole in "a family never displaces another failure".
+//
+// Capping the share closes it: failures always have the rest of the ring, so
+// they compete with failures and never with somebody else's call log.
+const maxFamilyShare = 2
+
 // Buffer is a concurrency-safe store of traces keyed by request ID for O(1)
 // lookup, holding them in three age-ordered rings: `live` for user-facing
 // requests, `pinned` for the ones that went wrong, and `internal` for the
@@ -61,6 +74,11 @@ type Buffer struct {
 	bytes int64
 	// dropped counts what retention has reclaimed, by rule. See RetentionStats.
 	dropped DroppedCounts
+	// familyPinned is how much of the pinned ring is currently held by calls
+	// pinned alongside a failure. Maintained wherever a slot enters or leaves
+	// that ring: a counter that only rose would stop families being pinned at
+	// all after the first few deploys.
+	familyPinned int
 }
 
 // NewBuffer creates a fixed-size buffer holding capacity user-facing traces.
@@ -231,11 +249,11 @@ func (b *Buffer) enforceBytesLocked() {
 		if s == nil {
 			return
 		}
-		s.inPinned = false
+		b.unpinLocked(s)
 		if s.inLive {
 			continue
 		}
-		b.dropLocked(s)
+		b.dropLocked(s, dropBytes)
 	}
 }
 
@@ -300,21 +318,32 @@ func (b *Buffer) retireLocked(s *slot, why dropReason) {
 // children moments after. The pinned deploy would then be a timeline whose
 // every body reports OmitEvicted.
 //
-// The family rides along in whatever room is left, and **never displaces
-// another failure**: two failures are two things somebody may come back for,
-// and one deploy's children are not worth more than either. A deploy with more
-// calls than the ring has spare slots keeps the ones that fit; the rest degrade
-// to OmitEvicted, which the UI already explains.
+// The family rides along in whatever room is left, and is bounded to a share of
+// the ring (maxFamilyShare) so that **it cannot spend the failure budget**.
+//
+// Stopping at the ring being full was not enough. The calls stay in the ring
+// afterwards, so the next failure to arrive evicts the oldest entry — which
+// could be an older failure that a deploy's call log had crowded towards the
+// head. The family displaced a failure a step later rather than at the moment
+// it was pinned. Capping the share closes that: failures always have the rest
+// of the ring, so they compete with failures and never with somebody else's
+// call log.
+//
+// A deploy with more calls than its share keeps the ones that fit; the rest
+// degrade to OmitEvicted, which the UI already explains.
 // Callers must hold b.mu.
 func (b *Buffer) pinFamilyLocked(parent *slot) {
+	limit := b.pinned.cap() / maxFamilyShare
 	for _, id := range parent.rec.hopRequestIDList() {
-		if b.pinned.len() >= b.pinned.cap() {
+		if b.pinned.len() >= b.pinned.cap() || b.familyPinned >= limit {
 			return
 		}
 		child, ok := b.index[id]
 		if !ok || child.inPinned {
 			continue
 		}
+		child.viaFamily = true
+		b.familyPinned++
 		b.pinLocked(child)
 	}
 }
@@ -332,11 +361,27 @@ func (b *Buffer) dropLocked(s *slot, why dropReason) {
 	delete(b.index, s.rec.requestID)
 }
 
+// unpinLocked clears a slot's pinned membership, keeping the family share
+// accounting in step.
+//
+// Every path that removes a slot from the pinned ring goes through here, for
+// the same reason dropLocked owns the byte accounting: a counter that only ever
+// rises is one that silently stops working, and here that means no family is
+// ever pinned again after the first few deploys.
+// Callers must hold b.mu.
+func (b *Buffer) unpinLocked(s *slot) {
+	s.inPinned = false
+	if s.viaFamily {
+		s.viaFamily = false
+		b.familyPinned--
+	}
+}
+
 // pinLocked moves a slot onto the pinned ring. Callers must hold b.mu.
 func (b *Buffer) pinLocked(s *slot) {
 	s.inPinned = true
 	if evicted := b.pinned.push(s); evicted != nil {
-		evicted.inPinned = false
+		b.unpinLocked(evicted)
 		if !evicted.inLive {
 			b.dropLocked(evicted, dropPinnedCap)
 		}
