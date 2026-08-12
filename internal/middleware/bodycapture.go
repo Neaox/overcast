@@ -153,6 +153,21 @@ func (c *requestCapture) seal() {
 	c.sealed = true
 }
 
+// captured returns the bytes recorded so far without reading any further.
+//
+// It exists for classification, which runs on every request and so must not
+// pay body()'s top-up read. A handler that dispatched on the request has
+// already read what it needed — a Query-protocol handler cannot find its
+// Action parameter otherwise — so for the requests where the body carries the
+// only signal of which service was addressed, the bytes are here. When they
+// are not, the caller falls back to what it would have concluded anyway.
+func (c *requestCapture) captured() []byte {
+	if c == nil {
+		return nil
+	}
+	return c.buf
+}
+
 // body returns the captured bytes, first topping the buffer up from any
 // unread remainder. Only the failure path calls this, so a handler that
 // rejected a request before reading its body still logs what the client sent
