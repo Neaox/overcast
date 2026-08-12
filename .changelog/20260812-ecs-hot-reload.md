@@ -1,7 +1,0 @@
-* [ecs] A task definition can point a scratch volume at a directory on your machine, so a save is live in the task on the next request with no image rebuild and no redeploy. Tag the task definition `overcast:hot-reload-path/<volume-name>` with an absolute host path and start Overcast with `OVERCAST_ECS_HOT_RELOAD=true`. The volume stays an ordinary name-only scratch volume — legal on Fargate, deployable as-is — and only the tag, which real AWS stores and ignores, redirects it locally, so nothing about the task definition changes meaning on a real deploy. With one redirectable volume the bare `overcast:hot-reload-path` works too, the same key Lambda takes.
-
-* [ecs] RegisterTaskDefinition accepts `tags` and stores them against the revision's ARN, on both wire protocols. AWS tags a task definition at registration and CloudFormation and CDK rely on it; previously tags sent with the call were dropped and only a separate TagResource took effect.
-
-* [lambda] `OVERCAST_HOT_RELOAD` enables bind-mount source reload for every compute service at once, with `OVERCAST_LAMBDA_HOT_RELOAD` and `OVERCAST_ECS_HOT_RELOAD` overriding it per service in either direction — so one service can be opted out of an umbrella `true`. `OVERCAST_LAMBDA_HOT_RELOAD` on its own behaves exactly as before.
-
-* [ecs] A bind mount the daemon rejects now stops the task with a `stoppedReason` naming the host paths involved and pointing at Docker Desktop's File Sharing setting, rather than Docker's own message, which names neither.

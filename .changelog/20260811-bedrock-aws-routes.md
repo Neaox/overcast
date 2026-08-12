@@ -1,5 +1,0 @@
-* [bedrock] `InvokeModel` and `Converse` are served at the paths AWS binds them to — `POST /model/{modelId}/invoke` and `POST /model/{modelId}/converse` — so an unmodified SDK reaches them instead of getting a 501; `modelId` may be an ID or an ARN
-- [bedrock] the emulator-only `/_bedrock/*` path prefix, the invented `Bedrock.` `X-Amz-Target` dispatch, and the Smithy RPC v2 endpoint that came with it
-  migration: call AWS's own paths — bedrock-runtime is modelled `restJson1` and sends no target header, so an AWS SDK was never able to use any of the three
-~ [bedrock] `Converse` returns a complete `ConverseResponse`: `usage.totalTokens` is present, as the AWS model requires, and the token counts and `metrics.latencyMs` now read zero because no inference is performed
-~ [bedrock] `InvokeModel` treats its request and response bodies as the opaque model-specific payloads AWS models, rather than reading `{"prompt":…}` and answering with `Converse`'s shape; the canned reply is a single `overcastEmulator` field, and an absent payload gets a `ValidationException`

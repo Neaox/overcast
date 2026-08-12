@@ -66,6 +66,428 @@ can be applied mechanically rather than reconstructed from memory.
 
 ## [Unreleased]
 
+## [0.0.1-alpha.35] - 2026-08-12
+
+### Added
+
+- [appconfig] `UpdateApplication` is implemented, at `PATCH /applications/{ApplicationId}`; an omitted `Name` or `Description` leaves the stored value alone
+
+- **BREAKING** [appconfig] the create operations require the members AWS marks required — `Name` on an environment, `Name` and `LocationUri` on a configuration profile, `Content-Type` on a hosted version — and creating an environment or a profile under an application that does not exist answers `ResourceNotFoundException` in place of storing an unreachable record
+  migration: pass the required member, and create the application first
+
+- [appconfig] the create operations apply an inline `Tags` map, `CreateHostedConfigurationVersion` honours the `Latest-Version-Number` header with a `ConflictException`, `ListConfigurationProfiles` honours `type` and `ListHostedConfigurationVersions` honours `version_label`
+
+- [appconfig] every list operation paginates on `max_results` and `next_token` and answers a `NextToken`; a token that cannot be decoded gets a `BadRequestException` in place of a silent restart at the first page
+
+- **BREAKING** [appconfigdata] `StartConfigurationSession` accepts `RequiredMinimumPollIntervalInSeconds`, reports it back in `Next-Poll-Interval-In-Seconds`, and refuses a poll that arrives before it has elapsed, as AWS does; the member used to be ignored
+  migration: poll no more often than the interval the session asked for, or drop `RequiredMinimumPollIntervalInSeconds` from `StartConfigurationSession`
+
+- [backup] `ListBackupVaults` and `ListBackupPlans` honour `maxResults` and `nextToken`, and `ListBackupVaults` also filters on `vaultType` and `shared`; a token that cannot be decoded gets an `InvalidParameterValueException` in place of a silent restart at the first page
+
+- [backup] `CreateBackupVault` validates the vault name against the pattern AWS documents, and `DescribeBackupVault` honours `backupVaultAccountId`
+
+- [backup] `GetBackupPlan` answers not-found for a `versionId` other than the plan's current one, rather than returning the current version under the requested version's name
+
+- [console] a Lambda's Configuration tab says what its VPC configuration actually does here — the container really joins the VPC's network, but Overcast restricts nothing and security groups are never applied, so a test that "proves" the VPC wiring works passes whether or not it is correct. Shown only on functions that have a VPC configured; the empty state carries a one-line version for everyone else
+
+- [dns] a query for a resource endpoint the calling container cannot reach is refused instead of answered with Overcast's own address. Overcast is authoritative for every subdomain of its split-horizon domains, and a container endpoint is one of those — so a missing network alias never produced a clean failure, it produced Overcast's address, and the client connected to the emulator on the engine's port and waited for its own timeout. The refusal is immediate, and the log line names the resource, the caller, and the networks each is on
+
+- [dns] the refusal requires positive identification — some container is advertising that exact alias, on a network the caller is not attached to. A name that merely *looks* like a resource endpoint is still answered, because those labels are ordinary words in a bucket name: `my.rds` is addressed virtual-hosted as `my.rds.localhost`, and refusing it would break the bucket
+
+- [docs] `docs/networking.md` gains a section on Lambda, ECS and VPCs — a row-by-row comparison of what AWS routes and what Overcast currently allows, why the emulator's own APIs stay reachable from inside a VPC on purpose, and what to do about the two `*_NETWORK`-era migrations (`OVERCAST_NETWORK`, and the seeded default VPC turning up in `DescribeVpcs`)
+
+- [ec2/ecs] `assignPublicIp: ENABLED` on an `awsvpcConfiguration` keeps the task reachable from outside its VPC, matching what the field buys on AWS. It was stored and ignored before
+
+- **BREAKING** [ecr] images pushed to the emulated ECR survive an Overcast restart. The registry container keeps its blobs in a named Docker volume, `overcast-ecr-registry-data-<port>`, carrying the same `overcast.service=ecr` labels every other managed resource does; the container itself stays disposable. The gap this closes is `cdk deploy`: cdk-assets asks `DescribeImages` for a container asset's content-hash tag and skips both the build and the push when it resolves, so a registry that came back empty made every deploy after a restart rebuild and re-upload assets that had not changed. Only the fixed-port claim (`OVERCAST_ECR_REGISTRY_PORT`, default `4510`) gets a volume — an ephemeral registry's container name is deliberately random and its port is whatever the daemon had spare, so a volume keyed to either would be a fresh orphan on every start, and one well-known name shared between concurrent instances would put two registry processes on one filesystem. Repository metadata still follows the state backend, and re-creating a repository is enough for its images to reappear: the first read reconciles it against the registry
+  migration: a restart no longer clears the registry. Discard the images with `docker volume rm overcast-ecr-registry-data-4510` while Overcast is down, or set `OVERCAST_ECR_REGISTRY_PERSIST=false` to keep the old container-lifetime storage
+
+- [ecr] `OVERCAST_ECR_REGISTRY_PERSIST` (default `true`) backs the fixed-port registry with that volume. Set it false for storage that dies with the registry container, which is worth doing when the volume itself is the problem — a corrupt one, or a runner that has to start from nothing
+
+- [eks] `DescribeAddonVersions` filters on `addonName`, `kubernetesVersion`, `types`, `publishers` and `owners` and pages with `maxResults`/`nextToken`; omitting `addonName` returns the whole add-on catalog rather than nothing, and each entry now carries its `type`, `publisher` and `owner`
+
+- [eks] `ListInsights` honours the modeled `filter` on category, Kubernetes version and status, and pages with `maxResults`/`nextToken`; an undecodable `nextToken` gets an `InvalidParameterException` in place of a silent restart at the first page
+
+- [lambda] an asynchronous invocation whose function returns an error is now retried, as AWS retries it: two more attempts, waiting one minute after the first and two after the second, matching AWS's default `MaximumRetryAttempts` and the wait AWS documents for a function error. Previously a single failure was final, so a handler that failed on a cold start and would have succeeded on the retry lost its event — and, with a `DeadLetterConfig` configured, dead-lettered an event AWS would have run. Each attempt acquires its own execution environment and is tracked as its own invocation, which is what a retry is on AWS rather than a resumption of the last one. A function throttled by its own reserved concurrency is the documented exception and is not retried again: AWS sends those events to the dead-letter queue "without any retries"
+
+- [lambda] `DeadLetterConfig` on a function is honoured: an asynchronous invocation that fails is delivered to the SQS queue or SNS topic `TargetArn` names, carrying the original event as the message body and the `RequestID`, `ErrorCode` and `ErrorMessage` message attributes AWS documents. It is stored and echoed by `CreateFunction`, `UpdateFunctionConfiguration`, `GetFunction` and `GetFunctionConfiguration`, and an explicitly empty `TargetArn` removes the target as on AWS. Overcast still makes one attempt where AWS makes three, so the event reaches the queue sooner than it would on AWS; nothing in a dead-letter message reports the attempt count, so what a consumer reads is unchanged. `PutFunctionEventInvokeConfig` on-failure *destinations* — a different feature, carrying the invocation record rather than the event — remain unimplemented outside event source mappings
+
+- [lambda] `PutFunctionEventInvokeConfig` and its family — `Get`, `Update`, `Delete` and `ListFunctionEventInvokeConfigs` — are implemented, so a function's asynchronous invocation settings are configurable per function, version or alias instead of being fixed at AWS's defaults. `MaximumRetryAttempts` (0-2) decides how many times a failed event is retried, where 0 genuinely means "do not retry"; `MaximumEventAgeInSeconds` (60-21600) ends the retries once the event outlives it. `Put` overwrites and removes members the request omits, `Update` leaves them alone, and both are validated against AWS's ranges, so a policy that deploys against Overcast is one the account will also accept. Until now these operations had no routes at all, so an SDK call for one fell through to S3's catch-all and came back as an XML `NoSuchBucket` a Lambda client could not parse
+
+- [lambda] on-success and on-failure **destinations** now receive AWS's invocation record: the `{version, timestamp, requestContext, requestPayload, responseContext, responsePayload}` envelope, with `condition` reading `Success` or `RetriesExhausted` and `approximateInvokeCount` naming the attempt that settled it. SQS, SNS, Lambda and EventBridge destinations are delivered to, with an EventBridge entry carrying the `lambda` source and AWS's `Lambda Function Invocation Result - Success`/`- Failure` detail-type. A destination is not a dead-letter queue and the two are no longer conflated — a DLQ receives the bare event, a destination receives the record — so a function configured with both gets both, which is what AWS documents. An S3 on-failure destination returns `501` rather than accepting a configuration whose records would never be written, and an S3 on-success destination is rejected exactly as AWS rejects it
+
+- [msk] `ListClustersV2`, with `clusterNameFilter`, `clusterTypeFilter`, `maxResults` and `nextToken` read from the query string where AWS binds them; a `nextToken` that cannot be decoded gets a `BadRequestException` in place of a silent restart at the first page
+
+- **BREAKING** [opensearch] `ListTags`, `AddTags`, `RemoveTags` and `DescribeDomains` require the members AWS marks required, answering `ValidationException` where an empty ARN or an empty domain list was accepted
+  migration: pass the required member — `?arn=` on `ListTags`, `ARN` on `AddTags` and `RemoveTags`, and at least one name in `DescribeDomains`
+
+- [opensearch] `ListDomainNames` honours the `engineType` query parameter, and a domain's `EngineType` follows from its `EngineVersion` instead of being reported as `OpenSearch` whatever engine it runs
+
+- [opensearch] `CreateDomain` applies an inline `TagList` at creation, so `ListTags` sees a tagged create without a second call
+
+- [rds] `PubliclyAccessible` on DB instances — `CreateDBInstance` accepts it, `ModifyDBInstance` changes it, and `CreateDBInstance`, `ModifyDBInstance` and `DescribeDBInstances` all report it. It is the field that says whether a database is meant to be reachable from outside the VPC it was placed in, and until now Overcast did not have it at all: there was no way to ask for a database in a VPC that stays dialable from your machine, and no way for a template that sets it to round-trip. Unstated, it defaults the way AWS defaults it — `true` without a `DBSubnetGroupName`, because that instance lands in the region's default VPC and Overcast seeds that VPC with an internet gateway, and `false` with one, because a named subnet group is a chosen placement that AWS treats as private. An instance created before Overcast had the field reports the value its create would have been given, so nothing an existing database says about itself changes on upgrade. Instance-level, as on AWS: an Aurora cluster carries no `PubliclyAccessible`, and `CreateDBCluster` does not accept one
+
+- [web/lambda] a function's Configuration tab now has an **Asynchronous invocation** section showing its dead-letter target, with an Edit that sets or clears one — the console half of `DeadLetterConfig`, which until now could only be set from an SDK or a template. It states the retry policy rather than offering fields for it — a failed invocation is retried twice by default — and points at `PutFunctionEventInvokeConfig` for the settings this page does not edit, so nobody looks for a field that is not there
+
+### Changed
+
+- **BREAKING** [appconfig] `CreateHostedConfigurationVersion` and `GetHostedConfigurationVersion` answer with the configuration content as the response payload and the metadata in the `Application-Id`, `Configuration-Profile-Id`, `Version-Number`, `Description`, `Content-Type` and `VersionLabel` headers, as AWS binds them. The create used to answer a JSON envelope, and both used invented `AppConfig-*` header names
+  migration: read the version number from the `Version-Number` header rather than from a JSON body
+
+- **BREAKING** [appconfig] `Application`, `Environment` and `ConfigurationProfile` responses carry the members AWS models and no others; the invented `Arn` and `Tags` members are gone, and `ListConfigurationProfiles` answers profile summaries with `ValidatorTypes` rather than whole profiles
+  migration: read tags through `ListTagsForResource`; an AppConfig ARN is `arn:aws:appconfig:{region}:{account}:application/{id}[/environment/{id}|/configurationprofile/{id}]`
+
+- **BREAKING** [appconfig] configuration content over 1 MB comes back as `PayloadTooLargeException` with HTTP 413, the error AWS binds to that operation, in place of `BadRequestException` with HTTP 400
+  migration: match on `PayloadTooLargeException` where a handler tested for `BadRequestException`
+
+- **BREAKING** [backup] timestamps are epoch seconds, the encoding REST JSON binds them to, in place of RFC 3339 strings that every AWS SDK rejected outright when deserialising a response
+  migration: none for SDK callers; a hand-written client reading `CreationDate` or `DeletionDate` as a string must read a number
+
+- **BREAKING** [backup] vaults and plans are scoped to the region they were created in, as on AWS, where one vault of a given name was shared by every region while its ARN named the creating region
+  migration: vaults and plans recorded by an earlier version are not visible to this one; recreate them
+
+- **BREAKING** [backup] `DeleteBackupVault` answers an empty 200, the `Unit` output AWS models, in place of an invented document
+  migration: read the vault's ARN and name from the `CreateBackupVault` or `DescribeBackupVault` response instead of the delete's
+
+- **BREAKING** [backup] `ResourceNotFoundException`, `AlreadyExistsException`, `MissingParameterValueException` and `InvalidParameterValueException` replace the unmodeled `ValidationException` and the 404 status; AWS Backup models no `ValidationException` and gives all four HTTP 400
+  migration: match on the modeled error codes, and on HTTP 400 rather than 404 for a missing vault or plan
+
+- [bedrock] `Converse` returns a complete `ConverseResponse`: `usage.totalTokens` is present, as the AWS model requires, and the token counts and `metrics.latencyMs` now read zero because no inference is performed
+
+- [bedrock] `InvokeModel` treats its request and response bodies as the opaque model-specific payloads AWS models, rather than reading `{"prompt":…}` and answering with `Converse`'s shape; the canned reply is a single `overcastEmulator` field, and an absent payload gets a `ValidationException`
+
+- **BREAKING** [cognito] the JWT issuer and OIDC discovery drop their region path segment: `iss` is now `{endpoint}/{poolId}` and discovery is served at `/{poolId}/.well-known/openid-configuration`, matching the path portion of AWS's `https://cognito-idp.{region}.amazonaws.com/{poolId}`. AWS carries the region in the hostname; Overcast serves one origin and a pool ID is `{region}_{suffix}`, so the segment restated what the pool ID already said
+  migration: **tokens minted before this release fail validation** — sign in again to get one carrying the new issuer. A client that hard-codes the issuer or the discovery URL drops the region segment; one that reads `issuer` out of the discovery document needs no change. Overcast's own validation reads the pool ID from the issuer path and is unaffected either way
+
+- [compat] every suite's `lambda-crud:UpdateFunctionConfiguration` now sends a `DeadLetterConfig` and checks the response *and* a follow-up read, in all seven suites that implement the group — cli, go-sdk, node-js-sdk, python-sdk, java-sdk, dotnet-sdk and rust-sdk. The test previously sent a timeout and, in most suites, checked only that the call did not error, so the member that broke `cdk deploy` for every function with a dead-letter queue was wire-observable through all seven clients and caught by none of them. Each suite provisions a real SQS queue and uses its ARN rather than a plausible-looking string, so the assertion means the same thing against real AWS as it does here
+
+- **BREAKING** [ec2/lambda/ecs/rds/elasticache] naming a VPC now restricts what a resource can reach, as it does on AWS. A Lambda or ECS task with a VPC configuration reaches resources in that VPC and no others; a resource in a VPC is not reachable from a caller outside it. Previously placement was additive and everything reached everything, so a test proving "my function can reach my database" passed whether or not the VPC wiring was correct — and then failed on deploy. A forbidden connection is refused by name, with a log line identifying the resource, the caller and the networks each is on, rather than hanging
+  migration: if something stopped resolving, the stack describes a connection that would not work on AWS either. Put the caller in the same VPC (`VpcConfig` / `awsvpcConfiguration`), or open the resource with the AWS field that does it: `PubliclyAccessible: true` on an RDS instance, `assignPublicIp: ENABLED` on an ECS task. There is no Overcast-specific override, on purpose — the fix that works here is the fix that works deployed.
+
+- **BREAKING** [eks] `DescribeIdentityProviderConfig` is a `POST` to `/clusters/{name}/identity-provider-configs/describe` naming the config in the body, and answers the modeled shape with the config nested under `identityProviderConfig.oidc` alongside its ARN, status and tags
+  migration: replace `GET /clusters/{name}/identity-provider-configs/{type}/{name}` with the POST, sending `{"identityProviderConfig":{"type":"oidc","name":"…"}}`, and read the result from `identityProviderConfig.oidc`
+
+- **BREAKING** [eks] `ListInsights` is a `POST` to `/clusters/{name}/insights` carrying `filter`, `maxResults` and `nextToken` in the body
+  migration: replace the `GET` with the `POST`; an empty body `{}` returns what the `GET` used to
+
+- **BREAKING** [iam] the IAM action a policy is evaluated against now uses AWS's action prefix rather than Overcast's internal service name, so policies written from the AWS documentation match for the first time. Affects `OVERCAST_ENFORCE_IAM=true` only; the other 40 services already used AWS's name
+  migration: update policies written against the old names — `msk:` → `kafka:`, `stepfunctions:` → `states:`, `efs:` → `elasticfilesystem:`, `opensearch:` → `es:`, `appregistry:` → `servicecatalog:`, `elbv2:` → `elasticloadbalancing:`, `cognito:` → `cognito-idp:`, `waf:` → `wafv2:`
+
+- [lambda] `CreateFunction` and `UpdateFunctionConfiguration` no longer answer `501` when the request carries `DeadLetterConfig`. Under CloudFormation that refusal failed the resource, and with it the stack and the whole `cdk deploy`, for any function that named a dead-letter queue. Both operations moved together on purpose: implementing only the create path would have let the first deploy succeed and failed the redeploy that touched the function's configuration
+
+- [lambda] an event source mapping's `DestinationConfig.OnFailure.Destination` may now be an SNS topic, not only an SQS queue, which is what AWS accepts. The two failure paths — an ESM's on-failure destination and a function's dead-letter queue — now share one delivery, through the same `internal/eventtarget` dispatcher EventBridge and Pipes use, so a destination that does not exist reports the sink's own error instead of silently going nowhere
+
+- **BREAKING** [lambda/router] the emulator-only Lambda endpoints the console uses move out of AWS's path space: `GET|PUT /2015-03-31/functions/{name}/source`, `GET /2015-03-31/functions/{name}/test-events`, `PUT|DELETE /2015-03-31/functions/{name}/test-events/{eventName}` and `POST /2015-03-31/functions/{name}/invoke-with-progress` are now under `/_overcast/lambda/functions/{name}/...`. They were invented paths sitting inside a prefix AWS models, which is both misleading and a collision waiting for AWS to bind those sub-resources
+  migration: the web UI reaches these through its own API and needs no action. A direct caller updates the prefix; IAM policies are unchanged, and the per-function authorization on the source and test-event endpoints is preserved
+
+- [msk] a malformed request is answered with `BadRequestException`, the only client-error shape the kafka model declares, in place of `ValidationException`
+
+- **BREAKING** [opensearch] domains are scoped to the region they were created in, as on AWS, where one domain of a given name was shared by every region
+  migration: domains recorded by an earlier version are not visible to this one; recreate them
+
+- [opensearch] `ResourceNotFoundException` carries HTTP 409, the status AWS documents for it, in place of 404, and a store failure is reported as OpenSearch's own `InternalException`
+
+- **BREAKING** [router/web] Overcast's own endpoints move under one reserved prefix: `/_health`, `/_metrics`, `/_topology`, `/_/info`, `/_events` and `/_internal/domains/watch` are now `/_overcast/health`, `/_overcast/metrics`, `/_overcast/topology`, `/_overcast/info`, `/_overcast/events` and `/_overcast/domains/watch`. `overcast-mcp`'s own health endpoint moves the same way. The prefix is reserved by an S3 naming rule — a bucket name cannot begin with an underscore — and that guarantee is worth spending on one prefix rather than the sixteen roots Overcast had grown, each of which some future AWS service could want
+  migration: update container healthchecks and any script or dashboard that polls these — `wget -qO- http://localhost:4566/_overcast/health` in place of `/_health` is the common one. The shipped `Dockerfile` and both compose files are already updated; a `docker-compose.yml` you maintain yourself is not. The web UI and `overcast` CLI need no action, and nothing an AWS SDK sends is affected: no AWS API path has ever started with an underscore
+
+- **BREAKING** [router/web] the debug namespace and the MCP endpoint join the reserved prefix: `/_debug/*` is now `/_overcast/debug/*` and `/_mcp` is now `/_overcast/mcp`. That covers all 23 debug routes — state, traces, trace search, metrics, config, reset and the whole `pprof` family — and the MCP endpoint the `overcast-mcp` client and any editor integration connect to
+  migration: point MCP clients at `/_overcast/mcp`, and update anything that curls the debug endpoints by hand — `/_overcast/debug/state`, `/_overcast/debug/traces` and `/_overcast/debug/metrics` are the common ones. `go tool pprof http://localhost:4566/_overcast/debug/pprof/heap` replaces the `/_debug` form. The web UI needs no action; `OVERCAST_DEBUG` still gates the namespace, unchanged
+
+- **BREAKING** [router/web] the per-service admin endpoints join the reserved prefix: `/_lambda/instances`, `/_lambda/runtimes` and `/_lambda/layers/…` are now under `/_overcast/lambda/`, `/_ecs/…` under `/_overcast/ecs/`, `/_rds/…` under `/_overcast/rds/`, EKS's `POST /clusters/{name}/kubeconfig` is now `POST /_overcast/eks/clusters/{name}/kubeconfig`, and the mail inbox moves from `/_overcast/inbox` to `/_overcast/ses/inbox` so it sits with the SES admin routes it belongs to. Lambda's function-URL invoke path is untouched
+  migration: the web UI reaches all of these through its own API and needs no action. Update anything calling them directly — `aws eks update-kubeconfig` is unaffected, since that is a CLI-side command that never sends this request
+
+- **BREAKING** [router/cognito] the emulated data plane joins the reserved prefix, and it is the last group to do so: `/_appsync/{apiId}/…` is now `/_overcast/appsync/apis/{apiId}/…`, `/_cloudfront/{distId}/…` is `/_overcast/cloudfront/distributions/{distId}/…`, `/_apigateway/execute-api/…` is `/_overcast/apigateway/execute-api/…`, `/_lambda/url-invoke/…` is `/_overcast/lambda/url-invoke/…`, `/_elb` is `/_overcast/elb`, API Gateway's WebSocket management API moves from `/@connections/{apiId}/{stageName}` to `/_overcast/apigateway/connections/{apiId}/{stageName}`, and Cognito's managed login moves from `/_cognito/{poolId}/…` to `/_overcast/cognito/user-pools/{poolId}/…`. Sixteen internal path roots are now one
+  migration: nothing changes for host-addressed callers — an execute-api, AppSync or Lambda function URL resolves to these paths internally and the URL you were given is unaffected, as are application redirect URIs. Two things need attention: a hard-coded Cognito hosted-UI URL (the OIDC discovery document regenerates itself, so a client that reads `authorization_endpoint` needs no change), and a caller posting to `/@connections/…` by path rather than through the API Gateway Management API endpoint. JWT issuers and token validation are unaffected
+
+### Fixed
+
+- [appconfig] every AppConfig operation is served at the binding AWS models — `/applications` and everything beneath it, and `/tags/{ResourceArn}` — so an unmodified SDK, CDK construct or `aws appconfig …` call reaches it instead of a bare 404
+
+- **BREAKING** [appconfig/appregistry] `POST /applications` signed for `appconfig` answers with an AppConfig application; it used to be answered by Service Catalog AppRegistry, returning a `servicecatalog` ARN with HTTP 200 and writing into AppRegistry's store, with no error raised anywhere. `GET`, `PATCH` and `DELETE /applications/{id}` behaved the same way
+  migration: sign AppConfig calls with an `appconfig` SigV4 credential scope, which every AWS SDK does. Unsigned callers and `servicecatalog`-scoped callers still reach AppRegistry
+
+- [appconfig] `ListTagsForResource`, `TagResource` and `UntagResource` reach AppConfig's own tag store; an AppConfig ARN used to fall through to API Gateway's service-agnostic store, which answered 200 with an empty map for any ARN at all, and an ARN naming nothing now answers `ResourceNotFoundException`
+
+- [appconfig] deleting an application, environment or configuration profile deletes its tags, which used to be left behind for the next resource of the same identity to inherit; a single undecodable record is skipped and logged instead of failing a whole listing
+
+- [appconfig/cloudformation] `AWS::AppConfig::Application`, `::Environment` and `::ConfigurationProfile` provision over the modeled REST binding, signed as `appconfig` so the dispatcher does not hand them to AppRegistry
+
+- [appconfig/router] AppConfig requests are classified as `appconfig` rather than `appregistry`, so they are logged, metered and authorised under the service that answers them, and a modeled AppConfig path Overcast does not implement answers a protocol-correct 501 instead of an empty 404
+
+- [appconfigdata] both operations are served at AWS's own bindings — `POST /configurationsessions` and `GET /configuration` — so an unmodified SDK, CDK construct or `aws appconfigdata …` call reaches them instead of answering 501
+
+- [appconfigdata] `GetLatestConfiguration` reads the session token from the `configuration_token` query parameter, which is where every AWS SDK puts it; it used to be a path segment no client sends
+
+- **BREAKING** [appconfigdata] `StartConfigurationSession` validates that its three identifiers are present and within the modeled 128 characters, and that `RequiredMinimumPollIntervalInSeconds` is between 15 and 86400, answering `BadRequestException`
+  migration: supply `ApplicationIdentifier`, `EnvironmentIdentifier` and `ConfigurationProfileIdentifier`, and keep any requested poll interval inside 15-86400 seconds
+
+- [appconfigdata] a configuration token is single-use and expires after 24 hours, as AWS documents; a spent or stale token gets `BadRequestException`
+
+- [appconfigdata] a store failure while reading a session is reported as `InternalError` in place of an invalid-token error, and a single undecodable session record is skipped and logged
+
+- [appconfigdata/router] `detectService` claims `/configuration` and `/configurationsessions`, so these requests are logged and IAM-authorised as `appconfigdata` rather than falling through to S3's bucket routes
+
+- [appsync] `EvaluateCode` and `EvaluateMappingTemplate` are served at the bindings AWS models — `POST /v1/dataplane-evaluatecode` and `POST /v1/dataplane-evaluatetemplate` — instead of under `/v1/apis/{apiId}/…`, so an unmodified SDK, CDK construct or `aws appsync evaluate-code` call reaches them for the first time
+
+- [appsync] `EvaluateCode` reads `context` as the JSON **string** AWS models rather than an object, so a spec-shaped request no longer answers `SerializationException`; both operations now validate `runtime`, `code`, `template` and `context` against the model, and both answer the modeled response envelope with `evaluationResult`, `error`, `stash` and `logs`
+
+- [appsync] an unimplemented path under `/v1/apis/{apiId}/` answers a `NotImplemented` AWS error instead of a bare 404 from the sub-router
+
+- [backup] every AWS Backup operation is served at the binding AWS models — vaults under `/backup-vaults` and plans under `/backup/plans` — so an unmodified SDK, CDK construct or `aws backup …` call reaches it instead of answering 501; Overcast registered no routes for this service at all
+
+- **BREAKING** [backup] `CreateBackupPlan` mints a UUID for `BackupPlanId`, as AWS does, where the identifier was derived from the clock and two plans created in the same nanosecond collided — the second silently replaced the first
+  migration: treat `BackupPlanId` as opaque; anything deriving a plan id from the creation time, or parsing the old `plan-<nanoseconds>` form, must read it from the create response instead
+
+- [backup] `UpdateBackupPlan` mints a new `VersionId` per update and returns the modeled `CreationDate`; every update after the first used to report the same hardcoded version
+
+- [backup/cloudformation] `AWS::Backup::BackupVault` and `AWS::Backup::BackupPlan` provision over the modeled REST bindings, and the plan handler addresses the plan by id when deleting it, where it sent the ARN it uses as the physical ID and matched nothing — so a stack delete left the plan behind
+
+- [backup/router] AWS Backup requests are classified from their path prefixes, so they are logged and authorised as `backup` rather than falling through to S3 when unsigned
+
+- [backup] a single undecodable vault or plan record is skipped and logged instead of failing a describe with a 500 or disappearing from a listing without trace
+
+- [bedrock] `InvokeModel` and `Converse` are served at the paths AWS binds them to — `POST /model/{modelId}/invoke` and `POST /model/{modelId}/converse` — so an unmodified SDK reaches them instead of getting a 501; `modelId` may be an ID or an ARN
+
+- [cloudformation] AWS::RDS::DBInstance forwards PubliclyAccessible. It was dropped at the template boundary, leaving a template's own opt-out from a subnet group's private default with no effect.
+
+- [cloudformation] every stack event carries a `ClientRequestToken`, as on AWS — the caller's when the operation supplied one, and otherwise the request ID of the API call that started the operation. That fallback is what makes a failure traceable: the request ID is the key `/_overcast/debug/trace/{requestId}` is served under, so an event's token opens the request behind it, with every internal service call the operation made, their bodies and statuses, and its log lines. Before this a stack failure was an orphan — the only route back to the requests behind it was guessing from timestamps across a CDK deploy that issues thousands. The token belongs to the operation rather than the stack, so a create and a later update are told apart, and a nested stack's events carry the token of the parent operation that provisioned it. Real CloudFormation fills the field the same way when an operation arrives without one (the console's `Console-CreateStack-<uuid>`)
+
+- [cloudformation] a persistence flush that does not finish no longer fails a stack that provisioned. A deploy died on `CREATE_FAILED — persistent state flush failed: context deadline exceeded` against `AWS::CloudFormation::Stack`, naming no resource because no resource was involved: every resource had been created and the stack had reached `CREATE_COMPLETE` before the end-of-operation flush ran out of its five seconds. That flush is store-wide, so it carries every service's queued writes and a deploy that has just uploaded its assets can have far more than five seconds of them, and an uncommitted batch is neither lost nor abandoned — it goes back at the head of the pending queue and the pending log replays it after an unclean exit. It is logged now, into the trace of the request that started the operation as well as the server log, and the stack keeps the status it reached; whether the store is keeping up is what `/_overcast/health`'s `persistent.pendingWrites` and `/_overcast/debug/metrics`' `flushHistory` are for
+
+- [cloudformation] a stack that fails logs why, so the reason reaches the trace of the request that started the operation. The provisioning goroutine already carries that request's recorder; the failure reason only ever went to the stack event, so a reader working from the trace saw every internal call the deploy made and no statement of what went wrong at the stack level
+
+- **BREAKING** [cloudformation] a template over either of AWS's size quotas is refused with a `ValidationError`, rather than accepted. An inline `TemplateBody` is capped at 51,200 bytes, and a template fetched from a `TemplateURL` at 1,000,000 — a decimal megabyte, which the quotas table states only as "1 MB" but AWS's own error names exactly ("Template may not exceed 1000000 bytes in size."); reading it as a mebibyte would have accepted 48,576 bytes' worth of templates AWS refuses. The inline cap belongs to the parameter, so `CreateStack`, `UpdateStack`, `CreateChangeSet`, `ValidateTemplate` and `GetTemplateSummary` all apply it, and the URL cap covers a nested stack's child template because it arrives through the same parameter. Marked breaking because a template that deployed against Overcast yesterday may not today — though it would never have deployed against AWS, which is the divergence being closed
+  migration: for a template over 51,200 bytes, upload it to S3 and pass `TemplateURL` instead of `TemplateBody` — what the same template already requires against real AWS. `aws cloudformation deploy` and `cdk deploy` do this for you; a hand-rolled `create-stack` is the case that has to change. Over 1,000,000 bytes there is no parameter that helps: split the stack, or use nested stacks, as on AWS
+
+- [cloudwatch] an alarm carrying metric math (`Metrics`), an extended statistic or an anomaly band is created and declares what will not happen to it, instead of being refused with a 501. The refusal's reasoning was sound — an alarm that looks armed but is never evaluated is worse than no alarm — but the price was the whole environment: CDK's `Metric.createAlarm` on a `MathExpression` emits one of these per function, and a `501` failed the CloudFormation resource, the stack and the deploy over a resource whose only defect is one Overcast will not act on. It now says so in the three places anyone looks — the alarm's `StateReason`, an `x-overcast-emulation-limitation` response header, and the CloudFormation `ResourceStatusReason`, carried on the `CREATE_COMPLETE` event so a deploy shows it as the resource goes by. An ordinary single-metric alarm carries none of that, because the signal is only worth anything if it marks the exceptions. PromQL alarms (`EvaluationCriteria`) are still refused, and a metric-math alarm that also names a top-level `Namespace`/`MetricName` still gets the `400 ValidationError` AWS itself answers with
+
+- [console] the WAF "Metadata only — Web ACL rules are not enforced" notice is readable on the light theme. It was styled with a fixed dark-theme amber (`text-amber-100`, a near-white shade) on a panel that is near-white in light mode, so both its heading and body text were invisible there — the warning was present in the DOM and unreadable on screen. It now uses the semantic `warning` tokens, which follow the theme
+
+- [debug] SQS and CloudWatch requests are named in the request log and the debug trace instead of being labelled `s3`. Both are served over the AWS Query protocol, and neither was in the generated index that classification reads: CloudWatch's model declares `awsQuery` alongside `awsJson1_0` and the index was built from each model's primary protocol alone, while SQS's model declares no Query at all — AWS retired the trait from it and kept accepting the wire, which is still what the AWS CLI and the web UI send. Unsigned traffic has no other service signal, so all of it fell through to the `s3` fallback: unfindable under the trace list's Service filter and under the log's `service` field, and put in front of IAM enforcement as an `s3:` action
+
+- [debug] an unsigned RDS Query request is no longer labelled with the empty string. RDS shares its API version and most of its action names with DocumentDB and Neptune, so the registry declines to attribute the action, and the classifier returned that blank verdict as if it were a service key — reaching IAM enforcement as one. It now falls through to the documented `s3` fallback, as the X-Amz-Target step already did
+
+- [debug] Smithy RPC v2 requests (`/service/{service}/operation/{operation}`) are classified by the service and operation named in their own URI. Every one of them was labelled `s3` with no operation at all, which also meant IAM enforcement's unnamed-action branch let them through. The `Smithy-Protocol` header gates it, because without that header the router really does hand the same path to S3, where `service` is an ordinary bucket name
+
+- [debug] Smithy RPC v2 requests addressed by an Overcast service name — `POST /service/ecs/operation/ListClusters` and every service like it — are named in the request log and the debug trace instead of being labelled `s3` with no operation. The router resolves that label against its own registered services before it consults the generated registry, so ECS, CloudWatch Logs, SQS and WAF all answer CBOR on a wire the pinned AWS models bind no RPC v2 operation on; classification followed the models alone and so named none of them. It now reads the label the way the router does, which also means IAM enforcement sees an operation on these requests rather than falling through its unnamed-action branch. A label naming no service is still not believed, and keeps the `s3` fall-through
+
+- [debug] the request log names the service that answered a Query-protocol request instead of falling back to `s3`. `detectService` takes the request body variadically and the logger passed none, which silently disabled the only step that can classify SQS, SNS, CloudFormation and the rest of the Query services — their operation is in the form body, and there is no distinguishing path. Signed traffic was unaffected, because the credential scope answers a step earlier; unsigned traffic is the web UI, curl, and anything else that skips SigV4, and all of it was logged under a service it never touched. The bytes come from what the handler had already read, so nothing is read a second time: `body()`'s top-up from the socket stays reserved for the 5xx path
+
+- [debug] EventBridge and RDS requests are named in the request log and the debug trace instead of being labelled `s3`. Both were unattributable in the generated operation registry, which blanks the service when several modeled AWS services declare one wire key rather than guessing between them — but Overcast already knew the owner in both cases, and now says so. `cloudwatch-events` and `eventbridge` are one service under two modeled identities, so all 51 of their shared `X-Amz-Target` collisions were never collisions at all; DocumentDB, Neptune and RDS share the `2014-10-31` API version and most of its action names for all 71 query collisions, and Overcast implements only RDS, which is what each Query service's `OwnsVersion` already routes by. A collision neither declaration resolves stays unattributed, as the four Timestream targets do
+
+- [debug] a trace now says *why* a body is missing instead of rendering an empty panel. Hop bodies were the silent case: a trace stops retaining them once it has kept 8 MiB (`MaxHopBodyBytes`), which a CDK deploy reaches partway through, and every hop after that rendered no body section at all — indistinguishable from a hop that carried none. Each body now carries a reason (`requestBodyOmitted` / `responseBodyOmitted`), and the UI shows it: an inline chip when a prefix survived a size truncation, a notice in place of the body when nothing did, saying which limit applied and that the hop's service, operation, status, timing and ordering are still intact
+
+- [debug] when a hop body is dropped for that budget the notice links to the hop's own trace, where the body is still held in full. Every hop is dispatched through the router and has a trace of its own, so the copy stored on the parent is a duplicate — dropping it hides the body rather than losing it, and the reader should be told which
+
+- [debug] the reason also separates three losses the old `requestBodyTruncated` / `responseBodyTruncated` booleans could not tell apart — a body cut short at 1 MiB, a body dropped for the per-trace hop budget, and a streamed response whose body was never captured at all. Those booleans are unchanged on the wire, now derived from the reason so the two cannot drift
+
+- [debug] `GET /_overcast/debug/traces/search?q=…` finds a retained trace by something it *said* — a hop response body, a hop error, a log line — rather than only by what it is. That is where the explanation of a failure actually lives: the CloudFormation stack failure that reads `persistent state flush failed` is a log line, and the ECS pull failure that reads `ImageNotFoundException` is an ECR hop's response body, and neither was reachable from the search box. Each match names where it hit (which hop, which log level) and carries an excerpt with the matched span split out, so a result places itself instead of only asserting that an answer exists somewhere
+
+- [debug] the scan is budgeted, resumable and cancellable, because the worst case is the case worth searching: a ring full of CDK deploy traces is ~8 GB of bodies. One call reads 64 MiB and hands back a cursor; a client that goes away cancels the request context, and the scan checks it between hops rather than between traces, so an abandoned search stops in milliseconds instead of running to completion for a result nobody will read. Nothing is copied to scan it — the matcher takes slice headers under a brief read lock and runs outside every lock, so searching a deploy does not block the deploy still writing to it
+
+- [debug] request traces keep infrastructure polling in its own ring, so an open web UI, a health check or an SSE reconnect can no longer evict a request you made on purpose. A buffer sized 1000 now retains 1000 user-facing traces plus up to 200 internal ones, where the two previously shared those 1000 — idle polling used to cost a fifth of the budget, and at a full buffer an arriving poll evicted the oldest real request
+
+- [debug] listing traces reads one page instead of the whole buffer. It used to materialise and sort every retained trace to return fifty of them: 64 µs and a 164 KB allocation per poll at 1000 traces, and 700 µs / 1.6 MB at 10,000, once a second behind the trace list. It is now 3.2 µs and 8.4 KB, and — the part that matters for the retention work still to come — the cost no longer grows with how much is retained
+
+- [debug] admitting an internal trace no longer scans the ring. Recycling the oldest poll used to walk every retained entry once the internal population was full, on every health check: 44–53 µs at 10,000 retained traces, against 0.55 µs now
+
+- [debug] the trace list's search matches a request's operation and the AWS error it answered with, alongside the request ID, path and service it always did. Every RPC-protocol request is `POST /`, so the operation was the only thing distinguishing one trace from the next and it was the one thing search could not see — finding "the `RunTask` that returned `AccessDenied`" meant paging the list by eye. Bodies and log lines are still out of reach, deliberately: matching them means scanning up to 8 MiB per trace, which is not something a list call polled once a second can do inline, and a test pins the separation so that it is crossed on purpose. The plan for reaching them is in `docs/plans/trace-deep-search.md`
+
+- [debug] a search that matches nothing no longer allocates per trace — which is every keystroke of a query until it starts matching. On a full 1000-trace buffer that is 38 µs and 2 allocations per list call, against 88 µs and 1002 before
+
+- [debug] trace retention is now bounded by bytes as well as by count. The retention ceiling counts traces, and a count is a poor proxy for memory when one trace can be a thousand times the size of another — ten thousand `DescribeStacks` polls are tens of megabytes, while ten thousand 1 MiB uploads are ten gigabytes, which is what a seeding script produces. `OVERCAST_DEBUG_TRACE_BYTES_MB` (default 512) reclaims the oldest overflow until the retained request and response bodies fit
+
+- [debug] the byte budget is a backstop on the burst, not an override of the floor: it reclaims down to `OVERCAST_DEBUG_TRACE_BUFFER` and stops, and never reclaims a trace pinned for having gone wrong. A floor that is itself over budget is what the operator asked for, and quietly discarding it would be the worse failure
+
+- [debug] `OVERCAST_DEBUG_TRACE_BYTES_MB` now actually bounds retained memory. Traces kept because they failed were exempt from it and capped only by count, so the worst case was `OVERCAST_DEBUG_TRACE_PINNED` traces of up to ~2 MiB each — around 2 GB at the defaults — however small the budget was set. Lowering it because your machine was struggling did nothing about the memory actually being held
+
+- [debug] the budget reclaims cheapest-first: ordinary overflow above the floor goes first, and a kept failure is surrendered only when there is nothing cheaper left. The floor is still never breached, and a failure is still vastly more durable than an ordinary trace — it is simply no longer unbounded
+
+- [debug] a retained failure now keeps the calls it made. Pinning a failed deploy without them was half a rescue: each hop names a trace of its own — that is where its bodies live — and those traces are newer than the parent, so they were evicted moments after it, leaving a pinned timeline whose every body read "no longer retained". The calls are now pinned alongside the failure they belong to
+
+- [debug] a failure's calls ride along in whatever room is spare and never displace another failure, because two failures are two things somebody may come back for. A deploy with more calls than there is room keeps the ones that fit; the rest still show their service, operation, status, timing and ordering, and say that only the body is gone
+
+- [debug] one failed deploy can no longer spend the whole budget for kept failures on its own call log. Pinning a failure also pins the calls it made, and a CDK deploy makes thousands: those calls stayed in the ring, so the next failure to arrive evicted an older failure that the call log had crowded towards the head. A failure was displaced by another failure's calls — a step later than the guarantee checked for, but displaced all the same. Calls are now capped at half the ring, so failures compete with failures
+
+- [debug] a trace no longer keeps its own copy of every internal call's request and response body. Each hop is a router-dispatched request with a trace of its own, so the copy on the calling trace duplicated bytes the buffer already held — for a CDK deploy, up to 8 MiB per deploy trace on top of the traces those same bodies lived in. Hop bodies are now resolved from the call's own trace when a trace is read, and the ring holds each body once
+
+- [debug] a hop whose own trace has since been evicted says so (`evicted`) instead of rendering an empty body panel, and the per-view inlining limit says the body was not shown here rather than dropped — it is still intact on the hop's own trace, one click away
+
+- [debug] deep search no longer scans the same bytes twice. A body now matches once, on the trace that owns it, rather than on both that trace and every trace whose hop copied it; the `hopRequest` and `hopResponse` match kinds are gone with the copies. Searching for an error an internal call returned still finds it — attributed to that call, with the hops tab linking back to whatever made it
+
+- [debug] the trace list now says what is past the end of it. A list that simply stops cannot be told apart from a bug — you cannot tell whether the request you are looking for was never traced, or was traced and reclaimed — so the end of the list now reads "1,204 older traces no longer retained — 1,204 aged out after 1h · oldest retained 14:22:07", naming the rule that reclaimed them rather than just the number
+
+- [debug] a trace kept because it failed is marked `kept: error` in the list. Retention holds failures past the point where their neighbours are reclaimed, so an old row sitting among new ones would otherwise read as eviction being broken
+
+- [debug] `GET /_overcast/debug/traces/count` carries the full retention picture — per-ring occupancy, the floor, ceiling, window and pinned limits, retained bytes against the budget, the oldest retained timestamp, and running counts of what was reclaimed by each rule. `count` and `capacity` keep their previous meanings
+
+- [debug] the request that explains a failure is still there when you go looking. A `cdk deploy` pushes thousands of requests through in a couple of minutes and used to overrun the trace buffer — and because a failed deploy rolls back rather than stopping, what survived was the chatty teardown while the `400` that started it had already been evicted. Traces that went wrong (a 4xx/5xx, an AWS error code, or a failed internal hop) are now kept regardless of how much traffic follows them, up to `OVERCAST_DEBUG_TRACE_PINNED` (default 1000)
+
+- [debug] a burst is no longer capped at the buffer size. Retention grows past `OVERCAST_DEBUG_TRACE_BUFFER` (default 1000) up to `OVERCAST_DEBUG_TRACE_CEILING` (default 10000) and holds the overflow for `OVERCAST_DEBUG_TRACE_WINDOW` (default 1h) before reclaiming it — sized for the gap between a deploy failing and somebody opening the trace UI, not for the deploy itself. Nothing needs configuring in advance, which was the point: by the time you know you wanted a bigger buffer, the trace that told you is gone
+
+- [debug] a trace is classified as worth keeping when it is evicted, not when it arrives. A request's status does not exist at request start, and a CloudFormation hop can fail minutes later on a goroutine that outlives the request, so anything decided earlier would miss exactly the asynchronous failures a deploy produces
+
+- [dns] the container resolver no longer fails to start on Windows hosts where Hyper-V or WinNAT has reserved part of the dynamic port range. It drew its port from a range the kernel walks in sequence, so a reserved block could swallow every retry; candidates are now drawn independently
+
+- [docs] the support matrix no longer advertises 43 operations as supported across appconfig, appconfigdata, appsync, backup, bedrock, eks, msk, opensearch and elasticache. Each is implemented and works, but is served on a path or method AWS does not use, so an SDK or CLI calling it gets a 501. Every entry now names the issue tracking the move; no behaviour changed, the matrix just says what a client actually gets
+
+- [docs] `docs/networking.md` § Lambda, ECS and VPCs is rewritten around the restriction: what is refused, the three ways out, what is still not enforced, and why a native Windows or macOS host is exempt
+
+- [docs] A new guide, "The inner loop", covers editing code and seeing it take effect without a rebuild or redeploy: when `cdk watch` is the right answer, how Lambda and ECS hot reload differ, the shared `OVERCAST_HOT_RELOAD` flag family, and a full Laravel-on-Fargate walkthrough. It leads with the mistakes that make a correctly configured mount look broken — OPcache's `validate_timestamps=0` ignoring your edits, a bind-mounted `vendor/` crossing a VM boundary on every request, and `php artisan queue:work` caching the application in memory.
+
+- [ecr] `DescribeImages` raises `ImageNotFoundException` for an `imageIds` entry it cannot resolve, as real ECR does, instead of answering 200 with a short list. That answer is how a publisher decides whether to push: cdk-assets treats any non-throwing `DescribeImages` as "already published", so `cdk deploy` skipped building and pushing every container asset and reported a clean deploy over an empty repository. The ECS service running the asset then failed to stabilise with `CannotPullContainerError … status 404 … not found`, naming a registry that had never received the image. A call that names no `imageIds` still returns an empty list, because only a requested identifier can be missing
+
+- [ecr] `repositoryUri` names the registry this run is serving, re-minted on every read instead of frozen into the repository at `CreateRepository`. The address is the registry container's published port; repositories are persisted and the registry is not, so a `cdk bootstrap` that ran before the registry was up sent every later deploy's `docker push` at Overcast's own API port — `unexpected status from POST request to http://…:4566/v2/…/blobs/uploads/: 405 Method Not Allowed` — while the pull side, which resolves through the live registry, was reaching `:4510` in the same deploy. When there is no registry at all the API base is still the only address there is to state, but Overcast now says so in one warning rather than leaving a 405 to explain it
+
+- [ecr] `repositoryUri` and `proxyEndpoint` name `localhost` rather than `OVERCAST_HOSTNAME` whenever startup proved the Docker daemon can reach the registry there — which is exactly what the port-selection probe establishes, by having the daemon dial it. The two are not interchangeable to a daemon even when they name one machine: Docker trusts plain HTTP to `localhost` and bypasses proxies for it, while a hostname like `localhost.overcast.sh` is an ordinary domain, so a machine with a proxy configured sent `docker push` to the proxy — `proxyconnect tcp: dial tcp 192.168.65.1:3128: i/o timeout` on Docker Desktop — and never reached a registry that was listening the whole time. When the daemon proves nothing (a remote one, or published ports that are not on its loopback) the configured hostname still stands, since that is the address its `insecure-registries` needs
+
+- [ecr] image records no longer outlive the images. A registry whose storage went with its container — the ephemeral fallback, or any registry before persistence landed — left the records built from its manifests behind, so after a restart `DescribeImages`, `ListImages` and `BatchGetImage` described images that no longer existed anywhere, and a publisher was again told to skip the push. Reading a repository now drops the records the registry answers 404 for; a record written by `PutImage` is left alone, having never been in the registry
+
+- [ecs] a task that fails to start records the reason on the container that failed, not on every container in the task. A launch failure — `CannotPullContainerError` for an image that could not be pulled, and the create/start/network failures alongside it — was copied onto all of the task's containers, so a four-container task definition reported the same error against all four and each of them named the one image involved. A CDK deployment failing on its ECR container asset therefore blamed its X-Ray sidecar too, for an image the sidecar does not run. As on AWS, the culprit carries the reason and the rest are `STOPPED` with none; the task's own `stoppedReason` is unchanged
+
+- [ecs] A task definition can point a scratch volume at a directory on your machine, so a save is live in the task on the next request with no image rebuild and no redeploy. Tag the task definition `overcast:hot-reload-path/<volume-name>` with an absolute host path and start Overcast with `OVERCAST_ECS_HOT_RELOAD=true`. The volume stays an ordinary name-only scratch volume — legal on Fargate, deployable as-is — and only the tag, which real AWS stores and ignores, redirects it locally, so nothing about the task definition changes meaning on a real deploy. With one redirectable volume the bare `overcast:hot-reload-path` works too, the same key Lambda takes.
+
+- [ecs] RegisterTaskDefinition accepts `tags` and stores them against the revision's ARN, on both wire protocols. AWS tags a task definition at registration and CloudFormation and CDK rely on it; previously tags sent with the call were dropped and only a separate TagResource took effect.
+
+- [ecs] A bind mount the daemon rejects now stops the task with a `stoppedReason` naming the host paths involved and pointing at Docker Desktop's File Sharing setting, rather than Docker's own message, which names neither.
+
+- [ecs] The startup sweep no longer deletes task volumes belonging to another Overcast instance's running tasks. It decided a volume was abandoned by asking its own task records, so two instances sharing a Docker daemon each saw the other's live volumes as orphans — a running task could lose its scratch and overlay mounts mid-flight. It now asks the daemon which volumes no container references, which is the one view every instance agrees on. Found by running two instances against one daemon.
+
+- [ecs] Task definitions honour every volume shape AWS models, not just EFS. A name-only volume is now a scratch directory shared by the containers that mount it — the shape an nginx sidecar and an application container use for a document root, and the only non-EFS volume Fargate allows. `host.sourcePath` becomes a bind mount from the container instance, and `dockerVolumeConfiguration` a Docker volume with the task definition's own driver and driver options. Previously all three were dropped at decode and their mount points skipped with a warning, so a task started with the mount silently missing and wrote into its own layer instead.
+
+- [ecs] RegisterTaskDefinition rejects the volume configurations real ECS rejects: `host.sourcePath` and `dockerVolumeConfiguration` on a Fargate task definition, `autoprovision` on a task-scoped volume, an unknown scope, and more than one configuration on a single volume. The Fargate message matches AWS's own, so a task definition that would fail a real deploy now fails locally first rather than passing here and failing there.
+
+- [ecs] A `dockerVolumeConfiguration` with `scope: shared` and `autoprovision: false` adopts a volume you created yourself, by the name the task definition gives it, and fails the task if it does not exist — as AWS does. Pre-creating that volume with the local driver's bind options is the supported way to hand an EC2-launch-type task a directory from the host.
+
+- [ecs] Task-lifetime volumes are removed when the task stops, retried while a dying container still holds them, and swept at startup if the process did not survive to do it. Shared-scope volumes are never removed, matching ECS's treatment of a volume on a container instance, and `ECS_KEEP_CONTAINERS=true` now keeps volumes too.
+
+- [ecs/rds/lambda] `ECS_KEEP_CONTAINERS`, `RDS_KEEP_CONTAINERS` and `LAMBDA_KEEP_CONTAINERS` now survive a restart. Every removal path honoured the flag except the startup sweep, so a container held back for post-mortem inspection was removed the next time Overcast came up — which is when the inspection usually happens. The sweep now returns without listing anything when the flag is set
+
+- [efs] Live-mode startup reconciliation no longer deletes EFS volumes belonging to another Overcast instance, or to a previous run of this one. It removed every managed volume whose file system was absent from its own store, and two instances sharing a Docker daemon keep separate stores — so each deleted the other's file data, which in live mode is the real thing Lambda `FileSystemConfigs` and ECS `efsVolumeConfiguration` mounts read and write. Volumes and export containers now carry the identity of the state store that created them, and the sweep only removes its own; anything unlabelled or belonging elsewhere is left. With the default `memory` backend that identity is minted fresh each start, so a restart no longer deletes every EFS volume on the daemon — orphans leak until `docker volume prune --filter label=overcast.managed=true`, which is the safe direction to err. The same scoping now applies to the export-container and materialization-helper sweep. Same defect class as the ECS task-volume sweep, but the dangling-volume fix used there does not transfer: a file system is unreferenced whenever nothing is mounting it, which is most of the time.
+
+- [eks] shutting down while a live-mode cluster is still starting no longer leaves its k3s container running. Cleanup works from the runtime registry, which a bootstrap writes only once it has started its container, so a shutdown landing in that window tore down the containers it knew about and left that one behind
+
+- [eks] shutdown no longer waits out the readiness poll of a cluster whose control plane never answers. The bootstrap ran detached from the service, so its five-minute poll had nothing to end it and ran against a shutdown budget every other service shares. It is now ended, and the cluster is left in a terminal state saying the shutdown stopped it rather than still claiming to be CREATING
+
+- [eks] `DescribeAddonVersions`, `DescribeAddonConfiguration`, `DescribeIdentityProviderConfig`, `ListInsights`, `UpdateAddon` and `UpdateNodegroupVersion` are served at the paths and methods AWS models, so an unmodified SDK, CDK construct or `aws eks …` call reaches them instead of answering 501. Four of the six were registered on the wrong HTTP method, and two on a path one character away from a real one
+
+- [eks] `DescribeAddonConfiguration` answers the schema for the add-on version that was asked for, and rejects a missing `addonName` or `addonVersion`; it used to ignore the requested version and answer from a table that held only one
+
+- [eks] `UpdateNodegroupVersion` accepts `releaseVersion` and `launchTemplate`, and no longer rejects a request that omits `version` — the model marks none of them required, so `aws eks update-nodegroup-version --release-version …` was refused
+
+- [eks] the support matrix marks `UpdateKubeconfig` as an Overcast extension rather than an AWS operation, and links the `aws eks update-kubeconfig` CLI command it stands in for instead of an AWS API page that does not exist
+
+- [eks] the same for a live-mode cluster's k3s control plane, which now joins the VPC its `resourcesVpcConfig.subnetIds` name. A cluster placed into a VPC that cannot take containers goes to `FAILED` with a `ConfigurationConflict` issue rather than starting a control plane nothing in the VPC can resolve
+
+- [elasticache] shutdown no longer waits out a container start that cannot finish. The background start every create path spawns ran on a context nothing cancelled, so one against an unresponsive Docker daemon held shutdown until the Docker client's own 30-second timeout expired — out of a budget shared with every other service's shutdown. They now run on the service context that shutdown cancels, and it cancels before waiting for them rather than after
+
+- [elasticache/msk/ecs] Container matching in the three services that shared RDS's defect no longer pairs a stored record with another Overcast's container on the same Docker daemon. All three matched on `overcast.resource-id` alone, and the reconcile indexes kept one container per resource ID, so a neighbour's could shadow this instance's own before ownership was ever asked about. ElastiCache is the directly exposed one — a cache cluster ID, replication group ID and serverless cache name are all names the caller chooses, so two Overcasts can each hold a cluster called `sessions` and each mark the other's live cache stopped, adopt it off the shared container name, or health-check an endpoint it does not own. MSK cluster ARNs and ECS task IDs carry minted UUIDs, so their exposure is narrower: a stale container for the same ARN beside the live one for MSK, and a state directory shared between two running Overcasts for ECS, where a foreign container exit stopped a task that was still being placed — one with no container IDs recorded yet satisfies "nothing still running" vacuously — tearing down its volumes and charging the death to its deployment. A container is now matched only when it carries this instance's identity, or when it carries no identity at all and the record itself names it, which is how containers created before that label keep being managed. ElastiCache and MSK also refuse to reuse a container another Overcast created for the same name, since a record whose container is gone rebuilds straight back through that path.
+
+- [elasticache/cloudformation] A replication group created with a CacheSubnetGroupName is now placed in that subnet group's VPC, like a cache cluster. The field was accepted on the wire and discarded by both the Query handler and the typed request, and CloudFormation did not forward it, so a replication group always landed on the shared data plane and was the one container-backed resource that could not be isolated in a VPC. A group created without a subnet group still stays on the default plane.
+
+- [eventbridge/scheduler] AWS cron expressions are parsed by one shared implementation that understands the whole six-field syntax: the three-letter month and day names (`JAN`, `MON-FRI`, case-insensitively), steps over a range (`0-6/2`), and the `L`, `LW`, `<day>W`, `<day>L` and `<day>#<n>` day specifiers. There were two partial implementations before, and ten forms AWS accepts were rejected by both. EventBridge's was the worse failure: it matched a raw expression field by field on every candidate minute, so a rule written `cron(15 10 ? * MON-FRI *)` was stored happily and then never fired, "MON-FRI" having matched no number and nothing having said so
+
+- [eventbridge] `PutRule` refuses a schedule expression it cannot honour instead of storing a rule that never fires, and says what was wrong with it: the expression, the field at fault, and — for the five-field Unix cron that AWS also refuses — the six-field form that was wanted. It previously answered `cron expression has no next fire within search window`, after walking 2.6 million candidate minutes to get there
+
+- [iam/msk] IAM enforcement no longer lets signed requests through unauthorized because it could not work out which service they were for. `detectService` returned the SigV4 signing name from the credential scope — `kafka`, `servicecatalog`, `monitoring`, `elasticloadbalancing` — where the rest of the emulator is keyed by Overcast's service name, so the generated operation registry matched nothing, no action was inferred, and `IAMEnforce`'s fail-open branch for unnamed actions passed the request on with no policy evaluated. MSK's whole v1 surface and AppRegistry's attribute groups were affected: with `OVERCAST_ENFORCE_IAM=true` every signed call to them was allowed regardless of policy. Log lines, trace badges and operation metrics for those services carried the signing name too, and now name the service
+
+- [lambda] logs a container printed as it crashed or timed out are no longer dropped from CloudWatch Logs when the Docker log reader had not yet read anything from that container
+
+- [lambda] `OVERCAST_HOT_RELOAD` enables bind-mount source reload for every compute service at once, with `OVERCAST_LAMBDA_HOT_RELOAD` and `OVERCAST_ECS_HOT_RELOAD` overriding it per service in either direction — so one service can be opted out of an umbrella `true`. `OVERCAST_LAMBDA_HOT_RELOAD` on its own behaves exactly as before.
+
+- [lambda] `GetFunctionConcurrency` returns 200 with an empty body for a function that has no reserved concurrency, as AWS does. It answered `404 ResourceNotFoundException` instead, so an SDK client asking whether a function reserves concurrency caught an exception rather than reading the answer — and had no way to tell that apart from the function not existing, which is what the operation's `ResourceNotFoundException` actually models. A reservation of `0` is still reported rather than omitted: zero is a reservation in its own right, AWS's documented way to switch a function off and the one place Overcast really does throttle, so conflating it with "unset" would have been a worse bug than the 404
+
+- [lambda/ecs/ses] successful responses now carry the request-ID header AWS answers every call with. Lambda's entire success surface — 38 operations across eight files — encoded JSON straight onto the ResponseWriter instead of going through a `protocol.Write*` helper, and the header is the helper's job, so an SDK read empty `ResponseMetadata` for every Lambda call that worked and a trace had nothing to correlate on. ECS's account-settings and container-instance handlers had the same hole while the rest of their own service already wrote through `protocol.WriteAWSJSON`, as did SESv2's `GetEmailIdentity` and `ListTagsForResource`. Nothing caught it because every request-ID assertion in the suites happened to be on an *error* response, and errors do go through a helper — so the gap was invisible exactly where it was widest
+
+- [logging] SES's admin identity routes are logged as `ses` rather than `internal`. `/_overcast/ses/identities` was already under that prefix but only the inbox was named, so the identity routes fell through to the catch-all
+
+- [msk] an IAM denial for MSK is now returned as JSON, the format MSK's own handlers and clients use, rather than in the Query XML envelope
+
+- [msk] the v2 cluster API is served at `/api/v2/clusters`, the path AWS binds it to, so `CreateClusterV2` and `DescribeClusterV2` are reachable from an unmodified SDK instead of answering 501; they were registered at the invented `/v2/clusters` in every release since `v0.0.1-alpha.0`
+
+- [msk] `CreateClusterV2` rejects a request naming both `provisioned` and `serverless`, or neither, in place of silently creating a serverless cluster the caller never asked for
+
+- [msk] `ListClusters`' `clusterNameFilter` matches on the cluster-name prefix, as AWS documents; it used to require the whole name
+
+- [msk] a cluster's brokers now join the VPC its `brokerNodeGroupInfo.clientSubnets` name, instead of always landing on the default network. The subnets were stored and never resolved, so a Lambda function or ECS task created *in* the VPC reached the broker only because a VPC-placed resource also kept the default network — and on AWS there is no non-VPC MSK cluster, so this was the normal case rather than a corner one. A VPC whose Docker network could not be created now fails the container start instead of quietly placing the brokers somewhere the VPC cannot reach; a cluster with no subnets, or subnets EC2 has no record of, still uses the default network
+
+- [opensearch] every OpenSearch operation is served at the binding AWS models — the domain surface under `/2021-01-01/opensearch/`, and `ListDomainNames`, `AddTags`, `ListTags` and `RemoveTags` directly under `/2021-01-01/` — so an unmodified SDK, CDK construct or `aws opensearch …` call reaches it instead of answering 501
+
+- **BREAKING** [opensearch] `CreateDomain` answers `ResourceAlreadyExistsException` for a domain name already in use in the region, where a second create silently replaced the first
+  migration: delete the existing domain, or create under a different name
+
+- [opensearch] `DeleteDomain` removes the domain's tags; they were written under the resource ARN and deleted by domain name, so a deleted domain left its tags behind for the next domain of that name to inherit
+
+- [opensearch/cloudformation] `AWS::OpenSearchService::Domain` dispatches over the modeled REST binding and addresses the domain by name when deleting it, where it sent the ARN it uses as the physical ID and matched nothing
+
+- [opensearch/router] OpenSearch requests are classified from the `/2021-01-01` path prefix, so they are logged and authorised as `opensearch` rather than falling through to S3 when unsigned
+
+- [protocol] `x-overcast-emulation-limitation` is a response header for stating what Overcast created but will not fully act on. It is additive and repeatable, so several limitations on one response each get their own line, and it is distinct from `x-emulator-unsupported`, which marks a `501` — the difference being whether the request was carried out at all
+
+- [rds] An Aurora member instance inherits its cluster's DB subnet group, and with it the cluster's VPC, when the instance names none of its own. CDK's rds.DatabaseCluster emits the member with no subnet group, so the writer previously landed outside the VPC its own application was in.
+
+- [rds] CreateDBInstance no longer demands MasterUsername and MasterUserPassword from an instance that names a DBClusterIdentifier. RDS keeps those on the cluster and rejects them on a member, so the shape CDK emits was refused outright; the member now takes the cluster's. A standalone instance still requires both.
+
+- [rds/ecs/elasticache/lambda/msk] Container cleanup no longer touches containers belonging to another Overcast instance on the same Docker daemon. Two instances keep separate state stores, so each saw the other's containers as orphans. The shutdown sweep was the worst of it: stopping one instance listed every managed container for its service and stopped and force-removed the lot, with no state check — taking out another instance's *running* RDS databases, ECS tasks, Lambda runtimes and MSK brokers. The startup sweep destroyed data rather than merely interrupting it: an RDS container carries no volume or bind mount, so the database lives in its writable layer, and one instance starting up permanently deleted another's stopped DB instances. ElastiCache's startup sweep had the same bug without even the ownership veto that was supposed to guard it. Containers now carry the identity of the state store that created them, and every sweep removes only its own; anything unlabelled, or belonging elsewhere, is left alone. With the default `memory` backend that identity is minted fresh each start, so the startup sweep no longer reclaims containers from a previous run — an orderly shutdown still cleans up, so what leaks is the containers of a run that crashed, recoverable with `docker rm $(docker ps -aq --filter label=overcast.managed=true)`. Same defect class as the ECS and EFS volume sweeps.
+
+- [rds] Container reconciliation no longer matches a DB instance record against another Overcast's container on the same Docker daemon. A DB instance identifier is a name the caller chooses, so two Overcasts can each hold one called `mydb` and each container carries `overcast.resource-id=mydb`; startup reconciliation and the Docker event handlers matched on that alone. An instance stopped with `StopDBInstance` therefore stopped the *other* Overcast's running database — an RDS container keeps its data in its writable layer, so that hands a live database to the next sweep to delete — and a rebuild adopted the neighbour's container off the shared container name, leaving both emulators serving and stopping the same one. A container is now matched only when it carries this instance's identity, or when it carries no identity at all and the record itself names it, which is how containers created before that label keep being managed.
+
+- [router] a Query-protocol request whose body is too large to parse as a form is answered `413 RequestEntityTooLarge` instead of `501 NotImplemented`. The 501 came from the shared `POST /` dispatcher treating a failed form parse as "no service claims this", so an oversized `CreateStack` came back carrying `x-emulator-unsupported: true` — telling tooling that Overcast lacks the operation, when the operation is implemented and it was the body that was refused. This applies to every Query service, none of which could say so before. The size at which a request is refused is unchanged: the new `protocol.MaxQueryRequestBody` states the ceiling `net/http` was already enforcing unnamed, so nothing that worked before stops working
+
+- [router] a source-level ledger now fails the build when a service handler writes its own success response, rather than waiting for someone to assert on the one operation that regressed. Emulator-only surfaces — the `/_<service>` console routes, Cognito's hosted-UI and JWKS endpoints, and the in-container Lambda Runtime/Extensions API — are listed with the surface each one serves, and an entry that stops describing anything is failed as a stale excuse
+
+- [scheduler] cron day-of-week is AWS's 1-7 from Sunday. EventBridge Scheduler read the field as Go's `time.Weekday` — 0-6 from Sunday — under a comment asserting AWS did the same, so `cron(0 12 ? * 2 *)` fired on Tuesday where AWS fires it on Monday, and `7`, being outside the range it allowed, never fired at all
+
+- [state] a Scan or List against the hybrid store no longer drops a key, or resurrects a deleted one, when a background flush commits partway through the read. The base SQLite read was taken first and the pending-write overlay consulted afterwards, so a flush landing between the two halves moved a key out of the overlay and into SQLite after the base result had already been captured — leaving it in neither half. Every SQLite-backed namespace was exposed on every read (s3:objects, sqs:messages, lambda:function-code, ecs:tasks, kinesis:records and the rest), and memory-resident namespaces were exposed for as long as the startup seed was still running
+
+- [tests] a Docker-backed test server removes the two networks it minted for itself. They were named per test run so parallel packages could not race each other, and then never removed: a daemon subnets a few dozen networks out of its default address pools, so a suite that leaks a pair per server exhausts them, and from then on every `docker network create` fails — which the emulator reports as "Docker not available", leaving ECS metadata-only and every container test failing for a reason unrelated to the code under test
+
+- [tests] Docker-dependent test servers connect to the platform's Docker endpoint rather than a hardcoded `/var/run/docker.sock`, which does not exist on Windows. Every such test built a server whose Docker client could not connect while the test's own gate connected fine, so the suite skipped or ran against an emulator with no Docker — container behaviour was verified on Linux only, which is how a broken ECR-to-ECS image pull shipped from a Windows workstation with a green suite
+
+### Removed
+
+- **BREAKING** [appconfig] the emulator-only `/_appconfig/*` path prefix and the invented `AppConfig.` `X-Amz-Target` namespace, which duplicated every operation on a wire contract the pinned model gives AppConfig no trace of
+  migration: use AWS's own bindings — `POST` and `GET /applications`, `GET`, `PATCH` and `DELETE /applications/{ApplicationId}`, `…/environments`, `…/configurationprofiles`, `…/hostedconfigurationversions` and `GET`, `POST` and `DELETE /tags/{ResourceArn}`
+
+- **BREAKING** [appconfigdata] the emulator-only `/_appconfigdata/*` path prefix, and the invented `AppConfigData.` `X-Amz-Target` namespace with it
+  migration: use AWS's bindings — `POST /configurationsessions`, and `GET /configuration?configuration_token=<token>`
+
+- **BREAKING** [appconfigdata] the non-AWS `AppConfig-Configuration-Version` response header on `GetLatestConfiguration`
+  migration: the configuration payload and the `Next-Poll-Configuration-Token`, `Next-Poll-Interval-In-Seconds` and `Content-Type` headers are the operation's whole modeled response; AWS never sent a version header here
+
+- [appsync] the invented `AppSync.` `X-Amz-Target` namespace and the Smithy RPC v2 CBOR surface behind it, which duplicated 70 operations on a wire contract the pinned model gives AppSync no trace of, and had already drifted from the REST handlers
+
+- **BREAKING** [backup] the invented `AWSBackup.` `X-Amz-Target` namespace and the Smithy RPC v2 CBOR surface it registered, neither of which the pinned model gives AWS Backup any trace of
+  migration: use AWS's own bindings — `PUT`, `GET` and `DELETE /backup-vaults/{BackupVaultName}`, `GET /backup-vaults`, `PUT` and `GET /backup/plans`, and `GET`, `POST` and `DELETE /backup/plans/{BackupPlanId}`
+
+- **BREAKING** [bedrock] the emulator-only `/_bedrock/*` path prefix, the invented `Bedrock.` `X-Amz-Target` dispatch, and the Smithy RPC v2 endpoint that came with it
+  migration: call AWS's own paths — bedrock-runtime is modelled `restJson1` and sends no target header, so an AWS SDK was never able to use any of the three
+
+- **BREAKING** [cloudfront] the undocumented singular `/2020-05-31/distribution/{id}/monitoring-subscription` alias. AWS binds monitoring-subscription to the plural `/2020-05-31/distributions/{id}/...`, which every SDK sends and which Overcast has always served
+  migration: none for SDK callers. A hand-written request to the singular path moves to the plural one
+
+- **BREAKING** [eks/addons] the emulator-only `GET /addons/{addonName}/versions` and `GET /addons/{addonName}/configuration` routes
+  migration: use AWS's paths — `GET /addons/supported-versions?addonName=…` and `GET /addons/configuration-schemas?addonName=…&addonVersion=…`, both of which take every input as a query parameter
+
+- **BREAKING** [eks/nodegroups/addons] the emulator-only `POST /clusters/{name}/node-groups/{nodegroupName}/updates` and `POST /clusters/{name}/addons/{addonName}/updates` routes
+  migration: drop the trailing `s` and use AWS's paths — `.../node-groups/{nodegroupName}/update-version` and `.../addons/{addonName}/update`
+
+- **BREAKING** [eks] the `DescribeAccessPolicy` and `UpdateIdentityProviderConfig` capability rows and the emulator-only routes behind them, which named operations AWS does not model at all and were advertised as supported
+  migration: read a policy's ARN from `ListAccessPolicies`, which returns the whole policy; replace an identity-provider-config update with `DisassociateIdentityProviderConfig` followed by `AssociateIdentityProviderConfig`, which is what AWS models
+
+- **BREAKING** [msk] the emulator-only `/v2/clusters` path prefix
+  migration: use AWS's paths — `POST /api/v2/clusters`, `GET /api/v2/clusters/{ClusterArn}` with the ARN percent-encoded into a single path segment, as every AWS SDK sends it
+
+- **BREAKING** [msk/cloudformation] MSK's `X-Amz-Target` dispatch and its typed JSON/CBOR surface, a second copy of the REST handlers for a protocol AWS does not model for kafka; `AWS::MSK::Cluster` and `AWS::MSK::Configuration` provisioning now dispatches over MSK's REST routes
+  migration: call MSK over HTTP the way the AWS SDKs do — no MSK operation carries an `X-Amz-Target` header or a Smithy RPC v2 binding in the pinned model, so nothing an SDK sends is affected
+
+- **BREAKING** [opensearch] the emulator-only `/_opensearch/*` path prefix and the invented `OpenSearch.` `X-Amz-Target` namespace, which duplicated every operation on a wire contract the pinned model gives OpenSearch no trace of
+  migration: use AWS's own bindings — `POST /2021-01-01/opensearch/domain`, `GET` and `DELETE /2021-01-01/opensearch/domain/{DomainName}`, `POST /2021-01-01/opensearch/domain-info`, `GET /2021-01-01/domain`, `POST /2021-01-01/tags`, `GET /2021-01-01/tags?arn=…` and `POST /2021-01-01/tags-removal`
+
+### Security
+
+- **BREAKING** [s3/msk] IAM enforcement applies to every path under `/api`; the middleware exempted the whole prefix for a console API that has never been behind it, so with `OVERCAST_ENFORCE_IAM=true` an S3 bucket named `api` was served without a policy ever being evaluated — and so was MSK's v2 cluster API once it moved to `/api/v2/clusters`, the path AWS binds it to
+  migration: with `OVERCAST_ENFORCE_IAM=true` an unsigned request under `/api` is now refused rather than served, and a signed one is evaluated wherever Overcast can name the operation — grant the principal the `s3:` actions it needs on a bucket named `api`, and `msk:ListClustersV2` / `msk:CreateClusterV2` for MSK's v2 cluster API. Overcast names MSK actions `msk:`, not AWS's `kafka:`
+
 ## [0.0.1-alpha.34] - 2026-08-10
 
 ### Added
@@ -1386,7 +1808,8 @@ can be applied mechanically rather than reconstructed from memory.
 [x.y.z]: https://github.com/Neaox/overcast/compare/vA.B.C...vx.y.z
 -->
 
-[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.34...HEAD
+[Unreleased]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.35...HEAD
+[0.0.1-alpha.35]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.34...v0.0.1-alpha.35
 [0.0.1-alpha.34]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.33...v0.0.1-alpha.34
 [0.0.1-alpha.33]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.32...v0.0.1-alpha.33
 [0.0.1-alpha.32]: https://github.com/Neaox/overcast/compare/v0.0.1-alpha.31...v0.0.1-alpha.32
