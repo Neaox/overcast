@@ -144,6 +144,21 @@ sizing. Two constraints it must respect:
    outlive unpinned children — so pinning a parent must pin the hops it
    references, or the reference must degrade to "the body is no longer retained"
    rather than to a broken link.
+
+   **Pinning is family-aware; eviction stays dumb.** The tempting version is to
+   make eviction follow the relationships and keep whatever is still referenced.
+   That turns eviction into reachability: you can no longer decide whether the
+   entry at the head is evictable without knowing who points at it, so the O(1)
+   head advance becomes a mark phase — on the hot path, at a 10,000 ceiling,
+   against a 1 Hz poll. Rejected for that reason.
+
+   Doing it at pin time costs nothing by comparison. The graph is already
+   materialised in both directions — `Entry.ParentRequestID` on the child and
+   `Recorder.hopRequestIDs` on the parent, already an O(1) map built for the
+   `HopsFor` filter — and pinning happens once, on the rare path, for failures
+   only. Cap what it pins with the failure windows the shrink rule already
+   defines (the failing hops plus the five before each), so a failed deploy with
+   3,000 hops pins a handful of children rather than 3,000.
 2. **The reader must not notice.** The detail endpoint should resolve references
    before serving, so the UI keeps seeing one trace with its bodies inline.
 
