@@ -1237,6 +1237,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// catch-all, which parses the version segment as a bucket name.
 	const reservedConcurrencyBase = "/2017-10-31"
 	const provisionedConcurrencyBase = "/2019-09-30"
+	// Asynchronous invocation settings sit on their own version, five days
+	// before provisioned concurrency's.
+	const eventInvokeConfigBase = "/2019-09-25"
 	const codeSigningBase = "/2020-06-30"
 	// The code signing configuration resource itself is on yet another version.
 	const codeSigningConfigBase = "/2020-04-22"
@@ -1284,6 +1287,14 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(provisionedConcurrencyBase+"/functions/{name}/provisioned-concurrency", s.handler.PutProvisionedConcurrencyConfig)
 	r.Get(provisionedConcurrencyBase+"/functions/{name}/provisioned-concurrency", s.handler.GetOrListProvisionedConcurrency)
 	r.Delete(provisionedConcurrencyBase+"/functions/{name}/provisioned-concurrency", s.handler.DeleteProvisionedConcurrencyConfig)
+	// Asynchronous invocation settings. Put overwrites and Update (POST) merges,
+	// which is the only difference between them; the /list suffix is AWS's own
+	// and is registered before nothing else claims it.
+	r.Put(eventInvokeConfigBase+"/functions/{name}/event-invoke-config", s.handler.PutFunctionEventInvokeConfig)
+	r.Post(eventInvokeConfigBase+"/functions/{name}/event-invoke-config", s.handler.UpdateFunctionEventInvokeConfig)
+	r.Get(eventInvokeConfigBase+"/functions/{name}/event-invoke-config", s.handler.GetFunctionEventInvokeConfig)
+	r.Delete(eventInvokeConfigBase+"/functions/{name}/event-invoke-config", s.handler.DeleteFunctionEventInvokeConfig)
+	r.Get(eventInvokeConfigBase+"/functions/{name}/event-invoke-config/list", s.handler.ListFunctionEventInvokeConfigs)
 	r.Post(apiBase+"/functions/{name}/invocations", s.handler.InvokeFunction)
 	// InvokeWithResponseStream uses a different API version path.
 	const streamBase = "/2021-11-15"

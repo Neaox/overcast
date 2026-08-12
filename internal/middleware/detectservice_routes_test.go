@@ -73,6 +73,7 @@ var registeredRouteClassification = map[string]string{
 	"/2017-03-31": "lambda",
 	"/2017-10-31": "lambda",
 	"/2018-10-31": "lambda",
+	"/2019-09-25": "lambda",
 	"/2019-09-30": "lambda",
 	"/2020-04-22": "lambda",
 	"/2020-05-31": "cloudfront",

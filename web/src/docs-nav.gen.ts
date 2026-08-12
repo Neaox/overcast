@@ -3749,6 +3749,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Asynchronous invocation",
+        "id": "asynchronous-invocation"
+      },
+      {
+        "depth": 3,
         "text": "Concurrency \u0026 configuration",
         "id": "concurrency-configuration"
       },

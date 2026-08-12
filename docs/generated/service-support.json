@@ -1,6 +1,6 @@
 {
   "generated_by": "go run -tags dev ./cmd/capgen --write-docs",
-  "total_ops": 1429,
+  "total_ops": 1434,
   "services": [
     {
       "service": "s3",
@@ -622,8 +622,8 @@
     {
       "service": "lambda",
       "display_name": "Lambda",
-      "total_ops": 54,
-      "implemented_ops": 52,
+      "total_ops": 59,
+      "implemented_ops": 57,
       "operations": [
         {
           "operation": "ListFunctions",
@@ -743,7 +743,7 @@
           "operation": "Invoke",
           "category": "Invocation",
           "status": "✅ Supported",
-          "notes": "Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried twice (1s then 2s, AWS's default) and then delivered to the function's DeadLetterConfig target; the retry policy itself is not configurable because PutFunctionEventInvokeConfig is not implemented"
+          "notes": "Container-based execution via Docker; falls back to stub when Docker unavailable; under LogFormat JSON the START/END/REPORT lines become Telemetry-API-shaped platform.start, platform.runtimeDone and platform.report records, filtered by SystemLogLevel, and function output is filtered by ApplicationLogLevel; platform.initStart and platform.initReport are not emitted yet (#660); an InvocationType=Event invocation whose function errors is retried per the function's FunctionEventInvokeConfig (AWS's default of twice, 1s then 2s, when unconfigured) and then delivered to its on-failure destination and its DeadLetterConfig target"
         },
         {
           "operation": "InvokeAsync",
@@ -876,6 +876,36 @@
           "category": "Layers",
           "status": "✅ Supported",
           "notes": "Removes the specific layer version; 404 if not found"
+        },
+        {
+          "operation": "PutFunctionEventInvokeConfig",
+          "category": "Asynchronous invocation",
+          "status": "✅ Supported",
+          "notes": "Overwrites the configuration, removing members the request omits; MaximumRetryAttempts and MaximumEventAgeInSeconds are validated against AWS's ranges and honoured by the async invoke path; SQS, SNS, Lambda and EventBridge destinations receive AWS's invocation record; an S3 on-failure destination returns 501 because the record is not written to S3, and an S3 on-success destination is rejected as AWS rejects it"
+        },
+        {
+          "operation": "UpdateFunctionEventInvokeConfig",
+          "category": "Asynchronous invocation",
+          "status": "✅ Supported",
+          "notes": "Partial update; members the request omits keep their stored value, which is the only difference from Put"
+        },
+        {
+          "operation": "GetFunctionEventInvokeConfig",
+          "category": "Asynchronous invocation",
+          "status": "✅ Supported",
+          "notes": "ResourceNotFoundException when the function has no configuration; LastModified is Unix seconds, as AWS returns for this resource"
+        },
+        {
+          "operation": "DeleteFunctionEventInvokeConfig",
+          "category": "Asynchronous invocation",
+          "status": "✅ Supported",
+          "notes": "Returns 204; ResourceNotFoundException when there is no configuration to delete"
+        },
+        {
+          "operation": "ListFunctionEventInvokeConfigs",
+          "category": "Asynchronous invocation",
+          "status": "✅ Supported",
+          "notes": "Every qualifier's configuration for the function; MaxItems is validated but the result is a single page, so NextMarker is never returned"
         },
         {
           "operation": "PutFunctionConcurrency",

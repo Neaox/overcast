@@ -97,14 +97,28 @@ type Filter struct {
 	Pattern string `json:"Pattern"`
 }
 
-// DestinationConfig specifies where to send records of invocations that fail
-// after exhausting retries. Mirrors the AWS Lambda DestinationConfig structure.
+// DestinationConfig specifies where to send records of an invocation's
+// outcome. Mirrors the AWS Lambda DestinationConfig structure, which is one
+// shape serving two features: an event source mapping's on-failure
+// destination, and a function's asynchronous invocation destinations (see
+// store_event_invoke.go).
+//
+// An ESM only ever sets OnFailure — AWS gives a mapping no on-success
+// destination — so OnSuccess is nil on that path and available on this one.
 type DestinationConfig struct {
+	OnSuccess *OnSuccess `json:"OnSuccess,omitempty"`
 	OnFailure *OnFailure `json:"OnFailure,omitempty"`
 }
 
 // OnFailure specifies the destination for records of failed invocations.
 type OnFailure struct {
+	Destination string `json:"Destination"`
+}
+
+// OnSuccess specifies the destination for records of successful asynchronous
+// invocations. AWS models it as its own shape rather than reusing OnFailure,
+// so it is spelled out the same way here.
+type OnSuccess struct {
 	Destination string `json:"Destination"`
 }
 
