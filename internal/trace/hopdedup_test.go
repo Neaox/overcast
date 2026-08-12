@@ -121,13 +121,15 @@ func TestBuffer_inlinedHopBodiesAreBounded(t *testing.T) {
 	// — every hop still reports its metadata either way
 	var inlined, budgeted int
 	for _, hop := range entry.Hops {
-		switch hop.RequestBodyOmitted {
-		case OmitNone:
+		// Not a switch: the exhaustive linter would want every OmitReason
+		// enumerated, and the point here is that only these two may occur.
+		switch reason := hop.RequestBodyOmitted; {
+		case reason == OmitNone:
 			inlined++
-		case OmitTraceBudget:
+		case reason == OmitTraceBudget:
 			budgeted++
 		default:
-			t.Errorf("hop %s: unexpected omission %q", hop.ID, hop.RequestBodyOmitted)
+			t.Errorf("hop %s: unexpected omission %q", hop.ID, reason)
 		}
 	}
 	if inlined == 0 {
