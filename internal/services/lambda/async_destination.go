@@ -31,6 +31,16 @@ import (
 // AWS's `requestContext.condition` values for an asynchronous invocation
 // record. "RetriesExhausted" is the one a failed event carries after its last
 // attempt; a successful one is simply "Success".
+//
+// An event discarded for outliving MaximumEventAgeInSeconds also carries
+// RetriesExhausted here, which is very likely not what AWS sends: its console
+// describes on-failure as firing when an event "fails all processing attempts
+// or exceeds the maximum age", so the two are distinct conditions. AWS
+// documents no value for the second — neither the developer guide's example
+// record nor the Destinations launch post names one — and inventing a string
+// would be worse than reusing a real one, because a caller matching on it would
+// be matching something AWS never sends. Left as a known divergence rather than
+// a guess.
 const (
 	invocationConditionSuccess          = "Success"
 	invocationConditionRetriesExhausted = "RetriesExhausted"

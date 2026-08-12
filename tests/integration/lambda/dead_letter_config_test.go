@@ -213,6 +213,21 @@ func TestInvokeFunction_asyncFailureReachesTheDeadLetterQueue(t *testing.T) {
 	helpers.AssertStatus(t, create, http.StatusCreated)
 	create.Body.Close()
 
+	// And: no retries, so the first failure is the last one.
+	//
+	// This test runs on the wall clock, and AWS waits a minute before the first
+	// retry and two more before the second — so under the defaults the event is
+	// not dead-lettered for three minutes. That is a schedule to drive from a
+	// mock clock, not to sit through here, and
+	// TestInvokeAsync_failedEventIsRetriedTwiceBeforeItIsDeadLettered covers it
+	// that way. What this test is for is the end-to-end path, that a real HTTP
+	// invoke reaches a real queue.
+	retries := doJSON(t, http.MethodPost, eventInvokeURL(srv, "dlq-e2e-fn"), map[string]any{
+		"MaximumRetryAttempts": 0,
+	})
+	helpers.AssertStatus(t, retries, http.StatusOK)
+	retries.Body.Close()
+
 	// When: it is invoked asynchronously with an event that will fail.
 	const event = `{"orderId":"a81ddca6"}`
 	req, err := http.NewRequest(http.MethodPost, lambdaURL(srv, "/functions/dlq-e2e-fn/invocations"), strings.NewReader(event))
