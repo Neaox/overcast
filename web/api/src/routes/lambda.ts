@@ -48,7 +48,7 @@ lambdaRoutes.get("/functions/:name/source", async (c) => {
   const fileParam = c.req.query("file")
   const qs = fileParam ? `?file=${encodeURIComponent(fileParam)}` : ""
   const res = await fetch(
-    `${baseUrl}/2015-03-31/functions/${encodeURIComponent(name)}/source${qs}`,
+    `${baseUrl}/_overcast/lambda/functions/${encodeURIComponent(name)}/source${qs}`,
   )
   const data = await res.json()
   return c.json(data, res.status as 200 | 404)
@@ -61,7 +61,7 @@ lambdaRoutes.put("/functions/:name/source", async (c) => {
   const name = c.req.param("name")
   const body = await c.req.json()
   const res = await fetch(
-    `${baseUrl}/2015-03-31/functions/${encodeURIComponent(name)}/source`,
+    `${baseUrl}/_overcast/lambda/functions/${encodeURIComponent(name)}/source`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -80,7 +80,7 @@ lambdaRoutes.post("/functions/:name/invoke-with-progress", async (c) => {
   const body = await c.req.text()
 
   const upstream = await fetch(
-    `${baseUrl}/2015-03-31/functions/${encodeURIComponent(name)}/invoke-with-progress`,
+    `${baseUrl}/_overcast/lambda/functions/${encodeURIComponent(name)}/invoke-with-progress`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -110,7 +110,7 @@ lambdaRoutes.get("/functions/:name/test-events", async (c) => {
   const baseUrl = emulatorUrl(c)
   const name = c.req.param("name")
   const res = await fetch(
-    `${baseUrl}/2015-03-31/functions/${encodeURIComponent(name)}/test-events`,
+    `${baseUrl}/_overcast/lambda/functions/${encodeURIComponent(name)}/test-events`,
   )
   const data = await res.json()
   return c.json(data, res.status as 200)
@@ -122,7 +122,7 @@ lambdaRoutes.put("/functions/:name/test-events/:eventName", async (c) => {
   const eventName = c.req.param("eventName")
   const body = await c.req.json()
   const res = await fetch(
-    `${baseUrl}/2015-03-31/functions/${encodeURIComponent(name)}/test-events/${encodeURIComponent(eventName)}`,
+    `${baseUrl}/_overcast/lambda/functions/${encodeURIComponent(name)}/test-events/${encodeURIComponent(eventName)}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -138,7 +138,7 @@ lambdaRoutes.delete("/functions/:name/test-events/:eventName", async (c) => {
   const name = c.req.param("name")
   const eventName = c.req.param("eventName")
   await fetch(
-    `${baseUrl}/2015-03-31/functions/${encodeURIComponent(name)}/test-events/${encodeURIComponent(eventName)}`,
+    `${baseUrl}/_overcast/lambda/functions/${encodeURIComponent(name)}/test-events/${encodeURIComponent(eventName)}`,
     { method: "DELETE" },
   )
   return c.body(null, 204)

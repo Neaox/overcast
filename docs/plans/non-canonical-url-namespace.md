@@ -1,8 +1,10 @@
 # One namespace for every non-canonical URL: `/_overcast/`
 
-> Status: **in progress** — phases 0, 0b, 1, 2, 3, 4 and 5 done. **Every
-> internal route family has collapsed into `/_overcast`.** Phase 6 remains,
-> and it grew twice: see §4.5 and §4.6.
+> Status: **substantially done** — phases 0-6 complete. **Every internal route
+> family has collapsed into `/_overcast`, and no path Overcast serves is
+> outside the rule except two the ratchet still names.** The one remaining
+> item is a decision, not a migration: Cognito's OIDC discovery path is the
+> JWT issuer — see §4.7.
 > The rule is enforced from phase 1 onward by
 > `TestNoRouteIsRegisteredOutsideTheNamespace`, against the `unmigratedRoutes`
 > ratchet that phases 2–6 empty. Open questions all decided (§4.3, §8).
@@ -474,6 +476,49 @@ rule §4.5 describes: reuse `overcastRESTOperation`, which already enumerates
 exactly the internal routes that carry an operation name, and treat "names an
 operation" as "is authorized".
 
+### 4.8 How phase 6 separated "internal" from "unauthenticated"
+
+Phase 4 could not move the four console-only Lambda endpoints because `/_` was
+doing two jobs: marking Overcast's own paths, and exempting them from IAM. The
+endpoints carry a resource-scoped check — `lambda:PutTestEvent` on one function
+must not authorize another — and moving them deleted it.
+
+`shouldBypassIAM` now asks a narrower question:
+
+```go
+if !strings.HasPrefix(r.URL.Path, InternalPrefix) { return false }
+_, named := overcastRESTOperation(detectService(r), r.Method, r.URL.Path)
+return !named
+```
+
+*An internal path that names an operation has something to authorize, so it is
+not exempt.* No new list: `overcastRESTOperation` already enumerated exactly
+those routes, for the logger and for IAM alike. Its doc comment said "the
+logger's label and IAM's action both come from here" — this makes that literal.
+
+Two supporting changes were needed, and both were found by tests rather than by
+reading:
+
+- `detectOperationForService` bailed out on every `/_` path before reaching
+  that table, so the moved endpoints lost their operation names. It now asks
+  the table first.
+- `requestLambdaIAMResource` read the function name from a fixed path index.
+  The namespaced path has one extra leading segment, so the ARN degraded to
+  `"*"` — which does not fail a request, it *widens* what a policy matches.
+  `TestIAMEnforce_enabled_lambdaTestEventsPathDeniesNonMatchingFunction` caught
+  it, the same test that blocked the move in phase 4.
+
+That second one is the argument for having written the test before the move
+rather than after: a silently widened ARN is invisible in every other signal.
+
+**What did not happen: `internalService` was not collapsed to
+`strings.Split(path, "/")[2]`.** §1 promised that, and it is wrong. The
+namespace holds more than services — `health`, `metrics`, `debug`, `events`,
+`info`, `topology`, `mcp`, `init`, `ca.pem`, `domains` — so reading segment 2
+blindly invents "health" and "debug" as service names. Collapsing it needs a
+set of real service keys to check against, which is another list, so the switch
+stays and says why.
+
 ## 5. Enforcement — the point of the exercise
 
 ### Gate 9: every registered route is modeled or namespaced
@@ -657,7 +702,7 @@ One PR per phase; Go, web, docs and tests in the same commit.
 | **3** | ✅ **Done.** `/_debug/*` → `/_overcast/debug/*` (23 routes, pprof included); `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
 | **4** | ✅ **Done.** Service admin: `/_lambda/{instances,runtimes,layers}`, `/_ecs/*`, `/_rds/*`, EKS's `kubeconfig`, and `/_overcast/inbox` → `/_overcast/ses/inbox`. **The four console-only Lambda endpoints did not move — see §4.5.** | Console-only consumers. |
 | **5** | ✅ **Done.** Service data plane: `/_apigateway`, `/_appsync`, `/_cloudfront`, `/_elb`, `/_lambda/url-invoke`, `/_cognito`, plus `/@connections`. Rewrite sites, `docs/networking.md`. | Host-addressed URLs are unaffected — see §4.6. |
-| **6** | Cognito discovery to the AWS shape (§4.3), with the top-level label-route overlap test. Delete `internalService`, collapse `detectService`, empty the ratchet down to the five allowlist groups, update `manifest-enforcement.md`. | The payoff. |
+| **6** | ✅ **Done, except the Cognito decision.** The four console-only Lambda endpoints moved, with `shouldBypassIAM` narrowed so an internal path that names an operation stays authorized; the redundant CloudFront singular alias deleted; `InternalPrefix` moved to `middleware` and `notready.go` narrowed to it. Ratchet down to two entries, both Cognito. | The payoff, minus the one item that turned out to be a token-compatibility question (§4.7). |
 
 Phase 1 is the one that must land; 2–6 are then individually revertible.
 

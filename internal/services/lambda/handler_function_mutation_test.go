@@ -338,7 +338,7 @@ func TestPutFunctionSource_concurrentCodeUpdate(t *testing.T) {
 		"source":   "exports.handler = async () => 'stale editor patch'",
 		"filename": "index.js",
 	})
-	sourceReq := withFunctionNameParam(httptest.NewRequest(http.MethodPut, "/2015-03-31/functions/race-fn/source", bytes.NewReader(sourceBody)), "race-fn")
+	sourceReq := withFunctionNameParam(httptest.NewRequest(http.MethodPut, "/_overcast/lambda/functions/race-fn/source", bytes.NewReader(sourceBody)), "race-fn")
 	sourceRec := httptest.NewRecorder()
 	done := make(chan struct{})
 	store.arm()

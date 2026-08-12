@@ -5,10 +5,10 @@ package lambda
 // These endpoints are NOT part of the AWS Lambda API. They exist solely to
 // support the built-in code editor in the Overcast web UI.
 //
-//   GET /2015-03-31/functions/{name}/source
+//   GET /_overcast/lambda/functions/{name}/source
 //       Returns {"source": "...", "filename": "...", "language": "..."}
 //
-//   PUT /2015-03-31/functions/{name}/source
+//   PUT /_overcast/lambda/functions/{name}/source
 //       Body: {"source": "...", "filename": "..."}
 //       Stores the source text, packages it into an in-memory zip, updates
 //       CodeZip/CodeSize, generates a new RevisionId.
@@ -405,7 +405,7 @@ func guessEntryFile(files []sourceFile, handler, runtime string) string {
 	return files[0].Name
 }
 
-// GetFunctionSource handles GET /2015-03-31/functions/{name}/source.
+// GetFunctionSource handles GET /_overcast/lambda/functions/{name}/source.
 // Returns the stored plain-text source (or a default stub if none stored yet).
 //
 // Query parameters:
@@ -479,7 +479,7 @@ func (h *Handler) GetFunctionSource(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// PutFunctionSource handles PUT /2015-03-31/functions/{name}/source.
+// PutFunctionSource handles PUT /_overcast/lambda/functions/{name}/source.
 // Stores the source text, packs it into a zip, and updates the function.
 func (h *Handler) PutFunctionSource(w http.ResponseWriter, r *http.Request) {
 	log := h.log.WithRecorder(r.Context())

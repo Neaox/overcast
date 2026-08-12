@@ -71,10 +71,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 			r.Get("/invalidation", h.ListInvalidations)
 			r.Get("/invalidation/{invalidationId}", h.GetInvalidation)
 
-			// Monitoring (stubs)
-			r.Post("/monitoring-subscription", h.CreateMonitoringSubscription)
-			r.Get("/monitoring-subscription", h.GetMonitoringSubscription)
-			r.Delete("/monitoring-subscription", h.DeleteMonitoringSubscription)
+			// Monitoring is NOT registered here. AWS binds it to the plural
+			// /distributions/{id}/monitoring-subscription, which is registered
+			// below and is what every SDK sends. A second copy lived here on
+			// the singular path, which no model describes and nothing sends —
+			// reported by the route-to-model gate and removed in phase 6 of
+			// docs/plans/non-canonical-url-namespace.md.
 		})
 
 		// ── Tagging ──────────────────────────────────────────────────
@@ -207,9 +209,12 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 		r.Post("/get-realtime-log-config", h.GetRealtimeLogConfig)
 		r.Post("/delete-realtime-log-config", h.DeleteRealtimeLogConfig)
 
-		// ── Monitoring (plural path variant) ────────────────────────
-		// The AWS SDK uses /distributions/{id}/monitoring-subscription
-		// (plural) while single-distribution CRUD uses the singular form.
+		// ── Monitoring ───────────────────────────────────────────────
+		// AWS binds these to /distributions/{id}/monitoring-subscription
+		// (plural), which is what every SDK sends. They were registered on the
+		// singular /distribution/{id} as well, on a path no model describes
+		// and nothing sends; the route-to-model gate reported it and phase 6 of
+		// docs/plans/non-canonical-url-namespace.md removed it.
 		r.Route("/distributions/{id}", func(r chi.Router) {
 			r.Post("/monitoring-subscription", h.CreateMonitoringSubscription)
 			r.Get("/monitoring-subscription", h.GetMonitoringSubscription)

@@ -86,24 +86,6 @@ import (
 	"github.com/Neaox/overcast/internal/trace"
 )
 
-// InternalPrefix is the one path prefix reserved for endpoints Overcast serves
-// on its own behalf rather than on AWS's — health, metrics, debug state, the
-// event stream, per-service admin APIs, and the data plane of emulated
-// workloads.
-//
-// It is reserved by an S3 naming rule rather than by convention: a bucket name
-// cannot begin with an underscore, so no request AWS models can ever collide
-// with it. That guarantee is worth spending on exactly one prefix, which is the
-// whole argument for having one.
-//
-// Today there are sixteen. The migration to this one is staged in
-// docs/plans/non-canonical-url-namespace.md and is not finished — every path
-// still outside the prefix is recorded in the unmigratedRoutes ratchet, and
-// TestNoRouteIsRegisteredOutsideTheNamespace fails on any that is not. So this
-// constant is the rule new code must follow, not yet a description of the
-// routing table.
-const InternalPrefix = "/_overcast/"
-
 // New builds and returns the root HTTP handler for the emulator, plus a
 // cleanup function that should be called during graceful shutdown with the
 // remaining shutdown context. It stops background service resources (e.g. the

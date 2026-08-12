@@ -607,9 +607,16 @@ func detectOperationForService(r *http.Request, svc string, body ...[]byte) stri
 		return "GetMetrics"
 	}
 
-	// Emulator-internal paths — never a modeled AWS operation, and S3 bucket
-	// names cannot begin with '_', so nothing below can apply.
-	if strings.HasPrefix(r.URL.Path, "/_") {
+	// Emulator-internal paths. No modeled AWS operation can describe one — S3
+	// bucket names cannot begin with '_', so none of the model-derived steps
+	// below can apply — but a few of them are named all the same, by the
+	// hand-written table in restoperation.go. Ask it before giving up, because
+	// this bail-out is what blanked the operation name on the emulator-only
+	// Lambda endpoints the moment phase 6 moved them into the namespace.
+	if strings.HasPrefix(r.URL.Path, InternalPrefix) {
+		if op, ok := overcastRESTOperation(svc, r.Method, r.URL.Path); ok {
+			return op
+		}
 		return ""
 	}
 
