@@ -37,7 +37,7 @@
 # There used to be — a NOSQLITE build arg that a single builder stage branched
 # on — and every caller that passed `--target slim` and forgot it silently got
 # the full binary in the slim image. The release workflow was one of them, so
-# `overcast-slim` shipped with the SPA, SQLite and /_mcp for several releases
+# `overcast-slim` shipped with the SPA, SQLite and /_overcast/mcp for several releases
 # (#798). A build arg that must agree with the target is a build arg that will
 # eventually disagree with it; the flavour is now a property of the target
 # alone, and each builder asserts what it produced (see the RUN steps below).
@@ -127,13 +127,13 @@ RUN CGO_ENABLED=0 \
 # MCP route (registered in internal/router/mcp_routes.go, !slim only), and the
 # SQLite driver (!nosqlite only). A cross-compiled binary is just bytes to
 # grep, so this works for every --platform without QEMU.
-RUN for marker in 'web/dist/' '/_mcp' 'modernc.org/sqlite'; do \
+RUN for marker in 'web/dist/' '/_overcast/mcp' 'modernc.org/sqlite'; do \
         if grep -q -F "$marker" /overcast; then \
             echo "slim binary contains '$marker' — it was not built with -tags slim,nosqlite" >&2; \
             exit 1; \
         fi; \
     done \
-    && echo "slim binary verified: no SPA, no /_mcp, no SQLite"
+    && echo "slim binary verified: no SPA, no /_overcast/mcp, no SQLite"
 
 # ---- Stage 4: Go build, console flavour ------------------------------------
 FROM go-src AS go-builder-console
@@ -161,13 +161,13 @@ RUN CGO_ENABLED=0 \
 
 # The mirror image of the slim assertion, so a future attempt to make slim
 # genuinely slim cannot do it by making console slim too.
-RUN for marker in 'web/dist/index.html' '/_mcp'; do \
+RUN for marker in 'web/dist/index.html' '/_overcast/mcp'; do \
         if ! grep -q -F "$marker" /overcast; then \
             echo "console binary is missing '$marker' — a console build must not use -tags slim" >&2; \
             exit 1; \
         fi; \
     done \
-    && echo "console binary verified: SPA and /_mcp present"
+    && echo "console binary verified: SPA and /_overcast/mcp present"
 
 # ---- Stage 5: shared runtime base ------------------------------------------
 # Both slim and console images share the same OS-level setup.

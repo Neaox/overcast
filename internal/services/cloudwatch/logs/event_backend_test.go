@@ -354,7 +354,7 @@ func TestEventBackend_GetGroupEventsRange_MemoryAndSQL_Parity(t *testing.T) {
 // TestEventBackend_DebugScan_MemoryAndSQL_Parity exercises the
 // DebugStateProvider-backing debugScan/debugDeleteAll methods on both
 // backends, including the truncation contract used by the bounded
-// /_debug/state response (storage-plan.md 2.3).
+// /_overcast/debug/state response (storage-plan.md 2.3).
 func TestEventBackend_DebugScan_MemoryAndSQL_Parity(t *testing.T) {
 	for name, b := range newTestBackends(t) {
 		b := b

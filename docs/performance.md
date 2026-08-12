@@ -187,7 +187,7 @@ pathology early, at startup, rather than waiting for the first `hybrid
 flush slow` warning under real write load.
 
 The probe's outcome is also queryable, not just logged: `GET
-/_debug/metrics` includes a `dataDirProbe` object per store
+/_overcast/debug/metrics` includes a `dataDirProbe` object per store
 (`{fsyncMillis, slow, probedAt}`) alongside the existing flush-history and
 pending-log diagnostics, so tooling (or a future web UI health panel) can
 surface it without scraping logs. A probe that fails outright (e.g. a

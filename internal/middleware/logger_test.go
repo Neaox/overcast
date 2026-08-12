@@ -50,7 +50,7 @@ func TestDetectService(t *testing.T) {
 		{name: "health", method: "GET", path: "/_overcast/health", want: "internal"},
 		{name: "topology", method: "GET", path: "/_overcast/topology", want: "internal"},
 		{name: "info", method: "GET", path: "/_overcast/info", want: "internal"},
-		{name: "debug", method: "GET", path: "/_debug/store", want: "internal"},
+		{name: "debug", method: "GET", path: "/_overcast/debug/store", want: "internal"},
 		{name: "cognito oauth", method: "GET", path: "/_cognito/us-east-1_ABC/oauth2/authorize", want: "cognito"},
 		{name: "cognito login", method: "POST", path: "/_cognito/us-east-1_ABC/login", want: "cognito"},
 		{name: "ecs tasks", method: "GET", path: "/_ecs/clusters/default/tasks", want: "ecs"},
@@ -165,7 +165,7 @@ func TestDetectOperation(t *testing.T) {
 		{name: "cognito oauth", method: "GET", path: "/_cognito/us-east-1_ABC/oauth2/authorize", want: ""},
 		{name: "cognito debug token", method: "GET", path: "/_cognito/us-east-1_ABC/debug/token", want: ""},
 		{name: "lambda instances", method: "GET", path: "/_lambda/instances", want: ""},
-		{name: "debug store", method: "GET", path: "/_debug/store/s3", want: ""},
+		{name: "debug store", method: "GET", path: "/_overcast/debug/store/s3", want: ""},
 
 		// S3 heuristics — should still work for real S3 paths
 		{name: "s3 list buckets", method: "GET", path: "/", want: "ListBuckets"},
@@ -258,7 +258,7 @@ func TestInternalService(t *testing.T) {
 		{"/_overcast/health", "internal"},
 		{"/_overcast/topology", "internal"},
 		{"/_overcast/info", "internal"},
-		{"/_debug/store", "internal"},
+		{"/_overcast/debug/store", "internal"},
 		{"/_overcast/metrics", "internal"}, // still "internal" via this helper; detectService handles the exact match earlier
 		{"/_unknown/path", "internal"},
 	}
@@ -293,10 +293,10 @@ func TestInternalService(t *testing.T) {
 func TestIsOperationalPollPath(t *testing.T) {
 	polled := []string{
 		"/_overcast/health",
-		"/_debug",
-		"/_debug/state",
-		"/_debug/traces",
-		"/_debug/traces/search",
+		"/_overcast/debug",
+		"/_overcast/debug/state",
+		"/_overcast/debug/traces",
+		"/_overcast/debug/traces/search",
 	}
 	for _, p := range polled {
 		if !isOperationalPollPath(p) {
@@ -308,7 +308,7 @@ func TestIsOperationalPollPath(t *testing.T) {
 		"/",
 		"/my-bucket/key",
 		"/2015-03-31/functions",
-		"/_debugfoo",
+		"/_overcast/debugfoo",
 		"/_overcast/init",
 
 		// Data plane: a real client's request, however it is spelled. Same
@@ -346,7 +346,7 @@ func TestLogger_healthCheckLogsAtTrace(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), healthReq)
 
 	// And: a debug-namespace request is served.
-	debugReq := httptest.NewRequest(http.MethodGet, "/_debug/state", nil)
+	debugReq := httptest.NewRequest(http.MethodGet, "/_overcast/debug/state", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), debugReq)
 
 	// And: a real AWS API request is served.
@@ -355,7 +355,7 @@ func TestLogger_healthCheckLogsAtTrace(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), awsReq)
 
 	// Then: the health-check and debug-namespace requests log at TRACE...
-	for _, path := range []string{"/_overcast/health", "/_debug/state"} {
+	for _, path := range []string{"/_overcast/health", "/_overcast/debug/state"} {
 		found := false
 		for _, e := range logs.FilterMessage("request").All() {
 			if e.ContextMap()["path"] == path {

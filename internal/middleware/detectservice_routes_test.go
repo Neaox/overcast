@@ -101,7 +101,6 @@ var registeredRouteClassification = map[string]string{
 	"/_ecs":        "ecs",
 	"/_elb":        "internal",
 	"/_lambda":     "lambda",
-	"/_mcp":        "internal",
 	"/_overcast":   "cognito|events|internal|metrics|secretsmanager|ses",
 	"/_rds":        "internal",
 
@@ -194,10 +193,17 @@ var registeredRouteClassification = map[string]string{
 	"/{region}":           "s3",
 }
 
-// buildTagGatedRouteFamilies are registered only in some build configurations,
-// so their absence is not drift. /_mcp is a !slim route (see mcp_routes.go and
-// mcp_routes_slim.go), and CI runs the suite under -tags slim,dev.
-var buildTagGatedRouteFamilies = map[string]bool{"/_mcp": true}
+// buildTagGatedRouteFamilies are families registered only in some build
+// configurations, so their absence is not drift.
+//
+// Empty since phase 3 of docs/plans/non-canonical-url-namespace.md. Its only
+// entry was "/_mcp", a !slim route (mcp_routes.go / mcp_routes_slim.go) whose
+// whole family vanished under -tags slim. MCP now lives at /_overcast/mcp, and
+// "/_overcast" is registered in every configuration — init, ca.pem and the
+// per-service admin routes are not build-tagged — so a slim build no longer
+// loses a family, only some routes within one. The map stays for the next
+// family that is genuinely build-gated.
+var buildTagGatedRouteFamilies = map[string]bool{}
 
 // TestDetectServiceClassifiesEveryRegisteredRouteFamily walks the real router
 // and checks every route family against the table above.

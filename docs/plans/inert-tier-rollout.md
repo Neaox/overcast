@@ -408,7 +408,7 @@ tempting and wrong for this codebase:
 
 So: typed records, marshalled to JSON for persistence in the existing
 `state.Store` — the pattern every current service uses, so no new storage
-subsystem, no migration, and `/_debug/state` keeps working.
+subsystem, no migration, and `/_overcast/debug/state` keeps working.
 
 ### 4.3 The shared inert runtime — `internal/inert`
 
@@ -598,7 +598,7 @@ the overlap set is exactly the reviewed list). Binary-size impact is one type pl
 a static table, not 400 method sets.
 
 `stubResourceHandler`'s "unknown type silently succeeds" behaviour stays for
-genuinely unknown types, but gains a counter surfaced in `/_debug/metrics` and a
+genuinely unknown types, but gains a counter surfaced in `/_overcast/debug/metrics` and a
 compat assertion: **a stack whose deploy used any stub handler fails the wave's
 CDK acceptance gate.** Silent stubbing is exactly what makes a green deploy
 meaningless.

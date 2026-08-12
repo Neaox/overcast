@@ -138,7 +138,7 @@ func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, erro
 // hash_key/sort_key columns) are now encodeOrderableNumber-encoded for
 // Number-typed key attributes (dynamodb-gsi-design.md §2) — that encoding is
 // an internal ordering detail, not something a developer inspecting
-// /_debug/state should ever see. The item's own attribute map is unchanged
+// /_overcast/debug/state should ever see. The item's own attribute map is unchanged
 // by that encoding (only the derived storage/seek key changed shape), so
 // the raw display value is recovered straight from record.Item via the same
 // schema-aware extraction putItem/getItem use (resolveKeys), not by trying

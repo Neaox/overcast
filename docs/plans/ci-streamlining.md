@@ -73,7 +73,7 @@ drops the embed entirely — the workflow already comments on deliberately not
 taking the artifact.
 
 So the untagged run exists for a genuinely small surface: the embedded SPA and
-the routes registered only in `!slim` builds (`/_mcp`). Paying 187 s of
+the routes registered only in `!slim` builds (`/_overcast/mcp`). Paying 187 s of
 critical path for it is the expensive way to buy that.
 
 ### 3. The suite runs four times

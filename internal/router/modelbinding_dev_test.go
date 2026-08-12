@@ -259,7 +259,7 @@ func inventory(t *testing.T) *routeSet {
 
 // inventoryWith is inventory with a chance to adjust the config first, for
 // gates that need routes the default build does not register. Only the
-// namespace gate uses it so far, to switch Debug on and make the /_debug/*
+// namespace gate uses it so far, to switch Debug on and make the /_overcast/debug/*
 // namespace visible; the model-binding gates want the default surface, since a
 // modeled AWS binding never hides behind a debug flag.
 func inventoryWith(t *testing.T, configure func(*config.Config)) *routeSet {

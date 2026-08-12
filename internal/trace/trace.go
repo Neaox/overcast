@@ -1,6 +1,6 @@
 // Package trace provides request-tracing infrastructure for the debug
 // namespace. When OVERCAST_DEBUG is enabled, every HTTP request is captured
-// into an in-memory ring buffer and made queryable through /_debug/trace/*
+// into an in-memory ring buffer and made queryable through /_overcast/debug/trace/*
 // endpoints.
 //
 // When OVERCAST_DEBUG is off this package has zero overhead: the Recorder is
@@ -667,11 +667,11 @@ var internalPaths = map[string]bool{
 
 // isInternalPath reports whether p is polled by infrastructure or the web UI
 // rather than driven by a real AWS client. It must stay aligned with
-// middleware's isOperationalPollPath: the entire /_debug/* namespace counts
+// middleware's isOperationalPollPath: the entire /_overcast/debug/* namespace counts
 // as internal so UI polling (traces, state, metrics) never consumes the
 // user-trace budget in the ring buffer.
 func isInternalPath(p string) bool {
-	if p == "/_debug" || strings.HasPrefix(p, "/_debug/") {
+	if p == "/_overcast/debug" || strings.HasPrefix(p, "/_overcast/debug/") {
 		return true
 	}
 	if internalPaths[p] {

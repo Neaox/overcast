@@ -181,7 +181,7 @@ All configuration is via environment variables. No config file required.
 | `OVERCAST_DEFAULT_REGION`        | `us-east-1`            | Fallback region used in ARNs when not present in SigV4 header                        |
 | `OVERCAST_ACCOUNT_ID`            | `000000000000`         | Account ID embedded in ARNs                                                          |
 | `OVERCAST_LOG_LEVEL`             | `info`                 | `trace`, `debug`, `info`, `warn`, `error` — see [Log levels](#log-levels) below      |
-| `OVERCAST_DEBUG`                 | `false`                | Enable `/_debug/*` endpoints                                                         |
+| `OVERCAST_DEBUG`                 | `false`                | Enable `/_overcast/debug/*` endpoints                                                         |
 | `OVERCAST_DEBUG_TRACE_BUFFER`    | `1000`                 | Request traces held in the in-memory ring buffer. Only read when `OVERCAST_DEBUG=true` |
 | `OVERCAST_SIGV4_VALIDATE`        | `false`                | SigV4 verification _(not yet implemented)_                                           |
 | `OVERCAST_ENFORCE_IAM`           | `false`                | Evaluate the calling principal's IAM policies before each request and return AWS-shaped `AccessDenied` when they do not allow it. **Off by default**; with it off nothing is evaluated and no policy is read. See [iam.md § Request-time enforcement](./services/iam.md#request-time-enforcement-opt-in) |
@@ -468,7 +468,7 @@ services:
 
 ## Debug endpoints
 
-Set `OVERCAST_DEBUG=true` to enable the `/_debug` namespace and request tracing.
+Set `OVERCAST_DEBUG=true` to enable the `/_overcast/debug` namespace and request tracing.
 Every response carries a request ID (`x-amzn-requestid` for most services,
 `x-amz-request-id` for S3) which can be used to look up the full trace:
 
@@ -478,17 +478,17 @@ Every response carries a request ID (`x-amzn-requestid` for most services,
 | `/_overcast/events`                  | GET    | SSE stream of internal events (always enabled)        |
 | `/_overcast/metrics`                 | GET    | Go runtime memory/GC/goroutine stats (always enabled) |
 | `/_overcast/topology`                | GET    | Full cross-region resource graph (always enabled)     |
-| `/_debug/health`            | GET    | Detailed: uptime, services, state backend and health  |
-| `/_debug/config`            | GET    | Effective configuration (secrets redacted)            |
-| `/_debug/state`             | GET    | Every namespace and its keys (no values)              |
-| `/_debug/state/{namespace}` | GET    | Paginated key/value pages for one namespace (`?after=` cursor, `?limit=` ≤ 5000, default 500); `?key=` fetches one raw value |
-| `/_debug/reset`             | POST   | Wipe all state                                        |
-| `/_debug/reset/{service}`   | POST   | Wipe state for one service                            |
-| `/_debug/metrics`           | GET    | Storage diagnostics: flush history, seed duration, pending-log size; `?includeRowCounts=true` adds per-namespace row counts |
-| `/_debug/pprof/`            | GET    | Go pprof index (goroutine, heap, CPU profiles, etc.)  |
-| `/_debug/trace/{requestId}` | GET    | Full trace for one request: bodies, headers, log entries, AWS errors |
-| `/_debug/traces`            | GET    | Paginated list of recent traces; filterable by `?service=`, `?method=`, `?path=`, `?status=`, `?search=` |
-| `/_debug/traces/count`      | GET    | Current trace buffer count and capacity               |
+| `/_overcast/debug/health`            | GET    | Detailed: uptime, services, state backend and health  |
+| `/_overcast/debug/config`            | GET    | Effective configuration (secrets redacted)            |
+| `/_overcast/debug/state`             | GET    | Every namespace and its keys (no values)              |
+| `/_overcast/debug/state/{namespace}` | GET    | Paginated key/value pages for one namespace (`?after=` cursor, `?limit=` ≤ 5000, default 500); `?key=` fetches one raw value |
+| `/_overcast/debug/reset`             | POST   | Wipe all state                                        |
+| `/_overcast/debug/reset/{service}`   | POST   | Wipe state for one service                            |
+| `/_overcast/debug/metrics`           | GET    | Storage diagnostics: flush history, seed duration, pending-log size; `?includeRowCounts=true` adds per-namespace row counts |
+| `/_overcast/debug/pprof/`            | GET    | Go pprof index (goroutine, heap, CPU profiles, etc.)  |
+| `/_overcast/debug/trace/{requestId}` | GET    | Full trace for one request: bodies, headers, log entries, AWS errors |
+| `/_overcast/debug/traces`            | GET    | Paginated list of recent traces; filterable by `?service=`, `?method=`, `?path=`, `?status=`, `?search=` |
+| `/_overcast/debug/traces/count`      | GET    | Current trace buffer count and capacity               |
 
 Traces are held in a ring buffer sized by `OVERCAST_DEBUG_TRACE_BUFFER`
 (default 1000); the oldest is evicted once it is full. A trace records each

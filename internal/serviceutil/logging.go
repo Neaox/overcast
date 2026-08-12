@@ -206,7 +206,7 @@ func NewServiceLogger(logger *zap.Logger, service string) *ServiceLogger {
 
 // Trace logs at TRACE level (below DEBUG) — periodic machine-generated
 // chatter that even a debugging session rarely wants: health/readiness probe
-// and /_debug/* request logs, flush/checkpoint/maintenance/sweep cycle logs,
+// and /_overcast/debug/* request logs, flush/checkpoint/maintenance/sweep cycle logs,
 // buffer/pool internals. See the TraceLevel doc comment and CONTRIBUTING.md
 // § Log levels for the full trace-vs-debug distinction.
 // Do NOT use for anything a human debugging Overcast would actually want to

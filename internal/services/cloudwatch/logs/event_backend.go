@@ -64,13 +64,13 @@ type eventBackend interface {
 	deleteEventsOlderThan(ctx context.Context, region, group string, cutoff time.Time) error
 
 	// debugScan returns up to limit raw event rows for
-	// /_debug/state/logs:events, ordered deterministically. When limit <= 0,
+	// /_overcast/debug/state/logs:events, ordered deterministically. When limit <= 0,
 	// scan is unbounded (used by tests; callers serving HTTP responses
 	// should always pass a positive limit — see Service.DebugStateKeys). The
 	// second return value reports whether more rows exist beyond limit.
 	debugScan(ctx context.Context, limit int) (records []debugEventRecord, truncated bool, err error)
 
-	// debugDeleteAll removes every persisted event, for /_debug/reset.
+	// debugDeleteAll removes every persisted event, for /_overcast/debug/reset.
 	debugDeleteAll(ctx context.Context) error
 
 	// getEventsRange returns up to limit persisted events for one stream

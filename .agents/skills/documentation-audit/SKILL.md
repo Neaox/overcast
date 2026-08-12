@@ -50,7 +50,7 @@ Beware approximations that were once right — "~50" is not protected by the til
 
 ### 3. Ports, endpoints and routes
 
-Every port and URL in the docs, against the actual defaults. Every documented `/_debug/*` and internal route against the registrations in `internal/router/`, both directions.
+Every port and URL in the docs, against the actual defaults. Every documented `/_overcast/debug/*` and internal route against the registrations in `internal/router/`, both directions.
 
 ### 4. Links and anchors
 

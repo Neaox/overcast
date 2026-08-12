@@ -26,7 +26,7 @@ export function debugStateQueryOptions() {
 }
 
 /**
- * Incremental paging over GET /_debug/state/{namespace} (storage-plan.md
+ * Incremental paging over GET /_overcast/debug/state/{namespace} (storage-plan.md
  * item 3.13, frontend half). Each page is fetched only when the UI asks for
  * it (see debug-page.tsx's scroll-triggered fetchNextPage) — this
  * deliberately does NOT merge every page eagerly the way the old

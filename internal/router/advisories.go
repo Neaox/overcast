@@ -61,7 +61,7 @@ const storageDocsPath = "storage.md"
 const noSQLiteDocsPath = storageDocsPath + "#builds-without-sqlite"
 
 // Advisory is one actionable diagnostic surfaced alongside the storage
-// diagnostics in GET /_debug/metrics (see debugMetricsResponse.Advisories).
+// diagnostics in GET /_overcast/debug/metrics (see debugMetricsResponse.Advisories).
 // The web UI's Metrics & Health page renders these generically — icon/color
 // from Severity, then Title/Detail/optional DocsPath link — so adding a
 // future rule to computeAdvisories never requires a web UI change.
@@ -132,7 +132,7 @@ type advisoryInput struct {
 }
 
 // computeAdvisories is the single generator function behind the
-// GET /_debug/metrics payload's `advisories` array. It is a pure function of
+// GET /_overcast/debug/metrics payload's `advisories` array. It is a pure function of
 // advisoryInput — no I/O, no clock reads beyond formatting a timestamp
 // that's already in the input — so every rule is independently unit-tested
 // with fake input (see advisories_test.go) rather than requiring a real

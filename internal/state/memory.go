@@ -252,7 +252,7 @@ func (s *MemoryStore) Reset() {
 	s.data = make(map[string]*btree.Map[string, string], 16)
 }
 
-// Len returns the number of entries. Used by /_debug/state and tests.
+// Len returns the number of entries. Used by /_overcast/debug/state and tests.
 func (s *MemoryStore) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

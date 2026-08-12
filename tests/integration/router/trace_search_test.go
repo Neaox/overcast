@@ -3,7 +3,7 @@ package router_test
 // trace_search_test.go — the deep-search endpoint, end to end.
 //
 // The unit tests in internal/trace prove the scan; this proves the wire: that a
-// real request's real body is reachable through /_debug/traces/search, which is
+// real request's real body is reachable through /_overcast/debug/traces/search, which is
 // the whole claim being made to anyone using the trace viewer.
 
 import (
@@ -36,7 +36,7 @@ type deepSearchResponse struct {
 
 func deepSearch(t *testing.T, srv *helpers.TestServer, query string) deepSearchResponse {
 	t.Helper()
-	resp, err := http.Get(srv.URL + "/_debug/traces/search?q=" + url.QueryEscape(query))
+	resp, err := http.Get(srv.URL + "/_overcast/debug/traces/search?q=" + url.QueryEscape(query))
 	if err != nil {
 		t.Fatalf("deep search: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestTraceSearch_findsATraceByItsResponseBody(t *testing.T) {
 	}
 
 	// And: the cheap search cannot — which is why this endpoint exists.
-	listResp, err := http.Get(srv.URL + "/_debug/traces?search=" + url.QueryEscape("NonExistentQueue"))
+	listResp, err := http.Get(srv.URL + "/_overcast/debug/traces?search=" + url.QueryEscape("NonExistentQueue"))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestTraceSearch_findsATraceByItsResponseBody(t *testing.T) {
 func TestTraceSearch_refusesAQueryTooShortToMeanAnything(t *testing.T) {
 	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
 
-	resp, err := http.Get(srv.URL + "/_debug/traces/search?q=ab")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/traces/search?q=ab")
 	if err != nil {
 		t.Fatalf("deep search: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestTraceSearch_refusesAQueryTooShortToMeanAnything(t *testing.T) {
 func TestTraceSearch_saysWhenTracingIsOff(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
-	resp, err := http.Get(srv.URL + "/_debug/traces/search?q=anything")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/traces/search?q=anything")
 	if err != nil {
 		t.Fatalf("deep search: %v", err)
 	}

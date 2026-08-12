@@ -373,30 +373,30 @@ func proxyJSONHandler(path string) http.HandlerFunc {
 }
 
 func handleDebugState(w http.ResponseWriter, r *http.Request) {
-	proxyDebugState(w, r, "/_debug/state")
+	proxyDebugState(w, r, "/_overcast/debug/state")
 }
 
 func handleDebugNamespace(w http.ResponseWriter, r *http.Request) {
 	namespace := strings.TrimPrefix(r.URL.EscapedPath(), "/api/debug/state/")
-	proxyDebugState(w, r, "/_debug/state/"+namespace)
+	proxyDebugState(w, r, "/_overcast/debug/state/"+namespace)
 }
 
-// handleDebugMetrics proxies GET /_debug/metrics — the storage diagnostics +
+// handleDebugMetrics proxies GET /_overcast/debug/metrics — the storage diagnostics +
 // advisories payload behind the web UI's Metrics & Health page (see
 // internal/router/debug.go's debugMetrics and advisories.go). Shares
 // proxyDebugState's "DebugDisabled" 404 translation rather than
-// proxyJSONHandler's plain pass-through, since /_debug/* only exists at all
+// proxyJSONHandler's plain pass-through, since /_overcast/debug/* only exists at all
 // when the emulator has OVERCAST_DEBUG=true — the Metrics & Health page needs
 // the same recognizable, non-generic error the raw-state debugger already
 // gives so its empty/degraded state can explain why, instead of showing a
 // bare "HTTP 404".
 func handleDebugMetrics(w http.ResponseWriter, r *http.Request) {
-	proxyDebugState(w, r, "/_debug/metrics")
+	proxyDebugState(w, r, "/_overcast/debug/metrics")
 }
 
 func handleDebugTrace(w http.ResponseWriter, r *http.Request) {
 	requestID := chi.URLParam(r, "requestId")
-	proxyDebugJSON(w, r, "/_debug/trace/"+url.PathEscape(requestID))
+	proxyDebugJSON(w, r, "/_overcast/debug/trace/"+url.PathEscape(requestID))
 }
 
 func handleDebugTraceEvents(w http.ResponseWriter, r *http.Request) {
@@ -405,11 +405,11 @@ func handleDebugTraceEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDebugTraces(w http.ResponseWriter, r *http.Request) {
-	proxyDebugJSON(w, r, "/_debug/traces")
+	proxyDebugJSON(w, r, "/_overcast/debug/traces")
 }
 
 func handleDebugTraceCount(w http.ResponseWriter, r *http.Request) {
-	proxyDebugJSON(w, r, "/_debug/traces/count")
+	proxyDebugJSON(w, r, "/_overcast/debug/traces/count")
 }
 
 // handleDebugTraceSearch proxies the deep scan of trace bodies, hop errors and
@@ -422,7 +422,7 @@ func handleDebugTraceCount(w http.ResponseWriter, r *http.Request) {
 // aborts the fetch closes this connection, which cancels that context, which
 // ends the scan.
 func handleDebugTraceSearch(w http.ResponseWriter, r *http.Request) {
-	proxyDebugJSON(w, r, "/_debug/traces/search")
+	proxyDebugJSON(w, r, "/_overcast/debug/traces/search")
 }
 
 // proxyDebugJSON proxies a debug endpoint, forwarding query params and
@@ -485,10 +485,10 @@ func copyDebugResponse(w http.ResponseWriter, resp *http.Response) {
 	}
 }
 
-// writeDebugDisabledError is shared by every /_debug/* proxy in this file
+// writeDebugDisabledError is shared by every /_overcast/debug/* proxy in this file
 // (raw state and metrics/advisories alike) — a stable "error": "DebugDisabled"
 // code callers can key off of, plus a human-readable message covering both
-// use cases so it reads correctly regardless of which /_debug/* route hit it.
+// use cases so it reads correctly regardless of which /_overcast/debug/* route hit it.
 func writeDebugDisabledError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)

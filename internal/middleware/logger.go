@@ -723,7 +723,7 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 // isOperationalPollPath reports whether path belongs to an internal
-// health/readiness probe or the /_debug/* namespace polled by container
+// health/readiness probe or the /_overcast/debug/* namespace polled by container
 // orchestrators (Docker HEALTHCHECK, Kubernetes probes) or the web UI's
 // auto-refreshing debug views. These fire purely because time passed and
 // infrastructure polled — never because of anything a real AWS client did —
@@ -731,11 +731,11 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // at TRACE: polling intervals of a few seconds would otherwise drown genuine
 // request activity even at DEBUG.
 func isOperationalPollPath(path string) bool {
-	return path == "/_overcast/health" || strings.HasPrefix(path, "/_debug/") || path == "/_debug"
+	return path == "/_overcast/health" || strings.HasPrefix(path, "/_overcast/debug/") || path == "/_overcast/debug"
 }
 
 // Logger logs every request with structured fields: real AWS API calls and
-// other requests at INFO, internal health/readiness and /_debug/* polling at
+// other requests at INFO, internal health/readiness and /_overcast/debug/* polling at
 // TRACE (see isOperationalPollPath). When stdout is a terminal, each line is
 // prefixed with the service badge and (when known) an operation badge so log
 // lines are easy to scan at a glance. Failed requests (5xx) are logged at

@@ -45,7 +45,7 @@ function mockCoreEndpoints() {
 const DEBUG_DISABLED_MESSAGE =
   "OVERCAST_DEBUG must be enabled to inspect raw state or storage diagnostics."
 
-/** GET /_debug/metrics as it responds when OVERCAST_DEBUG is off. */
+/** GET /_overcast/debug/metrics as it responds when OVERCAST_DEBUG is off. */
 function debugDisabled() {
   return HttpResponse.json(
     { error: "DebugDisabled", message: DEBUG_DISABLED_MESSAGE },
@@ -243,7 +243,7 @@ describe("MetricsPage", () => {
   })
 
   it("explains when storage diagnostics are unavailable because debug mode is off", async () => {
-    // Given: OVERCAST_DEBUG is disabled, so /_debug/metrics 404s.
+    // Given: OVERCAST_DEBUG is disabled, so /_overcast/debug/metrics 404s.
     mockCoreEndpoints()
     server.use(
       http.get("/api/health", () => HttpResponse.json(healthyPersistentHealth)),
@@ -258,7 +258,7 @@ describe("MetricsPage", () => {
   })
 
   it("keeps the advisories section still while a background poll is in flight", async () => {
-    // Given: debug mode is off, so every 3-second poll of /_debug/metrics
+    // Given: debug mode is off, so every 3-second poll of /_overcast/debug/metrics
     // fails and the query never holds a payload. Polls after the first park
     // until the test releases them — the in-flight window is held open by an
     // explicit signal rather than a duration, so nothing here races.

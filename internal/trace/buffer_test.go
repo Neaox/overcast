@@ -635,20 +635,20 @@ func TestBuffer_concurrentHopsWhileListing(t *testing.T) {
 }
 
 func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
-	// The whole /_debug/* namespace and /_overcast/metrics are polled by the web UI
+	// The whole /_overcast/debug/* namespace and /_overcast/metrics are polled by the web UI
 	// and must be classified internal, matching middleware's
 	// isOperationalPollPath, so polling never consumes user-trace budget.
 	internal := []string{
 		"/_overcast/health",
 		"/_overcast/metrics",
-		"/_debug",
-		"/_debug/traces",
-		"/_debug/traces/abc-123",
-		"/_debug/trace/abc-123",
-		"/_debug/traces/count",
-		"/_debug/metrics",
-		"/_debug/state",
-		"/_debug/state/sqs:queues",
+		"/_overcast/debug",
+		"/_overcast/debug/traces",
+		"/_overcast/debug/traces/abc-123",
+		"/_overcast/debug/trace/abc-123",
+		"/_overcast/debug/traces/count",
+		"/_overcast/debug/metrics",
+		"/_overcast/debug/state",
+		"/_overcast/debug/state/sqs:queues",
 		"/_overcast/events",
 		"/_overcast/events/request",
 		"/_overcast/inbox",
@@ -684,7 +684,7 @@ func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 		"/",
 		"/2015-03-31/functions",
 		"/my-bucket/key",
-		"/_debugfoo",
+		"/_overcast/debugfoo",
 		"/_overcast/init",
 
 		// Data plane: the emulated workload answers these, not Overcast.

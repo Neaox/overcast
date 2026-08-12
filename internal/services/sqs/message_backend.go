@@ -128,13 +128,13 @@ type messageBackend interface {
 	countMessages(ctx context.Context, region, queueName string, now time.Time) (visible, total int, err error)
 
 	// debugScan returns up to limit raw message rows for
-	// /_debug/state/sqs:messages, ordered deterministically. limit <= 0
+	// /_overcast/debug/state/sqs:messages, ordered deterministically. limit <= 0
 	// means unbounded (tests only — HTTP callers always pass a positive
 	// limit, see Service.DebugStateKeys). The second return value reports
 	// whether more rows exist beyond limit.
 	debugScan(ctx context.Context, limit int) (records []debugMessageRecord, truncated bool, err error)
 
-	// debugDeleteAll removes every persisted message, for /_debug/reset.
+	// debugDeleteAll removes every persisted message, for /_overcast/debug/reset.
 	debugDeleteAll(ctx context.Context) error
 }
 

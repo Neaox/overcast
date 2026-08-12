@@ -3,8 +3,8 @@ package sqs
 // service_debug_test.go covers the SQS Service's router.DebugStateProvider
 // implementation (DebugNamespace/DebugStateKeys/DebugStateValues/
 // DebugResetState) — docs/plans/storage-plan.md's graduation rule requires
-// every dedicated table to stay visible to /_debug/state and resettable via
-// /_debug/reset, mirroring DynamoDB's "dynamodb:items" and CloudWatch Logs'
+// every dedicated table to stay visible to /_overcast/debug/state and resettable via
+// /_overcast/debug/reset, mirroring DynamoDB's "dynamodb:items" and CloudWatch Logs'
 // "logs:events" virtual namespaces. Package-level (no internal/router
 // dependency, avoiding an import cycle) — internal/router/debug_test.go
 // covers the HTTP-level wiring for DynamoDB/Logs already; this file is this

@@ -582,7 +582,7 @@ Overcast's level ladder has five rungs: `TRACE` < `DEBUG` < `INFO` < `WARN` < `E
 defined in [`internal/logging`](./internal/logging/level.go) as
 `zapcore.Level(-2)`, one step under zap's `DebugLevel`. It exists because
 Docker's `HEALTHCHECK` (and any orchestrator's liveness/readiness probe) hits
-`/_overcast/health` every few seconds forever, and the web UI polls `/_debug/*`
+`/_overcast/health` every few seconds forever, and the web UI polls `/_overcast/debug/*`
 continuously — at `INFO` that traffic drowns real activity; even at `DEBUG` it
 drowns the request-explaining detail a human actually opened the logs to
 read. `TRACE` gives that machine chatter somewhere to go without either
@@ -617,14 +617,14 @@ artifact — `TRACE` is where volume is allowed.
 
 | Level   | Use for                                                                                                                                                                     |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TRACE` | Periodic machinery chatter: health/readiness probe request logs, `/_debug/*` polling request logs, per-tick flush/checkpoint/maintenance/sweep cycle logs, pool/buffer internals. |
+| `TRACE` | Periodic machinery chatter: health/readiness probe request logs, `/_overcast/debug/*` polling request logs, per-tick flush/checkpoint/maintenance/sweep cycle logs, pool/buffer internals. |
 | `DEBUG` | What a human debugging Overcast actually wants: per-request internals for real AWS calls, dispatch/protocol decisions, store operation diagnostics, replay/seed detail, migration step detail beyond the INFO-level summary lines. |
 | `INFO`  | Process lifecycle (listening, shutdown, migrations applied, backup written), genuine state milestones (resource created/deleted), and one request line per **real AWS API call**. |
 | `WARN`  | Unexpected-but-handled conditions: a malformed persisted record skipped, protocol drift, a slow-filesystem probe, a torn WAL line tolerated, debug mode enabled.               |
 | `ERROR` | Actionable failures: the store degraded, a migration failed, unrecoverable request handling, a panic recovery.                                                                |
 
 The Logger middleware logs one line per request: `INFO` for real AWS API
-calls, `TRACE` for `/_overcast/health` and `/_debug/*` polling (see
+calls, `TRACE` for `/_overcast/health` and `/_overcast/debug/*` polling (see
 `isOperationalPollPath` in `internal/middleware/logger.go`), `ERROR` for 5xx
 responses. Don't duplicate the per-request line in handlers — add `DEBUG`/
 `TRACE` lines only for detail the request-line summary doesn't carry.
@@ -747,7 +747,7 @@ migration for what is, from SQLite's point of view, not a schema change at all.
 ### Data earns a table
 
 The generic `kv` table is the default for a reason: it comes for free with `HybridStore`'s
-memory-speed reads, the async flush path, `/_debug/state` visibility, and `/_debug/reset`
+memory-speed reads, the async flush path, `/_overcast/debug/state` visibility, and `/_overcast/debug/reset`
 support. A dedicated SQL table forfeits all of that — it needs its own backend
 implementation(s), its own migration, and its own debug wiring. **A namespace earns a
 dedicated table; a service does not automatically get one just because it's high-traffic.**
@@ -787,7 +787,7 @@ following — treat this as the real cost of graduating, not an afterthought:
   [internal/state/migrate.go](./internal/state/migrate.go) — see
   [Writing a migration](#writing-a-migration) below.
 - **A `router.DebugStateProvider` implementation**, so the new table stays visible to
-  `/_debug/state` and resettable via `/_debug/reset`. The raw state debugger only enumerates
+  `/_overcast/debug/state` and resettable via `/_overcast/debug/reset`. The raw state debugger only enumerates
   the generic `kv` store by default, so a dedicated table is otherwise invisible to it and
   immune to reset. Implement
   `DebugNamespace`/`DebugStateKeys`/`DebugStateValues`/`DebugResetState` (see

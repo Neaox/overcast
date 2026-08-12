@@ -13,7 +13,7 @@ tells you what you need without a single breakpoint. Overcast's log levels are
 `trace` < `debug` < `info` < `warn` < `error`; `debug` is tuned to be exactly
 what you'd want attached to a bug report (dispatch/protocol decisions, store
 operation diagnostics, replay/seed detail), while `trace` adds the
-machine-generated chatter (health probes, `/_debug/*` polling, background
+machine-generated chatter (health probes, `/_overcast/debug/*` polling, background
 flush/sweep ticks) that's rarely useful even mid-debugging session but can
 help when you specifically suspect a background loop. See
 [CONTRIBUTING.md § Log levels](../../CONTRIBUTING.md#log-levels) for the full

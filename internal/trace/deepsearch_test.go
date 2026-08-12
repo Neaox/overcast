@@ -259,7 +259,7 @@ func TestDeepSearch_doesNotRenderBinaryAsText(t *testing.T) {
 // bodies by default spends the budget on what nobody asked to see.
 func TestDeepSearch_skipsInternalTracesUnlessAsked(t *testing.T) {
 	buf := NewBuffer(10)
-	rec := NewRecorder("poll", time.Now(), http.MethodGet, "/_debug/traces", "localhost", "", http.Header{})
+	rec := NewRecorder("poll", time.Now(), http.MethodGet, "/_overcast/debug/traces", "localhost", "", http.Header{})
 	rec.AddLog(LogEntry{Level: "info", Message: "a distinctive marker"})
 	buf.Add(rec)
 

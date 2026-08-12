@@ -28,8 +28,8 @@ func TestDebugState_proxiesStateFromEmulator(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("expected JSON content-type, got %q", got)
 	}
-	if gotPath != "/_debug/state" {
-		t.Fatalf("expected emulator path /_debug/state, got %q", gotPath)
+	if gotPath != "/_overcast/debug/state" {
+		t.Fatalf("expected emulator path /_overcast/debug/state, got %q", gotPath)
 	}
 	if got := rec.Body.String(); got != "{\"sqs/queues\":[\"queue-a\"]}\n" {
 		t.Fatalf("unexpected body: %q", got)
@@ -53,7 +53,7 @@ func TestDebugStateNamespace_proxiesNamespaceFromEmulator(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if gotPath != "/_debug/state/sqs%2Fqueues" {
+	if gotPath != "/_overcast/debug/state/sqs%2Fqueues" {
 		t.Fatalf("expected encoded emulator namespace path, got %q", gotPath)
 	}
 	if got := rec.Body.String(); got != "{\"queue-a\":\"{\\\"name\\\":\\\"queue-a\\\"}\"}\n" {
@@ -80,7 +80,7 @@ func TestDebugStateNamespaceKey_proxiesRawValueFromEmulator(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if gotPath != "/_debug/state/lambda%3Alayers" {
+	if gotPath != "/_overcast/debug/state/lambda%3Alayers" {
 		t.Fatalf("expected encoded emulator namespace path, got %q", gotPath)
 	}
 	if gotQuery != "key=us-east-1%2Fdeps%3A0000000001" {
@@ -131,8 +131,8 @@ func TestDebugMetrics_proxiesMetricsFromEmulator(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if gotPath != "/_debug/metrics" {
-		t.Fatalf("expected emulator path /_debug/metrics, got %q", gotPath)
+	if gotPath != "/_overcast/debug/metrics" {
+		t.Fatalf("expected emulator path /_overcast/debug/metrics, got %q", gotPath)
 	}
 	if got := rec.Body.String(); got != `{"stores":[{"mode":"hybrid","journalMode":"wal"}],"advisories":[]}` {
 		t.Fatalf("unexpected body: %q", got)

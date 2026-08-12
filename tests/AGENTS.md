@@ -104,7 +104,7 @@ Run with: `make test-integration`
 
 Some surfaces only exist in some builds. The runtime MCP endpoint is the current
 example: `internal/router/mcp_routes.go` is `//go:build !slim` and its slim twin
-makes `registerMCPRoutes` a no-op, so under `-tags slim` there is no `/_mcp`
+makes `registerMCPRoutes` a no-op, so under `-tags slim` there is no `/_overcast/mcp`
 route and requests to it correctly fall through to S3's catch-all and get a 501.
 
 **A test must carry the same build constraint as the surface it exercises.** An

@@ -88,14 +88,14 @@ const debugMessagesScanLimit = 500
 // DebugNamespace returns the virtual raw-state namespace name for SQS
 // messages, implementing router.DebugStateProvider. Messages live in the
 // dedicated sqs_messages SQL table (or the in-memory equivalent), not the
-// generic kv store, so without this they'd be invisible to /_debug/state and
-// exempt from /_debug/reset — the graduation rule (storage-plan.md
+// generic kv store, so without this they'd be invisible to /_overcast/debug/state and
+// exempt from /_overcast/debug/reset — the graduation rule (storage-plan.md
 // "Settled decisions") requires this for every dedicated table, mirroring
 // DynamoDB's "dynamodb:items" and CloudWatch Logs' "logs:events".
 func (s *Service) DebugNamespace() string { return "sqs:messages" }
 
 // DebugStateKeys returns up to debugMessagesScanLimit virtual keys for
-// /_debug/state's top-level listing.
+// /_overcast/debug/state's top-level listing.
 func (s *Service) DebugStateKeys(ctx context.Context) ([]string, error) {
 	records, _, err := s.handler.store.backend.debugScan(ctx, debugMessagesScanLimit)
 	if err != nil {
@@ -126,7 +126,7 @@ func (s *Service) DebugStateValues(ctx context.Context) (map[string]string, erro
 	return values, nil
 }
 
-// DebugResetState deletes every persisted message, for /_debug/reset.
+// DebugResetState deletes every persisted message, for /_overcast/debug/reset.
 func (s *Service) DebugResetState(ctx context.Context) error {
 	return s.handler.store.backend.debugDeleteAll(ctx)
 }

@@ -115,7 +115,7 @@ func runServe(uiPortFlag int, bridgeEnabled bool, bridgeBindIPStr string) error 
 		logger.Warn("OVERCAST_SIGV4_VALIDATE is set but SigV4 validation is not yet implemented — all requests are accepted")
 	}
 	if cfg.Debug {
-		logger.Warn("debug endpoints enabled (/_debug/*) — do not expose this port publicly")
+		logger.Warn("debug endpoints enabled (/_overcast/debug/*) — do not expose this port publicly")
 	}
 	if cfg.StateSource == config.StateSourceAuto {
 		logger.Info(

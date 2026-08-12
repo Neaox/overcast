@@ -76,7 +76,7 @@ Configure with `OVERCAST_EC2_VPC_STRATEGY`:
 | `remapped`         | Overlapping VPCs get a unique Docker shadow subnet in `100.64.0.0/10`; `NetworkStatus=remapped` and `DockerCidrBlock` records the shadow CIDR. | Multi-VPC simulations that need overlap without Docker subnet collisions.   |
 
 `DescribeVpcs` includes synthetic tag `overcast:network-status=<value>` and
-`/_debug/ec2/vpcs` exposes internal fields (`NetworkStatus`,
+`/_overcast/debug/ec2/vpcs` exposes internal fields (`NetworkStatus`,
 `DockerNetworkID`, `DockerCidrBlock`) for diagnostics.
 
 **Important caveat for `remapped`:** data-plane packet routing still follows

@@ -5,7 +5,7 @@
  * OVERCAST_DEBUG is off (the common case — see debugMetricsQueryOptions's
  * doc comment):
  * - GET /_overcast/health (always available): storage mode + healthy/degraded status.
- * - GET /_debug/metrics (debug-gated): live journal mode + last flush time.
+ * - GET /_overcast/debug/metrics (debug-gated): live journal mode + last flush time.
  *
  * Uptime is passed in from the parent, which already polls GET /_overcast/metrics for
  * the sparkline cards — no reason to fetch it a second time here.

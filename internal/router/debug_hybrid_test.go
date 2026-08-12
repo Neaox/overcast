@@ -43,7 +43,7 @@ func TestDebugMetrics_hybridStoreReportsFlushAndSeed(t *testing.T) {
 		t.Fatalf("Flush: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/_debug/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/debug/metrics", nil)
 	rec := httptest.NewRecorder()
 	cfg := &config.Config{State: config.StateBackendHybrid}
 	debugMetrics(cfg, store).ServeHTTP(rec, req)

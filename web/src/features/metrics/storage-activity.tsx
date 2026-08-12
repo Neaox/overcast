@@ -1,7 +1,7 @@
 /**
  * StorageActivity — Metrics & Health page's "Storage Activity" section.
  *
- * Sourced from GET /_debug/metrics's `stores` array (debug-gated — see
+ * Sourced from GET /_overcast/debug/metrics's `stores` array (debug-gated — see
  * debugMetricsQueryOptions; the health strip and advisories list already
  * explain when that endpoint is unavailable, so this section simply renders
  * nothing rather than repeating that explanation a third time).

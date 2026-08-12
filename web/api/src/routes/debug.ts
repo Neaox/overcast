@@ -12,7 +12,7 @@ function endpointFromHeaders(c: Context) {
 
 debugRoutes.get("/metrics", async (c) => {
   const endpoint = endpointFromHeaders(c)
-  const res = await fetch(`${endpoint.baseUrl}/_debug/metrics`)
+  const res = await fetch(`${endpoint.baseUrl}/_overcast/debug/metrics`)
   if (res.status === 404) {
     return c.json(
       {
@@ -28,7 +28,7 @@ debugRoutes.get("/metrics", async (c) => {
 
 debugRoutes.get("/state", async (c) => {
   const endpoint = endpointFromHeaders(c)
-  const res = await fetch(`${endpoint.baseUrl}/_debug/state`)
+  const res = await fetch(`${endpoint.baseUrl}/_overcast/debug/state`)
   if (res.status === 404) {
     return c.json(
       { error: "DebugDisabled", message: "OVERCAST_DEBUG must be enabled to inspect raw state." },
@@ -44,7 +44,7 @@ debugRoutes.get("/state/:namespace", async (c) => {
   const namespace = c.req.param("namespace")
   const key = c.req.query("key")
   const search = key ? `?key=${encodeURIComponent(key)}` : ""
-  const res = await fetch(`${endpoint.baseUrl}/_debug/state/${encodeURIComponent(namespace)}${search}`)
+  const res = await fetch(`${endpoint.baseUrl}/_overcast/debug/state/${encodeURIComponent(namespace)}${search}`)
   if (res.status === 404 && !key) {
     return c.json(
       { error: "DebugDisabled", message: "OVERCAST_DEBUG must be enabled to inspect raw state." },

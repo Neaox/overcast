@@ -83,7 +83,7 @@ better default. In practice this means:
 To see what `auto` actually chose for a running instance, check either:
 
 - the startup log line: `storage mode auto-detected: <mode> (<reason>) — set OVERCAST_STATE to override`
-- the Metrics & Health page in the web console (or `GET /_debug/metrics`'s
+- the Metrics & Health page in the web console (or `GET /_overcast/debug/metrics`'s
   `advisories` array), which surfaces an info-level advisory whenever the resolved mode
   is `memory`, with the concrete steps to change it.
 

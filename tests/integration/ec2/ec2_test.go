@@ -3623,9 +3623,9 @@ func TestCreateVpc_remappedStrategy_overlapGetsShadowCIDR(t *testing.T) {
 
 	// Then: debug view shows at least one VPC with a distinct shadow Docker CIDR.
 	// In test environments without Docker, NetworkStatus may be "unbacked".
-	resp, err := http.Get(srv.URL + "/_debug/ec2/vpcs")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/ec2/vpcs")
 	if err != nil {
-		t.Fatalf("GET /_debug/ec2/vpcs: %v", err)
+		t.Fatalf("GET /_overcast/debug/ec2/vpcs: %v", err)
 	}
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -3637,7 +3637,7 @@ func TestCreateVpc_remappedStrategy_overlapGetsShadowCIDR(t *testing.T) {
 		DockerCidrBlock string `json:"dockerCidrBlock"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&vpcs); err != nil {
-		t.Fatalf("decode /_debug/ec2/vpcs: %v", err)
+		t.Fatalf("decode /_overcast/debug/ec2/vpcs: %v", err)
 	}
 
 	foundShadow := false
@@ -3781,9 +3781,9 @@ func TestCreateVpc_setsCreateTime(t *testing.T) {
 	helpers.AssertStatus(t, r1, http.StatusOK)
 
 	// Then: the debug endpoint shows a non-zero CreateTime
-	resp, err := http.Get(srv.URL + "/_debug/ec2/vpcs")
+	resp, err := http.Get(srv.URL + "/_overcast/debug/ec2/vpcs")
 	if err != nil {
-		t.Fatalf("GET /_debug/ec2/vpcs: %v", err)
+		t.Fatalf("GET /_overcast/debug/ec2/vpcs: %v", err)
 	}
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
@@ -3793,7 +3793,7 @@ func TestCreateVpc_setsCreateTime(t *testing.T) {
 		CreateTime int64  `json:"createTime"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&vpcs); err != nil {
-		t.Fatalf("decode /_debug/ec2/vpcs: %v", err)
+		t.Fatalf("decode /_overcast/debug/ec2/vpcs: %v", err)
 	}
 	if len(vpcs) != 1 {
 		t.Fatalf("expected 1 VPC in debug output, got %d", len(vpcs))

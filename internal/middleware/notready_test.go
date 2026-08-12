@@ -102,7 +102,7 @@ func TestNotReady_MigratingRequest_JSONServiceReturnsJSON503(t *testing.T) {
 
 func TestNotReady_InternalPathsAreExempt(t *testing.T) {
 	store := &fakeNotReadyStore{notReady: true}
-	for _, path := range []string{"/_debug/state", "/_overcast/health", "/_overcast/info", "/_overcast/init"} {
+	for _, path := range []string{"/_overcast/debug/state", "/_overcast/health", "/_overcast/info", "/_overcast/init"} {
 		t.Run(path, func(t *testing.T) {
 			next, called := passThroughHandler()
 			handler := NotReady(store)(next)

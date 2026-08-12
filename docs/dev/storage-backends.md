@@ -60,7 +60,7 @@ migration is still in flight are rejected by the `NotReady` middleware
 ([internal/middleware/notready.go](../../internal/middleware/notready.go)) with a 503
 `ServiceUnavailable` response (the real AWS error code, which AWS SDKs already retry
 automatically) plus a `Retry-After: 2` header — in the service's own wire format (XML for S3,
-JSON elsewhere). Overcast's own `/_`-prefixed endpoints (`/_overcast/health`, `/_debug/*`, …) are exempt,
+JSON elsewhere). Overcast's own `/_`-prefixed endpoints (`/_overcast/health`, `/_overcast/debug/*`, …) are exempt,
 so operators can still check status while a long migration (the `VACUUM` above) runs.
 
 The middleware exists because of what each backend would otherwise do in this window — worth
