@@ -710,7 +710,7 @@ docker run -e OVERCAST_LAMBDA_HOT_RELOAD=true overcast
 ```
 
 `OVERCAST_HOT_RELOAD=true` turns it on for every compute service at once —
-Lambda and [ECS](./ecs.md#hot-reload--editing-local-source-inside-a-task) —
+Lambda and [ECS](./ecs.md#hot-reload-editing-local-source-inside-a-task) —
 and `OVERCAST_LAMBDA_HOT_RELOAD` overrides it either way, so a single service
 can be opted out of an umbrella `true`.
 

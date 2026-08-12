@@ -478,6 +478,63 @@ export const DOCS_NAV = [
     ]
   },
   {
+    "path": "docs/local-dev.md",
+    "href": "local-dev.md",
+    "title": "The inner loop — live code inside emulated compute",
+    "description": "Edit a file and see it take effect without rebuilding an image or redeploying: cdk watch, Lambda hot reload, and ECS hot reload, with a full Laravel-on-Fargate walkthrough.",
+    "section": "Getting Started",
+    "tags": [
+      "development",
+      "docs",
+      "ecs",
+      "guide",
+      "hot-reload",
+      "lambda"
+    ],
+    "headings": [
+      {
+        "depth": 1,
+        "text": "The inner loop — live code inside emulated compute",
+        "id": "the-inner-loop-live-code-inside-emulated-compute"
+      },
+      {
+        "depth": 2,
+        "text": "Which one to use",
+        "id": "which-one-to-use"
+      },
+      {
+        "depth": 2,
+        "text": "Turning hot reload on",
+        "id": "turning-hot-reload-on"
+      },
+      {
+        "depth": 2,
+        "text": "Lambda",
+        "id": "lambda"
+      },
+      {
+        "depth": 2,
+        "text": "ECS",
+        "id": "ecs"
+      },
+      {
+        "depth": 2,
+        "text": "Worked example: Laravel on Fargate",
+        "id": "worked-example-laravel-on-fargate"
+      },
+      {
+        "depth": 3,
+        "text": "The traps, in the order they bite",
+        "id": "the-traps-in-the-order-they-bite"
+      },
+      {
+        "depth": 2,
+        "text": "When it does not work",
+        "id": "when-it-does-not-work"
+      }
+    ]
+  },
+  {
     "path": "docs/migration-from-localstack.md",
     "href": "migration-from-localstack.md",
     "title": "Migrating from LocalStack",
