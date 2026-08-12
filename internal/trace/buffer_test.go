@@ -147,24 +147,26 @@ func TestBuffer_eviction(t *testing.T) {
 	}
 }
 
-// countInternal walks the raw slots and reports how many stored traces are
-// internal, so tests can verify quota accounting independently of the
-// internalCount field.
+// countInternal reports how many retained traces are internal, so tests can
+// check the cap without reaching into ring indices.
 func countInternal(b *Buffer) int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	n := 0
-	for _, rec := range b.entries {
-		if rec != nil && rec.internal {
+	b.eachRecorderLocked(func(rec *Recorder) {
+		if rec.internal {
 			n++
 		}
-	}
+	})
 	return n
 }
 
 func TestBuffer_internalCapHoldsAfterWrap(t *testing.T) {
-	// Given a buffer filled past capacity with user entries, When internal
-	// poll traces keep arriving, Then the internal quota (capacity/5) holds
-	// and user traces are not evicted beyond that quota.
-	buf := NewBuffer(10) // maxInternal = 2
+	// Given a full buffer of user entries, When internal poll traces keep
+	// arriving well past the internal ring's capacity, Then the cap holds and —
+	// now that the two populations no longer share a ring — not one user entry
+	// is lost, rather than the oldest few being spent on the quota.
+	buf := NewBuffer(10) // internal ring holds 2
 	for i := 0; i < 10; i++ {
 		addTrace(buf, traceSpec{
 			RequestID: "user-" + strconv.Itoa(i),
@@ -183,17 +185,9 @@ func TestBuffer_internalCapHoldsAfterWrap(t *testing.T) {
 	}
 
 	if got := countInternal(buf); got > 2 {
-		t.Errorf("internal entries exceeded quota: got %d, want <= 2", got)
+		t.Errorf("internal entries exceeded the ring: got %d, want <= 2", got)
 	}
-	if buf.internalCount != countInternal(buf) {
-		t.Errorf("internalCount accounting drifted: field says %d, actual %d", buf.internalCount, countInternal(buf))
-	}
-	if buf.internalCount < 0 {
-		t.Errorf("internalCount went negative: %d", buf.internalCount)
-	}
-	// The two oldest user entries may have been evicted to admit the quota's
-	// worth of internal entries; the remaining eight must survive.
-	for i := 2; i < 10; i++ {
+	for i := 0; i < 10; i++ {
 		if _, ok := buf.Get("user-" + strconv.Itoa(i)); !ok {
 			t.Errorf("user-%d was evicted by internal polling", i)
 		}
@@ -221,43 +215,14 @@ func TestBuffer_internalQuotaRotatesWhenNotFull(t *testing.T) {
 	if got := countInternal(buf); got != 2 {
 		t.Errorf("expected 2 internal entries, got %d", got)
 	}
-	if buf.internalCount != 2 {
-		t.Errorf("expected internalCount 2, got %d", buf.internalCount)
-	}
 }
 
-func TestBuffer_fullEvictionFairness(t *testing.T) {
-	// Given a full buffer where a user entry reclaimed an internal entry's
-	// near-head slot, When further user entries arrive, Then the reclaiming
-	// entry is not evicted almost immediately — eviction stays oldest-first.
-	buf := NewBuffer(5) // maxInternal = 1
-	addTrace(buf, traceSpec{RequestID: "user-0", Path: "/", Timestamp: time.Now()})
-	addTrace(buf, traceSpec{RequestID: "int-1", Path: "/_overcast/health", Timestamp: time.Now().Add(time.Second)})
-	for i := 2; i < 5; i++ {
-		addTrace(buf, traceSpec{
-			RequestID: "user-" + strconv.Itoa(i),
-			Path:      "/",
-			Timestamp: time.Now().Add(time.Duration(i) * time.Second),
-		})
-	}
-
-	// Full buffer: this user entry reclaims int-1's slot (index 1, near head).
-	addTrace(buf, traceSpec{RequestID: "user-5", Path: "/", Timestamp: time.Now().Add(5 * time.Second)})
-	// Two more user entries should evict user-0 and user-2 (the oldest),
-	// not the just-inserted user-5.
-	addTrace(buf, traceSpec{RequestID: "user-6", Path: "/", Timestamp: time.Now().Add(6 * time.Second)})
-	addTrace(buf, traceSpec{RequestID: "user-7", Path: "/", Timestamp: time.Now().Add(7 * time.Second)})
-
-	if _, ok := buf.Get("user-5"); !ok {
-		t.Error("user-5 was evicted prematurely after inheriting a near-head slot")
-	}
-	if _, ok := buf.Get("user-0"); ok {
-		t.Error("user-0 (oldest) should have been evicted first")
-	}
-	if _, ok := buf.Get("user-2"); ok {
-		t.Error("user-2 (second oldest) should have been evicted second")
-	}
-}
+// TestBuffer_fullEvictionFairness was removed with the mechanism it guarded.
+// It covered a user entry inheriting a reclaimed internal slot near the head
+// and being evicted almost immediately as a result — a hazard created by
+// replaceLocked's slot shuffling, which separate rings delete outright. The
+// property it protected, eviction being oldest-first, is covered by
+// TestBuffer_evictionIsOldestFirst in rings_buffer_test.go.
 
 func TestBuffer_getMissing(t *testing.T) {
 	buf := NewBuffer(10)
@@ -709,15 +674,18 @@ func TestIsInternalPathSeparatesPollingFromClientTraffic(t *testing.T) {
 	}
 }
 
+// Capacity spans both rings, so that Len — which counts every retained trace —
+// can never exceed it. The number asked for is the user-facing ring; the
+// internal ring is additional, which is the point of separating them.
 func TestBufferCapacity(t *testing.T) {
 	buf := NewBuffer(42)
-	if buf.Capacity() != 42 {
-		t.Errorf("expected 42, got %d", buf.Capacity())
+	if want := 42 + 42/5; buf.Capacity() != want {
+		t.Errorf("Capacity = %d, want %d", buf.Capacity(), want)
 	}
 
 	buf2 := NewBuffer(0)
-	if buf2.Capacity() != 1000 {
-		t.Errorf("expected default 1000, got %d", buf2.Capacity())
+	if want := 1000 + maxInternalRing; buf2.Capacity() != want {
+		t.Errorf("Capacity = %d, want %d for the default floor", buf2.Capacity(), want)
 	}
 }
 

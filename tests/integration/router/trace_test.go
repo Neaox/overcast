@@ -130,8 +130,15 @@ func TestTrace(t *testing.T) {
 		if count.Count < 1 {
 			t.Errorf("expected count >= 1, got %d", count.Count)
 		}
-		if count.Capacity != 1000 {
-			t.Errorf("expected capacity 1000, got %d", count.Capacity)
+		// Capacity spans both rings — the 1000 user-facing traces the buffer is
+		// configured for, plus the internal ring that holds polling alongside
+		// them rather than out of their budget. Count spans both too, so the
+		// invariant a reader relies on is that one never exceeds the other.
+		if want := 1000 + 200; count.Capacity != want {
+			t.Errorf("expected capacity %d, got %d", want, count.Capacity)
+		}
+		if count.Count > count.Capacity {
+			t.Errorf("count %d exceeds capacity %d", count.Count, count.Capacity)
 		}
 	})
 }
