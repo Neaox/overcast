@@ -419,7 +419,7 @@ func (s *Service) startExport(ctx context.Context, region, mountTargetID, fsID s
 			Entrypoint:   []string{"/bin/sh", "-c"},
 			Cmd:          []string{ganeshaStartScript(exports)},
 			ExposedPorts: map[string]struct{}{nfsContainerPort: {}},
-			Labels:       docker.ManagedLabels(serviceName, mountTargetID),
+			Labels:       s.managedLabels(ctx, mountTargetID),
 		},
 		HostConfig: &docker.HostConfig{
 			Mounts: []docker.Mount{{Type: "volume", Source: volumeName(fsID), Target: nfsExportRoot}},
@@ -823,13 +823,39 @@ func (s *Service) reconcileExports(ctx context.Context) {
 
 	// Sweep: any managed EFS container whose mount target is gone, plus any
 	// materialization helper that outlived the process that started it.
+	//
+	// Restricted to containers this instance created, for the reason
+	// reconcileVolumes sets out at length: a second Overcast on the same
+	// daemon keeps separate records, so every export it is currently serving
+	// looks to us like one whose mount target is gone. Killing it does not
+	// destroy data the way sweeping its volume would, but it does take a live
+	// NFS export out from under whatever is mounting it. The helper branch is
+	// the wider of the two — it matches any managed EFS container that is not
+	// an export — so without this it would collect another instance's
+	// in-flight materialization run as well.
+	//
+	// Only the removals are scoped. Adoption above is keyed by mount-target
+	// ID, which is random and drawn from this instance's own store, so it can
+	// only match a container this instance created; adding the check there
+	// would gain nothing and would strand export containers created before
+	// this label existed, which have no identity to match and would each be
+	// replaced by a second container fighting for the same port.
+	domain := s.sweepDomain(ctx)
 	for i := range containers {
 		c := &containers[i]
 		resourceID := c.ResourceID()
-		if strings.HasPrefix(resourceID, "fsmt-") {
+		isExport := strings.HasPrefix(resourceID, "fsmt-")
+		if isExport {
 			if _, ok := known[resourceID]; ok && s.nfsActive() {
 				continue
 			}
+		}
+		if domain == "" || c.Instance() != domain {
+			s.log.Debug("efs: leaving container owned by another instance",
+				zap.String("container", c.FirstName()), zap.String("owner", c.Instance()))
+			continue
+		}
+		if isExport {
 			s.log.Info("efs: removing orphaned export container",
 				zap.String("container", c.FirstName()), zap.String("mount_target", resourceID))
 		} else {

@@ -55,7 +55,20 @@ keep EFS away from Docker deliberately.
 - `SetDocker(*docker.Client)` + `dockerReady` (EKS pattern), wired in the
   router's Docker-probe block behind `OVERCAST_EFS_MODE=live`; the setter
   kicks off asynchronous volume reconciliation (recreate missing volumes
-  across all regions, remove orphaned managed volumes).
+  across all regions, remove this instance's own orphaned volumes).
+- **Sweep scope.** Volumes and export containers carry
+  `overcast.instance` — the identity of the state store that created them,
+  from `serviceutil.InstanceIdentity` — and reconciliation removes only
+  resources matching this instance's value. Records are per-instance and the
+  Docker daemon is shared, so "no file system record for this volume" is not
+  evidence the volume is abandoned; it is exactly what another Overcast's live
+  file data looks like. ECS's answer to the same defect (sweep only volumes the
+  daemon reports dangling, #936) does not transfer: an EFS volume is
+  unreferenced whenever nothing happens to be mounting it, which is its resting
+  state. With the `memory` backend the identity dies with the store, so a
+  restart inherits nothing and sweeps nothing — deliberately, because a
+  memory-backed instance cannot tell its own stale volume from one another
+  instance is serving, and the volume holds the user's only copy of the data.
 - Docker unavailable ⇒ `CreateFileSystem` still succeeds metadata-only and
   logs a warning (same degradation the ECS/RDS services use), so live mode
   never breaks pure-control-plane CI.
@@ -128,7 +141,9 @@ port per mount target. Implementation in `internal/services/efs/live_nfs.go`.
   Reconciliation on `SetDocker` adopts running exports (container ID and
   published port) for surviving mount targets, restarts missing ones, and
   sweeps orphaned exports, stale one-shot root-directory helpers, and port
-  reservations with no mount target behind them.
+  reservations with no mount target behind them. The container sweeps are
+  scoped by `overcast.instance` for the reason above — adoption is not, since
+  it matches on mount-target IDs drawn from this instance's own store.
 
 ## Ordering and effort
 
@@ -156,8 +171,11 @@ port per mount target. Implementation in `internal/services/efs/live_nfs.go`.
   transactions, and every service carries the same class of race. Accepted.
 - **Volume removal while a container still mounts the volume** fails with 409;
   the delete path retries a few times (30 s apart) and startup reconciliation
-  is the backstop, so an orphan can outlive a session only if the emulator
-  never restarts.
+  is the backstop — but only for an instance whose state outlives the process,
+  since the sweep is scoped to volumes bearing its own identity. On the
+  `memory` backend nothing is ever swept, and an orphan waits for
+  `docker volume prune`. Accepted: leaking a volume costs disk, and the
+  alternative cost the user their file data.
 - **NFS exports are fixed when the mount target starts.** An access point
   created after its file system's mount target has no pseudo-path on that
   export until the mount target is recreated: Ganesha reloads exports only on

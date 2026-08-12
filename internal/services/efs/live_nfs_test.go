@@ -481,14 +481,14 @@ func TestReconcileExports_adoptsKnownAndSweepsOrphans(t *testing.T) {
 			ID:     "ctr-orphan",
 			Names:  []string{"/" + nfsContainerName("fsmt-zzzzzzzzzzzzzzzzz")},
 			State:  "running",
-			Labels: docker.ManagedLabels(serviceName, "fsmt-zzzzzzzzzzzzzzzzz"),
+			Labels: svc.managedLabels(ctx, "fsmt-zzzzzzzzzzzzzzzzz"),
 		},
 		{
 			// A one-shot root-directory helper that outlived its process.
 			ID:     "ctr-helper",
 			Names:  []string{"/overcast-efs-mkdir-abc"},
 			State:  "exited",
-			Labels: docker.ManagedLabels(serviceName, volumeName("fs-aaaaaaaaaaaaaaaaa")),
+			Labels: svc.managedLabels(ctx, volumeName("fs-aaaaaaaaaaaaaaaaa")),
 		},
 	}
 	fd.mu.Unlock()
@@ -830,4 +830,51 @@ func nfsNullResponder(t *testing.T, reply bool) net.Listener {
 		conn.Write(append(frame, out...)) //nolint:errcheck
 	}()
 	return ln
+}
+
+// The export sweep's scoping, the container-side counterpart of
+// TestReconcileVolumes_leavesVolumesOwnedByAnotherInstance. Removing another
+// instance's containers does not destroy data the way sweeping its volumes
+// would, but it takes a live NFS export out from under whatever is mounting
+// it — and the helper branch, which matches any managed EFS container that is
+// not an export, would collect its in-flight materialization runs too.
+func TestReconcileExports_leavesContainersOwnedByAnotherInstance(t *testing.T) {
+	fd := newFakeNFSDaemon(t)
+	svc := newNFSTestService(t, fd, true)
+	ctx := context.Background()
+
+	foreignExport := docker.ManagedLabels(serviceName, "fsmt-zzzzzzzzzzzzzzzzz")
+	foreignExport[docker.LabelInstance] = "11111111-2222-3333-4444-555555555555"
+	foreignHelper := docker.ManagedLabels(serviceName, volumeName("fs-zzzzzzzzzzzzzzzzz"))
+	foreignHelper[docker.LabelInstance] = "11111111-2222-3333-4444-555555555555"
+
+	fd.mu.Lock()
+	fd.listed = []docker.ContainerSummary{
+		{
+			ID:     "ctr-other-export",
+			Names:  []string{"/" + nfsContainerName("fsmt-zzzzzzzzzzzzzzzzz")},
+			State:  "running",
+			Labels: foreignExport,
+		},
+		{
+			ID:     "ctr-other-helper",
+			Names:  []string{"/overcast-efs-mkdir-xyz"},
+			State:  "running",
+			Labels: foreignHelper,
+		},
+		{
+			// Predates the identity label: owner unestablishable, so untouched.
+			ID:     "ctr-unlabelled",
+			Names:  []string{"/" + nfsContainerName("fsmt-yyyyyyyyyyyyyyyyy")},
+			State:  "running",
+			Labels: docker.ManagedLabels(serviceName, "fsmt-yyyyyyyyyyyyyyyyy"),
+		},
+	}
+	fd.mu.Unlock()
+
+	svc.reconcileExports(ctx)
+
+	if removed := fd.removedContainers(); len(removed) != 0 {
+		t.Fatalf("swept containers this instance does not own: %v", removed)
+	}
 }
