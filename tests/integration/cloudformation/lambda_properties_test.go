@@ -335,12 +335,22 @@ func TestUpdateStack_LambdaFunctionForwardsPriorityOneProperties(t *testing.T) {
 	helpers.AssertStatus(t, removeResp, http.StatusOK)
 	waitForStackStatus(t, srv, "lambda-priority-one-update-stack", "UPDATE_COMPLETE")
 
-	// Then: CloudFormation delegates the clear to DeleteFunctionConcurrency.
+	// Then: CloudFormation delegates the clear to DeleteFunctionConcurrency, so
+	// the function reports no reservation. GetFunctionConcurrency answers 200
+	// with an empty document for that, as AWS does — the absence of the member
+	// is the evidence the clear happened, not a 404.
 	removedConcurrencyResp := lambdaRequest(t, srv, http.MethodGet,
 		"/2019-09-30/functions/cfn-lambda-configured/concurrency", nil)
 	defer removedConcurrencyResp.Body.Close()
-	helpers.AssertStatus(t, removedConcurrencyResp, http.StatusNotFound)
-	helpers.AssertJSONError(t, removedConcurrencyResp, "ResourceNotFoundException")
+	helpers.AssertStatus(t, removedConcurrencyResp, http.StatusOK)
+	var removedConcurrency struct {
+		ReservedConcurrentExecutions *int `json:"ReservedConcurrentExecutions"`
+	}
+	helpers.DecodeJSON(t, removedConcurrencyResp, &removedConcurrency)
+	if removedConcurrency.ReservedConcurrentExecutions != nil {
+		t.Errorf("ReservedConcurrentExecutions = %d after the property was removed, want the member absent",
+			*removedConcurrency.ReservedConcurrentExecutions)
+	}
 }
 
 const lambdaNegativeConcurrencyTemplate = `{

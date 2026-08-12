@@ -29,8 +29,18 @@ type putFunctionConcurrencyRequest struct {
 	ReservedConcurrentExecutions *int `json:"ReservedConcurrentExecutions"`
 }
 
+// functionConcurrencyResponse is the body of PutFunctionConcurrency and
+// GetFunctionConcurrency.
+//
+// The member is a pointer because AWS does not mark it required: a function
+// with no reservation answers 200 with an empty document. It must not become a
+// zero on the way out — zero is a reservation in its own right, AWS's
+// documented way to switch a function off, and the one place Overcast really
+// does throttle (see AGENTS.md § Non-goals). `omitempty` on a pointer keys off
+// nil rather than the pointed-to value, so a reservation of 0 is still
+// reported.
 type functionConcurrencyResponse struct {
-	ReservedConcurrentExecutions int `json:"ReservedConcurrentExecutions"`
+	ReservedConcurrentExecutions *int `json:"ReservedConcurrentExecutions,omitempty"`
 }
 
 type putProvisionedConcurrencyRequest struct {
@@ -175,7 +185,9 @@ func (h *Handler) PutFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	protocol.WriteRESTJSON(w, r, http.StatusOK, functionConcurrencyResponse{ReservedConcurrentExecutions: *req.ReservedConcurrentExecutions})
+	// PutFunctionConcurrency echoes what it was given, and AWS models the
+	// request and the response as the same single-member shape.
+	protocol.WriteRESTJSON(w, r, http.StatusOK, functionConcurrencyResponse(req))
 }
 
 // GetFunctionConcurrency handles GET /2019-09-30/functions/{name}/concurrency.
@@ -197,17 +209,13 @@ func (h *Handler) GetFunctionConcurrency(w http.ResponseWriter, r *http.Request)
 		})
 		return
 	}
-	if fn.ReservedConcurrency == nil {
-		protocol.WriteJSONError(w, r, &protocol.AWSError{
-			Code:       "ResourceNotFoundException",
-			Message:    "No concurrency configured for function: " + name,
-			HTTPStatus: http.StatusNotFound,
-		})
-		return
-	}
-
+	// A function with no reservation is not a missing resource: AWS answers 200
+	// with an empty document, and the operation's ResourceNotFoundException is
+	// for the function itself (handled above). Answering 404 here made an SDK
+	// client asking "does this function reserve concurrency?" catch an
+	// exception instead of reading the answer.
 	protocol.WriteRESTJSON(w, r, http.StatusOK, functionConcurrencyResponse{
-		ReservedConcurrentExecutions: *fn.ReservedConcurrency,
+		ReservedConcurrentExecutions: fn.ReservedConcurrency,
 	})
 }
 

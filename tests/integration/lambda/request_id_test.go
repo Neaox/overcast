@@ -40,15 +40,6 @@ func TestLambdaSuccessResponses_carryARequestID(t *testing.T) {
 	helpers.AssertStatus(t, alias, http.StatusCreated)
 	alias.Body.Close()
 
-	// GetFunctionConcurrency answers 404 for a function that has never had any,
-	// so give this one a reservation — the subject here is the success
-	// response, not what an unconfigured read does.
-	concurrency := doJSON(t, http.MethodPut, srv.URL+"/2017-10-31/functions/request-id-fn/concurrency", map[string]any{
-		"ReservedConcurrentExecutions": 1,
-	})
-	helpers.AssertStatus(t, concurrency, http.StatusOK)
-	concurrency.Body.Close()
-
 	// When: each family's read operation is called.
 	// Paths are absolute, not lambdaURL-relative: Lambda's operations are spread
 	// across nine dated bases, and only the /2015-03-31 ones are the function

@@ -5371,7 +5371,7 @@ func TestGetFunctionConcurrency_success(t *testing.T) {
 	}
 }
 
-func TestGetFunctionConcurrency_notSet_returns404(t *testing.T) {
+func TestGetFunctionConcurrency_notSet_returnsEmptyBody(t *testing.T) {
 	// Given a function with no reserved concurrency
 	srv := helpers.NewTestServer(t)
 	createFunction(t, srv, "concurrency-notset-fn")
@@ -5380,8 +5380,11 @@ func TestGetFunctionConcurrency_notSet_returns404(t *testing.T) {
 	resp := doJSON(t, http.MethodGet, getConcurrencyURL(srv, "concurrency-notset-fn"), nil)
 	defer resp.Body.Close()
 
-	// Then 404 ResourceNotFoundException
-	helpers.AssertStatus(t, resp, http.StatusNotFound)
+	// Then 200 with no ReservedConcurrentExecutions, which is what AWS answers.
+	// This case used to assert 404: the operation does model
+	// ResourceNotFoundException, but for the function rather than for its
+	// reservation. reserved_concurrency_test.go owns the detail.
+	helpers.AssertStatus(t, resp, http.StatusOK)
 }
 
 func TestDeleteFunctionConcurrency_success(t *testing.T) {
@@ -5401,10 +5404,12 @@ func TestDeleteFunctionConcurrency_success(t *testing.T) {
 	// Then 204 No Content
 	helpers.AssertStatus(t, resp2, http.StatusNoContent)
 
-	// And GetFunctionConcurrency now returns 404
+	// And GetFunctionConcurrency reports no reservation — 200 with an empty
+	// document, as AWS answers. reserved_concurrency_test.go asserts that the
+	// member is genuinely absent rather than reported as a zero.
 	resp3 := doJSON(t, http.MethodGet, getConcurrencyURL(srv, "concurrency-del-fn"), nil)
 	defer resp3.Body.Close()
-	helpers.AssertStatus(t, resp3, http.StatusNotFound)
+	helpers.AssertStatus(t, resp3, http.StatusOK)
 }
 
 // TestReservedConcurrency_awsPaths_doNotFallThroughToS3 pins the routing

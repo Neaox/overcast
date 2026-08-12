@@ -887,7 +887,7 @@
           "operation": "GetFunctionConcurrency",
           "category": "Concurrency \u0026 configuration",
           "status": "✅ Supported",
-          "notes": "Returns 404 if no concurrency limit is set"
+          "notes": "A function with no reservation answers 200 with an empty body, as on AWS; a reservation of 0 is reported rather than omitted, since 0 is the documented way to switch a function off. ResourceNotFoundException is for the function itself"
         },
         {
           "operation": "DeleteFunctionConcurrency",

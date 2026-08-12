@@ -177,6 +177,7 @@ findings:
     - Lambda resource-policy AddPermission, GetPolicy, and RemovePermission support race-safe AWS::Lambda::Permission create/delete orchestration; AddPermission remains reported unsupported until invocation authorization is enforced (#629).
     - CreateFunction and UpdateFunctionCode/Configuration preserve Architectures, VpcConfig including Ipv6AllowedForDualStack, ImageConfig, and FileSystemConfigs.
     - PutFunctionConcurrency rejects negative ReservedConcurrentExecutions with InvalidParameterValueException instead of storing an invalid throttle limit.
+    - GetFunctionConcurrency answers 200 with an empty body for a function that has no reservation, as AWS does, rather than 404 ResourceNotFoundException; a reservation of 0 is still reported, so "switched off" stays distinguishable from "unset". Tests in tests/integration/lambda/reserved_concurrency_test.go.
     - DeadLetterConfig is accepted by CreateFunction and UpdateFunctionConfiguration and acted on: a failed asynchronous invocation is delivered to the target SQS queue or SNS topic with the original event as the body and AWS's RequestID/ErrorCode/ErrorMessage message attributes.
   remaining_gaps:
     - Finish CreateFunction Publish=true and advanced optional configuration review.

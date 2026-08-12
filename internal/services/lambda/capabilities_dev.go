@@ -114,7 +114,7 @@ func init() {
 		capabilities.Capability{Service: "lambda", Operation: "PutFunctionConcurrency", Category: "Concurrency & configuration",
 			Status: capabilities.StatusSupported, Notes: "Enforced: over-limit invokes get 429 TooManyRequestsException; 0 throttles the function entirely"},
 		capabilities.Capability{Service: "lambda", Operation: "GetFunctionConcurrency", Category: "Concurrency & configuration",
-			Status: capabilities.StatusSupported, Notes: "Returns 404 if no concurrency limit is set"},
+			Status: capabilities.StatusSupported, Notes: "A function with no reservation answers 200 with an empty body, as on AWS; a reservation of 0 is reported rather than omitted, since 0 is the documented way to switch a function off. ResourceNotFoundException is for the function itself"},
 		capabilities.Capability{Service: "lambda", Operation: "DeleteFunctionConcurrency", Category: "Concurrency & configuration",
 			Status: capabilities.StatusSupported, Notes: "Clears reserved concurrency limit; returns 204"},
 		capabilities.Capability{Service: "lambda", Operation: "PutProvisionedConcurrencyConfig", Category: "Concurrency & configuration",
