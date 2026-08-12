@@ -25,6 +25,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -114,6 +115,46 @@ func TestHybridStore_ListMerged_SnapshotsOverlayBeforeBaseRead(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != key {
 		t.Fatalf("listMerged across a mid-read flush = %v, want exactly [%s]", got, key)
+	}
+}
+
+// TestHybridStore_ScanAndList_HonourShorterPrefixTombstone guards the
+// narrowing in snapshotOverlayLocked: the dirty/flushing entries it copies are
+// filtered to namespace+prefix, but prefix tombstones deliberately are not.
+// A tombstone shadows the keys UNDER its prefix, so one recorded at "a/"
+// covers a scan of "a/b/" — filtering tombstones the same way as keys would
+// drop the deletion and resurrect every key beneath it.
+func TestHybridStore_ScanAndList_HonourShorterPrefixTombstone(t *testing.T) {
+	s := newFlushControlledHybridStore(t)
+	ctx := context.Background()
+
+	const namespace = "s3:objects"
+	for i := 0; i < 5; i++ {
+		if err := s.Set(ctx, namespace, fmt.Sprintf("a/b/k-%d", i), "v"); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	if err := s.flush(ctx); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if err := s.DeletePrefix(ctx, namespace, "a/"); err != nil {
+		t.Fatalf("DeletePrefix: %v", err)
+	}
+
+	pairs, err := s.Scan(ctx, namespace, "a/b/")
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(pairs) != 0 {
+		t.Fatalf("Scan(%q) after DeletePrefix(%q) = %+v, want empty", "a/b/", "a/", pairs)
+	}
+
+	keys, err := s.List(ctx, namespace, "a/b/")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("List(%q) after DeletePrefix(%q) = %v, want empty", "a/b/", "a/", keys)
 	}
 }
 

@@ -1188,37 +1188,46 @@ func (snap hybridOverlaySnapshot) resolve(namespace, key string) (dirtyEntry, bo
 }
 
 // snapshotOverlayLocked builds a hybridOverlaySnapshot for namespace+prefix,
-// restricted to overlay entries newer than startAfter. Copies the full
-// dirty/flushing maps and tombstone lists (bounded by the configured
-// dirty-flush thresholds, not by namespace size — see
-// hybridScanPageMerged's doc comment) rather than trying to filter
-// client-side per source map, since a straightforward point-in-time copy is
-// what makes it safe to release s.mu before hybridScanPageMerged's walk
-// begins.
+// restricted to overlay entries newer than startAfter.
+//
+// Only the entries under namespace+prefix are copied, not the whole overlay.
+// resolve() is never called with anything else — every key a caller resolves
+// comes either from a base read already scoped to namespace+prefix or from
+// snap.newKeys, which is filtered here — so the copy is exactly equivalent
+// and the cost of a snapshot scales with the slice of the overlay the caller
+// can actually observe rather than with unrelated write traffic. That matters
+// because Scan/List take a snapshot per call: copying the whole overlay made
+// a ten-key prefix scan allocate 936 KB when 9k unrelated entries happened to
+// be unflushed, against 18 KB for the same scan pre-snapshot.
+//
+// Prefix tombstones are the exception and are copied for the whole namespace:
+// a tombstone shadows keys UNDER its prefix, so one recorded at "a/" covers a
+// scan of "a/b/" and filtering them by the scan prefix would silently drop
+// the deletion. There is one per DeletePrefix call rather than one per key,
+// so the list is short.
+//
+// Copying under s.mu — rather than filtering against live maps later — is
+// still what makes it safe to release the lock before the (potentially slow,
+// multi-round-trip) base read that follows.
 func (s *HybridStore) snapshotOverlayLocked(namespace, prefix, startAfter string) hybridOverlaySnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	snap := hybridOverlaySnapshot{
-		dirty:              make(map[string]dirtyEntry, len(s.dirty)),
-		flushing:           make(map[string]dirtyEntry, len(s.flushing)),
-		tombstones:         append([]prefixTombstone(nil), s.tombstones...),
-		flushingTombstones: append([]prefixTombstone(nil), s.flushingTombstones...),
-	}
-	for k, v := range s.dirty {
-		snap.dirty[k] = v
-	}
-	for k, v := range s.flushing {
-		snap.flushing[k] = v
+		dirty:              make(map[string]dirtyEntry),
+		flushing:           make(map[string]dirtyEntry),
+		tombstones:         copyNamespaceTombstones(s.tombstones, namespace),
+		flushingTombstones: copyNamespaceTombstones(s.flushingTombstones, namespace),
 	}
 
 	seen := make(map[string]struct{})
-	collect := func(m map[string]dirtyEntry) {
-		for composite := range m {
+	collect := func(src, dst map[string]dirtyEntry) {
+		for composite, entry := range src {
 			ns, key := splitStoreKey(composite)
 			if ns != namespace || !strings.HasPrefix(key, prefix) {
 				continue
 			}
+			dst[composite] = entry
 			if startAfter != "" && key <= startAfter {
 				continue
 			}
@@ -1229,10 +1238,23 @@ func (s *HybridStore) snapshotOverlayLocked(namespace, prefix, startAfter string
 			snap.newKeys = append(snap.newKeys, key)
 		}
 	}
-	collect(s.dirty)
-	collect(s.flushing)
+	collect(s.dirty, snap.dirty)
+	collect(s.flushing, snap.flushing)
 	sort.Strings(snap.newKeys)
 	return snap
+}
+
+// copyNamespaceTombstones returns the prefix tombstones recorded against one
+// namespace. See snapshotOverlayLocked for why these are not also filtered by
+// the scan prefix.
+func copyNamespaceTombstones(tombstones []prefixTombstone, namespace string) []prefixTombstone {
+	var out []prefixTombstone
+	for _, t := range tombstones {
+		if t.namespace == namespace {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // WaitReady blocks until the background SQLite open and migration has
