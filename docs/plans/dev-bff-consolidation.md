@@ -44,7 +44,7 @@ Both fixes were "mirror the change into the second implementation" — i.e., mor
 
 Small, but it closes the loop:
 
-- **Docs heading slugs:** `internal/router/advisories.go` ships a fragment (`#data-dir-placement-…`) computed by `web/src/routes/docs.tsx`'s `slug()`. Add a web test asserting `slug("Data dir placement — avoid host bind mounts on Docker Desktop")` equals the exact Go constant (import the string via a tiny fixture or duplicate-with-test — the test IS the pairing). Any future advisory fragment gets added to the same table test.
+- **Docs heading slugs:** `internal/router/advisories.go` ships a fragment (`#data-dir-placement-…`) computed by `web/src/routes/docs.tsx`'s `slug()`. **Still open, and now half-covered:** `scripts/docs-index.go --check` (run by `make docs-check`) validates every in-page anchor a *published doc* writes against the real heading ids — that gate caught four GitHub-shaped anchors and one anchor to a since-renamed heading. It cannot see the advisory constant, which is a Go string rather than a Markdown link, so the cross-language pairing itself is still pinned by nothing. Add a web test asserting `slug("Data dir placement — avoid host bind mounts on Docker Desktop")` equals the exact Go constant (import the string via a tiny fixture or duplicate-with-test — the test IS the pairing). Any future advisory fragment gets added to the same table test.
 - **Path strings** in the web client (`API_BASE + "/debug/metrics"` etc.): deliberately NOT generated or pinned. Post-B1 they fail loudly in dev (real 404 from the real BFF on first render), which is the cheap, honest guard.
 
 ## 3. What deliberately stays out

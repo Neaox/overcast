@@ -41,7 +41,7 @@ implemented, the DNS story that makes it work locally, and the tradeoffs.
 | AppSync (GraphQL)         | `{apiId}.appsync-api.{region}.{base}/graphql`     | Also reachable at `/realtime` on the same host — Overcast colocates the GraphQL and realtime endpoints. |
 | AppSync (subscriptions)   | `{apiId}.appsync-realtime-api.{region}.{base}`    | The host real AWS serves subscriptions on, and the one Amplify derives by substituting into the GraphQL URL. Routes to the same endpoint as `/realtime` above. |
 | CloudFront                | `{distributionId}.cloudfront.{base}`              | Global, so there is no region segment. `DomainName` is minted on the hostname you reached Overcast on rather than the literal `cloudfront.net`. |
-| S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...` or `{bucket}.{base}/...` | Both forms are supported. The second is what an AWS SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses. See [sdk-cli.md](./sdk-cli.md#s3-path-style-addressing) and [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows). |
+| S3 (virtual-hosted style) | `{bucket}.s3[.{region}].{base}/...` or `{bucket}.{base}/...` | Both forms are supported. The second is what an AWS SDK emits against a custom endpoint with path-style disabled, and the only form CDK's asset publisher uses. See [sdk-cli.md](./sdk-cli.md#s3-addressing-styles) and [cdk.md](./cdk.md#s3-asset-upload-fails-on-windows). |
 
 Every Host-routed request is rewritten internally onto the same handlers
 path-style requests use, so behavior (authorizers, stage variables,
@@ -226,7 +226,7 @@ services:
 With this configuration, `CreateFunctionUrlConfig` returns URLs like
 `http://a1b2c3....lambda-url.us-east-1.localhost.overcast.sh:4566/`, which
 resolve via public DNS to `127.0.0.1` and route straight back into this same
-container — see [performance.md](./performance.md#data-dir-placement--avoid-host-bind-mounts-on-docker-desktop)
+container — see [performance.md](./performance.md#data-dir-placement-avoid-host-bind-mounts-on-docker-desktop)
 for the matching `docker compose` pattern for the `/data` volume.
 
 ---
