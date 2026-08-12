@@ -60,7 +60,7 @@ migration is still in flight are rejected by the `NotReady` middleware
 ([internal/middleware/notready.go](../../internal/middleware/notready.go)) with a 503
 `ServiceUnavailable` response (the real AWS error code, which AWS SDKs already retry
 automatically) plus a `Retry-After: 2` header — in the service's own wire format (XML for S3,
-JSON elsewhere). Overcast's own `/_`-prefixed endpoints (`/_health`, `/_debug/*`, …) are exempt,
+JSON elsewhere). Overcast's own `/_`-prefixed endpoints (`/_overcast/health`, `/_debug/*`, …) are exempt,
 so operators can still check status while a long migration (the `VACUUM` above) runs.
 
 The middleware exists because of what each backend would otherwise do in this window — worth
@@ -205,7 +205,7 @@ entry. The same tolerance applies to `wal` mode's log replay.
 **Degraded mode (unopenable/corrupt database): degrade, don't poison.** If the SQLite file
 can't be opened, migrated, or seeded, the store logs loudly once and continues **memory-only**
 for the rest of the process lifetime: reads and writes keep working, flushes are skipped, and
-`PersistentHealth` reports unhealthy (surfaced via `/_health`). The pending log keeps
+`PersistentHealth` reports unhealthy (surfaced via `/_overcast/health`). The pending log keeps
 appending so a restart can replay — but with flushes gone, nothing ever compacts it, so its
 growth is hard-capped at 64 MiB; past the cap, writes are memory-only for the rest of the run
 and a one-time warning is logged. One corrupt *row* (as opposed to a corrupt file) never

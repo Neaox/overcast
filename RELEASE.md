@@ -370,7 +370,7 @@ For an alpha release:
    collide with your own instance on 4566/4567:
    ```sh
    docker run --rm -d --name overcast-smoke -p 4576:4566 -p 4577:4567 ghcr.io/neaox/overcast-slim:<version>
-   curl -sf http://localhost:4576/_health
+   curl -sf http://localhost:4576/_overcast/health
 
    # It is a *slim* image only if both of these hold. /_mcp is registered in
    # !slim builds only, so anything but 404 means the console binary shipped

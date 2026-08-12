@@ -111,7 +111,7 @@ const InternalPrefix = "/_overcast/"
 // listener).
 //
 // The returned preShutdown function must be called BEFORE http.Server.Shutdown
-// to unblock long-lived handlers (e.g. the SSE /_events endpoint).
+// to unblock long-lived handlers (e.g. the SSE /_overcast/events endpoint).
 func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Clock, hookRunner ...*inithooks.Runner) (handler http.Handler, preShutdown func(), cleanup func(context.Context), waitReady func()) {
 	prof := newStartupProfiler()
 
@@ -119,7 +119,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	var cleanups []func()
 
 	// shutdownCh is closed during pre-shutdown to unblock long-lived handlers
-	// (e.g. the SSE /_events endpoint) so http.Server.Shutdown can complete
+	// (e.g. the SSE /_overcast/events endpoint) so http.Server.Shutdown can complete
 	// without waiting for the full ShutdownTimeout.
 	shutdownCh := make(chan struct{})
 	preShutdown = sync.OnceFunc(func() { close(shutdownCh) })
@@ -238,24 +238,24 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	bus = events.NewBus()
 
 	// ---- SSE event stream (always available) --------------------------------
-	// GET /_events?source=s3 — streams all internal events to connected clients.
-	r.Get("/_events", eventsHandler(bus, logger, clk, shutdownCh))
-	r.Get("/_events/request/{requestId}", eventsByRequestHandler(bus))
+	// GET /_overcast/events?source=s3 — streams all internal events to connected clients.
+	r.Get("/_overcast/events", eventsHandler(bus, logger, clk, shutdownCh))
+	r.Get("/_overcast/events/request/{requestId}", eventsByRequestHandler(bus))
 
 	// ---- Custom domain registry (always available) -------------------------
 	// Tracks API Gateway / CloudFront custom domain names and streams changes
 	// to the host CLI (overcast dev) so it can drive mDNS publishing.
 	domainReg := domainregistry.New()
-	r.Get("/_internal/domains/watch", domainsWatchHandler(domainReg, logger, shutdownCh))
+	r.Get("/_overcast/domains/watch", domainsWatchHandler(domainReg, logger, shutdownCh))
 
 	// ---- Runtime metrics (always available) ---------------------------------
-	// GET /_metrics — returns a snapshot of Go runtime memory/GC/goroutine stats.
-	r.Get("/_metrics", metricsHandler())
+	// GET /_overcast/metrics — returns a snapshot of Go runtime memory/GC/goroutine stats.
+	r.Get("/_overcast/metrics", metricsHandler())
 
 	// ---- Server info (always available) -------------------------------------
-	// GET /_/info — returns the server's configured region and account ID.
+	// GET /_overcast/info — returns the server's configured region and account ID.
 	// Used by the web UI to seed the region selector on first load.
-	r.Get("/_/info", newInfoHandler(cfg))
+	r.Get("/_overcast/info", newInfoHandler(cfg))
 	prof.mark("bus + SSE + internal routes")
 
 	// Smithy RPC v2 requests use /service/{Service}/operation/{Operation}.
@@ -989,10 +989,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 	}
 
-	r.Get("/_health", newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers, dockerStatusFn))
+	r.Get("/_overcast/health", newHealthHandler(cfg, store, enabledServiceNames, enabledTiers, enabledGoalTiers, dockerStatusFn))
 
-	// GET /_topology — full cross-region resource graph for the system map.
-	r.Get("/_topology", newTopologyHandler(cfg, store))
+	// GET /_overcast/topology — full cross-region resource graph for the system map.
+	r.Get("/_overcast/topology", newTopologyHandler(cfg, store))
 
 	// Register POST / handler for AWS target and query-protocol dispatch. The
 	// generated registry also owns modeled operations when no configured service

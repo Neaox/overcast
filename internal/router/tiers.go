@@ -24,7 +24,7 @@ const (
 //
 // Every registered service must appear here: New falls back to TierStub for
 // anything missing, so an omission silently reports a working service as
-// "stub" in /_health. TestServiceTiers_coverEveryRegisteredService enforces it.
+// "stub" in /_overcast/health. TestServiceTiers_coverEveryRegisteredService enforces it.
 var ServiceTiers = map[string]EmulationTier{
 	// Full — P1+P2 complete
 	"s3":     TierFull,

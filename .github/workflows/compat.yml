@@ -446,7 +446,7 @@ jobs:
         if: env.RUN_SUITES == 'true'
         run: |
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:4566/_health > /dev/null; then
+            if curl -sf http://localhost:4566/_overcast/health > /dev/null; then
               echo "Overcast ready (attempt $i)"
               exit 0
             fi

@@ -1,5 +1,5 @@
 /**
- * useMetrics — polls /_metrics every POLL_INTERVAL_MS and accumulates a
+ * useMetrics — polls /_overcast/metrics every POLL_INTERVAL_MS and accumulates a
  * rolling history of snapshots for rendering sparklines.
  */
 import { useState, useEffect, useCallback, useRef } from "react"

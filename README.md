@@ -173,7 +173,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock # required for Lambda, ECS, RDS, EC2
       - overcast-data:/data # mounting this is what makes auto resolve to hybrid
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:4566/_health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:4566/_overcast/health"]
       interval: 5s
       timeout: 3s
       retries: 5

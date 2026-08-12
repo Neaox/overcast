@@ -92,9 +92,9 @@ func TestCFN_APIGateway_TopologyRegion(t *testing.T) {
 	}
 
 	// Fetch topology.
-	topoResp, err := http.Get(srv.URL + "/_topology")
+	topoResp, err := http.Get(srv.URL + "/_overcast/topology")
 	if err != nil {
-		t.Fatalf("GET /_topology: %v", err)
+		t.Fatalf("GET /_overcast/topology: %v", err)
 	}
 	defer topoResp.Body.Close()
 	topoBody, _ := io.ReadAll(topoResp.Body)

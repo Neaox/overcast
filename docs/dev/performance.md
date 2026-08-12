@@ -19,7 +19,7 @@ For each claim, document at minimum:
 1. **What is measured** — the exact metric (wall-clock startup, heap allocated,
    RSS, image size, p99 latency, etc.).
 2. **How it is measured** — tool, command, or code path that produces the
-   number (e.g. `/_metrics` endpoint, `runtime.MemStats`, `docker images`,
+   number (e.g. `/_overcast/metrics` endpoint, `runtime.MemStats`, `docker images`,
    `go test -bench`).
 3. **Environment** — OS, architecture, Go version, container vs bare-metal,
    number of enabled services, store backend, and any other variable that
@@ -35,7 +35,7 @@ For each claim, document at minimum:
 end of `router.New()` in `internal/router/router.go`. This is the Go-side
 startup budget: runtime/package init after the earliest best-effort Go
 timestamp plus config, store construction, service construction, routing,
-and cross-service wiring. `/_metrics` also reports `pre_init_ms`, measured
+and cross-service wiring. `/_overcast/metrics` also reports `pre_init_ms`, measured
 from the OS-reported process creation time (`GetProcessTimes` on Windows,
 `/proc` on Linux, `sysctl` on macOS) to `goStartTime`.
 
@@ -60,10 +60,10 @@ runs on first use), SMTP mock server bind (goroutine), HybridStore
 SQLite→memory seeding (goroutine), ECS built-in capacity-provider seeding
 (lazy, runs on first capacity-provider request), and API Gateway
 domain-registry hydration (lazy, runs on first domain-name request).
-Reported via `GET /_metrics`.
+Reported via `GET /_overcast/metrics`.
 
 **Idle memory (`sys_bytes`, `heap_alloc_bytes`):**
-Captured from `runtime.MemStats` via `GET /_metrics` after startup, before
+Captured from `runtime.MemStats` via `GET /_overcast/metrics` after startup, before
 any client requests. `sys_bytes` is total memory obtained from the OS
 (≈ RSS). `heap_alloc_bytes` is live heap objects only.
 
@@ -249,7 +249,7 @@ go run ./scripts/bench-startup.go -n 10 -threshold 50 -v
 ```
 
 The script builds overcast, spawns it with a clean data dir for each
-backend, polls `/_metrics`, kills the process, and prints a summary table:
+backend, polls `/_overcast/metrics`, kills the process, and prints a summary table:
 
 ```
 Backend       p50       p95       max      mean  │  int-p50  heap-p50   sys-p50
@@ -271,7 +271,7 @@ Exits non-zero if any backend's p50 wall time exceeds `-threshold`
 3. Measure 10 cold starts and record p50/max:
    `for i in $(seq 1 10); do rm -rf /tmp/overcast-$i && \
 OVERCAST_DATA_DIR=/tmp/overcast-$i ./bin/overcast serve & \
-sleep 0.5 && curl -s localhost:4566/_metrics | \
+sleep 0.5 && curl -s localhost:4566/_overcast/metrics | \
 jq .startup_duration_ms && kill $!; done`
 4. If p50 increased by >5 ms, identify which phase owns the regression
    and apply one of the patterns above. **Do not merge a change that

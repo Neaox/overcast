@@ -1,6 +1,6 @@
 # One namespace for every non-canonical URL: `/_overcast/`
 
-> Status: **in progress** — phases 0, 0b and 1 done; no routes have moved yet.
+> Status: **in progress** — phases 0, 0b, 1 and 2 done.
 > The rule is enforced from phase 1 onward by
 > `TestNoRouteIsRegisteredOutsideTheNamespace`, against the `unmigratedRoutes`
 > ratchet that phases 2–6 empty. Open questions all decided (§4.3, §8).
@@ -45,22 +45,23 @@ against every `/_`-literal in the tree.
 
 | Current | Registered at | Target |
 | --- | --- | --- |
-| `GET /_health` | [router.go:974](../../internal/router/router.go) | `/_overcast/health` |
-| `GET /_metrics` | [router.go:235](../../internal/router/router.go) | `/_overcast/metrics` |
-| `GET /_topology` | [router.go:977](../../internal/router/router.go) | `/_overcast/topology` |
-| `GET /_/info` | [router.go:240](../../internal/router/router.go) | `/_overcast/info` |
-| `GET /_events` | [router.go:224](../../internal/router/router.go) | `/_overcast/events` |
-| `GET /_events/request/{requestId}` | [router.go:225](../../internal/router/router.go) | `/_overcast/events/request/{requestId}` |
-| `GET /_internal/domains/watch` | [router.go:231](../../internal/router/router.go) | `/_overcast/domains/watch` |
+| ~~`/_health`~~ | ✅ phase 2 | `/_overcast/health` |
+| ~~`/_metrics`~~ | ✅ phase 2 | `/_overcast/metrics` |
+| ~~`/_topology`~~ | ✅ phase 2 | `/_overcast/topology` |
+| ~~`/_/info`~~ | ✅ phase 2 | `/_overcast/info` |
+| ~~`/_events`~~ | ✅ phase 2 | `/_overcast/events` |
+| ~~`/_events/request/{requestId}`~~ | ✅ phase 2 | `/_overcast/events/request/{requestId}` |
+| ~~`/_internal/domains/watch`~~ | ✅ phase 2 | `/_overcast/domains/watch` |
 | `/_debug` + `/_debug/*` (only when `cfg.Debug`) | [router.go:275](../../internal/router/router.go) | `/_overcast/debug/*` |
 | `/_mcp` + `/_mcp/*` (excluded by `slim`) | [mcp_routes.go:47](../../internal/router/mcp_routes.go) | `/_overcast/mcp` |
 | `GET /_overcast/init`, `/_overcast/init/{stage}` | [router.go:204](../../internal/router/router.go) | unchanged |
 | `GET /_overcast/ca.pem` | [trust/remote.go:35](../../internal/hostbridge/trust/remote.go) | unchanged |
 | `/_overcast/inbox/*` | [router.go:577](../../internal/router/router.go) | `/_overcast/ses/inbox/*` — see §4.2 |
 
-`/_/info` is the sharpest illustration of the problem: it is the only route
-using a `/_/` root, it was named before any convention existed, and nothing
-today would catch a second one.
+`/_/info` was the sharpest illustration of the problem: the only route using a
+`/_/` root, named before any convention existed, and nothing would have caught
+a second one. Phase 2 moved it to `/_overcast/info`, and the gate would now
+refuse the shape outright.
 
 ### 2.2 Service-owned data plane
 
@@ -463,7 +464,7 @@ Two predicates depend on the second, and neither is a prefix test:
 | Predicate | Shape today | Decides |
 | --- | --- | --- |
 | [`trace.isInternalPath`](../../internal/trace/trace.go) | allowlist: 8 exact paths + `/_debug/*` | whether a request spends user-trace ring-buffer budget, and whether it shows in the trace UI |
-| [`middleware.isOperationalPollPath`](../../internal/middleware/logger.go) | allowlist: `/_health` + `/_debug*` | whether the request logs at TRACE instead of INFO |
+| [`middleware.isOperationalPollPath`](../../internal/middleware/logger.go) | allowlist: `/_overcast/health` + `/_debug*` | whether the request logs at TRACE instead of INFO |
 
 Everything **not** in those allowlists is treated as a real client's request —
 which today silently includes the whole emulated data plane, because those
@@ -554,7 +555,7 @@ One PR per phase; Go, web, docs and tests in the same commit.
 | **0** | ✅ **Done.** Fix the `/api` IAM bypass (§3.1). Standalone, failing test first. | Independent of the move, and a live hole. |
 | **0b** | ✅ **Done.** Pin the internal-vs-client-traffic classification in both allowlists, data-plane paths included (§5). No routes move. | The one regression in this plan that fails silently. Cheaper to write down before the move than to diagnose after it. |
 | **1** | ✅ **Done.** Gate 9 (§5) landed with every current violation in the `unmigratedRoutes` ratchet, plus `router.InternalPrefix`. No routes moved. | The rule is enforced from day one; every later phase shrinks the ratchet instead of racing it. |
-| **2** | Router roots: `/_health`, `/_metrics`, `/_topology`, `/_/info`, `/_events`, `/_internal/domains/watch`, plus `overcast-mcp`'s own `/_health`. Predicates, web, 4 healthchecks, `cmd/compat/launch.go`. | Highest-traffic, lowest-risk: no minted URLs. |
+| **2** | ✅ **Done.** Router roots: `/_health`, `/_metrics`, `/_topology`, `/_/info`, `/_events`, `/_internal/domains/watch`, plus `overcast-mcp`'s own `/_health`. Predicates, web, 4 healthchecks, `cmd/compat/launch.go`. | Highest-traffic, lowest-risk: no minted URLs. |
 | **3** | `/_debug/*` → `/_overcast/debug/*`; `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
 | **4** | Service admin: `/_lambda/*`, `/_ecs/*`, `/_rds/*`, and `/_overcast/inbox` → `/_overcast/ses/inbox`. | Console-only consumers. |
 | **5** | Service data plane: `/_apigateway`, `/_appsync`, `/_cloudfront`, `/_elb`, `/_lambda/url-invoke`, `/_cognito`. Rewrite sites, URL-minting code, `docs/networking.md`. | The only phase that changes URLs Overcast hands to callers. |

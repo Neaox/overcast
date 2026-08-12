@@ -17,7 +17,7 @@ func TestInfoHandlerIncludesDebugFlag(t *testing.T) {
 		Version:   "test-version",
 		Debug:     true,
 	})
-	req := httptest.NewRequest(http.MethodGet, "/_/info", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/info", nil)
 	rec := httptest.NewRecorder()
 
 	handler(rec, req)
@@ -40,7 +40,7 @@ func TestInfoHandlerIncludesDebugFlag(t *testing.T) {
 func TestInfoHandler_reportsIAMEnforcement(t *testing.T) {
 	// Given: the default configuration
 	handler := newInfoHandler(&config.Config{})
-	req := httptest.NewRequest(http.MethodGet, "/_/info", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/info", nil)
 	rec := httptest.NewRecorder()
 
 	// When: the info endpoint is called
@@ -60,7 +60,7 @@ func TestInfoHandler_reportsIAMEnforcement(t *testing.T) {
 	rec = httptest.NewRecorder()
 
 	// When/Then: the endpoint says so
-	handler(rec, httptest.NewRequest(http.MethodGet, "/_/info", nil))
+	handler(rec, httptest.NewRequest(http.MethodGet, "/_overcast/info", nil))
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestInfoHandler_reportsIAMEnforcement(t *testing.T) {
 	}
 }
 
-// TestHealthHandler_reportsAutoStateProvenance verifies that /_health's
+// TestHealthHandler_reportsAutoStateProvenance verifies that /_overcast/health's
 // storage.configured field distinguishes "what was configured" from
 // storage.default's "what backend is actually in effect" — the case that
 // matters is Default: memory, Configured: auto, which means the
@@ -84,7 +84,7 @@ func TestHealthHandler_reportsAutoStateProvenance(t *testing.T) {
 		StateSource:     config.StateSourceAuto,
 	}
 	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/_health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/health", nil)
 	rec := httptest.NewRecorder()
 
 	handler(rec, req)
@@ -108,7 +108,7 @@ func TestHealthHandler_reportsAutoStateProvenance(t *testing.T) {
 // nature of storage.configured: a Config built directly (not via
 // config.Load()) leaves StateConfigured at its zero value, and the field
 // must be omitted from the JSON response rather than emitted as "" — this is
-// the shape every pre-existing caller of /_health (and every test built
+// the shape every pre-existing caller of /_overcast/health (and every test built
 // against tests/helpers.NewTestServer, which constructs Config directly)
 // already expects, so it must not regress when this field was added.
 func TestHealthHandler_omitsConfiguredWhenNotPopulated(t *testing.T) {
@@ -118,7 +118,7 @@ func TestHealthHandler_omitsConfiguredWhenNotPopulated(t *testing.T) {
 		State:     config.StateBackendMemory,
 	}
 	handler := newHealthHandler(cfg, state.NewMemoryStore(), nil, nil, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/_health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/_overcast/health", nil)
 	rec := httptest.NewRecorder()
 
 	handler(rec, req)

@@ -22,7 +22,7 @@ export const healthHandlers = [
       services: ["s3", "sqs", "dynamodb", "lambda", "sns"],
     }),
   ),
-  http.get("http://localhost:4566/_/info", () =>
+  http.get("http://localhost:4566/_overcast/info", () =>
     HttpResponse.json({
       region: "us-east-1",
       account_id: "000000000000",

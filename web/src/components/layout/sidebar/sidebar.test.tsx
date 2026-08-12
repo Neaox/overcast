@@ -172,7 +172,7 @@ describe("Sidebar pins", () => {
   })
 
   // Availability is gone: every service always runs, so a pinned service is
-  // simply a link. Nothing is dimmed and nothing is inferred from /_health.
+  // simply a link. Nothing is dimmed and nothing is inferred from /_overcast/health.
   it("renders the pinned services as plain links", async () => {
     localStorage.setItem("overcast-favourites", JSON.stringify(["/s3", "/dynamodb"]))
 

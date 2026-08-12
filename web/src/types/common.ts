@@ -1,4 +1,4 @@
-/** Shape of a single event sent over the /_events SSE stream. */
+/** Shape of a single event sent over the /_overcast/events SSE stream. */
 export interface StreamEvent {
   type: string
   time: string // ISO-8601
@@ -21,7 +21,7 @@ export interface StartupPhase {
   environment?: boolean
 }
 
-/** Snapshot returned by GET /_metrics (Go runtime stats). */
+/** Snapshot returned by GET /_overcast/metrics (Go runtime stats). */
 export interface MetricsSnapshot {
   timestamp: string
   uptime: string

@@ -581,11 +581,11 @@ func containsEnv(env []string, want string) bool {
 func TestWaitForHealthReturnsOnceHealthy(t *testing.T) {
 	// Given: an instance that is unhealthy for its first few polls
 	// When: the launcher waits for it
-	// Then: it returns as soon as /_health answers 200, not on the first try
+	// Then: it returns as soon as /_overcast/health answers 200, not on the first try
 	var polls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/_health" {
-			t.Errorf("polled %q, want /_health", r.URL.Path)
+		if r.URL.Path != "/_overcast/health" {
+			t.Errorf("polled %q, want /_overcast/health", r.URL.Path)
 		}
 		if atomic.AddInt32(&polls, 1) < 3 {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -778,12 +778,12 @@ func TestResolveDockerSocketAcceptsARealSocketOnLinux(t *testing.T) {
 	}
 }
 
-// healthWithDocker serves /_health with a fixed body.
+// healthWithDocker serves /_overcast/health with a fixed body.
 func healthWithDocker(t *testing.T, body string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/_health" {
-			t.Errorf("polled %q, want /_health", r.URL.Path)
+		if r.URL.Path != "/_overcast/health" {
+			t.Errorf("polled %q, want /_overcast/health", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, body)
@@ -828,7 +828,7 @@ func TestDockerReportedIsUnavailableOnceTheProbeHasRun(t *testing.T) {
 
 func TestDockerReportedIsUnknownWithoutADockerSection(t *testing.T) {
 	// Given: an instance with no Docker-backed service configured at all, so
-	// /_health omits the section
+	// /_overcast/health omits the section
 	// When: the launcher asks
 	// Then: the answer is "unknown", and it comes back at once — there is
 	// nothing to report and nothing to skip, and polling for an answer that

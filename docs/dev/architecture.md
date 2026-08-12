@@ -76,7 +76,7 @@ An emulator that quietly does the wrong thing is worse than one that refuses.
 Overcast has three mechanisms for admitting what it does not do.
 
 **Service tiers.** Every service carries an overall tier, visible on
-`/_health` and in the web console:
+`/_overcast/health` and in the web console:
 
 | Tier | Meaning |
 |---|---|
@@ -531,7 +531,7 @@ contains hundreds of hops, which is the point: this is how you find out why
 something failed three services deep.
 
 Two other things worth trying while it is running: the console at
-<http://localhost:4567>, and `curl -N http://localhost:4566/_events`, which
+<http://localhost:4567>, and `curl -N http://localhost:4566/_overcast/events`, which
 streams internal events live as you make calls. Both are covered in
 [§10](#10-what-overcast-adds-on-top-of-aws).
 
@@ -1032,7 +1032,7 @@ visible through the AWS API, and the audience for it is **your** code.
 **The internal event bus** (`internal/events`) is Overcast's own plumbing, and
 nothing about it is an AWS concept. Services publish to it whenever something
 happens — an object was written, a container started, a message was delivered —
-and Overcast's own machinery subscribes: the console's live feed at `/_events`,
+and Overcast's own machinery subscribes: the console's live feed at `/_overcast/events`,
 the topology graph, trace correlation, and the handful of pipelines whose
 producer has no fixed consumer. The audience is **Overcast itself**.
 
@@ -1153,9 +1153,9 @@ The main additives:
   and — most usefully — every
   *internal service-to-service hop* it triggered. A CDK deploy fans out into
   hundreds of hops under one trace. Nothing in AWS gives you this.
-- **A live event stream** (`/_events`), server-sent, backing the console's
+- **A live event stream** (`/_overcast/events`), server-sent, backing the console's
   activity feed.
-- **A topology graph** (`/_topology`) of cross-service resource relationships.
+- **A topology graph** (`/_overcast/topology`) of cross-service resource relationships.
 - **The web console** on port 4567: per-service browsers and editors, the
   activity feed, the topology map, state inspection.
 - **The Inbox — capture for everything outbound.** Anything Overcast would
@@ -1182,7 +1182,7 @@ The main additives:
   structurally never has.
 - **An MCP server** at `/_mcp`, exposing instance state and a bounded set of
   actions to AI agents.
-- **Honesty surfaces**: per-service tiers on `/_health`, the
+- **Honesty surfaces**: per-service tiers on `/_overcast/health`, the
   `x-emulator-unsupported` header, and `/_debug/config` with secrets redacted.
 
 ---

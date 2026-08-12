@@ -63,7 +63,7 @@ function useEndpointValidation(baseUrl: string): ValidationState {
     queryKey: ["endpoint-validate", probeUrl],
     queryFn: async () => {
       try {
-        const res = await fetch(`${probeUrl}/_/info`)
+        const res = await fetch(`${probeUrl}/_overcast/info`)
         if (!res.ok) return { ok: false as const, error: `HTTP ${res.status}` }
         const json = (await res.json()) as { version?: string }
         if (!json.version) return { ok: false as const, error: "Not an Overcast endpoint" }

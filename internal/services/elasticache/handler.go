@@ -336,7 +336,7 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	// Docker is not available — leave the cluster in "creating".
-	// The /_health endpoint and web UI banner tell the user why.
+	// The /_overcast/health endpoint and web UI banner tell the user why.
 
 	h.publish(r, events.ElastiCacheClusterCreated, events.ResourcePayload{Name: id, ARN: arn})
 

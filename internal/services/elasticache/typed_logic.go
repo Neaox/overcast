@@ -531,7 +531,7 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 		}()
 	}
 	// Docker is not available — leave the cluster in "creating".
-	// The /_health endpoint and web UI banner tell the user why.
+	// The /_overcast/health endpoint and web UI banner tell the user why.
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheClusterCreated, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.CacheClusterId, ARN: arn}})
 	}
@@ -692,7 +692,7 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 		}()
 	}
 	// Docker is not available — leave the group in "creating".
-	// The /_health endpoint and web UI banner tell the user why.
+	// The /_overcast/health endpoint and web UI banner tell the user why.
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheReplicationGroupCreated, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.ReplicationGroupId, ARN: arn}})
 	}

@@ -42,7 +42,7 @@ type HandlerFunc func(ctx context.Context, e Event)
 // event is eventually delivered (no drops).
 //
 // Bus also owns a rolling History of recently published events (see
-// history.go) so that newly-connecting consumers — the SSE /_events
+// history.go) so that newly-connecting consumers — the SSE /_overcast/events
 // endpoint in particular — can replay recent activity instead of starting
 // from a blank slate. See SnapshotAndSubscribeAll.
 //
@@ -184,7 +184,7 @@ func (b *Bus) SubscribeAll(h HandlerFunc) (cancel func()) {
 // call is reflected in the returned snapshot only, and any Publish call
 // serialized after it is delivered to h only — never both, never neither.
 //
-// This is the primitive the SSE /_events endpoint uses to implement
+// This is the primitive the SSE /_overcast/events endpoint uses to implement
 // "replay history, then tail live" without a race window.
 func (b *Bus) SnapshotAndSubscribeAll(h HandlerFunc) (snapshot []Event, cancel func()) {
 	b.mu.Lock()

@@ -1,5 +1,5 @@
 /**
- * Topology route — thin proxy to the emulator's internal /_topology endpoint.
+ * Topology route — thin proxy to the emulator's internal /_overcast/topology endpoint.
  *
  * GET /api/topology[?region=us-east-1]
  *
@@ -23,7 +23,7 @@ topologyRoutes.get("/", async (c) => {
   const region = c.req.query("region")
   const qs = region ? `?region=${encodeURIComponent(region)}` : ""
 
-  const res = await fetch(`${endpoint.baseUrl}/_topology${qs}`)
+  const res = await fetch(`${endpoint.baseUrl}/_overcast/topology${qs}`)
   if (!res.ok) {
     return c.json({ error: "topology fetch failed" }, 502)
   }

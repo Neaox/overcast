@@ -4,7 +4,7 @@ import { server } from "@/test/server"
 import { MetricsPage } from "./metrics-page"
 import { metricsHealthKeys } from "./data"
 
-/** Minimal realistic GET /_metrics fixture — enough for MetricsPage to render past its loading state. */
+/** Minimal realistic GET /_overcast/metrics fixture — enough for MetricsPage to render past its loading state. */
 const metricsSnapshot = {
   timestamp: new Date().toISOString(),
   uptime: "5m0s",

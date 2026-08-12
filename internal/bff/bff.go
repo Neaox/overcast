@@ -120,12 +120,12 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Use(corsMiddleware)
 
 	// ── Simple JSON proxies ────────────────────────────────────────────────
-	r.Get("/api/health", proxyJSONHandler("/_health"))
+	r.Get("/api/health", proxyJSONHandler("/_overcast/health"))
 	// The daemon's CA certificate (PEM, public half only) — mirrored on the
 	// UI origin for symmetry with the API's /_overcast/ca.pem, so either
 	// port can hand a browser or script the cert to trust.
 	r.Get("/api/ca.pem", handleCACert)
-	r.Get("/api/metrics", proxyJSONHandler("/_metrics"))
+	r.Get("/api/metrics", proxyJSONHandler("/_overcast/metrics"))
 	r.Get("/api/topology", handleTopology)
 	r.Get("/api/debug/state", handleDebugState)
 	r.Get("/api/debug/state/*", handleDebugNamespace)
@@ -401,7 +401,7 @@ func handleDebugTrace(w http.ResponseWriter, r *http.Request) {
 
 func handleDebugTraceEvents(w http.ResponseWriter, r *http.Request) {
 	requestID := chi.URLParam(r, "requestId")
-	proxyDebugJSON(w, r, "/_events/request/"+url.PathEscape(requestID))
+	proxyDebugJSON(w, r, "/_overcast/events/request/"+url.PathEscape(requestID))
 }
 
 func handleDebugTraces(w http.ResponseWriter, r *http.Request) {
@@ -639,7 +639,7 @@ func handleTopology(w http.ResponseWriter, r *http.Request) {
 	if region := r.URL.Query().Get("region"); region != "" {
 		qs = "?region=" + url.QueryEscape(region)
 	}
-	resp, err := doGet(r.Context(), ep+"/_topology"+qs)
+	resp, err := doGet(r.Context(), ep+"/_overcast/topology"+qs)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "topology fetch failed")
 		return
@@ -652,18 +652,18 @@ func handleTopology(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleEvents proxies the SSE stream from /_events. Supports endpoint and
+// handleEvents proxies the SSE stream from /_overcast/events. Supports endpoint and
 // region via query params (ep, region) in addition to headers, because
 // browsers cannot send custom headers with EventSource.
 func handleEvents(w http.ResponseWriter, r *http.Request) {
 	ep := resolveEndpointQP(r)
 
-	upstream := ep + "/_events"
+	upstream := ep + "/_overcast/events"
 	q := url.Values{}
 	for _, s := range r.URL.Query()["source"] {
 		q.Add("source", s)
 	}
-	// The resume point a reconnecting client sent, so /_events replays only
+	// The resume point a reconnecting client sent, so /_overcast/events replays only
 	// what the client is missing instead of its whole history buffer. It can
 	// arrive either way — see the Last-Event-ID handling in
 	// internal/router/events.go — and both have to survive this hop, since

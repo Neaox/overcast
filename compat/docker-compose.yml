@@ -64,7 +64,7 @@ services:
       # path (pairs with the /etc/hosts entry in the runner services below).
       OVERCAST_HOSTNAME: overcast
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:4566/_health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:4566/_overcast/health"]
       interval: 3s
       timeout: 2s
       retries: 20

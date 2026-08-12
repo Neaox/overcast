@@ -1,5 +1,5 @@
 /**
- * The shared `/_health` query.
+ * The shared `/_overcast/health` query.
  *
  * Every caller reads it through this one `queryOptions` so they hit the same
  * `["health"]` cache entry the connection gate has already populated, rather

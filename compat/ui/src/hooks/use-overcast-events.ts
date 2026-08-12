@@ -20,7 +20,7 @@ export function useOvercastEvents(endpoint: string, paused: boolean) {
     if (!endpoint) return;
     let url: string;
     try {
-      url = new URL("/_events", endpoint).toString();
+      url = new URL("/_overcast/events", endpoint).toString();
     } catch {
       return;
     }

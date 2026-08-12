@@ -4,7 +4,7 @@
  * Region fallback chain (highest to lowest priority):
  *   1. sessionStorage — per-tab explicit choice (region selector / ?region= param)
  *   2. localStorage   — last region used in any previous session
- *   3. server         — OVERCAST_DEFAULT_REGION from GET /_/info (seeded at startup)
+ *   3. server         — OVERCAST_DEFAULT_REGION from GET /_overcast/info (seeded at startup)
  *   4. static default — "us-east-1"
  *
  * The baseUrl and label are stored in localStorage and persist across tabs —
@@ -206,7 +206,7 @@ export function hasPersistedRegion(): boolean {
 }
 
 /**
- * Fetches the server's configured region from GET /_/info.
+ * Fetches the server's configured region from GET /_overcast/info.
  * Returns null on any network or parse error.
  */
 export async function fetchServerRegion(baseUrl: string): Promise<string | null> {
@@ -215,12 +215,12 @@ export async function fetchServerRegion(baseUrl: string): Promise<string | null>
 }
 
 /**
- * Fetches always-available server metadata from GET /_/info.
+ * Fetches always-available server metadata from GET /_overcast/info.
  * Returns null on any network or parse error.
  */
 export async function fetchServerInfo(baseUrl: string): Promise<ServerInfo | null> {
   try {
-    const res = await fetch(`${baseUrl}/_/info`)
+    const res = await fetch(`${baseUrl}/_overcast/info`)
     if (!res.ok) return null
     return (await res.json()) as ServerInfo
   } catch {

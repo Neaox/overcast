@@ -37,7 +37,7 @@ const TRACE: TraceSummary = {
 function captureTraceRequests(): string[] {
   const seen: string[] = []
   server.use(
-    http.get("http://localhost:4566/_/info", () =>
+    http.get("http://localhost:4566/_overcast/info", () =>
       HttpResponse.json({ region: "us-east-1", account_id: "000000000000", version: "test", debug: true }),
     ),
     http.get("/api/debug/traces/count", () => HttpResponse.json({ count: 1, capacity: 100 })),

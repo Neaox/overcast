@@ -9,7 +9,7 @@ import (
 )
 
 // StartupPhase records a single timed phase during server initialization.
-// Exposed via /_metrics to power the startup timeline visualisation in the web UI.
+// Exposed via /_overcast/metrics to power the startup timeline visualisation in the web UI.
 // StartMs is milliseconds since Go startup. Environment phases use the process-start anchor.
 type StartupPhase struct {
 	Name        string  `json:"name"`
@@ -134,7 +134,7 @@ func (p *startupProfiler) mark(phase string) {
 }
 
 // finalize seals the startup phase timeline into sealedPhases.
-// Called at the end of router.New so that /_metrics can expose the full
+// Called at the end of router.New so that /_overcast/metrics can expose the full
 // phase breakdown. Merges external phases (pre-router) with router phases.
 // Must be called from the same goroutine as mark() (i.e. inside router.New).
 func (p *startupProfiler) finalize() {

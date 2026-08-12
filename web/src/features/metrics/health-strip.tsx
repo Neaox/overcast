@@ -4,10 +4,10 @@
  * Combines two data sources so the strip degrades gracefully when
  * OVERCAST_DEBUG is off (the common case — see debugMetricsQueryOptions's
  * doc comment):
- * - GET /_health (always available): storage mode + healthy/degraded status.
+ * - GET /_overcast/health (always available): storage mode + healthy/degraded status.
  * - GET /_debug/metrics (debug-gated): live journal mode + last flush time.
  *
- * Uptime is passed in from the parent, which already polls GET /_metrics for
+ * Uptime is passed in from the parent, which already polls GET /_overcast/metrics for
  * the sparkline cards — no reason to fetch it a second time here.
  */
 import { useQuery } from "@tanstack/react-query"

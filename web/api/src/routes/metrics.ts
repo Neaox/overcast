@@ -6,7 +6,7 @@ export const metricsRoutes = new Hono()
 /**
  * GET /api/metrics
  *
- * Proxies /_metrics from the configured emulator endpoint and returns a
+ * Proxies /_overcast/metrics from the configured emulator endpoint and returns a
  * snapshot of Go runtime statistics (memory, GC, goroutines, uptime).
  */
 metricsRoutes.get("/", async (c) => {
@@ -15,7 +15,7 @@ metricsRoutes.get("/", async (c) => {
     [REGION_HEADER]: c.req.header(REGION_HEADER),
   })
 
-  const res = await fetch(`${endpoint.baseUrl}/_metrics`)
+  const res = await fetch(`${endpoint.baseUrl}/_overcast/metrics`)
   if (!res.ok) {
     return c.json({ error: "metrics fetch failed" }, 502)
   }

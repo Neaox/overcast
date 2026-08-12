@@ -84,24 +84,26 @@ var registeredRouteClassification = map[string]string{
 
 	// Emulator-internal paths. S3 bucket names cannot begin with "_", so these
 	// never reach the S3 fallback; internalService maps the known owners and
-	// calls the rest "internal". The multi-valued entries are directories with
-	// several owners under them (/_overcast/cognito, /_overcast/inbox, …).
-	"/_":           "internal",
+	// calls the rest "internal".
+	//
+	// These are collapsing into "/_overcast" as
+	// docs/plans/non-canonical-url-namespace.md runs. Phase 2 retired "/_",
+	// "/_internal", "/_health", "/_metrics", "/_topology" and "/_events" —
+	// which is why /_overcast now answers for more services than any other
+	// family and gains one whenever a phase lands. It is multi-valued because
+	// it is a directory with several owners under it (/_overcast/cognito,
+	// /_overcast/inbox, /_overcast/events, …), not because anything is
+	// ambiguous: internalService reads the owner from the second segment.
 	"/_apigateway": "internal",
 	"/_appsync":    "appsync",
 	"/_cloudfront": "cloudfront",
 	"/_cognito":    "cognito",
 	"/_ecs":        "ecs",
 	"/_elb":        "internal",
-	"/_events":     "events|internal",
-	"/_health":     "internal",
-	"/_internal":   "internal",
 	"/_lambda":     "lambda",
 	"/_mcp":        "internal",
-	"/_metrics":    "metrics",
-	"/_overcast":   "cognito|internal|secretsmanager|ses",
+	"/_overcast":   "cognito|events|internal|metrics|secretsmanager|ses",
 	"/_rds":        "internal",
-	"/_topology":   "internal",
 
 	// Undated literals the prefix switch claims. /applications is shared by
 	// AppConfig and AppRegistry; unsigned it resolves to AppRegistry, which

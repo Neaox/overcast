@@ -1,7 +1,7 @@
 package main
 
 // cmd_bridge.go — `overcast bridge`. Runs the host-side bridge: connects to
-// overcast's /_internal/domains/watch SSE feed, publishes fixed mDNS records
+// overcast's /_overcast/domains/watch SSE feed, publishes fixed mDNS records
 // for overcast.local and overcast-app.local, starts a port-80 reverse proxy,
 // and drives the bridge until the user hits ^C.
 //

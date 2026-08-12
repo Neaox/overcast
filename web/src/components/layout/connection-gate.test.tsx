@@ -64,7 +64,7 @@ describe("ConnectionGate", () => {
   describe("when the endpoint is cleared at runtime", () => {
     beforeEach(() => {
       localStorage.setItem(ENDPOINT_KEY, JSON.stringify({ baseUrl: "http://localhost:4566" }))
-      server.use(http.get("*/_health", () => HttpResponse.json({ status: "ok" })))
+      server.use(http.get("*/_overcast/health", () => HttpResponse.json({ status: "ok" })))
     })
 
     // The settings control calls endpointStore.reset(). The gate used to

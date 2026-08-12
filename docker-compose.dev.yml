@@ -121,7 +121,7 @@ services:
         /home/vscode/bin/overcast serve
       "
     healthcheck:
-      test: [ "CMD", "wget", "-qO-", "http://localhost:4566/_health" ]
+      test: [ "CMD", "wget", "-qO-", "http://localhost:4566/_overcast/health" ]
       interval: 5s
       timeout: 3s
       retries: 10

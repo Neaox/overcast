@@ -13,7 +13,7 @@ import (
 // so the (=...) totals in its stderr output represent Go-side startup work.
 // All phases are always recorded into the router package's phase log
 // regardless of OVERCAST_PROFILE_STARTUP, so the startup timeline is always
-// available via /_metrics.
+// available via /_overcast/metrics.
 type phaseTimer struct {
 	enabled bool
 	start   time.Time // = earliest best-effort Go start time
@@ -39,7 +39,7 @@ func (p *phaseTimer) mark(phase string) {
 	prev := p.prev
 	p.prev = now
 
-	// Always record for the /_metrics startup timeline, regardless of the
+	// Always record for the /_overcast/metrics startup timeline, regardless of the
 	// OVERCAST_PROFILE_STARTUP flag.
 	router.RecordExternalPhase(phase, prev, now)
 

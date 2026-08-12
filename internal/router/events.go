@@ -2,7 +2,7 @@ package router
 
 // events.go — Server-Sent Events endpoint for the internal event bus.
 //
-// GET /_events
+// GET /_overcast/events
 //
 // On connect, replays the bus's rolling History buffer (up to
 // events.HistoryCapacity recent events, oldest first) and then streams every

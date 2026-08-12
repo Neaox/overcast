@@ -168,7 +168,7 @@ to get its images back. See [ECR § Persistence](./services/ecr.md#persistence).
 
 **If the underlying SQLite file becomes unreadable or corrupt**, `persistent` and `hybrid`
 log a warning and — for `hybrid` only — keep serving reads and writes in a degraded,
-memory-only mode for the rest of that run rather than crashing; `/_health` reports this
+memory-only mode for the rest of that run rather than crashing; `/_overcast/health` reports this
 condition. This is a rare, unusual-environment case, not something to expect in normal use.
 
 ---

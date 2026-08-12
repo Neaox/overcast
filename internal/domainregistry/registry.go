@@ -4,7 +4,7 @@
 // to subscribed watchers.
 //
 // The registry is the single source of truth consumed by the
-// /_internal/domains/watch SSE endpoint, which in turn drives the
+// /_overcast/domains/watch SSE endpoint, which in turn drives the
 // `overcast dev` host CLI's mDNS publishing and local trust store.
 //
 // Design notes:

@@ -52,7 +52,7 @@ and reconsider the approach.
 ## Running a session — ports are chosen, never assumed
 
 `cmd/compat` manages its own emulator. Unless `--endpoint` is pinned it starts
-a throwaway Overcast instance on a **free port**, waits for `/_health`, and
+a throwaway Overcast instance on a **free port**, waits for `/_overcast/health`, and
 stops it on exit; the dashboard and Vite ports are probed the same way. Ports
 **4566 and 4567 are never bound** — they belong to the user's own instance, per
 the root [AGENTS.md § Reserved ports](../AGENTS.md#reserved-ports--4566-and-4567-belong-to-the-user).
@@ -818,7 +818,7 @@ prevent.
 
 A managed instance — one compat starts itself, not an endpoint you pinned —
 gets the host Docker socket bind-mounted (`--mount-docker-socket`, on by
-default). Compat then reads the instance's own `/_health` and, when the
+default). Compat then reads the instance's own `/_overcast/health` and, when the
 *machine* is why there is no daemon (nothing to mount, or none running here),
 sets `OVERCAST_COMPAT_SKIP_DOCKER=1` itself and says so once at startup. That
 automatic skip is deliberately confined: it never fires for a pinned endpoint,

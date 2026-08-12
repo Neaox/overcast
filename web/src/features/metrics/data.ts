@@ -9,7 +9,7 @@ export const metricsHealthKeys = {
 }
 
 /**
- * GET /_health, polled — always available (not debug-gated), so this is the
+ * GET /_overcast/health, polled — always available (not debug-gated), so this is the
  * baseline data source for the health strip's storage mode / healthy badge
  * even when OVERCAST_DEBUG is off.
  */

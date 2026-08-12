@@ -60,9 +60,9 @@ The `overcast-slim` image and the `overcastd` binaries are built without SQLite,
 Measured 2026-04-17 in the dev container (Debian 12, x86_64, Go 1.23,
 modernc/sqlite pure-Go driver, all 27 services registered, no SDK
 clients connected) with `OVERCAST_STATE=<backend>`,
-`OVERCAST_DATA_DIR=<empty tmp>`, polling `/_metrics` every 5 ms from a
+`OVERCAST_DATA_DIR=<empty tmp>`, polling `/_overcast/metrics` every 5 ms from a
 sibling Go process. Wall time is `os.Process.Start` → first HTTP 200
-on `/_metrics`. Internal startup is `startup_duration_ms` from that
+on `/_overcast/metrics`. Internal startup is `startup_duration_ms` from that
 endpoint (package-init `startTime` → end of `router.New()`). Numbers
 are best-of-5 cold runs (fresh `tmp` dir each iteration); warm-cache
 runs are 1–2 ms faster across the board and not reported.
