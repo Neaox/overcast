@@ -5551,7 +5551,7 @@
           "operation": "CreateReplicationGroup",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Docker-backed (single primary node); async creating→available via TCP health check"
+          "notes": "Docker-backed (single primary node); async creating→available via TCP health check; `CacheSubnetGroupName` places the group in that subnet group's VPC"
         },
         {
           "operation": "CreateServerlessCache",

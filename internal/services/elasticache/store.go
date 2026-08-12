@@ -67,6 +67,11 @@ type ReplicationGroup struct {
 	SnapshotRetentionLimit int              `json:"SnapshotRetentionLimit"`
 	MemberClusters         []string         `json:"MemberClusters,omitempty"`
 	ConfigurationEndpoint  *ClusterEndpoint `json:"ConfigurationEndpoint,omitempty"`
+	// CacheSubnetGroupName is what places the group's container in a VPC. AWS
+	// takes it on CreateReplicationGroup but does not return it on the
+	// ReplicationGroup shape — it belongs to the member cache clusters — so it
+	// is stored and never echoed.
+	CacheSubnetGroupName string `json:"CacheSubnetGroupName,omitempty"`
 	// Docker fields — internal only, not returned in API responses.
 	DockerContainerID string `json:"DockerContainerID,omitempty"`
 	HostPort          int    `json:"HostPort,omitempty"`

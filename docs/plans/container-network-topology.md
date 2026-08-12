@@ -15,7 +15,7 @@
 > task, each reaching placement through `Placement.Public`. There is deliberately
 > no isolation toggle (§10, phase 6).
 >
-> Three deviations from the plan as written, all recorded in place:
+> Two deviations from the plan as written, both recorded in place:
 >
 > 1. The control plane is created as an ordinary bridge rather than `--internal`
 >    (§5). The plumbing exists — `dataplane.ControlPlaneInternal()` and
@@ -29,11 +29,12 @@
 >    phase 5 existed to remove. The same stack is therefore permissive on a host
 >    run and restrictive containerised — deliberate, documented, and better than
 >    a hang.
-> 3. ElastiCache replication groups land on the default plane because the record
->    carries no `CacheSubnetGroupName` — it is discarded at the wire in both the
->    Query handler and the typed request, and CloudFormation does not forward it
->    either. They are therefore unaffected by enforcement rather than wrongly
->    restricted by it; see §11.
+>
+> Closed since: ElastiCache replication groups were the one container-backed
+> resource that could not be placed in a VPC at all, because
+> `CacheSubnetGroupName` was discarded at the wire by the Query handler and the
+> typed request alike and CloudFormation never forwarded it. All four layers
+> carry it now, and a replication group is placed exactly as a cache cluster is.
 >
 > Scope: `internal/config/config.go`, `internal/router/router.go`,
 > `internal/docker/probe.go`, `internal/containerendpoint/`, `internal/dns/`,

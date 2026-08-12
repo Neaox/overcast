@@ -45,6 +45,7 @@ type ecCreateReplicationGroupReq struct {
 	MultiAZEnabled              string `json:"MultiAZEnabled"`
 	SnapshotRetentionLimit      int    `json:"SnapshotRetentionLimit"`
 	PrimaryClusterId            string `json:"PrimaryClusterId"`
+	CacheSubnetGroupName        string `json:"CacheSubnetGroupName"`
 }
 
 type ecDescribeReplicationGroupsReq struct {
@@ -640,6 +641,7 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 		EngineVersion:          engineVersion,
 		SnapshotRetentionLimit: snapshotRetention,
 		ConfigurationEndpoint:  endpoint,
+		CacheSubnetGroupName:   req.CacheSubnetGroupName,
 	}
 	if req.PrimaryClusterId != "" {
 		rg.MemberClusters = []string{req.PrimaryClusterId}
