@@ -1,7 +1,8 @@
 # One namespace for every non-canonical URL: `/_overcast/`
 
-> Status: **in progress** — phases 0, 0b, 1, 2, 3 and 4 done. Phases 5 and 6
-> remain, and phase 6 grew: see §4.5.
+> Status: **in progress** — phases 0, 0b, 1, 2, 3, 4 and 5 done. **Every
+> internal route family has collapsed into `/_overcast`.** Phase 6 remains,
+> and it grew twice: see §4.5 and §4.6.
 > The rule is enforced from phase 1 onward by
 > `TestNoRouteIsRegisteredOutsideTheNamespace`, against the `unmigratedRoutes`
 > ratchet that phases 2–6 empty. Open questions all decided (§4.3, §8).
@@ -414,6 +415,65 @@ emulator extension no SDK sends, and its IAM action was never inferable
 (`restOperation` returns nothing for it), so relocating it removed no control
 that existed.
 
+### 4.6 What phase 5 turned out *not* to change
+
+The plan called phase 5 "the loud one" on the grounds that it moves URLs
+Overcast mints and hands back. Measured rather than assumed, that is mostly
+wrong, and the correction is worth keeping because it is the reason the phase
+was safe to do in one pass.
+
+The client-facing URLs for execute-api, AppSync and Lambda function URLs are
+**host-addressed** — `{apiId}.execute-api.{region}…`, `{urlId}.lambda-url…`,
+`{apiId}.appsync-api…`. The `/_appsync/…` paths were only ever the internal
+rewrite *targets* those hosts resolve to, invisible to callers. Moving them
+changes nothing anyone configured.
+
+Two things did change, and both are narrower than "minted URLs":
+
+- **Cognito's managed login base**, `/_cognito/{poolId}` →
+  `/_overcast/cognito/user-pools/{poolId}`. That is the hosted-UI URL a browser
+  visits. The OIDC discovery document regenerates from it, and an application's
+  own redirect URIs are unaffected — they point at the application, not at
+  Overcast — so the breakage is limited to anything that hard-coded the
+  hosted-UI URL.
+- **API Gateway's WebSocket management API**, `/@connections/{apiId}/{stageName}/*`
+  → `/_overcast/apigateway/connections/{apiId}/{stageName}/*`. Recorded in §3.2
+  as needing a decision; the decision is the conservative one — relocate the
+  invented shape, and leave "should this be the modeled path plus host routing
+  instead" as a separate AWS-fidelity question that this plan does not settle.
+
+**The JWT issuer is not affected**, and that is the one worth stating
+explicitly because it constrains phase 6. `issuerURL` mints
+`{base}/{region}/{poolId}` — the region-prefixed discovery shape, not the
+managed-login path — so nothing phase 5 moved appears in a token.
+
+### 4.7 Correction to §4.3, and to §5's option 3
+
+Two earlier decisions were made on incomplete information.
+
+**§4.3 said the region-prefixed `/{region}/{poolId}/.well-known/…` could be
+deleted because a pool ID already encodes its region.** The segment is not
+redundant: it stands in for the region AWS puts in the *hostname*
+(`cognito-idp.{region}.amazonaws.com/{poolId}`), and it is the issuer path.
+Deleting it changes the `iss` claim in every minted token, breaks OIDC
+Discovery §4.3's requirement that the issuer be byte-identical to the URL
+discovery was fetched from — `handler_auth.go` carries a long comment
+explaining that the shape is deliberate — and interacts with
+`ValidateCognitoToken`, which parses the pool ID out of the issuer path.
+`docs/plans/client-facing-url-minting.md` is the full analysis. Phase 6 may
+still *add* the AWS-shaped path; deleting the region-prefixed one is a
+token-compatibility change and needs its own argument.
+
+**§5's option 3 — mark the property on the route at registration — is not
+available.** `IAMEnforce` and `Logger` are both registered with `r.Use` at the
+router level (router.go), so they run *before* chi resolves which route
+matched. There is no route to read a marker from. Both predicates therefore
+have to stay path-based, which leaves option 1 (explicit allowlists) or option
+2 (sub-namespace by kind) — or, for the IAM half specifically, the narrower
+rule §4.5 describes: reuse `overcastRESTOperation`, which already enumerates
+exactly the internal routes that carry an operation name, and treat "names an
+operation" as "is authorized".
+
 ## 5. Enforcement — the point of the exercise
 
 ### Gate 9: every registered route is modeled or namespaced
@@ -596,7 +656,7 @@ One PR per phase; Go, web, docs and tests in the same commit.
 | **2** | ✅ **Done.** Router roots: `/_health`, `/_metrics`, `/_topology`, `/_/info`, `/_events`, `/_internal/domains/watch`, plus `overcast-mcp`'s own `/_health`. Predicates, web, 4 healthchecks, `cmd/compat/launch.go`. | Highest-traffic, lowest-risk: no minted URLs. |
 | **3** | ✅ **Done.** `/_debug/*` → `/_overcast/debug/*` (23 routes, pprof included); `/_mcp` → `/_overcast/mcp`. | Both build-tag-gated; isolated from service code. |
 | **4** | ✅ **Done.** Service admin: `/_lambda/{instances,runtimes,layers}`, `/_ecs/*`, `/_rds/*`, EKS's `kubeconfig`, and `/_overcast/inbox` → `/_overcast/ses/inbox`. **The four console-only Lambda endpoints did not move — see §4.5.** | Console-only consumers. |
-| **5** | Service data plane: `/_apigateway`, `/_appsync`, `/_cloudfront`, `/_elb`, `/_lambda/url-invoke`, `/_cognito`. Rewrite sites, URL-minting code, `docs/networking.md`. | The only phase that changes URLs Overcast hands to callers. |
+| **5** | ✅ **Done.** Service data plane: `/_apigateway`, `/_appsync`, `/_cloudfront`, `/_elb`, `/_lambda/url-invoke`, `/_cognito`, plus `/@connections`. Rewrite sites, `docs/networking.md`. | Host-addressed URLs are unaffected — see §4.6. |
 | **6** | Cognito discovery to the AWS shape (§4.3), with the top-level label-route overlap test. Delete `internalService`, collapse `detectService`, empty the ratchet down to the five allowlist groups, update `manifest-enforcement.md`. | The payoff. |
 
 Phase 1 is the one that must land; 2–6 are then individually revertible.

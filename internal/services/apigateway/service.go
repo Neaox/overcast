@@ -263,14 +263,14 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// NOTE: v2 execution routes (/v2/apis/{apiId}/stages/...) are registered
 	// inside V2APIRouter because the /v2/apis path is dispatched by the main
 	// router (shared with AppSync Events API).
-	r.HandleFunc("/@connections/{apiId}/{stageName}/*", func(w http.ResponseWriter, req *http.Request) {
+	r.HandleFunc("/_overcast/apigateway/connections/{apiId}/{stageName}/*", func(w http.ResponseWriter, req *http.Request) {
 		stub.ServeHTTP(w, req)
 	})
 
 	// ---- Host-based invoke (execute-api Host header) ----------------------
 	// See handler_host_execute.go: middleware.HostDispatch rewrites
 	// {apiId}.execute-api.{region}.{base} requests onto this marker route.
-	r.HandleFunc("/_apigateway/execute-api/{apiId}/{region}/*", h.ExecuteByHost)
+	r.HandleFunc("/_overcast/apigateway/execute-api/{apiId}/{region}/*", h.ExecuteByHost)
 }
 
 // TagsRouter returns a chi.Router for the REST API v1 tagging routes that

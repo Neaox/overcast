@@ -150,7 +150,7 @@ func TestCreateGraphqlApi_success(t *testing.T) {
 	if api.Uris["GRAPHQL"] == "" {
 		t.Error("expected uris.GRAPHQL to be set")
 	}
-	if want := srv.ExternalBase() + "/_appsync/" + api.ApiId + "/graphql"; api.Uris["GRAPHQL"] != want {
+	if want := srv.ExternalBase() + "/_overcast/appsync/apis/" + api.ApiId + "/graphql"; api.Uris["GRAPHQL"] != want {
 		t.Fatalf("expected executable GraphQL URL %q, got %q", want, api.Uris["GRAPHQL"])
 	}
 	if api.Uris["REALTIME"] == "" {
@@ -191,7 +191,7 @@ func TestListGraphqlApis_localGraphQLURLs(t *testing.T) {
 	if len(result.GraphqlApis) != 1 {
 		t.Fatalf("expected one API, got %d", len(result.GraphqlApis))
 	}
-	want := srv.ExternalBase() + "/_appsync/" + apiID + "/graphql"
+	want := srv.ExternalBase() + "/_overcast/appsync/apis/" + apiID + "/graphql"
 	if got := result.GraphqlApis[0].Uris["GRAPHQL"]; got != want {
 		t.Fatalf("expected executable GraphQL URL %q, got %q", want, got)
 	}
@@ -1960,7 +1960,7 @@ func TestExecuteGraphQL_basicQuery(t *testing.T) {
 	}).Body.Close()
 
 	// When: a GraphQL query is executed
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -1997,7 +1997,7 @@ func TestExecuteGraphQL_noSchema(t *testing.T) {
 	helpers.DecodeJSON(t, keyResp, &keyResult)
 
 	// When: query against an API with no schema
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"x-api-key": keyResult.ApiKey.Id},
 	)
@@ -2022,7 +2022,7 @@ func TestExecuteGraphQL_invalidQuery(t *testing.T) {
 	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
 
 	// When: a query references a non-existent field
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ nonexistent }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2044,7 +2044,7 @@ func TestExecuteGraphQL_invalidQuery(t *testing.T) {
 func TestExecuteGraphQL_apiNotFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/nonexistent/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/nonexistent/graphql",
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"x-api-key": "fake"},
 	)
@@ -2061,7 +2061,7 @@ func TestExecuteGraphQL_missingApiKey(t *testing.T) {
 	apiID, _ := setupGraphQLAPI(t, srv, sdl)
 
 	// When: no x-api-key header
-	resp := appsyncPost(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPost(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 	)
 	defer resp.Body.Close()
@@ -2076,7 +2076,7 @@ func TestExecuteGraphQL_invalidApiKey(t *testing.T) {
 	apiID, _ := setupGraphQLAPI(t, srv, sdl)
 
 	// When: wrong API key
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"x-api-key": "da2-invalid"},
 	)
@@ -2104,7 +2104,7 @@ func TestExecuteGraphQL_expiredApiKey(t *testing.T) {
 	helpers.DecodeJSON(t, keyResp, &keyResult)
 
 	// When: query with expired key
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"x-api-key": keyResult.ApiKey.Id},
 	)
@@ -2133,7 +2133,7 @@ type Mutation { setHello(msg: String): String }`
 	}).Body.Close()
 
 	// When: mutation is executed
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `mutation { setHello(msg: "hi") }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2175,7 +2175,7 @@ func TestExecuteGraphQL_operationName(t *testing.T) {
 	}).Body.Close()
 
 	// When: document with two named operations, operationName selects "GetB"
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":         `query GetA { a } query GetB { b }`,
 			"operationName": "GetB",
@@ -2204,7 +2204,7 @@ func TestExecuteGraphQL_operationNameRequired(t *testing.T) {
 	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
 
 	// When: document with multiple named operations but no operationName
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query": `query GetA { a } query GetB { b }`,
 		},
@@ -2254,7 +2254,7 @@ func TestExecuteGraphQL_httpDataSource(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ item }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2288,7 +2288,7 @@ type User { name: String  age: Int }`
 	}).Body.Close()
 
 	// When: query with sub-selection on user
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ user { name age } }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2332,7 +2332,7 @@ func TestExecuteGraphQL_multipleFields(t *testing.T) {
 	}).Body.Close()
 
 	// When: query with two fields
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ x y }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2601,7 +2601,7 @@ func TestExecuteGraphQL_pipelineResolver(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ item }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2646,7 +2646,7 @@ func TestExecuteGraphQL_variablesPassthrough(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute with variables
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query Echo($msg: String) { echo(msg: $msg) }`,
 			"variables": map[string]any{"msg": "hello"},
@@ -2708,7 +2708,7 @@ func TestExecuteGraphQL_lambdaDataSource(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute a query with arguments
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query Greet($n: String!) { greet(name: $n) }`,
 			"variables": map[string]any{"n": "Alice"},
@@ -2767,7 +2767,7 @@ func TestExecuteGraphQL_lambdaDirectResolver(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ missing }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2813,7 +2813,7 @@ func TestExecuteGraphQL_lambdaNoInvoker(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ fn }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2857,7 +2857,7 @@ func TestExecuteGraphQL_argumentsInTemplate(t *testing.T) {
 	}).Body.Close()
 
 	// When: query with an argument
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query G($n: String!) { greet(name: $n) }`,
 			"variables": map[string]any{"n": "Bob"},
@@ -2903,7 +2903,7 @@ type User { name: String  role: String }`
 		"responseMappingTemplate": `$util.toJson($context.result)`,
 	}).Body.Close()
 
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ user { name role } }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -2955,7 +2955,7 @@ type Post { title: String }`
 	}).Body.Close()
 
 	// When: query nested fields
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ author { name posts { title } } }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -3083,7 +3083,7 @@ type User { id: String, name: String, age: Int }`
 	}).Body.Close()
 
 	// When: execute a GraphQL query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query GetUser($id: String!) { getUser(id: $id) { id name age } }`,
 			"variables": map[string]any{"id": "user-1"},
@@ -3142,7 +3142,7 @@ type User { id: String, name: String }`
 	}).Body.Close()
 
 	// When: query for a non-existent item
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query { getUser(id: "does-not-exist") { id name } }`,
 			"variables": map[string]any{},
@@ -3208,7 +3208,7 @@ type User { id: String, name: String }`
 	}).Body.Close()
 
 	// When: execute a mutation to create a user
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `mutation CreateUser($id: String!, $name: String!) { createUser(id: $id, name: $name) { id name } }`,
 			"variables": map[string]any{"id": "user-2", "name": "Bob"},
@@ -3219,7 +3219,7 @@ type User { id: String, name: String }`
 	helpers.AssertStatus(t, resp, http.StatusOK)
 
 	// Then: verify the item was stored by reading it back
-	getResp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	getResp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query { getUser(id: "user-2") { id name } }`,
 			"variables": map[string]any{},
@@ -3286,7 +3286,7 @@ type User { id: String, name: String }`
 	}).Body.Close()
 
 	// When: delete the item via mutation
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `mutation { deleteUser(id: "del-1") { id } }`,
 			"variables": map[string]any{},
@@ -3297,7 +3297,7 @@ type User { id: String, name: String }`
 	helpers.AssertStatus(t, resp, http.StatusOK)
 
 	// Then: verify the item is gone
-	getResp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	getResp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query { getUser(id: "del-1") { id name } }`,
 			"variables": map[string]any{},
@@ -3352,7 +3352,7 @@ type User { id: String, name: String }`
 	}).Body.Close()
 
 	// When: execute a scan query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query": `{ listUsers { id name } }`,
 		},
@@ -3416,7 +3416,7 @@ type Post { pk: String, sk: String, title: String }`
 	}).Body.Close()
 
 	// When: query for user-1's posts
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query Posts($uid: String!) { postsByUser(userId: $uid) { pk sk title } }`,
 			"variables": map[string]any{"uid": "user-1"},
@@ -3471,7 +3471,7 @@ func TestExecuteGraphQL_dynamoDBNoInvoker(t *testing.T) {
 		"requestMappingTemplate": `{"operation":"GetItem","key":{"id":{"S":"$context.arguments.id"}}}`,
 	}).Body.Close()
 
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query": `{ get(id: "x") }`,
 		},
@@ -3544,7 +3544,7 @@ type Item { id: String, name: String }`
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query { getItem(id: "pipe-1") { id name } }`,
 			"variables": map[string]any{},
@@ -3606,7 +3606,7 @@ func TestAppSyncJS_unitResolver(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ greet(name: "World") }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -3684,7 +3684,7 @@ func TestAppSyncJS_pipelineResolver(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ add(a: 3, b: 4) }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -3735,7 +3735,7 @@ func TestAppSyncJS_utilAutoId(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ generateId }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -3789,7 +3789,7 @@ func TestAppSyncJS_utilJson(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ roundTrip(input: "hello") }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -3883,7 +3883,7 @@ func TestAppSyncJS_stashPropagation(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ stashTest }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -3963,7 +3963,7 @@ func TestVTL_simpleReturn(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ greet(name: "World") }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -4006,7 +4006,7 @@ func TestVTL_setDirective(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ greet(name: "VTL") }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -4052,7 +4052,7 @@ func TestVTL_conditionalDirective(t *testing.T) {
 	}).Body.Close()
 
 	// When: formal = true
-	resp1 := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp1 := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ greet(formal: true, name: "Alice") }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -4073,7 +4073,7 @@ func TestVTL_conditionalDirective(t *testing.T) {
 	}
 
 	// When: formal = false
-	resp2 := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp2 := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ greet(formal: false, name: "Bob") }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -4117,7 +4117,7 @@ func TestVTL_foreachDirective(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute with a list of names
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query":     `query($names: [String!]!) { joinNames(names: $names) }`,
 			"variables": map[string]any{"names": []string{"Alice", "Bob", "Charlie"}},
@@ -4289,7 +4289,7 @@ func TestVTL_pipelineResolver(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ stashTest }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -4349,7 +4349,7 @@ func TestAppSyncJS_envVars(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ envTest }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -4509,7 +4509,7 @@ func TestAuth_cognitoAcceptsBearer(t *testing.T) {
 
 	// When: send a request with Bearer token
 	token := fakeJWT(t, map[string]any{"sub": "user-123", "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_fake"})
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"Authorization": "Bearer " + token},
 	)
@@ -4554,7 +4554,7 @@ func TestAuth_cognitoIdentityAvailableInVTL(t *testing.T) {
 
 	// When: the query is executed with a Bearer token
 	token := fakeJWT(t, map[string]any{"sub": "user-123", "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_fake"})
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ subject }`},
 		map[string]string{"Authorization": "Bearer " + token},
 	)
@@ -4590,7 +4590,7 @@ func TestAuth_cognitoRejectsNoToken(t *testing.T) {
 	appsyncPost(t, srv, "/v1/apis/"+apiID+"/schemacreation", map[string]any{"definition": b64SDL}).Body.Close()
 
 	// When: send request WITHOUT Authorization header
-	resp := appsyncPost(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPost(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 	)
 	defer resp.Body.Close()
@@ -4650,7 +4650,7 @@ func TestAuth_multiAuth(t *testing.T) {
 	}).Body.Close()
 
 	// When: use API key → should work (primary auth)
-	resp1 := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp1 := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -4667,7 +4667,7 @@ func TestAuth_multiAuth(t *testing.T) {
 
 	// When: use Bearer token → should work (additional auth)
 	token := fakeJWT(t, map[string]any{"sub": "user-456", "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_fake"})
-	resp2 := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp2 := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello }`},
 		map[string]string{"Authorization": "Bearer " + token},
 	)
@@ -4695,7 +4695,7 @@ type Mutation { createUser(name: String): String }
 	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
 
 	// When: standard __schema introspection query.
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query": `{
 __schema {
@@ -4761,7 +4761,7 @@ type User { id: ID! name: String! }
 	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
 
 	// When: __type introspection for User.
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query": `{
 __type(name: "User") {
@@ -4838,7 +4838,7 @@ func TestExecuteGraphQL_typename(t *testing.T) {
 	}).Body.Close()
 
 	// When: query includes __typename.
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ hello __typename }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -4872,7 +4872,7 @@ enum Status { ACTIVE INACTIVE }
 	apiID, keyID := setupGraphQLAPI(t, srv, sdl)
 
 	// When: standard Apollo-style introspection query with fragments.
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query": `
 query IntrospectionQuery {
@@ -4973,7 +4973,7 @@ func TestExecuteGraphQL_introspectionDisabled(t *testing.T) {
 	helpers.DecodeJSON(t, keyResp, &keyResult)
 
 	// When: introspection query sent to disabled API.
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ __schema { queryType { name } } }`},
 		map[string]string{"x-api-key": keyResult.ApiKey.Id},
 	)
@@ -5170,7 +5170,7 @@ type User {
 	}).Body.Close()
 
 	// When: a query is executed requesting specific sub-fields.
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `query { getUser(id: "1") { id name } }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -5228,7 +5228,7 @@ type Item {
 	}).Body.Close()
 
 	// When: a query executes requesting id and value.
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `query { getItem(id: "1") { id value } }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -5294,7 +5294,7 @@ type Item { id: String, name: String }`
 	}).Body.Close()
 
 	// When: execute GraphQL query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ batchGet { id name } }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -5364,7 +5364,7 @@ type Query { dummy: String }`
 	}).Body.Close()
 
 	// When: execute GraphQL mutation
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `mutation { batchWrite }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -5432,7 +5432,7 @@ type Item { id: String, val: String }`
 	}).Body.Close()
 
 	// When: execute GraphQL query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ transactGet { id val } }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -5491,7 +5491,7 @@ type Query { dummy: String }`
 	}).Body.Close()
 
 	// When: execute GraphQL mutation
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `mutation { transactWrite }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -5554,7 +5554,7 @@ func TestVTL_utilErrorWithType(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ failTyped }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -5604,7 +5604,7 @@ func TestGraphQL_errorPathEnrichment(t *testing.T) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ brokenField }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -5660,7 +5660,7 @@ export function response(ctx) {
 	}).Body.Close()
 
 	// When: execute the query
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{"query": `{ failJS }`},
 		map[string]string{"x-api-key": keyID},
 	)
@@ -6301,7 +6301,7 @@ func eventsDelete(t *testing.T, srv *helpers.TestServer, path string) *http.Resp
 // TestExecuteGraphQL_hostBasedInvoke mirrors TestExecuteGraphQL_basicQuery
 // but posts to "/graphql" against the real AWS Host-routed shape
 // ({apiId}.appsync-api.{region}.amazonaws.com/graphql) instead of the
-// path-style /_appsync/{apiId}/graphql URL, proving
+// path-style /_overcast/appsync/apis/{apiId}/graphql URL, proving
 // middleware.HostDispatch's rewrite reaches the exact same execution logic.
 func TestExecuteGraphQL_hostBasedInvoke(t *testing.T) {
 	// Given: a GraphQL API with a resolver, same setup as the path-style test
@@ -6322,7 +6322,7 @@ func TestExecuteGraphQL_hostBasedInvoke(t *testing.T) {
 	}).Body.Close()
 
 	// When: the query is executed via the appsync-api Host header at the
-	// bare "/graphql" path instead of the path-style /_appsync/{apiId}/graphql
+	// bare "/graphql" path instead of the path-style /_overcast/appsync/apis/{apiId}/graphql
 	resp := appsyncPostWithHost(t, srv, "/graphql",
 		map[string]any{"query": `{ hello }`},
 		apiID+".appsync-api.us-east-1.amazonaws.com",
@@ -6347,7 +6347,7 @@ func TestExecuteGraphQL_hostBasedInvoke(t *testing.T) {
 // of the addressing-precedence regression. Every base below except
 // ".amazonaws.com" used to be claimed by S3 virtual-hosted addressing first,
 // which prepended a bogus bucket segment to the path so the rewritten request
-// never matched /_appsync/{apiId}/graphql.
+// never matched /_overcast/appsync/apis/{apiId}/graphql.
 //
 // See docs/plans/host-routing-precedence.md.
 func TestExecuteGraphQL_hostBasedInvokeAcrossResolvableBases(t *testing.T) {

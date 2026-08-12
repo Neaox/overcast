@@ -319,7 +319,7 @@ export const cognito = {
   getPlaintextPassword: async (poolId: string, username: string): Promise<string | null> => {
     const { baseUrl } = endpointStore.get()
     const res = await fetch(
-      `${baseUrl}/_cognito/${poolId}/users/${encodeURIComponent(username)}/password`,
+      `${baseUrl}/_overcast/cognito/user-pools/${poolId}/users/${encodeURIComponent(username)}/password`,
     )
     if (!res.ok) return null
     const json = (await res.json()) as { password?: string }
@@ -330,7 +330,7 @@ export const cognito = {
 
   getBranding: async (poolId: string): Promise<ManagedLoginBranding> => {
     const { baseUrl } = endpointStore.get()
-    const res = await fetch(`${baseUrl}/_cognito/${poolId}/branding`)
+    const res = await fetch(`${baseUrl}/_overcast/cognito/user-pools/${poolId}/branding`)
     if (!res.ok) throw new Error(`Failed to fetch branding: ${res.status}`)
     return (await res.json()) as ManagedLoginBranding
   },
@@ -340,7 +340,7 @@ export const cognito = {
     branding: ManagedLoginBranding,
   ): Promise<ManagedLoginBranding> => {
     const { baseUrl } = endpointStore.get()
-    const res = await fetch(`${baseUrl}/_cognito/${poolId}/branding`, {
+    const res = await fetch(`${baseUrl}/_overcast/cognito/user-pools/${poolId}/branding`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(branding),

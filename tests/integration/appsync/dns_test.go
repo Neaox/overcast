@@ -117,7 +117,7 @@ func TestGraphqlApi_dnsGraphQLHostRoutesBackToTheApi(t *testing.T) {
 // Real AWS returns the host-routed
 // https://{apiId}.appsync-api.{region}.amazonaws.com/graphql, and that is what
 // every AWS client — and CloudFormation's Fn::GetAtt GraphQLUrl — expects.
-// Overcast used to return the path-style {base}/_appsync/{apiId}/graphql
+// Overcast used to return the path-style {base}/_overcast/appsync/apis/{apiId}/graphql
 // unconditionally, because the host-routed form needs *.localhost to resolve
 // and it does not on Windows or macOS (see docs/networking.md).
 //
@@ -154,7 +154,7 @@ func TestGraphqlApi_urisStayPathStyleOnABareBase(t *testing.T) {
 	apiID, uris := createAPIReadingUris(t, srv, "uris-bare-api")
 
 	// Then: uris stays the always-resolvable path-style form
-	want := srv.ExternalBase() + "/_appsync/" + apiID + "/graphql"
+	want := srv.ExternalBase() + "/_overcast/appsync/apis/" + apiID + "/graphql"
 	if got := uris["GRAPHQL"]; got != want {
 		t.Errorf("uris.GRAPHQL = %q, want %q", got, want)
 	}

@@ -24,7 +24,7 @@ func wsConnect(t *testing.T, srv *helpers.TestServer, apiID string) (*websocket.
 
 func wsConnectWithHeaders(t *testing.T, srv *helpers.TestServer, apiID string, header http.Header) (*websocket.Conn, context.Context) {
 	t.Helper()
-	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/_appsync/" + apiID + "/realtime"
+	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/_overcast/appsync/apis/" + apiID + "/realtime"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: header})
@@ -111,7 +111,7 @@ func TestSubscription_connectMissingAPIKey(t *testing.T) {
 	apiID, _ := createTestAPI(t, srv)
 
 	// When: we connect without realtime authorization headers
-	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/_appsync/" + apiID + "/realtime"
+	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/_overcast/appsync/apis/" + apiID + "/realtime"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -182,7 +182,7 @@ func TestSubscription_subscribeAndReceive(t *testing.T) {
 	}
 
 	// Execute a createTodo mutation via HTTP.
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query": `mutation { createTodo(title: "Test Todo") { id title } }`,
 		},
@@ -275,7 +275,7 @@ func TestSubscription_unsubscribe(t *testing.T) {
 	}
 
 	// And: executing a mutation does NOT push data to the unsubscribed client
-	resp := appsyncPostWithHeaders(t, srv, "/_appsync/"+apiID+"/graphql",
+	resp := appsyncPostWithHeaders(t, srv, "/_overcast/appsync/apis/"+apiID+"/graphql",
 		map[string]any{
 			"query": `mutation { createTodo(title: "After Unsub") { id title } }`,
 		},
@@ -299,7 +299,7 @@ func TestSubscription_apiNotFound(t *testing.T) {
 	srv := helpers.NewTestServer(t)
 
 	// When: attempting to connect to a non-existent API's realtime endpoint
-	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/_appsync/nonexistent/realtime"
+	wsURL := strings.Replace(srv.URL, "http://", "ws://", 1) + "/_overcast/appsync/apis/nonexistent/realtime"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, _, err := websocket.Dial(ctx, wsURL, nil)

@@ -96,11 +96,11 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 func (s *Service) Name() string { return serviceName }
 
 // RegisterRoutes mounts the load balancer data plane. Requests arriving on a
-// load balancer's DNS name are rewritten onto /_elb by HostRouteRewrite and
+// load balancer's DNS name are rewritten onto /_overcast/elb by HostRouteRewrite and
 // forwarded to a registered target from here.
 func (s *Service) RegisterRoutes(r chi.Router) {
-	r.HandleFunc("/_elb", s.handler.ProxyRequest)
-	r.HandleFunc("/_elb/*", s.handler.ProxyRequest)
+	r.HandleFunc("/_overcast/elb", s.handler.ProxyRequest)
+	r.HandleFunc("/_overcast/elb/*", s.handler.ProxyRequest)
 }
 
 // RegisterTarget adds an address to a target group, and DeregisterTarget

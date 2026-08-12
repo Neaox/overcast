@@ -469,20 +469,17 @@ func serviceIdentityForRPCLabel(label string) string {
 // definitively not an S3 request and must not fall through to the S3 fallback.
 func internalService(path string) string {
 	switch {
-	// Still-unnamespaced prefixes. /_lambda is only url-invoke now; phase 5
-	// moves it, along with /_cognito, /_appsync and /_cloudfront.
-	case strings.HasPrefix(path, "/_cognito"):
-		return "cognito"
-	case strings.HasPrefix(path, "/_lambda"):
-		return "lambda"
-	case strings.HasPrefix(path, "/_appsync"):
-		return "appsync"
-	case strings.HasPrefix(path, "/_cloudfront"):
-		return "cloudfront"
-
-	// Namespaced. Every one of these is "/_overcast/" plus the owner, which is
-	// the shape the whole switch collapses into once phase 5 lands and there is
-	// nothing above this line: strings.Split(path, "/")[2].
+	// Every arm is now "/_overcast/" plus the owning service, because phase 5
+	// was the last one that had a prefix outside the namespace to name.
+	//
+	// This is one step short of the collapse the plan promised — segment 2 of
+	// the path *is* the answer here. It stays a switch because the namespace
+	// holds more than services: /_overcast/health, /metrics, /debug, /events,
+	// /info, /topology, /mcp, /init, /ca.pem and /domains all belong to the
+	// emulator itself, and reading segment 2 blindly would invent "health" and
+	// "debug" as service names. Collapsing it needs the set of real service
+	// keys to check against, which phase 6 does along with the rest of the
+	// predicate rework.
 	case strings.HasPrefix(path, "/_overcast/cognito"):
 		return "cognito"
 	case strings.HasPrefix(path, "/_overcast/secretsmanager"):
@@ -501,7 +498,15 @@ func internalService(path string) string {
 		return "rds"
 	case strings.HasPrefix(path, "/_overcast/eks"):
 		return "eks"
+	case strings.HasPrefix(path, "/_overcast/appsync"):
+		return "appsync"
+	case strings.HasPrefix(path, "/_overcast/cloudfront"):
+		return "cloudfront"
 	default:
+		// Includes /_overcast/apigateway and /_overcast/elb, which were
+		// "internal" before this phase too: host-routed traffic to either is
+		// labelled from the HostClaim well before this function is reached, and
+		// only direct-path access lands here.
 		return "internal"
 	}
 }

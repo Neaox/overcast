@@ -3,28 +3,28 @@ package cognito
 // handler_managed_login.go — OAuth2/OIDC endpoints and server-rendered managed login pages.
 //
 // Implemented:
-//   - HandleAuthorize              GET  /_cognito/{poolId}/oauth2/authorize
-//   - HandleToken                  POST /_cognito/{poolId}/oauth2/token
-//   - HandleUserInfo               GET  /_cognito/{poolId}/oauth2/userInfo
-//   - HandleRevoke                 POST /_cognito/{poolId}/oauth2/revoke
-//   - HandleLoginPage              GET  /_cognito/{poolId}/login
-//   - HandleLoginSubmit            POST /_cognito/{poolId}/login
-//   - HandleLogout                 GET  /_cognito/{poolId}/logout
-//   - HandleSignUpPage             GET  /_cognito/{poolId}/signup
-//   - HandleSignUpSubmit           POST /_cognito/{poolId}/signup
-//   - HandleConfirmPage            GET  /_cognito/{poolId}/confirm
-//   - HandleConfirmSubmit          POST /_cognito/{poolId}/confirm
-//   - HandleNewPasswordPage        GET  /_cognito/{poolId}/new-password
-//   - HandleNewPasswordSubmit      POST /_cognito/{poolId}/new-password
-//   - HandleMFAPage                GET  /_cognito/{poolId}/mfa
-//   - HandleMFASubmit              POST /_cognito/{poolId}/mfa
-//   - HandleForgotPasswordPage     GET  /_cognito/{poolId}/forgot-password
-//   - HandleForgotPasswordSubmit   POST /_cognito/{poolId}/forgot-password
-//   - HandleResetPasswordPage      GET  /_cognito/{poolId}/reset-password
-//   - HandleResetPasswordSubmit    POST /_cognito/{poolId}/reset-password
+//   - HandleAuthorize              GET  /_overcast/cognito/user-pools/{poolId}/oauth2/authorize
+//   - HandleToken                  POST /_overcast/cognito/user-pools/{poolId}/oauth2/token
+//   - HandleUserInfo               GET  /_overcast/cognito/user-pools/{poolId}/oauth2/userInfo
+//   - HandleRevoke                 POST /_overcast/cognito/user-pools/{poolId}/oauth2/revoke
+//   - HandleLoginPage              GET  /_overcast/cognito/user-pools/{poolId}/login
+//   - HandleLoginSubmit            POST /_overcast/cognito/user-pools/{poolId}/login
+//   - HandleLogout                 GET  /_overcast/cognito/user-pools/{poolId}/logout
+//   - HandleSignUpPage             GET  /_overcast/cognito/user-pools/{poolId}/signup
+//   - HandleSignUpSubmit           POST /_overcast/cognito/user-pools/{poolId}/signup
+//   - HandleConfirmPage            GET  /_overcast/cognito/user-pools/{poolId}/confirm
+//   - HandleConfirmSubmit          POST /_overcast/cognito/user-pools/{poolId}/confirm
+//   - HandleNewPasswordPage        GET  /_overcast/cognito/user-pools/{poolId}/new-password
+//   - HandleNewPasswordSubmit      POST /_overcast/cognito/user-pools/{poolId}/new-password
+//   - HandleMFAPage                GET  /_overcast/cognito/user-pools/{poolId}/mfa
+//   - HandleMFASubmit              POST /_overcast/cognito/user-pools/{poolId}/mfa
+//   - HandleForgotPasswordPage     GET  /_overcast/cognito/user-pools/{poolId}/forgot-password
+//   - HandleForgotPasswordSubmit   POST /_overcast/cognito/user-pools/{poolId}/forgot-password
+//   - HandleResetPasswordPage      GET  /_overcast/cognito/user-pools/{poolId}/reset-password
+//   - HandleResetPasswordSubmit    POST /_overcast/cognito/user-pools/{poolId}/reset-password
 //   - HandleOIDCDiscovery          GET  /{region}/{poolId}/.well-known/openid-configuration
-//   - HandleDebugToken             GET  /_cognito/{poolId}/debug/token
-//   - HandleGetPassword            GET  /_cognito/{poolId}/users/{username}/password
+//   - HandleDebugToken             GET  /_overcast/cognito/user-pools/{poolId}/debug/token
+//   - HandleGetPassword            GET  /_overcast/cognito/user-pools/{poolId}/users/{username}/password
 
 import (
 	"context"
@@ -251,12 +251,12 @@ func (p oauthParams) query() string {
 
 // basePath returns the URL prefix for the managed login routes for a pool.
 func managedLoginBase(poolID string) string {
-	return "/_cognito/" + poolID
+	return "/_overcast/cognito/user-pools/" + poolID
 }
 
 // ─── OAuth2 authorize endpoint ────────────────────────────────────────────────
 
-// HandleAuthorize handles GET /_cognito/{poolId}/oauth2/authorize.
+// HandleAuthorize handles GET /_overcast/cognito/user-pools/{poolId}/oauth2/authorize.
 // Validates the request and redirects to the login page.
 func (s *Service) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 	poolID := chi.URLParam(r, "poolId")
@@ -364,7 +364,7 @@ func (s *Service) completeAuthorize(w http.ResponseWriter, r *http.Request, pool
 
 // ─── OAuth2 token endpoint ────────────────────────────────────────────────────
 
-// HandleToken handles POST /_cognito/{poolId}/oauth2/token.
+// HandleToken handles POST /_overcast/cognito/user-pools/{poolId}/oauth2/token.
 func (s *Service) HandleToken(w http.ResponseWriter, r *http.Request) {
 	poolID := chi.URLParam(r, "poolId")
 	ctx := r.Context()
@@ -572,7 +572,7 @@ func (s *Service) handleTokenClientCredentials(w http.ResponseWriter, r *http.Re
 
 // ─── UserInfo endpoint ────────────────────────────────────────────────────────
 
-// HandleUserInfo handles GET/POST /_cognito/{poolId}/oauth2/userInfo.
+// HandleUserInfo handles GET/POST /_overcast/cognito/user-pools/{poolId}/oauth2/userInfo.
 func (s *Service) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 	poolID := chi.URLParam(r, "poolId")
 	ctx := r.Context()
@@ -616,7 +616,7 @@ func (s *Service) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
 
 // ─── Revoke endpoint ──────────────────────────────────────────────────────────
 
-// HandleRevoke handles POST /_cognito/{poolId}/oauth2/revoke.
+// HandleRevoke handles POST /_overcast/cognito/user-pools/{poolId}/oauth2/revoke.
 func (s *Service) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -818,7 +818,7 @@ func (s *Service) completeLoginFlow(w http.ResponseWriter, r *http.Request, pool
 
 // ─── Logout endpoint ──────────────────────────────────────────────────────────
 
-// HandleLogout handles GET /_cognito/{poolId}/logout.
+// HandleLogout handles GET /_overcast/cognito/user-pools/{poolId}/logout.
 func (s *Service) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	poolID := chi.URLParam(r, "poolId")
 	ctx := r.Context()
@@ -1338,7 +1338,7 @@ func (s *Service) HandleOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
 	// it advertises has to be one the discovering client can dial.
 	origin := serviceutil.ClientBaseURL(s.cfg, r)
 	issuer := origin + "/" + region + "/" + poolID
-	base := origin + "/_cognito/" + poolID
+	base := origin + "/_overcast/cognito/user-pools/" + poolID
 
 	doc := map[string]any{
 		"issuer":                                issuer,
@@ -1375,7 +1375,7 @@ type debugTokenPageData struct {
 	Error        string
 }
 
-// HandleDebugToken serves GET /_cognito/{poolId}/debug/token.
+// HandleDebugToken serves GET /_overcast/cognito/user-pools/{poolId}/debug/token.
 // After the authorization code flow completes with the debug redirect URI, the
 // browser lands here with ?code=.... This handler exchanges the code for tokens
 // server-side and renders an interactive JWT inspector page.
@@ -1448,7 +1448,7 @@ func (s *Service) HandleDebugToken(w http.ResponseWriter, r *http.Request) {
 
 // ─── Branding endpoints ───────────────────────────────────────────────────────
 
-// HandleGetBranding serves GET /_cognito/{poolId}/branding.
+// HandleGetBranding serves GET /_overcast/cognito/user-pools/{poolId}/branding.
 // Emulator-only: returns the managed login branding for the pool.
 func (s *Service) HandleGetBranding(w http.ResponseWriter, r *http.Request) {
 	poolID := chi.URLParam(r, "poolId")
@@ -1468,7 +1468,7 @@ func (s *Service) HandleGetBranding(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(branding)
 }
 
-// HandleSetBranding serves PUT /_cognito/{poolId}/branding.
+// HandleSetBranding serves PUT /_overcast/cognito/user-pools/{poolId}/branding.
 // Emulator-only: replaces the managed login branding for the pool.
 func (s *Service) HandleSetBranding(w http.ResponseWriter, r *http.Request) {
 	poolID := chi.URLParam(r, "poolId")
@@ -1495,7 +1495,7 @@ func (s *Service) HandleSetBranding(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(branding)
 }
 
-// HandleGetPassword serves GET /_cognito/{poolId}/users/{username}/password.
+// HandleGetPassword serves GET /_overcast/cognito/user-pools/{poolId}/users/{username}/password.
 // Emulator-only endpoint for dev convenience — returns the user's plaintext password.
 func (s *Service) HandleGetPassword(w http.ResponseWriter, r *http.Request) {
 	poolID := chi.URLParam(r, "poolId")
@@ -1767,7 +1767,7 @@ func isValidRedirectURI(client *UserPoolClient, uri string) bool {
 		return false
 	}
 	// Always accept the emulator debug token page.
-	if strings.HasSuffix(uri, "/debug/token") && strings.Contains(uri, "/_cognito/") {
+	if strings.HasSuffix(uri, "/debug/token") && strings.Contains(uri, "/_overcast/cognito/user-pools/") {
 		return true
 	}
 	for _, allowed := range client.CallbackURLs {

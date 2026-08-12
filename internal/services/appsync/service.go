@@ -236,9 +236,9 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// ── GraphQL execution endpoint ───────────────────────────────────────
 	// GraphQL clients POST queries here. In real AWS, this lives at
 	// https://{apiId}.appsync-api.{region}.amazonaws.com/graphql.
-	// In the emulator, it is exposed under /_appsync/ so SDK clients can
+	// In the emulator, it is exposed under /_overcast/appsync/apis/ so SDK clients can
 	// be pointed at a local endpoint URL.
-	r.Route("/_appsync/{apiId}", func(r chi.Router) {
+	r.Route("/_overcast/appsync/apis/{apiId}", func(r chi.Router) {
 		r.Post("/graphql", h.ExecuteGraphQL)
 		r.Get("/realtime", h.HandleWebSocket)
 	})

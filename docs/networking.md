@@ -53,7 +53,7 @@ label, the region segment and the base domain alike — because a hostname is
 (RFC 4343). So `E1PQRS2T3U4V5W.cloudfront.localhost.overcast.sh:4566` and the
 all-lowercase form a browser actually sends reach the same distribution, and
 `MyBucket.localhost:4566` reaches bucket `mybucket`. **Paths are
-case-sensitive**, as they are on AWS: `/_cloudfront/{distributionId}/...` and
+case-sensitive**, as they are on AWS: `/_overcast/cloudfront/distributions/{distributionId}/...` and
 every other path-style route must match exactly.
 
 ### How Overcast decides who owns a Host

@@ -35,7 +35,7 @@ func TestDetectService(t *testing.T) {
 		{name: "lambda path", method: "GET", path: "/2015-03-31/functions", want: "lambda"},
 		{name: "pipes path", method: "GET", path: "/v1/pipes", want: "pipes"},
 		{name: "appsync apis", method: "GET", path: "/v1/apis", want: "appsync"},
-		{name: "appsync graphql", method: "POST", path: "/_appsync/api-id/graphql", want: "appsync"},
+		{name: "appsync graphql", method: "POST", path: "/_overcast/appsync/apis/api-id/graphql", want: "appsync"},
 		{name: "ses path", method: "GET", path: "/v2/email/identities", want: "ses"},
 		{name: "cloudfront path", method: "GET", path: "/2020-05-31/distribution", want: "cloudfront"},
 		{name: "apigateway restapis", method: "GET", path: "/restapis", want: "apigateway"},
@@ -51,11 +51,11 @@ func TestDetectService(t *testing.T) {
 		{name: "topology", method: "GET", path: "/_overcast/topology", want: "internal"},
 		{name: "info", method: "GET", path: "/_overcast/info", want: "internal"},
 		{name: "debug", method: "GET", path: "/_overcast/debug/store", want: "internal"},
-		{name: "cognito oauth", method: "GET", path: "/_cognito/us-east-1_ABC/oauth2/authorize", want: "cognito"},
-		{name: "cognito login", method: "POST", path: "/_cognito/us-east-1_ABC/login", want: "cognito"},
+		{name: "cognito oauth", method: "GET", path: "/_overcast/cognito/user-pools/us-east-1_ABC/oauth2/authorize", want: "cognito"},
+		{name: "cognito login", method: "POST", path: "/_overcast/cognito/user-pools/us-east-1_ABC/login", want: "cognito"},
 		{name: "ecs tasks", method: "GET", path: "/_overcast/ecs/clusters/default/tasks", want: "ecs"},
 		{name: "lambda instances", method: "GET", path: "/_overcast/lambda/instances", want: "lambda"},
-		{name: "cloudfront proxy", method: "GET", path: "/_cloudfront/EDIST123/index.html", want: "cloudfront"},
+		{name: "cloudfront proxy", method: "GET", path: "/_overcast/cloudfront/distributions/EDIST123/index.html", want: "cloudfront"},
 		{name: "secretsmanager internal", method: "GET", path: "/_overcast/secretsmanager/secrets", want: "secretsmanager"},
 		{name: "mail internal", method: "GET", path: "/_overcast/ses/inbox/messages", want: "ses"},
 
@@ -63,10 +63,10 @@ func TestDetectService(t *testing.T) {
 		// appsync-api Host subdomains) — see hostroute.go. Labelled from the
 		// claim HostAddressing stamped on the request, regardless of what
 		// internal path convention the (already-applied) rewrite used.
-		{name: "host-routed execute-api", method: "GET", path: "/_apigateway/execute-api/abc123/us-east-1/prod/pets", host: "abc123.execute-api.us-east-1.amazonaws.com", want: "apigateway"},
-		{name: "host-routed execute-api no region", method: "GET", path: "/_apigateway/execute-api/abc123/-/prod/pets", host: "abc123.execute-api.localhost", want: "apigateway"},
-		{name: "host-routed lambda-url", method: "POST", path: "/_lambda/url-invoke/deadbeef/", host: "deadbeefdeadbeefdeadbeefdeadbeef.lambda-url.us-east-1.amazonaws.com", want: "lambda"},
-		{name: "host-routed appsync-api", method: "POST", path: "/_appsync/api-id/graphql", host: "api-id.appsync-api.us-east-1.amazonaws.com", want: "appsync"},
+		{name: "host-routed execute-api", method: "GET", path: "/_overcast/apigateway/execute-api/abc123/us-east-1/prod/pets", host: "abc123.execute-api.us-east-1.amazonaws.com", want: "apigateway"},
+		{name: "host-routed execute-api no region", method: "GET", path: "/_overcast/apigateway/execute-api/abc123/-/prod/pets", host: "abc123.execute-api.localhost", want: "apigateway"},
+		{name: "host-routed lambda-url", method: "POST", path: "/_overcast/lambda/url-invoke/deadbeef/", host: "deadbeefdeadbeefdeadbeefdeadbeef.lambda-url.us-east-1.amazonaws.com", want: "lambda"},
+		{name: "host-routed appsync-api", method: "POST", path: "/_overcast/appsync/apis/api-id/graphql", host: "api-id.appsync-api.us-east-1.amazonaws.com", want: "appsync"},
 
 		// Unrecognised Host label — must NOT be claimed by the host-route
 		// table; falls through to whatever the path/other signals say
@@ -162,8 +162,8 @@ func TestDetectOperation(t *testing.T) {
 		{name: "health", method: "GET", path: "/_overcast/health", want: ""},
 		{name: "topology", method: "GET", path: "/_overcast/topology", want: ""},
 		{name: "info", method: "GET", path: "/_overcast/info", want: ""},
-		{name: "cognito oauth", method: "GET", path: "/_cognito/us-east-1_ABC/oauth2/authorize", want: ""},
-		{name: "cognito debug token", method: "GET", path: "/_cognito/us-east-1_ABC/debug/token", want: ""},
+		{name: "cognito oauth", method: "GET", path: "/_overcast/cognito/user-pools/us-east-1_ABC/oauth2/authorize", want: ""},
+		{name: "cognito debug token", method: "GET", path: "/_overcast/cognito/user-pools/us-east-1_ABC/debug/token", want: ""},
 		{name: "lambda instances", method: "GET", path: "/_overcast/lambda/instances", want: ""},
 		{name: "debug store", method: "GET", path: "/_overcast/debug/store/s3", want: ""},
 
@@ -244,14 +244,14 @@ func TestInternalService(t *testing.T) {
 		path string
 		want string
 	}{
-		{"/_cognito/pool/oauth2/authorize", "cognito"},
-		{"/_cognito/pool/login", "cognito"},
+		{"/_overcast/cognito/user-pools/pool/oauth2/authorize", "cognito"},
+		{"/_overcast/cognito/user-pools/pool/login", "cognito"},
 		{"/_overcast/ecs/clusters/default/tasks", "ecs"},
 		{"/_overcast/ecs/tasks/arn/logs/main", "ecs"},
 		{"/_overcast/lambda/instances", "lambda"},
 		{"/_overcast/lambda/runtimes", "lambda"},
-		{"/_appsync/api-id/graphql", "appsync"},
-		{"/_cloudfront/EDIST/index.html", "cloudfront"},
+		{"/_overcast/appsync/apis/api-id/graphql", "appsync"},
+		{"/_overcast/cloudfront/distributions/EDIST/index.html", "cloudfront"},
 		{"/_overcast/secretsmanager/secrets", "secretsmanager"},
 		{"/_overcast/secretsmanager/secrets/id/value", "secretsmanager"},
 		{"/_overcast/ses/inbox/messages", "ses"},
@@ -284,12 +284,13 @@ func TestInternalService(t *testing.T) {
 // on behalf of an emulated workload is the second kind and must stay at INFO,
 // which is what the user cases below are for.
 //
-// Written down now because docs/plans/non-canonical-url-namespace.md moves
-// every one of these paths under /_overcast/. Today the distinction survives
-// on the accident that data-plane routes sit on first segments nobody thought
-// to demote; after the move it has to be carried deliberately, and a test that
-// already says what the answer is turns that into a failure rather than a
-// silently quieter log.
+// These were written down before docs/plans/non-canonical-url-namespace.md
+// moved the paths, because the distinction used to survive on an accident: the
+// data-plane routes sat on first segments of their own that nobody had thought
+// to demote. Phase 5 put them under /_overcast/ alongside the polling
+// endpoints, so the accident is gone and the allowlist is now the only thing
+// keeping them apart. Getting it wrong would not fail anything — it would just
+// make a client's request quietly log a level lower than it should.
 func TestIsOperationalPollPath(t *testing.T) {
 	polled := []string{
 		"/_overcast/health",
@@ -315,14 +316,14 @@ func TestIsOperationalPollPath(t *testing.T) {
 		// set as trace.TestIsInternalPathSeparatesPollingFromClientTraffic —
 		// the two predicates are meant to agree, so they are given the same
 		// paths to agree about.
-		"/_appsync/abc123/graphql",
-		"/_appsync/abc123/realtime",
-		"/_apigateway/execute-api/abc123/us-east-1/test/hello",
-		"/_lambda/url-invoke/abc123/",
-		"/_cloudfront/E123456789/index.html",
-		"/_elb/healthz",
-		"/_cognito/us-east-1_abc123/login",
-		"/_cognito/us-east-1_abc123/oauth2/token",
+		"/_overcast/appsync/apis/abc123/graphql",
+		"/_overcast/appsync/apis/abc123/realtime",
+		"/_overcast/apigateway/execute-api/abc123/us-east-1/test/hello",
+		"/_overcast/lambda/url-invoke/abc123/",
+		"/_overcast/cloudfront/distributions/E123456789/index.html",
+		"/_overcast/elb/healthz",
+		"/_overcast/cognito/user-pools/us-east-1_abc123/login",
+		"/_overcast/cognito/user-pools/us-east-1_abc123/oauth2/token",
 	}
 	for _, p := range client {
 		if isOperationalPollPath(p) {

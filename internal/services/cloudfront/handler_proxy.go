@@ -28,7 +28,7 @@ var proxyClient = &http.Client{
 }
 
 // ProxyRequest handles GET/HEAD/POST/PUT/DELETE/PATCH requests to
-// /_cloudfront/{distId}/* and forwards them to the matched origin.
+// /_overcast/cloudfront/distributions/{distId}/* and forwards them to the matched origin.
 func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 	distID := chi.URLParam(r, "distId")
 	ctx := r.Context()
@@ -85,7 +85,7 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Extract the downstream path (everything after /_cloudfront/{distId}).
+	// Extract the downstream path (everything after /_overcast/cloudfront/distributions/{distId}).
 	reqPath := chi.URLParam(r, "*")
 	if reqPath == "" || reqPath[0] != '/' {
 		reqPath = "/" + reqPath
@@ -620,7 +620,7 @@ func (s *Service) HostRouteRewrite(r *http.Request, m middleware.HostRouteMatch)
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	r.URL.Path = "/_cloudfront/" + strings.ToUpper(m.ID) + path
+	r.URL.Path = "/_overcast/cloudfront/distributions/" + strings.ToUpper(m.ID) + path
 	if r.URL.RawPath != "" {
 		r.URL.RawPath = r.URL.Path
 	}

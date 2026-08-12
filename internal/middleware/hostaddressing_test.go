@@ -338,7 +338,7 @@ func TestHostAddressing_dispatchesExactlyOneRewrite(t *testing.T) {
 		host     string
 		wantPath string
 	}{
-		{name: "host-routed invoke is not prefixed with a bucket", host: "abc123.execute-api.us-east-1.localhost.overcast.sh:4566", wantPath: "/_apigateway/abc123/test/hello"},
+		{name: "host-routed invoke is not prefixed with a bucket", host: "abc123.execute-api.us-east-1.localhost.overcast.sh:4566", wantPath: "/_overcast/apigateway/abc123/test/hello"},
 		{name: "bare bucket is prefixed once", host: "mybucket.localhost:4566", wantPath: "/mybucket/test/hello"},
 		{name: "labelled bucket is prefixed once", host: "mybucket.s3.localhost", wantPath: "/mybucket/test/hello"},
 		{name: "path-style host is untouched", host: "localhost:4566", wantPath: "/test/hello"},
@@ -349,7 +349,7 @@ func TestHostAddressing_dispatchesExactlyOneRewrite(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rows := []HostRouteRow{
 				{Label: "execute-api", Rewrite: func(r *http.Request, m HostRouteMatch) {
-					r.URL.Path = "/_apigateway/" + m.ID + r.URL.Path
+					r.URL.Path = "/_overcast/apigateway/" + m.ID + r.URL.Path
 				}},
 			}
 			var gotPath string

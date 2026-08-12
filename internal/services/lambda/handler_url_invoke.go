@@ -2,7 +2,7 @@ package lambda
 
 // handler_url_invoke.go — Host-routed Lambda function URL invocation.
 //
-// Registered at /_lambda/url-invoke/{urlId}/* (see Service.HostRouteRewrite
+// Registered at /_overcast/lambda/url-invoke/{urlId}/* (see Service.HostRouteRewrite
 // in handler_url.go). Maps the incoming HTTP request to the Lambda function
 // URL payload format 2.0 event (the only event format AWS uses for function
 // URLs — there is no "1.0" option, unlike API Gateway) and maps the

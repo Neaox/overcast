@@ -369,7 +369,7 @@ func (h *Handler) DeleteGraphqlApi(w http.ResponseWriter, r *http.Request) {
 //
 // REALTIME deliberately returns the SAME host as GRAPHQL. Real AWS serves
 // realtime from a separate appsync-realtime-api hostname; Overcast colocates
-// both under /_appsync/{apiId} (see service.go), so the appsync-api host is
+// both under /_overcast/appsync/apis/{apiId} (see service.go), so the appsync-api host is
 // the one that actually routes. Advertising an appsync-realtime-api name would
 // reintroduce exactly the defect this replaces: a hostname Overcast hands out
 // but cannot serve. Splitting them needs a fourth dispatch label -- tracked as
@@ -386,7 +386,7 @@ func (h *Handler) graphQLDNS(r *http.Request, apiID string) string {
 //
 // That is the shape every AWS client expects and the one CloudFormation's
 // Fn::GetAtt GraphQLUrl hands on to stacks. It was unconditionally path-style
-// ({base}/_appsync/{apiId}/graphql) — a URL only Overcast understands — on the
+// ({base}/_overcast/appsync/apis/{apiId}/graphql) — a URL only Overcast understands — on the
 // grounds that *.localhost does not resolve on Windows or macOS. That is true
 // of a bare localhost base and false of every wildcard-DNS domain, so the
 // choice belongs to serviceutil.SupportsHostRouting rather than to the whole
@@ -401,8 +401,8 @@ func (h *Handler) graphQLDNS(r *http.Request, apiID string) string {
 func localGraphQLURIs(baseURL, apiID, region string) map[string]string {
 	if !serviceutil.SupportsHostRouting(baseURL) {
 		return map[string]string{
-			"GRAPHQL":  fmt.Sprintf("%s/_appsync/%s/graphql", baseURL, apiID),
-			"REALTIME": fmt.Sprintf("%s/_appsync/%s/realtime", websocketBaseURL(baseURL), apiID),
+			"GRAPHQL":  fmt.Sprintf("%s/_overcast/appsync/apis/%s/graphql", baseURL, apiID),
+			"REALTIME": fmt.Sprintf("%s/_overcast/appsync/apis/%s/realtime", websocketBaseURL(baseURL), apiID),
 		}
 	}
 	return map[string]string{

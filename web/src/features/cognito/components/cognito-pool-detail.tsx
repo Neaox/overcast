@@ -545,13 +545,13 @@ function ManagedLoginTestPanel({ poolId, onClose }: { poolId: string; onClose: (
   )
 
   const { baseUrl } = endpointStore.get()
-  const debugUri = `${baseUrl}/_cognito/${poolId}/debug/token`
+  const debugUri = `${baseUrl}/_overcast/cognito/user-pools/${poolId}/debug/token`
   const callbackUrl =
     testClient != null ? ((testClient.callbackUrls ?? [])[0] ?? debugUri) : debugUri
 
   const authorizeUrl =
     testClient != null && poolDetail?.domain != null
-      ? `${baseUrl}/_cognito/${poolId}/oauth2/authorize?client_id=${testClient.clientId}&response_type=code&scope=openid&state=test&redirect_uri=${encodeURIComponent(callbackUrl)}`
+      ? `${baseUrl}/_overcast/cognito/user-pools/${poolId}/oauth2/authorize?client_id=${testClient.clientId}&response_type=code&scope=openid&state=test&redirect_uri=${encodeURIComponent(callbackUrl)}`
       : null
 
   const saveMut = useMutation({

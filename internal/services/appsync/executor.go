@@ -22,7 +22,7 @@ package appsync
 //   (keyed by apiId). Invalid SDL is rejected on upload.
 //
 // Phase 2 — Query execution (P2): ✅ DONE (NONE + HTTP + Lambda + DynamoDB data sources, PIPELINE resolvers, arguments, nested resolution)
-//   GraphQL requests arrive at POST /_appsync/{apiId}/graphql.
+//   GraphQL requests arrive at POST /_overcast/appsync/apis/{apiId}/graphql.
 //   Handler parses the query string against the cached *ast.Schema, resolves
 //   fields by looking up Resolvers in the store (type+field → Resolver),
 //   then dispatches each resolver through the appropriate data source:
@@ -66,7 +66,7 @@ package appsync
 //   fallback chain. Identity ($context.identity) propagated through execution.
 //
 // Phase 6 — Subscriptions (P3): ✅ DONE (WebSocket real-time, mutation fan-out)
-//   GET /_appsync/{apiId}/realtime upgrades to WebSocket using github.com/coder/websocket.
+//   GET /_overcast/appsync/apis/{apiId}/realtime upgrades to WebSocket using github.com/coder/websocket.
 //   Protocol: connection_init→connection_ack, start→start_ack, stop→complete,
 //   ka (30s keepalive). On subscription start, parses the subscription query
 //   and registers in an in-memory subscription map. When a mutation resolves,
@@ -267,7 +267,7 @@ type CodeError struct {
 //   4. Check expiry: if key.Expires < now, reject with UnauthorizedException.
 //   5. On success, return a RequestIdentity with minimal info.
 //
-// For the GraphQL execution endpoint (POST /_appsync/{apiId}/graphql):
+// For the GraphQL execution endpoint (POST /_overcast/appsync/apis/{apiId}/graphql):
 //   1. Load the API from the store.
 //   2. Determine auth mode from the API's authenticationType.
 //   3. Call Authenticator.Authenticate(r, api).

@@ -56,7 +56,7 @@ So `abc123.execute-api.us-east-1.localhost` yields bucket
 then prepends its own marker prefix on top of the already-corrupted path:
 
 ```
-/_apigateway/execute-api/abc123/us-east-1/abc123.execute-api.us-east-1/test/hello
+/_overcast/apigateway/execute-api/abc123/us-east-1/abc123.execute-api.us-east-1/test/hello
 ```
 
 `dispatchHostRestAPI` reads the first segment as the stage name, finds no such
@@ -146,7 +146,7 @@ API Gateway, Lambda function URLs and AppSync all mint lower-case IDs, so only
 their *label* and *region* segments were exposed.
 
 Folding is a property of the **host** only. Paths stay case-sensitive, as they
-are on AWS — `/_cloudfront/{distributionId}/…` and every other path-style route
+are on AWS — `/_overcast/cloudfront/distributions/{distributionId}/…` and every other path-style route
 match verbatim. The one place the two meet is CloudFront's `HostRouteRewrite`,
 which turns a folded host segment back into a path segment: it re-canonicalises
 the ID to upper case, since that is the only form the store holds.
@@ -547,7 +547,7 @@ http://{id}.{label}.{region}.{OVERCAST_HOSTNAME}:{port}/{stage}/
 | Lambda `FunctionUrl` | `{urlId}.lambda-url.{region}.{host}:{port}/` ✅ | unchanged — this is the reference implementation |
 | API Gateway v2 `apiEndpoint` | **never populated** — field omitted by `v2APIToResponse` ([handler_http.go:604](../../internal/services/apigateway/handler_http.go)), so CFN `Fn::GetAtt ApiEndpoint` yields `""` | `http://{apiId}.execute-api.{region}.{host}:{port}` |
 | API Gateway v1 | no invoke-URL field | unchanged on the wire — real AWS has none either; the console composes it client-side, and must compose the host-routed form (see §8.1) |
-| AppSync `uris.GRAPHQL` | path-style `{base}/_appsync/{apiId}/graphql` | `http://{apiId}.appsync-api.{region}.{host}:{port}/graphql` **when the base can carry a subdomain** — see §8.1 |
+| AppSync `uris.GRAPHQL` | path-style `{base}/_overcast/appsync/apis/{apiId}/graphql` | `http://{apiId}.appsync-api.{region}.{host}:{port}/graphql` **when the base can carry a subdomain** — see §8.1 |
 | AppSync `dns.GRAPHQL` / `dns.REALTIME` | hardcoded `amazonaws.com` ([handler.go:232](../../internal/services/appsync/handler.go)) | the configured base |
 | AppSync `appsyncDomainName` | hardcoded `d-{hex}.appsync-api.{region}.amazonaws.com` ([handler_config.go](../../internal/services/appsync/handler_config.go)) | the configured base |
 | ECR `Fn::GetAtt RepositoryUri` | rebuilt as `{account}.dkr.ecr.{region}.amazonaws.com/{name}` ([provisioner_json_coverage.go](../../internal/services/cloudformation/provisioner_json_coverage.go)), diverging from the `repositoryUri` ECR itself returns | read the value off the CreateRepository response |
@@ -857,7 +857,7 @@ trie sees it**:
 
 ```
 GET /prod/pets            Host: abc123.execute-api.us-east-1.localhost:4566
-  -> GET /_apigateway/execute-api/abc123/us-east-1/prod/pets
+  -> GET /_overcast/apigateway/execute-api/abc123/us-east-1/prod/pets
 ```
 
 This matters because an invoke path is arbitrary customer-defined data. A
@@ -872,7 +872,7 @@ and would be 501'd — breaking a working customer API.
 
 A3 already satisfies this by construction: `restFallback` is registered at
 **route** level after every explicit service route, so it runs during chi
-dispatch, long after middleware. The rewritten path is `/_apigateway/...`,
+dispatch, long after middleware. The rewritten path is `/_overcast/apigateway/...`,
 which matches an explicit route and never reaches the fallback. A3's additional
 requirement that `middleware.ServiceFromCredential(r)` match `claim.SigningName`
 gives a second layer of protection, since host-routed invokes are typically
@@ -935,7 +935,7 @@ fixture that sets an explicit `Host` should be checked against the §4 matrix.
   the wrong call: the host was not a nicety but the one Amplify derives by
   substituting into the GraphQL URL, so until it dispatched, a subscription to
   the hostname AWS actually serves was claimed as an S3 bucket. Overcast still
-  colocates realtime under the same `/_appsync/{apiId}` prefix, so the label
+  colocates realtime under the same `/_overcast/appsync/apis/{apiId}` prefix, so the label
   routes to the same endpoint as `appsync-api`, with the query string preserved
   because AppSync carries connection auth there. H5b's evidence gate will
   therefore validate five existing labels rather than gate the addition of new

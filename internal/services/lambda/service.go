@@ -1355,7 +1355,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// Host-based invoke (lambda-url Host header) — see handler_url.go's
 	// Service.HostRouteRewrite. Matches any HTTP method: real Lambda
 	// function URLs accept arbitrary methods and let the function decide.
-	r.HandleFunc("/_lambda/url-invoke/{urlId}/*", s.handler.InvokeFunctionURL)
+	r.HandleFunc("/_overcast/lambda/url-invoke/{urlId}/*", s.handler.InvokeFunctionURL)
 
 }
 

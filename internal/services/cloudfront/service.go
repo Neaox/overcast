@@ -220,5 +220,5 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// ── Origin Proxy ─────────────────────────────────────────────────
 	// Internal endpoint for proxying requests through CloudFront distributions
 	// to their configured origins. Not part of the AWS API surface.
-	r.HandleFunc("/_cloudfront/{distId}/*", h.ProxyRequest)
+	r.HandleFunc("/_overcast/cloudfront/distributions/{distId}/*", h.ProxyRequest)
 }

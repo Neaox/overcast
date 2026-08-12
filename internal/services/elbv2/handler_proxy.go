@@ -45,7 +45,7 @@ func (s *Service) HostRouteRewrite(r *http.Request, _ middleware.HostRouteMatch)
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	r.URL.Path = "/_elb" + path
+	r.URL.Path = "/_overcast/elb" + path
 	if r.URL.RawPath != "" {
 		r.URL.RawPath = r.URL.Path
 	}
@@ -76,9 +76,9 @@ func (h *Handler) ProxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip the /_elb prefix the host rewrite added, restoring the path the
+	// Strip the /_overcast/elb prefix the host rewrite added, restoring the path the
 	// client actually asked for.
-	r.URL.Path = strings.TrimPrefix(r.URL.Path, "/_elb")
+	r.URL.Path = strings.TrimPrefix(r.URL.Path, "/_overcast/elb")
 	if r.URL.Path == "" {
 		r.URL.Path = "/"
 	}
