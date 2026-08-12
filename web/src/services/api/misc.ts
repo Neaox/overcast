@@ -10,6 +10,8 @@ import type {
   TraceListResponse,
   TraceCountResponse,
   TraceListParams,
+  TraceSearchParams,
+  TraceSearchResponse,
 } from "@/types"
 
 export const metrics = {
@@ -151,4 +153,21 @@ export const debugTrace = {
     apiFetch<TraceEvent[]>(`/debug/trace/${encodeURIComponent(requestId)}/events`),
 
   count: () => apiFetch<TraceCountResponse>("/debug/traces/count"),
+
+  /**
+   * Scans retained traces for a string in their bodies, hop errors and log
+   * entries — what `list`'s own `search` deliberately does not reach.
+   *
+   * One call scans a budget's worth and returns a cursor; the caller keeps
+   * asking until `done`. The signal is not optional in spirit: a scan runs on
+   * the emulator for as long as its budget allows, so abandoning one without
+   * aborting the fetch leaves it running for a result nobody will read. React
+   * Query hands `queryFn` a signal for exactly this.
+   */
+  search: (params: TraceSearchParams, signal?: AbortSignal): Promise<TraceSearchResponse> => {
+    const query = new URLSearchParams({ q: params.q })
+    if (params.cursor) query.set("cursor", params.cursor)
+    if (params.internal) query.set("internal", "true")
+    return apiFetch<TraceSearchResponse>(`/debug/traces/search?${query.toString()}`, { signal })
+  },
 }

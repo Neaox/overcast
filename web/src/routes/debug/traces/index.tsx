@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router"
-import { useMemo, useState, useCallback } from "react"
+import { Fragment, useMemo, useState, useCallback } from "react"
 import { Search, RefreshCw, EyeOff, Terminal, GitFork } from "lucide-react"
 import { useInfiniteQuery, useQuery, useQueryClient, infiniteQueryOptions } from "@tanstack/react-query"
 import type { InfiniteData } from "@tanstack/react-query"
@@ -17,6 +17,8 @@ import {
   type TracesSearch,
 } from "@/features/debug-traces/filters"
 import { serviceColor } from "@/features/debug-traces/service-color"
+import { useDeepSearch } from "@/features/debug-traces/use-deep-search"
+import { MatchBadge, MatchExcerpt } from "@/features/debug-traces/components/match-excerpt"
 import { PageHeader, Spinner } from "@/components/ui/primitives"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -171,6 +173,21 @@ function TracesPage() {
     return filtered
   }, [allTraces, hideInternal, hiddenServices])
 
+  // The deep scan runs only when the cheap search has come up short — which is
+  // exactly the case it exists for, and keeps a query the list already answered
+  // from spending the budget walking gigabytes of bodies to add rows nobody
+  // asked for. `searchInput` rather than the settled URL value so the scan's own
+  // longer settle starts from the last keystroke, not from the list's commit.
+  const deep = useDeepSearch(searchInput, searchInput.trim().length > 0 && displayTraces.length === 0)
+
+  // A trace the list already shows must not appear again below it. The deep
+  // scan reaches fields the list does not, so the same trace can legitimately
+  // match both ways.
+  const deepMatches = useMemo(() => {
+    const shown = new Set(displayTraces.map((t) => t.requestId))
+    return deep.matches.filter((m) => !shown.has(m.requestId))
+  }, [deep.matches, displayTraces])
+
   if (!debugEnabled) {
     return (
       <div className="flex flex-col gap-4 p-6">
@@ -223,6 +240,23 @@ function TracesPage() {
         </label>
       </div>
 
+      {/*
+        The deep scan's progress. It only appears while one is running, because
+        a status line that is always there is one nobody reads — and its whole
+        job is to explain why results are still arriving after the table
+        already settled.
+      */}
+      {deep.active && !deep.done && (
+        <div className="flex items-center gap-2 text-xs text-fg-muted" role="status" aria-live="polite">
+          <Spinner className="h-3 w-3" />
+          <span>
+            Searching bodies, hop errors and log lines for “{deep.query}”
+            {deep.scanned > 0 ? ` — ${deep.scanned} trace${deep.scanned === 1 ? "" : "s"} scanned` : ""}
+            {deep.remaining > 0 ? `, ${deep.remaining} to go` : ""}
+          </span>
+        </div>
+      )}
+
       {isLoading ? (
         <Spinner />
       ) : error ? (
@@ -255,8 +289,25 @@ function TracesPage() {
                 </tr>
               </thead>
               <tbody>
-                {displayTraces.length === 0 ? (
-                  <tr><td colSpan={COL_COUNT} className="px-3 py-8 text-center text-fg-muted">No traces yet. Send a request to see it here.</td></tr>
+                {displayTraces.length === 0 && deepMatches.length === 0 ? (
+                  <tr>
+                    <td colSpan={COL_COUNT} className="px-3 py-8 text-center text-fg-muted">
+                      {/*
+                        The old wording here was "No traces yet. Send a request
+                        to see it here." — a confident answer that was wrong
+                        whenever the thing being searched for was sitting in a
+                        hop body. An empty list during a search means the search
+                        found nothing, which is a different statement from the
+                        buffer being empty, and while the deep scan is still
+                        running it is not even that yet.
+                      */}
+                      {deep.active && !deep.done
+                        ? "No matches in paths, IDs or operations — searching bodies and logs…"
+                        : searchInput.trim()
+                          ? "No matches, including in bodies, hop errors and log lines."
+                          : "No traces yet. Send a request to see it here."}
+                    </td>
+                  </tr>
                 ) : (
                   displayTraces.map((t) => (
                     <tr key={t.requestId} className="border-b border-border hover:bg-bg-elevated cursor-pointer transition-colors" onClick={() => void navigate({ to: "/debug/traces/$requestId", params: { requestId: t.requestId } })}>
@@ -294,6 +345,46 @@ function TracesPage() {
                     </tr>
                   ))
                 )}
+                {/*
+                  Deep matches join the same table rather than forming a second
+                  list. A trace list is a chronology, and the reason anyone is
+                  looking at it is to line it up against a deploy log — so a
+                  match found in a body belongs in the same timeline as one
+                  found in a path, distinguished by its badge and its excerpt
+                  rather than by being somewhere else on the page.
+                */}
+                {deepMatches.map((m) => (
+                  <Fragment key={`deep-${m.requestId}`}>
+                    <tr
+                      className="border-b border-border/50 hover:bg-bg-elevated cursor-pointer transition-colors"
+                      onClick={() => void navigate({ to: "/debug/traces/$requestId", params: { requestId: m.requestId }, search: m.hopId ? { hop: m.hopId } : {} })}
+                    >
+                      <td className="px-3 py-2 whitespace-nowrap text-fg-muted font-mono text-xs">{formatTimestamp(m.summary.timestamp)}</td>
+                      <td className="px-3 py-2"><Badge variant="outline" className="text-xs font-mono">{m.summary.method}</Badge></td>
+                      <td className="px-3 py-2">
+                        <div className="max-w-40 truncate font-mono text-xs @lg:max-w-xs @3xl:max-w-md @5xl:max-w-xl" title={m.summary.path}>{m.summary.path}</div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-1">
+                          <Badge variant="outline" className="text-xs" style={{ borderColor: serviceColor(m.summary.service || "") }}>{m.summary.service || "—"}</Badge>
+                          <MatchBadge match={m} />
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-fg-muted text-xs">{m.summary.operation ?? "—"}</td>
+                      <td className={cn("px-3 py-2 font-mono text-xs whitespace-nowrap", statusColor(m.summary.statusCode))}>{m.summary.statusCode > 0 ? m.summary.statusCode : "—"}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-fg-muted">{nsToHuman(m.summary.duration)}</td>
+                      <td className="px-3 py-2 min-w-0 truncate">
+                        <Link to="/debug/traces/$requestId" params={{ requestId: m.requestId }} className="font-mono text-xs text-accent hover:underline" onClick={(e) => e.stopPropagation()}>{m.requestId}</Link>
+                      </td>
+                      <td className="px-3 py-2" />
+                    </tr>
+                    <tr className="border-b border-border">
+                      <td colSpan={COL_COUNT} className="px-3 pb-2">
+                        <MatchExcerpt match={m} />
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))}
               </tbody>
             </table>
           </div>
