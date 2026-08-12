@@ -215,10 +215,29 @@ directions — `Entry.ParentRequestID` on the child and `Recorder.hopRequestIDs`
 an O(1) map built for the `HopsFor` filter — and pinning happens once, on the rare path, for failures
 only.
 
-Cap what it pins: **the failing hops and the five hops before each**. The cause is usually upstream of
-the symptom, so those are the ones worth keeping; a failed deploy with 3,000 hops then pins a handful
-of children rather than 3,000. Every other hop keeps its metadata and reports `evicted` if its body is
-asked for after the child is gone.
+**Pin every child of a pinned parent, and let bytes be the bound.**
+
+An earlier draft pinned the failing hops and the five before each, on the reasoning that the cause is
+usually upstream of the symptom. That reasoning is right and the mechanism is wrong: **ordinal
+adjacency does not track causation.** CloudFormation provisions in dependency order, but adjacent
+hops need not be related — a `PutBucketPolicy` at hop 347 can fail because of a bucket created at hop
+12, and a changeset with hundreds of resources makes that the normal case rather than the exotic one.
+Raising five to fifty moves an arbitrary line without making the window mean anything.
+
+The relation that *would* mean something — same logical resource, or dependency ancestor — is not
+available. `Hop.Parent` exists on the struct and is **never set by any Go code**, and the dispatch
+funnel `internalCall.do` does not carry a logical resource ID to set it from. See
+[what would make this precise](#what-would-make-this-precise).
+
+So pin the whole family, because it is cheap. A 3,000-hop deploy's children are ~2–5 KiB each — 6 to
+15 MB, which is noise against a 512 MiB backstop. The case that is not noise is inline Lambda code,
+bounded at 1 MiB per body by `maxTraceBody`, so ~100 Lambda functions is ≤200 MB; that is exactly the
+pathological shape the backstop exists to catch, and it catches it by evicting oldest-non-pinned
+first rather than by a guess made in advance.
+
+Consequence for the `pinned` ring: its cap is **1,000 pinned *parents*, with families riding along**,
+bounded overall by bytes — not a flat 1,000 entries. A failure and the calls it made are one unit of
+retention, and counting them separately would let a single deploy exhaust the failure budget.
 
 ---
 
@@ -255,8 +274,10 @@ Recorded because deleting a phase is a decision, not an omission.
 - **The shrink rule is gone.** An earlier draft had a fourth phase that shed successful hops' bodies,
   sub-warn logs and stacks under pressure, to stop a pinned deploy trace being unbounded. After
   de-duplication a pinned trace is bounded at ~2.4 MiB by caps that already exist, so there is
-  nothing left to shed. The one part worth keeping — the five-hops-before-a-failure window — survives
-  as the pinning bound above.
+  nothing left to shed.
+- **The five-hops-before-a-failure window is gone too**, and with it the last place this design tried
+  to guess which calls mattered. Adjacency is not causation; see phase 3. What replaced it is pinning
+  the whole family and bounding it by bytes.
 - **The byte budget stopped being the point.** It was the primary bound because per-trace size spread
   four orders of magnitude; removing the duplicated hop bodies collapsed most of that spread.
 - **Relationship-aware eviction was considered and rejected**, in favour of family-aware pinning.
@@ -269,8 +290,11 @@ Failing-test-first throughout, per [AGENTS.md](../../AGENTS.md).
 
 - **The scenario test is the acceptance criterion**, and it is a restatement of the promise at the
   top: six thousand traces, three of them failures placed in the first two hundred, then advance the
-  fake clock two hours. The three failures are still retrievable at full fidelity, with the five hops
-  before each intact. Write it first, before any of phases 2–4.
+  fake clock two hours. The three failures are still retrievable at full fidelity, **and so are the
+  calls they made** — the hop bodies resolve rather than reporting `evicted`. Write it first, before
+  any of phases 2–4.
+- A pinned parent with more children than the pinned ring would hold under a count-based cap: the
+  family stays together, and it is the byte backstop that bounds it, not the parent count.
 - Ring mechanics: wrap, cull, cap, and the index staying consistent across all three rings under
   `-race`.
 - The cull is lazy, so it needs a test that it happens on `Add` and that a buffer nobody writes to
@@ -281,6 +305,23 @@ Failing-test-first throughout, per [AGENTS.md](../../AGENTS.md).
   and a wall-clock test here would be flaky by construction.
 - Bench `ListSummaries` at 1,000 and 10,000, and `Add` on the internal path, which is the one the
   removed linear scan was hurting.
+
+## What would make this precise
+
+Pinning the whole family is the right answer *given what a hop knows today*, which is nothing about
+causation. Two small additions would change that, and both are worth more than retention alone:
+
+- **Set `Hop.Parent`.** The field is on the struct and serialized to the UI, and no Go code has ever
+  assigned it. The hops of one trace are currently a flat list in dispatch order; CloudFormation
+  provisions a tree.
+- **Carry the logical resource ID** through `internalCall` to the hop. The provisioner knows which
+  template resource it is materialising at the point it dispatches; the hop does not record it, so a
+  reader cannot ask "show me every call for `MyBucket`" and neither can the retention policy.
+
+With either, "pin the family" could narrow to "pin the failing resource and what it depended on", and
+the hops tab could group 300 calls into 40 resources — which is the difference between a timeline a
+person can read and one they scroll past. Neither is required for phases 2–4; both are cheap, and the
+second is a change at one call site.
 
 ## What this does not do
 
