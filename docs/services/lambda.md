@@ -37,23 +37,31 @@ containers, communicate with the Lambda Runtime API, and return real response pa
   missing.** `PutFunctionEventInvokeConfig` and its family are implemented, so
   `MaximumRetryAttempts` (0-2) and `MaximumEventAgeInSeconds` (60-21600) apply
   per function, version or alias; a function with no configuration gets AWS's
-  defaults of two retries, one second after the first attempt and two after the
-  second. On-success and on-failure **destinations** receive AWS's invocation
-  record — the envelope naming the request, the condition, the attempt count and
-  the function's response — and a `DeadLetterConfig` receives the event itself,
+  defaults of two retries, waiting the one minute then two minutes AWS documents
+  for a function error. On-success and on-failure **destinations** receive AWS's
+  invocation record — the envelope naming the request, the condition, the attempt
+  count and the function's response — and a `DeadLetterConfig` receives the event itself,
   so a function configured with both gets both, as on AWS. All of this applies
   equally to events arriving from S3 notifications, EventBridge and Scheduler
   targets, and SNS `lambda` subscriptions, which share the same async path.
-  - **`MaximumEventAgeInSeconds` is honoured but rarely reachable.** On AWS the
-    age is mostly spent waiting in the asynchronous event queue; Overcast has no
-    such queue and starts the first attempt immediately, so with AWS's retry
-    schedule of one and two seconds an event only outlives its minimum sixty
-    seconds if the handler itself is slow. It is enforced from when the
-    invocation was accepted, so a long-running handler does age out.
+  - **`MaximumEventAgeInSeconds` is measured from acceptance**, covering the
+    waits between attempts and the time the handler spends running, and an event
+    that outlives it is discarded before the next attempt rather than after it —
+    which is where AWS checks it. At AWS's retry waits its sixty-second minimum
+    is reachable in the ordinary case: an event whose first attempt fails has
+    already expired when the one-minute wait ends, so it never runs again.
+  - **An aged-out record's `condition` reads `RetriesExhausted`**, which is
+    probably not what AWS sends — its console describes an on-failure
+    destination as firing when an event "fails all processing attempts *or*
+    exceeds the maximum age", so the two are distinct. AWS documents no string
+    for the second, and inventing one would be worse than reusing a real one.
   - A function throttled by its own reserved concurrency is the documented
     exception and is not retried by this loop: AWS sends those events to the
     dead-letter queue "without any retries", and Overcast does the same once the
-    invocation has waited out its concurrency back-off.
+    invocation has waited out its concurrency back-off. A function throttled by
+    *exhausted* concurrency rather than a reserve of zero is the case Overcast
+    still gets wrong — AWS returns those to the queue for up to six hours, and
+    Overcast dead-letters them once the back-off is spent.
   - **An S3 destination is refused.** AWS allows an S3 bucket as an *on-failure*
     destination; Overcast answers `501` rather than accepting the configuration
     and writing no object. An S3 *on-success* destination is rejected with
