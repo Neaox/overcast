@@ -1,1 +1,0 @@
-* [dns] the container resolver no longer fails to start on Windows hosts where Hyper-V or WinNAT has reserved part of the dynamic port range. It drew its port from a range the kernel walks in sequence, so a reserved block could swallow every retry; candidates are now drawn independently
