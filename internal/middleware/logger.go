@@ -719,6 +719,15 @@ func (rw *responseWriter) WriteHeader(status int) {
 
 // RecordAWSError lets protocol writers attach AWS error details to the request
 // log without exposing internal causes in client-facing response bodies.
+//
+// It forwards to a wrapped recorder as well as recording locally, because more
+// than one of these can be in a single chain: RequestEvents is registered after
+// Logger and builds its own responseWriter around Logger's, so a handler writes
+// through the inner one while Logger reads the outer. Recording only locally
+// left Logger's copy empty, and with it the trace's AWSErrorCode — the type
+// assertion in protocol.recordAWSError succeeded every time, so nothing
+// failed and nothing warned; the value just landed on the instance nobody
+// read. Forwarding makes the depth of the chain stop mattering.
 func (rw *responseWriter) RecordAWSError(aerr *protocol.AWSError) {
 	if aerr == nil {
 		return
@@ -726,6 +735,11 @@ func (rw *responseWriter) RecordAWSError(aerr *protocol.AWSError) {
 	rw.awsErrorCode = aerr.Code
 	rw.awsErrorMessage = aerr.Message
 	rw.awsErrorCause = protocol.Cause(aerr)
+	if outer, ok := rw.ResponseWriter.(interface {
+		RecordAWSError(*protocol.AWSError)
+	}); ok {
+		outer.RecordAWSError(aerr)
+	}
 }
 
 // Flush forwards to the underlying ResponseWriter if it supports http.Flusher.
