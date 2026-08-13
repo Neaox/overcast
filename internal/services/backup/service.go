@@ -241,10 +241,10 @@ func (s *Service) PathPrefixes() []string { return []string{pathVaults, pathPlan
 //	PUT    /backup-vaults/{BackupVaultName}  CreateBackupVault
 //	GET    /backup-vaults/{BackupVaultName}  DescribeBackupVault
 //	DELETE /backup-vaults/{BackupVaultName}  DeleteBackupVault
-//	GET    /backup-vaults                    ListBackupVaults
-//	PUT    /backup/plans                     CreateBackupPlan
-//	GET    /backup/plans                     ListBackupPlans
-//	GET    /backup/plans/{BackupPlanId}      GetBackupPlan
+//	GET    /backup-vaults/                   ListBackupVaults
+//	PUT    /backup/plans/                    CreateBackupPlan
+//	GET    /backup/plans/                    ListBackupPlans
+//	GET    /backup/plans/{BackupPlanId}/     GetBackupPlan
 //	POST   /backup/plans/{BackupPlanId}      UpdateBackupPlan
 //	DELETE /backup/plans/{BackupPlanId}      DeleteBackupPlan
 //
@@ -258,17 +258,23 @@ func (s *Service) PathPrefixes() []string { return []string{pathVaults, pathPlan
 // 501. This is the fault docs/plans/manifest-enforcement.md records for
 // AppConfig under AppRegistry's /applications.
 //
-// The three collection routes are registered twice, with and without a
-// trailing slash, and both spellings are load-bearing. AWS models
-// ListBackupVaults, ListBackupPlans and CreateBackupPlan on the collection URI
-// *with* the slash, which is what every AWS SDK sends — registering only the
-// slash-less form left all three answering 501 to a signed client, and
-// unsigned they fell through to S3's wildcard and returned a 200
-// <ListBucketResult> that a caller can read as success (#963). The slash-less
-// spelling stays because hand-written callers were reaching it before the
-// trailing-slash form was added, and dropping it now would be a second break.
-// chi keeps `/backup-vaults/` and `/backup-vaults/{BackupVaultName}` distinct,
-// so the pair does not shadow the item routes.
+// Four routes are registered twice, with and without a trailing slash, and
+// both spellings are load-bearing. AWS models ListBackupVaults,
+// ListBackupPlans, CreateBackupPlan and GetBackupPlan on a URI ending in a
+// slash, which is what every AWS SDK sends — registering only the slash-less
+// form left them answering 501 to a signed client, and unsigned they fell
+// through to S3's wildcard and returned a 200 <ListBucketResult> that a caller
+// can read as success (#963). The slash-less spelling stays because
+// hand-written callers were reaching it before the trailing-slash form was
+// added, and dropping it now would be a second break. chi keeps
+// `/backup-vaults/` and `/backup-vaults/{BackupVaultName}` distinct, so the
+// pair does not shadow the item routes.
+//
+// Which of the two spellings a binding uses is the model's choice and follows
+// no rule worth inferring: GetBackupPlan carries the slash while
+// UpdateBackupPlan and DeleteBackupPlan, on the same resource, do not. #966
+// fixed the three collections and missed GetBackupPlan for exactly that reason
+// (#971). Read the URI off the model rather than the sibling operation.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	// Vaults
 	r.Get(pathVaults, s.listBackupVaults)
@@ -283,6 +289,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	r.Put(pathPlans, s.createBackupPlan)
 	r.Put(pathPlans+"/", s.createBackupPlan)
 	r.Get(pathPlans+"/{BackupPlanId}", s.getBackupPlan)
+	r.Get(pathPlans+"/{BackupPlanId}/", s.getBackupPlan)
 	r.Post(pathPlans+"/{BackupPlanId}", s.updateBackupPlan)
 	r.Delete(pathPlans+"/{BackupPlanId}", s.deleteBackupPlan)
 }

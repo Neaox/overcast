@@ -729,3 +729,61 @@ func TestCollectionRoutes_trailingSlashDoesNotSwallowUnimplemented(t *testing.T)
 		t.Errorf("GET %s/vault-a/recovery-points = 200; an unimplemented sub-resource must not be served", pathVaults)
 	}
 }
+
+// GetBackupPlan is bound to a trailing slash too — GET
+// /backup/plans/{backupPlanId}/ in the pinned model, unlike UpdateBackupPlan
+// and DeleteBackupPlan on the same resource, which carry none. #966 registered
+// the pair for the three *collection* routes and stopped there, so the one item
+// route AWS models with a slash stayed unreachable: every AWS SDK sends the
+// slash, and the request fell past Backup into S3's wildcard.
+//
+// Both spellings are registered, as they are for the collections, so the
+// handwritten callers reaching the slash-less form keep working.
+func TestGetBackupPlan_trailingSlash(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createVault(t, srv, "vault-a")
+	planID, _ := createPlan(t, srv, "plan-a")["BackupPlanId"].(string)
+	if planID == "" {
+		t.Fatalf("createPlan returned no BackupPlanId")
+	}
+
+	for _, path := range []string{
+		pathPlans + "/" + planID,
+		pathPlans + "/" + planID + "/",
+	} {
+		t.Run(path, func(t *testing.T) {
+			resp := backupDo(t, srv, http.MethodGet, path, defaultRegion, nil)
+			defer resp.Body.Close()
+
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			body := decodeMap(t, resp)
+			if got := body["BackupPlanId"]; got != planID {
+				t.Fatalf("BackupPlanId = %v, want %s — Backup did not answer this path", got, planID)
+			}
+			plan, _ := body["BackupPlan"].(map[string]any)
+			if got := plan["BackupPlanName"]; got != "plan-a" {
+				t.Errorf("BackupPlan.BackupPlanName = %v, want plan-a", got)
+			}
+		})
+	}
+}
+
+// The trailing-slash item route must not capture the plan sub-resources Backup
+// does not implement — /backup/plans/{id}/versions/ and
+// /backup/plans/{id}/selections/ among them — which have to keep reaching the
+// generated 501. Same guard as the collection routes carry, for the same
+// reason.
+func TestGetBackupPlan_trailingSlashDoesNotSwallowUnimplemented(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createVault(t, srv, "vault-a")
+	planID, _ := createPlan(t, srv, "plan-a")["BackupPlanId"].(string)
+
+	for _, suffix := range []string{"/versions/", "/selections/"} {
+		path := pathPlans + "/" + planID + suffix
+		resp := backupDo(t, srv, http.MethodGet, path, defaultRegion, nil)
+		if resp.StatusCode != http.StatusNotImplemented {
+			t.Errorf("GET %s = %d, want 501; an unimplemented sub-resource must not be served", path, resp.StatusCode)
+		}
+		resp.Body.Close() //nolint:errcheck
+	}
+}
