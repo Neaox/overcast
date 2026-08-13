@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/Neaox/overcast/tests/helpers"
@@ -150,4 +151,56 @@ func TestTrace_listSearchStillMatchesTheOperation(t *testing.T) {
 		}
 	}
 	t.Errorf("search by operation did not return %s", reqID)
+}
+
+// DynamoDB wraps the writer again, in its own crc32ResponseWriter, to add the
+// X-Amz-Crc32 header its clients check. CloudFront does the same for access
+// logging. Those wrappers sit *closer to the handler* than Logger's, so they
+// are what protocol.recordAWSError asserts on — and a wrapper that does not
+// forward swallows the error exactly as the nested middleware writer did.
+//
+// This is the same defect one layer down, and the reason the fix is a
+// forwarding contract rather than a one-off: the number of wrappers between
+// Logger and a handler is a property of the service, not of the middleware
+// chain.
+func TestTrace_recordsTheAWSErrorThroughAServiceOwnedWriter(t *testing.T) {
+	srv := helpers.NewTestServer(t, helpers.WithDebug(true))
+
+	// Given: a DynamoDB request that failed — DynamoDB's handlers write through
+	// protocol.WriteJSONError like everyone else, but behind crc32ResponseWriter.
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", strings.NewReader(`{"TableName":"no-such-table-anywhere"}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	req.Header.Set("X-Amz-Target", "DynamoDB_20120810.DescribeTable")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("seed request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("seed status = %d, want 400", resp.StatusCode)
+	}
+	reqID := resp.Header.Get("x-amzn-requestid")
+
+	// Then: the error reached the trace despite the extra wrapper.
+	detail, err := http.Get(srv.URL + "/_overcast/debug/trace/" + reqID)
+	if err != nil {
+		t.Fatalf("get trace: %v", err)
+	}
+	defer detail.Body.Close()
+	raw, err := io.ReadAll(detail.Body)
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+	var got struct {
+		AWSErrorCode string `json:"awsErrorCode"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("decode trace: %v\nbody: %s", err, raw)
+	}
+	if got.AWSErrorCode != "ResourceNotFoundException" {
+		t.Errorf("awsErrorCode = %q, want ResourceNotFoundException — the service's own writer swallowed it", got.AWSErrorCode)
+	}
 }
