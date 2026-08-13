@@ -1,7 +1,6 @@
 package lambda
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/Neaox/overcast/internal/protocol"
@@ -33,13 +32,13 @@ var lambdaRuntimeValueSet = func() map[string]struct{} {
 // lambdaRuntimeVersionARNPattern mirrors com.amazonaws.lambda#RuntimeVersionArn
 // in the same pinned model. Lambda accepts either a modeled runtime identifier
 // or a runtime-version ARN in the Runtime member.
-var lambdaRuntimeVersionARNPattern = regexp.MustCompile(`^arn:(aws[a-zA-Z-]*):lambda:(eusc-)?[a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}::runtime:.+$`)
+var lambdaRuntimeVersionARNPattern = lazyRegexp(`^arn:(aws[a-zA-Z-]*):lambda:(eusc-)?[a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}::runtime:.+$`)
 
 func validateLambdaRuntime(runtime string) *protocol.AWSError {
 	if _, ok := lambdaRuntimeValueSet[runtime]; ok {
 		return nil
 	}
-	if len(runtime) >= 26 && len(runtime) <= 2048 && lambdaRuntimeVersionARNPattern.MatchString(runtime) {
+	if len(runtime) >= 26 && len(runtime) <= 2048 && lambdaRuntimeVersionARNPattern().MatchString(runtime) {
 		return nil
 	}
 	return lambdaInvalidParameter(

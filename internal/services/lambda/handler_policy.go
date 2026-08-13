@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -59,14 +58,14 @@ type getPolicyResponse struct {
 }
 
 var (
-	statementIDPattern        = regexp.MustCompile(`^[a-zA-Z0-9-_]+$`)
-	policyFunctionNamePattern = regexp.MustCompile(`^(?:arn:((?:aws[a-zA-Z-]*)?):lambda:)?(?:([a-z]{2}(?:(?:-gov)|(?:-iso[a-z]?))?-[a-z]+-\d{1}):)?(?:(\d{12}):)?(?:function:)?([a-zA-Z0-9-_\.]+)(?::(\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_]+))?$`)
-	qualifierPattern          = regexp.MustCompile(`^(?:\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_$]+)$`)
-	permissionActionPattern   = regexp.MustCompile(`^(?:\*|lambda:(?:\*|[a-zA-Z]+))$`)
-	sourceAccountPattern      = regexp.MustCompile(`^[0-9]{12}$`)
-	sourceARNPattern          = regexp.MustCompile(`^arn:aws[a-zA-Z0-9-]*:[a-zA-Z0-9-]+:(?:[a-z]{2}(?:-gov)?-[a-z]+-[0-9])?:(?:[0-9]{12})?:.*$`)
-	principalOrgIDPattern     = regexp.MustCompile(`^o-[a-z0-9]{10,32}$`)
-	eventSourceTokenPattern   = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+	statementIDPattern        = lazyRegexp(`^[a-zA-Z0-9-_]+$`)
+	policyFunctionNamePattern = lazyRegexp(`^(?:arn:((?:aws[a-zA-Z-]*)?):lambda:)?(?:([a-z]{2}(?:(?:-gov)|(?:-iso[a-z]?))?-[a-z]+-\d{1}):)?(?:(\d{12}):)?(?:function:)?([a-zA-Z0-9-_\.]+)(?::(\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_]+))?$`)
+	qualifierPattern          = lazyRegexp(`^(?:\$LATEST(?:\.PUBLISHED)?|[a-zA-Z0-9-_$]+)$`)
+	permissionActionPattern   = lazyRegexp(`^(?:\*|lambda:(?:\*|[a-zA-Z]+))$`)
+	sourceAccountPattern      = lazyRegexp(`^[0-9]{12}$`)
+	sourceARNPattern          = lazyRegexp(`^arn:aws[a-zA-Z0-9-]*:[a-zA-Z0-9-]+:(?:[a-z]{2}(?:-gov)?-[a-z]+-[0-9])?:(?:[0-9]{12})?:.*$`)
+	principalOrgIDPattern     = lazyRegexp(`^o-[a-z0-9]{10,32}$`)
+	eventSourceTokenPattern   = lazyRegexp(`^[a-zA-Z0-9._-]+$`)
 )
 
 const (
@@ -99,13 +98,13 @@ func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 	if len(*req.StatementID) > 100 {
 		return smithyStringLengthConstraint("statementId", *req.StatementID, 100)
 	}
-	if !statementIDPattern.MatchString(*req.StatementID) {
+	if !statementIDPattern().MatchString(*req.StatementID) {
 		return smithyPatternConstraint("statementId", *req.StatementID, statementIDConstraint)
 	}
 	if len(req.Action) > 10000 {
 		return smithyStringLengthConstraint("action", req.Action, 10000)
 	}
-	if !permissionActionPattern.MatchString(req.Action) {
+	if !permissionActionPattern().MatchString(req.Action) {
 		return smithyPatternConstraint("action", req.Action, permissionActionConstraint)
 	}
 	if len(req.Principal) > 2048 {
@@ -117,13 +116,13 @@ func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 	if req.SourceAccount != "" && len(req.SourceAccount) > 12 {
 		return smithyStringLengthConstraint("sourceAccount", req.SourceAccount, 12)
 	}
-	if req.SourceAccount != "" && !sourceAccountPattern.MatchString(req.SourceAccount) {
+	if req.SourceAccount != "" && !sourceAccountPattern().MatchString(req.SourceAccount) {
 		return smithyPatternConstraint("sourceAccount", req.SourceAccount, sourceAccountConstraint)
 	}
 	if req.SourceARN != "" && len(req.SourceARN) > 1024 {
 		return smithyStringLengthConstraint("sourceArn", req.SourceARN, 1024)
 	}
-	if req.SourceARN != "" && !sourceARNPattern.MatchString(req.SourceARN) {
+	if req.SourceARN != "" && !sourceARNPattern().MatchString(req.SourceARN) {
 		return smithyPatternConstraint("sourceArn", req.SourceARN, sourceARNConstraint)
 	}
 	if req.PrincipalOrgID != "" && len(req.PrincipalOrgID) < 12 {
@@ -132,13 +131,13 @@ func validatePermissionRequest(req addPermissionRequest) *protocol.AWSError {
 	if len(req.PrincipalOrgID) > 34 {
 		return smithyStringLengthConstraint("principalOrgID", req.PrincipalOrgID, 34)
 	}
-	if req.PrincipalOrgID != "" && !principalOrgIDPattern.MatchString(req.PrincipalOrgID) {
+	if req.PrincipalOrgID != "" && !principalOrgIDPattern().MatchString(req.PrincipalOrgID) {
 		return smithyPatternConstraint("principalOrgID", req.PrincipalOrgID, principalOrgIDConstraint)
 	}
 	if req.EventSourceToken != "" && len(req.EventSourceToken) > 256 {
 		return smithyStringLengthConstraint("eventSourceToken", req.EventSourceToken, 256)
 	}
-	if req.EventSourceToken != "" && !eventSourceTokenPattern.MatchString(req.EventSourceToken) {
+	if req.EventSourceToken != "" && !eventSourceTokenPattern().MatchString(req.EventSourceToken) {
 		return smithyPatternConstraint("eventSourceToken", req.EventSourceToken, eventSourceTokenConstraint)
 	}
 	if req.FunctionURLAuthType != "" && req.FunctionURLAuthType != "NONE" && req.FunctionURLAuthType != "AWS_IAM" {
@@ -240,7 +239,7 @@ func (h *Handler) RemovePermission(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, smithyStringLengthConstraint("statementId", statementID, 100))
 		return
 	}
-	if !statementIDPattern.MatchString(statementID) {
+	if !statementIDPattern().MatchString(statementID) {
 		protocol.WriteJSONError(w, r, smithyPatternConstraint("statementId", statementID, statementIDConstraint))
 		return
 	}
@@ -282,7 +281,7 @@ func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qu
 	if len(identifier) > 256 {
 		return nil, smithyStringLengthConstraint("functionName", identifier, 256)
 	}
-	if !policyFunctionNamePattern.MatchString(identifier) {
+	if !policyFunctionNamePattern().MatchString(identifier) {
 		return nil, smithyPatternConstraint("functionName", identifier, policyFunctionNameConstraint)
 	}
 	if len(name) > 64 {
@@ -291,7 +290,7 @@ func (h *Handler) validatePolicyTarget(ctx context.Context, identifier, name, qu
 	if len(qualifier) > 128 {
 		return nil, smithyStringLengthConstraint("qualifier", qualifier, 128)
 	}
-	if qualifier != "" && !qualifierPattern.MatchString(qualifier) {
+	if qualifier != "" && !qualifierPattern().MatchString(qualifier) {
 		return nil, smithyPatternConstraint("qualifier", qualifier, qualifierConstraint)
 	}
 	if reference, ok := parsePolicyFunctionReference(identifier, ""); ok {
@@ -344,7 +343,7 @@ type policyFunctionReference struct {
 }
 
 func parsePolicyFunctionReference(identifier, queryQualifier string) (policyFunctionReference, bool) {
-	match := policyFunctionNamePattern.FindStringSubmatch(identifier)
+	match := policyFunctionNamePattern().FindStringSubmatch(identifier)
 	if match == nil {
 		return policyFunctionReference{}, false
 	}
@@ -381,7 +380,7 @@ func permissionPrincipal(principal, functionARN string) any {
 	if strings.HasSuffix(principal, ".amazonaws.com") {
 		return map[string]string{"Service": principal}
 	}
-	if sourceAccountPattern.MatchString(principal) {
+	if sourceAccountPattern().MatchString(principal) {
 		partition := "aws"
 		if parts := strings.SplitN(functionARN, ":", 3); len(parts) == 3 && parts[0] == "arn" && parts[1] != "" {
 			partition = parts[1]

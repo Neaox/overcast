@@ -5,6 +5,7 @@ package router
 import (
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/events"
@@ -38,13 +39,17 @@ import (
 func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus *events.Bus, _ *zap.Logger) {
 	provider := mcp.NewRuntimeProvider(cfg, store)
 	provider.AttachEventBus(bus)
-	runtimeMCP := mcp.NewServer(nil, slog.Default(), provider)
-	runtimeMCP.SetNotificationReplayLimit(cfg.MCPReplayLimit)
-	if cfg.MCPRemoteExposure || cfg.MCPAuthToken != "" {
-		runtimeMCP.SetBearerAuthToken(cfg.MCPAuthToken)
-	}
-	root := runtimeMCP.RootHandler()
-	strip := http.StripPrefix("/_overcast/mcp", root)
+	root := sync.OnceValue(func() http.Handler {
+		runtimeMCP := mcp.NewServer(nil, slog.Default(), provider)
+		runtimeMCP.SetNotificationReplayLimit(cfg.MCPReplayLimit)
+		if cfg.MCPRemoteExposure || cfg.MCPAuthToken != "" {
+			runtimeMCP.SetBearerAuthToken(cfg.MCPAuthToken)
+		}
+		return runtimeMCP.RootHandler()
+	})
+	strip := http.StripPrefix("/_overcast/mcp", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		root().ServeHTTP(w, req)
+	}))
 	r.Mount("/_overcast/mcp", strip)
 
 	// Explicitly route the base path without trailing slash so clients can use
@@ -55,7 +60,7 @@ func registerMCPRoutes(r chi.Router, cfg *config.Config, store state.Store, bus 
 		urlCopy.Path = "/"
 		urlCopy.RawPath = "/"
 		rewritten.URL = &urlCopy
-		root.ServeHTTP(w, rewritten)
+		root().ServeHTTP(w, rewritten)
 	}
 	r.MethodFunc(http.MethodGet, "/_overcast/mcp", rootPath)
 	r.MethodFunc(http.MethodPost, "/_overcast/mcp", rootPath)
