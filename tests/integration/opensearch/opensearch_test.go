@@ -333,6 +333,76 @@ func TestListTags_arnIsAQueryParameter(t *testing.T) {
 	}
 }
 
+// AWS binds ListTags to GET /2021-01-01/tags/ — with a trailing slash, the
+// only URI in the whole OpenSearch model that carries one — and that is what
+// an unmodified AWS client sends. Overcast registered only the slash-less
+// spelling, so the operation was unreachable: signed, it answered 501;
+// unsigned, it fell past OpenSearch into S3's wildcard object route and
+// returned HTTP 404 with <Error><Code>NoSuchKey</Code>…</Error>, an S3 error
+// for an OpenSearch call. Same fault as #963, same fix as #966.
+//
+// The slash-less spelling stays registered — it is what the callers that
+// worked before this fix send — so both are asserted here.
+func TestListTags_trailingSlashBinding(t *testing.T) {
+	// Given: a tagged domain
+	srv := helpers.NewTestServer(t)
+	arn, _ := createDomain(t, srv, "test-domain", "")["ARN"].(string)
+	add := osDo(t, srv, http.MethodPost, pathTags, defaultRegion, map[string]any{
+		"ARN":     arn,
+		"TagList": []map[string]string{{"Key": "team", "Value": "search"}},
+	})
+	defer add.Body.Close()
+	helpers.AssertStatus(t, add, http.StatusOK)
+
+	// When: the tags are listed at each spelling of the collection URI
+	for _, path := range []string{pathTags, pathTags + "/"} {
+		t.Run(path, func(t *testing.T) {
+			resp := osDo(t, srv, http.MethodGet, path+"?arn="+url.QueryEscape(arn), defaultRegion, nil)
+			defer resp.Body.Close()
+
+			// Then: OpenSearch answers with its own modeled output, not S3's
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			var body struct {
+				TagList []struct {
+					Key   string `json:"Key"`
+					Value string `json:"Value"`
+				} `json:"TagList"`
+			}
+			helpers.DecodeJSON(t, resp, &body)
+			if len(body.TagList) != 1 || body.TagList[0].Key != "team" {
+				t.Fatalf("GET %s: TagList = %+v, want the tag added above", path, body.TagList)
+			}
+		})
+	}
+}
+
+// Adding a second spelling of a collection URI must not cost the fallback.
+// OpenSearch implements eight of the ~96 operations AWS binds under
+// /2021-01-01, and the other eighty-odd have to keep reaching a
+// protocol-correct 501 — swallowing them is exactly what a chi sub-router
+// over the prefix would have done, which is why these routes are registered
+// absolutely rather than nested.
+func TestUnimplementedOperations_stillReachTheGenerated501(t *testing.T) {
+	// Given: a running emulator
+	srv := helpers.NewTestServer(t)
+
+	// When: modeled operations Overcast does not implement are called at the
+	// bindings AWS gives them, including one directly beside the tag routes
+	for _, path := range []string{
+		"/2021-01-01/opensearch/versions",           // ListVersions
+		"/2021-01-01/opensearch/compatibleVersions", // GetCompatibleVersions
+		"/2021-01-01/domain/test-domain/packages",   // ListPackagesForDomain
+	} {
+		t.Run(path, func(t *testing.T) {
+			resp := osDo(t, srv, http.MethodGet, path, defaultRegion, nil)
+			defer resp.Body.Close()
+
+			// Then: the protocol-correct not-implemented answer
+			helpers.AssertStatus(t, resp, http.StatusNotImplemented)
+		})
+	}
+}
+
 func TestListTags_missingArn(t *testing.T) {
 	// Given: a running emulator
 	srv := helpers.NewTestServer(t)

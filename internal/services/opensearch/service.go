@@ -191,6 +191,19 @@ func (s *Service) PathPrefixes() []string { return []string{apiPrefix} }
 // asymmetry is AWS's, not a tidying opportunity: collapsing GET
 // /2021-01-01/domain (list) onto POST /2021-01-01/opensearch/domain (create)
 // is exactly the mistake #856 warns about.
+//
+// ListTags is registered twice, with and without a trailing slash, and both
+// spellings are load-bearing. AWS binds it to GET /2021-01-01/tags/ — the only
+// trailing-slash URI in the whole OpenSearch model — and that is what an
+// unmodified AWS client sends. Registering the slash-less form alone left the
+// operation unreachable: a signed client got a 501, and an unsigned one fell
+// past OpenSearch into S3's wildcard object route and came back HTTP 404 with
+// <Error><Code>NoSuchKey</Code>…</Error>, an S3 error for an OpenSearch call.
+// That is #963's fault in a second service, fixed the way #966 fixed it in
+// Backup. The slash-less spelling stays because callers were reaching it
+// before the trailing-slash form existed, and dropping it now would trade one
+// break for another. AddTags and RemoveTags are POSTs to different URIs and
+// carry no slash in the model, so they need only one registration each.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	// Domains
 	r.Get(apiPrefix+"/domain", s.listDomainNames)
@@ -202,6 +215,7 @@ func (s *Service) RegisterRoutes(r chi.Router) {
 	// Tags
 	r.Post(apiPrefix+"/tags", s.addTags)
 	r.Get(apiPrefix+"/tags", s.listTags)
+	r.Get(apiPrefix+"/tags/", s.listTags)
 	r.Post(apiPrefix+"/tags-removal", s.removeTags)
 }
 
