@@ -653,3 +653,79 @@ func TestBackupTargetPrefix_isNoLongerDispatched(t *testing.T) {
 		t.Errorf("AWSBackup.ListBackupVaults still answers 200; the invented target namespace is still dispatched")
 	}
 }
+
+// AWS binds Backup's three collection operations to a URI with a trailing
+// slash — ListBackupVaults to GET /backup-vaults/, and ListBackupPlans and
+// CreateBackupPlan to /backup/plans/ — and every AWS SDK sends exactly that.
+// Overcast registered only the slash-less form, so all three answered 501 to a
+// signed client. Worse unsigned: /backup-vaults/ fell through to S3's wildcard
+// bucket route and came back 200 with a <ListBucketResult>, which a client can
+// mistake for success.
+//
+// The slash-less forms stay registered: they are what the handwritten callers
+// that worked before this fix send, and dropping them would be a second break.
+func TestCollectionRoutes_trailingSlash(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createVault(t, srv, "vault-a")
+	createPlan(t, srv, "plan-a")
+
+	// When: each collection is addressed both ways, as the models bind them
+	// and as the pre-existing callers send them.
+	for _, tc := range []struct {
+		name, method, path, listKey string
+	}{
+		{"ListBackupVaults slashless", http.MethodGet, pathVaults, "BackupVaultList"},
+		{"ListBackupVaults trailing", http.MethodGet, pathVaults + "/", "BackupVaultList"},
+		{"ListBackupPlans slashless", http.MethodGet, pathPlans, "BackupPlansList"},
+		{"ListBackupPlans trailing", http.MethodGet, pathPlans + "/", "BackupPlansList"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := backupDo(t, srv, tc.method, tc.path, defaultRegion, nil)
+			defer resp.Body.Close()
+
+			// Then: Backup answers, with its own modeled output.
+			helpers.AssertStatus(t, resp, http.StatusOK)
+			body := decodeMap(t, resp)
+			if _, ok := body[tc.listKey].([]any); !ok {
+				t.Fatalf("%s = %#v, want a list — Backup did not answer this path", tc.listKey, body[tc.listKey])
+			}
+		})
+	}
+
+	// CreateBackupPlan is a PUT to the same collection, so it needs the same
+	// pair. A minted BackupPlanId proves Backup handled it rather than a
+	// fallback returning something that merely parses.
+	t.Run("CreateBackupPlan trailing", func(t *testing.T) {
+		resp := backupDo(t, srv, http.MethodPut, pathPlans+"/", defaultRegion, map[string]any{
+			"BackupPlan": map[string]any{
+				"BackupPlanName": "plan-via-trailing-slash",
+				"Rules": []any{map[string]any{
+					"RuleName": "r", "TargetBackupVaultName": "vault-a",
+				}},
+			},
+		})
+		defer resp.Body.Close()
+
+		helpers.AssertStatus(t, resp, http.StatusOK)
+		body := decodeMap(t, resp)
+		if id, _ := body["BackupPlanId"].(string); id == "" {
+			t.Fatalf("BackupPlanId missing: %#v", body)
+		}
+	})
+}
+
+// A path *below* a collection that Backup does not implement must still reach
+// the generated 501 rather than being captured by the new trailing-slash
+// routes. This is the fallback the absolute-path registration exists to
+// protect, and it is the thing a chi sub-router would have eaten.
+func TestCollectionRoutes_trailingSlashDoesNotSwallowUnimplemented(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	createVault(t, srv, "vault-a")
+
+	resp := backupDo(t, srv, http.MethodGet, pathVaults+"/vault-a/recovery-points", defaultRegion, nil)
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("GET %s/vault-a/recovery-points = 200; an unimplemented sub-resource must not be served", pathVaults)
+	}
+}
