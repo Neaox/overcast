@@ -3449,6 +3449,65 @@
       ]
     },
     {
+      "service": "appconfigdata",
+      "name": "appconfigdata-sessions",
+      "tests": [
+        {
+          "name": "StartConfigurationSession"
+        },
+        {
+          "name": "GetLatestConfiguration",
+          "depends": [
+            "StartConfigurationSession"
+          ]
+        },
+        {
+          "name": "GetLatestConfigurationWithNextPollToken",
+          "op": "GetLatestConfiguration",
+          "depends": [
+            "GetLatestConfiguration"
+          ]
+        },
+        {
+          "name": "GetLatestConfigurationAfterNewVersion",
+          "op": "GetLatestConfiguration",
+          "depends": [
+            "GetLatestConfigurationWithNextPollToken"
+          ]
+        },
+        {
+          "name": "StartConfigurationSessionWithPollInterval",
+          "op": "StartConfigurationSession"
+        }
+      ]
+    },
+    {
+      "service": "appconfigdata",
+      "name": "appconfigdata-errors",
+      "tests": [
+        {
+          "name": "StartConfigurationSessionApplicationNotFound",
+          "op": "StartConfigurationSession"
+        },
+        {
+          "name": "StartConfigurationSessionEnvironmentNotFound",
+          "op": "StartConfigurationSession"
+        },
+        {
+          "name": "StartConfigurationSessionProfileNotFound",
+          "op": "StartConfigurationSession"
+        },
+        {
+          "name": "GetLatestConfigurationInvalidToken",
+          "op": "GetLatestConfiguration"
+        },
+        {
+          "name": "GetLatestConfigurationReusedToken",
+          "op": "GetLatestConfiguration"
+        }
+      ]
+    },
+    {
       "service": "cdk",
       "name": "cdk-lifecycle",
       "suites": [

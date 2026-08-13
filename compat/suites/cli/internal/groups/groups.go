@@ -57,5 +57,6 @@ func All() []ServiceGroup {
 		Shield().named("shield"),
 		ElastiCache().named("elasticache"),
 		EFS().named("efs"),
+		AppConfigData().named("appconfigdata"),
 	}
 }
