@@ -60,5 +60,6 @@ func All() []ServiceGroup {
 		AppConfigData().named("appconfigdata"),
 		OpenSearch().named("opensearch"),
 		AppConfig().named("appconfig"),
+		Backup().named("backup"),
 	}
 }
