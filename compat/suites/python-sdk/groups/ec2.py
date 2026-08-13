@@ -331,7 +331,9 @@ IMPLS = {
     "DescribeAvailabilityZones": DescribeAvailabilityZones,
     "DescribeInstances": DescribeInstances,
     "DescribeInstanceTypes": DescribeInstanceTypes,
-    "DescribeImages": DescribeImages,
+    # ECR models a DescribeImages of its own, so the bare key is ambiguous and
+    # the loader refuses it.
+    "ec2-instances:DescribeImages": DescribeImages,
     "RunInstances": RunInstances,
     "StopInstances": StopInstances,
     "StartInstances": StartInstances,

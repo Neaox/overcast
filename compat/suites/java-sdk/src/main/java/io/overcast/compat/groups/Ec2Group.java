@@ -30,7 +30,9 @@ public final class Ec2Group implements ServiceGroup {
                 Map.entry("DescribeRegions",                this::describeRegions),
                 Map.entry("DescribeAvailabilityZones",      this::describeAvailabilityZones),
                 Map.entry("DescribeInstanceTypes",          this::describeInstanceTypes),
-                Map.entry("DescribeImages",                 this::describeImages),
+                // ECR models a DescribeImages of its own, so the bare key is
+                // ambiguous and the loader refuses it.
+                Map.entry("ec2-instances:DescribeImages",   this::describeImages),
                 Map.entry("RunInstances",                   this::runInstances),
                 Map.entry("DescribeInstances",              this::describeInstances),
                 Map.entry("StopInstances",                  this::stopInstances),
