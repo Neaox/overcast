@@ -257,16 +257,31 @@ func (s *Service) PathPrefixes() []string { return []string{pathVaults, pathPlan
 // selections and the rest — must keep falling through to a protocol-correct
 // 501. This is the fault docs/plans/manifest-enforcement.md records for
 // AppConfig under AppRegistry's /applications.
+//
+// The three collection routes are registered twice, with and without a
+// trailing slash, and both spellings are load-bearing. AWS models
+// ListBackupVaults, ListBackupPlans and CreateBackupPlan on the collection URI
+// *with* the slash, which is what every AWS SDK sends — registering only the
+// slash-less form left all three answering 501 to a signed client, and
+// unsigned they fell through to S3's wildcard and returned a 200
+// <ListBucketResult> that a caller can read as success (#963). The slash-less
+// spelling stays because hand-written callers were reaching it before the
+// trailing-slash form was added, and dropping it now would be a second break.
+// chi keeps `/backup-vaults/` and `/backup-vaults/{BackupVaultName}` distinct,
+// so the pair does not shadow the item routes.
 func (s *Service) RegisterRoutes(r chi.Router) {
 	// Vaults
 	r.Get(pathVaults, s.listBackupVaults)
+	r.Get(pathVaults+"/", s.listBackupVaults)
 	r.Put(pathVaults+"/{BackupVaultName}", s.createBackupVault)
 	r.Get(pathVaults+"/{BackupVaultName}", s.describeBackupVault)
 	r.Delete(pathVaults+"/{BackupVaultName}", s.deleteBackupVault)
 
 	// Plans
 	r.Get(pathPlans, s.listBackupPlans)
+	r.Get(pathPlans+"/", s.listBackupPlans)
 	r.Put(pathPlans, s.createBackupPlan)
+	r.Put(pathPlans+"/", s.createBackupPlan)
 	r.Get(pathPlans+"/{BackupPlanId}", s.getBackupPlan)
 	r.Post(pathPlans+"/{BackupPlanId}", s.updateBackupPlan)
 	r.Delete(pathPlans+"/{BackupPlanId}", s.deleteBackupPlan)
