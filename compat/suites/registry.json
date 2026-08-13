@@ -3508,6 +3508,87 @@
       ]
     },
     {
+      "service": "opensearch",
+      "name": "opensearch-domains",
+      "tests": [
+        {
+          "name": "CreateDomain"
+        },
+        {
+          "name": "DescribeDomain",
+          "depends": [
+            "CreateDomain"
+          ]
+        },
+        {
+          "name": "DescribeDomains",
+          "depends": [
+            "CreateDomain"
+          ]
+        },
+        {
+          "name": "ListDomainNames",
+          "depends": [
+            "CreateDomain"
+          ]
+        },
+        {
+          "name": "ListDomainNamesByEngineType",
+          "op": "ListDomainNames",
+          "depends": [
+            "CreateDomain"
+          ]
+        },
+        {
+          "name": "ListDomainNamesInvalidEngineType",
+          "op": "ListDomainNames"
+        },
+        {
+          "name": "DescribeDomainNotFound",
+          "op": "DescribeDomain"
+        },
+        {
+          "name": "CreateDomainAlreadyExists",
+          "op": "CreateDomain",
+          "depends": [
+            "CreateDomain"
+          ]
+        },
+        {
+          "name": "DeleteDomain"
+        },
+        {
+          "name": "DeleteDomainNotFound",
+          "op": "DeleteDomain"
+        }
+      ]
+    },
+    {
+      "service": "opensearch",
+      "name": "opensearch-tags",
+      "tests": [
+        {
+          "name": "AddTags"
+        },
+        {
+          "name": "ListTags",
+          "depends": [
+            "AddTags"
+          ]
+        },
+        {
+          "name": "RemoveTags",
+          "depends": [
+            "AddTags"
+          ]
+        },
+        {
+          "name": "CreateDomainWithTagList",
+          "op": "CreateDomain"
+        }
+      ]
+    },
+    {
       "service": "cdk",
       "name": "cdk-lifecycle",
       "suites": [
