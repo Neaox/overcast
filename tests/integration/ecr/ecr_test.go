@@ -348,6 +348,70 @@ func TestDeleteRepository_notFound(t *testing.T) {
 	}
 }
 
+// TestDeleteRepository_notEmpty pins the guard AWS puts on the destructive
+// call: a repository holding images is not deletable without force, and the
+// refusal must leave the repository and its images alone.
+func TestDeleteRepository_notEmpty(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "holds-images"})
+	putResp := ecrCall(t, srv, "PutImage", map[string]any{
+		"repositoryName": "holds-images",
+		"imageTag":       "v1",
+		"imageManifest":  `{"schemaVersion":2}`,
+	})
+	putResp.Body.Close()
+
+	resp := ecrCall(t, srv, "DeleteRepository", map[string]any{
+		"repositoryName": "holds-images",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+	body := mustDecode(t, resp)
+	if body["__type"] != "RepositoryNotEmptyException" {
+		t.Fatalf("unexpected error type: %v", body["__type"])
+	}
+
+	// The refusal must not have deleted anything.
+	listBody := mustDecode(t, ecrCall(t, srv, "DescribeRepositories", map[string]any{}))
+	if repos, _ := listBody["repositories"].([]any); len(repos) != 1 {
+		t.Fatalf("expected the repository to survive a refused delete, got %d", len(repos))
+	}
+	imagesBody := mustDecode(t, ecrCall(t, srv, "ListImages", map[string]any{
+		"repositoryName": "holds-images",
+	}))
+	if ids, _ := imagesBody["imageIds"].([]any); len(ids) != 1 {
+		t.Fatalf("expected the image to survive a refused delete, got %d", len(ids))
+	}
+}
+
+// TestDeleteRepository_forceNonEmpty is the other half: force is what the
+// error tells the caller to reach for, so it has to work.
+func TestDeleteRepository_forceNonEmpty(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	ecrCall(t, srv, "CreateRepository", map[string]any{"repositoryName": "force-delete"})
+	putResp := ecrCall(t, srv, "PutImage", map[string]any{
+		"repositoryName": "force-delete",
+		"imageTag":       "v1",
+		"imageManifest":  `{"schemaVersion":2}`,
+	})
+	putResp.Body.Close()
+
+	resp := ecrCall(t, srv, "DeleteRepository", map[string]any{
+		"repositoryName": "force-delete",
+		"force":          true,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	listBody := mustDecode(t, ecrCall(t, srv, "DescribeRepositories", map[string]any{}))
+	if repos, _ := listBody["repositories"].([]any); len(repos) != 0 {
+		t.Fatalf("expected the repository to be gone, got %d", len(repos))
+	}
+}
+
 // ── GetAuthorizationToken ──────────────────────────────────────────────────────
 
 func TestGetAuthorizationToken_success(t *testing.T) {

@@ -395,6 +395,45 @@ func (s *Service) errRepoNotFound(w http.ResponseWriter, r *http.Request, name s
 	})
 }
 
+// errRepoNotEmpty is DeleteRepository's answer to a repository that still
+// holds images when force was not set.
+//
+// Per the ECR API Reference (DeleteRepository § Errors): "The specified
+// repository contains images. To delete a repository that contains images,
+// you must force the deletion with the force parameter." It is the reason
+// force exists. Without the guard the call succeeds and takes the images with
+// it, and there is no other signal a caller could read: DeleteRepository
+// answers 200 with the repository either way, so a teardown that meant to be
+// stopped is instead told it did the right thing.
+func (s *Service) errRepoNotEmpty(name string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code: "RepositoryNotEmptyException",
+		Message: fmt.Sprintf(
+			"The repository with name '%s' in registry with id '%s' cannot be deleted because it still contains images",
+			name, s.accountID()),
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+// repoHoldsImages reports whether a repository still has images in it, for the
+// benefit of an unforced DeleteRepository.
+//
+// The registry is swept first, for the same reason ListImages sweeps: an image
+// that arrived by `docker push` is known to the registry container before it
+// is known here, and that is the case the guard exists for — a CDK container
+// asset pushed by one deploy and a `cdk destroy` that must not silently
+// discard it. The sweep is a no-op without Docker and changes nothing when the
+// registry cannot be reached, so an unreachable registry falls back to what
+// the store knows rather than refusing every delete.
+func (s *Service) repoHoldsImages(ctx context.Context, region, name string) (bool, error) {
+	_ = s.syncRepoImagesFromRegistry(ctx, region, name)
+	keys, err := s.store.List(ctx, imageNamespace, serviceutil.RegionKey(region, name+"/"))
+	if err != nil {
+		return false, err
+	}
+	return len(keys) > 0, nil
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
 func (s *Service) createRepository(w http.ResponseWriter, r *http.Request) {
@@ -529,6 +568,17 @@ func (s *Service) deleteRepository(w http.ResponseWriter, r *http.Request) {
 	if !found {
 		s.errRepoNotFound(w, r, req.RepositoryName)
 		return
+	}
+	if !req.Force {
+		hasImages, err := s.repoHoldsImages(ctx, region, req.RepositoryName)
+		if err != nil {
+			protocol.WriteJSONError(w, r, protocol.ErrInternalError)
+			return
+		}
+		if hasImages {
+			protocol.WriteJSONError(w, r, s.errRepoNotEmpty(req.RepositoryName))
+			return
+		}
 	}
 	s.applyCurrentRepoURI(ctx, region, repo)
 

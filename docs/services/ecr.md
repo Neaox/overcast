@@ -274,12 +274,12 @@ same fixed port picks it up and carries on with the images already in it.
 
 ### General
 
-| Operation              | Status       | Notes                                                  | AWS Docs                                                                                        |
-| ---------------------- | ------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `CreateRepository`     | ✅ Supported | Returns ARN, URI, and createdAt                        | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_CreateRepository.html)     |
-| `DescribeRepositories` | ✅ Supported | Lists all repos or filters by name                     | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeRepositories.html) |
-| `DeleteRepository`     | ✅ Supported | Deletes the repository and all its image records       | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DeleteRepository.html)     |
-| `DescribeRegistry`     | ✅ Supported | Returns registry metadata with empty replication rules | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeRegistry.html)     |
+| Operation              | Status       | Notes                                                                                                                                        | AWS Docs                                                                                        |
+| ---------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `CreateRepository`     | ✅ Supported | Returns ARN, URI, and createdAt                                                                                                              | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_CreateRepository.html)     |
+| `DescribeRepositories` | ✅ Supported | Lists all repos or filters by name                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeRepositories.html) |
+| `DeleteRepository`     | ✅ Supported | Deletes the repository and all its image records; a repository still holding images raises RepositoryNotEmptyException unless `force` is set | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DeleteRepository.html)     |
+| `DescribeRegistry`     | ✅ Supported | Returns registry metadata with empty replication rules                                                                                       | [docs](https://docs.aws.amazon.com/AmazonECR/latest/APIReference/API_DescribeRegistry.html)     |
 
 ### Auth
 
