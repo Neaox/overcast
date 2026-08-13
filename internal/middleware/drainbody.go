@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // maxResponseBuffer is the largest response body we buffer in memory to set
@@ -59,6 +61,21 @@ type bufResponseWriter struct {
 	status   int
 	direct   bool // true once headers have been flushed (streaming mode)
 	hijacked bool // true after Hijack() — skip finish()
+}
+
+// RecordAWSError forwards to the wrapped writer, so that a protocol error
+// writer running behind this one still reaches the recorder Logger reads.
+// protocol.recordAWSError locates that recorder by type-asserting whichever
+// writer the handler holds, and a wrapper that satisfies the assertion without
+// passing it on ends the chain without failing — see #964. This writer is
+// registered outside Logger's today, so nothing records through it; the method
+// exists so the guarantee does not depend on that ordering.
+func (w *bufResponseWriter) RecordAWSError(aerr *protocol.AWSError) {
+	if rec, ok := w.ResponseWriter.(interface {
+		RecordAWSError(*protocol.AWSError)
+	}); ok {
+		rec.RecordAWSError(aerr)
+	}
 }
 
 // WriteHeader records the status code without flushing it.

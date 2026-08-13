@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Neaox/overcast/internal/protocol"
 )
 
 // responseRecorder wraps ResponseWriter to capture status code and bytes written
@@ -31,6 +33,20 @@ func (rr *responseRecorder) Write(b []byte) (int, error) {
 	n, err := rr.ResponseWriter.Write(b)
 	rr.bytesWritten += n
 	return n, err
+}
+
+// RecordAWSError forwards to the wrapped writer. protocol.recordAWSError finds
+// its recorder by type-asserting the writer a handler holds, so a wrapper that
+// satisfies the assertion without passing it on ends the chain silently — the
+// error then reaches neither the trace, nor the request log's aws_error_code
+// field, nor the retention rule that keeps a trace carrying an AWS error. Same
+// defect as DynamoDB's crc32 writer (#964).
+func (rr *responseRecorder) RecordAWSError(aerr *protocol.AWSError) {
+	if rec, ok := rr.ResponseWriter.(interface {
+		RecordAWSError(*protocol.AWSError)
+	}); ok {
+		rec.RecordAWSError(aerr)
+	}
 }
 
 // writeAccessLog writes a single W3C Extended Log Format entry to the

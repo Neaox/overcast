@@ -142,6 +142,21 @@ func (w *traceResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
+// RecordAWSError forwards to the wrapped writer. protocol.recordAWSError finds
+// its recorder by type-asserting whichever writer the handler holds, so a
+// wrapper that answers the assertion without passing it on truncates the chain
+// silently — the assertion succeeds and the value lands where nothing reads it.
+// Registration order currently puts this writer outside Logger's, so nothing
+// records through it today; forwarding anyway is what stops a reordering of
+// internal/router/router.go from quietly reintroducing #964.
+func (w *traceResponseWriter) RecordAWSError(aerr *protocol.AWSError) {
+	if rec, ok := w.ResponseWriter.(interface {
+		RecordAWSError(*protocol.AWSError)
+	}); ok {
+		rec.RecordAWSError(aerr)
+	}
+}
+
 func (w *traceResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
 		return hj.Hijack()
