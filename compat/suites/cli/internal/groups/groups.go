@@ -59,5 +59,6 @@ func All() []ServiceGroup {
 		EFS().named("efs"),
 		AppConfigData().named("appconfigdata"),
 		OpenSearch().named("opensearch"),
+		AppConfig().named("appconfig"),
 	}
 }

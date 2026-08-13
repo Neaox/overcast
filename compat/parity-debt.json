@@ -22,6 +22,60 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "tests": 5
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "tests": 4
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "tests": 3
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "tests": 10
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "tests": 5
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "appconfigdata",
       "group": "appconfigdata-errors",
       "tests": 5
@@ -382,6 +436,60 @@
     },
     {
       "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "tests": 7
+    },
+    {
+      "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "tests": 7
+    },
+    {
+      "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "tests": 5
+    },
+    {
+      "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "tests": 4
+    },
+    {
+      "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "tests": 7
+    },
+    {
+      "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "tests": 3
+    },
+    {
+      "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "tests": 10
+    },
+    {
+      "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "tests": 7
+    },
+    {
+      "suite": "go-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "tests": 5
+    },
+    {
+      "suite": "go-sdk",
       "service": "appconfigdata",
       "group": "appconfigdata-errors",
       "tests": 5
@@ -406,6 +514,60 @@
     },
     {
       "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "tests": 7
+    },
+    {
+      "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "tests": 7
+    },
+    {
+      "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "tests": 5
+    },
+    {
+      "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "tests": 4
+    },
+    {
+      "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "tests": 7
+    },
+    {
+      "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "tests": 3
+    },
+    {
+      "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "tests": 10
+    },
+    {
+      "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "tests": 7
+    },
+    {
+      "suite": "java-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "tests": 5
+    },
+    {
+      "suite": "java-sdk",
       "service": "appconfigdata",
       "group": "appconfigdata-errors",
       "tests": 5
@@ -430,6 +592,60 @@
     },
     {
       "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "tests": 7
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "tests": 7
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "tests": 5
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "tests": 4
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "tests": 7
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "tests": 3
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "tests": 10
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "tests": 7
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "tests": 5
+    },
+    {
+      "suite": "node-js-sdk",
       "service": "appconfigdata",
       "group": "appconfigdata-errors",
       "tests": 5
@@ -451,6 +667,60 @@
       "service": "opensearch",
       "group": "opensearch-tags",
       "tests": 4
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "tests": 7
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "tests": 7
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "tests": 5
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "tests": 4
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "tests": 7
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "tests": 3
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "tests": 10
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "tests": 7
+    },
+    {
+      "suite": "python-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "tests": 5
     },
     {
       "suite": "python-sdk",
@@ -493,6 +763,60 @@
       "service": "apigateway",
       "group": "apigateway-usage-plans",
       "tests": 6
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-applications",
+      "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-configuration-profiles",
+      "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployment-strategies",
+      "tests": 5
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-deployments",
+      "tests": 4
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-environments",
+      "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-experiments",
+      "tests": 3
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-extensions",
+      "tests": 10
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-hosted-versions",
+      "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "appconfig",
+      "group": "appconfig-tags",
+      "tests": 5
     },
     {
       "suite": "rust-sdk",

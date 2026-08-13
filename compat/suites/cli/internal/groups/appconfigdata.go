@@ -476,22 +476,11 @@ func (g *appConfigDataGroup) poll(t *harness.TestContext, token string) (map[str
 	return out, string(body), nil
 }
 
-// expectAWSFailure runs a command that must fail, and asserts both halves of
-// the AWS error contract: the error code the model names, and the HTTP status
-// it is bound to. Checking only the code would miss a status change, which is
-// exactly what alpha.35 did to several services.
+// expectAWSFailure asserts an unsigned command fails with the error code and
+// HTTP status the model binds. The assertion itself is shared with the services
+// that can only be reached signed — see assertAWSFailure in util.go.
 func expectAWSFailure(t *harness.TestContext, testName, wantCode string, wantStatus int, args ...string) error {
-	status, err := awscli.RunStatus(t.Endpoint, t.Region, args...)
-	if err == nil {
-		return fmt.Errorf("%s: expected %s, got success", testName, wantCode)
-	}
-	if !strings.Contains(err.Error(), wantCode) {
-		return fmt.Errorf("%s: expected %s, got %v", testName, wantCode, err)
-	}
-	if status != wantStatus {
-		return fmt.Errorf("%s: expected HTTP %d for %s, got %d", testName, wantStatus, wantCode, status)
-	}
-	return nil
+	return assertAWSFailure(awscli.RunStatus, t, testName, wantCode, wantStatus, args...)
 }
 
 // describeRotation says how a NextPollConfigurationToken disappointed without

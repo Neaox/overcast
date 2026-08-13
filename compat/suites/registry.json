@@ -3804,6 +3804,299 @@
           ]
         }
       ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-applications",
+      "tests": [
+        {
+          "name": "CreateApplication"
+        },
+        {
+          "name": "GetApplication",
+          "depends": [
+            "CreateApplication"
+          ]
+        },
+        {
+          "name": "ListApplications",
+          "depends": [
+            "CreateApplication"
+          ]
+        },
+        {
+          "name": "UpdateApplication",
+          "depends": [
+            "CreateApplication"
+          ]
+        },
+        {
+          "name": "DeleteApplication",
+          "depends": [
+            "CreateApplication"
+          ]
+        },
+        {
+          "name": "GetApplicationNotFound",
+          "op": "GetApplication"
+        },
+        {
+          "name": "ListApplicationsInvalidToken",
+          "op": "ListApplications"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-environments",
+      "tests": [
+        {
+          "name": "CreateEnvironment"
+        },
+        {
+          "name": "GetEnvironment",
+          "depends": [
+            "CreateEnvironment"
+          ]
+        },
+        {
+          "name": "ListEnvironments",
+          "depends": [
+            "CreateEnvironment"
+          ]
+        },
+        {
+          "name": "UpdateEnvironment",
+          "depends": [
+            "CreateEnvironment"
+          ]
+        },
+        {
+          "name": "DeleteEnvironment",
+          "depends": [
+            "CreateEnvironment"
+          ]
+        },
+        {
+          "name": "GetEnvironmentNotFound",
+          "op": "GetEnvironment"
+        },
+        {
+          "name": "ListEnvironmentsApplicationNotFound",
+          "op": "ListEnvironments"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-configuration-profiles",
+      "tests": [
+        {
+          "name": "CreateConfigurationProfile"
+        },
+        {
+          "name": "GetConfigurationProfile",
+          "depends": [
+            "CreateConfigurationProfile"
+          ]
+        },
+        {
+          "name": "ListConfigurationProfiles",
+          "depends": [
+            "CreateConfigurationProfile"
+          ]
+        },
+        {
+          "name": "ListConfigurationProfilesByType",
+          "op": "ListConfigurationProfiles",
+          "depends": [
+            "CreateConfigurationProfile"
+          ]
+        },
+        {
+          "name": "UpdateConfigurationProfile",
+          "depends": [
+            "CreateConfigurationProfile"
+          ]
+        },
+        {
+          "name": "DeleteConfigurationProfile",
+          "depends": [
+            "CreateConfigurationProfile"
+          ]
+        },
+        {
+          "name": "GetConfigurationProfileNotFound",
+          "op": "GetConfigurationProfile"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-hosted-versions",
+      "tests": [
+        {
+          "name": "CreateHostedConfigurationVersion"
+        },
+        {
+          "name": "GetHostedConfigurationVersion",
+          "depends": [
+            "CreateHostedConfigurationVersion"
+          ]
+        },
+        {
+          "name": "ListHostedConfigurationVersions",
+          "depends": [
+            "CreateHostedConfigurationVersion"
+          ]
+        },
+        {
+          "name": "ListHostedConfigurationVersionsByLabel",
+          "op": "ListHostedConfigurationVersions",
+          "depends": [
+            "CreateHostedConfigurationVersion"
+          ]
+        },
+        {
+          "name": "CreateHostedConfigurationVersionStaleVersion",
+          "op": "CreateHostedConfigurationVersion",
+          "depends": [
+            "CreateHostedConfigurationVersion"
+          ]
+        },
+        {
+          "name": "DeleteHostedConfigurationVersion",
+          "depends": [
+            "CreateHostedConfigurationVersion"
+          ]
+        },
+        {
+          "name": "GetHostedConfigurationVersionNotFound",
+          "op": "GetHostedConfigurationVersion"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-tags",
+      "tests": [
+        {
+          "name": "CreateApplicationWithTags",
+          "op": "CreateApplication"
+        },
+        {
+          "name": "TagResource",
+          "depends": [
+            "CreateApplicationWithTags"
+          ]
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": [
+            "TagResource"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "TagResource"
+          ]
+        },
+        {
+          "name": "ListTagsForResourceNotFound",
+          "op": "ListTagsForResource"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-deployment-strategies",
+      "tests": [
+        {
+          "name": "CreateDeploymentStrategy"
+        },
+        {
+          "name": "GetDeploymentStrategy"
+        },
+        {
+          "name": "ListDeploymentStrategies"
+        },
+        {
+          "name": "UpdateDeploymentStrategy"
+        },
+        {
+          "name": "DeleteDeploymentStrategy"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-deployments",
+      "tests": [
+        {
+          "name": "StartDeployment"
+        },
+        {
+          "name": "GetDeployment"
+        },
+        {
+          "name": "ListDeployments"
+        },
+        {
+          "name": "StopDeployment"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-extensions",
+      "tests": [
+        {
+          "name": "CreateExtension"
+        },
+        {
+          "name": "GetExtension"
+        },
+        {
+          "name": "ListExtensions"
+        },
+        {
+          "name": "UpdateExtension"
+        },
+        {
+          "name": "DeleteExtension"
+        },
+        {
+          "name": "CreateExtensionAssociation"
+        },
+        {
+          "name": "GetExtensionAssociation"
+        },
+        {
+          "name": "ListExtensionAssociations"
+        },
+        {
+          "name": "UpdateExtensionAssociation"
+        },
+        {
+          "name": "DeleteExtensionAssociation"
+        }
+      ]
+    },
+    {
+      "service": "appconfig",
+      "name": "appconfig-experiments",
+      "tests": [
+        {
+          "name": "ListExperimentDefinitions"
+        },
+        {
+          "name": "ListExperimentRuns"
+        },
+        {
+          "name": "ListExperimentRunEvents"
+        }
+      ]
     }
   ]
 }

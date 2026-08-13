@@ -87,6 +87,16 @@ func RunStatus(endpoint, region string, args ...string) (int, error) {
 	return lastHTTPStatus(stderr), err
 }
 
+// RunStatusSigned is RunStatus with SigV4 signing enabled — see RunSigned.
+//
+// A service reached only when signed needs both: unsigned, its negative paths
+// are answered by whichever other service owns the URI, so the status read back
+// would be that service's rather than the one under test.
+func RunStatusSigned(endpoint, region string, args ...string) (int, error) {
+	_, stderr, err := runCLI(endpoint, region, runOpts{sign: true, debug: true}, args...)
+	return lastHTTPStatus(stderr), err
+}
+
 // httpStatusRe matches urllib3's request log line, e.g.
 // `http://127.0.0.1:4566 "GET /configuration?configuration_token=x HTTP/1.1" 400 84`.
 var httpStatusRe = regexp.MustCompile(`HTTP/1\.1" (\d{3})`)
