@@ -17,8 +17,3 @@ scripts/*.ps1 text eol=crlf
 internal/docssearch/index.gen.jsonl linguist-generated=true
 web/src/docs-nav.gen.ts linguist-generated=true
 internal/capabilities/all.gen.go linguist-generated=true
-
-# Known binaries checked into the repo (compat suite helpers) — never run
-# text normalization or diff them as text.
-compat/suites/cli/runner -text -diff
-compat/suites/go-sdk/runner -text -diff

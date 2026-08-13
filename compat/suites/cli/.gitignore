@@ -1,0 +1,5 @@
+# Go build output. The compat runner starts this suite with
+# `go run ./cmd/runner`, so a `go build ./cmd/runner` binary left in the suite
+# root is a local artifact and never belongs in the repo.
+/runner
+/runner.exe
