@@ -8,7 +8,7 @@ func init() {
 	capabilities.Default.Register(
 		capabilities.Capability{Service: "ecr", Operation: "CreateRepository", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns ARN, URI, and createdAt"},
 		capabilities.Capability{Service: "ecr", Operation: "DescribeRepositories", Category: "General", Status: capabilities.StatusSupported, Notes: "Lists all repos or filters by name"},
-		capabilities.Capability{Service: "ecr", Operation: "DeleteRepository", Category: "General", Status: capabilities.StatusSupported, Notes: "Deletes the repository and all its image records"},
+		capabilities.Capability{Service: "ecr", Operation: "DeleteRepository", Category: "General", Status: capabilities.StatusSupported, Notes: "Deletes the repository and all its image records; a repository still holding images raises RepositoryNotEmptyException unless `force` is set"},
 		capabilities.Capability{Service: "ecr", Operation: "GetAuthorizationToken", Category: "Auth", Status: capabilities.StatusSupported, Notes: "Returns `base64(\"AWS:<password>\")` and the registry proxy endpoint; token expiry is 12 hours"},
 		capabilities.Capability{Service: "ecr", Operation: "DescribeRegistry", Category: "General", Status: capabilities.StatusSupported, Notes: "Returns registry metadata with empty replication rules"},
 		capabilities.Capability{Service: "ecr", Operation: "ListImages", Category: "Images", Status: capabilities.StatusSupported, Notes: "Returns image IDs (tag + digest); reconciles local registry tags when Docker is available"},

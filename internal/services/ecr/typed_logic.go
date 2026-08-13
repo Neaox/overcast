@@ -315,6 +315,15 @@ func (s *Service) deleteRepositoryTyped(ctx context.Context, req *deleteReposito
 	if !found {
 		return nil, s.errRepoNotFoundTyped(req.RepositoryName)
 	}
+	if !req.Force {
+		hasImages, err := s.repoHoldsImages(ctx, region, req.RepositoryName)
+		if err != nil {
+			return nil, protocol.ErrInternalError
+		}
+		if hasImages {
+			return nil, s.errRepoNotEmpty(req.RepositoryName)
+		}
+	}
 	s.applyCurrentRepoURI(ctx, region, repo)
 	key := serviceutil.RegionKey(region, req.RepositoryName)
 	if err := s.store.Delete(ctx, repoNamespace, key); err != nil {

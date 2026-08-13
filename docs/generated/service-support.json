@@ -4283,7 +4283,7 @@
           "operation": "DeleteRepository",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Deletes the repository and all its image records"
+          "notes": "Deletes the repository and all its image records; a repository still holding images raises RepositoryNotEmptyException unless `force` is set"
         },
         {
           "operation": "GetAuthorizationToken",
