@@ -218,6 +218,7 @@ type updateServiceRequest struct {
 	Service              string                `json:"service" cbor:"service"`
 	TaskDefinition       string                `json:"taskDefinition" cbor:"taskDefinition"`
 	DesiredCount         *int                  `json:"desiredCount" cbor:"desiredCount"`
+	ForceNewDeployment   bool                  `json:"forceNewDeployment" cbor:"forceNewDeployment"`
 	NetworkConfiguration *NetworkConfiguration `json:"networkConfiguration" cbor:"networkConfiguration"`
 	PlatformVersion      string                `json:"platformVersion" cbor:"platformVersion"`
 }

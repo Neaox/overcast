@@ -286,8 +286,22 @@ public final class EcsGroup implements ServiceGroup {
         String cluster = ctx.getString("svcCluster");
         String svcName = ctx.getString("svcName");
         Assertions.assertNotBlank(svcName, "UpdateService: no service from CreateService");
-        var resp = ecs().updateService(r -> r.cluster(cluster).service(svcName).desiredCount(2));
+        var before = ecs().describeServices(r -> r.cluster(cluster).services(svcName));
+        Assertions.assertTrue(before.services().size() == 1, "UpdateService: service missing before update");
+        String beforeId = before.services().get(0).deployments().stream()
+                .filter(deployment -> "PRIMARY".equals(deployment.status()))
+                .map(deployment -> deployment.id())
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("UpdateService: no PRIMARY deployment before update"));
+        var resp = ecs().updateService(r -> r.cluster(cluster).service(svcName).desiredCount(2).forceNewDeployment(true));
         Assertions.assertNotNull(resp.service(), "UpdateService: missing service in response");
+        String afterId = resp.service().deployments().stream()
+                .filter(deployment -> "PRIMARY".equals(deployment.status()))
+                .map(deployment -> deployment.id())
+                .findFirst()
+                .orElse(null);
+        Assertions.assertTrue(afterId != null && !beforeId.equals(afterId),
+                "UpdateService: forceNewDeployment did not replace the PRIMARY deployment");
     }
 
     private void deleteService(TestContext ctx) throws Exception {

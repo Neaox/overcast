@@ -205,3 +205,60 @@ func TestUpdateService_newDeploymentDoesNotCountTheOldDeploymentsTasks(t *testin
 			primary.RolloutState, primary.RolloutStateReason)
 	}
 }
+
+func TestUpdateService_forceNewDeploymentStartsFreshTasks(t *testing.T) {
+	// Given: a service with one task placed from its current task definition.
+	srv := helpers.NewTestServer(t)
+	cluster := ecsCall(t, srv, "CreateCluster", map[string]any{"clusterName": "forced-cluster"})
+	helpers.AssertStatus(t, cluster, http.StatusOK)
+	cluster.Body.Close()
+	register := ecsCall(t, srv, "RegisterTaskDefinition", map[string]any{
+		"family":               "forced-task",
+		"containerDefinitions": []map[string]any{{"name": "app", "image": "busybox"}},
+	})
+	helpers.AssertStatus(t, register, http.StatusOK)
+	register.Body.Close()
+	create := ecsCall(t, srv, "CreateService", map[string]any{
+		"cluster": "forced-cluster", "serviceName": "forced-service",
+		"taskDefinition": "forced-task:1", "desiredCount": 1,
+	})
+	helpers.AssertStatus(t, create, http.StatusOK)
+	var created struct {
+		Service ecsServiceView `json:"service"`
+	}
+	helpers.DecodeJSON(t, create, &created)
+	create.Body.Close()
+	if len(created.Service.Deployments) != 1 {
+		t.Fatalf("initial deployments = %#v, want one", created.Service.Deployments)
+	}
+	initialDeploymentID := created.Service.Deployments[0].ID
+
+	// When: the AWS CLI-shaped request forces a deployment without changing
+	// the task definition.
+	update := ecsCall(t, srv, "UpdateService", map[string]any{
+		"cluster": "forced-cluster", "service": "forced-service", "forceNewDeployment": true,
+	})
+	defer update.Body.Close()
+	helpers.AssertStatus(t, update, http.StatusOK)
+	var updated struct {
+		Service ecsServiceView `json:"service"`
+	}
+	helpers.DecodeJSON(t, update, &updated)
+
+	// Then: a distinct PRIMARY deployment owns a freshly placed task while the
+	// prior deployment is retained until its replacement becomes healthy.
+	if len(updated.Service.Deployments) != 2 {
+		t.Fatalf("deployments = %#v, want new and superseded deployments", updated.Service.Deployments)
+	}
+	primary := updated.Service.Deployments[0]
+	if primary.ID == initialDeploymentID {
+		t.Errorf("forced deployment reused ID %q", primary.ID)
+	}
+	if primary.Status != "PRIMARY" || primary.PendingCount != 1 {
+		t.Errorf("forced PRIMARY deployment = %#v, want one freshly placed pending task", primary)
+	}
+	if updated.Service.Deployments[1].ID != initialDeploymentID || updated.Service.Deployments[1].Status != "ACTIVE" {
+		t.Errorf("superseded deployment = %#v, want prior deployment %q ACTIVE",
+			updated.Service.Deployments[1], initialDeploymentID)
+	}
+}

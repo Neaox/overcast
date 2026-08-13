@@ -1,8 +1,8 @@
 service: ecs
-status: not_started
+status: fixed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-05
+last_updated: 2026-08-14
 protocols: [aws_json_1_1, rpcv2_cbor]
 implementation: [internal/services/ecs]
 integration_tests: [tests/integration/ecs]
@@ -71,12 +71,36 @@ operations:
         evidence:
           - tests/integration/ecs/service_lifecycle_test.go#TestUpdateService_scaleDownStopsTasksWithSchedulerStopCode
         notes: Scheduler replacement and scale-down stops report ServiceSchedulerInitiated and populate stoppingAt/stoppedAt.
+  UpdateService:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_UpdateService.html
+      - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/secrets-envvar-secrets-manager.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-ecs-service-forcenewdeployment.html
+    scenarios:
+      force_new_deployment_refreshes_launch_time_secrets:
+        status: fixed
+        evidence:
+          - internal/services/ecs/secret_deployment_test.go#TestUpdateService_forceNewDeploymentRefreshesSecret
+          - tests/integration/ecs/service_deployment_test.go#TestUpdateService_forceNewDeploymentStartsFreshTasks
+          - compat/suites/go-sdk/internal/groups/ecs.go
+          - compat/suites/python-sdk/groups/ecs.py
+          - compat/suites/node-js-sdk/src/groups/ecs.ts
+          - compat/suites/java-sdk/src/main/java/io/overcast/compat/groups/EcsGroup.java
+          - compat/suites/cli/internal/groups/ecs.go
+        notes: A forced deployment creates a distinct PRIMARY deployment using the current task definition. Its replacement containers resolve Secrets Manager and SSM again at start, while existing containers retain their original values.
+      cloudformation_cdk_nonce:
+        status: fixed
+        evidence:
+          - internal/services/cloudformation/provisioner_ecs_test.go#TestECSServiceUpdate_forceNewDeploymentFromCDK
+        notes: AWS::ECS::Service ForceNewDeployment emitted by CDK is translated to the ECS UpdateService forceNewDeployment boolean; the CloudFormation-only nonce is not sent to ECS.
 findings:
   fixed:
     - DescribeClusters no longer returns creation-time zeroes after resources are added to a cluster.
     - ListTasks applies AWS's default RUNNING desired-status filter.
     - Stopped task records expire after the documented one-hour visibility window.
     - StopTask and scheduler stops expose stable stop codes, reasons, and transition timestamps.
+    - UpdateService forceNewDeployment replaces tasks on the unchanged task definition and refreshes launch-time secret values, including through the CloudFormation/CDK nonce path.
   remaining_gaps:
     - Prioritize RunTask, CreateService, RegisterTaskDefinition, Fargate awsvpc, and CDK paths.
     - Modern ListServiceDeployments, DescribeServiceDeployments, and service revision history are not implemented; they are a separate endpoint-sized feature rather than task retention metadata.

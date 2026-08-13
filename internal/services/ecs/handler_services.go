@@ -274,9 +274,16 @@ func (h *Handler) applyServiceUpdate(ctx context.Context, serviceName string, sv
 		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has begun draining connections on %d tasks.", serviceName, 0))
 	}
 
-	// Update task definition if changed.
-	if req.TaskDefinition != "" {
-		family, revision, hasRevision := parseTaskDefRef(req.TaskDefinition)
+	// Updating the task definition or explicitly forcing a deployment creates
+	// a new PRIMARY deployment. A forced deployment deliberately reuses the
+	// service's current task definition: its purpose is to start fresh tasks so
+	// launch-time inputs such as secrets and mutable image tags are read again.
+	if req.TaskDefinition != "" || req.ForceNewDeployment {
+		taskDefinition := req.TaskDefinition
+		if taskDefinition == "" {
+			taskDefinition = svc.TaskDefinition
+		}
+		family, revision, hasRevision := parseTaskDefRef(taskDefinition)
 		var td *TaskDefinition
 		var aerr *protocol.AWSError
 		if hasRevision {
@@ -288,7 +295,7 @@ func (h *Handler) applyServiceUpdate(ctx context.Context, serviceName string, sv
 			return aerr
 		}
 
-		if td.TaskDefinitionArn != svc.TaskDefinition {
+		if td.TaskDefinitionArn != svc.TaskDefinition || req.ForceNewDeployment {
 			// Demote current PRIMARY to ACTIVE.
 			for i := range svc.Deployments {
 				if svc.Deployments[i].Status == "PRIMARY" {
@@ -322,7 +329,11 @@ func (h *Handler) applyServiceUpdate(ctx context.Context, serviceName string, sv
 				PlatformVersion:      newPlatformVersion,
 			}}, svc.Deployments...)
 			svc.TaskDefinition = td.TaskDefinitionArn
-			h.addServiceEvent(svc, fmt.Sprintf("(service %s) was updated to use task definition %s.", serviceName, td.TaskDefinitionArn))
+			if req.ForceNewDeployment && req.TaskDefinition == "" {
+				h.addServiceEvent(svc, fmt.Sprintf("(service %s) has begun a forced deployment.", serviceName))
+			} else {
+				h.addServiceEvent(svc, fmt.Sprintf("(service %s) was updated to use task definition %s.", serviceName, td.TaskDefinitionArn))
+			}
 		}
 	}
 

@@ -57,6 +57,29 @@ const dynamicRefTemplate = `{
   }
 }`
 
+const dynamicRefParameterTemplate = `{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "SourceSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Name": "dynref-parameter-secret",
+        "SecretString": "before"
+      }
+    },
+    "TargetParameter": {
+      "Type": "AWS::SSM::Parameter",
+      "DependsOn": "SourceSecret",
+      "Properties": {
+        "Name": "/dynref/target",
+        "Type": "String",
+        "Value": "{{resolve:secretsmanager:dynref-parameter-secret}}",
+        "Description": "before-update"
+      }
+    }
+  }
+}`
+
 // rdsDescribeInstance returns one DB instance's master username and DB name as
 // the RDS API reports them — the same values the web UI reads.
 func rdsDescribeInstance(t *testing.T, srv *helpers.TestServer, id string) (masterUsername, dbName string) {
@@ -176,6 +199,77 @@ func TestUpdateStack_rotatingASecretDoesNotReplaceTheResource(t *testing.T) {
 	}
 }
 
+// CloudFormation retrieves a dynamic reference only when it creates or updates
+// the resource containing that reference. An unchanged resource must therefore
+// remain untouched even when its previously resolved secret no longer exists.
+func TestUpdateStack_unchangedResourceDoesNotRetrieveDynamicReference(t *testing.T) {
+	srv := helpers.NewTestServer(t)
+	const stackName = "dynref-unchanged-stack"
+
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{dynamicRefTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+
+	before, _ := rdsDescribeInstance(t, srv, "dynref-db")
+	if before != "appuser" {
+		t.Fatalf("MasterUsername = %q, want %q before deleting the secret", before, "appuser")
+	}
+
+	deleteSecret(t, srv, "dynref-db-secret")
+
+	ur := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{dynamicRefTemplate},
+	})
+	defer ur.Body.Close()
+	helpers.AssertStatus(t, ur, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	after, _ := rdsDescribeInstance(t, srv, "dynref-db")
+	if after != "appuser" {
+		t.Errorf("MasterUsername = %q after a no-op update; want the previously resolved value %q", after, "appuser")
+	}
+}
+
+func TestUpdateStack_changedResourceRetrievesCurrentDynamicReference(t *testing.T) {
+	// Given: a parameter whose value was resolved from AWSCURRENT when its
+	// containing resource was created.
+	srv := helpers.NewTestServer(t)
+	const stackName = "dynref-changed-stack"
+	cr := cfnQuery(t, srv, "CreateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{dynamicRefParameterTemplate},
+	})
+	defer cr.Body.Close()
+	helpers.AssertStatus(t, cr, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "CREATE_COMPLETE")
+	if got := getParameterValue(t, srv, "/dynref/target"); got != "before" {
+		t.Fatalf("initial parameter value = %q, want before", got)
+	}
+
+	putSecret(t, srv, "dynref-parameter-secret", "after")
+	updatedTemplate := strings.Replace(dynamicRefParameterTemplate, "before-update", "after-update", 1)
+
+	// When: a literal property change selects the containing resource for an
+	// update without changing the dynamic reference itself.
+	ur := cfnQuery(t, srv, "UpdateStack", url.Values{
+		"StackName":    []string{stackName},
+		"TemplateBody": []string{updatedTemplate},
+	})
+	defer ur.Body.Close()
+	helpers.AssertStatus(t, ur, http.StatusOK)
+	waitForStackStatus(t, srv, stackName, "UPDATE_COMPLETE")
+
+	// Then: CloudFormation retrieves AWSCURRENT at resource-update time.
+	if got := getParameterValue(t, srv, "/dynref/target"); got != "after" {
+		t.Errorf("updated parameter value = %q, want after", got)
+	}
+}
+
 // putSecret overwrites a secret's value through the Secrets Manager API.
 func putSecret(t *testing.T, srv *helpers.TestServer, secretID, value string) {
 	t.Helper()
@@ -195,6 +289,56 @@ func putSecret(t *testing.T, srv *helpers.TestServer, secretID, value string) {
 	}
 	defer resp.Body.Close()
 	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func deleteSecret(t *testing.T, srv *helpers.TestServer, secretID string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"SecretId":                   secretID,
+		"ForceDeleteWithoutRecovery": true,
+	})
+	if err != nil {
+		t.Fatalf("marshal DeleteSecret body: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build DeleteSecret request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "secretsmanager.DeleteSecret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+}
+
+func getParameterValue(t *testing.T, srv *helpers.TestServer, name string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"Name": name})
+	if err != nil {
+		t.Fatalf("marshal GetParameter body: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build GetParameter request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "AmazonSSM.GetParameter")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GetParameter: %v", err)
+	}
+	defer resp.Body.Close()
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	var out struct {
+		Parameter struct {
+			Value string `json:"Value"`
+		} `json:"Parameter"`
+	}
+	helpers.DecodeJSON(t, resp, &out)
+	return out.Parameter.Value
 }
 
 const unresolvableRefTemplate = `{

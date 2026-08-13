@@ -73,7 +73,9 @@ the stored resource properties both keep the literal `{{resolve:...}}` text, so:
   changed. This matches AWS — *"Updating only the secret value in Secrets
   Manager doesn't automatically cause CloudFormation to retrieve the new
   value"* — and to push a new value you must change the resource in the
-  template, exactly as on AWS.
+  template, exactly as on AWS. No `GetSecretValue` call is made for an unchanged
+  containing resource, so a no-op stack update also succeeds if that secret is
+  no longer available.
 - A resolved secret is never written to Overcast's state. Only the service the
   property belongs to ever sees it, which is the one exposure AWS also allows:
   *"the secret value may show up in the service whose resource it's being used
@@ -135,6 +137,11 @@ service itself gives — an RDS event, an ECS service event — and the stack ro
 back, deleting the resource it created. A failed update is never answered by
 replacing the resource: the change has already been applied to the one that
 exists, so a second copy would carry the same problem.
+
+`AWS::ECS::Service.ForceNewDeployment` is translated to ECS's
+`forceNewDeployment` update flag, so changing the nonce emitted by CDK launches
+fresh tasks even when the task definition is unchanged. Those tasks resolve
+Secrets Manager and SSM values again at container start.
 
 | Resource Type                              | Status      | Physical ID Format        | GetAtt Attributes                               |
 | ------------------------------------------ | ----------- | ------------------------- | ----------------------------------------------- |

@@ -338,9 +338,26 @@ def UpdateServiceFn(ctx: TestContext) -> None:
     svc_name = ctx.get("svc_name")
     if not svc_name:
         raise AssertionError("UpdateService: no service from CreateService")
-    resp = ecs.update_service(cluster=cluster, service=svc_name, desiredCount=2)
-    if not resp.get("service"):
+    before = ecs.describe_services(cluster=cluster, services=[svc_name])
+    before_deployments = before.get("services", [{}])[0].get("deployments", [])
+    if not before_deployments:
+        raise AssertionError("UpdateService: no deployment before update")
+    before_id = next((d.get("id") for d in before_deployments if d.get("status") == "PRIMARY"), None)
+    if not before_id:
+        raise AssertionError("UpdateService: no PRIMARY deployment before update")
+    resp = ecs.update_service(
+        cluster=cluster,
+        service=svc_name,
+        desiredCount=2,
+        forceNewDeployment=True,
+    )
+    service = resp.get("service")
+    if not service:
         raise AssertionError("UpdateService: missing service in response")
+    deployments = service.get("deployments", [])
+    after_id = next((d.get("id") for d in deployments if d.get("status") == "PRIMARY"), None)
+    if not after_id or after_id == before_id:
+        raise AssertionError("UpdateService: forceNewDeployment did not replace the PRIMARY deployment")
 
 
 def DeleteServiceFn(ctx: TestContext) -> None:

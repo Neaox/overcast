@@ -6,6 +6,7 @@ package cloudformation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -19,6 +20,56 @@ import (
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
+
+type ecsUpdateRouter struct {
+	target string
+	body   map[string]any
+}
+
+func (r *ecsUpdateRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.target = req.Header.Get("X-Amz-Target")
+	if err := json.NewDecoder(req.Body).Decode(&r.body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+	_, _ = w.Write([]byte(`{"service":{}}`))
+}
+
+func TestECSServiceUpdate_forceNewDeploymentFromCDK(t *testing.T) {
+	// Given: the AWS::ECS::Service shape emitted by CDK when a changed nonce
+	// requests a deployment without changing the task definition.
+	router := &ecsUpdateRouter{}
+	props := map[string]any{
+		"ForceNewDeployment": map[string]any{
+			"EnableForceNewDeployment": true,
+			"ForceNewDeploymentNonce":  "secret-version-2",
+		},
+	}
+
+	// When: CloudFormation updates the ECS service resource.
+	physicalID := "arn:aws:ecs:us-east-1:123456789012:service/app-cluster/app-service"
+	gotID, _, err := (&ecsServiceHandler{}).Update(context.Background(), router, nil,
+		physicalID, props, nil, &resolveContext{Region: "us-east-1"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Then: the CloudFormation-only object becomes the ECS API boolean on the
+	// same UpdateService path used by aws ecs --force-new-deployment.
+	if gotID != physicalID {
+		t.Errorf("physical ID = %q, want %q", gotID, physicalID)
+	}
+	if router.target != "AmazonEC2ContainerServiceV20141113.UpdateService" {
+		t.Errorf("target = %q, want ECS UpdateService", router.target)
+	}
+	if got, ok := router.body["forceNewDeployment"].(bool); !ok || !got {
+		t.Errorf("forceNewDeployment = %#v, want true (body %#v)", router.body["forceNewDeployment"], router.body)
+	}
+	if _, leaked := router.body["forceNewDeploymentNonce"]; leaked {
+		t.Errorf("CloudFormation nonce leaked into ECS API request: %#v", router.body)
+	}
+}
 
 func TestECSServiceStable_deploymentShapes(t *testing.T) {
 	// Given: the DescribeServices shapes a service passes through

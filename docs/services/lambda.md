@@ -689,6 +689,12 @@ contained extension `1.0.143` and did not honor endpoint environment variables;
 current layer version `90` contained extension `1.0.342` and routed SSM and
 Secrets Manager requests to Overcast.
 
+Overcast does not add a secret cache in front of the extension. The extension
+binary keeps its own execution-environment-local cache, as it does on AWS, so a
+warm environment can return a prior value until `SECRETS_MANAGER_TTL` expires.
+A new Lambda container starts a new extension process and cache. Set the TTL to
+`0` when every request must read the current `AWSCURRENT` value.
+
 ### Extension troubleshooting
 
 If an extension still reaches real AWS or returns AWS credential errors:
