@@ -54,9 +54,9 @@ func AppSync() ServiceGroup {
 			"ListTypes":  g.ListTypes,
 			"DeleteType": g.DeleteType,
 			// tags
-			"appsync-tags:TagResource":   g.TagResource,
-			"ListTagsForResource":        g.ListTagsForResource,
-			"appsync-tags:UntagResource": g.UntagResource,
+			"appsync-tags:TagResource":         g.TagResource,
+			"appsync-tags:ListTagsForResource": g.ListTagsForResource,
+			"appsync-tags:UntagResource":       g.UntagResource,
 			// env-vars
 			"PutGraphqlApiEnvironmentVariables": g.PutGraphqlApiEnvironmentVariables,
 			"GetGraphqlApiEnvironmentVariables": g.GetGraphqlApiEnvironmentVariables,

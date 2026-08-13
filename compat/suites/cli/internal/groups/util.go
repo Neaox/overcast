@@ -2,8 +2,11 @@ package groups
 
 import (
 	"encoding/base64"
+	"fmt"
 	"math/big"
 	"strings"
+
+	"github.com/Neaox/overcast-compat-cli/internal/harness"
 )
 
 // encodeBase64 returns the standard base64 encoding of b.
@@ -20,6 +23,30 @@ func hashMidpointStr(start, end string) string {
 	sum := new(big.Int).Add(s, e)
 	mid := new(big.Int).Rsh(sum, 1) // divide by 2
 	return mid.String()
+}
+
+// statusRunner runs a CLI command and reports the HTTP status of the last
+// response alongside the error. Both awscli.RunStatus and its signed
+// counterpart satisfy it, which is what lets one assertion serve a service
+// reachable unsigned and one that is not.
+type statusRunner func(endpoint, region string, args ...string) (int, error)
+
+// assertAWSFailure runs a command that must fail, and asserts both halves of
+// the AWS error contract: the error code the model names, and the HTTP status
+// it is bound to. Checking only the code would miss a status change, which is
+// exactly what alpha.35 did to several services.
+func assertAWSFailure(run statusRunner, t *harness.TestContext, testName, wantCode string, wantStatus int, args ...string) error {
+	status, err := run(t.Endpoint, t.Region, args...)
+	if err == nil {
+		return fmt.Errorf("%s: expected %s, got success", testName, wantCode)
+	}
+	if !strings.Contains(err.Error(), wantCode) {
+		return fmt.Errorf("%s: expected %s, got %v", testName, wantCode, err)
+	}
+	if status != wantStatus {
+		return fmt.Errorf("%s: expected HTTP %d for %s, got %d", testName, wantStatus, wantCode, status)
+	}
+	return nil
 }
 
 // isAlreadyExists reports whether the error is an AWS "already exists" error,
