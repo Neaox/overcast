@@ -439,10 +439,24 @@ func (g *ecsGroup) UpdateService(ctx context.Context, t *harness.TestContext) er
 	if svcName == "" {
 		return fmt.Errorf("UpdateService: no service from CreateService")
 	}
+	before, err := g.cl().DescribeServices(ctx, &ecs.DescribeServicesInput{
+		Cluster: aws.String(cluster), Services: []string{svcName},
+	})
+	if err != nil {
+		return err
+	}
+	if len(before.Services) != 1 {
+		return fmt.Errorf("UpdateService: no deployment before update")
+	}
+	beforeID := sdkPrimaryDeploymentID(before.Services[0].Deployments)
+	if beforeID == "" {
+		return fmt.Errorf("UpdateService: no PRIMARY deployment before update")
+	}
 	resp, err := g.cl().UpdateService(ctx, &ecs.UpdateServiceInput{
-		Cluster:      aws.String(cluster),
-		Service:      aws.String(svcName),
-		DesiredCount: aws.Int32(2),
+		Cluster:            aws.String(cluster),
+		Service:            aws.String(svcName),
+		DesiredCount:       aws.Int32(2),
+		ForceNewDeployment: true,
 	})
 	if err != nil {
 		return err
@@ -450,7 +464,19 @@ func (g *ecsGroup) UpdateService(ctx context.Context, t *harness.TestContext) er
 	if resp.Service == nil {
 		return fmt.Errorf("UpdateService: missing service in response")
 	}
+	if afterID := sdkPrimaryDeploymentID(resp.Service.Deployments); afterID == "" || afterID == beforeID {
+		return fmt.Errorf("UpdateService: forceNewDeployment did not replace PRIMARY deployment %q", beforeID)
+	}
 	return nil
+}
+
+func sdkPrimaryDeploymentID(deployments []ecstypes.Deployment) string {
+	for _, deployment := range deployments {
+		if aws.ToString(deployment.Status) == "PRIMARY" {
+			return aws.ToString(deployment.Id)
+		}
+	}
+	return ""
 }
 
 func (g *ecsGroup) DeleteService(ctx context.Context, t *harness.TestContext) error {

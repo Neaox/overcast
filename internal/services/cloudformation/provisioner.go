@@ -399,9 +399,12 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 		}
 		res := tmpl.Resources[logicalID]
 
-		// As in the create path: a reference that will not resolve fails the
-		// resource rather than being written into it verbatim.
-		props, recordedProps, refErr := p.resolveProperties(res, rCtx)
+		// CloudFormation compares the literal dynamic-reference string before it
+		// retrieves the secret. Per AWS, an unchanged containing resource does
+		// not retrieve the reference at all. Besides preserving that deliberately
+		// stale value, deferring expansion avoids an internal API call per secret
+		// on no-op stack updates.
+		recordedProps := resolveAllProperties(res.Properties, rCtx)
 		propsHash := hashResourceProperties(res.Type, recordedProps, stack.Tags)
 
 		// Same logical ID and type, with a resource still behind the record.
@@ -426,7 +429,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 				rCtx.Attributes[logicalID] = old.Attributes
 			}
 
-			if refErr == nil && resourcePropertiesMatch(old.PropertiesHash, res.Type, recordedProps, stack.Tags, previous.Tags) {
+			if resourcePropertiesMatch(old.PropertiesHash, res.Type, recordedProps, stack.Tags, previous.Tags) {
 				// No change, or legacy resource without a recorded hash —
 				// treat as unchanged. (Stacks created before property
 				// hashing was added have no recorded hash; without a
@@ -450,6 +453,7 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			}
 
 			// Properties changed — attempt update.
+			props, refErr := expandRecordedProperties(recordedProps, rCtx)
 			p.recordEvent(ctx, stack, logicalID, old.PhysicalID, res.Type, ResourceUpdateInProgress, "")
 			outcome, updErr := resourceUpdateOutcome{}, refErr
 			if updErr == nil {
@@ -530,6 +534,8 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 			delete(existing, logicalID)
 			continue
 		}
+
+		props, refErr := expandRecordedProperties(recordedProps, rCtx)
 
 		// New (or different type) — emit CREATE_IN_PROGRESS before provisioning.
 		p.recordEvent(ctx, stack, logicalID, "", res.Type, ResourceCreateInProgress, "")
@@ -1195,16 +1201,23 @@ func (p *provisioner) buildResolveContext(stack *Stack, tmpl *Template) *resolve
 // handler is given. That is the one place AWS does let the value reach: "the
 // secret value may show up in the service whose resource it's being used in".
 //
-// The error must be taken here rather than at dispatch: a resource whose
-// properties are unchanged never dispatches at all, and a failure left on the
-// context would be blamed on the next resource instead.
+// Expansion errors are taken with the resource selected for dispatch so a
+// failure cannot be attributed to whichever resource is processed next.
 func (p *provisioner) resolveProperties(res TemplateResource, rCtx *resolveContext) (expanded, recorded map[string]any, err error) {
 	recorded = resolveAllProperties(res.Properties, rCtx)
+	expanded, err = expandRecordedProperties(recorded, rCtx)
+	return expanded, recorded, err
+}
+
+// expandRecordedProperties resolves dynamic references only after
+// CloudFormation has selected the containing resource for creation or update.
+// No-op stack updates therefore avoid both expansion work and secret reads.
+func expandRecordedProperties(recorded map[string]any, rCtx *resolveContext) (expanded map[string]any, err error) {
 	expanded, _ = expandDynamicRefs(recorded, rCtx).(map[string]any)
 	if expanded == nil {
 		expanded = recorded
 	}
-	return expanded, recorded, rCtx.takeDynamicRefErr()
+	return expanded, rCtx.takeDynamicRefErr()
 }
 
 // collectExports gathers all cross-stack exports from completed stacks in the

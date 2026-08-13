@@ -2,7 +2,7 @@ service: cloudformation
 status: implementation_mismatch
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-08
+last_updated: 2026-08-14
 protocols: [query]
 implementation: [internal/services/cloudformation]
 integration_tests: [tests/integration/cloudformation]
@@ -19,6 +19,7 @@ operations:
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-lambda-permission.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-table.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-logs-loggroup.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-secretsmanager.html
     tests:
       - tests/integration/cloudformation/cloudformation_test.go
     scenarios:
@@ -87,6 +88,13 @@ operations:
           - tests/integration/cloudformation/generate_secret_string_test.go
           - internal/services/cloudformation/provisioner_secretsmanager_test.go
         notes: AWS::SecretsManager::Secret validates GenerateSecretString composition before service dispatch, generates through GetRandomPassword, and creates through CreateSecret. KmsKeyId, resource tags, and propagated stack tags round-trip through Secrets Manager APIs; metadata-only updates preserve the generated value.
+      - name: secrets manager dynamic reference freshness boundary
+        status: fixed
+        tests:
+          - tests/integration/cloudformation/dynamic_reference_test.go::TestUpdateStack_rotatingASecretDoesNotReplaceTheResource
+          - tests/integration/cloudformation/dynamic_reference_test.go::TestUpdateStack_unchangedResourceDoesNotRetrieveDynamicReference
+          - tests/integration/cloudformation/dynamic_reference_test.go::TestUpdateStack_changedResourceRetrievesCurrentDynamicReference
+        notes: CloudFormation hashes and stores the literal dynamic reference. An unchanged containing resource neither refreshes nor retrieves the secret, even when the current secret was deleted; a changed or newly created resource resolves AWSCURRENT through GetSecretValue at dispatch time.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -129,6 +137,7 @@ findings:
     - AWS::DynamoDB::Table forwards LocalSecondaryIndexes through CreateTable and reconciles TimeToLiveSpecification through DynamoDB's TTL API, including create/update compensation.
     - AWS::Logs::LogGroup applies RetentionInDays, resource Tags, and propagated stack tags when created, then reconciles effective tag additions, changes, and removals during stack updates.
     - AWS::SecretsManager::Secret no longer drops KmsKeyId or Tags, and malformed GenerateSecretString templates fail before password generation or secret creation.
+    - No-op updates no longer retrieve Secrets Manager dynamic references before literal-property change detection, preserving AWS's intentionally stale resource value and avoiding unnecessary internal API calls.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.

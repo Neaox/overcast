@@ -21,6 +21,7 @@ package ecs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +46,7 @@ type fakeECSDockerDaemon struct {
 
 	mu      sync.Mutex
 	started []string
+	created []docker.CreateContainerRequest
 }
 
 // startedCount reports how many containers have been started.
@@ -52,6 +54,17 @@ func (fd *fakeECSDockerDaemon) startedCount() int {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 	return len(fd.started)
+}
+
+// createdEnvironments returns one environment snapshot per container create.
+func (fd *fakeECSDockerDaemon) createdEnvironments() [][]string {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	envs := make([][]string, len(fd.created))
+	for i := range fd.created {
+		envs[i] = append([]string(nil), fd.created[i].Env...)
+	}
+	return envs
 }
 
 func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
@@ -71,9 +84,15 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 			w.WriteHeader(http.StatusNotFound)
 
 		case strings.HasSuffix(p, "/containers/create"):
+			var create docker.CreateContainerRequest
+			if err := json.NewDecoder(r.Body).Decode(&create); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			fd.mu.Lock()
 			seq++
 			id := fmt.Sprintf("ecsfakecontainer%04d", seq)
+			fd.created = append(fd.created, create)
 			fd.mu.Unlock()
 			w.Write([]byte(`{"Id":"` + id + `"}`)) //nolint:errcheck
 

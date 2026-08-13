@@ -2,7 +2,7 @@ service: lambda
 status: fixed
 priority: p0
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-09
+last_updated: 2026-08-14
 protocols: [rest_json, event_stream]
 implementation: [internal/services/lambda]
 integration_tests: [tests/integration/lambda]
@@ -162,6 +162,7 @@ operations:
     aws_docs:
       - https://docs.aws.amazon.com/lambda/latest/dg/chapter-layers.html
       - https://docs.aws.amazon.com/lambda/latest/dg/adding-layers.html
+      - https://docs.aws.amazon.com/lambda/latest/dg/with-secrets-manager.html
     protocol: REST JSON; POST /2015-03-31/functions/{FunctionName}/invocations
     tests:
       - go test -count=1 -run TestInvokeLayerCheck_foreignAccountCachedLayer ./internal/services/lambda
@@ -172,6 +173,9 @@ operations:
       missing_layer:
         status: reviewed
         evidence: Missing same-account layer metadata and uncached foreign-account layer ARNs still return a Lambda init-style layer version not found error before container startup.
+      parameters_and_secrets_extension_cache:
+        status: reviewed
+        evidence: internal/services/lambda/container_runtime_test.go verifies that Lambda containers receive AWS_ENDPOINT_URL_SECRETS_MANAGER and local session credentials. The AWS extension binary owns its process-local cache and SECRETS_MANAGER_TTL; Overcast adds no cache in front of GetSecretValue, and a new Lambda container starts a new extension process.
 findings:
   fixed:
     - Lambda resource-policy AddPermission, GetPolicy, and RemovePermission support race-safe AWS::Lambda::Permission create/delete orchestration; AddPermission remains reported unsupported until invocation authorization is enforced (#629).

@@ -461,11 +461,22 @@ export function makeECSGroups(suite: string): TestGroup[] {
               "_serviceName"
             ] as string;
             assert.ok(serviceName, "UpdateService: no service from CreateService");
+            const before = await ecs.send(
+              new DescribeServicesCommand({
+                cluster: clusterName,
+                services: [serviceName],
+              }),
+            );
+            const beforeId = before.services?.[0]?.deployments?.find(
+              (deployment) => deployment.status === "PRIMARY",
+            )?.id;
+            assert.ok(beforeId, "UpdateService: no PRIMARY deployment before update");
             const resp = await ecs.send(
               new UpdateServiceCommand({
                 cluster: clusterName,
                 service: serviceName,
                 desiredCount: 2,
+                forceNewDeployment: true,
               }),
             );
             assert.ok(resp.service, "UpdateService: missing service in response");
@@ -473,6 +484,13 @@ export function makeECSGroups(suite: string): TestGroup[] {
               resp.service.desiredCount,
               2,
               `UpdateService: expected desiredCount 2, got ${resp.service.desiredCount}`,
+            );
+            const afterId = resp.service.deployments?.find(
+              (deployment) => deployment.status === "PRIMARY",
+            )?.id;
+            assert.ok(
+              afterId && afterId !== beforeId,
+              "UpdateService: forceNewDeployment did not replace the PRIMARY deployment",
             );
           },
         },

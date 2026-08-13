@@ -153,6 +153,7 @@ type ecsServiceView struct {
 		Status             string `json:"status"`
 		DesiredCount       int    `json:"desiredCount"`
 		RunningCount       int    `json:"runningCount"`
+		PendingCount       int    `json:"pendingCount"`
 		FailedTasks        int    `json:"failedTasks"`
 		RolloutState       string `json:"rolloutState"`
 		RolloutStateReason string `json:"rolloutStateReason"`

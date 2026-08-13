@@ -159,6 +159,10 @@ const (
 func (h *ecsServiceHandler) Create(ctx context.Context, router http.Handler, cfg *config.Config, props map[string]any, rCtx *resolveContext) (string, map[string]string, error) {
 	// Convert CF PascalCase properties to ECS API camelCase.
 	body := convertCFKeysToAPI(props).(map[string]any)
+	// ForceNewDeployment is a CloudFormation orchestration property, not a
+	// CreateService request member. Initial tasks already read launch-time
+	// inputs, so there is no existing deployment to replace on create.
+	delete(body, "forceNewDeployment")
 
 	// CloudFormation names the service when the template does not, which is
 	// what CDK expects — it never emits ServiceName.
@@ -401,6 +405,9 @@ func (h *ecsServiceHandler) Update(ctx context.Context, router http.Handler, _ *
 	if v, _ := props["PlatformVersion"].(string); v != "" {
 		body["platformVersion"] = v
 	}
+	if forceNewDeploymentEnabled(props["ForceNewDeployment"]) {
+		body["forceNewDeployment"] = true
+	}
 
 	if _, err := internalJSON(ctx, router, rCtx.Region, "AmazonEC2ContainerServiceV20141113.UpdateService", body); err != nil {
 		return "", nil, fmt.Errorf("UpdateService: %w", err)
@@ -412,4 +419,18 @@ func (h *ecsServiceHandler) Update(ctx context.Context, router http.Handler, _ *
 	// wrong, and without the wait the resource reports success while the service
 	// sits on a failed rollout.
 	return physicalID, nil, nil
+}
+
+// forceNewDeploymentEnabled translates AWS::ECS::Service's CloudFormation-only
+// ForceNewDeployment object to the boolean UpdateService member. CloudFormation
+// invokes Update only when the resource properties change; a changed nonce is
+// therefore preserved as one forced ECS deployment without storing runtime
+// state or inventing a cache.
+func forceNewDeploymentEnabled(raw any) bool {
+	props, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	enabled, _ := props["EnableForceNewDeployment"].(bool)
+	return enabled
 }

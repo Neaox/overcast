@@ -399,10 +399,20 @@ func (g *ecsCliGroup) UpdateService(_ context.Context, t *harness.TestContext) e
 	if svcName == "" {
 		return fmt.Errorf("UpdateService: no service from CreateService")
 	}
+	before, err := awscli.RunOutput(t.Endpoint, t.Region, "ecs", "describe-services",
+		"--cluster", cluster, "--services", svcName)
+	if err != nil {
+		return err
+	}
+	beforeID := cliPrimaryDeploymentID(before)
+	if beforeID == "" {
+		return fmt.Errorf("UpdateService: no PRIMARY deployment before update")
+	}
 	out, err := awscli.RunOutput(t.Endpoint, t.Region, "ecs", "update-service",
 		"--cluster", cluster,
 		"--service", svcName,
 		"--desired-count", "2",
+		"--force-new-deployment",
 	)
 	if err != nil {
 		return err
@@ -411,7 +421,32 @@ func (g *ecsCliGroup) UpdateService(_ context.Context, t *harness.TestContext) e
 	if svc == nil {
 		return fmt.Errorf("UpdateService: missing service in response")
 	}
+	afterID := primaryDeploymentID(svc)
+	if afterID == "" || afterID == beforeID {
+		return fmt.Errorf("UpdateService: PRIMARY deployment ID = %q, want a replacement for %q", afterID, beforeID)
+	}
 	return nil
+}
+
+func cliPrimaryDeploymentID(out map[string]interface{}) string {
+	services, _ := out["services"].([]interface{})
+	if len(services) != 1 {
+		return ""
+	}
+	service, _ := services[0].(map[string]interface{})
+	return primaryDeploymentID(service)
+}
+
+func primaryDeploymentID(service map[string]interface{}) string {
+	deployments, _ := service["deployments"].([]interface{})
+	for _, raw := range deployments {
+		deployment, _ := raw.(map[string]interface{})
+		if deployment["status"] == "PRIMARY" {
+			id, _ := deployment["id"].(string)
+			return id
+		}
+	}
+	return ""
 }
 
 func (g *ecsCliGroup) DeleteService(_ context.Context, t *harness.TestContext) error {
