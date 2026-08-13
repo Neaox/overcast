@@ -47,6 +47,7 @@ type fakeECSDockerDaemon struct {
 	mu      sync.Mutex
 	started []string
 	created []docker.CreateContainerRequest
+	onStart func(string)
 }
 
 // startedCount reports how many containers have been started.
@@ -65,6 +66,21 @@ func (fd *fakeECSDockerDaemon) createdEnvironments() [][]string {
 		envs[i] = append([]string(nil), fd.created[i].Env...)
 	}
 	return envs
+}
+
+func (fd *fakeECSDockerDaemon) setOnStart(fn func(string)) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	fd.onStart = fn
+}
+
+func (fd *fakeECSDockerDaemon) latestResourceID() string {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	if len(fd.created) == 0 || fd.created[len(fd.created)-1].Labels == nil {
+		return ""
+	}
+	return fd.created[len(fd.created)-1].Labels[docker.LabelResourceID]
 }
 
 func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
@@ -98,8 +114,13 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 
 		case strings.HasSuffix(p, "/start"):
 			fd.mu.Lock()
-			fd.started = append(fd.started, containerIDFromPath(p))
+			containerID := containerIDFromPath(p)
+			fd.started = append(fd.started, containerID)
+			onStart := fd.onStart
 			fd.mu.Unlock()
+			if onStart != nil {
+				onStart(containerID)
+			}
 			w.WriteHeader(http.StatusNoContent)
 
 		case r.Method == http.MethodDelete && strings.Contains(p, "/containers/"):

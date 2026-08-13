@@ -113,6 +113,14 @@ func (s *Service) InitLogWriter(w events.LogWriter) {
 func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus
 	bus.Subscribe(events.DockerContainerDied, s.handler.handleContainerDied)
+	bus.Subscribe(events.DockerDaemonConnected, s.handler.handleDockerDaemonConnected)
+}
+
+// ReconcileContainers satisfies router.ContainerReconciler. The central
+// Docker supervisor calls it at startup so an event missed while Overcast was
+// unavailable cannot leave a dead container represented as a running task.
+func (s *Service) ReconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
+	s.handler.reconcileContainers(ctx, containers)
 }
 
 // Name satisfies router.Service.

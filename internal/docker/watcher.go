@@ -233,16 +233,7 @@ func (w *Watcher) inspectDieReason(ctx context.Context, containerID string) stri
 			zap.Error(err))
 		return ""
 	}
-	switch {
-	case info.State.OOMKilled:
-		return "oom"
-	case info.State.Error != "":
-		return info.State.Error
-	case info.State.ExitCode != 0:
-		return fmt.Sprintf("exit %d", info.State.ExitCode)
-	default:
-		return ""
-	}
+	return info.ExitReason()
 }
 
 // dispatchNetwork handles network lifecycle events.

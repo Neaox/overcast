@@ -8,10 +8,109 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+// handleDockerDaemonConnected reconciles exits that happened while the Docker
+// event stream was disconnected. Initial connection is already covered by the
+// central supervisor's startup reconciliation; only reconnects need another
+// list here, and only for the daemon ECS is wired to.
+func (h *Handler) handleDockerDaemonConnected(ctx context.Context, e events.Event) {
+	p, ok := e.Payload.(docker.DaemonConnectedPayload)
+	if !ok || !p.Reconnected || p.Client == nil || p.Client != h.docker {
+		return
+	}
+	containers, err := h.docker.ListContainers(ctx, serviceName)
+	if err != nil {
+		h.log.Warn("ecs: reconcile after Docker reconnect", zap.Error(err))
+		return
+	}
+	h.reconcileContainers(ctx, containers)
+}
+
+// reconcileContainers brings stored task state back in line with Docker after
+// startup or an event-stream reconnect. It deliberately feeds the same exit
+// handler as a live die event so stop metadata, service failure accounting,
+// replacement scheduling, log retention, and cleanup have one owner.
+func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
+	tasks, err := serviceutil.ScanRegions[Task](ctx, h.store.store, nsTasks, h.store.defaultRegion)
+	if err != nil {
+		h.log.Warn("ecs: reconcile containers: list tasks", zap.Error(err))
+		return
+	}
+	byResource := indexContainersByResource(containers)
+	for _, regioned := range tasks {
+		task := regioned.Value
+		if task.LastStatus == "STOPPED" {
+			continue
+		}
+		rctx := middleware.ContextWithRegion(ctx, regioned.Region)
+		resourceID := extractClusterName(task.ClusterArn) + "/" + extractTaskID(task.TaskArn)
+		h.reconcileTaskContainers(rctx, task, resourceID, byResource[resourceID])
+	}
+}
+
+func indexContainersByResource(containers []docker.ContainerSummary) map[string][]*docker.ContainerSummary {
+	byResource := make(map[string][]*docker.ContainerSummary, len(containers))
+	for i := range containers {
+		if resourceID := containers[i].ResourceID(); resourceID != "" {
+			byResource[resourceID] = append(byResource[resourceID], &containers[i])
+		}
+	}
+	return byResource
+}
+
+func (h *Handler) reconcileTaskContainers(ctx context.Context, task *Task, resourceID string, candidates []*docker.ContainerSummary) {
+	for _, container := range task.Containers {
+		if container.DockerID == "" || container.LastStatus == "STOPPED" {
+			continue
+		}
+		actual := h.instances.OwnContainer(ctx, candidates, container.DockerID)
+		if actual != nil && !containerHasExited(actual.State) {
+			continue
+		}
+		payload := h.reconciledContainerExit(ctx, container.DockerID, resourceID, actual)
+		h.handleContainerDied(ctx, events.Event{Type: events.DockerContainerDied, Payload: payload})
+	}
+}
+
+func (h *Handler) reconciledContainerExit(ctx context.Context, recordedID, resourceID string, actual *docker.ContainerSummary) events.DockerContainerPayload {
+	payload := events.DockerContainerPayload{
+		ContainerID: recordedID,
+		Action:      "die",
+		Service:     serviceName,
+		ResourceID:  resourceID,
+	}
+	if actual == nil {
+		return payload
+	}
+	payload.ContainerID = actual.ID
+	payload.Instance = actual.Instance()
+	if h.docker == nil {
+		return payload
+	}
+	info, err := h.docker.InspectContainer(ctx, actual.ID)
+	if err != nil {
+		h.log.Debug("ecs: reconcile containers: inspect exited container",
+			zap.String("container", actual.ID), zap.Error(err))
+		return payload
+	}
+	payload.ExitCode = strconv.Itoa(info.State.ExitCode)
+	payload.Reason = info.ExitReason()
+	return payload
+}
+
+func containerHasExited(state string) bool {
+	switch strings.ToLower(state) {
+	case "dead", "exited", "removing":
+		return true
+	default:
+		return false
+	}
+}
 
 // handleContainerDied is a bus handler for DockerContainerDied events targeting
 // ECS containers. When a task container exits, it updates the container status,
@@ -155,13 +254,13 @@ func (h *Handler) recordContainerExit(clusterName, taskID string, p events.Docke
 		return "", nil, false
 	}
 
-	exitCode, _ := strconv.Atoi(p.ExitCode)
-
 	// Update the container that died.
 	for i := range task.Containers {
 		if task.Containers[i].DockerID == p.ContainerID {
 			task.Containers[i].LastStatus = "STOPPED"
-			task.Containers[i].ExitCode = &exitCode
+			if exitCode, err := strconv.Atoi(p.ExitCode); err == nil {
+				task.Containers[i].ExitCode = &exitCode
+			}
 			if p.Reason != "" {
 				task.Containers[i].Reason = p.Reason
 			}

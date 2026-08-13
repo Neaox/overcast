@@ -308,6 +308,25 @@ type ContainerInspect struct {
 	} `json:"NetworkSettings"`
 }
 
+// ExitReason derives the concise reason container-backed services expose for
+// an exited container. Keeping the precedence here makes live Docker events
+// and reconciliation after a missed event describe the same exit identically.
+func (c *ContainerInspect) ExitReason() string {
+	if c == nil {
+		return ""
+	}
+	switch {
+	case c.State.OOMKilled:
+		return "oom"
+	case c.State.Error != "":
+		return c.State.Error
+	case c.State.ExitCode != 0:
+		return fmt.Sprintf("exit %d", c.State.ExitCode)
+	default:
+		return ""
+	}
+}
+
 // ContainerNetwork is one entry of a container's NetworkSettings.Networks.
 type ContainerNetwork struct {
 	NetworkID string `json:"NetworkID"`
