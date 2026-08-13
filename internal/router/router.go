@@ -661,6 +661,8 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	rdsSvc.InitBus(bus)
 	// ECS: wire bus so Docker container events update task status.
 	ecsSvc.InitBus(bus)
+	efsSvc.InitBus(bus)
+	eksSvc.InitBus(bus)
 	// ElastiCache: wire bus so Docker container events update cluster status.
 	elasticacheSvc.InitBus(bus)
 	// ECR: wire bus for repository lifecycle events.
@@ -743,6 +745,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// Lambda probes Docker independently (it needs the Runtime API server);
 	// we register its socket so the Supervisor starts a watcher.
 	dockerServices["lambda"] = docker.ServiceConfig{Name: "lambda", Socket: cfg.LambdaDockerSocket}
+	dockerServices["ecr"] = docker.ServiceConfig{Name: "ecr", Socket: cfg.LambdaDockerSocket}
 	// Live is the default. Mock mode is not registered at all, so no probe runs
 	// for containers that will never exist.
 	if cfg.RDSMode == config.RDSModeLive {
@@ -784,7 +787,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		go func() {
 			// Collect configs in deterministic order.
 			var configs []docker.ServiceConfig
-			for _, name := range []string{"lambda", "rds", "elasticache", "msk", "ecs", "ec2", "eks", "efs"} {
+			for _, name := range []string{"lambda", "ecr", "rds", "elasticache", "msk", "ecs", "ec2", "eks", "efs"} {
 				if sc, ok := dockerServices[name]; ok {
 					configs = append(configs, sc)
 				}
@@ -800,14 +803,20 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 				dnsServer.SetGuard(dataplane.NewGuard(results[0].Client, logger))
 			}
 
-			// Wire each successful service and reconcile containers/networks.
+			// Wire every successful service before reconciling. Services sharing
+			// one daemon then consume one daemon-wide snapshot rather than each
+			// issuing its own full list call.
 			for _, res := range results {
 				if setter, ok := dockerSetters[res.Name]; ok {
 					setter(res.Client)
 				}
-				reconcileDockerContainers(context.Background(), res.Client, res.Name, serviceByName[res.Name], logger)
-				reconcileDockerNetworks(context.Background(), res.Client, res.Name, serviceByName[res.Name], logger)
 			}
+			targetsByClient := dockerReconcileTargetsByClient(results, serviceByName)
+
+			// Snapshot only after the watcher has opened its stream. The initial
+			// connected event covers startup; every reconnect closes a missed-event
+			// gap through the same idempotent reconciliation path.
+			bus.Subscribe(events.DockerDaemonConnected, dockerConnectedHandler(targetsByClient, logger))
 
 			// Start one watcher per unique Docker daemon (blocks until shutdown).
 			dockerSup.Run(context.Background())
@@ -1042,39 +1051,103 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 		}
 }
 
-// reconcileDockerContainers lists all managed containers for the given service
-// label and calls ReconcileContainers on the service if it implements the
-// ContainerReconciler interface. This is called once after Docker becomes
-// available so services can sync their stored state against actual container state.
-func reconcileDockerContainers(ctx context.Context, dc *docker.Client, service string, svc Service, logger *zap.Logger) {
-	reconciler, ok := svc.(ContainerReconciler)
-	if !ok {
-		return
-	}
-	containers, err := dc.ListContainers(ctx, service)
-	if err != nil {
-		logger.Warn("docker reconcile: list containers failed", zap.String("service", service), zap.Error(err))
-		return
-	}
-	logger.Info("docker reconcile: syncing container state", zap.String("service", service), zap.Int("containers", len(containers)))
-	reconciler.ReconcileContainers(ctx, containers)
+type dockerReconcileTarget struct {
+	name    string
+	service Service
 }
 
-// reconcileDockerNetworks is the network parallel of reconcileDockerContainers.
-// It lists all managed networks for the given service and calls ReconcileNetworks
-// on the service if it implements NetworkReconciler.
-func reconcileDockerNetworks(ctx context.Context, dc *docker.Client, service string, svc Service, logger *zap.Logger) {
-	reconciler, ok := svc.(NetworkReconciler)
-	if !ok {
-		return
+type dockerReconcileGroup struct {
+	client  *docker.Client
+	targets []dockerReconcileTarget
+	mu      sync.Mutex
+}
+
+func (g *dockerReconcileGroup) reconcile(ctx context.Context, logger *zap.Logger) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	reconcileDockerDaemon(ctx, g.client, g.targets, logger)
+}
+
+func dockerReconcileTargetsByClient(results []docker.ServiceResult, services map[string]Service) map[*docker.Client]*dockerReconcileGroup {
+	groups := make(map[*docker.Client]*dockerReconcileGroup)
+	for _, result := range results {
+		if service := services[result.Name]; service != nil {
+			group := groups[result.Client]
+			if group == nil {
+				group = &dockerReconcileGroup{client: result.Client}
+				groups[result.Client] = group
+			}
+			group.targets = append(group.targets, dockerReconcileTarget{name: result.Name, service: service})
+		}
 	}
-	networks, err := dc.ListNetworks(ctx, service)
-	if err != nil {
-		logger.Warn("docker reconcile: list networks failed", zap.String("service", service), zap.Error(err))
-		return
+	return groups
+}
+
+func dockerConnectedHandler(groups map[*docker.Client]*dockerReconcileGroup, logger *zap.Logger) events.HandlerFunc {
+	return func(ctx context.Context, e events.Event) {
+		p, ok := e.Payload.(docker.DaemonConnectedPayload)
+		if !ok || p.Client == nil {
+			return
+		}
+		if group := groups[p.Client]; group != nil {
+			group.reconcile(ctx, logger)
+		}
 	}
-	logger.Info("docker reconcile: syncing network state", zap.String("service", service), zap.Int("networks", len(networks)))
-	reconciler.ReconcileNetworks(ctx, networks)
+}
+
+// reconcileDockerDaemon takes one snapshot of each Docker object kind and
+// fans the service-labelled subsets out to every reconciler on that daemon.
+// It runs at startup and after watcher reconnects, so services get one
+// idempotent lifecycle contract without N repeated full-daemon list calls.
+func reconcileDockerDaemon(ctx context.Context, dc *docker.Client, targets []dockerReconcileTarget, logger *zap.Logger) {
+	containerReconcilers := make([]dockerReconcileTarget, 0, len(targets))
+	networkReconcilers := make([]dockerReconcileTarget, 0, len(targets))
+	for _, target := range targets {
+		if _, ok := target.service.(ContainerReconciler); ok {
+			containerReconcilers = append(containerReconcilers, target)
+		}
+		if _, ok := target.service.(NetworkReconciler); ok {
+			networkReconcilers = append(networkReconcilers, target)
+		}
+	}
+
+	if len(containerReconcilers) > 0 {
+		containers, err := dc.ListContainers(ctx, "")
+		if err != nil {
+			logger.Warn("docker reconcile: list containers failed", zap.Error(err))
+		} else {
+			serviceNames := make([]string, 0, len(containerReconcilers))
+			for _, target := range containerReconcilers {
+				serviceNames = append(serviceNames, target.name)
+			}
+			byService := docker.ContainersByService(containers, serviceNames...)
+			for _, target := range containerReconcilers {
+				snapshot := byService[target.name]
+				logger.Info("docker reconcile: syncing container state",
+					zap.String("service", target.name), zap.Int("containers", len(snapshot)))
+				target.service.(ContainerReconciler).ReconcileContainers(ctx, snapshot)
+			}
+		}
+	}
+
+	if len(networkReconcilers) > 0 {
+		networks, err := dc.ListNetworks(ctx, "")
+		if err != nil {
+			logger.Warn("docker reconcile: list networks failed", zap.Error(err))
+		} else {
+			serviceNames := make([]string, 0, len(networkReconcilers))
+			for _, target := range networkReconcilers {
+				serviceNames = append(serviceNames, target.name)
+			}
+			byService := docker.NetworksByService(networks, serviceNames...)
+			for _, target := range networkReconcilers {
+				snapshot := byService[target.name]
+				logger.Info("docker reconcile: syncing network state",
+					zap.String("service", target.name), zap.Int("networks", len(snapshot)))
+				target.service.(NetworkReconciler).ReconcileNetworks(ctx, snapshot)
+			}
+		}
+	}
 }
 
 // targetDispatch returns a handler that inspects the X-Amz-Target header and

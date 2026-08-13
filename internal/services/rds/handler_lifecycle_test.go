@@ -1180,7 +1180,7 @@ func TestDockerRecoveryBudget_recognizesPersistedStabilityAfterRestart(t *testin
 	}
 }
 
-func TestHandleDockerDaemonConnected_reconcilesMissedStop(t *testing.T) {
+func TestReconcileContainers_reconcilesMissedStop(t *testing.T) {
 	d := newLifecycleDaemon(t)
 	h := newLifecycleHandler(t, d)
 	ctx := context.Background()
@@ -1195,11 +1195,13 @@ func TestHandleDockerDaemonConnected_reconcilesMissedStop(t *testing.T) {
 	startsBefore := d.starts
 	d.mu.Unlock()
 
-	// When: the Docker watcher reconnects after the daemon returns.
-	h.handleDockerDaemonConnected(ctx, events.Event{
-		Type:    events.DockerDaemonConnected,
-		Payload: docker.DaemonConnectedPayload{Client: h.docker, Reconnected: true},
-	})
+	// When: central Docker reconciliation supplies the daemon snapshot after
+	// startup or watcher reconnect.
+	containers, err := h.docker.ListContainers(ctx, serviceName)
+	if err != nil {
+		t.Fatalf("ListContainers: %v", err)
+	}
+	h.reconcileContainers(ctx, containers)
 	h.dockerWg.Wait()
 
 	// Then: RDS lists the daemon's current state and restarts the missed exit.
@@ -1215,7 +1217,7 @@ func TestHandleDockerDaemonConnected_reconcilesMissedStop(t *testing.T) {
 	}
 }
 
-func TestHandleDockerDaemonConnected_retriesRecoveryInterruptedByDaemonShutdown(t *testing.T) {
+func TestReconcileContainers_retriesRecoveryInterruptedByDaemonShutdown(t *testing.T) {
 	d := newLifecycleDaemon(t)
 	h := newLifecycleHandler(t, d)
 	ctx := context.Background()
@@ -1247,12 +1249,13 @@ func TestHandleDockerDaemonConnected_retriesRecoveryInterruptedByDaemonShutdown(
 			inst.DBInstanceStatus, inst.DockerRecoveryPending)
 	}
 
-	// When: Docker returns and its event watcher reconnects.
+	// When: Docker returns and central reconciliation supplies a fresh snapshot.
 	d.setStartFailure(false)
-	h.handleDockerDaemonConnected(ctx, events.Event{
-		Type:    events.DockerDaemonConnected,
-		Payload: docker.DaemonConnectedPayload{Client: h.docker, Reconnected: true},
-	})
+	containers, err := h.docker.ListContainers(ctx, serviceName)
+	if err != nil {
+		t.Fatalf("ListContainers: %v", err)
+	}
+	h.reconcileContainers(ctx, containers)
 	// The second automatic attempt is deliberately delayed by the recovery
 	// backoff. Wait for that keyed callback to launch the async Docker start
 	// before waiting on the Docker work itself.

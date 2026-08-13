@@ -19,6 +19,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Neaox/overcast/internal/middleware"
 )
@@ -69,7 +70,7 @@ func TestTaskDeathsCountedWhileReconciling(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range deaths {
-			h.recordServiceTaskDeath(ctx, cluster, service, dead)
+			h.recordServiceTaskDeath(ctx, cluster, service, dead, time.Time{})
 		}
 	}()
 	go func() {

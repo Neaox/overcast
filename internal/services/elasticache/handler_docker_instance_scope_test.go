@@ -137,9 +137,10 @@ func TestHandleContainerEvent_stillActsOnOwnCacheCluster(t *testing.T) {
 			Instance:    h.instances.Resolve(ctx),
 		},
 	})
+	fd.release()
 
-	if got := clusterStatus(t, h, ctx, "sessions"); got != "stopped" {
-		t.Fatalf("this instance's own container died and the cluster is %q; want stopped", got)
+	if got := clusterStatus(t, h, ctx, "sessions"); got != "modifying" {
+		t.Fatalf("this instance's own container died and the cluster is %q; want modifying", got)
 	}
 }
 
@@ -161,9 +162,10 @@ func TestHandleContainerEvent_unlabelledOwnContainerStillMatches(t *testing.T) {
 			ResourceID:  "sessions",
 		},
 	})
+	fd.release()
 
-	if got := clusterStatus(t, h, ctx, "sessions"); got != "stopped" {
-		t.Fatalf("an unlabelled container this instance recorded died and the cluster is %q; want stopped", got)
+	if got := clusterStatus(t, h, ctx, "sessions"); got != "modifying" {
+		t.Fatalf("an unlabelled container this instance recorded died and the cluster is %q; want modifying", got)
 	}
 }
 
@@ -222,9 +224,10 @@ func TestReconcileContainers_doesNotAdoptAnotherOvercastsCacheCluster(t *testing
 	h.reconcileContainers(ctx, []docker.ContainerSummary{
 		neighbourSummary("sessions", "running"),
 	})
+	fd.release()
 
-	if got := clusterStatus(t, h, ctx, "sessions"); got != "stopped" {
-		t.Fatalf("this instance's container was gone and it adopted a neighbour's; cluster is %q, want stopped", got)
+	if got := clusterStatus(t, h, ctx, "sessions"); got != "modifying" {
+		t.Fatalf("this instance's container was gone and it adopted a neighbour's; cluster is %q, want modifying", got)
 	}
 }
 

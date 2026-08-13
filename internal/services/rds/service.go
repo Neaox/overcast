@@ -51,7 +51,6 @@ func (s *Service) InitBus(bus *events.Bus) {
 	s.handler.bus = bus
 	bus.Subscribe(events.DockerContainerDied, s.handler.handleContainerEvent)
 	bus.Subscribe(events.DockerContainerStarted, s.handler.handleContainerStarted)
-	bus.Subscribe(events.DockerDaemonConnected, s.handler.handleDockerDaemonConnected)
 }
 
 // SetDocker wires the Docker client for RDS container management and starts
@@ -93,9 +92,9 @@ func (s *Service) SetVPCResolver(r VPCNetworkResolver) {
 	s.handler.vpcResolver = r
 }
 
-// ReconcileContainers satisfies router.ContainerReconciler. It is called once
-// after Docker becomes available at startup and syncs stored RDS instance
-// statuses against the actual container state.
+// ReconcileContainers satisfies router.ContainerReconciler. Startup and
+// reconnect snapshots repair stored RDS instance state and replace missing
+// database containers.
 func (s *Service) ReconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
 	s.handler.reconcileContainers(ctx, containers)
 }

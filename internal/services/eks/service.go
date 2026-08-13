@@ -27,6 +27,7 @@ import (
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
@@ -48,6 +49,7 @@ const (
 	nsAccess     = "eks:accessentries"
 	nsAccessPol  = "eks:accesspolicies"
 	nsPodIDAssoc = "eks:podidentityassociations"
+	nsInstance   = "eks:instance"
 )
 
 // Cluster represents the EKS cluster metadata returned by controller APIs.
@@ -184,6 +186,7 @@ type Service struct {
 	puller      *docker.ImagePuller
 	dockerReady atomic.Bool
 	vpcResolver VPCNetworkResolver
+	instances   *serviceutil.InstanceDomain
 
 	liveMu       sync.Mutex
 	liveRuntimes map[string]*liveClusterRuntime
@@ -204,6 +207,13 @@ type Service struct {
 	// in flight leaves that container behind. Same shape as the dockerWg that
 	// RDS, ElastiCache and MSK track their container starts with.
 	liveWg sync.WaitGroup
+	// liveLifecycleMu closes the WaitGroup Add/Wait boundary for recovery
+	// goroutines when service shutdown begins.
+	liveLifecycleMu sync.Mutex
+	liveStopping    bool
+	// liveRecoveries coalesces startup, reconnect, and watcher-driven recovery
+	// for one persisted control plane.
+	liveRecoveries sync.Map
 
 	// startLiveClusterHook, when non-nil, stands in for the background
 	// bootstrap CreateCluster hands off to. Always nil in production; set
@@ -237,6 +247,7 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 		clk:          clk,
 		log:          serviceutil.NewServiceLogger(logger, serviceName),
 		liveRuntimes: make(map[string]*liveClusterRuntime),
+		instances:    serviceutil.NewInstanceDomain(st, nsInstance),
 	}
 	s.liveCtx, s.liveCancel = context.WithCancel(context.Background())
 	s.typedOp = s.typedOps()
@@ -244,6 +255,13 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 }
 
 func (s *Service) Name() string { return serviceName }
+
+// InitBus wires immediate managed-control-plane recovery for Docker exits.
+// Startup and event-stream gaps use the same recovery path through
+// ReconcileContainers.
+func (s *Service) InitBus(bus *events.Bus) {
+	bus.Subscribe(events.DockerContainerDied, s.handleLiveRuntimeDied)
+}
 
 func (s *Service) TargetPrefix() string { return "EKS." }
 
@@ -281,6 +299,13 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	s.dockerReady.Store(dc != nil)
 }
 
+// ReconcileContainers satisfies router.ContainerReconciler. Amazon EKS
+// replaces unhealthy control-plane instances; persisted CREATING/ACTIVE
+// clusters therefore re-adopt a running runtime or start a replacement.
+func (s *Service) ReconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
+	s.reconcileLiveClusterContainers(ctx, containers)
+}
+
 // Stop satisfies router.Stopper. Live-mode cleanup is best-effort for both the
 // in-memory runtime registry and any persisted live clusters that need runtime
 // reconciliation after a process restart.
@@ -291,7 +316,10 @@ func (s *Service) SetDocker(dc *docker.Client) {
 // containers Stop knows about and leave that one behind. ctx bounds the wait,
 // so a bootstrap that will not end still cannot hold shutdown open.
 func (s *Service) Stop(ctx context.Context) {
+	s.liveLifecycleMu.Lock()
+	s.liveStopping = true
 	s.liveCancel()
+	s.liveLifecycleMu.Unlock()
 	bootstrapsDone := make(chan struct{})
 	go func() {
 		s.liveWg.Wait()

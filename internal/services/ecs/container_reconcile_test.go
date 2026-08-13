@@ -2,6 +2,8 @@ package ecs
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -168,6 +170,19 @@ func TestReconcileContainers_exitedContainerStopsTask(t *testing.T) {
 	// exited while the Docker event stream was unavailable.
 	h, _ := newECSRegionTestHandler(t)
 	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+	const finishedAt = "2026-08-14T01:02:03.456789123Z"
+	dockerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/containers/container-1/json") {
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"Id":"container-1","State":{"Status":"exited","ExitCode":1,"FinishedAt":"` + finishedAt + `"}}`))
+	}))
+	t.Cleanup(dockerServer.Close)
+	h.docker = docker.NewClient("tcp://"+dockerServer.Listener.Addr().String(), h.log.ZapLogger())
+	bus := events.NewBus()
+	t.Cleanup(bus.Stop)
+	h.bus = bus
 	task := &Task{
 		TaskArn:       h.taskARN(ctx, "demo", "task-1"),
 		ClusterArn:    h.clusterARN(ctx, "demo"),
@@ -205,5 +220,70 @@ func TestReconcileContainers_exitedContainerStopsTask(t *testing.T) {
 	}
 	if got.StopCode != "EssentialContainerExited" {
 		t.Errorf("stopCode = %q, want EssentialContainerExited", got.StopCode)
+	}
+	if got.Containers[0].ExitCode == nil || *got.Containers[0].ExitCode != 1 {
+		t.Fatalf("exitCode = %v, want Docker's recorded exit 1", got.Containers[0].ExitCode)
+	}
+	wantStoppedAt, _ := time.Parse(time.RFC3339Nano, finishedAt)
+	if got.StoppedAt == nil || *got.StoppedAt != wantStoppedAt.Unix() {
+		t.Fatalf("stoppedAt = %v, want Docker finish time %d", got.StoppedAt, wantStoppedAt.Unix())
+	}
+	history, cancel := bus.SnapshotAndSubscribeAll(func(context.Context, events.Event) {})
+	cancel()
+	var stoppedEvent *events.Event
+	for i := range history {
+		if history[i].Type == events.ECSTaskStopped {
+			stoppedEvent = &history[i]
+		}
+	}
+	if stoppedEvent == nil || !stoppedEvent.Time.Equal(wantStoppedAt) {
+		t.Fatalf("backfilled ECS stop event = %#v, want Docker finish time %s", stoppedEvent, wantStoppedAt)
+	}
+}
+
+func TestHandleContainerDiedPreservesDockerEventTime(t *testing.T) {
+	h, _ := newECSRegionTestHandler(t)
+	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+	task := &Task{
+		TaskArn: h.taskARN(ctx, "demo", "task-1"), ClusterArn: h.clusterARN(ctx, "demo"),
+		LastStatus: "RUNNING", DesiredStatus: "RUNNING", Group: serviceGroupPrefix + "worker", StartedBy: "ecs-svc/1",
+		Containers: []Container{{Name: "app", DockerID: "container-1", LastStatus: "RUNNING"}},
+	}
+	if aerr := h.store.putTask(ctx, task); aerr != nil {
+		t.Fatalf("putTask: %s", aerr.Message)
+	}
+	if aerr := h.store.putService(ctx, "demo", &ecsService{
+		ServiceName: "worker", ClusterArn: h.clusterARN(ctx, "demo"), Status: "ACTIVE", DesiredCount: 1,
+		Events: []ServiceEvent{}, Deployments: []Deployment{{ID: "ecs-svc/1", Status: "PRIMARY", FailedTasks: consistentFailureThreshold - 1}},
+	}); aerr != nil {
+		t.Fatalf("putService: %s", aerr.Message)
+	}
+	finishedAt := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+
+	h.handleContainerDied(ctx, events.Event{
+		Type: events.DockerContainerDied, Time: finishedAt,
+		Payload: events.DockerContainerPayload{
+			ContainerID: "container-1", Action: "die", ExitCode: "1",
+			Service: serviceName, ResourceID: "demo/task-1",
+		},
+	})
+
+	got, aerr := h.store.getTask(ctx, "demo", "task-1")
+	if aerr != nil || got == nil || got.StoppedAt == nil {
+		t.Fatalf("getTask after exit: task %#v, error %v", got, aerr)
+	}
+	if *got.StoppedAt != finishedAt.Unix() {
+		t.Fatalf("stoppedAt = %d, want Docker finish time %d", *got.StoppedAt, finishedAt.Unix())
+	}
+	if got.Containers[0].ExitCode == nil || *got.Containers[0].ExitCode != 1 {
+		t.Fatalf("exitCode = %v, want 1", got.Containers[0].ExitCode)
+	}
+	svc, aerr := h.store.getService(ctx, "demo", "worker")
+	if aerr != nil || svc == nil || len(svc.Events) != 1 {
+		t.Fatalf("getService after exit: service %#v, error %v", svc, aerr)
+	}
+	if svc.Events[0].CreatedAt != float64(finishedAt.UnixMilli())/1000 {
+		t.Fatalf("service event createdAt = %f, want Docker finish time %f",
+			svc.Events[0].CreatedAt, float64(finishedAt.UnixMilli())/1000)
 	}
 }

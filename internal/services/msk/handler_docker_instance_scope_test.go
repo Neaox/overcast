@@ -46,11 +46,13 @@ func newScopeHandler(t *testing.T) *Handler {
 	s := New(cfg, state.NewMemoryStore(), zap.NewNop(), clock.New())
 	h := s.handler
 	h.docker = docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop())
+	h.puller = docker.NewImagePuller(h.docker)
 	h.dockerReady.Store(true)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		h.scheduler.Stop(ctx)
+		h.dockerWg.Wait()
 	})
 	return h
 }
@@ -154,8 +156,8 @@ func TestHandleContainerEvent_stillActsOnOwnBroker(t *testing.T) {
 		},
 	})
 
-	if got := clusterState(t, h, ctx); got != "FAILED" {
-		t.Fatalf("this instance's own broker died and the cluster is %q; want FAILED", got)
+	if got := clusterState(t, h, ctx); got != "HEALING" {
+		t.Fatalf("this instance's own broker died and the cluster is %q; want HEALING", got)
 	}
 }
 
@@ -176,8 +178,8 @@ func TestHandleContainerEvent_unlabelledOwnBrokerStillMatches(t *testing.T) {
 		},
 	})
 
-	if got := clusterState(t, h, ctx); got != "FAILED" {
-		t.Fatalf("an unlabelled broker this instance recorded died and the cluster is %q; want FAILED", got)
+	if got := clusterState(t, h, ctx); got != "HEALING" {
+		t.Fatalf("an unlabelled broker this instance recorded died and the cluster is %q; want HEALING", got)
 	}
 }
 
@@ -230,8 +232,8 @@ func TestReconcileContainers_doesNotAdoptAnotherOvercastsBroker(t *testing.T) {
 		neighbourBroker("running"),
 	})
 
-	if got := clusterState(t, h, ctx); got != "FAILED" {
-		t.Fatalf("this instance's broker was gone and it adopted a foreign one; cluster is %q, want FAILED", got)
+	if got := clusterState(t, h, ctx); got != "HEALING" {
+		t.Fatalf("this instance's broker was gone and it adopted a foreign one; cluster is %q, want HEALING", got)
 	}
 }
 

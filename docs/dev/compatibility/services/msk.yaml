@@ -1,17 +1,29 @@
 service: msk
-status: not_started
+status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-08-14
 protocols: [rest_json, aws_json_1_0, aws_json_1_1, rpcv2_cbor]
 implementation: [internal/services/msk]
 integration_tests: [tests/integration/msk]
 capability_docs: docs/services/msk.md
 operation_count_estimate: 16 supported, 13 unsupported
 current_support_level: MSK metadata API plus optional Docker-backed Redpanda clusters; several update, SCRAM, and VPC operations stubbed.
-operations: {}
+operations:
+  CreateCluster:
+    status: in_progress
+    docs:
+      - https://docs.aws.amazon.com/msk/latest/developerguide/msk-replicator-perform-unplanned-failover.html
+    scenarios:
+      managed_broker_recovery:
+        status: fixed
+        evidence:
+          - internal/services/msk/handler_docker_instance_scope_test.go
+          - internal/router/docker_reconcile_test.go
+        notes: A live broker exit or a startup/reconnect snapshot moves the cluster through HEALING and coalesces a replacement start. Reconciliation retains per-Overcast container ownership and re-adopts a running owned broker without repeating daemon-wide list calls.
 findings:
-  fixed: []
+  fixed:
+    - Missing and exited Docker-backed brokers are replaced after live events, startup, and Docker watcher reconnects instead of leaving an ACTIVE cluster backed by no broker.
   remaining_gaps:
     - Audit REST path, status, and header fidelity.
     - Ensure unsupported operations are consistently tracked and tested.

@@ -327,6 +327,20 @@ func (c *ContainerInspect) ExitReason() string {
 	}
 }
 
+// ExitTime returns Docker's recorded container finish time. A missing,
+// malformed, or zero timestamp stays unknown so callers can fall back to
+// their service clock without inventing historical precision.
+func (c *ContainerInspect) ExitTime() time.Time {
+	if c == nil || c.State.FinishedAt == "" {
+		return time.Time{}
+	}
+	finished, err := time.Parse(time.RFC3339Nano, c.State.FinishedAt)
+	if err != nil || finished.IsZero() {
+		return time.Time{}
+	}
+	return finished
+}
+
 // ContainerNetwork is one entry of a container's NetworkSettings.Networks.
 type ContainerNetwork struct {
 	NetworkID string `json:"NetworkID"`
@@ -443,6 +457,72 @@ func (c *ContainerSummary) FirstName() string {
 		return ""
 	}
 	return strings.TrimPrefix(c.Names[0], "/")
+}
+
+// ContainersByService partitions a daemon-wide snapshot by the service label.
+// When services is non-empty, unrelated containers are not retained in the
+// index. The returned slices contain values so callers can retain the index
+// without depending on the lifetime or backing array of the input snapshot.
+func ContainersByService(containers []ContainerSummary, services ...string) map[string][]ContainerSummary {
+	var wanted map[string]struct{}
+	if len(services) > 0 {
+		wanted = stringSet(services)
+	}
+	byService := make(map[string][]ContainerSummary, len(wanted))
+	for i := range containers {
+		if service := containers[i].Service(); service != "" {
+			if len(wanted) > 0 {
+				if _, ok := wanted[service]; !ok {
+					continue
+				}
+			}
+			byService[service] = append(byService[service], containers[i])
+		}
+	}
+	return byService
+}
+
+// ContainersByResource indexes a service-scoped snapshot by resource label.
+// Multiple containers may legitimately share a resource ID when independent
+// Overcast instances use the same daemon, so every candidate is retained for
+// InstanceDomain to resolve.
+func ContainersByResource(containers []ContainerSummary) map[string][]*ContainerSummary {
+	byResource := make(map[string][]*ContainerSummary, len(containers))
+	for i := range containers {
+		if resourceID := containers[i].ResourceID(); resourceID != "" {
+			byResource[resourceID] = append(byResource[resourceID], &containers[i])
+		}
+	}
+	return byResource
+}
+
+// NetworksByService partitions a daemon-wide network snapshot by service.
+// When services is non-empty, unrelated networks are not retained.
+func NetworksByService(networks []NetworkSummary, services ...string) map[string][]NetworkSummary {
+	var wanted map[string]struct{}
+	if len(services) > 0 {
+		wanted = stringSet(services)
+	}
+	byService := make(map[string][]NetworkSummary, len(wanted))
+	for i := range networks {
+		if service := networks[i].Service(); service != "" {
+			if len(wanted) > 0 {
+				if _, ok := wanted[service]; !ok {
+					continue
+				}
+			}
+			byService[service] = append(byService[service], networks[i])
+		}
+	}
+	return byService
+}
+
+func stringSet(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
 }
 
 // ─── API helpers ───────────────────────────────────────────────────────────

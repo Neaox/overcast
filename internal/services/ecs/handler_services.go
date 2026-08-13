@@ -39,10 +39,16 @@ func extractServiceName(input string) string {
 
 // addServiceEvent prepends an event to the service's event list, capping at maxServiceEvents.
 func (h *Handler) addServiceEvent(svc *ecsService, msg string) {
-	now := h.clk.Now()
+	h.addServiceEventAt(svc, msg, h.clk.Now())
+}
+
+func (h *Handler) addServiceEventAt(svc *ecsService, msg string, occurredAt time.Time) {
+	if occurredAt.IsZero() {
+		occurredAt = h.clk.Now()
+	}
 	evt := ServiceEvent{
 		ID:        uuid.New().String(),
-		CreatedAt: float64(now.UnixMilli()) / 1000,
+		CreatedAt: float64(occurredAt.UnixMilli()) / 1000,
 		Message:   msg,
 	}
 	svc.Events = append([]ServiceEvent{evt}, svc.Events...)
@@ -949,6 +955,10 @@ const consistentFailureThreshold = 3
 // because AWS's failedTasks counts a task that never reached a running state
 // and one that did not stay there alike.
 func (h *Handler) recordDeploymentFailure(svc *ecsService, n int) {
+	h.recordDeploymentFailureAt(svc, n, h.clk.Now())
+}
+
+func (h *Handler) recordDeploymentFailureAt(svc *ecsService, n int, occurredAt time.Time) {
 	d := primaryDeployment(svc)
 	if d == nil || n <= 0 {
 		return
@@ -957,12 +967,15 @@ func (h *Handler) recordDeploymentFailure(svc *ecsService, n int) {
 	d.FailedTasks += n
 	// A deployment that is still trying says so through its timestamp; a frozen
 	// updatedAt is how a service that has given up looks.
-	d.UpdatedAt = h.clk.Now().Unix()
+	if occurredAt.IsZero() {
+		occurredAt = h.clk.Now()
+	}
+	d.UpdatedAt = occurredAt.Unix()
 
 	if before < consistentFailureThreshold && d.FailedTasks >= consistentFailureThreshold {
-		h.addServiceEvent(svc, fmt.Sprintf(
+		h.addServiceEventAt(svc, fmt.Sprintf(
 			"(service %s) is unable to consistently start tasks successfully. For more information, see the Troubleshooting section.",
-			svc.ServiceName))
+			svc.ServiceName), occurredAt)
 	}
 
 	// Without a circuit breaker the deployment stays IN_PROGRESS and the
@@ -979,8 +992,8 @@ func (h *Handler) recordDeploymentFailure(svc *ecsService, n int) {
 	}
 	d.RolloutState = rolloutFailed
 	d.RolloutStateReason = "ECS deployment circuit breaker: task failed to start."
-	h.addServiceEvent(svc, fmt.Sprintf("(service %s) (deployment %s) deployment failed: tasks failed to start.",
-		svc.ServiceName, d.ID))
+	h.addServiceEventAt(svc, fmt.Sprintf("(service %s) (deployment %s) deployment failed: tasks failed to start.",
+		svc.ServiceName, d.ID), occurredAt)
 }
 
 // recordPlacementFailure records n tasks the scheduler could not place.
@@ -994,12 +1007,12 @@ func (h *Handler) recordPlacementFailure(svc *ecsService, reason string, n int) 
 // container is exactly this, repeated. It counts against the deployment that
 // placed the task; one belonging to a superseded deployment is draining, not
 // failing.
-func (h *Handler) recordTaskStopFailure(svc *ecsService, task *Task) {
+func (h *Handler) recordTaskStopFailureAt(svc *ecsService, task *Task, occurredAt time.Time) {
 	d := primaryDeployment(svc)
 	if d == nil || (task.StartedBy != "" && task.StartedBy != d.ID) {
 		return
 	}
-	h.recordDeploymentFailure(svc, 1)
+	h.recordDeploymentFailureAt(svc, 1, occurredAt)
 }
 
 // deploymentRecoveryWindow is how long a replacement task must stay RUNNING

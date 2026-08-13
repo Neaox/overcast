@@ -2,7 +2,7 @@ service: ecr
 status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-11
+last_updated: 2026-08-14
 protocols: [aws_json_1_1, aws_json_1_0, rpcv2_cbor]
 implementation: [internal/services/ecr]
 integration_tests: [tests/integration/ecr]
@@ -10,6 +10,17 @@ capability_docs: docs/services/ecr.md
 operation_count_estimate: 20 supported
 current_support_level: Repository and image metadata control plane supported; Docker registry integration optional; scanning inert/not-scanned.
 operations:
+  GetAuthorizationToken:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECR/latest/userguide/Registries.html
+    scenarios:
+      registry_container_recovery:
+        status: fixed
+        evidence:
+          - internal/services/ecr/registry_reconcile_test.go
+          - internal/router/docker_reconcile_test.go
+        notes: A used local registry whose container exits is replaced immediately. If the Docker event was missed, the first daemon connection or reconnect supplies the same central snapshot and invalidates the cached dead address before starting a replacement; the registry password is retained so issued authorization tokens remain valid.
   DescribeRepositories:
     status: fixed
     docs:
@@ -60,6 +71,7 @@ findings:
   fixed:
     - DescribeImages answered an absent imageId with 200 and an empty list rather than ImageNotFoundException.
     - Image records survived the registry that held the images, so absent images were reported present.
+    - A registry container exit no longer leaves repository URIs and authorization responses pointing at its dead published port; live events and daemon reconnect reconciliation start a replacement.
   remaining_gaps:
     - Downgrade or annotate Docker-dependent and scanner-unavailable behavior as partial/inert.
     - ListImages and BatchGetImage are reconciled with the registry but have no equivalent scenario coverage.

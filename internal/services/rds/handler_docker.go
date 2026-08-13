@@ -152,24 +152,6 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 	}
 }
 
-// handleDockerDaemonConnected reconciles changes that happened while the
-// Docker event stream was unavailable. The watcher publishes this on both its
-// initial connection and every reconnection; the pointer check prevents an RDS
-// service wired to one daemon from reacting to another configured socket.
-func (h *Handler) handleDockerDaemonConnected(ctx context.Context, e events.Event) {
-	log := h.log.WithRecorder(ctx)
-	p, ok := e.Payload.(docker.DaemonConnectedPayload)
-	if !ok || !p.Reconnected || p.Client == nil || p.Client != h.docker || h.shuttingDown.Load() {
-		return
-	}
-	containers, err := h.docker.ListContainers(ctx, serviceName)
-	if err != nil {
-		log.Warn("RDS: reconcile after Docker reconnect", zap.Error(err))
-		return
-	}
-	h.reconcileContainers(ctx, containers)
-}
-
 // instanceOwnsContainer reports whether a DB instance record still claims this
 // container's resource ID, in any region. It is the startup sweep's veto: a
 // container an instance still owns is not litter, however long it has been
@@ -285,13 +267,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 	// several containers — a DB instance called "mydb" under each Overcast
 	// sharing this daemon — so they are collected rather than overwritten, and
 	// ourContainer picks this instance's out of them below.
-	byResource := make(map[string][]*docker.ContainerSummary, len(containers))
-	for i := range containers {
-		rid := containers[i].ResourceID()
-		if rid != "" {
-			byResource[rid] = append(byResource[rid], &containers[i])
-		}
-	}
+	byResource := docker.ContainersByResource(containers)
 
 	regioned, err := serviceutil.ScanRegions[DBInstance](ctx, h.store.store, nsDBInstances, h.store.defaultRegion)
 	if err != nil {

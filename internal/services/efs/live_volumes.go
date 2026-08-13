@@ -28,25 +28,40 @@ const volumeOpTimeout = 30 * time.Second
 func volumeName(fsID string) string { return volumeNamePrefix + fsID }
 
 // SetDocker wires the Docker client used for live-mode volumes. Called by the
-// router once the Docker probe succeeds; kicks off asynchronous reconciliation
-// so file systems persisted before a restart regain their volumes, mount
-// targets re-adopt or restart their NFS exports, and orphans are swept.
+// router once the Docker probe succeeds. The central ContainerReconciler call
+// that follows performs volume/export recovery from the daemon-wide snapshot.
 func (s *Service) SetDocker(dc *docker.Client) {
 	s.docker = dc
 	if dc != nil {
 		s.puller = docker.NewImagePuller(dc)
 	}
 	s.dockerReady.Store(dc != nil)
-	if dc != nil && s.liveModeEnabled() {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), volumeOpTimeout)
-			defer cancel()
-			s.reconcileVolumes(ctx)
-			// Containers second: an export needs its file system's volume to
-			// exist before it can be started.
-			s.reconcileExports(ctx)
-		}()
+}
+
+// ReconcileContainers satisfies router.ContainerReconciler. Work stays off
+// the Docker supervisor path because volume healing may pull/start an export;
+// the mutex coalesces startup and reconnect passes into a safe sequence.
+func (s *Service) ReconcileContainers(_ context.Context, containers []docker.ContainerSummary) {
+	s.reconcileLifecycleMu.Lock()
+	defer s.reconcileLifecycleMu.Unlock()
+	if s.reconcileStopping {
+		return
 	}
+	if !s.volumesActive() {
+		return
+	}
+	snapshot := append([]docker.ContainerSummary(nil), containers...)
+	s.nfsWg.Add(1)
+	go func() {
+		defer s.nfsWg.Done()
+		s.reconcileMu.Lock()
+		defer s.reconcileMu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), volumeOpTimeout)
+		defer cancel()
+		s.reconcileVolumes(ctx)
+		// Containers second: an export needs its file system's volume first.
+		s.reconcileExportsSnapshot(ctx, snapshot)
+	}()
 }
 
 func (s *Service) liveModeEnabled() bool {

@@ -194,6 +194,62 @@ type Service struct {
 // InitBus wires the event bus for ECR lifecycle events.
 func (s *Service) InitBus(bus *events.Bus) {
 	s.bus = bus
+	bus.Subscribe(events.DockerContainerDied, s.handleRegistryContainerDied)
+}
+
+// handleRegistryContainerDied invalidates the cached ready address and starts
+// a replacement. Amazon ECR is managed; callers must not keep receiving the
+// port of an AutoRemove registry container that no longer exists.
+func (s *Service) handleRegistryContainerDied(_ context.Context, e events.Event) {
+	p, ok := e.Payload.(events.DockerContainerPayload)
+	if !ok || p.Service != serviceName {
+		return
+	}
+	s.registryMu.Lock()
+	if s.registryStopping || s.registryContainer == "" || p.ContainerID != s.registryContainer {
+		s.registryMu.Unlock()
+		return
+	}
+	s.registryContainer = ""
+	s.registryName = ""
+	s.registryHost = ""
+	s.registryHostPort = 0
+	s.registryClientBases = nil
+	s.registryClientBase = ""
+	s.registryReady = nil
+	s.registryInitOnce = sync.Once{}
+	s.registryMu.Unlock()
+
+	if err := s.ensureRegistry(context.Background()); err != nil {
+		s.log.Warn("failed to restart ECR registry after its container exited", zap.Error(err))
+	}
+}
+
+// ReconcileContainers invalidates a cached registry address when its container
+// disappeared while the watcher was disconnected. A fresh process has no
+// cached address, so startup remains lazy; reconnect heals an already-used ECR.
+func (s *Service) ReconcileContainers(_ context.Context, containers []docker.ContainerSummary) {
+	s.registryMu.Lock()
+	containerID := s.registryContainer
+	wasReady := containerID != "" && s.registryHostPort > 0
+	s.registryMu.Unlock()
+	if !wasReady {
+		return
+	}
+	for i := range containers {
+		if containers[i].ID == containerID && strings.EqualFold(containers[i].State, "running") {
+			return
+		}
+	}
+	s.handleRegistryContainerDied(context.Background(), events.Event{
+		Type: events.DockerContainerDied,
+		Payload: events.DockerContainerPayload{
+			ContainerID: containerID,
+			Service:     serviceName,
+			ResourceID:  ecrRegistryResource,
+			Action:      "reconcile",
+		},
+	})
 }
 
 // publish emits an event if the bus is wired.
@@ -1683,14 +1739,15 @@ func (s *Service) ensureRegistry(ctx context.Context) error {
 		}
 		s.registryPassword = password
 	}
-	s.registryMu.Unlock()
-
+	var ready chan struct{}
 	s.registryInitOnce.Do(func() {
-		s.registryMu.Lock()
-		s.registryReady = make(chan struct{})
-		s.registryMu.Unlock()
-		go s.initRegistryDocker()
+		ready = make(chan struct{})
+		s.registryReady = ready
 	})
+	s.registryMu.Unlock()
+	if ready != nil {
+		go s.initRegistryDocker(ready)
+	}
 	return nil
 }
 
@@ -1718,8 +1775,8 @@ func (s *Service) waitRegistryReady(ctx context.Context) error {
 
 // initRegistryDocker performs the blocking Docker setup for the shared local
 // registry container. Runs in a background goroutine launched by registryInitOnce.
-func (s *Service) initRegistryDocker() {
-	defer close(s.registryReady)
+func (s *Service) initRegistryDocker(ready chan struct{}) {
+	defer close(ready)
 
 	pingCtx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	err := s.docker.Ping(pingCtx)

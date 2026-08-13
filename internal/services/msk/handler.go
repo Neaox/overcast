@@ -111,7 +111,12 @@ func (h *Handler) newCluster(ctx context.Context, name string, tags map[string]s
 // which is what a caller polling DescribeCluster sees on AWS while brokers are
 // still being provisioned.
 func (h *Handler) startClusterAsync(clusterARN string) {
-	if !h.dockerReady.Load() {
+	h.dockerLifecycle.Lock()
+	defer h.dockerLifecycle.Unlock()
+	if h.dockerStopping || !h.dockerReady.Load() {
+		return
+	}
+	if _, loaded := h.dockerStarts.LoadOrStore(clusterARN, struct{}{}); loaded {
 		return
 	}
 	if h.puller != nil {
@@ -120,8 +125,9 @@ func (h *Handler) startClusterAsync(clusterARN string) {
 	h.dockerWg.Add(1)
 	go func() {
 		defer h.dockerWg.Done()
+		defer h.dockerStarts.Delete(clusterARN)
 		if err := h.startClusterContainer(clusterRegionCtx(clusterARN), clusterARN); err != nil {
-			h.log.Warn("failed to start Docker container for MSK cluster — cluster stays in CREATING state",
+			h.log.Warn("failed to start Docker container for MSK cluster — current lifecycle state is retained",
 				zap.String("cluster", clusterARN), zap.Error(err))
 		}
 	}()
