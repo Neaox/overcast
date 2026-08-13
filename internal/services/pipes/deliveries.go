@@ -64,13 +64,16 @@ type deliveryLog struct {
 }
 
 func newDeliveryLog() *deliveryLog {
-	return &deliveryLog{records: make([]deliveryRecord, deliveryLogSize)}
+	return &deliveryLog{}
 }
 
 // add records one outcome, overwriting the oldest entry when full.
 func (l *deliveryLog) add(rec deliveryRecord) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.records == nil {
+		l.records = make([]deliveryRecord, deliveryLogSize)
+	}
 	l.records[l.next] = rec
 	l.next = (l.next + 1) % len(l.records)
 	if l.next == 0 {

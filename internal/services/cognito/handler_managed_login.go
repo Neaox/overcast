@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -164,15 +165,21 @@ type mfaPageData struct {
 
 var (
 	brandingPartial    = "templates/_branding_script.html"
-	loginTmpl          = template.Must(template.ParseFS(templateFS, "templates/login.html", brandingPartial))
-	signUpTmpl         = template.Must(template.ParseFS(templateFS, "templates/signup.html", brandingPartial))
-	confirmTmpl        = template.Must(template.ParseFS(templateFS, "templates/confirm.html", brandingPartial))
-	newPasswordTmpl    = template.Must(template.ParseFS(templateFS, "templates/new_password.html", brandingPartial))
-	mfaTmpl            = template.Must(template.ParseFS(templateFS, "templates/mfa.html", brandingPartial))
-	debugTokenTmpl     = template.Must(template.ParseFS(templateFS, "templates/debug_token.html"))
-	forgotPasswordTmpl = template.Must(template.ParseFS(templateFS, "templates/forgot_password.html", brandingPartial))
-	resetPasswordTmpl  = template.Must(template.ParseFS(templateFS, "templates/reset_password.html", brandingPartial))
+	loginTmpl          = lazyManagedLoginTemplate("templates/login.html", brandingPartial)
+	signUpTmpl         = lazyManagedLoginTemplate("templates/signup.html", brandingPartial)
+	confirmTmpl        = lazyManagedLoginTemplate("templates/confirm.html", brandingPartial)
+	newPasswordTmpl    = lazyManagedLoginTemplate("templates/new_password.html", brandingPartial)
+	mfaTmpl            = lazyManagedLoginTemplate("templates/mfa.html", brandingPartial)
+	debugTokenTmpl     = lazyManagedLoginTemplate("templates/debug_token.html")
+	forgotPasswordTmpl = lazyManagedLoginTemplate("templates/forgot_password.html", brandingPartial)
+	resetPasswordTmpl  = lazyManagedLoginTemplate("templates/reset_password.html", brandingPartial)
 )
+
+func lazyManagedLoginTemplate(patterns ...string) func() *template.Template {
+	return sync.OnceValue(func() *template.Template {
+		return template.Must(template.ParseFS(templateFS, patterns...))
+	})
+}
 
 func branding(pool *UserPool) ManagedLoginBranding {
 	if pool.ManagedLoginBranding != nil {
@@ -673,7 +680,7 @@ func (s *Service) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = loginTmpl.Execute(w, data)
+	_ = loginTmpl().Execute(w, data)
 }
 
 // HandleLoginSubmit processes the login form POST.
@@ -776,7 +783,7 @@ func (s *Service) renderLoginError(w http.ResponseWriter, pool *UserPool, params
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK) // AWS returns 200 with error in page
-	_ = loginTmpl.Execute(w, data)
+	_ = loginTmpl().Execute(w, data)
 }
 
 // completeLoginFlow sets a session cookie and finishes the authorize redirect.
@@ -908,7 +915,7 @@ func (s *Service) HandleSignUpPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = signUpTmpl.Execute(w, data)
+	_ = signUpTmpl().Execute(w, data)
 }
 
 // HandleSignUpSubmit processes the sign-up form POST.
@@ -1013,7 +1020,7 @@ func (s *Service) renderSignUpError(w http.ResponseWriter, pool *UserPool, param
 		ShowEmailField:       uType != "email",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = signUpTmpl.Execute(w, data)
+	_ = signUpTmpl().Execute(w, data)
 }
 
 // ─── Confirm page ─────────────────────────────────────────────────────────────
@@ -1045,7 +1052,7 @@ func (s *Service) HandleConfirmPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = confirmTmpl.Execute(w, data)
+	_ = confirmTmpl().Execute(w, data)
 }
 
 // HandleConfirmSubmit processes the confirmation code POST.
@@ -1113,7 +1120,7 @@ func (s *Service) renderConfirmError(w http.ResponseWriter, pool *UserPool, para
 		Username:     username,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = confirmTmpl.Execute(w, data)
+	_ = confirmTmpl().Execute(w, data)
 }
 
 // ─── New password page (FORCE_CHANGE_PASSWORD) ───────────────────────────────
@@ -1146,7 +1153,7 @@ func (s *Service) HandleNewPasswordPage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = newPasswordTmpl.Execute(w, data)
+	_ = newPasswordTmpl().Execute(w, data)
 }
 
 // HandleNewPasswordSubmit processes the new password POST.
@@ -1222,7 +1229,7 @@ func (s *Service) renderNewPasswordError(w http.ResponseWriter, pool *UserPool, 
 		Nonce:        params.Nonce,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = newPasswordTmpl.Execute(w, data)
+	_ = newPasswordTmpl().Execute(w, data)
 }
 
 // ─── MFA page ─────────────────────────────────────────────────────────────────
@@ -1255,7 +1262,7 @@ func (s *Service) HandleMFAPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = mfaTmpl.Execute(w, data)
+	_ = mfaTmpl().Execute(w, data)
 }
 
 // HandleMFASubmit processes the MFA verification POST.
@@ -1316,7 +1323,7 @@ func (s *Service) renderMFAError(w http.ResponseWriter, pool *UserPool, params o
 		Nonce:        params.Nonce,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = mfaTmpl.Execute(w, data)
+	_ = mfaTmpl().Execute(w, data)
 }
 
 // ─── OIDC discovery ───────────────────────────────────────────────────────────
@@ -1396,7 +1403,7 @@ func (s *Service) HandleDebugToken(w http.ResponseWriter, r *http.Request) {
 
 	renderErr := func(msg string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = debugTokenTmpl.Execute(w, debugTokenPageData{
+		_ = debugTokenTmpl().Execute(w, debugTokenPageData{
 			PoolName:  pool.Name,
 			LogoutURL: logoutURL,
 			Error:     msg,
@@ -1441,7 +1448,7 @@ func (s *Service) HandleDebugToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = debugTokenTmpl.Execute(w, debugTokenPageData{
+	_ = debugTokenTmpl().Execute(w, debugTokenPageData{
 		PoolName:     pool.Name,
 		AccessToken:  result.AccessToken,
 		IDToken:      result.IdToken,
@@ -1553,7 +1560,7 @@ func (s *Service) HandleForgotPasswordPage(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = forgotPasswordTmpl.Execute(w, data)
+	_ = forgotPasswordTmpl().Execute(w, data)
 }
 
 // HandleForgotPasswordSubmit processes the forgot-password form POST.
@@ -1594,7 +1601,7 @@ func (s *Service) HandleForgotPasswordSubmit(w http.ResponseWriter, r *http.Requ
 			UsernameAutocomplete: uAuto,
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = forgotPasswordTmpl.Execute(w, data)
+		_ = forgotPasswordTmpl().Execute(w, data)
 	}
 
 	if username == "" {
@@ -1661,7 +1668,7 @@ func (s *Service) HandleResetPasswordPage(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = resetPasswordTmpl.Execute(w, data)
+	_ = resetPasswordTmpl().Execute(w, data)
 }
 
 // HandleResetPasswordSubmit processes the reset-password form POST.
@@ -1702,7 +1709,7 @@ func (s *Service) HandleResetPasswordSubmit(w http.ResponseWriter, r *http.Reque
 			ForgotPasswordURL: base + "/forgot-password?" + params.query(),
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = resetPasswordTmpl.Execute(w, data)
+		_ = resetPasswordTmpl().Execute(w, data)
 	}
 
 	if username == "" || code == "" || newPassword == "" {

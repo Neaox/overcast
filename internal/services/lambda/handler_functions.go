@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -300,8 +299,8 @@ func lambdaInvalidParameter(message string) *protocol.AWSError {
 // localMountPathRe matches AWS's LocalMountPath constraint: an absolute path
 // directly under /mnt.
 var (
-	localMountPathRe = regexp.MustCompile(`^/mnt/[a-zA-Z0-9-_.]+$`)
-	fileSystemARNRe  = regexp.MustCompile(`^(?:arn:aws[a-zA-Z-]*:elasticfilesystem:[a-z]{2}((-gov)|(-iso(b?)))?-[a-z]+-\d{1}:\d{12}:access-point/fsap-[a-f0-9]{17}|arn:aws[-a-z]*:s3files:[0-9a-z-:]+:file-system/fs-[0-9a-f]{17,40}/access-point/fsap-[0-9a-f]{17,40})$`)
+	localMountPathRe = lazyRegexp(`^/mnt/[a-zA-Z0-9-_.]+$`)
+	fileSystemARNRe  = lazyRegexp(`^(?:arn:aws[a-zA-Z-]*:elasticfilesystem:[a-z]{2}((-gov)|(-iso(b?)))?-[a-z]+-\d{1}:\d{12}:access-point/fsap-[a-f0-9]{17}|arn:aws[-a-z]*:s3files:[0-9a-z-:]+:file-system/fs-[0-9a-f]{17,40}/access-point/fsap-[0-9a-f]{17,40})$`)
 )
 
 const (
@@ -321,10 +320,10 @@ func validateFileSystemConfigs(configs []FileSystemConfig) *protocol.AWSError {
 		return smithyLengthConstraint("fileSystemConfigs", len(configs), 1)
 	}
 	fsc := configs[0]
-	if len(fsc.Arn) > 256 || !fileSystemARNRe.MatchString(fsc.Arn) {
+	if len(fsc.Arn) > 256 || !fileSystemARNRe().MatchString(fsc.Arn) {
 		return smithyPatternConstraint("fileSystemConfigs.1.member.arn", fsc.Arn, fileSystemARNConstraint)
 	}
-	if len(fsc.LocalMountPath) > 160 || !localMountPathRe.MatchString(fsc.LocalMountPath) {
+	if len(fsc.LocalMountPath) > 160 || !localMountPathRe().MatchString(fsc.LocalMountPath) {
 		return smithyPatternConstraint("fileSystemConfigs.1.member.localMountPath", fsc.LocalMountPath, localMountPathConstraint)
 	}
 	return nil
@@ -364,7 +363,7 @@ func smithyPatternConstraint(member, value, pattern string) *protocol.AWSError {
 	return lambdaInvalidParameter("1 validation error detected: Value '" + value + "' at '" + member + "' failed to satisfy constraint: Member must satisfy regular expression pattern: " + pattern)
 }
 
-var loggingConfigLogGroupPattern = regexp.MustCompile(`^[\.\-_/#A-Za-z0-9]+$`)
+var loggingConfigLogGroupPattern = lazyRegexp(`^[\.\-_/#A-Za-z0-9]+$`)
 
 const loggingConfigLogGroupConstraint = `[\.\-_/#A-Za-z0-9]+`
 
@@ -384,7 +383,7 @@ func normalizeLoggingConfig(req *loggingConfigRequest, functionName string) (*lo
 		if len(*req.LogGroup) > 512 {
 			return nil, smithyStringLengthConstraint("loggingConfig.logGroup", *req.LogGroup, 512)
 		}
-		if !loggingConfigLogGroupPattern.MatchString(*req.LogGroup) {
+		if !loggingConfigLogGroupPattern().MatchString(*req.LogGroup) {
 			return nil, smithyPatternConstraint("loggingConfig.logGroup", *req.LogGroup, loggingConfigLogGroupConstraint)
 		}
 		config.LogGroup = *req.LogGroup
@@ -511,7 +510,7 @@ const (
 
 // kmsKeyARNPattern is AWS's own pattern for the Lambda KMSKeyArn member. The
 // empty alternative is AWS's: passing "" is how a key association is removed.
-var kmsKeyARNPattern = regexp.MustCompile(`^((arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|())$`)
+var kmsKeyARNPattern = lazyRegexp(`^((arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|())$`)
 
 const kmsKeyARNConstraint = `(arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|()`
 
@@ -521,7 +520,7 @@ const kmsKeyARNConstraint = `(arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|()`
 // than sharing kmsKeyARNPattern's variable: the two are independent members of
 // AWS's model that happen to carry the same pattern today, and folding them
 // together would make a future divergence look like a typo.
-var deadLetterTargetARNPattern = regexp.MustCompile(`^((arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|())$`)
+var deadLetterTargetARNPattern = lazyRegexp(`^((arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|())$`)
 
 const deadLetterTargetARNConstraint = `(arn:(aws[a-zA-Z-]*)?:[a-z0-9-.]+:.*)|()`
 
@@ -557,7 +556,7 @@ func validateKMSKeyArn(arn *string) *protocol.AWSError {
 	if arn == nil {
 		return nil
 	}
-	if !kmsKeyARNPattern.MatchString(*arn) {
+	if !kmsKeyARNPattern().MatchString(*arn) {
 		return smithyPatternConstraint("kMSKeyArn", *arn, kmsKeyARNConstraint)
 	}
 	return nil
@@ -571,7 +570,7 @@ func validateDeadLetterConfig(config *deadLetterConfigWire) *protocol.AWSError {
 	if config == nil {
 		return nil
 	}
-	if !deadLetterTargetARNPattern.MatchString(config.TargetArn) {
+	if !deadLetterTargetARNPattern().MatchString(config.TargetArn) {
 		return smithyPatternConstraint("deadLetterConfig.targetArn", config.TargetArn, deadLetterTargetARNConstraint)
 	}
 	return nil
@@ -1055,7 +1054,7 @@ func (h *Handler) CreateFunction(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, lambdaDeprecatedRuntimeError(req.Runtime))
 		return
 	}
-	if req.CodeSigningConfigArn != "" && !codeSigningConfigARNPattern.MatchString(req.CodeSigningConfigArn) {
+	if req.CodeSigningConfigArn != "" && !codeSigningConfigARNPattern().MatchString(req.CodeSigningConfigArn) {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
 			Code:       "InvalidParameterValueException",
 			Message:    "Invalid code signing config arn: " + req.CodeSigningConfigArn,
@@ -1375,7 +1374,7 @@ func (h *Handler) completeFunctionPrewarm(name, region string, generation functi
 // codeSigningConfigARNPattern is AWS's own pattern for the ARN, from the Lambda
 // API model. Validating the shape catches a typo at the point of the call the
 // way AWS does, without implying the configuration behind it exists.
-var codeSigningConfigARNPattern = regexp.MustCompile(
+var codeSigningConfigARNPattern = lazyRegexp(
 	`^arn:(aws[a-zA-Z-]*)?:lambda:[a-z]{2}((-gov)|(-iso(b?)))?-[a-z]+-\d{1}:\d{12}:code-signing-config:csc-[a-z0-9]{17}$`)
 
 // functionForCodeSigning resolves the named function, writing the AWS-shaped
@@ -1450,7 +1449,7 @@ func (h *Handler) PutFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Re
 		protocol.WriteJSONError(w, r, protocol.ErrInvalidArgument("invalid request body"))
 		return
 	}
-	if !codeSigningConfigARNPattern.MatchString(req.CodeSigningConfigArn) {
+	if !codeSigningConfigARNPattern().MatchString(req.CodeSigningConfigArn) {
 		protocol.WriteJSONError(w, r, &protocol.AWSError{
 			Code:       "InvalidParameterValueException",
 			Message:    "Invalid code signing config arn: " + req.CodeSigningConfigArn,
@@ -2016,7 +2015,7 @@ func (h *Handler) DeleteFunction(w http.ResponseWriter, r *http.Request) {
 			protocol.WriteJSONError(w, r, smithyStringLengthConstraint("qualifier", qualifier, 128))
 			return
 		}
-		if !qualifierPattern.MatchString(qualifier) {
+		if !qualifierPattern().MatchString(qualifier) {
 			protocol.WriteJSONError(w, r, smithyPatternConstraint("qualifier", qualifier, qualifierConstraint))
 			return
 		}

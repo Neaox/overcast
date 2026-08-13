@@ -53,6 +53,7 @@ type Bus struct {
 	workCh      chan workItem
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
+	workersOnce sync.Once
 	history     *History
 	clk         clock.Clock
 
@@ -74,17 +75,26 @@ func NewBus() *Bus {
 func NewBusWithClock(clk clock.Clock) *Bus {
 	b := &Bus{
 		subscribers: make(map[Type][]HandlerFunc),
-		workCh:      make(chan workItem, workQueueSize),
 		stopCh:      make(chan struct{}),
 		history:     NewHistory(HistoryCapacity),
 		clk:         clk,
 		runID:       newRunID(),
 	}
-	b.wg.Add(workerCount)
-	for range workerCount {
-		go b.worker()
-	}
 	return b
+}
+
+// startWorkers defers the queue allocation and worker goroutines until an
+// event actually has a subscriber to notify. Startup wiring only subscribes
+// handlers, so eagerly reserving the queue made every process pay roughly
+// half a megabyte before it had published one event.
+func (b *Bus) startWorkers() {
+	b.workersOnce.Do(func() {
+		b.workCh = make(chan workItem, workQueueSize)
+		b.wg.Add(workerCount)
+		for range workerCount {
+			go b.worker()
+		}
+	})
 }
 
 // newRunID returns a short, process-unique identifier for one Bus instance.
@@ -107,6 +117,11 @@ func (b *Bus) RunID() string { return b.runID }
 
 // Stop shuts down the worker pool after draining all queued work items.
 func (b *Bus) Stop() {
+	// Claim the once without starting workers when the bus was never used.
+	b.workersOnce.Do(func() {})
+	if b.workCh == nil {
+		return
+	}
 	close(b.stopCh)
 	b.wg.Wait()
 }
@@ -243,6 +258,9 @@ func (b *Bus) Publish(ctx context.Context, e Event) {
 	copy(wild, b.subscribers[All])
 	b.mu.Unlock()
 
+	if len(typed)+len(wild) > 0 {
+		b.startWorkers()
+	}
 	for _, h := range typed {
 		b.workCh <- workItem{ctx: ctx, e: e, h: h}
 	}

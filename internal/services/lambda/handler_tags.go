@@ -14,7 +14,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -34,7 +33,7 @@ var lambdaTagCfg = serviceutil.TagValidationConfig{
 // Lambda model (models/aws/VERSION), reported verbatim in validation errors.
 const taggableResourceConstraint = `arn:(aws[a-zA-Z-]*):lambda:(eusc-)?[a-z]{2}((-gov)|(-iso([a-z]?)))?-[a-z]+-\d{1}:\d{12}:(function:[a-zA-Z0-9-_]+(:(\$LATEST|[a-zA-Z0-9-_]+))?|code-signing-config:csc-[a-z0-9]{17}|event-source-mapping:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|(capacity-provider|network-connector):[a-zA-Z0-9-_]{1,64})`
 
-var taggableResourcePattern = regexp.MustCompile(`^` + taggableResourceConstraint + `$`)
+var taggableResourcePattern = lazyRegexp(`^` + taggableResourceConstraint + `$`)
 
 // maxTaggableResourceLength is TaggableResource's modeled length ceiling.
 const maxTaggableResourceLength = 10000
@@ -145,7 +144,7 @@ func (h *Handler) resolveTagResource(r *http.Request) (resourceTagStore, *protoc
 	if len(arn) > maxTaggableResourceLength {
 		return resourceTagStore{}, smithyStringLengthConstraint("resource", arn, maxTaggableResourceLength), false
 	}
-	if !taggableResourcePattern.MatchString(arn) {
+	if !taggableResourcePattern().MatchString(arn) {
 		return resourceTagStore{}, smithyPatternConstraint("resource", arn, taggableResourceConstraint), false
 	}
 
