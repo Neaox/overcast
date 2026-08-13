@@ -364,6 +364,21 @@ func (w *crc32ResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
+// RecordAWSError forwards to the wrapped writer. This writer is the one a
+// DynamoDB handler holds, so it is what protocol.recordAWSError type-asserts —
+// and without this method the assertion succeeded on a writer that records
+// nothing, leaving every DynamoDB error absent from its trace, from the request
+// log's aws_error_code field, and from the retention rule that keeps a trace
+// carrying an AWS error. Nothing failed and nothing warned, because answering
+// the assertion is indistinguishable from honouring it (#964).
+func (w *crc32ResponseWriter) RecordAWSError(aerr *protocol.AWSError) {
+	if rec, ok := w.ResponseWriter.(interface {
+		RecordAWSError(*protocol.AWSError)
+	}); ok {
+		rec.RecordAWSError(aerr)
+	}
+}
+
 // ---- localDynamoDBInvoker -------------------------------------------------
 
 // localDynamoDBInvoker implements events.DynamoDBInvoker by dispatching
