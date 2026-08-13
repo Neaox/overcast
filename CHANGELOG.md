@@ -219,6 +219,8 @@ can be applied mechanically rather than reconstructed from memory.
 
 - [backup/router] AWS Backup requests are classified from their path prefixes, so they are logged and authorised as `backup` rather than falling through to S3 when unsigned
 
+- [backup] `ListBackupVaults`, `ListBackupPlans` and `CreateBackupPlan` are reachable from an AWS SDK. AWS binds all three to the collection URI with a trailing slash — `GET /backup-vaults/`, `GET|PUT /backup/plans/` — which is what every SDK sends and what the routes did not match, so a signed client got a 501 and an unsigned one fell through to S3's wildcard and got a 200 `<ListBucketResult>` it could read as success. Both spellings are now registered; the slash-less form keeps working for callers already using it
+
 - [bedrock] `InvokeModel` and `Converse` are served at the paths AWS binds them to — `POST /model/{modelId}/invoke` and `POST /model/{modelId}/converse` — so an unmodified SDK reaches them instead of getting a 501; `modelId` may be an ID or an ARN
 
 - [cloudformation] AWS::RDS::DBInstance forwards PubliclyAccessible. It was dropped at the template boundary, leaving a template's own opt-out from a subnet group's private default with no effect.
