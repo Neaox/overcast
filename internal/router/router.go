@@ -221,6 +221,13 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// daemon without a shared volume. 404 until a CA exists (OVERCAST_TLS=auto).
 	r.Get(trust.CAPemPath, caCertHandler(cfg))
 
+	// ---- TLS settings (always available) ------------------------------------
+	// The web console's Settings → HTTPS page: status of the CA / trust store /
+	// serving mode, and the in-daemon `overcast https enable` equivalent.
+	// See tls_settings.go for the cross-origin guard on the mutating route.
+	r.Get("/_overcast/tls/status", tlsStatusHandler(cfg, logger))
+	r.Post("/_overcast/tls/setup", tlsSetupHandler(cfg, logger))
+
 	// ---- Debug dependencies ---------------------------------------------------
 	// ec2Svc is constructed before the rest of the services because the debug
 	// namespace exposes EC2 internals (/_overcast/debug/ec2/vpcs). Its constructor has no

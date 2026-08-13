@@ -125,6 +125,11 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	// UI origin for symmetry with the API's /_overcast/ca.pem, so either
 	// port can hand a browser or script the cert to trust.
 	r.Get("/api/ca.pem", handleCACert)
+	// Settings → HTTPS: status is a plain JSON proxy; the mutating setup
+	// route needs its own handler (Origin forwarding + no client timeout —
+	// see handleTLSSetup).
+	r.Get("/api/settings/https", proxyJSONHandler("/_overcast/tls/status"))
+	r.Post("/api/settings/https/enable", handleTLSSetup)
 	r.Get("/api/metrics", proxyJSONHandler("/_overcast/metrics"))
 	r.Get("/api/topology", handleTopology)
 	r.Get("/api/debug/state", handleDebugState)
@@ -627,6 +632,39 @@ func handleCACert(w http.ResponseWriter, r *http.Request) {
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
+// handleTLSSetup proxies POST /api/settings/https/enable to the daemon's
+// /_overcast/tls/setup (the in-daemon `overcast https enable`). Two ways this
+// deliberately differs from proxyJSONHandler:
+//
+//   - The browser's Origin header is forwarded, so the daemon's cross-origin
+//     guard (internal/router/tls_settings.go) judges the real page origin
+//     rather than seeing a header-less proxy dial and waving it through.
+//   - bffStreamingClient, not bffHTTPClient: a native trust install blocks on
+//     the OS's approval prompt, and a user reading that dialog for more than
+//     30 seconds must not have the request cut out from under the prompt.
+func handleTLSSetup(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, ep+"/_overcast/tls/setup", nil)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	resp, err := bffStreamingClient.Do(req)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	if !copyResponseBody(w, resp.Body) {
 		return

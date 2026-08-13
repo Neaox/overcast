@@ -407,6 +407,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 2,
+        "text": "From the web console",
+        "id": "from-the-web-console"
+      },
+      {
+        "depth": 2,
         "text": "Docker",
         "id": "docker"
       },
