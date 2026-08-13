@@ -61,14 +61,16 @@ func AppSync() ServiceGroup {
 			"PutGraphqlApiEnvironmentVariables": g.PutGraphqlApiEnvironmentVariables,
 			"GetGraphqlApiEnvironmentVariables": g.GetGraphqlApiEnvironmentVariables,
 			// domains
-			"CreateDomainName":  g.CreateDomainName,
-			"GetDomainName":     g.GetDomainName,
-			"UpdateDomainName":  g.UpdateDomainName,
-			"ListDomainNames":   g.ListDomainNames,
-			"AssociateApi":      g.AssociateApi,
-			"GetApiAssociation": g.GetApiAssociation,
-			"DisassociateApi":   g.DisassociateApi,
-			"DeleteDomainName":  g.DeleteDomainName,
+			"CreateDomainName": g.CreateDomainName,
+			"GetDomainName":    g.GetDomainName,
+			"UpdateDomainName": g.UpdateDomainName,
+			// Group-qualified: opensearch-domains declares a ListDomainNames
+			// too, and a bare key cannot say which group it implements.
+			"appsync-domains:ListDomainNames": g.ListDomainNames,
+			"AssociateApi":                    g.AssociateApi,
+			"GetApiAssociation":               g.GetApiAssociation,
+			"DisassociateApi":                 g.DisassociateApi,
+			"DeleteDomainName":                g.DeleteDomainName,
 			// cache
 			"CreateApiCache": g.CreateApiCache,
 			"GetApiCache":    g.GetApiCache,

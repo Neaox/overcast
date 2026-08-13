@@ -516,7 +516,9 @@ IMPLS = {
     "CreateDomainName": CreateDomainName,
     "GetDomainName": GetDomainName,
     "UpdateDomainName": UpdateDomainName,
-    "ListDomainNames": ListDomainNames,
+    # Group-qualified: opensearch-domains declares a ListDomainNames too, and a
+    # bare key cannot say which group it implements.
+    "appsync-domains:ListDomainNames": ListDomainNames,
     "AssociateApi": AssociateApi,
     "GetApiAssociation": GetApiAssociation,
     "DisassociateApi": DisassociateApi,

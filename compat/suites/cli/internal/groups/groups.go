@@ -58,5 +58,6 @@ func All() []ServiceGroup {
 		ElastiCache().named("elasticache"),
 		EFS().named("efs"),
 		AppConfigData().named("appconfigdata"),
+		OpenSearch().named("opensearch"),
 	}
 }

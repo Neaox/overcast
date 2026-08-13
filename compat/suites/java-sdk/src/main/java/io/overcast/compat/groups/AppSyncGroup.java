@@ -80,7 +80,9 @@ public final class AppSyncGroup implements ServiceGroup {
                 Map.entry("CreateDomainName",  this::createDomainName),
                 Map.entry("GetDomainName",     this::getDomainName),
                 Map.entry("UpdateDomainName",  this::updateDomainName),
-                Map.entry("ListDomainNames",   this::listDomainNames),
+                // Group-qualified: opensearch-domains declares a ListDomainNames
+                // too, and a bare key cannot say which group it implements.
+                Map.entry("appsync-domains:ListDomainNames", this::listDomainNames),
                 Map.entry("AssociateApi",      this::associateApi),
                 Map.entry("GetApiAssociation", this::getApiAssociation),
                 Map.entry("DisassociateApi",   this::disassociateApi),
