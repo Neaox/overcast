@@ -144,12 +144,17 @@ def CreateDBParameterGroup(ctx: TestContext) -> None:
     name = f"compat-pg-{ctx.run_id}"
     resp = rds.create_db_parameter_group(
         DBParameterGroupName=name,
-        DBParameterGroupFamily="mysql8.0",
+        DBParameterGroupFamily="aurora-mysql8.0",
         Description="compat test parameter group",
     )
     pg = resp.get("DBParameterGroup", {})
     if not pg.get("DBParameterGroupName"):
         raise AssertionError("CreateDBParameterGroup: missing DBParameterGroupName")
+    if pg.get("DBParameterGroupFamily") != "aurora-mysql8.0":
+        raise AssertionError(
+            "CreateDBParameterGroup: family mismatch: "
+            f"{pg.get('DBParameterGroupFamily')!r}"
+        )
     ctx["rds_param_group"] = name
 
 

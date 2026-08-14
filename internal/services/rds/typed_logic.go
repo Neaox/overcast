@@ -838,7 +838,7 @@ func (h *Handler) createDBParameterGroupTyped(ctx context.Context, req *createDB
 	if family == "" {
 		return nil, errInvalidParameterValue("DBParameterGroupFamily is required")
 	}
-	if !knownParameterGroupFamilies[family] {
+	if !isSupportedParameterGroupFamily(family) {
 		return nil, errInvalidParameterValue("Invalid DB parameter group family: " + family)
 	}
 

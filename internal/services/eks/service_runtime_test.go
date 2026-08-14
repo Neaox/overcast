@@ -25,7 +25,7 @@ import (
 
 func TestStopCleansUpOwnedLiveRuntimeContainers(t *testing.T) {
 	requests := make([]string, 0, 2)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1.45/containers/") && strings.HasSuffix(r.URL.Path, "/stop"):
@@ -39,7 +39,7 @@ func TestStopCleansUpOwnedLiveRuntimeContainers(t *testing.T) {
 	defer dockerSrv.Close()
 
 	endpoint := "tcp://" + strings.TrimPrefix(dockerSrv.URL, "http://")
-	service := New(&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive}, state.NewMemoryStore(), zap.NewNop(), clock.New())
+	service := New(liveTestConfig(""), state.NewMemoryStore(), zap.NewNop(), clock.New())
 	service.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
 	service.setLiveClusterRuntime("us-east-1", "cleanup-cluster", &liveClusterRuntime{containerID: "ctr-123"})
 
@@ -63,7 +63,7 @@ func TestStopCleansUpOwnedLiveRuntimeContainers(t *testing.T) {
 
 func TestStopReconcilesManagedLiveRuntimeContainersAfterRestart(t *testing.T) {
 	requests := make([]string, 0, 4)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-restart-stop/json":
@@ -90,7 +90,7 @@ func TestStopReconcilesManagedLiveRuntimeContainersAfterRestart(t *testing.T) {
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -105,7 +105,7 @@ func TestStopReconcilesManagedLiveRuntimeContainersAfterRestart(t *testing.T) {
 	}
 
 	service := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	service.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -128,7 +128,7 @@ func TestStopReconcilesManagedLiveRuntimeContainersAfterRestart(t *testing.T) {
 
 func TestStopReconcilesManagedRuntimeWhenCachedContainerIDMissing(t *testing.T) {
 	requests := make([]string, 0, 4)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-restart-stop-empty-id/json":
@@ -155,7 +155,7 @@ func TestStopReconcilesManagedRuntimeWhenCachedContainerIDMissing(t *testing.T) 
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -170,7 +170,7 @@ func TestStopReconcilesManagedRuntimeWhenCachedContainerIDMissing(t *testing.T) 
 	}
 
 	service := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	service.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -194,7 +194,7 @@ func TestStopReconcilesManagedRuntimeWhenCachedContainerIDMissing(t *testing.T) 
 
 func TestStopReconcilesManagedRuntimeWhenCachedContainerIDIsStale(t *testing.T) {
 	requests := make([]string, 0, 4)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-restart-stop-stale-id/json":
@@ -221,7 +221,7 @@ func TestStopReconcilesManagedRuntimeWhenCachedContainerIDIsStale(t *testing.T) 
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -236,7 +236,7 @@ func TestStopReconcilesManagedRuntimeWhenCachedContainerIDIsStale(t *testing.T) 
 	}
 
 	service := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	service.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -264,7 +264,7 @@ func TestLiveModeCreateClusterStartsK3sContainer(t *testing.T) {
 	var pulled string
 	var createPayload map[string]any
 
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
@@ -361,7 +361,7 @@ func TestLiveModeCreateClusterReusesStoppedManagedContainerOnConflict(t *testing
 	var mu sync.Mutex
 	creates, starts := 0, 0
 
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
@@ -473,7 +473,7 @@ func TestLiveModeClusterTransitionsToACTIVE(t *testing.T) {
 	readyzURL, _ := url.Parse(readyzSrv.URL)
 	readyzPort := readyzURL.Port()
 
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/images/create"):
 			w.WriteHeader(http.StatusOK)
@@ -571,7 +571,7 @@ func TestLiveModeClusterTransitionsToACTIVE(t *testing.T) {
 
 func TestLiveModeDeleteClusterReconcilesManagedContainerAfterRestart(t *testing.T) {
 	requests := make([]string, 0, 3)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-restart-cluster/json":
@@ -598,7 +598,7 @@ func TestLiveModeDeleteClusterReconcilesManagedContainerAfterRestart(t *testing.
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -615,7 +615,7 @@ func TestLiveModeDeleteClusterReconcilesManagedContainerAfterRestart(t *testing.
 	// Simulate a restarted process: the persisted cluster remains, but the new
 	// service instance has an empty in-memory live runtime registry.
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -647,7 +647,7 @@ func TestLiveModeDeleteClusterReconcilesManagedContainerAfterRestart(t *testing.
 
 func TestLiveModeDeleteClusterReconcilesRuntimeWhenCachedContainerIDMissing(t *testing.T) {
 	requests := make([]string, 0, 3)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-empty-runtime-id/json":
@@ -672,7 +672,7 @@ func TestLiveModeDeleteClusterReconcilesRuntimeWhenCachedContainerIDMissing(t *t
 
 	endpoint := "tcp://" + strings.TrimPrefix(dockerSrv.URL, "http://")
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -721,7 +721,7 @@ func TestLiveModeDeleteClusterReconcilesRuntimeWhenCachedContainerIDMissing(t *t
 
 func TestLiveModeDeleteClusterReconcilesWhenCachedContainerIDIsStale(t *testing.T) {
 	requests := make([]string, 0, 3)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-stale-runtime-id/json":
@@ -746,7 +746,7 @@ func TestLiveModeDeleteClusterReconcilesWhenCachedContainerIDIsStale(t *testing.
 
 	endpoint := "tcp://" + strings.TrimPrefix(dockerSrv.URL, "http://")
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -805,7 +805,7 @@ func TestLiveModeDescribeClusterReconcilesReadyRuntimeAfterRestart(t *testing.T)
 	readyzPort := readyzURL.Port()
 
 	requests := make([]string, 0, 2)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-restart-ready/json":
@@ -842,7 +842,7 @@ func TestLiveModeDescribeClusterReconcilesReadyRuntimeAfterRestart(t *testing.T)
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -860,7 +860,7 @@ func TestLiveModeDescribeClusterReconcilesReadyRuntimeAfterRestart(t *testing.T)
 	// Simulate a restarted process: the persisted cluster remains but the runtime
 	// registry is empty, even though the managed k3s container is already ready.
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -917,7 +917,7 @@ func TestLiveModeDescribeClusterReconcilesWhenCachedRuntimeIDMissing(t *testing.
 	readyzPort := readyzURL.Port()
 
 	requests := make([]string, 0, 2)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-restart-ready-empty-id/json":
@@ -954,7 +954,7 @@ func TestLiveModeDescribeClusterReconcilesWhenCachedRuntimeIDMissing(t *testing.
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -971,7 +971,7 @@ func TestLiveModeDescribeClusterReconcilesWhenCachedRuntimeIDMissing(t *testing.
 	// Simulate restart with an incomplete cached runtime entry (container ID was
 	// never populated), while managed container is already running.
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -1029,7 +1029,7 @@ func TestLiveModeDescribeClusterReconcilesWhenCachedRuntimeIDIsStale(t *testing.
 	readyzPort := readyzURL.Port()
 
 	requests := make([]string, 0, 4)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/stale-k3s-id/json":
@@ -1086,7 +1086,7 @@ func TestLiveModeDescribeClusterReconcilesWhenCachedRuntimeIDIsStale(t *testing.
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -1103,7 +1103,7 @@ func TestLiveModeDescribeClusterReconcilesWhenCachedRuntimeIDIsStale(t *testing.
 	// Simulate restart with a stale non-empty cached runtime ID while managed
 	// runtime is available under deterministic container name.
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))

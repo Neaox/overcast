@@ -183,10 +183,12 @@ public final class RdsGroup implements ServiceGroup {
         String name = "compat-pg-" + ctx.runId();
         var resp = rds().createDBParameterGroup(r -> r
                 .dbParameterGroupName(name)
-                .dbParameterGroupFamily("mysql8.0")
+                .dbParameterGroupFamily("aurora-mysql8.0")
                 .description("compat test parameter group"));
         Assertions.assertNotBlank(resp.dbParameterGroup().dbParameterGroupName(),
                 "CreateDBParameterGroup: missing name");
+        Assertions.assertEquals("aurora-mysql8.0", resp.dbParameterGroup().dbParameterGroupFamily(),
+                "CreateDBParameterGroup: family mismatch");
         ctx.set("rdsParamGroup", name);
     }
 

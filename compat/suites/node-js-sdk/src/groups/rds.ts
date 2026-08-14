@@ -282,13 +282,18 @@ export function makeRDSGroups(suite: string): TestGroup[] {
             const resp = await rds.send(
               new CreateDBParameterGroupCommand({
                 DBParameterGroupName: groupName,
-                DBParameterGroupFamily: "mysql8.0",
+                DBParameterGroupFamily: "aurora-mysql8.0",
                 Description: "compat test parameter group",
               }),
             );
             assert.ok(
               resp.DBParameterGroup?.DBParameterGroupName,
               "CreateDBParameterGroup: missing DBParameterGroupName",
+            );
+            assert.equal(
+              resp.DBParameterGroup.DBParameterGroupFamily,
+              "aurora-mysql8.0",
+              "CreateDBParameterGroup: family mismatch",
             );
             (ctx as Record<string, unknown>)["_paramGroupName"] = groupName;
           },
