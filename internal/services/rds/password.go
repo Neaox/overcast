@@ -54,48 +54,47 @@ var engineClients = map[string]string{
 	"aurora-postgresql": "psql",
 }
 
-const (
-	// minMasterPasswordLen and maxMasterPasswordLen are RDS's bounds on a
-	// master password. Individual engines are stricter — Aurora MySQL stops at
-	// 41 — which Overcast does not model: the point is to reject what every
-	// engine rejects, not to reproduce the matrix.
-	minMasterPasswordLen = 8
-	maxMasterPasswordLen = 128
-)
+const minMasterPasswordLen = 8
 
 // forbiddenPasswordChars are the characters RDS documents as not allowed in a
-// master password: forward slash, double quote, at sign, single quote, space.
-const forbiddenPasswordChars = `/"@' `
+// master password: forward slash, double quote, at sign, and space. A single
+// quote is valid and is escaped by the SQL builders below.
+const forbiddenPasswordChars = `/"@ `
 
 // validateMasterUserPassword applies RDS's constraints on a master password,
 // so one real RDS would refuse is refused here too rather than working locally
 // and failing on deploy — which is the whole reason to run a database against
 // an emulator first.
 //
-// It is worth knowing that this rejects passwords Overcast itself can generate:
-// GetRandomPassword's default punctuation set contains four of the five
-// forbidden characters. That is not a contradiction, it is AWS reproduced —
-// GetRandomPassword on AWS produces passwords RDS rejects too, which is exactly
-// why CDK's `Credentials.fromGeneratedSecret` excludes them by default. A
-// template that trips this would trip it on deploy; finding out here is cheaper.
-// The fix in a template is `ExcludeCharacters`, the same as on AWS.
+// It is worth knowing that this rejects some passwords Overcast itself can
+// generate. GetRandomPassword on AWS can also produce characters RDS refuses,
+// which is why CDK's Credentials.fromGeneratedSecret excludes them by default.
+// A template that trips this would trip it on deploy; finding out here is
+// cheaper. The fix is ExcludeCharacters, the same as on AWS.
 //
 // Nothing downstream depends on this for safety. The statements in this file
 // quote and escape their inputs (mysqlString, pgString, pgIdentifier), so a
 // password containing a quote is handled correctly regardless — this is a
 // fidelity rule, not the injection defence.
-func validateMasterUserPassword(password string) *protocol.AWSError {
-	if len(password) < minMasterPasswordLen || len(password) > maxMasterPasswordLen {
+func validateMasterUserPassword(engine, password string) *protocol.AWSError {
+	maxLen := 128
+	switch engine {
+	case "mysql", "mariadb", "aurora-mysql":
+		maxLen = 41
+	case "aurora-postgresql":
+		maxLen = 99
+	}
+	if len(password) < minMasterPasswordLen || len(password) > maxLen {
 		return errInvalidParameterValue(fmt.Sprintf(
 			"The parameter MasterUserPassword must be between %d and %d characters long.",
-			minMasterPasswordLen, maxMasterPasswordLen))
+			minMasterPasswordLen, maxLen))
 	}
 	for _, r := range password {
 		if r < 0x21 || r > 0x7e || strings.ContainsRune(forbiddenPasswordChars, r) {
 			return errInvalidParameterValue(
 				"The parameter MasterUserPassword is not a valid password. " +
 					"It can include any printable ASCII character except forward slash (/), " +
-					"double quote (\"), at symbol (@), single quote (') or space.")
+					"double quote (\"), at symbol (@) or space.")
 		}
 	}
 	return nil
@@ -109,7 +108,7 @@ func (h *Handler) changeMasterPassword(ctx context.Context, inst *DBInstance, ne
 	// or not there is anything running to apply it to, and a metadata-only
 	// instance that accepted a password no engine could ever take would just
 	// move the problem to whenever a container is first built from the record.
-	if aerr := validateMasterUserPassword(newPassword); aerr != nil {
+	if aerr := validateMasterUserPassword(inst.Engine, newPassword); aerr != nil {
 		return aerr
 	}
 	if !h.dockerReady.Load() || inst.DockerContainerID == "" {
@@ -147,7 +146,7 @@ func (h *Handler) changeClusterMasterPassword(ctx context.Context, cluster *DBCl
 	// cluster with no members never reaches — that cluster would otherwise
 	// record a password RDS refuses, and hand it to the first member created
 	// under it.
-	if aerr := validateMasterUserPassword(newPassword); aerr != nil {
+	if aerr := validateMasterUserPassword(cluster.Engine, newPassword); aerr != nil {
 		return aerr
 	}
 
@@ -213,24 +212,26 @@ func masterPasswordCommand(inst *DBInstance, newPassword string) (cmd, env []str
 
 	switch client {
 	case "psql":
-		// The master user is the image's POSTGRES_USER and so the cluster
-		// superuser; `postgres` is the database every image always has.
+		// Use the AWS-shaped rdsadmin maintenance identity so an API reset still
+		// works after the master changed its password directly with SQL. The
+		// second statement rotates that internal password alongside the stored
+		// credential, keeping later resets recoverable too.
 		// ON_ERROR_STOP makes a rejected statement a non-zero exit rather than
 		// a message on a successful run.
 		return []string{
 				client,
 				"--no-psqlrc",
 				"-v", "ON_ERROR_STOP=1",
-				"-U", inst.MasterUsername,
+				"-U", postgresBootstrapUser,
 				"-d", "postgres",
-				"-c", postgresPasswordStatement(inst.MasterUsername, newPassword),
+				"-c", postgresPasswordStatements(inst.MasterUsername, newPassword),
 			},
-			[]string{"PGPASSWORD=" + inst.MasterUserPassword}, true
+			[]string{"PGPASSWORD=" + credentialBootstrapPassword(inst.MasterUserPassword)}, true
 
 	default: // mysql, mariadb
-		// Always as root: a non-root master user is created with rights on its
-		// own database only, and cannot alter accounts. The container's root
-		// password is the master password the instance was created with.
+		// Use the local-only root maintenance account so password recovery still
+		// works if the requested master's grants have been damaged. Its password
+		// tracks the stored master password, but root is not exposed over TCP.
 		//
 		// MYSQL_PWD rather than `-p<password>`, which both clients read, for
 		// the same reason psql gets PGPASSWORD: argv is visible to `docker
@@ -276,9 +277,12 @@ func mysqlPasswordStatements(masterUser, newPassword string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// postgresPasswordStatement sets the new password on the master role.
-func postgresPasswordStatement(masterUser, newPassword string) string {
-	return "ALTER USER " + pgIdentifier(masterUser) + " WITH PASSWORD " + pgString(newPassword) + ";"
+// postgresPasswordStatements sets the new password on the master role and
+// rotates the container-only maintenance credential used for future resets.
+func postgresPasswordStatements(masterUser, newPassword string) string {
+	return "ALTER USER " + pgIdentifier(masterUser) + " WITH PASSWORD " + pgString(newPassword) + "; " +
+		"ALTER USER " + pgIdentifier(postgresBootstrapUser) + " WITH PASSWORD " +
+		pgString(credentialBootstrapPassword(newPassword)) + ";"
 }
 
 // mysqlEscaper escapes the two characters that end a MySQL string literal

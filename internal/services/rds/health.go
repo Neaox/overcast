@@ -194,6 +194,29 @@ func (h *Handler) containerFailureReason(ctx context.Context, inst *DBInstance) 
 	}
 }
 
+// credentialBootstrapComplete proves the engine finished every init script,
+// not merely opened the temporary server used during image initialization.
+// It deliberately does not authenticate as the master: AWS permits that user
+// to change its password with SQL, which must not make lifecycle recovery fail.
+func (h *Handler) credentialBootstrapComplete(ctx context.Context, inst *DBInstance) bool {
+	if !h.dockerReady.Load() || inst.DockerContainerID == "" {
+		return true
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	var engineProbe string
+	switch inst.Engine {
+	case "postgres", "aurora-postgresql":
+		engineProbe = "pg_isready --host=127.0.0.1 --port=" + strconv.Itoa(inst.Port) + " --timeout=2"
+	default:
+		engineProbe = "mysqladmin --protocol=tcp --host=127.0.0.1 --port=" + strconv.Itoa(inst.Port) + " --connect-timeout=2 ping"
+	}
+	result, err := h.docker.Exec(probeCtx, inst.DockerContainerID,
+		[]string{"sh", "-c", "test -f " + credentialBootstrapMarker + " && " + engineProbe}, nil)
+	return err == nil && result.ExitCode == 0
+}
+
 // scheduleHealthCheck polls the engine until it answers, its container dies, or
 // the budget runs out, and moves the instance to available or failed
 // accordingly. It never leaves an instance in creating/starting.
@@ -229,8 +252,10 @@ func (h *Handler) scheduleHealthCheck(region, instanceID, host string, port int)
 		conn, err := net.DialTimeout("tcp", target, dialTimeout)
 		if err == nil {
 			conn.Close()
-			h.markAvailable(ctx, got)
-			return
+			if h.credentialBootstrapComplete(ctx, got) {
+				h.markAvailable(ctx, got)
+				return
+			}
 		}
 
 		if h.clk.Now().Before(deadline) {
@@ -264,12 +289,47 @@ func (h *Handler) startInstanceContainer(ctx context.Context, inst *DBInstance) 
 	return h.startDBContainer(ctx, inst)
 }
 
+// stopInstanceContainerAsync keeps the AWS-visible status at stopping until
+// the engine has actually stopped. Marking it stopped first creates a race in
+// which an immediate StartDBInstance targets the still-shutting-down process.
+func (h *Handler) stopInstanceContainerAsync(ctx context.Context, instanceID, containerID string) {
+	region := h.store.region(ctx)
+	h.dockerLifecycleMu.Lock()
+	if h.shuttingDown.Load() {
+		h.dockerLifecycleMu.Unlock()
+		return
+	}
+	h.dockerWg.Add(1)
+	h.dockerLifecycleMu.Unlock()
+	go func() {
+		defer h.dockerWg.Done()
+		stopCtx, cancel := context.WithTimeout(middleware.ContextWithRegion(context.Background(), region), 15*time.Second)
+		defer cancel()
+		if err := h.docker.StopContainer(stopCtx, containerID, 10); err != nil {
+			h.log.Warn("RDS: stop database container", zap.String("instance", instanceID), zap.Error(err))
+			if _, aerr := h.mutateInstance(stopCtx, instanceID, func(inst *DBInstance) *protocol.AWSError {
+				if inst.DBInstanceStatus != "stopping" {
+					return errInstanceMovedOn
+				}
+				inst.DBInstanceStatus = "available"
+				inst.StoppedByUser = false
+				return nil
+			}); aerr != nil && aerr != errInstanceMovedOn {
+				h.log.Warn("RDS: restore status after failed stop", zap.String("instance", instanceID), zap.String("error", aerr.Message))
+			}
+			return
+		}
+		h.completeInstanceStop(stopCtx, instanceID)
+	}()
+}
+
 // startInstanceContainerAsync runs the container start off the request path —
 // a rebuild may have to pull an image — and settles the instance's status
-// itself: available once the engine answers, failed if it cannot be started at
-// all. Mirrors launchDBContainerAsync's merge discipline: the instance may have
-// been stopped or deleted while the start was in flight, so only the
-// container-owned fields are written back onto a fresh read.
+// itself: available once engine initialization completes, failed if it cannot
+// be started at all. Mirrors launchDBContainerAsync's merge
+// discipline: the instance may have been stopped or deleted while the start was
+// in flight, so only the container-owned fields are written back onto a fresh
+// read.
 func (h *Handler) startInstanceContainerAsync(ctx context.Context, instanceID string) {
 	region := h.store.region(ctx)
 	h.dockerLifecycleMu.Lock()

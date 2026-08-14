@@ -245,6 +245,49 @@ func TestCreateDBInstance_missingEngine(t *testing.T) {
 	assertQueryXMLError(t, resp, "InvalidParameterValue")
 }
 
+func TestCreateDBInstance_invalidMasterUsernameAndDatabaseName(t *testing.T) {
+	tests := []struct {
+		name   string
+		values url.Values
+	}{
+		{
+			name: "master username",
+			values: url.Values{
+				"DBInstanceIdentifier": {"invalid-user"},
+				"Engine":               {"mysql"},
+				"MasterUsername":       {"1admin"},
+				"MasterUserPassword":   {"Password1!"},
+			},
+		},
+		{
+			name: "database name",
+			values: url.Values{
+				"DBInstanceIdentifier": {"invalid-database"},
+				"Engine":               {"postgres"},
+				"MasterUsername":       {"admin"},
+				"MasterUserPassword":   {"Password1!"},
+				"DBName":               {"app-database"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a fresh RDS endpoint.
+			srv := helpers.NewTestServer(t)
+
+			// When: CreateDBInstance receives an AWS-invalid account or database name.
+			resp := rdsQuery(t, srv, "CreateDBInstance", tc.values)
+			defer resp.Body.Close()
+
+			// Then: the Query API rejects it synchronously with an AWS error envelope.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			assertQueryXMLError(t, resp, "InvalidParameterValue")
+			helpers.AssertRequestID(t, resp)
+		})
+	}
+}
+
 func TestCreateDBInstance_duplicate(t *testing.T) {
 	// Given: an existing DB instance
 	srv := helpers.NewTestServer(t)
@@ -1582,6 +1625,49 @@ func TestCreateDBCluster_invalidEngine(t *testing.T) {
 	assertQueryXMLError(t, resp, "InvalidParameterValue")
 }
 
+func TestCreateDBCluster_invalidMasterUsernameAndDatabaseName(t *testing.T) {
+	tests := []struct {
+		name   string
+		values url.Values
+	}{
+		{
+			name: "Aurora MySQL master username underscore",
+			values: url.Values{
+				"DBClusterIdentifier": {"invalid-user"},
+				"Engine":              {"aurora-mysql"},
+				"MasterUsername":      {"cluster_admin"},
+				"MasterUserPassword":  {"Password1!"},
+			},
+		},
+		{
+			name: "Aurora PostgreSQL database punctuation",
+			values: url.Values{
+				"DBClusterIdentifier": {"invalid-database"},
+				"Engine":              {"aurora-postgresql"},
+				"MasterUsername":      {"clusteradmin"},
+				"MasterUserPassword":  {"Password1!"},
+				"DatabaseName":        {"app-database"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a fresh RDS endpoint.
+			srv := helpers.NewTestServer(t)
+
+			// When: CreateDBCluster receives an AWS-invalid account or database name.
+			resp := rdsQuery(t, srv, "CreateDBCluster", tc.values)
+			defer resp.Body.Close()
+
+			// Then: the Query API rejects it synchronously with an AWS error envelope.
+			helpers.AssertStatus(t, resp, http.StatusBadRequest)
+			assertQueryXMLError(t, resp, "InvalidParameterValue")
+			helpers.AssertRequestID(t, resp)
+		})
+	}
+}
+
 func TestCreateDBCluster_duplicate(t *testing.T) {
 	// Given: a cluster already exists
 	srv := helpers.NewTestServer(t)
@@ -1908,6 +1994,7 @@ func TestDescribeEvents_categoryFilterOnTheWire(t *testing.T) {
 		"DBInstanceIdentifier": []string{"events-filter-db"},
 	})
 	resp2.Body.Close()
+	srv.Clock.Add(time.Nanosecond) // stopping → stopped after the engine has stopped
 
 	resp := rdsQuery(t, srv, "DescribeEvents", url.Values{
 		"EventCategories.EventCategory.1": []string{"notification"},

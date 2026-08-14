@@ -200,30 +200,52 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		return nil, errInvalidParameterValue("Engine must be one of: mysql, postgres, mariadb, aurora-mysql, aurora-postgresql")
 	}
 
-	// An Aurora member instance carries no credentials of its own: they belong
-	// to the cluster, and RDS rejects CreateDBInstance if you pass them for a
-	// member. Requiring them here refused the shape CDK's rds.DatabaseCluster
-	// actually emits — DBClusterIdentifier and little else — so the canonical
-	// Aurora stack could not create its writer at all. What the member takes
-	// from the cluster instead is resolved below, once the cluster is read.
+	// Aurora member settings belong to the cluster. CreateDBInstance accepts
+	// these fields in its shared request shape, but AWS documents them as not
+	// applying to Aurora members; they must not override the cluster data plane.
 	clusterID := req.DBClusterIdentifier
-
 	masterUser := req.MasterUsername
-	if masterUser == "" && clusterID == "" {
+	masterPass := req.MasterUserPassword
+	engineVersion := req.EngineVersion
+	port := req.Port
+	dbName := req.DBName
+	dbSubnetGroupName := req.DBSubnetGroupName
+	if clusterID != "" {
+		cluster, aerr := h.store.getDBCluster(ctx, clusterID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		if cluster.Engine != engine {
+			return nil, errInvalidParameterCombination("The DB instance engine must match the DB cluster engine.")
+		}
+
+		// AWS manages these settings at Aurora cluster scope. Instance-level
+		// values don't apply, so they must never override the data plane.
+		masterUser = cluster.MasterUsername
+		masterPass = cluster.MasterUserPassword
+		engineVersion = cluster.EngineVersion
+		port = cluster.Port
+		dbName = cluster.DatabaseName
+		dbSubnetGroupName = cluster.DBSubnetGroupName
+	}
+
+	if masterUser == "" {
 		return nil, errInvalidParameterValue("MasterUsername is required")
 	}
+	if clusterID == "" {
+		if aerr := validateMasterUsername(engine, masterUser, false); aerr != nil {
+			return nil, aerr
+		}
+	}
 
-	masterPass := req.MasterUserPassword
-	if masterPass == "" && clusterID == "" {
+	if masterPass == "" {
 		return nil, errInvalidParameterValue("MasterUserPassword is required")
 	}
-	// Validated at create as well as on modify. Accepting a password here that
-	// ModifyDBInstance would refuse leaves an instance that can never change
-	// it, and RDS rejects it at this point too. A member instance that supplied
-	// none is exempt — there is nothing to validate, and the cluster's own
-	// password was checked when it was created.
-	if masterPass != "" {
-		if aerr := validateMasterUserPassword(masterPass); aerr != nil {
+	if aerr := validateMasterUserPassword(engine, masterPass); aerr != nil {
+		return nil, aerr
+	}
+	if clusterID == "" {
+		if aerr := validateInitialDatabaseName(engine, dbName); aerr != nil {
 			return nil, aerr
 		}
 	}
@@ -237,7 +259,6 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		instanceClass = "db.t3.micro"
 	}
 
-	engineVersion := req.EngineVersion
 	if engineVersion == "" {
 		engineVersion = defaultEngineVersions[engine]
 	}
@@ -247,7 +268,6 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 		allocatedStorage = 20
 	}
 
-	port := req.Port
 	if port == 0 {
 		port = defaultPorts[engine]
 	}
@@ -258,44 +278,13 @@ func (h *Handler) createDBInstanceTyped(ctx context.Context, req *createDBInstan
 	}
 
 	multiAZ := req.MultiAZ
-	dbName := req.DBName
-	dbSubnetGroupName := req.DBSubnetGroupName
 	vpcID := ""
-
-	if clusterID != "" {
-		cluster, aerr := h.store.getDBCluster(ctx, clusterID)
-		if aerr != nil {
-			return nil, aerr
-		}
-		// An Aurora member instance inherits its cluster's subnet group, and so
-		// its VPC. AWS puts the subnet group on the cluster and the instances
-		// follow it — CDK's rds.DatabaseCluster emits AWS::RDS::DBInstance with
-		// a DBClusterIdentifier and no DBSubnetGroupName at all, which is the
-		// common shape rather than an unusual one.
-		//
-		// Reading only the instance's own field left the writer container on the
-		// default plane while a Lambda with the matching VpcConfig went into the
-		// VPC. That was invisible while placement was additive; once naming a VPC
-		// restricts, it is the cluster failing to answer its own application.
-		if dbSubnetGroupName == "" {
-			dbSubnetGroupName = cluster.DBSubnetGroupName
-		}
-		// Same inheritance for the credentials the member was not allowed to
-		// supply. The engine container needs a username and password to start,
-		// and the cluster's are the ones its members answer to.
-		if masterUser == "" {
-			masterUser = cluster.MasterUsername
-		}
-		if masterPass == "" {
-			masterPass = cluster.MasterUserPassword
-		}
-	}
 
 	// Resolved once, here, so the record always carries an explicit answer and
 	// nothing downstream has to re-derive it. It follows the *effective* subnet
 	// group, inherited or not: an Aurora instance in a cluster with a subnet
 	// group is as private as a standalone instance in the same group.
-	publiclyAccessible := defaultPubliclyAccessible(dbSubnetGroupName)
+	publiclyAccessible := defaultPubliclyAccessible(engine, dbSubnetGroupName)
 	if req.PubliclyAccessible != nil {
 		publiclyAccessible = *req.PubliclyAccessible
 	}
@@ -542,30 +531,40 @@ func (h *Handler) stopDBInstanceTyped(ctx context.Context, req *stopDBInstanceRe
 	}
 
 	if h.dockerReady.Load() && inst.DockerContainerID != "" {
-		if h.gc != nil {
-			h.gc.StopNow(inst.DockerContainerID)
-		} else {
-			_ = h.docker.StopContainer(ctx, inst.DockerContainerID, 10)
-		}
+		h.stopInstanceContainerAsync(ctx, id, inst.DockerContainerID)
+	} else {
+		instID := id
+		region := h.store.region(ctx)
+		h.scheduler.AfterScoped(region, instID, "stopped", 0, func(ctx context.Context) {
+			h.completeInstanceStop(ctx, instID)
+		})
 	}
-
-	instID := id
-	region := h.store.region(ctx)
-	h.scheduler.AfterScoped(region, instID, "stopped", 0, func(ctx context.Context) {
-		h.transitionInstance(ctx, instID, "stopping", "stopped")
-	})
-
-	if h.bus != nil {
-		h.bus.Publish(ctx, events.Event{Type: events.RDSInstanceStopped, Time: h.clk.Now(), Source: "rds", Payload: events.ResourcePayload{Name: id}})
-	}
-	// RDS-EVENT-0087.
-	h.recordInstanceEvent(ctx, id, "DB instance stopped.", "notification")
 
 	return &xmlStopDBInstanceResponse{
 		Xmlns:            rdsXMLNS,
 		Result:           xmlStopDBInstanceResult{DBInstance: h.toXMLDBInstance(ctx, inst)},
 		ResponseMetadata: protocol.ResponseMetadata{RequestID: protocol.RequestIDFromContext(ctx)},
 	}, nil
+}
+
+func (h *Handler) completeInstanceStop(ctx context.Context, instanceID string) {
+	if _, aerr := h.mutateInstance(ctx, instanceID, func(inst *DBInstance) *protocol.AWSError {
+		if inst.DBInstanceStatus != "stopping" {
+			return errInstanceMovedOn
+		}
+		inst.DBInstanceStatus = "stopped"
+		return nil
+	}); aerr != nil {
+		if aerr != errInstanceMovedOn {
+			h.log.Warn("RDS: persist stopped instance", zap.String("instance", instanceID), zap.String("error", aerr.Message))
+		}
+		return
+	}
+	if h.bus != nil {
+		h.bus.Publish(ctx, events.Event{Type: events.RDSInstanceStopped, Time: h.clk.Now(), Source: "rds", Payload: events.ResourcePayload{Name: instanceID}})
+	}
+	// RDS-EVENT-0087.
+	h.recordInstanceEvent(ctx, instanceID, "DB instance stopped.", "notification")
 }
 
 // --- StartDBInstance ---
@@ -968,11 +967,17 @@ func (h *Handler) createDBClusterTyped(ctx context.Context, req *createDBCluster
 	if req.MasterUsername == "" {
 		return nil, errInvalidParameterValue("MasterUsername is required")
 	}
+	if aerr := validateMasterUsername(engine, req.MasterUsername, true); aerr != nil {
+		return nil, aerr
+	}
 
 	if req.MasterUserPassword == "" {
 		return nil, errInvalidParameterValue("MasterUserPassword is required")
 	}
-	if aerr := validateMasterUserPassword(req.MasterUserPassword); aerr != nil {
+	if aerr := validateMasterUserPassword(engine, req.MasterUserPassword); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := validateInitialDatabaseName(engine, req.DatabaseName); aerr != nil {
 		return nil, aerr
 	}
 

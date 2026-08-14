@@ -68,7 +68,7 @@ func TestModifyDBCluster_masterPasswordReachesEveryMember(t *testing.T) {
 		t.Fatalf("ModifyDBCluster: %s: %s", aerr.Code, aerr.Message)
 	}
 
-	cmds, envs := d.recordedExecs()
+	cmds, envs := d.recordedPasswordExecs()
 	if len(cmds) != 2 {
 		t.Fatalf("the rotation ran %d commands, want one per member: %v", len(cmds), cmds)
 	}
@@ -150,7 +150,7 @@ func TestModifyDBCluster_unchangedMasterPasswordTouchesNoEngine(t *testing.T) {
 		t.Fatalf("ModifyDBCluster: %s: %s", aerr.Code, aerr.Message)
 	}
 
-	if cmds, _ := d.recordedExecs(); len(cmds) != 0 {
+	if cmds, _ := d.recordedPasswordExecs(); len(cmds) != 0 {
 		t.Errorf("an unchanged password still ran %d commands in a container: %v", len(cmds), cmds)
 	}
 }
@@ -164,24 +164,34 @@ func TestModifyDBCluster_unchangedMasterPasswordTouchesNoEngine(t *testing.T) {
 func TestValidateMasterUserPassword(t *testing.T) {
 	tests := []struct {
 		name     string
+		engine   string
 		password string
 		wantErr  bool
 	}{
-		{"typical", "correct-horse-battery", false},
-		{"punctuation RDS allows", "p#ssw%rd!12*", false},
-		{"exactly the minimum", "12345678", false},
-		{"one under the minimum", "1234567", true},
-		{"one over the maximum", strings.Repeat("a", 129), true},
-		{"single quote", "pass'word12", true},
-		{"double quote", "pass\"word12", true},
-		{"at sign", "pass@word12", true},
-		{"forward slash", "pass/word12", true},
-		{"space", "pass word12", true},
-		{"non-printable", "pass\tword12", true},
+		{"typical", "mysql", "correct-horse-battery", false},
+		{"punctuation RDS allows", "mysql", "p#ssw%rd!12*", false},
+		{"single quote is allowed", "mysql", "pass'word12", false},
+		{"exactly the minimum", "mysql", "12345678", false},
+		{"one under the minimum", "mysql", "1234567", true},
+		{"MySQL maximum", "mysql", strings.Repeat("a", 41), false},
+		{"over MySQL maximum", "mysql", strings.Repeat("a", 42), true},
+		{"MariaDB maximum", "mariadb", strings.Repeat("a", 41), false},
+		{"over MariaDB maximum", "mariadb", strings.Repeat("a", 42), true},
+		{"PostgreSQL maximum", "postgres", strings.Repeat("a", 128), false},
+		{"over PostgreSQL maximum", "postgres", strings.Repeat("a", 129), true},
+		{"Aurora MySQL maximum", "aurora-mysql", strings.Repeat("a", 41), false},
+		{"over Aurora MySQL maximum", "aurora-mysql", strings.Repeat("a", 42), true},
+		{"Aurora PostgreSQL maximum", "aurora-postgresql", strings.Repeat("a", 99), false},
+		{"over Aurora PostgreSQL maximum", "aurora-postgresql", strings.Repeat("a", 100), true},
+		{"double quote", "mysql", "pass\"word12", true},
+		{"at sign", "mysql", "pass@word12", true},
+		{"forward slash", "mysql", "pass/word12", true},
+		{"space", "mysql", "pass word12", true},
+		{"non-printable", "mysql", "pass\tword12", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			aerr := validateMasterUserPassword(tc.password)
+			aerr := validateMasterUserPassword(tc.engine, tc.password)
 			if tc.wantErr && aerr == nil {
 				t.Errorf("validateMasterUserPassword(%q) = nil, want a refusal", tc.password)
 			}
@@ -211,7 +221,7 @@ func TestMasterPassword_invalidIsRefusedBeforeTheEngine(t *testing.T) {
 	if aerr.Code != "InvalidParameterValue" {
 		t.Errorf("error code = %q, want InvalidParameterValue", aerr.Code)
 	}
-	if cmds, _ := d.recordedExecs(); len(cmds) != 0 {
+	if cmds, _ := d.recordedPasswordExecs(); len(cmds) != 0 {
 		t.Errorf("an invalid password reached the engine: %v", cmds)
 	}
 	if got := storedPassword(t, h, "db"); got != "old-password" {
@@ -279,7 +289,7 @@ func TestModifyDBCluster_masterPasswordWithNoMembersIsStored(t *testing.T) {
 	}); aerr != nil {
 		t.Fatalf("ModifyDBCluster: %s: %s", aerr.Code, aerr.Message)
 	}
-	if cmds, _ := d.recordedExecs(); len(cmds) != 0 {
+	if cmds, _ := d.recordedPasswordExecs(); len(cmds) != 0 {
 		t.Errorf("a memberless cluster ran %d commands in a container: %v", len(cmds), cmds)
 	}
 	cl, _ := h.store.getDBCluster(ctx, "aurora-cl")

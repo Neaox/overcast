@@ -193,6 +193,7 @@ var auroraEngines = map[string]bool{
 var engineImages = map[string]map[string]string{
 	"mysql": {
 		"8.0": "mysql:8.0",
+		"8.4": "mysql:8.4",
 		"5.7": "mysql:5.7",
 	},
 	"postgres": {
@@ -208,6 +209,7 @@ var engineImages = map[string]map[string]string{
 	// aurora-mysql is MySQL-wire-compatible; aurora-postgresql is PostgreSQL-wire-compatible.
 	"aurora-mysql": {
 		"3.04": "mysql:8.0",
+		"4.0":  "mysql:8.4",
 		"2.11": "mysql:5.7",
 	},
 	"aurora-postgresql": {
@@ -220,7 +222,7 @@ var engineImages = map[string]map[string]string{
 type engineEnv struct {
 	PasswordVar   string
 	DatabaseVar   string
-	UserVar       string // optional: sets the DB superuser name (e.g. POSTGRES_USER)
+	UserVar       string // optional: sets the bootstrap superuser name (e.g. POSTGRES_USER)
 	ContainerPort int
 }
 
@@ -459,6 +461,7 @@ type engineVersionEntry struct {
 }
 
 var allEngineVersions = []engineVersionEntry{
+	{"mysql", "8.4", "mysql8.4", "MySQL Community Edition", "MySQL 8.4"},
 	{"mysql", "8.0", "mysql8.0", "MySQL Community Edition", "MySQL 8.0"},
 	{"mysql", "5.7", "mysql5.7", "MySQL Community Edition", "MySQL 5.7"},
 	{"postgres", "16.1", "postgres16", "PostgreSQL", "PostgreSQL 16.1"},
@@ -466,6 +469,7 @@ var allEngineVersions = []engineVersionEntry{
 	{"postgres", "14.11", "postgres14", "PostgreSQL", "PostgreSQL 14.11"},
 	{"mariadb", "11.4", "mariadb11.4", "MariaDB Community Edition", "MariaDB 11.4"},
 	{"mariadb", "10.11", "mariadb10.11", "MariaDB Community Edition", "MariaDB 10.11"},
+	{"aurora-mysql", "4.0", "aurora-mysql8.4", "Aurora MySQL", "Aurora MySQL 4.0"},
 	{"aurora-mysql", "3.04", "aurora-mysql8.0", "Aurora MySQL", "Aurora MySQL 3.04"},
 	{"aurora-mysql", "2.11", "aurora-mysql5.7", "Aurora MySQL", "Aurora MySQL 2.11"},
 	{"aurora-postgresql", "15.4", "aurora-postgresql15", "Aurora PostgreSQL", "Aurora PostgreSQL 15.4"},
@@ -730,29 +734,14 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 	// root password; a sourced init fragment installs the exact requested
 	// credential before the engine is exposed.
 	entrypointPassword := inst.MasterUserPassword
-	bootstrapMySQL8 := usesMySQL8CredentialBootstrap(inst.Engine, image)
-	if bootstrapMySQL8 {
-		entrypointPassword = mysql8BootstrapPassword(inst.MasterUserPassword)
+	if usesMySQL8CredentialBootstrap(inst.Engine, image) || ecfg.UserVar != "" {
+		entrypointPassword = credentialBootstrapPassword(inst.MasterUserPassword)
 	}
 	env := []string{ecfg.PasswordVar + "=" + entrypointPassword}
-	dbName := inst.DBName
-	if dbName == "" {
-		dbName = "test"
-	}
-	env = append(env, ecfg.DatabaseVar+"="+dbName)
-
-	// Set the superuser name when the engine supports it (Postgres).
 	if ecfg.UserVar != "" {
-		env = append(env, ecfg.UserVar+"="+inst.MasterUsername)
-	}
-
-	// For MySQL/MariaDB, create an additional non-root user when MasterUsername
-	// is not "root". The root password is already set via MYSQL_ROOT_PASSWORD.
-	if !bootstrapMySQL8 && (inst.Engine == "mysql" || inst.Engine == "aurora-mysql") && inst.MasterUsername != "root" {
-		env = append(env, "MYSQL_USER="+inst.MasterUsername, "MYSQL_PASSWORD="+inst.MasterUserPassword)
-	}
-	if inst.Engine == "mariadb" && inst.MasterUsername != "root" {
-		env = append(env, "MARIADB_USER="+inst.MasterUsername, "MARIADB_PASSWORD="+inst.MasterUserPassword)
+		env = append(env, ecfg.UserVar+"="+postgresBootstrapUser, ecfg.DatabaseVar+"=postgres")
+	} else if inst.DBName != "" {
+		env = append(env, ecfg.DatabaseVar+"="+inst.DBName)
 	}
 
 	req := &docker.CreateContainerRequest{
@@ -791,18 +780,16 @@ func (h *Handler) startDBContainer(ctx context.Context, inst *DBInstance) error 
 		return fmt.Errorf("create container: %w", err)
 	}
 
-	if bootstrapMySQL8 {
-		archive, archiveErr := mysql8CredentialArchive(inst.MasterUsername, inst.MasterUserPassword, dbName)
-		if archiveErr != nil {
-			h.docker.RemoveContainerForce(containerID) //nolint:errcheck
-			h.store.releasePort(ctx, hostPort)         //nolint:errcheck
-			return fmt.Errorf("build MySQL credential initializer: %w", archiveErr)
-		}
-		if copyErr := h.docker.CopyToContainer(ctx, containerID, "/docker-entrypoint-initdb.d", archive); copyErr != nil {
-			h.docker.RemoveContainerForce(containerID) //nolint:errcheck
-			h.store.releasePort(ctx, hostPort)         //nolint:errcheck
-			return fmt.Errorf("install MySQL credential initializer: %w", copyErr)
-		}
+	archive, archiveErr := credentialArchiveForInstance(inst, image)
+	if archiveErr != nil {
+		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+		return fmt.Errorf("build database credential initializer: %w", archiveErr)
+	}
+	if copyErr := h.docker.CopyToContainer(ctx, containerID, "/docker-entrypoint-initdb.d", archive); copyErr != nil {
+		h.docker.RemoveContainerForce(containerID) //nolint:errcheck
+		h.store.releasePort(ctx, hostPort)         //nolint:errcheck
+		return fmt.Errorf("install database credential initializer: %w", copyErr)
 	}
 
 	// Join the data plane before starting: the engine is reachable by name from

@@ -166,6 +166,7 @@ func TestDescribeEvents_filtersBySourceAndCategory(t *testing.T) {
 	if _, aerr := h.stopDBInstanceTyped(ctx, &stopDBInstanceReq{DBInstanceIdentifier: "events-a"}); aerr != nil {
 		t.Fatalf("StopDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
+	h.scheduler.AdvanceAndSettle(clk, 0)
 
 	got := describeEvents(t, h, &describeEventsReq{SourceType: "db-instance", SourceIdentifier: "events-a"})
 	if len(got) != 2 {

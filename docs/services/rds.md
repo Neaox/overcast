@@ -21,12 +21,14 @@ identified by the `Action` parameter with API version `2014-10-31`.
 ### Instance status is what actually happened
 
 An instance only reports `available` once Overcast has opened a TCP connection
-to the engine — on creation as well as on start. If the container exits, cannot
-be started or created, or never accepts a connection within five minutes, the
-instance goes to AWS's `failed` status rather than being declared available
-anyway — a database you cannot connect to is not available, and discovering
-that by trying to connect is worse than being told. An instance is never left
-in `creating` or `starting` indefinitely.
+to the engine, all credential initialization scripts have completed, and the
+engine's own readiness client confirms that the final server is listening — on
+creation as well as on start. This distinguishes the temporary initialization
+server from the final database without authenticating as the master user. If the
+container exits, cannot be started or created, or never reaches engine readiness
+within five minutes, the instance goes to AWS's `failed` status
+rather than being declared available anyway. An instance is never left in
+`creating` or `starting` indefinitely.
 
 That means `CreateDBInstance` leaves the instance in `creating` for as long as
 the engine takes to come up, which for a first boot is roughly half a minute:
@@ -101,6 +103,42 @@ the thing in your way — Overcast's own compatibility suites run this way, whic
 [issue #614](https://github.com/Neaox/overcast/issues/614) tracks undoing. If
 your code connects to the database, keep the default.
 
+### Master account and initial database
+
+The requested master account is the database administrator your application
+connects as. On MySQL, MariaDB, and Aurora MySQL, it can create databases and
+users and grant privileges across the instance. On PostgreSQL and Aurora
+PostgreSQL it is a non-superuser with `CREATEDB`, `CREATEROLE`, and membership
+in the emulated `rds_superuser` role, matching the boundary AWS exposes rather
+than the stock image's unrestricted superuser.
+
+The MySQL-family grants follow the selected engine version. RDS MySQL 8.0.36+
+and Aurora MySQL 3 use the `rds_superuser_role` model; MySQL 8.4 and Aurora
+MySQL 8.4 use their revised dynamic privileges and `caching_sha2_password`;
+Aurora MySQL 3 adds `SHOW_ROUTINE` from 3.04 and the documented `FLUSH_*`
+privileges from 3.09. Older MySQL, Aurora MySQL 2, and MariaDB receive the
+documented direct instance-wide grants, including MariaDB 11.4's
+`SHOW CREATE ROUTINE`.
+
+The container's maintenance account is separate. Overcast uses it during
+initialization and password recovery, but its generated credential is never
+returned by the RDS API. MySQL-family maintenance access is local-only;
+PostgreSQL exposes the AWS-shaped `rdsadmin` role in its catalog. Neither is an
+alternative application credential.
+
+`DBName` follows the engine's AWS behavior. MySQL and MariaDB create no
+application database when it is omitted. PostgreSQL always has `postgres`; an
+explicit `DBName` creates an additional database owned by the master account.
+An Aurora member inherits `DatabaseName` from its cluster.
+
+This emulates the privileges applications use to bootstrap databases and users,
+not every managed-engine guardrail. The stock engines don't provide AWS's full
+catalog of protected internal accounts and `rds_*` procedures. PostgreSQL
+extension availability follows the backing image rather than the RDS extension
+allowlist, and reserved-word validation covers the engine system schemas and
+common SQL keywords rather than every version-specific reserved word. Code that
+depends on those administrative edges still needs testing against AWS.
+
 ### Changing the master password — `ModifyDBInstance` and `ModifyDBCluster`
 
 `MasterUserPassword` is applied to the database that is running, not just to
@@ -131,20 +169,22 @@ With Docker unavailable the instance is metadata-only, and there the new
 password is simply stored: nothing is serving connections to disagree with the
 record, and a container built for that instance later is seeded from it.
 
-For MySQL and MariaDB the change covers the container's `root` account as well
-as the master user. `root` is how Overcast seeds a container, so leaving it on
-the old password would make the record wrong about any container rebuilt later.
-`DescribeDBInstances` never returns the password, on AWS or here.
+The change also keeps the container's maintenance credential synchronized so a
+later API reset remains possible even if the master changed its own password
+through SQL. Lifecycle readiness never uses the stored master password, so that
+SQL-side change also survives a stop/start cycle. `DescribeDBInstances` never
+returns either password, on AWS or here.
 
-Passwords are held to RDS's constraints, on create as well as on modify: 8–128
-printable ASCII characters, and none of `/`, `"`, `@`, `'` or space. A password
-RDS would refuse is refused here, so you find out locally instead of on deploy.
+Passwords are held to the engine's RDS constraints on create and modify. MySQL,
+MariaDB, and Aurora MySQL accept 8–41 characters; RDS PostgreSQL accepts 8–128;
+Aurora PostgreSQL accepts 8–99. All accept printable ASCII except `/`, `"`, `@`,
+and space. A single quote is valid and is escaped before it reaches the engine.
 
 That includes passwords Overcast itself can generate. `GetRandomPassword`'s
-default punctuation set contains four of the five forbidden characters — as
-AWS's does, which is why CDK's `Credentials.fromGeneratedSecret` excludes them
-by default. If a `{{resolve:secretsmanager:…}}` password is refused, the fix is
-the same one real AWS needs: set `ExcludeCharacters` on the generated secret.
+default punctuation set contains characters RDS forbids — as AWS's does, which
+is why CDK's `Credentials.fromGeneratedSecret` excludes them by default. If a
+`{{resolve:secretsmanager:…}}` password is refused, set `ExcludeCharacters` on
+the generated secret, as you would for AWS.
 
 `ModifyDBCluster` rotates a cluster's password the same way, through the same
 code, once per member. A `DBCluster` is a logical record with no container of
@@ -166,15 +206,15 @@ Omit it and it defaults the way AWS defaults it:
 
 | Created | Default | Why |
 | --- | --- | --- |
-| Without `DBSubnetGroupName` | `true` | The instance lands in the region's default VPC, and Overcast seeds that VPC with an internet gateway, exactly as AWS does |
+| Without `DBSubnetGroupName` | `true` for RDS, `false` for Aurora | RDS instances use the default VPC; AWS documents a private default for Aurora instances |
 | With `DBSubnetGroupName` | `false` | A named subnet group is a chosen placement, and AWS treats a subnet group's instances as private unless their subnets are public |
 
-AWS writes the rule in terms of internet gateways: public if the VPC the
-instance landed in has one. The first row resolves to `true` here and can
-resolve to nothing else. The second cannot be resolved from RDS at all —
-nothing on that side can see whether a subnet group's VPC has a gateway — so it
-takes AWS's other documented outcome, private. Send `PubliclyAccessible=true`
-to override it; that is what the field is for.
+AWS writes the non-Aurora rule in terms of internet gateways: public if the VPC
+the instance landed in has one. Overcast's default VPC has one, so an RDS
+instance in the first row is public; Aurora keeps AWS's explicit private
+default. A named subnet group's gateway state cannot currently be resolved from
+RDS, so it takes the private outcome. Send `PubliclyAccessible=true` to override
+it; that is what the field is for.
 
 An instance created before Overcast had the field reports the value its create
 would have been given, so upgrading does not change what any existing database
@@ -193,18 +233,25 @@ that used to work has started being refused, that is what changed; see
 
 ### What an Aurora member instance inherits
 
-On AWS, an Aurora cluster owns the placement and the credentials, and its member
-instances take them. `CreateDBInstance` with a `DBClusterIdentifier` is the
-member's create call, and it does not carry either — RDS rejects master
-credentials on a member, and the subnet group belongs to the cluster.
+On AWS, an Aurora cluster owns the placement, credentials, engine version,
+port, and initial database. `CreateDBInstance` with a `DBClusterIdentifier` is
+the member's create call. The shared request shape still contains some of these
+fields, but AWS documents them as not applying to Aurora instances.
 
 Overcast follows that. A `CreateDBInstance` naming a `DBClusterIdentifier`:
 
-| Field | If the request omits it | If the request sets it |
-| --- | --- | --- |
-| `DBSubnetGroupName` | Takes the cluster's, and with it the cluster's VPC | The instance's own wins |
-| `MasterUsername` | Takes the cluster's | The instance's own wins |
-| `MasterUserPassword` | Takes the cluster's | The instance's own wins |
+| Field | Effective member value |
+| --- | --- |
+| `DBSubnetGroupName` | The cluster's, and with it the cluster's VPC |
+| `MasterUsername` | The cluster's |
+| `MasterUserPassword` | The cluster's |
+| `EngineVersion` | The cluster's |
+| `Port` | The cluster's |
+| `DBName` | The cluster's `DatabaseName` |
+
+Conflicting instance-level values are ignored for these cluster-owned settings,
+so they cannot silently change which engine or credentials the endpoint serves.
+The instance engine itself must match the cluster engine.
 
 This is what makes the CDK shape work. `rds.DatabaseCluster` synthesises
 `AWS::RDS::DBInstance` with a `DBClusterIdentifier` and nothing else — no subnet
@@ -361,21 +408,21 @@ is fully supported. Docker containers are started when instances are added to th
 
 ### DB instances
 
-| Operation                         | Status         | Notes                                                                                                                                                                                                                                                                                                         | AWS Docs                                                                                                   |
-| --------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `CreateDBInstance`                | ✅ Supported   | Docker-backed when available; async creating→available; mysql/postgres/mariadb/aurora-mysql/aurora-postgresql; accepts `DBClusterIdentifier` for Aurora, and a member inherits the cluster's subnet group and credentials; `PubliclyAccessible` defaults to true without a DB subnet group and false with one | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBInstance.html)                |
-| `DescribeDBInstances`             | ✅ Supported   | List all or filter by DBInstanceIdentifier                                                                                                                                                                                                                                                                    | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBInstances.html)             |
-| `DeleteDBInstance`                | ✅ Supported   | Sets status to "deleting"; stops+removes Docker container                                                                                                                                                                                                                                                     | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBInstance.html)                |
-| `StopDBInstance`                  | ✅ Supported   | Stops Docker container; available→stopping→stopped                                                                                                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StopDBInstance.html)                  |
-| `StartDBInstance`                 | ✅ Supported   | Starts Docker container; stopped→starting→available                                                                                                                                                                                                                                                           | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StartDBInstance.html)                 |
-| `ModifyDBInstance`                | ✅ Supported   | Metadata updates (class, storage, engine version, multi-AZ, public accessibility); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and is held to RDS's 8–128 character and forbidden-character rules                                                                | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ModifyDBInstance.html)                |
-| `RebootDBInstance`                | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_RebootDBInstance.html)                |
-| `CreateDBSnapshot`                | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBSnapshot.html)                |
-| `DeleteDBSnapshot`                | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBSnapshot.html)                |
-| `DescribeDBSnapshots`             | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBSnapshots.html)             |
-| `RestoreDBInstanceFromDBSnapshot` | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_RestoreDBInstanceFromDBSnapshot.html) |
-| `DescribeDBLogFiles`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBLogFiles.html)              |
-| `DownloadDBLogFilePortion`        | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                             | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DownloadDBLogFilePortion.html)        |
+| Operation                         | Status         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                      | AWS Docs                                                                                                   |
+| --------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `CreateDBInstance`                | ✅ Supported   | Docker-backed when available; async creating→available; mysql/postgres/mariadb/aurora-mysql/aurora-postgresql; master accounts can create databases/users and grant privileges; omitted `DBName` creates no MySQL/MariaDB database; Aurora members use cluster-owned placement, credentials, version, port, and database; omitted `PubliclyAccessible` defaults to false for Aurora and otherwise follows subnet placement | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBInstance.html)                |
+| `DescribeDBInstances`             | ✅ Supported   | List all or filter by DBInstanceIdentifier                                                                                                                                                                                                                                                                                                                                                                                 | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBInstances.html)             |
+| `DeleteDBInstance`                | ✅ Supported   | Sets status to "deleting"; stops+removes Docker container                                                                                                                                                                                                                                                                                                                                                                  | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBInstance.html)                |
+| `StopDBInstance`                  | ✅ Supported   | Stops Docker container; available→stopping→stopped                                                                                                                                                                                                                                                                                                                                                                         | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StopDBInstance.html)                  |
+| `StartDBInstance`                 | ✅ Supported   | Starts Docker container; stopped→starting→available                                                                                                                                                                                                                                                                                                                                                                        | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_StartDBInstance.html)                 |
+| `ModifyDBInstance`                | ✅ Supported   | Metadata updates (class, storage, engine version, multi-AZ, public accessibility); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and uses RDS's engine-specific length and forbidden-character rules                                                                                                                                                                            | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_ModifyDBInstance.html)                |
+| `RebootDBInstance`                | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_RebootDBInstance.html)                |
+| `CreateDBSnapshot`                | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBSnapshot.html)                |
+| `DeleteDBSnapshot`                | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DeleteDBSnapshot.html)                |
+| `DescribeDBSnapshots`             | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBSnapshots.html)             |
+| `RestoreDBInstanceFromDBSnapshot` | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_RestoreDBInstanceFromDBSnapshot.html) |
+| `DescribeDBLogFiles`              | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBLogFiles.html)              |
+| `DownloadDBLogFilePortion`        | ❌ Unsupported | stub; returns 501                                                                                                                                                                                                                                                                                                                                                                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DownloadDBLogFilePortion.html)        |
 
 ### Aurora clusters
 
@@ -399,10 +446,10 @@ is fully supported. Docker containers are started when instances are added to th
 
 ### Engine metadata
 
-| Operation                            | Status       | Notes                                                                                                                             | AWS Docs                                                                                                      |
-| ------------------------------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `DescribeDBEngineVersions`           | ✅ Supported | mysql (8.0, 5.7), postgres (16.1, 15.5, 14.11), mariadb (11.4, 10.11), aurora-mysql (3.04, 2.11), aurora-postgresql (15.4, 14.11) | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBEngineVersions.html)           |
-| `DescribeOrderableDBInstanceOptions` | ✅ Supported | Static list of engine + instance class combos for mysql/postgres/mariadb                                                          | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeOrderableDBInstanceOptions.html) |
+| Operation                            | Status       | Notes                                                                                                                                       | AWS Docs                                                                                                      |
+| ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `DescribeDBEngineVersions`           | ✅ Supported | mysql (8.4, 8.0, 5.7), postgres (16.1, 15.5, 14.11), mariadb (11.4, 10.11), aurora-mysql (4.0, 3.04, 2.11), aurora-postgresql (15.4, 14.11) | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBEngineVersions.html)           |
+| `DescribeOrderableDBInstanceOptions` | ✅ Supported | Static list of engine + instance class combos for mysql/postgres/mariadb                                                                    | [docs](https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeOrderableDBInstanceOptions.html) |
 
 ### Subnet groups
 
