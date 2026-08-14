@@ -20,6 +20,9 @@ operations:
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-dynamodb-table.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-logs-loggroup.html
       - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/dynamic-references-secretsmanager.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html
+      - https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_RollbackStack.html
+      - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-event-messages.html
     tests:
       - tests/integration/cloudformation/cloudformation_test.go
     scenarios:
@@ -95,6 +98,19 @@ operations:
           - tests/integration/cloudformation/dynamic_reference_test.go::TestUpdateStack_unchangedResourceDoesNotRetrieveDynamicReference
           - tests/integration/cloudformation/dynamic_reference_test.go::TestUpdateStack_changedResourceRetrievesCurrentDynamicReference
         notes: CloudFormation hashes and stores the literal dynamic reference. An unchanged containing resource neither refreshes nor retrieves the secret, even when the current secret was deleted; a changed or newly created resource resolves AWSCURRENT through GetSecretValue at dispatch time.
+      - name: ecs service stabilization reports actionable scheduler failure
+        status: fixed
+        tests:
+          - internal/services/cloudformation/provisioner_ecs_test.go::TestECSServiceRolloutFailure_primaryDeploymentOnly
+        notes: AWS::ECS::Service stabilization selects the newest actionable scheduler failure event instead of allowing a newer task-start progress event to replace the failure reason reported through CloudFormation.
+      - name: create rollback honors deletion policy retain
+        status: fixed
+        tests:
+          - internal/services/cloudformation/provisioner_stabilize_test.go::TestCreateStack_rollbackRetainsAResourceWithDeletionPolicyRetain
+          - internal/services/cloudformation/provisioner_stabilize_test.go::TestStackResource_retentionPolicyDependsOnOperation
+          - internal/services/cloudformation/rollback_stack_test.go::TestRollbackStack_retainExceptOnCreateControlsRetainedCreateResources
+          - tests/integration/cloudformation/cloudformation_test.go::TestCreateStack_rollbackRetainsResourceWithDeletionPolicyRetain
+        notes: A resource with DeletionPolicy Retain remains service-side when automatic stack creation rollback runs, including a resource that received a physical ID before stabilization failed. Its stack history records DELETE_SKIPPED. Template RetainExceptOnCreate deletes during initial create rollback but retains during ordinary deletion, while the RollbackStack operation flag can opt newly created Retain resources into deletion.
   DescribeChangeSet:
     status: fixed
     aws_docs:
@@ -138,6 +154,8 @@ findings:
     - AWS::Logs::LogGroup applies RetentionInDays, resource Tags, and propagated stack tags when created, then reconciles effective tag additions, changes, and removals during stack updates.
     - AWS::SecretsManager::Secret no longer drops KmsKeyId or Tags, and malformed GenerateSecretString templates fail before password generation or secret creation.
     - No-op updates no longer retrieve Secrets Manager dynamic references before literal-property change detection, preserving AWS's intentionally stale resource value and avoiding unnecessary internal API calls.
+    - AWS::ECS::Service stabilization preserves the actionable scheduler failure when a newer task-start progress event exists.
+    - Automatic create rollback honors DeletionPolicy Retain and records DELETE_SKIPPED for the retained resource; RetainExceptOnCreate distinguishes initial create rollback from ordinary deletion.
   remaining_gaps:
     - Audit resource-type tracking against provisioner registrations.
     - Add CloudFormation Ref compatibility tests for resource handlers whose physical ID differs from documented Ref semantics.

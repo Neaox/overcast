@@ -161,6 +161,82 @@ func TestRollbackStack_fromCreateFailed_reachesRollbackComplete(t *testing.T) {
 	}
 }
 
+func TestRollbackStack_retainExceptOnCreateControlsRetainedCreateResources(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		override   string
+		wantStatus string
+	}{
+		{name: "retain by default", wantStatus: ResourceDeleteSkipped},
+		{name: "delete when requested", override: "true", wantStatus: ResourceDeleteComplete},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a failed create left a physical resource marked Retain
+			h, st := newRollbackTestHandler(t)
+			seedStack(t, st, "retained-create", StatusCreateFailed, StackResource{
+				LogicalID:      "Resource",
+				PhysicalID:     "physical-id",
+				Type:           "AWS::Unknown::RollbackTest",
+				Status:         ResourceCreateComplete,
+				DeletionPolicy: "Retain",
+			})
+
+			// When: RollbackStack runs with or without the operation override
+			params := map[string]string{"StackName": "retained-create"}
+			if tc.override != "" {
+				params["RetainExceptOnCreate"] = tc.override
+			}
+			rec := httptest.NewRecorder()
+			h.dispatch(rec, cfnPost("RollbackStack", params))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+			}
+
+			// Then: the retained resource is skipped by default and deleted only
+			// when this rollback operation explicitly requests the exception.
+			got, err := st.getStack(context.Background(), "retained-create")
+			if err != nil {
+				t.Fatalf("getStack: %v", err)
+			}
+			if len(got.Resources) != 1 || got.Resources[0].Status != tc.wantStatus {
+				t.Fatalf("resources = %+v, want status %s", got.Resources, tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestRollbackStack_invalidRetainExceptOnCreateReturnsValidationError(t *testing.T) {
+	// Given: a rollbackable failed create
+	h, st := newRollbackTestHandler(t)
+	seedStack(t, st, "invalid-retain-option", StatusCreateFailed)
+
+	// When: the optional Boolean member is malformed
+	rec := httptest.NewRecorder()
+	h.dispatch(rec, cfnPost("RollbackStack", map[string]string{
+		"StackName":            "invalid-retain-option",
+		"RetainExceptOnCreate": "not-a-boolean",
+	}))
+
+	// Then: the request is rejected before changing stack state
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	var errResp queryErrorResponse
+	if err := xml.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("unmarshal error response: %v; body: %s", err, rec.Body.String())
+	}
+	if errResp.Code != "ValidationError" || !strings.Contains(errResp.Message, "retainExceptOnCreate") {
+		t.Errorf("error = %#v, want retainExceptOnCreate ValidationError", errResp)
+	}
+	got, err := st.getStack(context.Background(), "invalid-retain-option")
+	if err != nil {
+		t.Fatalf("getStack: %v", err)
+	}
+	if got.Status != StatusCreateFailed {
+		t.Errorf("stack status = %q, want %q", got.Status, StatusCreateFailed)
+	}
+}
+
 func TestRollbackStack_byStackARN_resolvesTheStack(t *testing.T) {
 	// Given: a rollbackable stack addressed by ARN rather than name
 	h, st := newRollbackTestHandler(t)

@@ -274,12 +274,42 @@ func ecsServiceRolloutFailure(svc describedECSService) (string, bool) {
 		if d.RolloutState != "FAILED" && d.FailedTasks == 0 {
 			return "", false
 		}
+		if reason := ecsServiceFailureEvent(svc.Events); reason != "" {
+			return reason, true
+		}
+		if d.RolloutStateReason != "" {
+			return d.RolloutStateReason, true
+		}
 		if len(svc.Events) > 0 {
 			return svc.Events[0].Message, true
 		}
-		return d.RolloutStateReason, true
+		return "", true
 	}
 	return "", false
+}
+
+// ecsServiceFailureEvent returns the newest scheduler event that reports a
+// failure. ECS prepends service events, and a replacement attempt can therefore
+// put a successful "has started N tasks" event ahead of the event that explains
+// why the deployment failed.
+func ecsServiceFailureEvent(events []describedECSEvent) string {
+	// Placement events carry the service-provided cause after "Reason:". ECS
+	// may prepend broader deployment-failure events afterward, so prefer the
+	// reason-bearing observation even when it is not the newest failure event.
+	for _, event := range events {
+		if strings.Contains(strings.ToLower(event.Message), "reason:") {
+			return event.Message
+		}
+	}
+	for _, event := range events {
+		message := strings.ToLower(event.Message)
+		if strings.Contains(message, " was unable to ") ||
+			strings.Contains(message, " is unable to ") ||
+			strings.Contains(message, " deployment failed:") {
+			return event.Message
+		}
+	}
+	return ""
 }
 
 // waitForServiceStable blocks until an ECS service's current deployment reaches
@@ -318,7 +348,9 @@ func waitForServiceStable(ctx context.Context, router http.Handler, region, clus
 		if ecsServiceStable(svc) {
 			return nil
 		}
-		if len(svc.Events) > 0 {
+		if reason := ecsServiceFailureEvent(svc.Events); reason != "" {
+			lastReason = reason
+		} else if lastReason == "" && len(svc.Events) > 0 {
 			lastReason = svc.Events[0].Message
 		}
 		// A task the scheduler could not place will not place itself on a
