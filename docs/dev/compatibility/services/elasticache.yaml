@@ -2,7 +2,7 @@ service: elasticache
 status: reviewed
 priority: p2
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-07-14
+last_updated: 2026-08-14
 protocols: [query]
 implementation: [internal/services/elasticache]
 integration_tests: [tests/integration/elasticache]
@@ -10,6 +10,15 @@ capability_docs: docs/services/elasticache.md
 operation_count_estimate: 24 supported
 current_support_level: Cache clusters, serverless caches, replication groups, subnet/parameter groups, engine metadata, and tagging supported; replication is single-primary only.
 operations:
+  CreateCacheCluster:
+    status: in_progress
+    aws_docs:
+      - https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/AutoDiscovery.HowAutoDiscoveryWorks.html
+    scenarios:
+      - name: managed node replacement after container exit
+        status: fixed
+        tests: [TestHandleContainerEvent_stillActsOnOwnCacheCluster, TestReconcileContainers_doesNotAdoptAnotherOvercastsCacheCluster]
+        evidence: A live exit or a startup/reconnect snapshot moves an available cache through modifying, coalesces duplicate recovery work, and starts a replacement without adopting another Overcast instance's same-named container.
   CreateServerlessCache:
     status: reviewed
     aws_docs:
@@ -85,6 +94,7 @@ findings:
     - Added CloudFormation support for AWS::ElastiCache::ServerlessCache including ARN and Endpoint.* attributes.
     - Added ServerlessCache pagination, CacheUsageLimits, snapshot restore metadata, and CloudFormation in-place updates.
     - Docker-backed ElastiCache cache cluster, replication group, and serverless cache endpoint hostnames are registered as Docker DNS aliases on the Lambda network.
+    - Missing or exited cache cluster, replication group, and serverless cache containers are replaced from live events and central startup/reconnect snapshots rather than being exposed as durable stopped resources.
   remaining_gaps:
     - Review CreateCacheCluster/CreateReplicationGroup validation, lifecycle states, and XML shapes.
     - Serverless cache snapshots are metadata-only; no durable snapshot contents are emulated.

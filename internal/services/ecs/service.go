@@ -115,6 +115,13 @@ func (s *Service) InitBus(bus *events.Bus) {
 	bus.Subscribe(events.DockerContainerDied, s.handler.handleContainerDied)
 }
 
+// ReconcileContainers satisfies router.ContainerReconciler. The central
+// Docker supervisor calls it at startup and after watcher reconnects so a
+// missed event cannot leave a dead container represented as a running task.
+func (s *Service) ReconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
+	s.handler.reconcileContainers(ctx, containers)
+}
+
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
 

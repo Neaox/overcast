@@ -34,7 +34,7 @@ import (
 // and serverless caches ("serverless:" prefix).
 func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	p, ok := e.Payload.(events.DockerContainerPayload)
-	if !ok || p.Service != serviceName {
+	if !ok || p.Service != serviceName || !h.dockerReady.Load() {
 		return
 	}
 
@@ -52,9 +52,10 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 			return
 		}
 		switch rg.Status {
-		case "available", "starting":
-			h.transitionReplicationGroup(ctx, rgID, "stopped", rg.Status)
-			log.Info("replication group container stopped",
+		case "available", "starting", "creating", "modifying":
+			h.transitionReplicationGroup(ctx, rgID, "modifying", "available")
+			h.recoverReplicationGroup(region, rgID)
+			log.Info("replication group container stopped; replacement scheduled",
 				zap.String("rg", rgID), zap.String("action", p.Action))
 		}
 		return
@@ -70,9 +71,10 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 			return
 		}
 		switch cache.Status {
-		case "available", "starting":
-			h.transitionServerlessCache(ctx, name, "stopped", cache.Status)
-			log.Info("serverless cache container stopped",
+		case "available", "starting", "creating", "modifying":
+			h.transitionServerlessCache(ctx, name, "modifying", "available")
+			h.recoverServerlessCache(region, name)
+			log.Info("serverless cache container stopped; replacement scheduled",
 				zap.String("cache", name), zap.String("action", p.Action))
 		}
 		return
@@ -88,9 +90,10 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		return
 	}
 	switch cluster.CacheClusterStatus {
-	case "available", "starting":
-		h.transitionCacheCluster(ctx, p.ResourceID, "stopped", cluster.CacheClusterStatus)
-		log.Info("cache cluster container stopped",
+	case "available", "starting", "creating", "modifying":
+		h.transitionCacheCluster(ctx, p.ResourceID, "modifying", "available")
+		h.recoverCacheCluster(region, p.ResourceID)
+		log.Info("cache cluster container stopped; replacement scheduled",
 			zap.String("cluster", p.ResourceID), zap.String("action", p.Action))
 	}
 }
@@ -160,13 +163,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 	// below. Keyed to a single container, the index kept whichever the daemon
 	// listed last, so a neighbour's could decide the state of a record whose
 	// own container was running all along.
-	byResource := make(map[string][]*docker.ContainerSummary, len(containers))
-	for i := range containers {
-		rid := containers[i].ResourceID()
-		if rid != "" {
-			byResource[rid] = append(byResource[rid], &containers[i])
-		}
-	}
+	byResource := docker.ContainersByResource(containers)
 
 	// Reconcile cache clusters.
 	clusters, err := serviceutil.ScanRegions[CacheCluster](ctx, h.store.store, nsClusters, h.store.defaultRegion)
@@ -175,38 +172,39 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 	} else {
 		for _, rc := range clusters {
 			cluster := rc.Value
-			if cluster.DockerContainerID == "" {
-				continue
-			}
 			rctx := middleware.ContextWithRegion(ctx, rc.Region)
 			c := h.instances.OwnContainer(rctx, byResource[cluster.CacheClusterId], cluster.DockerContainerID)
 			switch {
 			case c == nil:
-				if cluster.CacheClusterStatus == "available" || cluster.CacheClusterStatus == "starting" || cluster.CacheClusterStatus == "creating" {
-					h.transitionCacheCluster(rctx, cluster.CacheClusterId, "stopped", cluster.CacheClusterStatus)
-					log.Info("reconcile: container missing — marked stopped",
+				if cacheRuntimeExpected(cluster.CacheClusterStatus) {
+					h.transitionCacheCluster(rctx, cluster.CacheClusterId, "modifying", "available", "stopped")
+					h.recoverCacheCluster(rc.Region, cluster.CacheClusterId)
+					log.Info("reconcile: container missing; replacement scheduled",
 						zap.String("cluster", cluster.CacheClusterId))
 				}
 			case c.State == "running":
 				// The Docker inspect stays outside the record's lock; only the
 				// endpoint it decides is written back, onto a fresh read.
+				cluster.DockerContainerID = c.ID
 				h.setContainerEndpoint(rctx, cluster)
 				if _, aerr := h.mutateCacheCluster(rctx, cluster.CacheClusterId, func(stored *CacheCluster) *protocol.AWSError {
+					stored.DockerContainerID = cluster.DockerContainerID
 					stored.ConfigurationEndpoint = cluster.ConfigurationEndpoint
 					return nil
 				}); aerr != nil {
 					log.Warn("reconcile: persist cluster endpoint",
 						zap.String("cluster", cluster.CacheClusterId), zap.String("error", aerr.Message))
 				}
-				if cluster.CacheClusterStatus == "creating" || cluster.CacheClusterStatus == "starting" || cluster.CacheClusterStatus == "stopped" || cluster.CacheClusterStatus == "available" {
+				if cacheRuntimeExpected(cluster.CacheClusterStatus) {
 					h.scheduleHealthCheck(rc.Region, cluster.CacheClusterId, cluster.ConfigurationEndpoint.Address, cluster.ConfigurationEndpoint.Port)
 					log.Info("reconcile: container running — scheduling health check",
 						zap.String("cluster", cluster.CacheClusterId))
 				}
 			default:
-				if cluster.CacheClusterStatus == "available" || cluster.CacheClusterStatus == "starting" {
-					h.transitionCacheCluster(rctx, cluster.CacheClusterId, "stopped", cluster.CacheClusterStatus)
-					log.Info("reconcile: container not running — marked stopped",
+				if cacheRuntimeExpected(cluster.CacheClusterStatus) {
+					h.transitionCacheCluster(rctx, cluster.CacheClusterId, "modifying", "available", "stopped")
+					h.recoverCacheCluster(rc.Region, cluster.CacheClusterId)
+					log.Info("reconcile: container not running; replacement scheduled",
 						zap.String("cluster", cluster.CacheClusterId),
 						zap.String("containerState", c.State))
 				}
@@ -221,37 +219,38 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 	} else {
 		for _, rr := range rgs {
 			rg := rr.Value
-			if rg.DockerContainerID == "" {
-				continue
-			}
 			rctx := middleware.ContextWithRegion(ctx, rr.Region)
 			resourceLabel := "rg:" + rg.ReplicationGroupId
 			c := h.instances.OwnContainer(rctx, byResource[resourceLabel], rg.DockerContainerID)
 			switch {
 			case c == nil:
-				if rg.Status == "available" || rg.Status == "starting" || rg.Status == "creating" {
-					h.transitionReplicationGroup(rctx, rg.ReplicationGroupId, "stopped", rg.Status)
-					log.Info("reconcile: RG container missing — marked stopped",
+				if cacheRuntimeExpected(rg.Status) {
+					h.transitionReplicationGroup(rctx, rg.ReplicationGroupId, "modifying", "available", "stopped")
+					h.recoverReplicationGroup(rr.Region, rg.ReplicationGroupId)
+					log.Info("reconcile: RG container missing; replacement scheduled",
 						zap.String("rg", rg.ReplicationGroupId))
 				}
 			case c.State == "running":
+				rg.DockerContainerID = c.ID
 				h.setReplicationGroupEndpoint(rctx, rg)
 				if _, aerr := h.mutateReplicationGroup(rctx, rg.ReplicationGroupId, func(stored *ReplicationGroup) *protocol.AWSError {
+					stored.DockerContainerID = rg.DockerContainerID
 					stored.ConfigurationEndpoint = rg.ConfigurationEndpoint
 					return nil
 				}); aerr != nil {
 					log.Warn("reconcile: persist RG endpoint",
 						zap.String("rg", rg.ReplicationGroupId), zap.String("error", aerr.Message))
 				}
-				if rg.Status == "creating" || rg.Status == "starting" || rg.Status == "stopped" || rg.Status == "available" {
+				if cacheRuntimeExpected(rg.Status) {
 					h.scheduleReplicationGroupHealthCheck(rr.Region, rg.ReplicationGroupId, rg.ConfigurationEndpoint.Address, rg.ConfigurationEndpoint.Port)
 					log.Info("reconcile: RG container running — scheduling health check",
 						zap.String("rg", rg.ReplicationGroupId))
 				}
 			default:
-				if rg.Status == "available" || rg.Status == "starting" {
-					h.transitionReplicationGroup(rctx, rg.ReplicationGroupId, "stopped", rg.Status)
-					log.Info("reconcile: RG container not running — marked stopped",
+				if cacheRuntimeExpected(rg.Status) {
+					h.transitionReplicationGroup(rctx, rg.ReplicationGroupId, "modifying", "available", "stopped")
+					h.recoverReplicationGroup(rr.Region, rg.ReplicationGroupId)
+					log.Info("reconcile: RG container not running; replacement scheduled",
 						zap.String("rg", rg.ReplicationGroupId),
 						zap.String("containerState", c.State))
 				}
@@ -266,22 +265,22 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 	}
 	for _, rs := range serverless {
 		cache := rs.Value
-		if cache.DockerContainerID == "" {
-			continue
-		}
 		rctx := middleware.ContextWithRegion(ctx, rs.Region)
 		resourceLabel := "serverless:" + cache.ServerlessCacheName
 		c := h.instances.OwnContainer(rctx, byResource[resourceLabel], cache.DockerContainerID)
 		switch {
 		case c == nil:
-			if cache.Status == "available" || cache.Status == "starting" || cache.Status == "creating" {
-				h.transitionServerlessCache(rctx, cache.ServerlessCacheName, "stopped", cache.Status)
-				log.Info("reconcile: serverless cache container missing — marked stopped",
+			if cacheRuntimeExpected(cache.Status) {
+				h.transitionServerlessCache(rctx, cache.ServerlessCacheName, "modifying", "available", "stopped")
+				h.recoverServerlessCache(rs.Region, cache.ServerlessCacheName)
+				log.Info("reconcile: serverless cache container missing; replacement scheduled",
 					zap.String("cache", cache.ServerlessCacheName))
 			}
 		case c.State == "running":
+			cache.DockerContainerID = c.ID
 			h.setServerlessEndpoint(rctx, cache)
 			if _, aerr := h.mutateServerlessCache(rctx, cache.ServerlessCacheName, func(stored *ServerlessCache) *protocol.AWSError {
+				stored.DockerContainerID = cache.DockerContainerID
 				stored.Endpoint = cache.Endpoint
 				stored.ReaderEndpoint = cache.ReaderEndpoint
 				return nil
@@ -289,20 +288,129 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 				log.Warn("reconcile: persist serverless cache endpoint",
 					zap.String("cache", cache.ServerlessCacheName), zap.String("error", aerr.Message))
 			}
-			if cache.Status == "creating" || cache.Status == "starting" || cache.Status == "stopped" || cache.Status == "available" {
+			if cacheRuntimeExpected(cache.Status) {
 				h.scheduleServerlessHealthCheck(rs.Region, cache.ServerlessCacheName, cache.Endpoint.Address, cache.Endpoint.Port)
 				log.Info("reconcile: serverless cache container running — scheduling health check",
 					zap.String("cache", cache.ServerlessCacheName))
 			}
 		default:
-			if cache.Status == "available" || cache.Status == "starting" {
-				h.transitionServerlessCache(rctx, cache.ServerlessCacheName, "stopped", cache.Status)
-				log.Info("reconcile: serverless cache container not running — marked stopped",
+			if cacheRuntimeExpected(cache.Status) {
+				h.transitionServerlessCache(rctx, cache.ServerlessCacheName, "modifying", "available", "stopped")
+				h.recoverServerlessCache(rs.Region, cache.ServerlessCacheName)
+				log.Info("reconcile: serverless cache container not running; replacement scheduled",
 					zap.String("cache", cache.ServerlessCacheName),
 					zap.String("containerState", c.State))
 			}
 		}
 	}
+}
+
+func (h *Handler) runDockerRecovery(key string, recover func()) {
+	h.dockerLifecycle.Lock()
+	defer h.dockerLifecycle.Unlock()
+	if h.dockerStopping || !h.dockerReady.Load() {
+		return
+	}
+	if _, loaded := h.dockerRecoveries.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	h.dockerWg.Add(1)
+	go func() {
+		defer h.dockerWg.Done()
+		defer h.dockerRecoveries.Delete(key)
+		recover()
+	}()
+}
+
+func cacheRuntimeExpected(status string) bool {
+	switch status {
+	case "available", "creating", "starting", "modifying", "stopped":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) recoverCacheCluster(region, id string) {
+	h.runDockerRecovery("cluster/"+region+"/"+id, func() {
+		ctx := middleware.ContextWithRegion(h.bgCtx, region)
+		cluster, aerr := h.store.getCacheCluster(ctx, id)
+		if aerr != nil || cluster == nil || cluster.CacheClusterStatus == "deleting" {
+			return
+		}
+		if err := h.startCacheContainer(ctx, cluster); err != nil {
+			h.log.Warn("ElastiCache: replace cache cluster container", zap.String("cluster", id), zap.Error(err))
+			return
+		}
+		if _, aerr := h.mutateCacheCluster(ctx, id, func(stored *CacheCluster) *protocol.AWSError {
+			if stored.CacheClusterStatus == "deleting" {
+				return errRecordMovedOn
+			}
+			stored.DockerContainerID = cluster.DockerContainerID
+			stored.HostPort = cluster.HostPort
+			stored.ConfigurationEndpoint = cluster.ConfigurationEndpoint
+			return nil
+		}); aerr != nil {
+			h.teardownOrphanedContainer(ctx, "cache cluster", id, cluster.DockerContainerID, cluster.HostPort)
+			return
+		}
+		h.scheduleHealthCheck(region, id, cluster.ConfigurationEndpoint.Address, cluster.ConfigurationEndpoint.Port)
+	})
+}
+
+func (h *Handler) recoverReplicationGroup(region, id string) {
+	h.runDockerRecovery("replication-group/"+region+"/"+id, func() {
+		ctx := middleware.ContextWithRegion(h.bgCtx, region)
+		group, aerr := h.store.getReplicationGroup(ctx, id)
+		if aerr != nil || group == nil || group.Status == "deleting" {
+			return
+		}
+		if err := h.startReplicationGroupContainer(ctx, group); err != nil {
+			h.log.Warn("ElastiCache: replace replication group container", zap.String("rg", id), zap.Error(err))
+			return
+		}
+		if _, aerr := h.mutateReplicationGroup(ctx, id, func(stored *ReplicationGroup) *protocol.AWSError {
+			if stored.Status == "deleting" {
+				return errRecordMovedOn
+			}
+			stored.DockerContainerID = group.DockerContainerID
+			stored.HostPort = group.HostPort
+			stored.ConfigurationEndpoint = group.ConfigurationEndpoint
+			return nil
+		}); aerr != nil {
+			h.teardownOrphanedContainer(ctx, "replication group", id, group.DockerContainerID, group.HostPort)
+			return
+		}
+		h.scheduleReplicationGroupHealthCheck(region, id, group.ConfigurationEndpoint.Address, group.ConfigurationEndpoint.Port)
+	})
+}
+
+func (h *Handler) recoverServerlessCache(region, name string) {
+	h.runDockerRecovery("serverless/"+region+"/"+name, func() {
+		ctx := middleware.ContextWithRegion(h.bgCtx, region)
+		cache, aerr := h.store.getServerlessCache(ctx, name)
+		if aerr != nil || cache == nil || cache.Status == "deleting" {
+			return
+		}
+		if err := h.startServerlessCacheContainer(ctx, cache); err != nil {
+			h.log.Warn("ElastiCache: replace serverless cache container", zap.String("cache", name), zap.Error(err))
+			return
+		}
+		if _, aerr := h.mutateServerlessCache(ctx, name, func(stored *ServerlessCache) *protocol.AWSError {
+			if stored.Status == "deleting" {
+				return errRecordMovedOn
+			}
+			stored.DockerContainerID = cache.DockerContainerID
+			stored.HostPort = cache.HostPort
+			stored.Endpoint = cache.Endpoint
+			stored.ReaderEndpoint = cache.ReaderEndpoint
+			return nil
+		}); aerr != nil {
+			h.teardownOrphanedContainer(ctx, "serverless cache", name, cache.DockerContainerID, cache.HostPort)
+			return
+		}
+		h.scheduleServerlessHealthCheck(region, name, cache.Endpoint.Address, cache.Endpoint.Port)
+	})
 }
 
 // parseRGResourceID returns (rgID, true) when the resource label has the "rg:" prefix.

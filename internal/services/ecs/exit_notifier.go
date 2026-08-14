@@ -8,10 +8,82 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
 )
+
+// reconcileContainers brings stored task state back in line with Docker after
+// startup or an event-stream reconnect. It deliberately feeds the same exit
+// handler as a live die event so stop metadata, service failure accounting,
+// replacement scheduling, log retention, and cleanup have one owner.
+func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
+	tasks, err := serviceutil.ScanRegions[Task](ctx, h.store.store, nsTasks, h.store.defaultRegion)
+	if err != nil {
+		h.log.Warn("ecs: reconcile containers: list tasks", zap.Error(err))
+		return
+	}
+	byResource := docker.ContainersByResource(containers)
+	for _, regioned := range tasks {
+		task := regioned.Value
+		if task.LastStatus == "STOPPED" {
+			continue
+		}
+		rctx := middleware.ContextWithRegion(ctx, regioned.Region)
+		resourceID := extractClusterName(task.ClusterArn) + "/" + extractTaskID(task.TaskArn)
+		h.reconcileTaskContainers(rctx, task, resourceID, byResource[resourceID])
+	}
+}
+
+func (h *Handler) reconcileTaskContainers(ctx context.Context, task *Task, resourceID string, candidates []*docker.ContainerSummary) {
+	for _, container := range task.Containers {
+		if container.DockerID == "" || container.LastStatus == "STOPPED" {
+			continue
+		}
+		actual := h.instances.OwnContainer(ctx, candidates, container.DockerID)
+		if actual != nil && !containerHasExited(actual.State) {
+			continue
+		}
+		payload, exitTime := h.reconciledContainerExit(ctx, container.DockerID, resourceID, actual)
+		h.handleContainerDied(ctx, events.Event{Type: events.DockerContainerDied, Time: exitTime, Payload: payload})
+	}
+}
+
+func (h *Handler) reconciledContainerExit(ctx context.Context, recordedID, resourceID string, actual *docker.ContainerSummary) (events.DockerContainerPayload, time.Time) {
+	payload := events.DockerContainerPayload{
+		ContainerID: recordedID,
+		Action:      "die",
+		Service:     serviceName,
+		ResourceID:  resourceID,
+	}
+	if actual == nil {
+		return payload, time.Time{}
+	}
+	payload.ContainerID = actual.ID
+	payload.Instance = actual.Instance()
+	if h.docker == nil {
+		return payload, time.Time{}
+	}
+	info, err := h.docker.InspectContainer(ctx, actual.ID)
+	if err != nil {
+		h.log.Debug("ecs: reconcile containers: inspect exited container",
+			zap.String("container", actual.ID), zap.Error(err))
+		return payload, time.Time{}
+	}
+	payload.ExitCode = strconv.Itoa(info.State.ExitCode)
+	payload.Reason = info.ExitReason()
+	return payload, info.ExitTime()
+}
+
+func containerHasExited(state string) bool {
+	switch strings.ToLower(state) {
+	case "dead", "exited", "removing":
+		return true
+	default:
+		return false
+	}
+}
 
 // handleContainerDied is a bus handler for DockerContainerDied events targeting
 // ECS containers. When a task container exits, it updates the container status,
@@ -32,7 +104,7 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	}
 	clusterName, taskID := parts[0], parts[1]
 
-	region, task, allStopped := h.recordContainerExit(clusterName, taskID, p)
+	region, task, allStopped := h.recordContainerExit(clusterName, taskID, p, e.Time)
 	if task == nil {
 		return
 	}
@@ -49,6 +121,7 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{
 			Type:    events.ECSTaskStopped,
+			Time:    e.Time,
 			Payload: events.ResourcePayload{Name: taskID},
 		})
 	}
@@ -60,7 +133,7 @@ func (h *Handler) handleContainerDied(_ context.Context, e events.Event) {
 	if !ok {
 		return
 	}
-	h.recordServiceTaskDeath(ctx, clusterName, serviceName, task)
+	h.recordServiceTaskDeath(ctx, clusterName, serviceName, task, e.Time)
 	h.scheduleServiceReplacement(ctx, region, clusterName, serviceName)
 }
 
@@ -140,7 +213,7 @@ func (h *Handler) containerIsOurs(ctx context.Context, containerID, owner string
 // task happens inside the lock rather than racing ahead of it. The lock is
 // released before the caller touches the service, keeping the order
 // service-then-task. See lockTask.
-func (h *Handler) recordContainerExit(clusterName, taskID string, p events.DockerContainerPayload) (string, *Task, bool) {
+func (h *Handler) recordContainerExit(clusterName, taskID string, p events.DockerContainerPayload, occurredAt time.Time) (string, *Task, bool) {
 	defer h.lockTask(clusterName, taskID)()
 
 	// The event only carries "cluster/task" — not the region the task was
@@ -155,13 +228,13 @@ func (h *Handler) recordContainerExit(clusterName, taskID string, p events.Docke
 		return "", nil, false
 	}
 
-	exitCode, _ := strconv.Atoi(p.ExitCode)
-
 	// Update the container that died.
 	for i := range task.Containers {
 		if task.Containers[i].DockerID == p.ContainerID {
 			task.Containers[i].LastStatus = "STOPPED"
-			task.Containers[i].ExitCode = &exitCode
+			if exitCode, err := strconv.Atoi(p.ExitCode); err == nil {
+				task.Containers[i].ExitCode = &exitCode
+			}
 			if p.Reason != "" {
 				task.Containers[i].Reason = p.Reason
 			}
@@ -194,7 +267,10 @@ func (h *Handler) recordContainerExit(clusterName, taskID string, p events.Docke
 		task.DesiredStatus = "STOPPED"
 		task.StoppedReason = "Essential container in task exited"
 		task.StopCode = "EssentialContainerExited"
-		stoppedAt := h.clk.Now().Unix()
+		if occurredAt.IsZero() {
+			occurredAt = h.clk.Now()
+		}
+		stoppedAt := occurredAt.Unix()
 		task.StoppedAt = &stoppedAt
 		task.StoppingAt = &stoppedAt
 
@@ -215,7 +291,7 @@ func (h *Handler) recordContainerExit(clusterName, taskID string, p events.Docke
 // the reconcile's write lands on top of the increment and the failure is lost:
 // the count a crash loop is measured by then undercounts, and with it the
 // "unable to consistently start tasks" event and the circuit breaker.
-func (h *Handler) recordServiceTaskDeath(ctx context.Context, clusterName, serviceName string, task *Task) {
+func (h *Handler) recordServiceTaskDeath(ctx context.Context, clusterName, serviceName string, task *Task, occurredAt time.Time) {
 	defer h.lockService(ctx, clusterName, serviceName)()
 
 	svc, aerr := h.store.getService(ctx, clusterName, serviceName)
@@ -227,7 +303,7 @@ func (h *Handler) recordServiceTaskDeath(ctx context.Context, clusterName, servi
 	// The deployment counts it as a failed task, which is what makes a
 	// crash loop visible: failedTasks climbs, the deployment stops
 	// reporting a steady state it is not in, and a circuit breaker trips.
-	h.recordTaskStopFailure(svc, task)
+	h.recordTaskStopFailureAt(svc, task, occurredAt)
 	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
 		h.log.Warn("ecs: failed to persist service after a task stopped",
 			zap.String("cluster", clusterName),

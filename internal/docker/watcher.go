@@ -210,10 +210,14 @@ func (w *Watcher) dispatchContainer(ctx context.Context, de *dockerEvent) {
 		zap.String("resource", payload.ResourceID),
 	)
 
-	w.bus.Publish(ctx, events.Event{
+	e := events.Event{
 		Type:    eventType,
 		Payload: payload,
-	})
+	}
+	if de.Time > 0 {
+		e.Time = time.Unix(de.Time, 0)
+	}
+	w.bus.Publish(ctx, e)
 }
 
 // inspectDieReason fetches State from the Docker daemon after a "die" event and
@@ -233,16 +237,7 @@ func (w *Watcher) inspectDieReason(ctx context.Context, containerID string) stri
 			zap.Error(err))
 		return ""
 	}
-	switch {
-	case info.State.OOMKilled:
-		return "oom"
-	case info.State.Error != "":
-		return info.State.Error
-	case info.State.ExitCode != 0:
-		return fmt.Sprintf("exit %d", info.State.ExitCode)
-	default:
-		return ""
-	}
+	return info.ExitReason()
 }
 
 // dispatchNetwork handles network lifecycle events.

@@ -290,9 +290,10 @@ func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
 
 // startTaskContainers creates and starts Docker containers for all container
 // definitions in a task. On success, task containers are updated with
-// DockerIDs. The RUNNING transition is queued by launchTask once the task
-// record has been persisted, not here — see the comment there.
-func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement) error {
+// DockerIDs. beforeStart closes the publication race immediately before the
+// first container can emit a die event; launchTask releases that guard only
+// after the task record is stored. The RUNNING transition is queued there too.
+func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskDefinition, clusterName, taskID string, placement awsvpcPlacement, beforeStart func()) error {
 	// Resolve how task containers reach Overcast. The planes themselves are
 	// created once by the Docker supervisor, before any client is handed to a
 	// service, so there is nothing to ensure here.
@@ -444,6 +445,7 @@ func (h *Handler) startTaskContainers(ctx context.Context, task *Task, td *TaskD
 			}
 		}
 
+		beforeStart()
 		if err := h.docker.StartContainer(ctx, dockerID); err != nil {
 			_ = h.docker.RemoveContainerForce(dockerID)
 			return containerFailure(cd.Name, "ecs: start container %s: %w", cd.Name, decorateBindMountError(err, mounts))

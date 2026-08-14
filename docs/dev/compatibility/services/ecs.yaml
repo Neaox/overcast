@@ -94,6 +94,21 @@ operations:
         evidence:
           - internal/services/cloudformation/provisioner_ecs_test.go#TestECSServiceUpdate_forceNewDeploymentFromCDK
         notes: AWS::ECS::Service ForceNewDeployment emitted by CDK is translated to the ECS UpdateService forceNewDeployment boolean; the CloudFormation-only nonce is not sent to ECS.
+  CreateService:
+    status: fixed
+    docs:
+      - https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_ContainerDefinition.html
+      - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-lifecycle-events.html
+      - https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs_services.html
+    scenarios:
+      fast_essential_container_exit:
+        status: fixed
+        evidence:
+          - internal/services/ecs/container_reconcile_test.go#TestLaunchTask_containerExitCannotRaceTaskPublication
+          - internal/services/ecs/container_reconcile_test.go#TestServiceTask_fastExitOneIsStoppedAndReplaced
+          - internal/services/ecs/container_reconcile_test.go#TestReconcileContainers_exitedContainerStopsTask
+          - internal/services/ecs/secret_deployment_test.go#TestUpdateService_forceNewDeploymentRefreshesSecret
+        notes: A container that exits during Docker start cannot outrun task-record publication. ECS records STOPPED/EssentialContainerExited and the exit code, replaces a failed service task, and startup or event-stream reconnect reconciliation repairs missed Docker events through the same lifecycle path. A forced deployment after exit 1 still resolves the current secret for its replacement container.
 findings:
   fixed:
     - DescribeClusters no longer returns creation-time zeroes after resources are added to a cluster.
@@ -101,6 +116,7 @@ findings:
     - Stopped task records expire after the documented one-hour visibility window.
     - StopTask and scheduler stops expose stable stop codes, reasons, and transition timestamps.
     - UpdateService forceNewDeployment replaces tasks on the unchanged task definition and refreshes launch-time secret values, including through the CloudFormation/CDK nonce path.
+    - Fast container exits cannot leave ECS tasks reported RUNNING; live Docker events update task state immediately, with central startup and reconnect reconciliation as the missed-event backstop.
   remaining_gaps:
     - Prioritize RunTask, CreateService, RegisterTaskDefinition, Fargate awsvpc, and CDK paths.
     - Modern ListServiceDeployments, DescribeServiceDeployments, and service revision history are not implemented; they are a separate endpoint-sized feature rather than task retention metadata.

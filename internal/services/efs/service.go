@@ -26,6 +26,7 @@ import (
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/events"
 	"github.com/Neaox/overcast/internal/lifecycle"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/protocol/codec"
@@ -70,6 +71,11 @@ type Service struct {
 	// live_nfs.go.
 	nfsMu sync.Mutex
 	nfsWg sync.WaitGroup
+	// reconcileMu prevents startup, reconnect, and live-exit recovery from
+	// starting competing export replacements for the same snapshot.
+	reconcileMu          sync.Mutex
+	reconcileLifecycleMu sync.Mutex
+	reconcileStopping    bool
 	// skipNFSReadiness short-circuits the NFSv4 readiness probe. Tests that
 	// drive a fake Docker daemon have no socket to probe; production never
 	// sets it.
@@ -124,6 +130,13 @@ func New(cfg *config.Config, st state.Store, logger *zap.Logger, clk clock.Clock
 
 func (s *Service) Name() string { return serviceName }
 
+// InitBus wires live export-container recovery. Startup and watcher reconnect
+// gaps are handled through ReconcileContainers; this path handles a death the
+// watcher observes normally.
+func (s *Service) InitBus(bus *events.Bus) {
+	bus.Subscribe(events.DockerContainerDied, s.handleExportContainerDied)
+}
+
 func (s *Service) TargetPrefix() string { return targetPrefix }
 
 // PathPrefixes satisfies router.PathPrefixService.
@@ -133,6 +146,10 @@ func (s *Service) PathPrefixes() []string { return []string{apiPrefix} }
 // waits for in-flight callbacks, including NFS export starts.
 func (s *Service) Stop(ctx context.Context) {
 	s.scheduler.Stop(ctx)
+	s.reconcileLifecycleMu.Lock()
+	s.reconcileStopping = true
+	s.dockerReady.Store(false)
+	s.reconcileLifecycleMu.Unlock()
 
 	done := make(chan struct{})
 	go func() {

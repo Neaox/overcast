@@ -268,18 +268,21 @@ func errConfigurationNotFound(arn string) *protocol.AWSError {
 
 // Handler handles MSK REST JSON requests.
 type Handler struct {
-	cfg         *config.Config
-	store       *mskStore
-	log         *serviceutil.ServiceLogger
-	clk         clock.Clock
-	bus         *events.Bus
-	scheduler   *lifecycle.Scheduler
-	docker      *docker.Client
-	dockerReady atomic.Bool
-	puller      *docker.ImagePuller
-	gc          *docker.GC
-	dockerWg    sync.WaitGroup
-	vpcResolver VPCNetworkResolver
+	cfg             *config.Config
+	store           *mskStore
+	log             *serviceutil.ServiceLogger
+	clk             clock.Clock
+	bus             *events.Bus
+	scheduler       *lifecycle.Scheduler
+	docker          *docker.Client
+	dockerReady     atomic.Bool
+	puller          *docker.ImagePuller
+	gc              *docker.GC
+	dockerWg        sync.WaitGroup
+	dockerLifecycle sync.Mutex // closes the start/recovery Add/Wait boundary at shutdown
+	dockerStopping  bool
+	dockerStarts    sync.Map // cluster ARN -> in-flight start or recovery
+	vpcResolver     VPCNetworkResolver
 	// instances scopes container sweeps to the containers this instance
 	// created, so one Overcast's shutdown does not take down another's running
 	// brokers. See docker.LabelInstance.
@@ -434,6 +437,10 @@ func (s *Service) ReconcileContainers(ctx context.Context, containers []docker.C
 // then cleans up all containers via the GC.
 func (s *Service) Stop(ctx context.Context) {
 	s.handler.scheduler.Stop(ctx)
+	s.handler.dockerLifecycle.Lock()
+	s.handler.dockerStopping = true
+	s.handler.dockerReady.Store(false)
+	s.handler.dockerLifecycle.Unlock()
 
 	done := make(chan struct{})
 	go func() {

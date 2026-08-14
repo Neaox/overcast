@@ -106,16 +106,16 @@ type QueryActionOwner interface {
 // Service packages import that package directly to avoid import cycles.
 
 // ContainerReconciler is optionally implemented by services that manage Docker
-// containers. When Docker becomes available at startup, the router calls
-// ReconcileContainers with the current state of all managed containers for that
-// service. Services should use this to sync their stored state (e.g. mark
-// instances as "stopped" if their container exited while overcast was down).
+// containers. When Docker becomes available at startup, and whenever its event
+// stream reconnects, the router calls ReconcileContainers with the current state
+// of all managed containers for that service. Services use this to repair any
+// state changes that happened while Overcast could not observe Docker events.
 //
 // ReconcileContainers must be idempotent — it will only be called once per
 // Docker availability event, but it must produce correct results regardless of
 // the order or timing of the call relative to CreateDBInstance etc.
 type ContainerReconciler interface {
-	// ReconcileContainers is called once after Docker becomes available.
+	// ReconcileContainers is called after Docker becomes available or reconnects.
 	// containers lists every managed container for this service, running or stopped.
 	ReconcileContainers(ctx context.Context, containers []docker.ContainerSummary)
 }

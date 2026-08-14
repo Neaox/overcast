@@ -70,11 +70,19 @@ func fakeEventsServer(t *testing.T) (*httptest.Server, chan dockerEvent) {
 		flusher.Flush()
 
 		enc := json.NewEncoder(w)
-		for ev := range ch {
-			if err := enc.Encode(ev); err != nil {
+		for {
+			select {
+			case <-r.Context().Done():
 				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				if err := enc.Encode(ev); err != nil {
+					return
+				}
+				flusher.Flush()
 			}
-			flusher.Flush()
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -146,6 +154,7 @@ func TestWatcher_DispatchEvents(t *testing.T) {
 	ch <- dockerEvent{
 		Type:   "container",
 		Action: "die",
+		Time:   1_725_000_123,
 		Actor: struct {
 			ID         string            `json:"ID"`
 			Attributes map[string]string `json:"Attributes"`
@@ -247,6 +256,9 @@ func TestWatcher_DispatchEvents(t *testing.T) {
 	}
 	if p1.Reason != "exit 1" {
 		t.Errorf("die.Reason = %q, want %q", p1.Reason, "exit 1")
+	}
+	if want := time.Unix(1_725_000_123, 0); !dieEvt.Time.Equal(want) {
+		t.Errorf("die.Time = %s, want Docker event time %s", dieEvt.Time, want)
 	}
 
 	// Verify: oom

@@ -14,6 +14,9 @@ import (
 
 	"github.com/Neaox/overcast/internal/dataplane"
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/events"
+	"github.com/Neaox/overcast/internal/middleware"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 func k3sImageForVersion(version string) string {
@@ -72,7 +75,7 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 		ContainerConfig: &docker.ContainerConfig{
 			Image:        image,
 			Cmd:          []string{"server", "--disable=traefik", "--disable=metrics-server"},
-			Labels:       docker.ManagedLabels(serviceName, cluster.Name),
+			Labels:       s.instances.ManagedLabels(ctx, serviceName, cluster.Name),
 			ExposedPorts: map[string]struct{}{"6443/tcp": {}},
 		},
 		HostConfig: &docker.HostConfig{AutoRemove: true,
@@ -96,6 +99,11 @@ func (s *Service) startLiveCluster(ctx context.Context, region string, cluster *
 			if !existing.HasOvercastLabels(serviceName, cluster.Name) {
 				s.failLiveCluster(ctx, region, cluster.Name, issueConfigurationConflict,
 					fmt.Errorf("container %s already exists and is not managed by Overcast", containerName))
+				return
+			}
+			if owner := existing.Instance(); owner != "" && owner != s.instances.Resolve(ctx) {
+				s.failLiveCluster(ctx, region, cluster.Name, issueConfigurationConflict,
+					fmt.Errorf("container %s belongs to another Overcast instance %s", containerName, owner))
 				return
 			}
 			containerID = existing.ID
@@ -508,6 +516,90 @@ func (s *Service) reconcilePersistedLiveClusterRuntimes(ctx context.Context) {
 				zap.String("cluster", name), zap.Error(err))
 		}
 	}
+}
+
+func (s *Service) reconcileLiveClusterContainers(ctx context.Context, containers []docker.ContainerSummary) {
+	if s.docker == nil || !s.liveModeEnabled() {
+		return
+	}
+	byResource := docker.ContainersByResource(containers)
+	pairs, err := s.store.Scan(ctx, nsClusters, "")
+	if err != nil {
+		s.log.Warn("failed to scan persisted EKS clusters for container reconciliation", zap.Error(err))
+		return
+	}
+	for _, kv := range pairs {
+		var cluster Cluster
+		if err := json.Unmarshal([]byte(kv.Value), &cluster); err != nil || s.isMockModeClusterRecord(&cluster) {
+			continue
+		}
+		region, name, ok := eksClusterFromResourceARN(cluster.Arn)
+		if !ok || (cluster.Status != "ACTIVE" && cluster.Status != "CREATING") {
+			continue
+		}
+		var recordedID string
+		if runtime, ok := s.getLiveClusterRuntime(region, name); ok {
+			recordedID = runtime.containerID
+		}
+		running := s.instances.OwnContainer(middleware.ContextWithRegion(ctx, region), byResource[name], recordedID)
+		if running != nil && !strings.EqualFold(running.State, "running") {
+			running = nil
+		}
+		if running != nil {
+			s.setLiveClusterRuntime(region, name, &liveClusterRuntime{containerID: running.ID})
+			continue
+		}
+		s.recoverLiveCluster(region, &cluster)
+	}
+}
+
+func (s *Service) handleLiveRuntimeDied(_ context.Context, e events.Event) {
+	p, ok := e.Payload.(events.DockerContainerPayload)
+	if !ok || p.Service != serviceName || p.ResourceID == "" || !s.liveModeEnabled() {
+		return
+	}
+	cluster, region, found, err := serviceutil.FindRegioned[Cluster](
+		context.Background(), s.store, nsClusters, p.ResourceID, s.cfg.Region)
+	if err != nil || !found || cluster == nil || (cluster.Status != "ACTIVE" && cluster.Status != "CREATING") {
+		return
+	}
+	if runtime, ok := s.getLiveClusterRuntime(region, p.ResourceID); ok && runtime.containerID != "" && runtime.containerID != p.ContainerID {
+		return
+	}
+	var recordedID string
+	if runtime, ok := s.getLiveClusterRuntime(region, p.ResourceID); ok {
+		recordedID = runtime.containerID
+	}
+	if !s.instances.ContainerIsOurs(middleware.ContextWithRegion(context.Background(), region), p.ContainerID, p.Instance, recordedID) {
+		return
+	}
+	s.recoverLiveCluster(region, cluster)
+}
+
+func (s *Service) recoverLiveCluster(region string, cluster *Cluster) {
+	if cluster == nil {
+		return
+	}
+	key := liveClusterRuntimeKey(region, cluster.Name)
+	s.liveLifecycleMu.Lock()
+	if s.liveStopping {
+		s.liveLifecycleMu.Unlock()
+		return
+	}
+	if _, loaded := s.liveRecoveries.LoadOrStore(key, struct{}{}); loaded {
+		s.liveLifecycleMu.Unlock()
+		return
+	}
+	s.liveWg.Add(1)
+	s.liveLifecycleMu.Unlock()
+	copy := *cluster
+	s.setLiveClusterRuntime(region, cluster.Name, &liveClusterRuntime{})
+	go func() {
+		defer s.liveWg.Done()
+		defer s.liveRecoveries.Delete(key)
+		ctx := middleware.ContextWithRegion(s.liveCtx, region)
+		s.bootstrapLiveCluster(ctx, region, &copy)
+	}()
 }
 
 func (s *Service) reconcileReadyLiveCluster(ctx context.Context, region string, cluster *Cluster) *Cluster {

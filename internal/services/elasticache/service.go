@@ -78,9 +78,8 @@ func (s *Service) SetDocker(dc *docker.Client) {
 	s.handler.dockerReady.Store(true)
 }
 
-// ReconcileContainers satisfies router.ContainerReconciler. It is called once
-// after Docker becomes available at startup and syncs stored cluster statuses
-// against the actual container state.
+// ReconcileContainers satisfies router.ContainerReconciler. Startup and
+// reconnect snapshots repair stored cluster state and replace missing nodes.
 func (s *Service) ReconcileContainers(ctx context.Context, containers []docker.ContainerSummary) {
 	s.handler.reconcileContainers(ctx, containers)
 }
@@ -99,6 +98,10 @@ func (s *Service) OwnsVersion(version string) bool { return version == awsapi.Ve
 // then cleans up all containers via the GC.
 func (s *Service) Stop(ctx context.Context) {
 	s.handler.scheduler.Stop(ctx)
+	s.handler.dockerLifecycle.Lock()
+	s.handler.dockerStopping = true
+	s.handler.dockerReady.Store(false)
+	s.handler.dockerLifecycle.Unlock()
 
 	// Cancel bgCtx before waiting, not after. It is what the container-start
 	// goroutines run on as well as what the GC remove loop exits on, so

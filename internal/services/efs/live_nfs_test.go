@@ -525,6 +525,38 @@ func TestReconcileExports_adoptsKnownAndSweepsOrphans(t *testing.T) {
 	}
 }
 
+func TestReconcileContainersAdoptsExportFromCentralSnapshot(t *testing.T) {
+	fd := newFakeNFSDaemon(t)
+	svc := newNFSTestService(t, fd, true)
+	ctx := context.Background()
+	const mountTargetID = "fsmt-bbbbbbbbbbbbbbbbb"
+	if err := svc.putMountTarget(ctx, "eu-west-1", &mountTargetRecord{
+		MountTargetId: mountTargetID, FileSystemId: "fs-bbbbbbbbbbbbbbbbb", LifeCycleState: stateAvailable,
+	}); err != nil {
+		t.Fatalf("seed mount target: %v", err)
+	}
+	containers := []docker.ContainerSummary{{
+		ID: "ctr-central", Names: []string{"/" + nfsContainerName(mountTargetID)}, State: "running",
+		Labels: docker.ManagedLabels(serviceName, mountTargetID),
+		Ports: []struct {
+			HostPort      int    `json:"PublicPort"`
+			ContainerPort int    `json:"PrivatePort"`
+			Type          string `json:"Type"`
+		}{{HostPort: 22051, ContainerPort: 2049, Type: "tcp"}},
+	}}
+
+	svc.ReconcileContainers(ctx, containers)
+	svc.nfsWg.Wait()
+
+	rec, found, err := svc.getMountTarget(ctx, "eu-west-1", mountTargetID)
+	if err != nil || !found {
+		t.Fatalf("get mount target: found=%v err=%v", found, err)
+	}
+	if rec.NFSContainerId != "ctr-central" || rec.NFSHostPort != 22051 {
+		t.Fatalf("central snapshot was not adopted: %+v", rec)
+	}
+}
+
 // ─── Ganesha configuration ────────────────────────────────────────────────────
 
 func TestGaneshaConfig_rootAndAccessPointPseudoPaths(t *testing.T) {

@@ -521,7 +521,7 @@ func (h *Handler) scheduleServerlessHealthCheck(region, name, host string, port 
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			h.transitionServerlessCache(ctx, name, "available", "creating", "starting")
+			h.transitionServerlessCache(ctx, name, "available", "creating", "starting", "modifying")
 			return
 		}
 		if attempt < maxRetries {

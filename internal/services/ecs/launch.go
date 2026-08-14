@@ -98,8 +98,24 @@ func (h *Handler) launchTask(ctx context.Context, spec taskLaunchSpec) (*Task, *
 	}
 
 	startErr := error(nil)
+	var unlockTask func()
+	lockTaskBeforeStart := func() {
+		if unlockTask == nil {
+			// Docker can report a fast container exit before StartContainer
+			// returns. Keep the notifier out from the first start until the task
+			// and its Docker IDs are persisted, otherwise that event is lost.
+			// Image pulls and container creation stay outside the critical
+			// section; no container can exit before it has started.
+			unlockTask = h.lockTask(spec.clusterName, taskID)
+		}
+	}
+	defer func() {
+		if unlockTask != nil {
+			unlockTask()
+		}
+	}()
 	if h.dockerReady.Load() {
-		startErr = h.startTaskContainers(ctx, task, td, spec.clusterName, taskID, spec.placement)
+		startErr = h.startTaskContainers(ctx, task, td, spec.clusterName, taskID, spec.placement, lockTaskBeforeStart)
 		if startErr != nil {
 			h.log.Warn("ecs: task failed to start",
 				zap.String("cluster", spec.clusterName),

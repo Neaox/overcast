@@ -48,9 +48,12 @@ type Handler struct {
 	// vpcResolver maps a cache's VPC onto its Docker network, so a cache placed
 	// in a VPC is reachable from the rest of it. nil when EC2 is not enabled,
 	// which puts every cache on the default plane.
-	vpcResolver VPCNetworkResolver
-	dockerWg    sync.WaitGroup // tracks in-flight container-start goroutines
-	typedOp     map[string]op.Operation
+	vpcResolver      VPCNetworkResolver
+	dockerWg         sync.WaitGroup // tracks in-flight container-start goroutines
+	dockerLifecycle  sync.Mutex     // closes the recovery Add/Wait boundary at shutdown
+	dockerStopping   bool
+	dockerRecoveries sync.Map // typed resource key -> in-flight replacement
+	typedOp          map[string]op.Operation
 	// instances scopes container sweeps to the containers this instance
 	// created. A cache is ephemeral, so what this prevents is not lost data but
 	// a second Overcast's startup deleting the first's stopped caches out from
@@ -779,7 +782,7 @@ func (h *Handler) scheduleHealthCheck(region, clusterID, host string, port int) 
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			h.transitionCacheCluster(ctx, clusterID, "available", "creating", "starting")
+			h.transitionCacheCluster(ctx, clusterID, "available", "creating", "starting", "modifying")
 			return
 		}
 		if attempt < maxRetries {
@@ -1038,7 +1041,7 @@ func (h *Handler) scheduleReplicationGroupHealthCheck(region, rgID, host string,
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			h.transitionReplicationGroup(ctx, rgID, "available", "creating", "starting")
+			h.transitionReplicationGroup(ctx, rgID, "available", "creating", "starting", "modifying")
 			return
 		}
 		if attempt < maxRetries {

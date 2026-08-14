@@ -342,7 +342,7 @@ func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(addr, strconv.Itoa(port)), 2*time.Second)
 		if err == nil {
 			conn.Close()
-			h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING", "STARTING")
+			h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING", "STARTING", "HEALING")
 			return
 		}
 		if attempt < maxRetries {
@@ -369,7 +369,7 @@ func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
 // handleContainerEvent processes DockerContainerDied and DockerContainerStopped.
 func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 	p, ok := e.Payload.(events.DockerContainerPayload)
-	if !ok || p.Service != serviceName {
+	if !ok || p.Service != serviceName || !h.dockerReady.Load() {
 		return
 	}
 	ctx := clusterRegionCtx(p.ResourceID)
@@ -384,9 +384,10 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		return
 	}
 	switch cluster.State {
-	case "ACTIVE", "STARTING", "CREATING":
-		h.transitionCluster(ctx, p.ResourceID, "FAILED", cluster.State)
-		h.log.Info("MSK cluster container stopped",
+	case "ACTIVE", "STARTING", "CREATING", "HEALING":
+		h.transitionCluster(ctx, p.ResourceID, "HEALING", cluster.State)
+		h.startClusterAsync(p.ResourceID)
+		h.log.Info("MSK cluster container stopped; replacement scheduled",
 			zap.String("cluster", p.ResourceID), zap.String("action", p.Action))
 	}
 }
@@ -408,7 +409,7 @@ func (h *Handler) handleContainerStarted(_ context.Context, e events.Event) {
 		return
 	}
 	switch cluster.State {
-	case "FAILED", "STARTING", "CREATING":
+	case "FAILED", "HEALING", "STARTING", "CREATING":
 		addr, port := h.clusterEndpointAddr(ctx, cluster.DockerContainerID, cluster.HostPort)
 		h.scheduleHealthCheck(p.ResourceID, addr, port)
 	}
@@ -422,13 +423,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 	// they are collected rather than overwritten, and OwnContainer picks this
 	// instance's out of them below. Keyed to a single container, the index kept
 	// whichever the daemon listed last.
-	byResource := make(map[string][]*docker.ContainerSummary, len(containers))
-	for i := range containers {
-		rid := containers[i].ResourceID()
-		if rid != "" {
-			byResource[rid] = append(byResource[rid], &containers[i])
-		}
-	}
+	byResource := docker.ContainersByResource(containers)
 
 	regioned, err := serviceutil.ScanRegions[Cluster](ctx, h.store.store, nsClusters, h.store.defaultRegion)
 	if err != nil {
@@ -437,29 +432,35 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 	}
 	for _, rc := range regioned {
 		cluster := rc.Value
-		if cluster.DockerContainerID == "" {
-			continue
-		}
 		rctx := middleware.ContextWithRegion(ctx, rc.Region)
 		c := h.instances.OwnContainer(rctx, byResource[cluster.ClusterArn], cluster.DockerContainerID)
 		switch {
 		case c == nil:
-			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" {
-				h.transitionCluster(rctx, cluster.ClusterArn, "FAILED", cluster.State)
-				h.log.Info("reconcile: MSK container missing — marked FAILED",
+			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" || cluster.State == "HEALING" {
+				h.transitionCluster(rctx, cluster.ClusterArn, "HEALING", cluster.State)
+				h.startClusterAsync(cluster.ClusterArn)
+				h.log.Info("reconcile: MSK container missing; replacement scheduled",
 					zap.String("cluster", cluster.ClusterArn))
 			}
 		case c.State == "running":
-			addr, port := h.clusterEndpointAddr(rctx, cluster.DockerContainerID, cluster.HostPort)
-			if cluster.State == "CREATING" || cluster.State == "STARTING" || cluster.State == "FAILED" || cluster.State == "ACTIVE" {
+			addr, port := h.clusterEndpointAddr(rctx, c.ID, cluster.HostPort)
+			if _, aerr := h.mutateCluster(rctx, cluster.ClusterArn, func(stored *Cluster) *protocol.AWSError {
+				stored.DockerContainerID = c.ID
+				stored.HostPort = port
+				return nil
+			}); aerr != nil {
+				h.log.Warn("reconcile: persist MSK container", zap.String("cluster", cluster.ClusterArn), zap.String("error", aerr.Message))
+			}
+			if cluster.State == "CREATING" || cluster.State == "STARTING" || cluster.State == "HEALING" || cluster.State == "ACTIVE" {
 				h.scheduleHealthCheck(cluster.ClusterArn, addr, port)
 				h.log.Info("reconcile: MSK container running — scheduling health check",
 					zap.String("cluster", cluster.ClusterArn))
 			}
 		default:
-			if cluster.State == "ACTIVE" || cluster.State == "STARTING" {
-				h.transitionCluster(rctx, cluster.ClusterArn, "FAILED", cluster.State)
-				h.log.Info("reconcile: MSK container not running — marked FAILED",
+			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" || cluster.State == "HEALING" {
+				h.transitionCluster(rctx, cluster.ClusterArn, "HEALING", cluster.State)
+				h.startClusterAsync(cluster.ClusterArn)
+				h.log.Info("reconcile: MSK container not running; replacement scheduled",
 					zap.String("cluster", cluster.ClusterArn),
 					zap.String("containerState", c.State))
 			}

@@ -753,6 +753,13 @@ func (s *Service) reconcileExports(ctx context.Context) {
 		s.log.Warn("efs: export reconciliation: list containers", zap.Error(err))
 		return
 	}
+	s.reconcileExportsSnapshot(ctx, containers)
+}
+
+func (s *Service) reconcileExportsSnapshot(ctx context.Context, containers []docker.ContainerSummary) {
+	if !s.volumesActive() {
+		return
+	}
 	byMountTarget := make(map[string]*docker.ContainerSummary, len(containers))
 	for i := range containers {
 		if id := containers[i].ResourceID(); strings.HasPrefix(id, "fsmt-") {

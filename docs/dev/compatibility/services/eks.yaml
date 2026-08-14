@@ -1,17 +1,29 @@
 service: eks
-status: not_started
+status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-05-17
+last_updated: 2026-08-14
 protocols: [rest_json]
 implementation: [internal/services/eks]
 integration_tests: [tests/integration/eks]
 capability_docs: docs/services/eks.md
 operation_count_estimate: unknown from initial subagent inventory
 current_support_level: EKS implementation present; compatibility inventory still needs service-specific audit.
-operations: {}
+operations:
+  CreateCluster:
+    status: in_progress
+    docs:
+      - https://docs.aws.amazon.com/eks/latest/userguide/disaster-recovery-resiliency.html
+    scenarios:
+      live_control_plane_recovery:
+        status: fixed
+        evidence:
+          - internal/services/eks/container_reconcile_test.go
+          - internal/router/docker_reconcile_test.go
+        notes: In live mode, persisted CREATING or ACTIVE clusters re-adopt a running k3s control plane or coalesce a replacement after a live exit, initial Docker connection, or event-stream reconnect.
 findings:
-  fixed: []
+  fixed:
+    - Live-mode EKS clusters no longer retain ACTIVE metadata after their control-plane container exits or disappears while Overcast is not observing Docker events.
   remaining_gaps:
     - Run a focused EKS inventory and AWS docs mapping.
   intentionally_partial: []
