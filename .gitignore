@@ -75,6 +75,7 @@ desktop.ini
 *.swo
 
 .cache
+/.codex-go-cache/
 .npm
 .claude/launch.json
 
