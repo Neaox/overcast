@@ -274,6 +274,36 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "ecs",
       "group": "ecs-clusters",
       "tests": 7
@@ -550,6 +580,36 @@
     },
     {
       "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "go-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "go-sdk",
       "service": "opensearch",
       "group": "opensearch-domains",
       "tests": 10
@@ -652,6 +712,36 @@
     },
     {
       "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "java-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "java-sdk",
       "service": "opensearch",
       "group": "opensearch-domains",
       "tests": 10
@@ -754,6 +844,36 @@
     },
     {
       "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
+    },
+    {
+      "suite": "node-js-sdk",
       "service": "opensearch",
       "group": "opensearch-domains",
       "tests": 10
@@ -853,6 +973,36 @@
       "service": "backup",
       "group": "backup-vaults",
       "tests": 10
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "python-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
     },
     {
       "suite": "python-sdk",
@@ -1135,6 +1285,36 @@
       "service": "ec2",
       "group": "ec2-vpc",
       "tests": 15
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-images",
+      "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-policies",
+      "tests": 7
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-registry",
+      "tests": 2
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-repositories",
+      "tests": 10
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "ecr",
+      "group": "ecr-tags",
+      "tests": 3
     },
     {
       "suite": "rust-sdk",

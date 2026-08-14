@@ -13,11 +13,13 @@ func EC2() ServiceGroup {
 	g := &ec2CliGroup{}
 	return ServiceGroup{
 		Impls: map[string]harness.TestFn{
-			"DescribeRegions":               g.DescribeRegions,
-			"DescribeAvailabilityZones":     g.DescribeAvailabilityZones,
-			"DescribeInstances":             g.DescribeInstances,
-			"DescribeInstanceTypes":         g.DescribeInstanceTypes,
-			"DescribeImages":                g.DescribeImages,
+			"DescribeRegions":           g.DescribeRegions,
+			"DescribeAvailabilityZones": g.DescribeAvailabilityZones,
+			"DescribeInstances":         g.DescribeInstances,
+			"DescribeInstanceTypes":     g.DescribeInstanceTypes,
+			// ECR models a DescribeImages of its own, so the bare key is
+			// ambiguous and the loader refuses it.
+			"ec2-instances:DescribeImages":  g.DescribeImages,
 			"RunInstances":                  g.RunInstances,
 			"StopInstances":                 g.StopInstances,
 			"StartInstances":                g.StartInstances,
