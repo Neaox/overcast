@@ -1,6 +1,6 @@
 ---
 name: git-worktrees
-description: "Use git worktrees for every mutating Overcast task. Each write-capable agent or sub-agent must work in its own task-owned worktree under the portable or clone-local configured worktree root, and the creating agent must clean it up after handoff."
+description: "Use git worktrees for every mutating Overcast task. Synchronize remote and local main first, isolate each writer in a task-owned worktree under the portable or clone-local configured root, and clean it up after handoff."
 argument-hint: "Branch name or feature description for the worktree"
 ---
 
@@ -25,6 +25,9 @@ git rev-parse --show-toplevel
 git branch --show-current
 git worktree list
 ```
+
+Then complete [Synchronize Remote and Local Main](#2-synchronize-remote-and-local-main)
+before creating the task worktree. Do not create a task worktree from a stale ref.
 
 Resolve the worktree root from the primary checkout, not the current linked worktree. The portable
 default is `<primary-checkout-parent>/.worktrees/<repo-name>`. A contributor may override it for
@@ -79,7 +82,70 @@ worktree root normally. If that root is not host-visible and the new worktree wo
 container-local, stop and ask the user to reopen the repo with the worktree-aware devcontainer
 config.
 
-### 2. Create the Worktree
+### 2. Synchronize Remote and Local Main
+
+Resolve the primary checkout first, then update its local `main` before deriving
+the task branch. This is a required part of worktree creation, not an optional
+freshness check.
+
+PowerShell:
+
+```powershell
+$commonDir = git rev-parse --path-format=absolute --git-common-dir
+$primaryRoot = Split-Path $commonDir -Parent
+
+if ((git -C $primaryRoot branch --show-current) -ne 'main') {
+    throw 'primary checkout must be on main before creating a task worktree'
+}
+if (git -C $primaryRoot status --short) {
+    throw 'primary checkout must be clean before updating main'
+}
+
+git -C $primaryRoot fetch origin --prune
+git -C $primaryRoot pull --ff-only origin main
+
+$localOnly, $remoteOnly = (git -C $primaryRoot rev-list --left-right --count main...origin/main) -split '\s+'
+if ($remoteOnly -ne '0') {
+    throw "local main is still $remoteOnly commit(s) behind origin/main"
+}
+```
+
+POSIX:
+
+```bash
+common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+primary_root=$(dirname "$common_dir")
+
+test "$(git -C "$primary_root" branch --show-current)" = main || {
+  echo 'primary checkout must be on main before creating a task worktree' >&2
+  exit 1
+}
+test -z "$(git -C "$primary_root" status --short)" || {
+  echo 'primary checkout must be clean before updating main' >&2
+  exit 1
+}
+
+git -C "$primary_root" fetch origin --prune
+git -C "$primary_root" pull --ff-only origin main
+
+set -- $(git -C "$primary_root" rev-list --left-right --count main...origin/main)
+test "$2" -eq 0 || {
+  echo "local main is still $2 commit(s) behind origin/main" >&2
+  exit 1
+}
+```
+
+The comparison may report local-only commits in the first column. Keep them:
+they are part of the contributor's latest local `main`, and the task worktree
+must include both those commits and the fetched remote changes. A non-zero
+second column means remote changes are still missing. If the pull cannot
+fast-forward because local and remote `main` diverged, stop rather than merging,
+rebasing, resetting, or falling back to one side without the user's direction.
+Likewise, stop when the primary checkout has uncommitted changes: a new worktree
+cannot inherit them safely, so the owner must commit, move, or otherwise resolve
+them first.
+
+### 3. Create the Worktree
 
 From the main checkout or any existing Overcast worktree:
 
@@ -96,7 +162,7 @@ if (-not $worktreeRoot) {
 }
 New-Item -ItemType Directory -Force -Path $worktreeRoot | Out-Null
 $worktreePath = Join-Path $worktreeRoot '<task-name>'
-git worktree add $worktreePath -b <branch-name> <base-ref>
+git worktree add $worktreePath -b <branch-name> main
 git worktree lock --reason 'owner=<agent-or-user>; task=<task>; claimed=<ISO-8601>' $worktreePath
 ```
 
@@ -115,7 +181,7 @@ if [ -z "$worktree_root" ]; then
 fi
 mkdir -p "$worktree_root"
 worktree_path="$worktree_root/<task-name>"
-git worktree add "$worktree_path" -b <branch-name> <base-ref>
+git worktree add "$worktree_path" -b <branch-name> main
 git worktree lock --reason 'owner=<agent-or-user>; task=<task>; claimed=<ISO-8601>' "$worktree_path"
 ```
 
@@ -123,7 +189,7 @@ Example:
 
 ```powershell
 $worktreePath = Join-Path $worktreeRoot 'codex-kinesis-service'
-git worktree add $worktreePath -b codex/kinesis-service origin/main
+git worktree add $worktreePath -b codex/kinesis-service main
 git worktree lock --reason 'owner=codex:<session>; task=kinesis-service; claimed=<ISO-8601>' $worktreePath
 ```
 
@@ -137,7 +203,7 @@ Putting them inside would confuse `go test ./...` and other recursive tools.
 
 **Devcontainer:** Open the new worktree as its own VS Code window and run `Dev Containers: Reopen in Container`. The generated compose project name includes the worktree folder name, so containers and the `web/node_modules` volume are isolated per worktree.
 
-### 3. Install Dependencies
+### 4. Install Dependencies
 
 Go modules are cached globally (`~/go/pkg/mod`) and shared automatically — no action needed.
 
@@ -168,7 +234,7 @@ cd '<worktree-path>'
 
 Skip these if your work is purely in Go.
 
-### 4. Verify the Worktree Builds
+### 5. Verify the Worktree Builds
 
 ```powershell
 Set-Location '<worktree-path>'
@@ -178,7 +244,7 @@ go vet ./...
 
 Fix any issues before starting work. You should see zero errors — worktrees start from the same commit as the source branch.
 
-### 5. Do Your Work
+### 6. Do Your Work
 
 **First: your shell does not start in your worktree.** See
 [Your working directory is not your worktree](#your-working-directory-is-not-your-worktree)
@@ -198,7 +264,7 @@ go test -race -count=1 -timeout=120s ./...
 
 **Tests are fully isolated.** Each test creates its own `httptest.Server` on a random OS-assigned port with a fresh `MemoryStore`. Multiple worktrees can run `go test` simultaneously with zero port conflicts.
 
-### 6. Running a Dev Server (If Needed)
+### 7. Running a Dev Server (If Needed)
 
 If you need a running emulator (e.g. for manual testing or compat suites), you must avoid port collisions with other worktrees.
 
@@ -240,7 +306,7 @@ docker compose -f docker-compose.dev.yml up overcast
 
 **Recommended:** Use `OVERCAST_STATE=memory` in worktrees to avoid SQLite file contention entirely. Tests already do this automatically.
 
-### 7. Commit Your Work
+### 8. Commit Your Work
 
 Commit from inside the worktree as normal:
 
@@ -252,7 +318,7 @@ git commit -m "feat(kinesis): add PutRecord and GetRecords"
 
 The commit is visible from the main checkout and all other worktrees immediately (they share the object store).
 
-### 8. Publish and Verify the Squash Merge
+### 9. Publish and Verify the Squash Merge
 
 Push the branch, open a PR, and use the repository's squash-merge workflow. Squash merge creates a
 new commit, so the worktree branch's commit SHA normally never appears in `main`. Do not use
@@ -268,7 +334,7 @@ gh pr view <pr-number> --json state,mergedAt,mergeCommit
 Only treat the work as integrated when the PR reports `MERGED` and provides the squash
 `mergeCommit`. If needed, fetch `origin/main` and verify that squash commit, not the branch tip.
 
-### 9. Mandatory Cleanup
+### 10. Mandatory Cleanup
 
 The agent that created a worktree owns its cleanup, including worktrees created for sub-agents.
 When the task is complete or handed off, first ensure its commits are recoverable from another
@@ -406,6 +472,7 @@ be told it was handled.
 
 | Mistake                                             | Why it fails                                                              | Fix                                                                   |
 | --------------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Branching before synchronizing `main`               | The task omits remote or committed local changes                          | Fast-forward local `main`, then branch from `main`                     |
 | Creating worktree inside the repo                   | `go test ./...` picks up nested Go files                                  | Use the resolved external worktree root                               |
 | Creating a worktree from a container-local checkout | The new checkout is not host-visible and may disappear with the container | Use the worktree-aware devcontainer or ask the user to reopen with it |
 | Two worktrees on the same branch                    | Git forbids this                                                          | Use unique branch names per agent                                     |
@@ -431,6 +498,21 @@ PowerShell:
 # Resolve the portable or clone-local configured root
 $commonDir = git rev-parse --path-format=absolute --git-common-dir
 $primaryRoot = Split-Path $commonDir -Parent
+
+# Synchronize committed remote and local main changes
+if ((git -C $primaryRoot branch --show-current) -ne 'main') {
+    throw 'primary checkout must be on main before creating a task worktree'
+}
+if (git -C $primaryRoot status --short) {
+    throw 'primary checkout must be clean before updating main'
+}
+git -C $primaryRoot fetch origin --prune
+git -C $primaryRoot pull --ff-only origin main
+$localOnly, $remoteOnly = (git -C $primaryRoot rev-list --left-right --count main...origin/main) -split '\s+'
+if ($remoteOnly -ne '0') {
+    throw "local main is still $remoteOnly commit(s) behind origin/main"
+}
+
 $worktreeRoot = git config --local --get overcast.worktreeRoot
 if ($worktreeRoot -and -not [IO.Path]::IsPathRooted($worktreeRoot)) {
     throw 'overcast.worktreeRoot must be an absolute path'
@@ -443,7 +525,7 @@ New-Item -ItemType Directory -Force -Path $worktreeRoot | Out-Null
 
 # Create
 $worktreePath = Join-Path $worktreeRoot '<task-name>'
-git worktree add $worktreePath -b <branch> <base-ref>
+git worktree add $worktreePath -b <branch> main
 git worktree lock --reason 'owner=<agent-or-user>; task=<task>; claimed=<ISO-8601>' $worktreePath
 
 # List all worktrees
@@ -477,6 +559,22 @@ POSIX shell:
 ```bash
 common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
 primary_root=$(dirname "$common_dir")
+test "$(git -C "$primary_root" branch --show-current)" = main || {
+  echo 'primary checkout must be on main before creating a task worktree' >&2
+  exit 1
+}
+test -z "$(git -C "$primary_root" status --short)" || {
+  echo 'primary checkout must be clean before updating main' >&2
+  exit 1
+}
+git -C "$primary_root" fetch origin --prune
+git -C "$primary_root" pull --ff-only origin main
+set -- $(git -C "$primary_root" rev-list --left-right --count main...origin/main)
+test "$2" -eq 0 || {
+  echo "local main is still $2 commit(s) behind origin/main" >&2
+  exit 1
+}
+
 worktree_root=$(git config --local --get overcast.worktreeRoot || true)
 case "$worktree_root" in
   ''|/*|[A-Za-z]:[\\/]*) ;;
@@ -488,7 +586,7 @@ fi
 
 worktree_path="$worktree_root/<task-name>"
 mkdir -p "$worktree_root"
-git worktree add "$worktree_path" -b <branch> <base-ref>
+git worktree add "$worktree_path" -b <branch> main
 git worktree lock --reason 'owner=<agent-or-user>; task=<task>; claimed=<ISO-8601>' "$worktree_path"
 git worktree list
 
