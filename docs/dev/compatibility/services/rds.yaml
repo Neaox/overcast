@@ -2,7 +2,7 @@ service: rds
 status: in_progress
 priority: p1
 reference_policy: aws_docs_only_unless_user_approves_real_aws
-last_updated: 2026-08-05
+last_updated: 2026-08-14
 protocols: [query]
 implementation: [internal/services/rds]
 integration_tests: [tests/integration/rds]
@@ -10,6 +10,22 @@ capability_docs: docs/services/rds.md
 operation_count_estimate: 33 supported
 current_support_level: DB instances, Aurora clusters, subnet/parameter groups, snapshots, logs, and tagging supported; Docker-backed where possible.
 operations:
+  CreateDBParameterGroup:
+    status: reviewed
+    scenarios:
+      - name: Aurora MySQL 3 instance parameter group family
+        status: fixed
+        tests: [TestCreateDBParameterGroup_auroraMySQL8Family, rds-parameter-groups/CreateDBParameterGroup]
+        evidence: >-
+          CreateDBParameterGroup accepts aurora-mysql8.0 and echoes that family through the AWS Query response.
+          AWS documents aurora-mysql8.0 for Aurora MySQL version 3 at
+          https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.setting-capacity.html
+          and directs callers to discover valid families through DescribeDBEngineVersions at
+          https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBParameterGroup.html.
+      - name: Unknown parameter group family
+        status: reviewed
+        tests: [TestCreateDBParameterGroup_unknownFamily]
+        evidence: Families absent from DescribeDBEngineVersions remain rejected with InvalidParameterValue.
   CreateDBInstance:
     status: in_progress
     scenarios:
@@ -27,6 +43,7 @@ operations:
         evidence: Fresh MySQL 8 containers use an entrypoint-safe bootstrap credential, then install the exact requested master password with escaped SQL and caching_sha2_password before the engine starts accepting connections.
 findings:
   fixed:
+    - CreateDBParameterGroup accepts the advertised aurora-mysql8.0 family used by Aurora MySQL 3 instance parameter groups while still rejecting unknown families.
     - Docker-backed RDS DB instance endpoint hostnames are registered as Docker DNS aliases on the Lambda network.
     - Missing, crashed, or externally stopped DB instance containers are recovered with bounded backoff, after Docker reconnects, and at startup without overriding an explicit StopDBInstance; repeated crash loops settle to failed.
     - MySQL 8 initialization preserves AWS-valid special characters in master passwords and provisions accounts with caching_sha2_password.
@@ -35,5 +52,5 @@ findings:
   intentionally_partial: []
 handoff:
   start_with: [CreateDBInstance, CreateDBCluster, lifecycle states]
-  do_not_redo: [Lambda container DNS for Docker-backed RDS DB instance endpoint hostnames, runtime and startup recovery of DB instance containers, MySQL 8 credential initialization]
+  do_not_redo: [Aurora MySQL 3 instance parameter group family, Lambda container DNS for Docker-backed RDS DB instance endpoint hostnames, runtime and startup recovery of DB instance containers, MySQL 8 credential initialization]
   commands: [go test -count=1 ./internal/services/rds/... ./tests/integration/rds/...]

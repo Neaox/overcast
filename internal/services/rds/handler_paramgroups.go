@@ -9,14 +9,16 @@ import (
 
 // ── Known parameter group families ───────────────────────────────────────────
 
-var knownParameterGroupFamilies = map[string]bool{
-	"mysql8.0":     true,
-	"mysql5.7":     true,
-	"postgres16":   true,
-	"postgres15":   true,
-	"postgres14":   true,
-	"mariadb11.4":  true,
-	"mariadb10.11": true,
+// AWS exposes valid family names through DescribeDBEngineVersions, so the
+// engine metadata is also the source of truth for CreateDBParameterGroup.
+// https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_CreateDBParameterGroup.html
+func isSupportedParameterGroupFamily(family string) bool {
+	for _, engineVersion := range allEngineVersions {
+		if engineVersion.DBParameterGroupFamily == family {
+			return true
+		}
+	}
+	return false
 }
 
 // ── XML response types ───────────────────────────────────────────────────────
@@ -145,7 +147,7 @@ func (h *Handler) CreateDBParameterGroup(w http.ResponseWriter, r *http.Request)
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("DBParameterGroupFamily is required"))
 		return
 	}
-	if !knownParameterGroupFamilies[family] {
+	if !isSupportedParameterGroupFamily(family) {
 		protocol.WriteQueryXMLError(w, r, errInvalidParameterValue("Invalid DB parameter group family: "+family))
 		return
 	}

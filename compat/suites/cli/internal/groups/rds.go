@@ -286,7 +286,7 @@ func (g *rdsCliGroup) CreateDBParameterGroup(_ context.Context, t *harness.TestC
 	name := fmt.Sprintf("compat-pg-%s", t.RunID)
 	out, err := awscli.RunOutput(t.Endpoint, t.Region, "rds", "create-db-parameter-group",
 		"--db-parameter-group-name", name,
-		"--db-parameter-group-family", "mysql8.0",
+		"--db-parameter-group-family", "aurora-mysql8.0",
 		"--description", "compat test parameter group",
 	)
 	if err != nil {
@@ -295,6 +295,9 @@ func (g *rdsCliGroup) CreateDBParameterGroup(_ context.Context, t *harness.TestC
 	pg, _ := out["DBParameterGroup"].(map[string]interface{})
 	if pg["DBParameterGroupName"] == nil {
 		return fmt.Errorf("CreateDBParameterGroup: missing DBParameterGroupName")
+	}
+	if pg["DBParameterGroupFamily"] != "aurora-mysql8.0" {
+		return fmt.Errorf("CreateDBParameterGroup: family = %v, want aurora-mysql8.0", pg["DBParameterGroupFamily"])
 	}
 	t.Set("param_group_name", name)
 	return nil

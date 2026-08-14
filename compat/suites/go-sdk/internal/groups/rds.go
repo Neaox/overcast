@@ -255,7 +255,7 @@ func (g *rdsGroup) CreateDBParameterGroup(ctx context.Context, t *harness.TestCo
 	name := fmt.Sprintf("compat-pg-%s", t.RunID)
 	resp, err := g.cl().CreateDBParameterGroup(ctx, &rds.CreateDBParameterGroupInput{
 		DBParameterGroupName:   aws.String(name),
-		DBParameterGroupFamily: aws.String("mysql8.0"),
+		DBParameterGroupFamily: aws.String("aurora-mysql8.0"),
 		Description:            aws.String("compat test parameter group"),
 	})
 	if err != nil {
@@ -263,6 +263,9 @@ func (g *rdsGroup) CreateDBParameterGroup(ctx context.Context, t *harness.TestCo
 	}
 	if resp.DBParameterGroup == nil || resp.DBParameterGroup.DBParameterGroupName == nil {
 		return fmt.Errorf("CreateDBParameterGroup: missing DBParameterGroupName")
+	}
+	if aws.ToString(resp.DBParameterGroup.DBParameterGroupFamily) != "aurora-mysql8.0" {
+		return fmt.Errorf("CreateDBParameterGroup: family = %q, want aurora-mysql8.0", aws.ToString(resp.DBParameterGroup.DBParameterGroupFamily))
 	}
 	t.Set("rds_param_group", name)
 	return nil

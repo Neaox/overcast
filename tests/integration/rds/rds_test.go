@@ -1125,6 +1125,51 @@ func TestCreateDBParameterGroup_success(t *testing.T) {
 	assert.Contains(t, pg.DBParameterGroupArn, "rds")
 }
 
+func TestCreateDBParameterGroup_auroraMySQL8Family(t *testing.T) {
+	// Given: the RDS service
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateDBParameterGroup is called with Aurora MySQL 3's parameter family
+	resp := rdsQuery(t, srv, "CreateDBParameterGroup", url.Values{
+		"DBParameterGroupName":   []string{"aurora-mysql8-params"},
+		"DBParameterGroupFamily": []string{"aurora-mysql8.0"},
+		"Description":            []string{"Aurora MySQL 3 instance parameters"},
+	})
+	defer resp.Body.Close()
+
+	// Then: the parameter group is created with the requested family
+	helpers.AssertStatus(t, resp, http.StatusOK)
+	helpers.AssertRequestID(t, resp)
+
+	var result struct {
+		Result struct {
+			DBParameterGroup struct {
+				DBParameterGroupFamily string `xml:"DBParameterGroupFamily"`
+			} `xml:"DBParameterGroup"`
+		} `xml:"CreateDBParameterGroupResult"`
+	}
+	decodeXML(t, resp, &result)
+	assert.Equal(t, "aurora-mysql8.0", result.Result.DBParameterGroup.DBParameterGroupFamily)
+}
+
+func TestCreateDBParameterGroup_unknownFamily(t *testing.T) {
+	// Given: the RDS service
+	srv := helpers.NewTestServer(t)
+
+	// When: CreateDBParameterGroup is called with a family RDS does not advertise
+	resp := rdsQuery(t, srv, "CreateDBParameterGroup", url.Values{
+		"DBParameterGroupName":   []string{"unknown-family-params"},
+		"DBParameterGroupFamily": []string{"aurora-mysql99.0"},
+		"Description":            []string{"Unknown family"},
+	})
+	defer resp.Body.Close()
+
+	// Then: the request is rejected with an AWS Query error
+	helpers.AssertStatus(t, resp, http.StatusBadRequest)
+	assertQueryXMLError(t, resp, "InvalidParameterValue")
+	helpers.AssertRequestID(t, resp)
+}
+
 func TestCreateDBParameterGroup_duplicate(t *testing.T) {
 	// Given: a parameter group already exists
 	srv := helpers.NewTestServer(t)
