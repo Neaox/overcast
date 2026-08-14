@@ -910,3 +910,131 @@ func TestDockerBlameHoldsTheInstanceResponsibleOnTheBinaryPath(t *testing.T) {
 		t.Error("dockerBlame gave no reason")
 	}
 }
+
+func TestImageRefIsPullableRefreshesAMovingRegistryTag(t *testing.T) {
+	// Given: the compiled-in default, a moving tag on a registry
+	// When: the reference is classified
+	// Then: it is pullable. `docker run` only fetches an image it does not
+	// already have, so without this the tag resolves to whatever copy the
+	// machine cached — which is how a run against ":alpha" silently exercised
+	// a months-old build whose health path had since been renamed, and failed
+	// the health gate with nothing but a timeout to go on.
+	for _, ref := range []string{
+		defaultOvercastImage,
+		"ghcr.io/neaox/overcast:0.0.1-alpha.35-rc.1902",
+		"localhost:5000/overcast:dev",
+		"docker.io/library/alpine:3",
+	} {
+		pullable, why := imageRefIsPullable(ref)
+		if !pullable {
+			t.Errorf("imageRefIsPullable(%q) = false (%s), want it refreshed", ref, why)
+		}
+	}
+}
+
+func TestImageRefIsPullableSkipsLocallyBuiltTags(t *testing.T) {
+	// Given: the tags this repo builds by hand — `docker build -t overcast:dev .`
+	// When: they are classified
+	// Then: no pull is attempted. They exist in no registry, so pulling can
+	// only fail, and a failed pull that prints a warning about a locally built
+	// image is noise the caller cannot act on.
+	for _, ref := range []string{"overcast:dev", "overcast:compat-hygiene", "compat-overcast"} {
+		pullable, why := imageRefIsPullable(ref)
+		if pullable {
+			t.Errorf("imageRefIsPullable(%q) = true, want it left alone as a local build", ref)
+		}
+		if why == "" {
+			t.Errorf("imageRefIsPullable(%q) gave no reason for skipping", ref)
+		}
+	}
+}
+
+func TestImageRefIsPullableSkipsDigestPinnedReferences(t *testing.T) {
+	// Given: a digest-pinned reference
+	// When: it is classified
+	// Then: no pull. A digest names exactly one image for all time, so a
+	// cached copy cannot be stale and `docker run` already fetches it if it is
+	// missing.
+	ref := "ghcr.io/neaox/overcast@sha256:0d7bcf259da3777a423aaae3f94ddd3f28f87d19daf1dfc52757598921950e94"
+	pullable, why := imageRefIsPullable(ref)
+	if pullable {
+		t.Errorf("imageRefIsPullable(%q) = true, want a digest treated as immutable", ref)
+	}
+	if !strings.Contains(why, "digest") {
+		t.Errorf("reason %q should say the reference is digest-pinned", why)
+	}
+}
+
+func TestImageSkewNoteExplainsFailuresFromTestsNewerThanTheImage(t *testing.T) {
+	// Given: the default published image, built four commits before HEAD
+	// When: the skew is described
+	// Then: it says how far behind and what that does to the run. The suites
+	// come from the working tree while the image is whatever was last
+	// released, so a test merged after the release fails against it and looks
+	// exactly like a regression — this is `cli/opensearch-tags` failing on
+	// alpha.35 because the tests (#977) and the fix under them (#970) both
+	// landed after the image was built (PR #979).
+	note := imageSkewNote(defaultOvercastImage, "0bfc845926a1b48ed3a68a0c1677aed0c8738dc5", 4)
+	if note == "" {
+		t.Fatal("imageSkewNote said nothing about an image behind the checkout")
+	}
+	if !strings.Contains(note, "0bfc8459") {
+		t.Errorf("note %q should name the commit the image was built from", note)
+	}
+	if !strings.Contains(note, "4") {
+		t.Errorf("note %q should say how far behind the image is", note)
+	}
+	if !strings.Contains(note, "--overcast-image") {
+		t.Errorf("note %q should say how to test the working tree instead", note)
+	}
+}
+
+func TestImageSkewNoteIsSilentWhenTheImageMatchesTheCheckout(t *testing.T) {
+	// Given: an image built from HEAD, or a revision git here cannot place
+	// (an unfetched commit counts as 0 rather than guessing)
+	// When: the skew is described
+	// Then: nothing is said. A warning that fires on a correct setup is a
+	// warning people learn to scroll past.
+	if note := imageSkewNote(defaultOvercastImage, "0bfc8459", 0); note != "" {
+		t.Errorf("imageSkewNote = %q, want silence when the image is level with the checkout", note)
+	}
+	if note := imageSkewNote(defaultOvercastImage, "", 4); note != "" {
+		t.Errorf("imageSkewNote = %q, want silence when the image carries no revision label", note)
+	}
+}
+
+func TestPullFallbackKeepsGoingWhenACachedCopyExists(t *testing.T) {
+	// Given: the pull failed — offline, or the registry is down — but the
+	// machine has the image cached
+	// When: the fallback is decided
+	// Then: the run continues rather than dying on a network blip, and the
+	// warning says the copy is cached and names its digest, so a caller who
+	// then hits odd behaviour can tell it is not the tag they think it is.
+	warning, fatal := pullFallback("sha256:0d7bcf25", fmt.Errorf("dial tcp: no route to host"), defaultOvercastImage)
+	if fatal != nil {
+		t.Fatalf("pullFallback returned fatal %v, want the cached copy used", fatal)
+	}
+	if !strings.Contains(warning, "sha256:0d7bcf25") {
+		t.Errorf("warning %q should name the cached digest being used instead", warning)
+	}
+	if !strings.Contains(warning, defaultOvercastImage) {
+		t.Errorf("warning %q should name the image whose pull failed", warning)
+	}
+}
+
+func TestPullFallbackFailsWhenNothingIsCached(t *testing.T) {
+	// Given: the pull failed and there is no local copy to fall back to
+	// When: the fallback is decided
+	// Then: it is fatal, and the message carries the pull error — `docker run`
+	// would fail moments later with a worse one.
+	warning, fatal := pullFallback("", fmt.Errorf("manifest unknown"), defaultOvercastImage)
+	if fatal == nil {
+		t.Fatal("pullFallback returned no error, want a failure with nothing to run")
+	}
+	if !strings.Contains(fatal.Error(), "manifest unknown") {
+		t.Errorf("error %q should carry the underlying pull failure", fatal)
+	}
+	if warning != "" {
+		t.Errorf("warning %q should be empty when the outcome is fatal", warning)
+	}
+}
