@@ -60,8 +60,12 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 // Name satisfies router.Service.
 func (s *Service) Name() string { return serviceName }
 
-// RegisterRoutes satisfies router.Service. CloudFormation has no path-routed endpoints.
-func (s *Service) RegisterRoutes(_ chi.Router) {}
+// RegisterRoutes satisfies router.Service. CloudFormation's AWS surface is
+// entirely Query-protocol POSTs to "/", so the only path-routed endpoints it
+// has are emulator-only ones — see handler_emulator.go.
+func (s *Service) RegisterRoutes(r chi.Router) {
+	r.Get("/_overcast/cloudformation/stacks/{stackName}/diagnostics", s.handler.GetStackDiagnostics)
+}
 
 // OwnsVersion satisfies router.QueryVersionOwner. CloudFormation's API version
 // (2010-05-15) uniquely identifies requests to this service — the same way

@@ -275,6 +275,17 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 			})
 			p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateFailed, provErr.Error())
 
+			// Read the evidence now, while the failed resource's service-side
+			// records still exist — the rollback below is about to delete
+			// them, and after it there is nothing left to ask. The write is
+			// deferred so the entry records the status the stack finishes at
+			// rather than the in-progress one it has here. Both branches
+			// return, so this runs at the end of whichever one is taken —
+			// including DisableRollback, which deletes nothing but should
+			// still leave the tab with something to show.
+			diagnosis := p.collectDeployDiagnostics(ctx, stack, deployOperationCreate, stack.Resources)
+			defer p.recordDeployDiagnostics(ctx, stack, diagnosis)
+
 			if stack.DisableRollback {
 				// DisableRollback: leave partial stack, status CREATE_FAILED.
 				p.failStack(ctx, stack, StatusCreateFailed, createFailureSummary(logicalID))
@@ -323,6 +334,10 @@ func (p *provisioner) provisionStackResourcesCtx(ctx context.Context, stack *Sta
 	stack.Status = StatusCreateComplete
 	stack.StatusReason = ""
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusCreateComplete, "")
+	// This deploy succeeded, so any diagnosis of the last one that failed no
+	// longer describes anything. Cleared before the flush so the removal is
+	// persisted with the rest of the terminal state.
+	p.clearDeployDiagnostics(ctx, stack)
 	p.persistTerminalState(ctx, stack)
 	p.publishStackEvent(ctx, events.CFNStackCreated, stack)
 	log.Debug("cfn: stack provisioned",
@@ -507,6 +522,12 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 				}
 				newResources = append(newResources, failedResource)
 				p.recordEvent(ctx, stack, logicalID, failedResource.PhysicalID, res.Type, ResourceUpdateFailed, updErr.Error())
+				// Capture before the rollback, as on the create path. The
+				// attempted list is passed rather than stack.Resources: on an
+				// update the stack record still holds the pre-update
+				// generation, so the resource that just failed is only in here.
+				diagnosis := p.collectDeployDiagnostics(ctx, stack, deployOperationUpdate, newResources)
+				defer p.recordDeployDiagnostics(ctx, stack, diagnosis)
 				if stack.DisableRollback {
 					if !resourceStateChanged {
 						newResources[len(newResources)-1] = retainPreviousResourceState(failedResource, old)
@@ -562,6 +583,8 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 				Timestamp:    now,
 			})
 			p.recordEvent(ctx, stack, logicalID, physID, res.Type, ResourceCreateFailed, provErr.Error())
+			diagnosis := p.collectDeployDiagnostics(ctx, stack, deployOperationUpdate, newResources)
+			defer p.recordDeployDiagnostics(ctx, stack, diagnosis)
 			if stack.DisableRollback {
 				stack.Resources = retainedUpdateResources(newResources, stack.Resources)
 				p.failStack(ctx, stack, StatusUpdateFailed,
@@ -669,6 +692,9 @@ func (p *provisioner) updateStackResourcesCtx(ctx context.Context, stack *Stack,
 	stack.Status = StatusUpdateComplete
 	stack.StatusReason = ""
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateComplete, "")
+	// As on the create path: a deploy that succeeded retires the diagnosis of
+	// the one that failed before it.
+	p.clearDeployDiagnostics(ctx, stack)
 	p.persistTerminalState(ctx, stack)
 	p.publishStackEvent(ctx, events.CFNStackUpdated, stack)
 }
@@ -1740,6 +1766,14 @@ func (p *provisioner) rollbackStackResourcesCtx(
 // state and drive the stack to a terminal UPDATE_ROLLBACK_COMPLETE.
 func (p *provisioner) rollbackToStable(ctx context.Context, stack *Stack, rCtx *resolveContext, reason string) {
 	log := p.log.WithRecorder(ctx)
+	// An explicit RollbackStack on a stack a failed update left UPDATE_FAILED
+	// is the second — and last — chance to read the evidence: the resources
+	// that failed are still standing at this point, and the loop below is what
+	// removes them. If this capture finds nothing because the service records
+	// have since been reaped, the entry the original failure wrote is left
+	// alone; see recordDeployDiagnostics.
+	diagnosis := p.collectDeployDiagnostics(ctx, stack, deployOperationUpdate, stack.Resources)
+	defer p.recordDeployDiagnostics(ctx, stack, diagnosis)
 	stack.Status = StatusUpdateRollbackInProgress
 	stack.StatusReason = reason
 	p.recordEvent(ctx, stack, stack.StackName, stack.StackID, "AWS::CloudFormation::Stack", StatusUpdateRollbackInProgress, reason)
@@ -2743,6 +2777,23 @@ func internalJSON(ctx context.Context, router http.Handler, region, target strin
 		region:      region,
 		target:      target,
 	}.do(ctx, router)
+}
+
+// internalGET dispatches a plain GET to an emulator-only /_overcast/ endpoint
+// over the same router every other internal call goes through.
+//
+// It exists because the ECS container-log endpoint the deploy-diagnostics
+// collector reads is a REST GET on an /_overcast/ path, while internalJSON is
+// built for an X-Amz-Target JSON POST. Re-implementing the dispatch would have
+// meant a second copy of the trace-hop recording internalCall.do already owns
+// — the duplication that once cost CloudFront's If-Match flow and AppSync
+// Events their hops entirely. internalCall was already the lower-level helper;
+// this is only a named entry point that states its service, for the same
+// reason internalS3Request states S3's: serviceFromPath cannot infer a service
+// from an /_overcast/ path, and a blank hop label is a visible gap where a
+// guess would be a quiet lie.
+func internalGET(ctx context.Context, router http.Handler, service, region, path string) (*httptest.ResponseRecorder, error) {
+	return restCall(service, region, http.MethodGet, path, "", nil).do(ctx, router)
 }
 
 // internalQuery dispatches a Query-protocol POST.

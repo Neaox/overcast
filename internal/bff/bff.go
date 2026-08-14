@@ -150,6 +150,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Delete("/api/lambda/functions/{name}/test-events/{eventName}", handleLambdaTestEventDelete)
 	r.Get("/api/ecs/tasks/{taskArn}/logs/{container}", handleECSTaskLogs)
 	r.Get("/api/ecs/clusters/{cluster}/tasks", handleECSClusterTasks)
+	r.Get("/api/cloudformation/stacks/{stackName}/diagnostics", handleCFNStackDiagnostics)
 	r.Get("/api/mail/messages", handleMailList)
 	r.Get("/api/mail/messages/{id}", handleMailGet)
 	r.Delete("/api/mail/messages", handleMailDeleteAll)
@@ -1275,6 +1276,38 @@ func handleECSClusterTasks(w http.ResponseWriter, r *http.Request) {
 	cluster := chi.URLParam(r, "cluster")
 	resp, err := doGet(r.Context(), fmt.Sprintf("%s/_overcast/ecs/clusters/%s/tasks",
 		ep, url.PathEscape(cluster)))
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if !copyResponseBody(w, resp.Body) {
+		return
+	}
+}
+
+// ── CloudFormation ─────────────────────────────────────────────────────────
+
+// handleCFNStackDiagnostics proxies the deploy-diagnostics journal behind the
+// console's Diagnostics tab — why the stack's last deploy failed, as gathered
+// before the rollback deleted the evidence.
+//
+// The upstream status is passed through rather than translated, and the 404
+// especially: it is the ordinary answer for a stack that has never failed, and
+// the console keys the tab's existence on it. Turning it into a 502 or an
+// empty 200 would either show an error for a healthy stack or show a tab with
+// nothing in it.
+//
+// The region is forwarded because the journal is region-scoped like every
+// other CloudFormation record, so a console pointed at ap-southeast-2 must not
+// be answered from us-east-1.
+func handleCFNStackDiagnostics(w http.ResponseWriter, r *http.Request) {
+	ep := resolveEndpoint(r)
+	stackName := chi.URLParam(r, "stackName")
+	resp, err := doGetWithRegion(r.Context(), fmt.Sprintf("%s/_overcast/cloudformation/stacks/%s/diagnostics",
+		ep, url.PathEscape(stackName)), r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "emulator unreachable")
 		return

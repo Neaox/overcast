@@ -21,6 +21,11 @@ const (
 	nsStacks     = "cfn:stacks"
 	nsChangeSets = "cfn:changesets"
 	nsEvents     = "cfn:events"
+	// nsDiagnostics holds one deploy-diagnostics entry per stack — see
+	// diagnostics.go. It is a CloudFormation namespace rather than a neutral
+	// one because only CloudFormation ever touches it: keyed by stack, written
+	// on the CloudFormation failure path, read by a CloudFormation endpoint.
+	nsDiagnostics = "cfn:diagnostics"
 )
 
 // cfnStore wraps state.Store with typed CloudFormation access.
@@ -305,6 +310,52 @@ func (st *cfnStore) deleteStackEvents(ctx context.Context, name string) error {
 		return fmt.Errorf("cfn: delete legacy events blob: %w", err)
 	}
 	return nil
+}
+
+// ── Deploy diagnostics ─────────────────────────────────────────────────────
+//
+// One row per stack, keyed "<region>/<stackName>" like cfn:stacks and replaced
+// wholesale on each failed deploy. There is deliberately no history here: the
+// question the console's Diagnostics tab answers is why *this* deploy failed,
+// and keeping only the answer to that question is what bounds the namespace
+// without a ring buffer, a TTL or a reaper. What each entry may hold is
+// bounded in turn by the collectors — see maxCapturedLogBytes and
+// maxCapturedTasks — so one chatty container cannot grow a row without limit.
+
+// putDeployDiagnostics stores (replacing) the journal entry for a stack.
+func (st *cfnStore) putDeployDiagnostics(ctx context.Context, d *DeployDiagnostics) error {
+	data, err := json.Marshal(d)
+	if err != nil {
+		return fmt.Errorf("cfn: marshal diagnostics: %w", err)
+	}
+	return st.s.Set(ctx, nsDiagnostics, serviceutil.RegionKey(st.region(ctx), d.StackName), string(data))
+}
+
+// getDeployDiagnostics returns the journal entry for a stack, or nil when the
+// stack has never failed — which is the ordinary case and not an error.
+//
+// A record that cannot be decoded is reported as absent rather than as a
+// server error, for the same reason decodeStackEventRows skips a corrupt row:
+// a diagnostic aid must never be the thing that breaks.
+func (st *cfnStore) getDeployDiagnostics(ctx context.Context, stackName string) (*DeployDiagnostics, error) {
+	raw, found, err := st.s.Get(ctx, nsDiagnostics, serviceutil.RegionKey(st.region(ctx), stackName))
+	if err != nil {
+		return nil, fmt.Errorf("cfn: get diagnostics: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+	var d DeployDiagnostics
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		return nil, nil
+	}
+	return &d, nil
+}
+
+// deleteDeployDiagnostics removes a stack's journal entry. Delete is a no-op
+// when the key does not exist, so callers need not check first.
+func (st *cfnStore) deleteDeployDiagnostics(ctx context.Context, stackName string) error {
+	return st.s.Delete(ctx, nsDiagnostics, serviceutil.RegionKey(st.region(ctx), stackName))
 }
 
 // ── ChangeSet CRUD ─────────────────────────────────────────────────────────

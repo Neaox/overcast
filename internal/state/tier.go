@@ -140,6 +140,12 @@ var namespaceTiers = map[string]Tier{
 
 	// ── CloudFormation Events ───────────────────────────────────────────
 	"cfn:events": TierCached,
+	// One deploy-diagnostics entry per stack whose last deploy failed, read
+	// only when a developer opens the console's Diagnostics tab. Nothing on a
+	// deploy's hot path touches it, so seeding it into memory at startup would
+	// buy latency nobody is waiting on. Listed explicitly rather than left to
+	// TierFor's fallback so the placement reads as a decision.
+	"cfn:diagnostics": TierCached,
 
 	// ── CloudFront ──────────────────────────────────────────────────────
 	"cloudfront": TierHot,
