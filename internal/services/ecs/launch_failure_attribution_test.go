@@ -37,12 +37,15 @@ const (
 	sidecarImage = "public.ecr.aws/xray/aws-xray-daemon:latest"
 )
 
-// newFailingPullDaemon serves the two Docker endpoints an image pull touches,
-// refusing every pull the way a registry refuses an image it does not have.
+// newFailingPullDaemon refuses every image pull the way a registry refuses an
+// image it does not have. When the test itself runs in a container, endpoint
+// discovery also attaches that container to Overcast's control plane.
 func newFailingPullDaemon(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.45/networks/overcast_control/connect":
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/images/create"):
 			// Docker reports a failed pull in the last line of the progress
 			// stream, not in the status code.

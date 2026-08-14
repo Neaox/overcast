@@ -14,14 +14,13 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/clock"
-	"github.com/Neaox/overcast/internal/config"
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/state"
 )
 
 func TestLiveModeUpdateKubeconfigReturnsKubeconfigWhenClusterReady(t *testing.T) {
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
 
@@ -65,7 +64,7 @@ func TestLiveModeUpdateKubeconfigReturnsKubeconfigWhenClusterReady(t *testing.T)
 
 func TestLiveModeUpdateKubeconfigReturnsUnavailableWhenClusterNotReady(t *testing.T) {
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
 
@@ -95,7 +94,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAFromRuntime(t *testing.T) {
 	const expectedCAData = "Q0EtQkFDS0ZJTEw="
 	k3sYAMLArchive := tarArchiveWithSingleFile(t, "k3s.yaml", "apiVersion: v1\nclusters:\n- cluster:\n    certificate-authority-data: "+expectedCAData+"\n")
 
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/k3s-backfill-ctr/archive":
 			if gotPath := r.URL.Query().Get("path"); gotPath != "/etc/rancher/k3s/k3s.yaml" {
@@ -112,7 +111,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAFromRuntime(t *testing.T) {
 
 	endpoint := "tcp://" + strings.TrimPrefix(dockerSrv.URL, "http://")
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -168,7 +167,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAWhenCachedRuntimeIDIsStale(t *testin
 	k3sYAMLArchive := tarArchiveWithSingleFile(t, "k3s.yaml", "apiVersion: v1\nclusters:\n- cluster:\n    certificate-authority-data: "+expectedCAData+"\n")
 
 	requests := make([]string, 0, 3)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/stale-k3s-id/json":
@@ -217,7 +216,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAWhenCachedRuntimeIDIsStale(t *testin
 
 	endpoint := "tcp://" + strings.TrimPrefix(dockerSrv.URL, "http://")
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -289,7 +288,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAWhenCachedRuntimeIDIsBlank(t *testin
 	k3sYAMLArchive := tarArchiveWithSingleFile(t, "k3s.yaml", "apiVersion: v1\nclusters:\n- cluster:\n    certificate-authority-data: "+expectedCAData+"\n")
 
 	requests := make([]string, 0, 2)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-live-backfill-blank-id/json":
@@ -321,7 +320,7 @@ func TestLiveModeUpdateKubeconfigBackfillsCAWhenCachedRuntimeIDIsBlank(t *testin
 
 	endpoint := "tcp://" + strings.TrimPrefix(dockerSrv.URL, "http://")
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		state.NewMemoryStore(), zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -388,7 +387,7 @@ func TestLiveModeUpdateKubeconfigReconcilesRuntimeAfterRestart(t *testing.T) {
 	k3sYAMLArchive := tarArchiveWithSingleFile(t, "k3s.yaml", "apiVersion: v1\nclusters:\n- cluster:\n    certificate-authority-data: "+expectedCAData+"\n")
 
 	requests := make([]string, 0, 2)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-live-restart-backfill/json":
@@ -417,7 +416,7 @@ func TestLiveModeUpdateKubeconfigReconcilesRuntimeAfterRestart(t *testing.T) {
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -435,7 +434,7 @@ func TestLiveModeUpdateKubeconfigReconcilesRuntimeAfterRestart(t *testing.T) {
 	// Simulate a restarted process: the cluster record persists, but the new
 	// service instance has no in-memory runtime bookkeeping yet.
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", EKSMode: config.EKSModeLive},
+		liveTestConfig(""),
 		store, zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -496,7 +495,7 @@ func TestLiveModeUpdateKubeconfigReconcilesReadyClusterAfterRestart(t *testing.T
 	readyzPort := readyzURL.Port()
 
 	requests := make([]string, 0, 2)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-live-restart-ready-kubeconfig/json":
@@ -533,7 +532,7 @@ func TestLiveModeUpdateKubeconfigReconcilesReadyClusterAfterRestart(t *testing.T
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -550,7 +549,7 @@ func TestLiveModeUpdateKubeconfigReconcilesReadyClusterAfterRestart(t *testing.T
 	// Simulate a restarted process: the persisted cluster is stale but the
 	// managed k3s runtime is already ready and discoverable via Docker.
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -621,7 +620,7 @@ func TestLiveModeUpdateKubeconfigReconcilesWhenCachedRuntimeIDMissing(t *testing
 	readyzPort := readyzURL.Port()
 
 	requests := make([]string, 0, 2)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/overcast-eks-live-restart-ready-kubeconfig-empty-id/json":
@@ -658,7 +657,7 @@ func TestLiveModeUpdateKubeconfigReconcilesWhenCachedRuntimeIDMissing(t *testing
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -675,7 +674,7 @@ func TestLiveModeUpdateKubeconfigReconcilesWhenCachedRuntimeIDMissing(t *testing
 	// Simulate restart with an incomplete cached runtime entry (container ID
 	// never populated) while the managed k3s runtime is already ready.
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
@@ -747,7 +746,7 @@ func TestLiveModeUpdateKubeconfigReconcilesWhenCachedRuntimeIDIsStale(t *testing
 	readyzPort := readyzURL.Port()
 
 	requests := make([]string, 0, 2)
-	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dockerSrv := httptest.NewServer(allowControlPlaneConnect(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.45/containers/stale-k3s-id/json":
@@ -804,7 +803,7 @@ func TestLiveModeUpdateKubeconfigReconcilesWhenCachedRuntimeIDIsStale(t *testing
 	store := state.NewMemoryStore()
 
 	seed := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	if err := seed.putCluster(context.Background(), "us-east-1", &Cluster{
@@ -821,7 +820,7 @@ func TestLiveModeUpdateKubeconfigReconcilesWhenCachedRuntimeIDIsStale(t *testing
 	// Simulate restart with a stale non-empty cached runtime ID while the
 	// managed k3s runtime is already ready under the deterministic name.
 	svc := New(
-		&config.Config{Region: "us-east-1", AccountID: "000000000000", Hostname: "overcast.local", EKSMode: config.EKSModeLive},
+		liveTestConfig("overcast.local"),
 		store, zap.NewNop(), clock.New(),
 	)
 	svc.SetDocker(docker.NewClient(endpoint, zap.NewNop()))
