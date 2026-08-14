@@ -48,6 +48,13 @@ type fakeECSDockerDaemon struct {
 	started []string
 	created []docker.CreateContainerRequest
 	onStart func(string)
+
+	// logs and removed model the one thing the retention paths turn on: a
+	// container's output is readable right up to the moment it is removed, and
+	// not one call afterwards. A daemon that always answers is no test of an
+	// ordering bug.
+	logs    map[string][]byte
+	removed map[string]bool
 }
 
 // startedCount reports how many containers have been started.
@@ -74,6 +81,22 @@ func (fd *fakeECSDockerDaemon) setOnStart(fn func(string)) {
 	fd.onStart = fn
 }
 
+// setContainerLogs gives a container the bytes its logs endpoint serves, in
+// whatever framing the test is about — multiplexed or the raw TTY stream.
+func (fd *fakeECSDockerDaemon) setContainerLogs(containerID string, body []byte) {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	fd.logs[containerID] = body
+}
+
+// wasRemoved reports whether the container has been deleted from the daemon,
+// which is the point after which its logs are unrecoverable.
+func (fd *fakeECSDockerDaemon) wasRemoved(containerID string) bool {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	return fd.removed[containerID]
+}
+
 func (fd *fakeECSDockerDaemon) latestResourceID() string {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
@@ -85,7 +108,10 @@ func (fd *fakeECSDockerDaemon) latestResourceID() string {
 
 func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 	t.Helper()
-	fd := &fakeECSDockerDaemon{}
+	fd := &fakeECSDockerDaemon{
+		logs:    map[string][]byte{},
+		removed: map[string]bool{},
+	}
 	var seq int
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +138,25 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 			fd.mu.Unlock()
 			w.Write([]byte(`{"Id":"` + id + `"}`)) //nolint:errcheck
 
+		// Logs, until the container is removed. Docker answers a removed one
+		// with a JSON 404, which the client turns into an error rather than
+		// letting the body reach a caller that would read it as output.
+		case strings.HasSuffix(p, "/logs"):
+			id := containerIDFromPath(p)
+			fd.mu.Lock()
+			gone, body := fd.removed[id], fd.logs[id]
+			fd.mu.Unlock()
+			if gone {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"No such container: ` + id + `"}`)) //nolint:errcheck
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.docker.raw-stream")
+			w.Write(body) //nolint:errcheck
+
+		case strings.HasSuffix(p, "/stop"):
+			w.WriteHeader(http.StatusNoContent)
+
 		case strings.HasSuffix(p, "/start"):
 			fd.mu.Lock()
 			containerID := containerIDFromPath(p)
@@ -124,6 +169,9 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 			w.WriteHeader(http.StatusNoContent)
 
 		case r.Method == http.MethodDelete && strings.Contains(p, "/containers/"):
+			fd.mu.Lock()
+			fd.removed[containerIDFromPath(p)] = true
+			fd.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 
 		// Container inspect, once one exists.

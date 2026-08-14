@@ -162,8 +162,8 @@ func (h *Handler) getVisibleTask(ctx context.Context, clusterName, taskID string
 	if aerr != nil || !h.stoppedTaskExpired(task) {
 		return task, aerr
 	}
-	if err := h.store.store.Delete(ctx, nsTags, serviceutil.RegionKey(h.store.region(ctx), task.TaskArn)); err != nil {
-		return nil, protocol.Wrap(protocol.ErrInternalError, err)
+	if aerr := h.reapTaskCompanions(ctx, task); aerr != nil {
+		return nil, aerr
 	}
 	if aerr := h.store.deleteTask(ctx, clusterName, taskID); aerr != nil {
 		return nil, aerr
@@ -182,14 +182,30 @@ func (h *Handler) listVisibleTasks(ctx context.Context, clusterName string) ([]T
 			visible = append(visible, tasks[i])
 			continue
 		}
-		if err := h.store.store.Delete(ctx, nsTags, serviceutil.RegionKey(h.store.region(ctx), tasks[i].TaskArn)); err != nil {
-			return nil, protocol.Wrap(protocol.ErrInternalError, err)
+		if aerr := h.reapTaskCompanions(ctx, &tasks[i]); aerr != nil {
+			return nil, aerr
 		}
 		if aerr := h.store.deleteTask(ctx, clusterName, extractTaskID(tasks[i].TaskArn)); aerr != nil {
 			return nil, aerr
 		}
 	}
 	return visible, nil
+}
+
+// reapTaskCompanions deletes the keys that hang off a task record without being
+// part of it: its tags, and its containers' retained log tails.
+//
+// The logs are the reason this is a function rather than the one line it was.
+// Nothing else expires that namespace — no TTL, no reaper anywhere — so left
+// alone it grows one entry per container of every task a service ever placed,
+// for the life of the process. They are unreachable well before that in any
+// case: GetTaskContainerLogs resolves the task first, so an entry outliving its
+// record can only be read as a 404.
+func (h *Handler) reapTaskCompanions(ctx context.Context, task *Task) *protocol.AWSError {
+	if err := h.store.store.Delete(ctx, nsTags, serviceutil.RegionKey(h.store.region(ctx), task.TaskArn)); err != nil {
+		return protocol.Wrap(protocol.ErrInternalError, err)
+	}
+	return h.store.deleteTaskContainerLogs(ctx, task)
 }
 
 // RunTask handles AmazonEC2ContainerServiceV20141113.RunTask.

@@ -1,0 +1,2 @@
+* [ecs] container logs read through the shared Docker de-framer, so a task started with a TTY no longer has the head of its output eaten and the rest cut at an arbitrary offset
+* [ecs] a task the service scheduler retires has its containers' final output captured before they are removed rather than racing the removal, so the logs of a deployment that failed survive the rollback that deletes it; the retained copy is bounded to 16 KiB, carries the time it was taken, and is deleted with the task record instead of accumulating for the life of the process

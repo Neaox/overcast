@@ -1124,24 +1124,8 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 			continue
 		}
 
-		// Stop Docker containers if available.
-		if h.dockerReady.Load() {
-			for _, c := range stopped.Containers {
-				if c.DockerID == "" {
-					continue
-				}
-				if err := h.docker.StopContainer(ctx, c.DockerID, 5); err != nil {
-					log.Warn("ecs: reconcile: failed to stop container",
-						zap.String("container", c.DockerID), zap.Error(err))
-				}
-				if !h.cfg.ECSKeepContainers {
-					if err := h.docker.RemoveContainerForce(c.DockerID); err != nil {
-						log.Warn("ecs: reconcile: failed to remove container",
-							zap.String("container", c.DockerID), zap.Error(err))
-					}
-				}
-			}
-		}
+		h.retireTaskContainers(ctx, stopped)
+
 		// Only what this pass actually retired is reported. A task that had
 		// already stopped on its own is not the scheduler's doing.
 		if changed {
@@ -1150,6 +1134,45 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 	}
 	if stoppedCount > 0 {
 		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has stopped %d tasks.", svc.ServiceName, stoppedCount))
+	}
+}
+
+// retireTaskContainers tears down the Docker containers of a task the service
+// scheduler has stopped: each one is stopped, its final output captured, and
+// then it is removed.
+//
+// The capture sits between the stop and the remove, and that ordering is the
+// point. Retention used to ride the Docker die event alone, which the worker
+// pool runs asynchronously — so on this path it raced the RemoveContainerForce
+// below and lost often enough to matter. The case it loses is the one that
+// matters most: a CloudFormation rollback deleting a service is exactly where
+// somebody goes looking for why the tasks would not start, and the miss
+// surfaced as nothing more than a Debug line about a container Docker no longer
+// had. Capturing before the stop would not do either — a container still gets
+// to write while it shuts down, and its last words are usually the useful ones.
+//
+// The die event still fires and still captures; captureContainerLogs keeps the
+// first success rather than letting the two orderings overwrite each other.
+func (h *Handler) retireTaskContainers(ctx context.Context, task *Task) {
+	if !h.dockerReady.Load() {
+		return
+	}
+	log := h.log.WithRecorder(ctx)
+	for _, c := range task.Containers {
+		if c.DockerID == "" {
+			continue
+		}
+		if err := h.docker.StopContainer(ctx, c.DockerID, 5); err != nil {
+			log.Warn("ecs: reconcile: failed to stop container",
+				zap.String("container", c.DockerID), zap.Error(err))
+		}
+		h.captureContainerLogs(ctx, task, c.DockerID)
+		if !h.cfg.ECSKeepContainers {
+			if err := h.docker.RemoveContainerForce(c.DockerID); err != nil {
+				log.Warn("ecs: reconcile: failed to remove container",
+					zap.String("container", c.DockerID), zap.Error(err))
+			}
+		}
 	}
 }
 

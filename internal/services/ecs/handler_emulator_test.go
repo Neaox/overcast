@@ -51,8 +51,8 @@ func TestRetainContainerLogs_exitedContainerCapturesBoundedTail(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("get retained logs: %s", aerr.Message)
 	}
-	if !found || logs != rootCause {
-		t.Fatalf("retained logs = %q, found %v; want %q", logs, found, rootCause)
+	if !found || logs.Logs != rootCause {
+		t.Fatalf("retained logs = %q, found %v; want %q", logs.Logs, found, rootCause)
 	}
 }
 
@@ -70,7 +70,8 @@ func TestGetTaskContainerLogs_stoppedContainerUsesRetainedSnapshot(t *testing.T)
 	if aerr := h.store.putTask(ctx, task); aerr != nil {
 		t.Fatalf("put task: %s", aerr.Message)
 	}
-	if aerr := h.store.putTaskContainerLogs(ctx, "demo", "task-1", "app", "entrypoint.sh: syntax error near unexpected token"); aerr != nil {
+	if aerr := h.store.putTaskContainerLogs(ctx, "demo", "task-1", "app",
+		taskContainerLogs{Logs: "entrypoint.sh: syntax error near unexpected token"}); aerr != nil {
 		t.Fatalf("put retained logs: %s", aerr.Message)
 	}
 
