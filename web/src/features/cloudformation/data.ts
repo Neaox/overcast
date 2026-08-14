@@ -13,6 +13,8 @@
  *   cfnKeys.eventList(baseUrl, name)             -> ["cloudformation", "events", baseUrl, name]
  *   cfnKeys.template()                           -> ["cloudformation", "template"]
  *   cfnKeys.templateDetail(baseUrl, name)        -> ["cloudformation", "template", baseUrl, name]
+ *   cfnKeys.diagnostics()                        -> ["cloudformation", "diagnostics"]
+ *   cfnKeys.diagnosticsDetail(baseUrl, name)     -> ["cloudformation", "diagnostics", baseUrl, name]
  */
 
 import { queryOptions, infiniteQueryOptions, mutationOptions } from "@tanstack/react-query"
@@ -36,6 +38,8 @@ export const cfnKeys = {
   eventList: (name: string) => [...cfnKeys.events(), name] as const,
   template: () => [...cfnKeys.all(), "template"] as const,
   templateDetail: (name: string) => [...cfnKeys.template(), name] as const,
+  diagnostics: () => [...cfnKeys.all(), "diagnostics"] as const,
+  diagnosticsDetail: (name: string) => [...cfnKeys.diagnostics(), name] as const,
 }
 
 // ─── Query definitions ─────────────────────────────────────────────────────
@@ -74,6 +78,22 @@ export function cfnTemplateQueryOptions(name: string) {
   return queryOptions({
     queryKey: cfnKeys.templateDetail(name),
     queryFn: () => cloudformation.getTemplate(name),
+  })
+}
+
+/**
+ * The emulator's deploy diagnostics for a stack — `null` when there are none.
+ *
+ * `null` is a legitimate result rather than an error, because a stack that has
+ * never failed is the ordinary case. The console keys the whole Diagnostics tab
+ * off it, so an error state here would be the difference between "nothing to
+ * show" and "a tab that fails to load", and only one of those is worth
+ * interrupting someone with.
+ */
+export function cfnDiagnosticsQueryOptions(name: string) {
+  return queryOptions({
+    queryKey: cfnKeys.diagnosticsDetail(name),
+    queryFn: () => cloudformation.getStackDiagnostics(name),
   })
 }
 
