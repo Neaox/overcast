@@ -4093,6 +4093,11 @@ export const DOCS_NAV = [
       },
       {
         "depth": 3,
+        "text": "Master account and initial database",
+        "id": "master-account-and-initial-database"
+      },
+      {
+        "depth": 3,
         "text": "Changing the master password — `ModifyDBInstance` and `ModifyDBCluster",
         "id": "changing-the-master-password-modifydbinstance-and-modifydbcluster"
       },

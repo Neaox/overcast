@@ -52,8 +52,7 @@ func seedClusterInSubnetGroup(t *testing.T, h *Handler, ctx context.Context, gro
 	}
 }
 
-// A member instance supplies no credentials of its own — RDS keeps them on the
-// cluster and rejects them on the member — so it takes the cluster's. Without
+// A member instance takes its effective credentials from the cluster. Without
 // them the engine container has nothing to start with.
 func TestCreateDBInstance_auroraMemberInheritsTheClustersCredentials(t *testing.T) {
 	h := auroraHandler(t)
@@ -74,6 +73,93 @@ func TestCreateDBInstance_auroraMemberInheritsTheClustersCredentials(t *testing.
 	}
 	if got.MasterUserPassword != "cluster-secret-1" {
 		t.Errorf("MasterUserPassword = %q, want the cluster's", got.MasterUserPassword)
+	}
+}
+
+func TestCreateDBInstance_auroraMemberInheritsTheClustersDatabaseName(t *testing.T) {
+	h := auroraHandler(t)
+	ctx := context.Background()
+	if aerr := h.store.putDBCluster(ctx, &DBCluster{
+		DBClusterIdentifier: "app-cluster",
+		Engine:              "aurora-mysql",
+		MasterUsername:      "clusteradmin",
+		MasterUserPassword:  "cluster-secret-1",
+		DatabaseName:        "application",
+	}); aerr != nil {
+		t.Fatalf("putDBCluster: %s", aerr.Message)
+	}
+
+	if _, aerr := h.createDBInstanceTyped(ctx, &createDBInstanceReq{
+		DBInstanceIdentifier: "app-cluster-writer",
+		Engine:               "aurora-mysql",
+		DBClusterIdentifier:  "app-cluster",
+	}); aerr != nil {
+		t.Fatalf("createDBInstanceTyped: %s", aerr.Message)
+	}
+
+	got, _ := h.store.getDBInstance(ctx, "app-cluster-writer")
+	if got.DBName != "application" {
+		t.Errorf("DBName = %q, want the cluster's DatabaseName", got.DBName)
+	}
+}
+
+func TestCreateDBInstance_auroraMemberUsesClusterOwnedSettings(t *testing.T) {
+	// Given: an Aurora cluster owns all settings shared by its members.
+	h := auroraHandler(t)
+	ctx := context.Background()
+	if aerr := h.store.putDBCluster(ctx, &DBCluster{
+		DBClusterIdentifier: "app-cluster",
+		Engine:              "aurora-mysql",
+		EngineVersion:       "8.0.mysql_aurora.3.09.0",
+		MasterUsername:      "clusteradmin",
+		MasterUserPassword:  "cluster-secret-1",
+		DatabaseName:        "application",
+		Port:                4406,
+	}); aerr != nil {
+		t.Fatalf("putDBCluster: %s", aerr.Message)
+	}
+
+	// When: ignored instance-level fields contain conflicting values.
+	if _, aerr := h.createDBInstanceTyped(ctx, &createDBInstanceReq{
+		DBInstanceIdentifier: "app-cluster-writer",
+		Engine:               "aurora-mysql",
+		DBClusterIdentifier:  "app-cluster",
+		EngineVersion:        "2.11",
+		MasterUsername:       "instanceadmin",
+		MasterUserPassword:   "instance-secret-1",
+		DBName:               "instance_database",
+		Port:                 3307,
+	}); aerr != nil {
+		t.Fatalf("createDBInstanceTyped: %s", aerr.Message)
+	}
+
+	// Then: the member records only the cluster-owned values.
+	got, _ := h.store.getDBInstance(ctx, "app-cluster-writer")
+	if got.EngineVersion != "8.0.mysql_aurora.3.09.0" || got.MasterUsername != "clusteradmin" ||
+		got.MasterUserPassword != "cluster-secret-1" || got.DBName != "application" || got.Port != 4406 {
+		t.Fatalf("member settings = version %q user %q password %q database %q port %d, want cluster-owned values",
+			got.EngineVersion, got.MasterUsername, got.MasterUserPassword, got.DBName, got.Port)
+	}
+}
+
+func TestCreateDBInstance_auroraMemberEngineMustMatchCluster(t *testing.T) {
+	// Given: an Aurora MySQL cluster exists.
+	h := auroraHandler(t)
+	ctx := context.Background()
+	if aerr := h.store.putDBCluster(ctx, &DBCluster{DBClusterIdentifier: "app-cluster", Engine: "aurora-mysql"}); aerr != nil {
+		t.Fatalf("putDBCluster: %s", aerr.Message)
+	}
+
+	// When: a PostgreSQL member is requested for that cluster.
+	_, aerr := h.createDBInstanceTyped(ctx, &createDBInstanceReq{
+		DBInstanceIdentifier: "wrong-engine",
+		Engine:               "aurora-postgresql",
+		DBClusterIdentifier:  "app-cluster",
+	})
+
+	// Then: the incompatible relationship is rejected synchronously.
+	if aerr == nil || aerr.Code != "InvalidParameterCombination" {
+		t.Fatalf("error = %#v, want InvalidParameterCombination", aerr)
 	}
 }
 
@@ -127,9 +213,9 @@ func TestCreateDBInstance_auroraMemberInheritsTheClustersVPC(t *testing.T) {
 	}
 }
 
-// An explicit subnet group on the instance still wins — inheritance fills a
-// gap, it does not override.
-func TestCreateDBInstance_instanceSubnetGroupBeatsTheClusters(t *testing.T) {
+// DBSubnetGroupName does not apply to an Aurora member, even when present in
+// the shared CreateDBInstance request shape.
+func TestCreateDBInstance_clusterSubnetGroupBeatsTheInstances(t *testing.T) {
 	h := auroraHandler(t)
 	ctx := context.Background()
 	seedClusterInSubnetGroup(t, h, ctx, "cluster-subnets", "vpc-cluster", "app-cluster")
@@ -151,19 +237,20 @@ func TestCreateDBInstance_instanceSubnetGroupBeatsTheClusters(t *testing.T) {
 	}
 
 	got, _ := h.store.getDBInstance(ctx, "odd-one-out")
-	if got.VpcID != "vpc-instance" {
-		t.Fatalf("VpcID = %q, want the instance's own VPC", got.VpcID)
+	if got.VpcID != "vpc-cluster" || got.DBSubnetGroupName != "cluster-subnets" {
+		t.Fatalf("member placement = VPC %q subnet group %q, want the cluster's", got.VpcID, got.DBSubnetGroupName)
 	}
 }
 
-// A cluster with no subnet group leaves the instance where it was: on the
-// default plane, public by the same rule as any instance without a group.
+// Aurora defaults to private even when no subnet group is specified.
 func TestCreateDBInstance_clusterWithoutASubnetGroupChangesNothing(t *testing.T) {
 	h := auroraHandler(t)
 	ctx := context.Background()
 	if aerr := h.store.putDBCluster(ctx, &DBCluster{
 		DBClusterIdentifier: "bare-cluster",
 		Engine:              "aurora-mysql",
+		MasterUsername:      "clusteradmin",
+		MasterUserPassword:  "cluster-secret-1",
 	}); aerr != nil {
 		t.Fatalf("putDBCluster: %s", aerr.Message)
 	}
@@ -181,7 +268,7 @@ func TestCreateDBInstance_clusterWithoutASubnetGroupChangesNothing(t *testing.T)
 	if got.VpcID != "" || got.DBSubnetGroupName != "" {
 		t.Fatalf("instance = vpc %q group %q, want neither", got.VpcID, got.DBSubnetGroupName)
 	}
-	if !got.PubliclyAccessibleOrDefault() {
-		t.Error("PubliclyAccessible = false, want true with no subnet group anywhere")
+	if got.PubliclyAccessibleOrDefault() {
+		t.Error("PubliclyAccessible = true, want Aurora's false default")
 	}
 }

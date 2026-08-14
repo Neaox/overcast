@@ -1,6 +1,9 @@
 package rds
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // resolveEngineImage picks the Docker image for an engine and version, and
 // reports which advertised version answered.
@@ -30,13 +33,21 @@ func resolveEngineImage(engine, version string) (image, matched string, ok bool)
 		return image, version, true
 	}
 
+	want := version
+	if engine == "aurora-mysql" {
+		want = auroraMySQLTrackVersion(version)
+	}
 	for known := range versions {
 		// Longest advertised version wins: "14.11" is a better answer for
 		// "14.11.2" than a bare "14" would be.
-		if versionMatches(version, known) && len(known) > len(matched) {
+		if strings.HasPrefix(want, known+".") && len(known) > len(matched) {
 			matched = known
 		}
 	}
+	if matched != "" {
+		return versions[matched], matched, true
+	}
+	matched = nearestVersionInMajor(want, versions)
 	if matched != "" {
 		return versions[matched], matched, true
 	}
@@ -46,13 +57,35 @@ func resolveEngineImage(engine, version string) (image, matched string, ok bool)
 	return "", "", false
 }
 
-// versionMatches reports whether an advertised version is a usable stand-in for
-// the requested one: a dot-boundary prefix of it, or the same major version.
-func versionMatches(want, advertised string) bool {
-	if strings.HasPrefix(want, advertised+".") {
-		return true
+func nearestVersionInMajor(want string, versions map[string]string) string {
+	var lower, upper string
+	for known := range versions {
+		if majorOf(want) != majorOf(known) {
+			continue
+		}
+		if versionAtLeast(want, known) {
+			if lower == "" || versionAtLeast(known, lower) {
+				lower = known
+			}
+		} else if upper == "" || versionAtLeast(upper, known) {
+			upper = known
+		}
 	}
-	return majorOf(want) != "" && majorOf(want) == majorOf(advertised)
+	if lower != "" {
+		return lower
+	}
+	return upper
+}
+
+// auroraMySQLTrackVersion extracts Aurora's release track from both the short
+// versions Overcast advertises and the full versions CloudFormation/CDK send.
+// For example, 8.0.mysql_aurora.3.04.0 belongs to Aurora MySQL 3.04.0.
+func auroraMySQLTrackVersion(version string) string {
+	const marker = ".mysql_aurora."
+	if i := strings.Index(version, marker); i >= 0 {
+		return version[i+len(marker):]
+	}
+	return version
 }
 
 func majorOf(version string) string {
@@ -60,4 +93,39 @@ func majorOf(version string) string {
 		return version[:i]
 	}
 	return version
+}
+
+func versionAtLeast(version, minimum string) bool {
+	got := numericVersion(version)
+	want := numericVersion(minimum)
+	limit := len(got)
+	if len(want) > limit {
+		limit = len(want)
+	}
+	for i := 0; i < limit; i++ {
+		var gotPart, wantPart int
+		if i < len(got) {
+			gotPart = got[i]
+		}
+		if i < len(want) {
+			wantPart = want[i]
+		}
+		if gotPart != wantPart {
+			return gotPart > wantPart
+		}
+	}
+	return true
+}
+
+func numericVersion(version string) []int {
+	parts := strings.Split(version, ".")
+	result := make([]int, 0, len(parts))
+	for _, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			break
+		}
+		result = append(result, n)
+	}
+	return result
 }

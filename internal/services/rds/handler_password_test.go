@@ -70,16 +70,22 @@ func TestModifyDBInstance_masterPasswordReachesTheRunningEngine(t *testing.T) {
 			engine:  "postgres",
 			user:    "admin",
 			wantCmd: "psql",
-			wantSQL: []string{`ALTER USER "admin" WITH PASSWORD 'new-password'`},
-			wantEnv: []string{"PGPASSWORD=old-password"},
+			wantSQL: []string{
+				`ALTER USER "admin" WITH PASSWORD 'new-password'`,
+				`ALTER USER "rdsadmin" WITH PASSWORD`,
+			},
+			wantEnv: []string{"PGPASSWORD=" + credentialBootstrapPassword("old-password")},
 		},
 		{
 			name:    "aurora-postgresql runs the engine underneath it",
 			engine:  "aurora-postgresql",
 			user:    "admin",
 			wantCmd: "psql",
-			wantSQL: []string{`ALTER USER "admin" WITH PASSWORD 'new-password'`},
-			wantEnv: []string{"PGPASSWORD=old-password"},
+			wantSQL: []string{
+				`ALTER USER "admin" WITH PASSWORD 'new-password'`,
+				`ALTER USER "rdsadmin" WITH PASSWORD`,
+			},
+			wantEnv: []string{"PGPASSWORD=" + credentialBootstrapPassword("old-password")},
 		},
 	}
 
@@ -97,7 +103,7 @@ func TestModifyDBInstance_masterPasswordReachesTheRunningEngine(t *testing.T) {
 				t.Fatalf("ModifyDBInstance: %s: %s", aerr.Code, aerr.Message)
 			}
 
-			cmds, envs := d.recordedExecs()
+			cmds, envs := d.recordedPasswordExecs()
 			if len(cmds) != 1 {
 				t.Fatalf("the password change ran %d commands in the container, want exactly 1: %v", len(cmds), cmds)
 			}
@@ -185,7 +191,7 @@ func TestModifyDBInstance_masterPasswordNeedsARunningEngine(t *testing.T) {
 	if got := storedPassword(t, h, id); got != "old-password" {
 		t.Errorf("stored MasterUserPassword = %q, want it left at the password the container has", got)
 	}
-	if cmds, _ := d.recordedExecs(); len(cmds) != 0 {
+	if cmds, _ := d.recordedPasswordExecs(); len(cmds) != 0 {
 		t.Errorf("a stopped instance was sent %d commands: %v", len(cmds), cmds)
 	}
 
@@ -215,7 +221,7 @@ func TestModifyDBInstance_unchangedMasterPasswordTouchesNothing(t *testing.T) {
 	}); aerr != nil {
 		t.Fatalf("ModifyDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}
-	if cmds, _ := d.recordedExecs(); len(cmds) != 0 {
+	if cmds, _ := d.recordedPasswordExecs(); len(cmds) != 0 {
 		t.Errorf("an unchanged password ran %d commands in the container: %v", len(cmds), cmds)
 	}
 }
@@ -273,9 +279,9 @@ func TestMasterPasswordStatements_quoting(t *testing.T) {
 		}
 	})
 	t.Run("postgres", func(t *testing.T) {
-		got := postgresPasswordStatement(`ad"min`, `pa'ss\word`)
-		if got != `ALTER USER "ad""min" WITH PASSWORD 'pa''ss\word';` {
-			t.Errorf("postgresPasswordStatement quoting: %s", got)
+		got := postgresPasswordStatements(`ad"min`, `pa'ss\word`)
+		if !strings.HasPrefix(got, `ALTER USER "ad""min" WITH PASSWORD 'pa''ss\word'; `) {
+			t.Errorf("postgresPasswordStatements quoting: %s", got)
 		}
 	})
 }

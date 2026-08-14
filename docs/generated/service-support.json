@@ -5317,7 +5317,7 @@
           "operation": "CreateDBInstance",
           "category": "DB instances",
           "status": "✅ Supported",
-          "notes": "Docker-backed when available; async creating→available; mysql/postgres/mariadb/aurora-mysql/aurora-postgresql; accepts `DBClusterIdentifier` for Aurora, and a member inherits the cluster's subnet group and credentials; `PubliclyAccessible` defaults to true without a DB subnet group and false with one"
+          "notes": "Docker-backed when available; async creating→available; mysql/postgres/mariadb/aurora-mysql/aurora-postgresql; master accounts can create databases/users and grant privileges; omitted `DBName` creates no MySQL/MariaDB database; Aurora members use cluster-owned placement, credentials, version, port, and database; omitted `PubliclyAccessible` defaults to false for Aurora and otherwise follows subnet placement"
         },
         {
           "operation": "DescribeDBInstances",
@@ -5347,7 +5347,7 @@
           "operation": "ModifyDBInstance",
           "category": "DB instances",
           "status": "✅ Supported",
-          "notes": "Metadata updates (class, storage, engine version, multi-AZ, public accessibility); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and is held to RDS's 8–128 character and forbidden-character rules"
+          "notes": "Metadata updates (class, storage, engine version, multi-AZ, public accessibility); `MasterUserPassword` is applied to the running engine, requires an `available` instance, and uses RDS's engine-specific length and forbidden-character rules"
         },
         {
           "operation": "RebootDBInstance",
@@ -5455,7 +5455,7 @@
           "operation": "DescribeDBEngineVersions",
           "category": "Engine metadata",
           "status": "✅ Supported",
-          "notes": "mysql (8.0, 5.7), postgres (16.1, 15.5, 14.11), mariadb (11.4, 10.11), aurora-mysql (3.04, 2.11), aurora-postgresql (15.4, 14.11)"
+          "notes": "mysql (8.4, 8.0, 5.7), postgres (16.1, 15.5, 14.11), mariadb (11.4, 10.11), aurora-mysql (4.0, 3.04, 2.11), aurora-postgresql (15.4, 14.11)"
         },
         {
           "operation": "DescribeOrderableDBInstanceOptions",

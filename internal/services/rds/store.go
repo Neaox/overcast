@@ -112,7 +112,7 @@ func (i *DBInstance) PubliclyAccessibleOrDefault() bool {
 	if i.PubliclyAccessible != nil {
 		return *i.PubliclyAccessible
 	}
-	return defaultPubliclyAccessible(i.DBSubnetGroupName)
+	return defaultPubliclyAccessible(i.Engine, i.DBSubnetGroupName)
 }
 
 // defaultPubliclyAccessible decides a CreateDBInstance that did not say.
@@ -122,12 +122,11 @@ func (i *DBInstance) PubliclyAccessibleOrDefault() bool {
 // if that VPC has a gateway attached; an instance created into a named subnet
 // group is public only if those subnets sit in a VPC that has one.
 //
-// The first half resolves to "public" here and cannot resolve to anything
-// else: Overcast seeds its default VPC with an internet gateway and a default
-// route through it (internal/services/ec2/default_vpc.go), exactly as AWS
-// does. It is also what the emulator already does — an instance with no subnet
-// group runs on the default network and is dialable from the host — so the
-// default states the status quo rather than changing it under anyone.
+// For non-Aurora RDS instances, the first half resolves to "public" here:
+// Overcast seeds its default VPC with an internet gateway and a default route
+// through it (internal/services/ec2/default_vpc.go), exactly as AWS does.
+// Aurora is the documented exception and defaults to private when no subnet
+// group is specified.
 //
 // The second half is not answerable from RDS: nothing here can see whether a
 // subnet group's VPC has a gateway, and VPCNetworkResolver does not offer it.
@@ -135,8 +134,8 @@ func (i *DBInstance) PubliclyAccessibleOrDefault() bool {
 // is the commoner shape on AWS — a subnet group is usually built over private
 // subnets — and it is the safer half to be wrong about, because being wrong
 // is visible (the database does not answer) and the fix is the field itself.
-func defaultPubliclyAccessible(dbSubnetGroupName string) bool {
-	return dbSubnetGroupName == ""
+func defaultPubliclyAccessible(engine, dbSubnetGroupName string) bool {
+	return !auroraEngines[engine] && dbSubnetGroupName == ""
 }
 
 // DBEvent is a stored RDS event — the channel AWS provides for "why did that
@@ -378,6 +377,14 @@ func errDBInstanceAlreadyExists(id string) *protocol.AWSError {
 func errInvalidParameterValue(msg string) *protocol.AWSError {
 	return &protocol.AWSError{
 		Code:       "InvalidParameterValue",
+		Message:    msg,
+		HTTPStatus: http.StatusBadRequest,
+	}
+}
+
+func errInvalidParameterCombination(msg string) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "InvalidParameterCombination",
 		Message:    msg,
 		HTTPStatus: http.StatusBadRequest,
 	}

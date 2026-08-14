@@ -120,11 +120,22 @@ type execCreateRequest struct {
 	Env []string `json:"Env"`
 }
 
-// recordedExecs returns the commands and environments of every exec so far.
-func (d *lifecycleDaemon) recordedExecs() (cmds, envs [][]string) {
+// recordedPasswordExecs returns password-change commands, excluding lifecycle
+// readiness probes that are part of instance setup.
+func (d *lifecycleDaemon) recordedPasswordExecs() (cmds, envs [][]string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return append([][]string(nil), d.execCmds...), append([][]string(nil), d.execEnvs...)
+	for i, cmd := range d.execCmds {
+		if len(cmd) >= 2 && (cmd[len(cmd)-2] == "-e" || cmd[len(cmd)-2] == "-c") && cmd[len(cmd)-1] == "SELECT 1" {
+			continue
+		}
+		if len(cmd) == 3 && cmd[0] == "sh" && cmd[1] == "-c" && strings.Contains(cmd[2], credentialBootstrapMarker) {
+			continue
+		}
+		cmds = append(cmds, append([]string(nil), cmd...))
+		envs = append(envs, append([]string(nil), d.execEnvs[i]...))
+	}
+	return cmds, envs
 }
 
 // failExecs makes every subsequent exec exit non-zero with output — what an
@@ -518,15 +529,15 @@ func newLifecycleDaemon(t *testing.T) *lifecycleDaemon {
 	return d
 }
 
-func TestCreateMySQL8Container_bootstrapsEscapedCachingSHA2CredentialsBeforeStart(t *testing.T) {
+func TestCreateAuroraMySQL3Container_bootstrapsAWSMasterCredentialsBeforeStart(t *testing.T) {
 	d := newLifecycleDaemon(t)
 	h := newLifecycleHandler(t, d)
 	const (
 		id       = "mysql-special-password"
-		password = `valid\password!`
+		password = `valid\pass'word!`
 	)
 
-	createRunningInstanceWith(t, h, id, "mysql", "admin", password)
+	createRunningInstanceWith(t, h, id, "aurora-mysql", "admin", password)
 
 	d.mu.Lock()
 	env := append([]string(nil), d.createEnv...)
@@ -562,14 +573,129 @@ func TestCreateMySQL8Container_bootstrapsEscapedCachingSHA2CredentialsBeforeStar
 		t.Fatalf("read credential init script: %v", err)
 	}
 	for _, want := range []string{
-		"IDENTIFIED WITH caching_sha2_password",
-		`BY 'valid\\password!'`,
-		`export MYSQL_ROOT_PASSWORD='valid\password!'`,
+		"IDENTIFIED WITH mysql_native_password",
+		`BY 'valid\\pass''word!'`,
+		`export MYSQL_ROOT_PASSWORD='valid\pass'\''word!'`,
+		"CREATE USER IF NOT EXISTS 'admin'@'%'",
+		"CREATE ROLE IF NOT EXISTS 'rds_superuser_role'@'%'",
+		" ON *.* TO 'rds_superuser_role'@'%' WITH GRANT OPTION",
+		"GRANT 'rds_superuser_role'@'%' TO 'admin'@'%'",
+		"SET DEFAULT ROLE 'rds_superuser_role'@'%' TO 'admin'@'%'",
+		"CREATE ROLE, DROP ROLE, APPLICATION_PASSWORD_ADMIN, ROLE_ADMIN, SET_USER_ID, XA_RECOVER_ADMIN, CONNECTION_ADMIN, SHOW_ROUTINE",
+		"DROP USER IF EXISTS 'root'@'%'",
 	} {
 		if !strings.Contains(script.String(), want) {
 			t.Errorf("credential init script does not contain %q:\n%s", want, script.String())
 		}
 	}
+	if strings.Contains(script.String(), "CREATE USER IF NOT EXISTS 'root'@'%'") {
+		t.Errorf("credential initializer exposes root@%% as a remote administrator:\n%s", script.String())
+	}
+	if strings.Contains(script.String(), " ON `test`.* TO 'admin'@'%'") {
+		t.Errorf("master privileges are scoped to the bootstrap database:\n%s", script.String())
+	}
+}
+
+func TestCreateMySQLContainer_withoutDBNameDoesNotCreateTestDatabase(t *testing.T) {
+	d := newLifecycleDaemon(t)
+	h := newLifecycleHandler(t, d)
+
+	createRunningInstanceWith(t, h, "mysql-no-db", "mysql", "admin", "password123")
+
+	d.mu.Lock()
+	env := append([]string(nil), d.createEnv...)
+	d.mu.Unlock()
+	for _, value := range env {
+		if strings.HasPrefix(value, "MYSQL_DATABASE=") {
+			t.Fatalf("container env contains %q, want no application database when DBName is omitted", value)
+		}
+	}
+}
+
+func TestCredentialInitializersGiveEveryRequestedMasterAWSBootstrapPrivileges(t *testing.T) {
+	tests := []struct {
+		name      string
+		instance  DBInstance
+		image     string
+		want      []string
+		forbidden []string
+	}{
+		{
+			name: "MySQL 5.7",
+			instance: DBInstance{
+				Engine: "mysql", EngineVersion: "5.7", MasterUsername: "admin", MasterUserPassword: "password123",
+			},
+			image: "mysql:5.7",
+			want: []string{
+				"CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED BY 'password123'",
+				" ON *.* TO 'admin'@'%' WITH GRANT OPTION",
+				"DROP USER IF EXISTS 'root'@'%'",
+			},
+			forbidden: []string{" ON `test`.*", "GRANT ALL ON *.* TO 'root'@'%'"},
+		},
+		{
+			name: "MariaDB",
+			instance: DBInstance{
+				Engine: "mariadb", EngineVersion: "11.4", MasterUsername: "admin", MasterUserPassword: "password123",
+			},
+			image: "mariadb:11",
+			want: []string{
+				"CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED BY 'password123'",
+				" ON *.* TO 'admin'@'%' WITH GRANT OPTION",
+				"DROP USER IF EXISTS 'root'@'%'",
+			},
+			forbidden: []string{" ON `test`.*", "GRANT ALL ON *.* TO 'root'@'%'"},
+		},
+		{
+			name: "PostgreSQL",
+			instance: DBInstance{
+				Engine: "postgres", MasterUsername: "admin", MasterUserPassword: "password123", DBName: "application",
+			},
+			image: "postgres:16",
+			want: []string{
+				`CREATE ROLE "admin" WITH LOGIN NOSUPERUSER CREATEDB CREATEROLE`,
+				`GRANT "rds_superuser" TO "admin" WITH ADMIN OPTION`,
+				`ARRAY['pg_monitor', 'pg_signal_backend', 'pg_checkpoint', 'pg_use_reserved_connections']`,
+				`GRANT %I TO rds_superuser WITH ADMIN OPTION`,
+				`ALTER DATABASE "postgres" OWNER TO "admin"`,
+				`CREATE DATABASE "application" OWNER "admin"`,
+			},
+			forbidden: []string{`CREATE ROLE "admin" WITH LOGIN SUPERUSER`, `CREATE DATABASE "test"`},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			archive, err := credentialArchiveForInstance(&tc.instance, tc.image)
+			if err != nil {
+				t.Fatalf("credentialArchiveForInstance: %v", err)
+			}
+			contents := readCredentialArchive(t, archive)
+			for _, want := range tc.want {
+				if !strings.Contains(contents, want) {
+					t.Errorf("credential initializer does not contain %q:\n%s", want, contents)
+				}
+			}
+			for _, forbidden := range tc.forbidden {
+				if strings.Contains(contents, forbidden) {
+					t.Errorf("credential initializer contains forbidden %q:\n%s", forbidden, contents)
+				}
+			}
+		})
+	}
+}
+
+func readCredentialArchive(t *testing.T, archive *bytes.Reader) string {
+	t.Helper()
+	tr := tar.NewReader(archive)
+	if _, err := tr.Next(); err != nil {
+		t.Fatalf("read credential init archive: %v", err)
+	}
+	var contents bytes.Buffer
+	if _, err := contents.ReadFrom(tr); err != nil {
+		t.Fatalf("read credential init contents: %v", err)
+	}
+	return contents.String()
 }
 
 func (d *lifecycleDaemon) state() (autoRemove, exists bool, starts int) {
@@ -839,6 +965,7 @@ func TestStopStartDBInstance_containerSurvivesTheStop(t *testing.T) {
 	if _, exists, _ := d.state(); !exists {
 		t.Fatal("the stop removed the container — nothing is left for StartDBInstance to start")
 	}
+	waitForStatus(t, h, id, "stopped")
 	if _, aerr := h.startDBInstanceTyped(ctx, &startDBInstanceReq{DBInstanceIdentifier: id}); aerr != nil {
 		t.Fatalf("StartDBInstance: %s: %s", aerr.Code, aerr.Message)
 	}

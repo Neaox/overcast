@@ -37,20 +37,25 @@ operations:
         status: fixed
         tests: [TestHandleContainerEvent_recoversDockerLevelStop, TestHandleContainerEvent_coalescesDuplicateRecoveryEvents, TestHandleContainerEvent_stopsRestartingAfterRecoveryBudget, TestDockerRecoveryBackoff, TestDockerRecoveryBudget_resetsOnlyAfterStableAvailability, TestDockerRecoveryBudget_recognizesPersistedStabilityAfterRestart, TestReconcileContainers_reconcilesMissedStop, TestReconcileContainers_retriesRecoveryInterruptedByDaemonShutdown, TestHandleContainerStarted_preservesExplicitStop, TestHandleContainerEvent_ignoresOvercastShutdown, TestReconcileContainers_rebuildsMissingAvailableInstance, TestReconcileContainers_rebuildsMissingExternallyStoppedInstance, TestReconcileContainers_restartsExitedContainerForAvailableInstance, TestReconcileContainers_leavesExplicitlyStoppedInstanceStopped, TestReconcileContainers_stopsDockerStartedExplicitlyStoppedInstance]
         evidence: Docker-level stops and crashes are recovered with bounded exponential backoff, duplicate die events are coalesced, and repeated crash loops settle to failed after five attempts unless the engine remains available for a two-minute stability period. Missed changes are reconciled when the Docker event stream reconnects, and startup rebuilds missing or exited containers. Only StopDBInstance establishes a durable stop; reconciliation stops a container started out of band for such an instance.
-      - name: MySQL 8 credential initialization
+      - name: Master-account initialization and initial database semantics
         status: fixed
-        tests: [TestCreateMySQL8Container_bootstrapsEscapedCachingSHA2CredentialsBeforeStart]
-        evidence: Fresh MySQL 8 containers use an entrypoint-safe bootstrap credential, then install the exact requested master password with escaped SQL and caching_sha2_password before the engine starts accepting connections.
+        tests: [TestMasterUser_realAuroraMySQLCanBootstrapDatabaseAndUser, TestMasterUser_realPostgresHasRDSSuperuserSemantics, TestCreateAuroraMySQL3Container_bootstrapsAWSMasterCredentialsBeforeStart, TestCredentialInitializersGiveEveryRequestedMasterAWSBootstrapPrivileges, TestMySQLMasterAccountSpec_engineVersionSemantics, TestCreateMySQLContainer_withoutDBNameDoesNotCreateTestDatabase, TestCreateDBInstance_auroraMemberUsesClusterOwnedSettings, TestValidateMasterUserPassword]
+        evidence: >-
+          Docker-backed Aurora MySQL and PostgreSQL tests connect as the requested master and create databases and users. MySQL-family privileges and roles vary by the selected AWS engine version; PostgreSQL exposes a non-superuser master with the documented rds_superuser memberships. Readiness waits for completed initialization and the final engine server without depending on mutable master credentials, and a SQL-side password change survives stop/start. Aurora members always use cluster-owned credentials, engine version, port, database, and subnet placement. Password and identifier shape constraints follow the supported AWS request forms.
 findings:
   fixed:
     - CreateDBParameterGroup accepts the advertised aurora-mysql8.0 family used by Aurora MySQL 3 instance parameter groups while still rejecting unknown families.
     - Docker-backed RDS DB instance endpoint hostnames are registered as Docker DNS aliases on the Lambda network.
     - Missing, crashed, or externally stopped DB instance containers are recovered with bounded backoff, after Docker reconnects, and at startup without overriding an explicit StopDBInstance; repeated crash loops settle to failed.
-    - MySQL 8 initialization preserves AWS-valid special characters in master passwords and provisions accounts with caching_sha2_password.
+    - Master accounts have version-specific cross-database bootstrap privileges without exposing a remote root credential; Aurora MySQL 3 uses mysql_native_password, newer role models are represented, and PostgreSQL masters are NOSUPERUSER members of rds_superuser.
+    - Initial database creation and password validation follow the supported engine's AWS-specific rules, including Aurora DatabaseName inheritance.
   remaining_gaps:
     - Review CreateDBInstance/CreateDBCluster lifecycle, validation errors, and XML response parity.
-  intentionally_partial: []
+  intentionally_partial:
+    - Protected internal-account enforcement and the complete catalog of AWS-managed rds_* procedures are not emulated by stock engine images.
+    - PostgreSQL extension availability follows the backing image rather than AWS's RDS extension allowlist.
+    - Reserved-word validation covers common SQL keywords and engine system schemas, not every version-specific engine reserved word.
 handoff:
   start_with: [CreateDBInstance, CreateDBCluster, lifecycle states]
-  do_not_redo: [Aurora MySQL 3 instance parameter group family, Lambda container DNS for Docker-backed RDS DB instance endpoint hostnames, runtime and startup recovery of DB instance containers, MySQL 8 credential initialization]
+  do_not_redo: [Aurora MySQL 3 instance parameter group family, Lambda container DNS for Docker-backed RDS DB instance endpoint hostnames, runtime and startup recovery of DB instance containers, master-account initialization and initial database semantics]
   commands: [go test -count=1 ./internal/services/rds/... ./tests/integration/rds/...]
