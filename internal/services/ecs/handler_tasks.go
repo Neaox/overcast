@@ -1071,10 +1071,15 @@ func (h *Handler) StopTask(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if h.gc != nil {
+				// The GC captures the container's output before it removes
+				// it — see SetBeforeRemove, wired in SetDocker.
 				h.gc.StopNow(c.DockerID)
 				h.gc.ScheduleRemove(c.DockerID)
 			} else {
+				// Without one, this path owns the ordering itself, as
+				// retireTaskContainers does: stop, capture, then remove.
 				_ = h.docker.StopContainer(r.Context(), c.DockerID, 10)
+				h.captureContainerLogs(r.Context(), task, c.DockerID)
 				if !h.cfg.ECSKeepContainers {
 					_ = h.docker.RemoveContainerForce(c.DockerID)
 				}

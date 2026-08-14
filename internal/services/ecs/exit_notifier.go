@@ -215,6 +215,43 @@ func (h *Handler) captureContainerLogs(ctx context.Context, task *Task, dockerID
 	}
 }
 
+// captureContainerLogsByID is captureContainerLogs for a caller that has only a
+// container ID — the container GC's before-remove hook, which is handed one
+// container at a time and knows nothing of tasks.
+//
+// The task is found by scanning for the record that claims the container, the
+// same way reconcileContainers matches Docker's containers back to tasks. That
+// is a scan per removal, which is affordable here and not elsewhere: removals
+// are driven by task teardown rather than by request traffic, they run on the
+// GC's own loop where nothing is waiting on them, and the alternative — asking
+// Docker for the container's resource-id label — is a second round trip to a
+// daemon that is about to be told to delete it.
+//
+// A container with no task record left is not an error: the record expires an
+// hour after the task stops, and a removal that arrives after that has nothing
+// left to attach output to.
+func (h *Handler) captureContainerLogsByID(containerID string) {
+	if containerID == "" || !h.dockerReady.Load() {
+		return
+	}
+	ctx := context.Background()
+	tasks, err := serviceutil.ScanRegions[Task](ctx, h.store.store, nsTasks, h.store.defaultRegion)
+	if err != nil {
+		h.log.Debug("ecs: capture container logs before removal: list tasks",
+			zap.String("container", containerID), zap.Error(err))
+		return
+	}
+	for _, regioned := range tasks {
+		for _, c := range regioned.Value.Containers {
+			if c.DockerID != containerID {
+				continue
+			}
+			h.captureContainerLogs(middleware.ContextWithRegion(ctx, regioned.Region), regioned.Value, containerID)
+			return
+		}
+	}
+}
+
 // retainContainerLogs captures a dead container's final output and then lets it
 // go. Called off the die event, where the container has exited on its own and
 // nothing else is removing it.

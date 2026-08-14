@@ -129,6 +129,98 @@ func TestServiceStopRetainsContainerLogsBeforeRemoval(t *testing.T) {
 	}
 }
 
+// StopTask tears a task's containers down the same way the scheduler does, and
+// so has the same race: the container is removed on the caller's goroutine
+// while the only capture rides the asynchronous die event. A task somebody
+// stopped by hand is one they are about to go read the logs of.
+//
+// This is the Docker-less-GC arm of the two, where the handler stops and
+// removes the container itself. There the loss is not a race at all — nothing
+// captured on that path.
+func TestStopTaskRetainsContainerLogsBeforeRemoval(t *testing.T) {
+	const output = "fatal: config missing DATABASE_URL\n"
+
+	stops := []struct {
+		name string
+		stop func(t *testing.T, h *Handler, ctx context.Context, task *Task)
+	}{{
+		name: "StopTask",
+		stop: func(t *testing.T, h *Handler, ctx context.Context, task *Task) {
+			w := postJSON(t, ctx, h.StopTask, map[string]any{
+				"cluster": "demo", "task": task.TaskArn, "reason": "by hand",
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("StopTask: HTTP %d: %s", w.Code, w.Body.String())
+			}
+		},
+	}, {
+		name: "stopTaskTyped",
+		stop: func(t *testing.T, h *Handler, ctx context.Context, task *Task) {
+			if _, aerr := h.stopTaskTyped(ctx, &stopTaskRequest{
+				Cluster: "demo", Task: task.TaskArn, Reason: "by hand",
+			}); aerr != nil {
+				t.Fatalf("stopTaskTyped: %s", aerr.Message)
+			}
+		},
+	}}
+
+	for _, s := range stops {
+		t.Run(s.name, func(t *testing.T) {
+			// Given: a running task whose container still has its output
+			h, _, fd := newECSDockerTestHandler(t)
+			ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+			task := putLoggedTask(t, h, fd, ctx, "demo", "stop-task", "stop-container", framed(2, output))
+
+			// When: the caller stops it
+			s.stop(t, h, ctx, task)
+
+			// Then: the container is gone, and its last words were captured first
+			if !fd.wasRemoved("stop-container") {
+				t.Fatal("container was not removed; the test is not exercising the race it is about")
+			}
+			got, found, aerr := h.store.getTaskContainerLogs(ctx, "demo", "stop-task", "app")
+			if aerr != nil {
+				t.Fatalf("get retained logs: %s", aerr.Message)
+			}
+			if !found || got.Logs != output {
+				t.Fatalf("retained logs = %q, found %v; want %q", got.Logs, found, output)
+			}
+		})
+	}
+}
+
+// The same teardown with the container GC wired, which is the arm that runs in
+// a real Overcast: the stop and the removal both happen on the GC's own
+// goroutines, so nothing on the caller's side can order the capture against
+// them. The GC captures before it removes, and that is what makes the ordering
+// hold for every caller that hands it a container rather than only these two.
+func TestGCScheduledRemovalCapturesLogsFirst(t *testing.T) {
+	// Given: a running task whose container is scheduled for GC removal
+	const output = "panic: runtime error: invalid memory address\n"
+	h, _, fd := newECSDockerTestHandler(t)
+	wireFakeGC(t, h, fd)
+	ctx := middleware.ContextWithRegion(context.Background(), "us-east-1")
+	task := putLoggedTask(t, h, fd, ctx, "demo", "gc-task", "gc-container", framed(2, output))
+
+	// When: the caller stops it and the GC gets as far as removing it
+	w := postJSON(t, ctx, h.StopTask, map[string]any{
+		"cluster": "demo", "task": task.TaskArn, "reason": "by hand",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("StopTask: HTTP %d: %s", w.Code, w.Body.String())
+	}
+	waitFor(t, "container removed", func() bool { return fd.wasRemoved("gc-container") })
+
+	// Then: the logs it was holding survived it
+	got, found, aerr := h.store.getTaskContainerLogs(ctx, "demo", "gc-task", "app")
+	if aerr != nil {
+		t.Fatalf("get retained logs: %s", aerr.Message)
+	}
+	if !found || got.Logs != output {
+		t.Fatalf("retained logs = %q, found %v; want %q", got.Logs, found, output)
+	}
+}
+
 // The die event fires on the scheduler path too, so both captures can run for
 // one container. The first success wins: the copy taken while the container was
 // certainly still there is never replaced by a later read of a container that

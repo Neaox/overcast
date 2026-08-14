@@ -202,6 +202,40 @@ func newFakeECSDockerDaemon(t *testing.T) *fakeECSDockerDaemon {
 	return fd
 }
 
+// wireFakeGC gives an already-wired handler a real container GC over the same
+// fake daemon, with its remove loop running — for the tests whose subject is
+// the GC's own ordering, which a nil gc routes around entirely.
+//
+// Torn down with DrainAndSweep so the queue is empty and every goroutine has
+// finished before the fake daemon closes under them.
+func wireFakeGC(t *testing.T, h *Handler, fd *fakeECSDockerDaemon) {
+	t.Helper()
+	gc := docker.NewGC(docker.NewClient("tcp://"+fd.srv.Listener.Addr().String(), zap.NewNop()),
+		zap.NewNop(), h.cfg.ECSKeepContainers, h.instances.Resolve)
+	gc.SetBeforeRemove(h.captureContainerLogsByID)
+	gc.StartRemoveLoop(context.Background())
+	h.gc = gc
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		gc.DrainAndSweep(ctx, serviceName)
+	})
+}
+
+// waitFor blocks until cond holds, for the assertions whose subject completes
+// on a goroutine the test does not own.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
 // containerIDFromPath pulls the container ID out of /v1.43/containers/<id>/...
 func containerIDFromPath(p string) string {
 	const marker = "/containers/"
