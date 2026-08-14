@@ -277,7 +277,7 @@ func (h *Handler) applyServiceUpdate(ctx context.Context, serviceName string, sv
 				svc.Deployments[i].UpdatedAt = now
 			}
 		}
-		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has begun draining connections on %d tasks.", serviceName, 0))
+		h.addServiceEvent(svc, fmt.Sprintf(ServiceEventDrainingConnectionsFormat, serviceName, 0))
 	}
 
 	// Updating the task definition or explicitly forcing a deployment creates
@@ -336,9 +336,9 @@ func (h *Handler) applyServiceUpdate(ctx context.Context, serviceName string, sv
 			}}, svc.Deployments...)
 			svc.TaskDefinition = td.TaskDefinitionArn
 			if req.ForceNewDeployment && req.TaskDefinition == "" {
-				h.addServiceEvent(svc, fmt.Sprintf("(service %s) has begun a forced deployment.", serviceName))
+				h.addServiceEvent(svc, fmt.Sprintf(ServiceEventForcedDeploymentFormat, serviceName))
 			} else {
-				h.addServiceEvent(svc, fmt.Sprintf("(service %s) was updated to use task definition %s.", serviceName, td.TaskDefinitionArn))
+				h.addServiceEvent(svc, fmt.Sprintf(ServiceEventUpdatedTaskDefinitionFormat, serviceName, td.TaskDefinitionArn))
 			}
 		}
 	}
@@ -406,7 +406,7 @@ func (h *Handler) drainServiceRecord(ctx context.Context, cluster, service strin
 				svc.Deployments[i].UpdatedAt = h.clk.Now().Unix()
 			}
 		}
-		h.addServiceEvent(svc, fmt.Sprintf("(service %s) is draining.", serviceName))
+		h.addServiceEvent(svc, fmt.Sprintf(ServiceEventDrainingFormat, serviceName))
 		return nil
 	})
 	if aerr != nil {
@@ -835,7 +835,7 @@ func (h *Handler) scaleUp(ctx context.Context, clusterName string, svc *ecsServi
 		// state, not here. A task merely being placed proves nothing — a
 		// crash-looping service places one on every cycle, and clearing the
 		// count here is what stopped the circuit breaker ever tripping.
-		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has started %d tasks.", svc.ServiceName, started))
+		h.addServiceEvent(svc, fmt.Sprintf(ServiceEventStartedTasksFormat, svc.ServiceName, started))
 	}
 
 	// A task whose containers never started is retried, on the same backoff as
@@ -973,9 +973,7 @@ func (h *Handler) recordDeploymentFailureAt(svc *ecsService, n int, occurredAt t
 	d.UpdatedAt = occurredAt.Unix()
 
 	if before < consistentFailureThreshold && d.FailedTasks >= consistentFailureThreshold {
-		h.addServiceEventAt(svc, fmt.Sprintf(
-			"(service %s) is unable to consistently start tasks successfully. For more information, see the Troubleshooting section.",
-			svc.ServiceName), occurredAt)
+		h.addServiceEventAt(svc, fmt.Sprintf(ServiceEventUnableToStartConsistentlyFormat, svc.ServiceName), occurredAt)
 	}
 
 	// Without a circuit breaker the deployment stays IN_PROGRESS and the
@@ -992,13 +990,12 @@ func (h *Handler) recordDeploymentFailureAt(svc *ecsService, n int, occurredAt t
 	}
 	d.RolloutState = rolloutFailed
 	d.RolloutStateReason = "ECS deployment circuit breaker: task failed to start."
-	h.addServiceEventAt(svc, fmt.Sprintf("(service %s) (deployment %s) deployment failed: tasks failed to start.",
-		svc.ServiceName, d.ID), occurredAt)
+	h.addServiceEventAt(svc, fmt.Sprintf(ServiceEventDeploymentFailedFormat, svc.ServiceName, d.ID), occurredAt)
 }
 
 // recordPlacementFailure records n tasks the scheduler could not place.
 func (h *Handler) recordPlacementFailure(svc *ecsService, reason string, n int) {
-	h.addServiceEvent(svc, fmt.Sprintf("(service %s) was unable to place a task. Reason: %s", svc.ServiceName, reason))
+	h.addServiceEvent(svc, fmt.Sprintf(ServiceEventUnableToPlaceTaskFormat, svc.ServiceName, reason))
 	h.recordDeploymentFailure(svc, n)
 }
 
@@ -1133,7 +1130,7 @@ func (h *Handler) stopServiceTasks(ctx context.Context, clusterName string, svc 
 		}
 	}
 	if stoppedCount > 0 {
-		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has stopped %d tasks.", svc.ServiceName, stoppedCount))
+		h.addServiceEvent(svc, fmt.Sprintf(ServiceEventStoppedTasksFormat, svc.ServiceName, stoppedCount))
 	}
 }
 
@@ -1249,7 +1246,7 @@ func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string
 	reachedSteadyState := h.refreshServiceCounts(ctx, clusterName, svc)
 	retireDrainedDeployments(svc)
 	if reachedSteadyState {
-		h.addServiceEvent(svc, fmt.Sprintf("(service %s) has reached a steady state.", serviceName))
+		h.addServiceEvent(svc, fmt.Sprintf(ServiceEventSteadyStateFormat, serviceName))
 	}
 	h.scheduleRecoveryCheck(ctx, clusterName, svc)
 	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {

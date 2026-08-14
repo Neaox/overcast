@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/Neaox/overcast/internal/clock"
 	"github.com/Neaox/overcast/internal/config"
+	"github.com/Neaox/overcast/internal/services/ecs"
 	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/state"
 )
@@ -186,7 +188,8 @@ func TestECSServiceRolloutFailure_primaryDeploymentOnly(t *testing.T) {
 						RolloutStateReason: "ECS deployment in progress."},
 				},
 				Events: []describedECSEvent{
-					{Message: "(service s) was unable to place a task. Reason: CannotPullContainerError: no such image"},
+					{Message: fmt.Sprintf(ecs.ServiceEventUnableToPlaceTaskFormat, "s",
+						"CannotPullContainerError: no such image")},
 				},
 			},
 			wantFailed: true,
@@ -202,10 +205,11 @@ func TestECSServiceRolloutFailure_primaryDeploymentOnly(t *testing.T) {
 					{Status: "PRIMARY", RolloutState: "IN_PROGRESS", FailedTasks: 1},
 				},
 				Events: []describedECSEvent{
-					{Message: "(service s) has started 1 tasks."},
-					{Message: "(service s) (deployment ecs-svc/1) deployment failed: tasks failed to start."},
-					{Message: "(service s) is unable to consistently start tasks successfully."},
-					{Message: "(service s) was unable to place a task. Reason: CannotStartContainerError: executable file not found"},
+					{Message: fmt.Sprintf(ecs.ServiceEventStartedTasksFormat, "s", 1)},
+					{Message: fmt.Sprintf(ecs.ServiceEventDeploymentFailedFormat, "s", "ecs-svc/1")},
+					{Message: fmt.Sprintf(ecs.ServiceEventUnableToStartConsistentlyFormat, "s")},
+					{Message: fmt.Sprintf(ecs.ServiceEventUnableToPlaceTaskFormat, "s",
+						"CannotStartContainerError: executable file not found")},
 				},
 			},
 			wantFailed: true,
