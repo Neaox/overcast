@@ -70,33 +70,33 @@ export function StackDetail({ stackName }: Props) {
     refetch: refetchStack,
   } = useQuery(cfnStackQueryOptions(stackName))
 
-  // Hoisted above the remaining queries because the diagnostics probe is gated
-  // on it, and every other query is gated on a tab whose validity depends on
-  // that probe's answer.
   const stackStatus = stack?.StackStatus ?? ""
 
   // The one query that cannot be gated on its own tab: whether the Diagnostics
   // tab exists at all is the answer to this request, so waiting for the tab to
-  // be selected would mean it never is. Gating on the stack having failed keeps
-  // it off the healthy path anyway, and matches the server, which only writes a
-  // journal for a deploy that did not land.
+  // be selected would mean it never is.
+  //
+  // It is not gated on the stack's status either, deliberately. The server
+  // writes a journal only for a deploy that did not land and deletes it once one
+  // does, so "a journal exists" already means "the most recent deploy of this
+  // stack failed" — reading that off the status here would be a second, weaker
+  // copy of the same rule, and it would hide the answer in the cases where the
+  // two disagree: a stack redeploying after a failure reads IN_PROGRESS while
+  // still holding the last completed deploy's diagnosis, which is exactly what
+  // its reader is looking for.
   const {
     data: diagnostics,
     isFetching: diagnosticsFetching,
     refetch: refetchDiagnostics,
-  } = useQuery({
-    ...cfnDiagnosticsQueryOptions(stackName),
-    enabled: isStackFailed(stackStatus) || isStackRollingBack(stackStatus),
-  })
+  } = useQuery(cfnDiagnosticsQueryOptions(stackName))
 
   const hasDiagnostics = Boolean(diagnostics)
 
-  // The journal is bounded and in-memory: a redeploy replaces the entry and a
-  // restart drops it, so the diagnostics can vanish under a reader who is
-  // looking at them, taking their tab with them. Derived rather than corrected
-  // in an effect — an effect would render the tabless, panel-less page once
-  // before fixing it, and that flash is exactly what reads as a broken console
-  // rather than as "that record is gone".
+  // A successful redeploy clears the journal, so the diagnostics can vanish
+  // under a reader who is looking at them, taking their tab with them. Derived
+  // rather than corrected in an effect — an effect would render the tabless,
+  // panel-less page once before fixing it, and that flash is exactly what reads
+  // as a broken console rather than as "that record is gone".
   const tab: TabKey = selectedTab === "diagnostics" && !hasDiagnostics ? "overview" : selectedTab
 
   const {

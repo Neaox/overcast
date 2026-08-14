@@ -264,23 +264,3 @@ func failedResources(attempted []StackResource) []StackResource {
 func quoteReason(reason string) string {
 	return `"` + strings.TrimRight(strings.TrimSpace(reason), ".") + `."`
 }
-
-// tailBytes returns at most maxBytes from the end of s, trimmed forward to the
-// next line boundary so the result never starts mid-line (or mid-rune).
-//
-// TEMPORARY: this is a stand-in for serviceutil.TailBytes, which is being
-// hoisted out of internal/services/rds on branch
-// claude/ecs-log-retention-hardening. Delete this function and its callers'
-// import at integration; it exists only so this change does not have to wait
-// on that one, and it is deliberately byte-identical to the RDS original so
-// the swap is a rename.
-func tailBytes(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	s = s[len(s)-maxBytes:]
-	if i := strings.IndexByte(s, '\n'); i >= 0 && i+1 < len(s) {
-		s = s[i+1:]
-	}
-	return s
-}

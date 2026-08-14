@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 const ecsDiagnosticsTarget = "AmazonEC2ContainerServiceV20141113."
@@ -218,7 +220,7 @@ func captureECSContainerOutput(ctx context.Context, router http.Handler, region 
 			if !ok || strings.TrimSpace(text) == "" {
 				continue
 			}
-			trimmed := tailBytes(text, maxCapturedLogBytes)
+			trimmed := serviceutil.TailBytes(text, maxCapturedLogBytes)
 			sections = append(sections, DiagnosticSection{
 				ID:         fmt.Sprintf("ecs-container-output-%s-%s", taskID, c.Name),
 				Title:      "Container output",

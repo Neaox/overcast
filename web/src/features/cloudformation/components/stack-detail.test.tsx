@@ -221,6 +221,29 @@ describe("StackDetail — Diagnostics tab", () => {
     expect(screen.getByRole("tab", { name: "Diagnostics" })).toBeInTheDocument()
   })
 
+  // The journal alone decides, never the stack's status: the server writes one
+  // only for a deploy that did not land and deletes it once one does, so
+  // checking the status here would be a second, weaker copy of that rule which
+  // hides the answer where the two disagree — a stack redeploying after a
+  // failure reads IN_PROGRESS while still holding the last completed deploy's
+  // diagnosis.
+  //
+  // Not asserted here, and deliberately not faked into looking asserted. What
+  // would have to be observed is whether the request was made at all, and this
+  // harness seeds the query cache directly with staleTime Infinity, so data is
+  // returned whatever `enabled` says and a gated component is indistinguishable
+  // from an ungated one. The rule that carries the weight — a journal exists if
+  // and only if the most recent deploy failed — is pinned server-side, where it
+  // is actually decided.
+  it("shows the tab on a stack whose status is not a failure", () => {
+    const seeds = seed({ StackStatus: "CREATE_IN_PROGRESS" })
+    seeds.push([cfnDiagnosticsQueryOptions(STACK_NAME).queryKey, DIAGNOSTICS])
+
+    renderWithData(<StackDetail stackName={STACK_NAME} />, seeds)
+
+    expect(screen.getByRole("tab", { name: "Diagnostics" })).toBeInTheDocument()
+  })
+
   it("renders every section kind", async () => {
     const { user } = renderWithData(
       <StackDetail stackName={STACK_NAME} />,
