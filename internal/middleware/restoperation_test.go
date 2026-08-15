@@ -516,19 +516,14 @@ func TestDetectServiceCoversModeledLambdaVersions(t *testing.T) {
 // refresh reshapes a binding, this fails rather than a service quietly
 // inheriting another's label.
 func TestRestOperationNeverNamesAnotherService(t *testing.T) {
-	restServices := map[string]bool{
-		"lambda": true, "efs": true, "pipes": true, "appsync": true, "ses": true,
-		"cloudfront": true, "route53": true, "apigateway": true, "appregistry": true,
-	}
-
 	checked := 0
 	awsapi.WalkOperations(func(op awsapi.Operation) bool {
 		svc := awsapi.ServiceKey(op.Service)
-		if !restServices[svc] || op.URI == "" || op.HTTPMethod == "" {
+		if !restRoutedServices[svc] || op.URI == "" || op.HTTPMethod == "" {
 			return true
 		}
 		path, query := concreteRESTPath(op.URI)
-		got := restOperation(svc, op.HTTPMethod, path, query)
+		got := restOperation(svc, restRequest(op.HTTPMethod, path, query))
 		checked++
 		if got != "" && got != op.Name {
 			t.Errorf("restOperation(%s, %s %s) = %q, want %q or \"\"",
@@ -538,6 +533,206 @@ func TestRestOperationNeverNamesAnotherService(t *testing.T) {
 	})
 	if checked == 0 {
 		t.Fatal("walked no modeled REST operations")
+	}
+}
+
+// TestRestOperationNamesEveryARNLabelledBinding is the generic form of the MSK
+// cases above, and the guard that keeps them from being the only ones covered.
+// It walks every modeled binding of the REST-routed services whose URI carries
+// an ARN label, encodes that label the way an SDK does, and asserts the lookup
+// still names an operation.
+//
+// Before the escaped-path walk every one of these answered "" — the blind spot
+// was never MSK's, only most visible there. A model refresh that reshapes a
+// binding, or a service added to restRoutedServices whose ARNs are handled some
+// other way, fails here rather than silently going unlabelled and ungated.
+func TestRestOperationNamesEveryARNLabelledBinding(t *testing.T) {
+	checked := 0
+	awsapi.WalkOperations(func(op awsapi.Operation) bool {
+		svc := awsapi.ServiceKey(op.Service)
+		if !restRoutedServices[svc] || op.URI == "" || op.HTTPMethod == "" {
+			return true
+		}
+		path, query, ok := arnLabelledRESTPath(op.URI)
+		if !ok {
+			return true
+		}
+		checked++
+		r := restRequest(op.HTTPMethod, path, query)
+		if r.URL.EscapedPath() == r.URL.Path {
+			t.Fatalf("%s %s: built target %q carries no escaped path", svc, op.Name, path)
+		}
+		got := restOperation(svc, r)
+		if got == "" {
+			t.Errorf("restOperation(%s, %s %s) = \"\", want %q (ARN label unmatched)",
+				svc, op.HTTPMethod, op.URI, op.Name)
+			return true
+		}
+
+		// The escaped walk takes precedence, so it must not displace an answer
+		// the decoded walk was already giving. Decoding an escaped ARN splits
+		// one segment into several, and a deeper binding of the right shape
+		// could in principle match that longer path — this asserts that no
+		// pinned binding does, rather than assuming it.
+		if decoded := awsapi.NewRegistry().RESTOperation(
+			awsapiServiceKey(svc), op.HTTPMethod, r.URL.Path, r.URL.RawQuery,
+		); decoded != "" && decoded != got {
+			t.Errorf("restOperation(%s, %s %s) = %q, but the decoded path named %q; the escaped walk displaced an existing answer",
+				svc, op.HTTPMethod, op.URI, got, decoded)
+		}
+		return true
+	})
+	if checked == 0 {
+		t.Fatal("walked no modeled REST operations carrying an ARN label")
+	}
+}
+
+// restRoutedServices is the set of services whose surface reaches restOperation
+// by method and path rather than by X-Amz-Target or a Query Action.
+var restRoutedServices = map[string]bool{
+	"lambda": true, "efs": true, "pipes": true, "appsync": true, "ses": true,
+	"cloudfront": true, "route53": true, "apigateway": true, "appregistry": true,
+	"msk": true,
+}
+
+// restRequest builds the request restOperation reads. It takes the path and
+// query separately because the caller has them separately; the target is
+// reassembled so url.Parse sets RawPath for any path that needs one.
+func restRequest(method, path, query string) *http.Request {
+	target := path
+	if query != "" {
+		target += "?" + query
+	}
+	return httptest.NewRequest(method, target, nil)
+}
+
+// arnLabelledRESTPath substitutes a Smithy URI template's labels the way
+// concreteRESTPath does, except that a label naming an ARN gets a percent-
+// encoded ARN — the single segment an SDK actually sends. It reports false for
+// a URI with no ARN label, and for a greedy ARN label, which binds the
+// remaining path and so was never affected.
+func arnLabelledRESTPath(uri string) (path, query string, ok bool) {
+	path = uri
+	if i := strings.IndexByte(uri, '?'); i >= 0 {
+		path, query = uri[:i], uri[i+1:]
+	}
+	segments := strings.Split(path, "/")
+	for i, segment := range segments {
+		if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") {
+			continue
+		}
+		if strings.HasSuffix(segment, "+}") {
+			segments[i] = "greedy/value"
+			continue
+		}
+		label := strings.TrimSuffix(strings.TrimPrefix(segment, "{"), "}")
+		if strings.HasSuffix(strings.ToLower(label), "arn") {
+			segments[i] = escapedARN(
+				fmt.Sprintf("arn:aws:svc:us-east-1:000000000000:resource/demo/v%d", i))
+			ok = true
+			continue
+		}
+		segments[i] = fmt.Sprintf("v%d", i)
+	}
+	return strings.Join(segments, "/"), query, ok
+}
+
+// escapedARN percent-encodes an ARN the way an AWS SDK does when it binds one
+// to a non-greedy httpLabel: the whole value becomes a single URI segment, so
+// its slashes and colons are escaped rather than left to divide segments.
+// smithy-go, botocore and the JS SDK all agree on this.
+func escapedARN(arn string) string {
+	return strings.NewReplacer("/", "%2F", ":", "%3A").Replace(arn)
+}
+
+const testClusterARN = "arn:aws:kafka:us-east-1:000000000000:cluster/demo/e8b4c1a2-1111-2222-3333-444455556666-7"
+
+// TestDetectOperationNamesARNLabelledBindings covers the decoded-path blind
+// spot. url.URL.Path is the request target *decoded*, so the single segment an
+// SDK sent for an ARN label reappears as three — "cluster", "demo", the UUID —
+// and the generated trie matches no binding of that shape. Every operation
+// whose URI carries an ARN therefore went unnamed: no label on the log line, no
+// operation on the metric, and no action for IAM to evaluate.
+//
+// This is the same mechanism PR #1000 fixed for the router's 501 fallback, on
+// the second of the two paths that walk the trie. It is not MSK-specific — MSK
+// is simply the service that puts an ARN in a URI most.
+func TestDetectOperationNamesARNLabelledBindings(t *testing.T) {
+	escaped := escapedARN(testClusterARN)
+	operationARN := escapedARN("arn:aws:kafka:us-east-1:000000000000:cluster-operation/demo/7e1f")
+
+	tests := []struct {
+		name    string
+		signing string
+		method  string
+		path    string
+		want    string
+	}{
+		{"describe cluster", "kafka", http.MethodGet, "/v1/clusters/" + escaped, "DescribeCluster"},
+		{"delete cluster", "kafka", http.MethodDelete, "/v1/clusters/" + escaped, "DeleteCluster"},
+		{"list cluster operations", "kafka", http.MethodGet, "/v1/clusters/" + escaped + "/operations", "ListClusterOperations"},
+		{"get bootstrap brokers", "kafka", http.MethodGet, "/v1/clusters/" + escaped + "/bootstrap-brokers", "GetBootstrapBrokers"},
+		{"list nodes", "kafka", http.MethodGet, "/v1/clusters/" + escaped + "/nodes", "ListNodes"},
+		{"update broker count", "kafka", http.MethodPut, "/v1/clusters/" + escaped + "/nodes/count", "UpdateBrokerCount"},
+		{"describe cluster v2", "kafka", http.MethodGet, "/api/v2/clusters/" + escaped, "DescribeClusterV2"},
+		{"list cluster operations v2", "kafka", http.MethodGet, "/api/v2/clusters/" + escaped + "/operations", "ListClusterOperationsV2"},
+		{"describe cluster operation v2", "kafka", http.MethodGet, "/api/v2/operations/" + operationARN, "DescribeClusterOperationV2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Given: a request encoded the way the AWS SDK encodes an ARN label.
+			r := signedRequest(tt.method, tt.path, tt.signing)
+			if r.URL.EscapedPath() == r.URL.Path {
+				t.Fatalf("test target %q did not survive parsing as an escaped path", tt.path)
+			}
+
+			// When/Then: the modeled operation is named.
+			if got := detectOperation(r); got != tt.want {
+				t.Errorf("detectOperation(%s %s) = %q, want %q",
+					tt.method, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDetectOperationKeepsDecodedPathMatches pins what the escaped-first walk
+// must not cost. Trying the escaped form first can only add matches, never lose
+// one, because the decoded form is still tried second — so every path named
+// before the change is still named after it.
+//
+// The last row is the one that makes the fallback load-bearing rather than
+// merely defensive: percent-encoding a *literal* segment ("%6Eodes" for
+// "nodes") makes the escaped walk miss where the decoded walk still matches,
+// because a literal is compared byte for byte while a label accepts whatever
+// segment it is given. Without the second walk that request would lose an
+// operation it is named today.
+func TestDetectOperationKeepsDecodedPathMatches(t *testing.T) {
+	tests := []struct {
+		name    string
+		signing string
+		method  string
+		path    string
+		want    string
+	}{
+		{"plain collection", "kafka", http.MethodGet, "/v1/clusters", "ListClusters"},
+		{"plain sub-resource", "kafka", http.MethodGet, "/v1/clusters/demo-cluster/nodes", "ListNodes"},
+		// Escaped and decoded both match here — a label takes either spelling —
+		// so this pins that a RawPath alone does not change the answer.
+		{"escaped label", "kafka", http.MethodGet, "/v1/clusters/demo%2Dcluster/nodes", "ListNodes"},
+		// Escaped misses, decoded matches: only the fallback can answer this.
+		{"escaped literal segment", "kafka", http.MethodGet, "/v1/clusters/demo/%6Eodes", "ListNodes"},
+		{"lambda control", "lambda", http.MethodGet, "/2015-03-31/functions", "ListFunctions"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := signedRequest(tt.method, tt.path, tt.signing)
+			if got := detectOperation(r); got != tt.want {
+				t.Errorf("detectOperation(%s %s) = %q, want %q",
+					tt.method, tt.path, got, tt.want)
+			}
+		})
 	}
 }
 

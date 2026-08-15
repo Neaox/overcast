@@ -631,7 +631,7 @@ func detectOperationForService(r *http.Request, svc string, body ...[]byte) stri
 
 	// 5. Method + path, resolved against the classified service.
 	if svc != "s3" {
-		return restOperation(svc, r.Method, r.URL.Path, r.URL.RawQuery)
+		return restOperation(svc, r)
 	}
 	return s3ShapeOperation(r)
 }
