@@ -40,17 +40,27 @@ a check keyed on the launch type never fires and the service is created unable
 to place a task.
 
 CloudFormation applies its own documented default of `DesiredCount: 1` for a new
-`AWS::ECS::Service`, and waits for the service to reach that count before the
-resource completes. A service that cannot place its tasks fails the stack rather
-than leaving it `CREATE_COMPLETE` around a service running nothing.
+`AWS::ECS::Service`, and waits for the service to reach a **steady state** before
+the resource completes: one deployment left, running its desired count, and that
+deployment reporting `rolloutState: COMPLETED`. A service that cannot place its
+tasks — or cannot keep them alive — fails the stack rather than leaving it
+`CREATE_COMPLETE` around a service running nothing.
 
-A stack **update** waits the same way, on the same definition of done that the
-AWS CLI's `ecs wait services-stable` uses: one deployment left, running its
-desired count. An update swapping in a task definition whose tasks cannot start
-fails the resource with the reason the service's own events give, and the stack
-unwinds — rather than reporting `UPDATE_COMPLETE` around a service still
-catching up, or one sitting on a rollout that failed. The failure is terminal
-for the resource: CloudFormation does not answer it by replacing the service.
+The rollout state is the part that goes further than the AWS CLI's `ecs wait
+services-stable`, which is satisfied by the counts alone. That waiter polls every
+15 seconds; CloudFormation here polls every 100 milliseconds, so it sees moments
+real AWS never shows a caller — including the instant a container that is about
+to exit is briefly `RUNNING`. Counting that instant is what reported
+`CREATE_COMPLETE` around a crash-looping service. A service under a `CODE_DEPLOY`
+or `EXTERNAL` deployment controller reports no `rolloutState`, so for those the
+counts remain the only evidence there is.
+
+A stack **update** waits the same way, on the same definition of done. An update
+swapping in a task definition whose tasks cannot start fails the resource with
+the reason the service's own deployment and events give, and the stack unwinds —
+rather than reporting `UPDATE_COMPLETE` around a service still catching up, or
+one sitting on a rollout that failed. The failure is terminal for the resource:
+CloudFormation does not answer it by replacing the service.
 
 ## A task definition change is a rollout
 
@@ -139,10 +149,23 @@ A task the scheduler or the caller stopped deliberately — a scale-in, a
 `DeleteService` drain, `StopTask` — is not a failure. It keeps its
 `ServiceSchedulerInitiated`/`UserInitiated` stop code and is not replaced.
 
-Once a deployment has failed a task, a replacement has to stay `RUNNING` for ten
-seconds before the deployment counts as recovered. This applies only after a
-failure: a deployment that has failed nothing reaches its steady state as soon
-as its tasks run, so nothing is slowed down on the healthy path.
+A deployment's tasks have to **stay** `RUNNING` before they count toward its
+desired count — a **settle window** of three seconds normally, ten once the
+deployment has already failed a task and is replacing it on a backoff. Only then
+does the deployment report `COMPLETED`.
+
+The window applies on the healthy path too, and that costs a couple of seconds on
+every ECS deploy. It is deliberate: a container that exits on startup is
+`RUNNING` for an instant first, and anything sampling the service in that instant
+— CloudFormation's provisioner polls every 100 ms — sees a finished rollout
+around a service that is about to be at 0/1. AWS says the same thing in
+substance: a deployment reaches `COMPLETED` when the service reaches a steady
+state, and a service reaches one when it is "healthy and at the desired number of
+tasks". Overcast runs no health checks, so staying up is the only evidence of
+health it can collect.
+
+**Divergence:** the window buys evidence, not certainty. A container that
+survives the window and then dies is still reported as a completed rollout first.
 
 ## Rollout state and the deployment circuit breaker
 

@@ -91,6 +91,19 @@ func TestECSServiceStable_deploymentShapes(t *testing.T) {
 			want: true,
 		},
 		{
+			// The instant a container that is about to exit is RUNNING. The
+			// counts say the service is there; the deployment says it has not
+			// reached a steady state yet, and it is the one that knows.
+			name: "single deployment at its desired count but not settled",
+			svc: describedECSService{
+				DesiredCount: 1, RunningCount: 1,
+				Deployments: []describedECSDeployment{
+					{Status: "PRIMARY", RolloutState: "IN_PROGRESS"},
+				},
+			},
+			want: false,
+		},
+		{
 			name: "new deployment still placing its tasks",
 			svc: describedECSService{
 				DesiredCount: 1, RunningCount: 0,
@@ -214,6 +227,25 @@ func TestECSServiceRolloutFailure_primaryDeploymentOnly(t *testing.T) {
 			},
 			wantFailed: true,
 			wantReason: "CannotStartContainerError",
+		},
+		{
+			// Failed tasks with no circuit breaker and no reason-bearing event:
+			// the deployment still carries the rolloutStateReason it was
+			// created with, which says the deploy is in progress. Reporting
+			// that describes a deploy that is over as though it were running.
+			name: "failed tasks with only the in-progress placeholder to quote",
+			svc: describedECSService{
+				DesiredCount: 1, RunningCount: 0,
+				Deployments: []describedECSDeployment{
+					{Status: "PRIMARY", RolloutState: "IN_PROGRESS", FailedTasks: 2,
+						RolloutStateReason: "ECS deployment ecs-svc/1 in progress."},
+				},
+				Events: []describedECSEvent{
+					{Message: fmt.Sprintf(ecs.ServiceEventStartedTasksFormat, "s", 1)},
+				},
+			},
+			wantFailed: true,
+			wantReason: "2 task(s) failed to stay running; 0 of 1 tasks running",
 		},
 		{
 			name: "circuit breaker failed the primary deployment",

@@ -523,8 +523,8 @@ func serviceNameFromGroup(group string) (string, bool) {
 
 // newPrimaryDeployment builds the PRIMARY deployment a new service or a new
 // task definition starts with. It begins IN_PROGRESS — a deployment is only
-// COMPLETED once its tasks are actually running, which is what steady state
-// means — and carries no rollout state at all under a non-ECS controller,
+// COMPLETED once its tasks are running and have stayed up, which is what steady
+// state means — and carries no rollout state at all under a non-ECS controller,
 // matching what AWS reports.
 func newPrimaryDeployment(taskDefArn string, desired int, now int64, platformVersion string, netCfg *NetworkConfiguration, controller *DeploymentController) Deployment {
 	d := Deployment{
@@ -626,8 +626,8 @@ func (h *Handler) mutateService(ctx context.Context, clusterName, serviceName st
 }
 
 // deploymentCounts is one deployment's share of a service's tasks. settled is
-// the subset of running tasks that have been up for deploymentRecoveryWindow,
-// which is what a deployment with failures behind it is judged on.
+// the subset of running tasks that have been up for the deployment's settle
+// window, which is what the deployment is judged on — see settleWindow.
 type deploymentCounts struct {
 	running int
 	pending int
@@ -644,14 +644,21 @@ type deploymentCounts struct {
 // task. A deployment's own tasks are the only ones that say whether it has
 // rolled out: crediting it with the tasks of the deployment it replaced makes
 // a service that has not started anything new look like it reached steady
-// state the instant the task definition changed.
+// state the instant the task definition changed. And only the tasks that have
+// been up for the deployment's settle window count toward it, so a container
+// that starts and exits cannot produce a steady state on its way past — see
+// settleWindow.
 func (h *Handler) refreshServiceCounts(ctx context.Context, clusterName string, svc *ecsService) bool {
 	tasks, aerr := h.store.listTasks(ctx, clusterName)
 	if aerr != nil {
 		return false
 	}
 	now := h.clk.Now().Unix()
-	recoverAfter := int64(deploymentRecoveryWindow / time.Second)
+	// The window the primary deployment is judged on, resolved once: it is the
+	// only deployment whose settled count is read, and a task's age has to be
+	// compared against something while the tasks are being walked.
+	d := primaryDeployment(svc)
+	settleAfter := int64(settleWindow(d) / time.Second)
 	running, pending := 0, 0
 	byDeployment := make(map[string]*deploymentCounts, len(svc.Deployments))
 	serviceGroup := serviceGroupPrefix + svc.ServiceName
@@ -668,7 +675,9 @@ func (h *Handler) refreshServiceCounts(ctx context.Context, clusterName string, 
 		case "RUNNING":
 			running++
 			c.running++
-			if t.StartedAt == nil || now-*t.StartedAt >= recoverAfter {
+			// A task whose start time is unknown cannot be aged, and refusing
+			// to settle it would leave the deployment waiting forever.
+			if t.StartedAt == nil || now-*t.StartedAt >= settleAfter {
 				c.settled++
 			}
 		case "PROVISIONING", "PENDING":
@@ -689,7 +698,6 @@ func (h *Handler) refreshServiceCounts(ctx context.Context, clusterName string, 
 		svc.Deployments[i].PendingCount = c.pending
 	}
 
-	d := primaryDeployment(svc)
 	if d == nil {
 		return false
 	}
@@ -701,17 +709,13 @@ func (h *Handler) refreshServiceCounts(ctx context.Context, clusterName string, 
 	if d.RolloutState == rolloutFailed {
 		return false
 	}
-	// A deployment that has already failed tasks has to prove a replacement
-	// stays up before it counts as recovered — see deploymentRecoveryWindow.
-	// One that has failed nothing settles the moment its tasks run. Either way
-	// the deployment is credited only with its own tasks: the ones it inherited
-	// from the deployment it replaced say nothing about whether it rolled out.
-	credited := d.RunningCount
-	if d.FailedTasks > 0 {
-		credited = 0
-		if c := byDeployment[d.ID]; c != nil {
-			credited = c.settled
-		}
+	// A deployment is credited only with its own tasks, and only with the ones
+	// that have stayed up for its settle window: a task it inherited from the
+	// deployment it replaced says nothing about whether it rolled out, and a
+	// task that is RUNNING this instant says nothing about whether it stays.
+	credited := 0
+	if c := byDeployment[d.ID]; c != nil {
+		credited = c.settled
 	}
 	if credited < d.DesiredCount {
 		d.RolloutState = rolloutInProgress
@@ -728,25 +732,31 @@ func (h *Handler) refreshServiceCounts(ctx context.Context, clusterName string, 
 	return reached
 }
 
-// scheduleRecoveryCheck re-reconciles a service whose current deployment has
-// placed all of its tasks but is still waiting out deploymentRecoveryWindow
-// after a failure. Nothing else would look again: the tasks are placed, so no
-// replacement is pending, and without this the recovery — and the steady-state
-// event announcing it — would only ever surface on a read.
+// scheduleSettleCheck re-reconciles a service whose current deployment has
+// placed all of its tasks but is still waiting out its settle window. Nothing
+// else would look again: the tasks are placed, so no replacement is pending,
+// and without this the steady state — and the event announcing it — would only
+// ever surface on a read, because DescribeServices recomputes the rollout state
+// on its own copy and persists nothing.
+//
+// It fires for every deployment waiting out a window, not only for one
+// recovering from a failure. A first deployment waits too now (see
+// settleWindow), and a service nobody describes would otherwise sit
+// IN_PROGRESS in the store for good.
 //
 // The deployment is judged on its own running count, not the service's: during
 // a rollout the service is also running the tasks of the deployment being
 // replaced, and those are not what has to prove it stays up.
-func (h *Handler) scheduleRecoveryCheck(ctx context.Context, clusterName string, svc *ecsService) {
+func (h *Handler) scheduleSettleCheck(ctx context.Context, clusterName string, svc *ecsService) {
 	d := primaryDeployment(svc)
-	if d == nil || d.FailedTasks == 0 || d.RolloutState != rolloutInProgress {
+	if d == nil || d.RolloutState != rolloutInProgress {
 		return
 	}
 	if d.RunningCount < d.DesiredCount {
 		return
 	}
 	serviceName := svc.ServiceName
-	h.scheduler.AfterScoped(h.store.region(ctx), serviceName, "recover", deploymentRecoveryWindow,
+	h.scheduler.AfterScoped(h.store.region(ctx), serviceName, "settle", settleWindow(d),
 		func(bgCtx context.Context) {
 			h.reconcile(bgCtx, clusterName, serviceName)
 		})
@@ -1012,18 +1022,56 @@ func (h *Handler) recordTaskStopFailureAt(svc *ecsService, task *Task, occurredA
 	h.recordDeploymentFailureAt(svc, 1, occurredAt)
 }
 
-// deploymentRecoveryWindow is how long a replacement task must stay RUNNING
-// before a deployment that has already failed tasks counts as recovered.
+// How long a deployment's tasks must stay RUNNING before they count toward its
+// desired count, and so before it reaches its steady state.
 //
-// It applies only after a failure. A deployment that has not failed anything
-// reaches its steady state the moment its tasks run, as it does today — the
-// window is not an artificial delay on the healthy path. Once tasks have
-// started dying, though, "a task is RUNNING right now" stops being evidence of
-// anything: a container that exits on startup is RUNNING for a moment on every
-// replacement, and without a window each of those moments looks like a
-// recovery. AWS applies the same idea over minutes; the emulator's job is only
-// to outlast the crash loop's own cycle.
-const deploymentRecoveryWindow = 10 * time.Second
+// The window applies to every deployment, healthy path included. It did not:
+// one that had failed nothing used to complete the moment its tasks ran, on the
+// reasoning that a window there would be an artificial delay. That was wrong,
+// and a live deploy showed why. A container that exits on startup is RUNNING
+// for an instant first, and anything sampling the service in that instant sees
+// a finished rollout — CloudFormation's ECS provisioner polls every 100 ms, so
+// it lands there routinely. It reported CREATE_COMPLETE on a stack whose
+// service was, twenty seconds later, at 0/1 with three failed tasks and a
+// tripped circuit breaker. A stack that says the deploy landed when it did not
+// costs far more in a dev tool than a couple of seconds on every deploy does,
+// and AWS agrees on the substance: a deployment reaches COMPLETED when the
+// service reaches a steady state, and a service reaches a steady state when it
+// is "healthy and at the desired number of tasks" — health being something a
+// container that is about to exit does not have. Overcast runs no health
+// checks, so staying up is the only evidence of health it can collect.
+//
+// Both values are measured against a task's startedAt, which has one-second
+// resolution, so a window of N seconds guarantees a task has been up for at
+// least N-1 seconds and at most N.
+const (
+	// deploymentSettleWindow covers a container that starts and then exits on
+	// its own. The reproduction's container lived about a second, so this
+	// guarantees roughly twice that with the second of slack the resolution
+	// costs, and leaves room for Docker's die event to be delivered and handled
+	// before the deadline. It is the latency every ECS deploy now pays, so it is
+	// no larger than that job needs. A container that survives longer than this
+	// and then dies will still be reported as a completed rollout first; the
+	// window buys evidence, not certainty.
+	deploymentSettleWindow = 3 * time.Second
+	// deploymentRecoveryWindow is the longer proof asked of a deployment that
+	// has already failed tasks. Once tasks have started dying the deployment is
+	// replacing them on a backoff, and a window that did not outlast a full
+	// crash-loop cycle would credit each replacement's first moment as a
+	// recovery. AWS applies the same idea over minutes; the emulator's job is
+	// only to outlast the cycle.
+	deploymentRecoveryWindow = 10 * time.Second
+)
+
+// settleWindow is how long d's tasks must stay up before it is credited with
+// them. One rule, two calibrations: the deployment has more to prove once it
+// has failures behind it.
+func settleWindow(d *Deployment) time.Duration {
+	if d != nil && d.FailedTasks > 0 {
+		return deploymentRecoveryWindow
+	}
+	return deploymentSettleWindow
+}
 
 // Bounds on how fast a service replaces tasks that keep dying.
 const (
@@ -1248,7 +1296,7 @@ func (h *Handler) reconcile(ctx context.Context, clusterName, serviceName string
 	if reachedSteadyState {
 		h.addServiceEvent(svc, fmt.Sprintf(ServiceEventSteadyStateFormat, serviceName))
 	}
-	h.scheduleRecoveryCheck(ctx, clusterName, svc)
+	h.scheduleSettleCheck(ctx, clusterName, svc)
 	if aerr := h.store.putService(ctx, clusterName, svc); aerr != nil {
 		log.Warn("ecs: reconcile: failed to persist service counts",
 			zap.String("cluster", clusterName),
