@@ -27,6 +27,37 @@
 
 set -uo pipefail
 
+# ---- Who is calling ---------------------------------------------------------
+# Two callers with different contracts. Run by hand — the usage above, and how
+# this gets run on a machine without `make` — there is no tool call to inspect
+# and every invocation should do the work. Run as a PreToolUse hook, stdin
+# carries the tool call as JSON, and only `git push` should pay for a full
+# verification.
+#
+# The settings.json entry says `if: "Bash(git push *)"` and that ought to
+# suffice. It did not: written `Bash(git push*)`, with no space and matching
+# neither the `cmd *` nor the `cmd:*` form used elsewhere in this repo, the
+# condition did not gate anything and this script ran — and blocked — on every
+# Bash call the agent made, including `gh pr view` and `grep`. A lint gate that
+# taxes `ls` gets worked around, which is worse than not having one.
+#
+# Anything not recognisable as hook JSON is treated as a hand run, so the
+# failure direction is toward doing the work rather than silently skipping it.
+# That is the opposite of commit-self-review-reminder.sh, deliberately: an
+# unnecessary run here costs CPU, whereas an unnecessary run there puts
+# instructions into an agent that did not ask for them.
+if [ $# -eq 0 ] && [ ! -t 0 ]; then
+	hook_payload=$(cat 2>/dev/null || true)
+	hook_command=$(printf '%s' "$hook_payload" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
+	if [ -n "$hook_command" ]; then
+		# Match `git push` at the start of a command segment, allowing Git's
+		# global options in between. Mirrors reject-worktree-stash.sh.
+		git_global_option='(-[cC][[:space:]]+[^[:space:];&|()]+|--(git-dir|work-tree|namespace|config-env)(=[^[:space:];&|()]+|[[:space:]]+[^[:space:];&|()]+)|-[^[:space:];&|()]+)'
+		printf '%s' "$hook_command" |
+			grep -Eq "(^|[;&|()][[:space:]]*)git[[:space:]]+(${git_global_option}[[:space:]]+)*push([[:space:];&|()]|$)" || exit 0
+	fi
+fi
+
 root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$root" || exit 0
 

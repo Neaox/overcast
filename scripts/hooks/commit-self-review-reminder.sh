@@ -13,7 +13,37 @@
 # branch is still yours, and an amend keeps the history coherent for the reviewer.
 #
 # See AGENTS.md § Self-review the diff before committing or pushing.
-set -euo pipefail
+#
+# # Why this reads the command rather than trusting the hook condition
+#
+# The settings.json entry carries `if: "Bash(git commit *)"`, and that ought to
+# be the whole story. It was not: with the condition written `Bash(git commit*)`
+# — no space, matching neither the `cmd *` nor the `cmd:*` form used everywhere
+# else in this repo — the hook ran on every Bash call the agent made. `ls`,
+# `gh pr view` and `grep` all came back carrying a reminder to amend a commit
+# that did not exist, and a read-only subagent doing nothing but searching was
+# told to `git commit --amend` and `git push --force-with-lease`. It declined,
+# and said so, which is the only reason it was noticed.
+#
+# So the gate lives here too. What this hook emits is imperative text that lands
+# in an agent's context, and that should not depend on a condition parsing the
+# way its author expected.
+#
+# The default is silence. Where verify-changed.sh fails toward doing its work —
+# the cost of a needless run is some CPU — this one fails toward saying nothing,
+# because the cost of a needless run is instructions appearing in an agent that
+# never asked for them.
+set -uo pipefail
+
+payload=$(cat 2>/dev/null || true)
+command=$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
+[ -n "$command" ] || exit 0
+
+# Match `git commit` at the start of a command segment, allowing Git's global
+# options in between (`git -C dir commit`). Mirrors reject-worktree-stash.sh.
+git_global_option='(-[cC][[:space:]]+[^[:space:];&|()]+|--(git-dir|work-tree|namespace|config-env)(=[^[:space:];&|()]+|[[:space:]]+[^[:space:];&|()]+)|-[^[:space:];&|()]+)'
+printf '%s' "$command" |
+	grep -Eq "(^|[;&|()][[:space:]]*)git[[:space:]]+(${git_global_option}[[:space:]]+)*commit([[:space:];&|()]|$)" || exit 0
 
 cat <<'JSON'
 {
