@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState, QueryListState, Spinner } from "@/components/ui/primitives"
+import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
 import {
   CreateAction,
   RefreshAction,
@@ -154,12 +155,15 @@ export function QueueList() {
             isEmpty={queues.length === 0}
             error={error}
             empty={
-              <EmptyState
-                icon={<MessagesSquare className="h-10 w-10" />}
-                title="No queues yet"
-                description="Create a queue to start sending and receiving messages."
-                action={<CreateAction onClick={openCreate}>Create queue</CreateAction>}
-              />
+              <>
+                <EmptyState
+                  icon={<MessagesSquare className="h-10 w-10" />}
+                  title="No queues yet"
+                  description="Create a queue to start sending and receiving messages."
+                  action={<CreateAction onClick={openCreate}>Create queue</CreateAction>}
+                />
+                <RegionElsewhereNotice kind="sqs-queues" noun="queues" />
+              </>
             }
             errorTitle="Failed to load queues"
           />

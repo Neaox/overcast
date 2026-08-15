@@ -158,6 +158,7 @@ func NewHandler(staticFS, docsFS fs.FS, cfg UIConfig) http.Handler {
 	r.Get("/api/eventbridge/rule-targets", handleEventBridgeRuleTargets)
 	r.Get("/api/pipes/wiring", handlePipeWiring)
 	r.Get("/api/pipes/deliveries", handlePipeDeliveries)
+	r.Get("/api/preflight/region", handlePreflightRegion)
 
 	// ── SSE proxy ─────────────────────────────────────────────────────────
 	r.Get("/api/events", handleEvents)
@@ -1303,6 +1304,21 @@ func proxyConsoleFeed(w http.ResponseWriter, r *http.Request, path string, param
 	if !copyResponseBody(w, resp.Body) {
 		return
 	}
+}
+
+// ── Preflight ──────────────────────────────────────────────────────────────
+
+// handlePreflightRegion proxies the region advisory a list page asks for when
+// it has just rendered nothing: does this kind of resource exist in a region
+// other than the one being shown, and how much of it.
+//
+// The region matters more here than on any other proxy in this file, because
+// it is half the comparison rather than a lookup key. proxyConsoleFeed
+// forwards it, and the emulator decides whether there is anything to say —
+// this hop adds no judgement of its own, so the "only on a matched symptom"
+// rule cannot drift between the two.
+func handlePreflightRegion(w http.ResponseWriter, r *http.Request) {
+	proxyConsoleFeed(w, r, "/_overcast/preflight/region", "kind")
 }
 
 // ── Mail ───────────────────────────────────────────────────────────────────

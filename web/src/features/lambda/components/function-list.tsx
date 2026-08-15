@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { QueryListState, EmptyState } from "@/components/ui/primitives"
+import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
 import {
   CreateAction,
   RefreshAction,
@@ -85,14 +86,17 @@ export function FunctionList() {
             isEmpty={functions.length === 0}
             error={error}
             empty={
-              <EmptyState
-                icon={<Zap className="h-10 w-10" />}
-                title="No functions yet"
-                description="Create a function to get started."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create function</CreateAction>
-                }
-              />
+              <>
+                <EmptyState
+                  icon={<Zap className="h-10 w-10" />}
+                  title="No functions yet"
+                  description="Create a function to get started."
+                  action={
+                    <CreateAction onClick={() => setShowCreate(true)}>Create function</CreateAction>
+                  }
+                />
+                <RegionElsewhereNotice kind="lambda-functions" noun="functions" />
+              </>
             }
             errorTitle="Failed to load functions"
           />

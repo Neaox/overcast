@@ -72,6 +72,22 @@ export const inboxHandlers = [http.get("/api/inbox/messages", () => HttpResponse
 
 export const debugHandlers = [http.get("/api/debug/state", () => HttpResponse.json({}))]
 
+// ─── Preflight ────────────────────────────────────────────────────────────
+
+// Every list page asks this once it has rendered nothing, so the default is
+// the healthy answer: nothing in this region, and nothing anywhere else
+// either. A test that wants the advisory overrides it with `server.use(...)`.
+export const preflightHandlers = [
+  http.get("/api/preflight/region", ({ request }) =>
+    HttpResponse.json({
+      kind: new URL(request.url).searchParams.get("kind"),
+      region: "us-east-1",
+      count: 0,
+      elsewhere: [],
+    }),
+  ),
+]
+
 // ─── Default handler set (all services, empty state) ─────────────────────
 
 export const handlers = [
@@ -83,4 +99,5 @@ export const handlers = [
   ...ecsHandlers,
   ...inboxHandlers,
   ...debugHandlers,
+  ...preflightHandlers,
 ]
