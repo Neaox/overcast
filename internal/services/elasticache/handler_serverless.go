@@ -193,8 +193,7 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			if err := h.startServerlessCacheContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for serverless cache — cache stays in creating state",
-					zap.String("cache", cacheName), zap.Error(err))
+				h.failServerlessCache(bgCtx, cacheName, fmt.Sprintf("the cache container could not be created: %v", err))
 				return
 			}
 			// The start took real time; the cache may have been deleted

@@ -230,9 +230,18 @@ func (h *Handler) startClusterAsync(clusterARN string) bool {
 	go func() {
 		defer h.dockerWg.Done()
 		defer h.dockerStarts.Delete(clusterARN)
-		if err := h.startClusterContainer(clusterRegionCtx(clusterARN), clusterARN); err != nil {
-			h.log.Warn("failed to start Docker container for MSK cluster — current lifecycle state is retained",
-				zap.String("cluster", clusterARN), zap.Error(err))
+		ctx := clusterRegionCtx(clusterARN)
+		if err := h.startClusterContainer(ctx, clusterARN); err != nil {
+			// The caller was told a broker was coming — this function returned
+			// true — and the readiness watch that would have owned the cluster
+			// from here is only scheduled once the container is up. So a
+			// failure here leaves nothing behind that could ever move the
+			// cluster out of CREATING; the failure has to be recorded on the
+			// record itself. failCluster's own guard decides whether this
+			// cluster is one that may still be settled: a reconcile or
+			// Docker-event start for a cluster that is already ACTIVE is left
+			// alone, because ACTIVE is not in clusterAwaiting.
+			h.failCluster(ctx, clusterARN, fmt.Sprintf("the broker container could not be started: %v", err))
 		}
 	}()
 	return true

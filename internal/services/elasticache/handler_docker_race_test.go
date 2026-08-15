@@ -34,15 +34,26 @@ type fakeDockerDaemon struct {
 	started     chan struct{}
 	release     func()
 
-	mu      sync.Mutex
-	stopped bool
-	removed bool
+	mu         sync.Mutex
+	stopped    bool
+	removed    bool
+	failCreate bool
 }
 
 func (fd *fakeDockerDaemon) stoppedOrRemoved() bool {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 	return fd.stopped || fd.removed
+}
+
+// refuseCreates makes building a container impossible, the way a daemon out of
+// disk does. The start then fails outright rather than blocking on release(),
+// which is the case container_start_failure_test.go is about. Mirrors
+// refuseCreates on rds's lifecycleDaemon.
+func (fd *fakeDockerDaemon) refuseCreates() {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	fd.failCreate = true
 }
 
 func newFakeDockerDaemon(t *testing.T) *fakeDockerDaemon {
@@ -72,6 +83,14 @@ func newFakeDockerDaemon(t *testing.T) *fakeDockerDaemon {
 			w.WriteHeader(http.StatusOK)
 
 		case strings.HasSuffix(p, "/containers/create"):
+			fd.mu.Lock()
+			refuse := fd.failCreate
+			fd.mu.Unlock()
+			if refuse {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"message":"no space left on device"}`))
+				return
+			}
 			w.Write([]byte(`{"Id":"` + containerID + `"}`)) //nolint:errcheck
 
 		case strings.HasSuffix(p, "/containers/"+containerID+"/start"):
