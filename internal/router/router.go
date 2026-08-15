@@ -265,7 +265,7 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 
 	// MCP runtime routes are mounted through a build-tag-aware hook.
 	// Slim builds intentionally do not expose MCP endpoints.
-	registerMCPRoutes(r, cfg, store, bus, logger)
+	registerMCPRoutes(r, cfg, store, bus, logger, shutdownCh)
 
 	// ---- Service registry -------------------------------------------------
 	// To add a new service: implement router.Service and append it here.

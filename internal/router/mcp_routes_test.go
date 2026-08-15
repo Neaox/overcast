@@ -20,7 +20,13 @@ import (
 	"github.com/Neaox/overcast/internal/state"
 )
 
-func newMCPRouterTestServer(t *testing.T, mutateCfg ...func(*config.Config)) *httptest.Server {
+// newMCPRouterTestParts builds the router and its server without registering
+// any cleanup, and hands back the two shutdown hooks with it.
+//
+// Split out of newMCPRouterTestServer for the one test whose subject *is* the
+// shutdown — it has to call these itself and time what happens, which it cannot
+// do if a t.Cleanup owns them. See mcp_shutdown_test.go.
+func newMCPRouterTestParts(t *testing.T, mutateCfg ...func(*config.Config)) (srv *httptest.Server, preShutdown func(), cleanup func(context.Context)) {
 	t.Helper()
 
 	cfg := &config.Config{
@@ -43,7 +49,13 @@ func newMCPRouterTestServer(t *testing.T, mutateCfg ...func(*config.Config)) *ht
 
 	store := state.NewMemoryStore()
 	handler, preShutdown, cleanup, _ := New(cfg, store, zap.NewNop(), clock.New())
-	srv := httptest.NewServer(handler)
+	return httptest.NewServer(handler), preShutdown, cleanup
+}
+
+func newMCPRouterTestServer(t *testing.T, mutateCfg ...func(*config.Config)) *httptest.Server {
+	t.Helper()
+
+	srv, preShutdown, cleanup := newMCPRouterTestParts(t, mutateCfg...)
 	t.Cleanup(func() {
 		preShutdown()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
