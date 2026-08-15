@@ -63,5 +63,6 @@ func All() []ServiceGroup {
 		AppConfig().named("appconfig"),
 		Backup().named("backup"),
 		MSK().named("msk"),
+		EKS().named("eks"),
 	}
 }
