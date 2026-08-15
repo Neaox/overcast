@@ -25,9 +25,10 @@ import (
 
 func TestClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	// Docker is wired to a fake daemon rather than skipped for want of a real
-	// one. Since #686 the CREATING → ACTIVE transition only happens on the
-	// Docker path — the health check performs it, and nothing schedules one
-	// otherwise — so a metadata-only handler never reaches the subject.
+	// one. The subject is the health check's region handling, and only the
+	// Docker path schedules a health check: a metadata-only handler reaches
+	// ACTIVE by the create path's own transition (readiness.go), which would
+	// pass this test without the health check having run at all.
 	// See docker_fake_test.go.
 	fd := newFakeMSKDockerDaemon(t)
 

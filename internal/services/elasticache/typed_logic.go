@@ -530,9 +530,11 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 			}
 			h.scheduleHealthCheck(region, clusterID, fresh.ConfigurationEndpoint.Address, fresh.ConfigurationEndpoint.Port)
 		}()
+	} else {
+		// No container is coming, so nothing else will ever move this cluster
+		// out of "creating". See settleCacheClusterWithoutRuntime.
+		h.settleCacheClusterWithoutRuntime(region, clusterID)
 	}
-	// Docker is not available — leave the cluster in "creating".
-	// The /_overcast/health endpoint and web UI banner tell the user why.
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheClusterCreated, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.CacheClusterId, ARN: arn}})
 	}
@@ -692,9 +694,11 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 			}
 			h.scheduleReplicationGroupHealthCheck(region, rgID, fresh.ConfigurationEndpoint.Address, fresh.ConfigurationEndpoint.Port)
 		}()
+	} else {
+		// No container is coming, so nothing else will ever move this group out
+		// of "creating". See settleReplicationGroupWithoutRuntime.
+		h.settleReplicationGroupWithoutRuntime(region, rgID)
 	}
-	// Docker is not available — leave the group in "creating".
-	// The /_overcast/health endpoint and web UI banner tell the user why.
 	if h.bus != nil {
 		h.bus.Publish(ctx, events.Event{Type: events.ElastiCacheReplicationGroupCreated, Time: h.clk.Now(), Source: "elasticache", Payload: events.ResourcePayload{Name: req.ReplicationGroupId, ARN: arn}})
 	}

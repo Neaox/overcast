@@ -205,9 +205,11 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 			}
 			h.scheduleReplicationGroupHealthCheck(region, rgID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
 		}()
+	} else {
+		// No container is coming, so nothing else will ever move this group out
+		// of "creating". See settleReplicationGroupWithoutRuntime.
+		h.settleReplicationGroupWithoutRuntime(region, rgID)
 	}
-	// Docker is not available — leave the group in "creating".
-	// The /_overcast/health endpoint and web UI banner tell the user why.
 
 	h.publish(r, events.ElastiCacheReplicationGroupCreated, events.ResourcePayload{Name: id, ARN: arn})
 

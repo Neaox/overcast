@@ -153,13 +153,16 @@ func TestMSKClusterCreate_neverActiveFailsTheResource(t *testing.T) {
 	}
 }
 
-// MSK leaves a cluster in CREATING for as long as it exists when there is no
-// broker container to start — a deployment without Docker. Waiting there would
-// hold every MSK stack open for three quarters of an hour and then roll it
-// back, so the wait does not run where nothing can answer it.
-func TestMSKClusterCreate_doesNotWaitWithoutAContainerRuntime(t *testing.T) {
-	// Given: a deployment with no MSK container runtime
-	f := &fakeMSK{script: statusScript{statuses: []string{"CREATING"}}}
+// A deployment with no MSK container runtime is not a special case. The wait
+// used to be skipped there, because MSK left a cluster with no broker coming in
+// CREATING and waiting for it would have held every MSK stack open for three
+// quarters of an hour before rolling it back. MSK now marks such a cluster
+// ACTIVE at once — there is no broker being claimed — so the wait runs
+// everywhere and gets its answer on the first poll.
+func TestMSKClusterCreate_withoutAContainerRuntimeStillWaitsAndCompletes(t *testing.T) {
+	// Given: a deployment with no MSK container runtime, where the service
+	// answers ACTIVE because nothing is coming that could change it
+	f := &fakeMSK{script: statusScript{statuses: []string{"ACTIVE"}}}
 	p, rCtx := newTestProvisioner(t, f, newPollDrivenClock())
 	p.cfg.MSKDockerSocket = ""
 
@@ -167,13 +170,12 @@ func TestMSKClusterCreate_doesNotWaitWithoutAContainerRuntime(t *testing.T) {
 	_, err := p.provisionResource(context.Background(), "Kafka",
 		TemplateResource{Type: "AWS::MSK::Cluster"}, mskClusterProps(), rCtx)
 
-	// Then: the resource completes on its metadata, with no state asked for
+	// Then: it completes, having actually asked
 	if err != nil {
-		t.Fatalf("provisionResource: %v — a cluster with no brokers behind it cannot become "+
-			"ACTIVE, and failing the stack over that is worse than completing it", err)
+		t.Fatalf("provisionResource: %v", err)
 	}
-	if got := f.script.count(); got != 0 {
-		t.Errorf("DescribeCluster calls = %d, want 0 — nothing was going to answer them", got)
+	if got := f.script.count(); got != 1 {
+		t.Errorf("DescribeCluster calls = %d, want 1 — the wait no longer skips a socketless deployment", got)
 	}
 }
 

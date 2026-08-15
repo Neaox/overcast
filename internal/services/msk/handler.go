@@ -201,17 +201,27 @@ func (h *Handler) clusterTags(ctx context.Context, resourceArn string) (map[stri
 }
 
 // startClusterAsync starts a cluster's Redpanda container in the background.
-// Without Docker there is nothing to start and the cluster stays in CREATING,
-// which is what a caller polling DescribeCluster sees on AWS while brokers are
-// still being provisioned.
-func (h *Handler) startClusterAsync(clusterARN string) {
+//
+// It reports whether a broker is on its way, which is what decides who owns the
+// cluster's state from here. True means a start is running or already running,
+// and the readiness watch that start schedules is the only thing entitled to
+// move the cluster out of CREATING — a create that promoted it itself would
+// make that watch a no-op, since it only ever moves a cluster out of CREATING.
+// False means nothing is coming at all, and a caller that leaves the cluster in
+// CREATING has parked it in a state nothing will ever change; see
+// settleClusterWithoutBroker for what to do instead.
+//
+// The reconcile and Docker-event callers only run with a daemon wired, so the
+// false case belongs to the create paths.
+func (h *Handler) startClusterAsync(clusterARN string) bool {
 	h.dockerLifecycle.Lock()
 	defer h.dockerLifecycle.Unlock()
 	if h.dockerStopping || !h.dockerReady.Load() {
-		return
+		return false
 	}
 	if _, loaded := h.dockerStarts.LoadOrStore(clusterARN, struct{}{}); loaded {
-		return
+		// A start is already in flight and owns the transition.
+		return true
 	}
 	if h.puller != nil {
 		h.puller.Prewarm(redpandaImage)
@@ -225,6 +235,7 @@ func (h *Handler) startClusterAsync(clusterARN string) {
 				zap.String("cluster", clusterARN), zap.Error(err))
 		}
 	}()
+	return true
 }
 
 // clusterTypeOf reports a stored cluster's type. CreateCluster (v1) creates
@@ -277,7 +288,9 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, aerr)
 		return
 	}
-	h.startClusterAsync(cluster.ClusterArn)
+	if !h.startClusterAsync(cluster.ClusterArn) {
+		h.settleClusterWithoutBroker(cluster.ClusterArn)
+	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{
 		"clusterArn":  cluster.ClusterArn,
@@ -722,7 +735,9 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cluster.ClusterType == clusterTypeProvisioned {
-		h.startClusterAsync(cluster.ClusterArn)
+		if !h.startClusterAsync(cluster.ClusterArn) {
+			h.settleClusterWithoutBroker(cluster.ClusterArn)
+		}
 	}
 
 	protocol.WriteJSON(w, r, http.StatusOK, map[string]any{

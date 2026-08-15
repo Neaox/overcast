@@ -29,6 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/protocol"
+	"github.com/Neaox/overcast/internal/serviceutil"
 	"github.com/Neaox/overcast/internal/serviceutil/readiness"
 )
 
@@ -77,6 +78,39 @@ func clusterRuntimeExpected(state string) bool {
 	default:
 		return false
 	}
+}
+
+// settleClusterWithoutBroker marks a cluster that has no broker container
+// coming ACTIVE.
+//
+// Without Docker nothing is started, so no readiness watch is scheduled and
+// nothing exists that could move the cluster out of CREATING. Leaving it there
+// claims progress that will never be made — the mirror image of the ACTIVE with
+// no broker behind it that the watch above exists to prevent, and just as
+// untrue. `aws kafka wait cluster-active` spun out its attempts against one,
+// and a CloudFormation stack waiting on it had the whole budget to burn before
+// rolling back a cluster that was as ready as it would ever be.
+//
+// A metadata-only cluster is therefore ACTIVE the moment it is recorded,
+// because there is no broker being claimed and nothing is coming to prove one.
+// createClusterV2 already says exactly this about a serverless cluster, which
+// has no brokers to provision either; RDS and Lambda say it about their own
+// metadata-only resources.
+//
+// Two properties this relies on, both deliberate:
+//
+//   - The transition is guarded on the cluster still being in CREATING, so a
+//     delete arriving in the same moment wins and this becomes a no-op rather
+//     than resurrecting what that call decided.
+//   - ACTIVE is a state reconciliation still expects a broker for (see
+//     clusterRuntimeExpected), so a daemon that appears later still gets a
+//     container built for the record and a real ApiVersions probe run against
+//     it. Marking it ready is not the same as writing it off.
+func (h *Handler) settleClusterWithoutBroker(clusterARN string) {
+	region := serviceutil.ARNRegion(clusterARN)
+	h.scheduler.AfterScoped(region, clusterARN, "active", 0, func(ctx context.Context) {
+		h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING")
+	})
 }
 
 // failCluster settles a cluster whose broker never answered, recording why in

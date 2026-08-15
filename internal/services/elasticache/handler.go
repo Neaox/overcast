@@ -344,9 +344,11 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 			}
 			h.scheduleHealthCheck(region, clusterID, got.ConfigurationEndpoint.Address, got.ConfigurationEndpoint.Port)
 		}()
+	} else {
+		// No container is coming, so nothing else will ever move this cluster
+		// out of "creating". See settleCacheClusterWithoutRuntime.
+		h.settleCacheClusterWithoutRuntime(region, clusterID)
 	}
-	// Docker is not available — leave the cluster in "creating".
-	// The /_overcast/health endpoint and web UI banner tell the user why.
 
 	h.publish(r, events.ElastiCacheClusterCreated, events.ResourcePayload{Name: id, ARN: arn})
 
