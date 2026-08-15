@@ -314,6 +314,11 @@ type Handler struct {
 
 	// One writer at a time per record — see locks.go.
 	clusterLocks serviceutil.RecordLocks
+	// One create at a time per region-scoped resource name. Separate from
+	// clusterLocks because it guards a name rather than a record: two creates
+	// racing over one name mint two different ARNs, so a per-ARN lock never
+	// makes them meet. See claimClusterName.
+	nameLocks serviceutil.RecordLocks
 }
 
 // VPCNetworkResolver resolves a cluster's client subnets back to EC2 VPC

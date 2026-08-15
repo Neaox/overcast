@@ -47,6 +47,75 @@ func errBadRequest(format string, args ...any) *protocol.AWSError {
 	}
 }
 
+// errConflict builds MSK's 409. The pinned kafka model gives ConflictException
+// @httpError(409) and declares it on CreateCluster, CreateClusterV2 and
+// CreateConfiguration alike; the API reference spells the condition out on
+// POST /v1/clusters and POST /v1/configurations: "This cluster name already
+// exists. Retry your request using another name".
+func errConflict(format string, args ...any) *protocol.AWSError {
+	return &protocol.AWSError{
+		Code:       "ConflictException",
+		Message:    fmt.Sprintf(format, args...),
+		HTTPStatus: http.StatusConflict,
+	}
+}
+
+// nameLockKey scopes a create's name-uniqueness lock to one kind of resource in
+// one region. AWS scopes both MSK names — cluster and configuration — to an
+// account and a region, so the same name in two regions is two resources and
+// must not serialise against each other. Overcast serves one account, so the
+// account half of that scope is implicit in the store.
+func nameLockKey(kind, region, name string) string {
+	return kind + "/" + serviceutil.RegionKey(region, name)
+}
+
+// claimClusterName holds this region's claim on a cluster name for the rest of
+// the create, and refuses the create if a cluster already holds it.
+//
+// The lock matters and the per-record lock in locks.go cannot stand in for it:
+// that one is keyed by ARN, and two creates racing over one name mint two
+// different ARNs, so they would never meet. Between an unlocked check and the
+// store write, both creates see a free name and both write — which is the
+// duplicate the guard exists to prevent, arrived at by a different route.
+//
+// The caller must call the returned release once the record is stored.
+func (h *Handler) claimClusterName(ctx context.Context, name string) (func(), *protocol.AWSError) {
+	release := h.nameLocks.Lock(nameLockKey("cluster", middleware.RegionFromContext(ctx, h.cfg.Region), name))
+	all, aerr := h.store.listClusters(ctx)
+	if aerr != nil {
+		release()
+		return nil, aerr
+	}
+	for _, c := range all {
+		// A cluster on its way out still holds its name: DeleteCluster answers
+		// immediately and drops the record afterwards, and until it is gone the
+		// cluster exists — which is what AWS reports too.
+		if c.ClusterName == name {
+			release()
+			return nil, errConflict("This cluster name already exists. Retry your request using another name.")
+		}
+	}
+	return release, nil
+}
+
+// claimConfigurationName is claimClusterName for configuration names, which AWS
+// scopes the same way and rejects a repeat of the same way.
+func (h *Handler) claimConfigurationName(ctx context.Context, name string) (func(), *protocol.AWSError) {
+	release := h.nameLocks.Lock(nameLockKey("configuration", middleware.RegionFromContext(ctx, h.cfg.Region), name))
+	all, aerr := h.store.listConfigurations(ctx)
+	if aerr != nil {
+		release()
+		return nil, aerr
+	}
+	for _, c := range all {
+		if c.Name == name {
+			release()
+			return nil, errConflict("This configuration name already exists. Retry your request using another name.")
+		}
+	}
+	return release, nil
+}
+
 // arnFromPath extracts an ARN from a chi path parameter, percent-decoding it.
 //
 // AWS models every MSK ARN path member as a non-greedy httpLabel, which the
@@ -197,6 +266,13 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		protocol.WriteJSONError(w, r, errBadRequest("clusterName is required"))
 		return
 	}
+
+	release, aerr := h.claimClusterName(r.Context(), req.ClusterName)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	defer release()
 
 	cluster := h.newCluster(r.Context(), req.ClusterName)
 	req.provisionedInput.applyTo(cluster)
@@ -425,6 +501,13 @@ func (h *Handler) createConfiguration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, aerr := h.claimConfigurationName(r.Context(), req.Name)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	defer release()
+
 	id := uuid.NewString()
 	arn := h.mskARN(r.Context(), "configuration/"+req.Name+"/"+id)
 	now := h.clk.Now()
@@ -625,6 +708,16 @@ func (h *Handler) createClusterV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// v1 and v2 are two bindings onto one cluster namespace, so the guard is
+	// the same one and reads the same records: a name a v1 create took is not
+	// available to a v2 create, whichever type it asks for.
+	release, aerr := h.claimClusterName(r.Context(), req.ClusterName)
+	if aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
+	}
+	defer release()
+
 	cluster := h.newCluster(r.Context(), req.ClusterName)
 	if req.Provisioned != nil {
 		cluster.ClusterType = clusterTypeProvisioned
@@ -781,12 +874,24 @@ func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Requ
 	}
 	clusterArn = strings.TrimSuffix(clusterArn, "/configuration")
 
+	// The configuration reference is a modeled `configurationInfo` object of
+	// {arn, revision}, and AWS marks it required. This read a flat
+	// `configurationArn` until #996 caught it: no AWS client sends that member,
+	// so the ARN was always empty, the check below it never ran, and an update
+	// naming a configuration that does not exist was answered 200 — the caller
+	// told its reference had been resolved when nothing had resolved it.
 	var req struct {
-		ConfigurationArn      string `json:"configurationArn"`
-		ConfigurationRevision int64  `json:"configurationRevision"`
-		CurrentVersion        string `json:"currentVersion"`
+		ConfigurationInfo *struct {
+			Arn      string `json:"arn"`
+			Revision int64  `json:"revision"`
+		} `json:"configurationInfo"`
+		CurrentVersion string `json:"currentVersion"`
 	}
 	if !serviceutil.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ConfigurationInfo == nil || req.ConfigurationInfo.Arn == "" {
+		protocol.WriteJSONError(w, r, errBadRequest("configurationInfo is required"))
 		return
 	}
 
@@ -801,11 +906,11 @@ func (h *Handler) updateClusterConfiguration(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if req.ConfigurationArn != "" {
-		if _, aerr := h.store.getConfiguration(r.Context(), req.ConfigurationArn); aerr != nil {
-			protocol.WriteJSONError(w, r, aerr)
-			return
-		}
+	// Resolved before the cluster is touched, so a rejected update does not
+	// spend the optimistic-concurrency token on a mutation that never happened.
+	if _, aerr := h.store.getConfiguration(r.Context(), req.ConfigurationInfo.Arn); aerr != nil {
+		protocol.WriteJSONError(w, r, aerr)
+		return
 	}
 
 	opID := uuid.NewString()

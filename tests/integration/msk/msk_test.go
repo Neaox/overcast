@@ -45,6 +45,18 @@ func decodeJSON(t *testing.T, resp *http.Response, dst any) {
 	require.NoError(t, json.Unmarshal(b, dst), "body: %s", b)
 }
 
+// drain reads and closes a response whose body the test does not inspect.
+// Leaving one unread abandons the connection instead of returning it to the
+// pool, and a package's worth of abandoned connections exhausts the Windows
+// ephemeral port range mid-run — which surfaces as connectex "only one usage of
+// each socket address", not as anything about this test.
+func drain(t *testing.T, resp *http.Response) {
+	t.Helper()
+	_, err := io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+}
+
 func assertJSONError(t *testing.T, resp *http.Response, expectedCode string) {
 	t.Helper()
 	b, err := io.ReadAll(resp.Body)
@@ -94,6 +106,41 @@ func TestCreateCluster_missingName(t *testing.T) {
 	// no ValidationException on any operation
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assertJSONError(t, resp, "BadRequestException")
+}
+
+func TestCreateCluster_rejectsANameAlreadyInUse(t *testing.T) {
+	// Given: a cluster already holds the name
+	srv := helpers.NewTestServer(t)
+	first := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":         "taken-name",
+		"kafkaVersion":        "3.5.1",
+		"numberOfBrokerNodes": 1,
+	})
+	require.Equal(t, http.StatusOK, first.StatusCode)
+	drain(t, first)
+
+	// When: a second cluster is created under the same name
+	resp := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName":         "taken-name",
+		"kafkaVersion":        "3.5.1",
+		"numberOfBrokerNodes": 1,
+	})
+
+	// Then: 409 ConflictException. The kafka model puts ConflictException at
+	// HTTP 409 and CreateCluster declares it; the API reference spells the
+	// condition out on POST /v1/clusters — "This cluster name already exists.
+	// Retry your request using another name."
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assertJSONError(t, resp, "ConflictException")
+
+	// And: the refusal left nothing behind. A second record under the same name
+	// is the damage the guard exists to prevent — a caller that looks a cluster
+	// up by name then gets one of two arbitrarily.
+	listResp := mskRequest(t, srv, http.MethodGet, "/v1/clusters", nil)
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	var listed map[string]any
+	decodeJSON(t, listResp, &listed)
+	assert.Len(t, listed["clusterInfoList"], 1)
 }
 
 // ── TestDescribeCluster ───────────────────────────────────────────────────────
@@ -399,6 +446,38 @@ func TestCreateConfiguration_success(t *testing.T) {
 	assert.Equal(t, "ACTIVE", result["state"])
 	assert.Equal(t, "my-config", result["name"])
 	assert.NotNil(t, result["latestRevision"])
+}
+
+func TestCreateConfiguration_rejectsANameAlreadyInUse(t *testing.T) {
+	// Given: a configuration already holds the name
+	srv := helpers.NewTestServer(t)
+	first := mskRequest(t, srv, http.MethodPost, "/v1/configurations", map[string]any{
+		"name":          "taken-config",
+		"kafkaVersions": []string{"3.5.1"},
+	})
+	require.Equal(t, http.StatusCreated, first.StatusCode)
+	drain(t, first)
+
+	// When: a second configuration is created under the same name
+	resp := mskRequest(t, srv, http.MethodPost, "/v1/configurations", map[string]any{
+		"name":          "taken-config",
+		"kafkaVersions": []string{"3.5.1"},
+	})
+
+	// Then: 409 ConflictException — CreateConfiguration declares the same shape
+	// CreateCluster does, and the API reference gives POST /v1/configurations
+	// the same 409 row.
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assertJSONError(t, resp, "ConflictException")
+
+	// And: only the first configuration exists. Two configurations sharing a
+	// name is what a caller resolving one by name would then have to guess
+	// between.
+	listResp := mskRequest(t, srv, http.MethodGet, "/v1/configurations", nil)
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	var listed map[string]any
+	decodeJSON(t, listResp, &listed)
+	assert.Len(t, listed["configurations"], 1)
 }
 
 // ── TestListConfigurations ────────────────────────────────────────────────────
@@ -842,6 +921,28 @@ func TestCreateClusterV2_bothProvisionedAndServerless(t *testing.T) {
 	assertJSONError(t, resp, "BadRequestException")
 }
 
+func TestCreateClusterV2_rejectsANameAlreadyInUse(t *testing.T) {
+	// Given: a v1 cluster already holds the name. v1 and v2 are two bindings
+	// onto one cluster namespace on AWS, so the name a v1 create took is not
+	// available to a v2 create either.
+	srv := helpers.NewTestServer(t)
+	first := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "shared-namespace",
+	})
+	require.Equal(t, http.StatusOK, first.StatusCode)
+	drain(t, first)
+
+	// When: a v2 serverless cluster is created under the same name
+	resp := mskRequest(t, srv, http.MethodPost, clustersV2Path, map[string]any{
+		"clusterName": "shared-namespace",
+		"serverless":  map[string]any{},
+	})
+
+	// Then: 409 ConflictException
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+	assertJSONError(t, resp, "ConflictException")
+}
+
 // ── TestDescribeClusterV2 ─────────────────────────────────────────────────────
 
 func TestDescribeClusterV2_provisioned(t *testing.T) {
@@ -1049,6 +1150,13 @@ func TestListClustersV2_rejectsAnInvalidNextToken(t *testing.T) {
 }
 
 // ── TestUpdateClusterConfiguration ───────────────────────────────────────────
+//
+// Every request below carries the configuration reference the way the model
+// binds it: a `configurationInfo` object of `{arn, revision}`, which is what
+// the AWS CLI and every SDK put on the wire. These tests used to send a flat
+// `configurationArn`, a member the kafka model does not declare — so they
+// agreed with a handler that read a member no client sends, and neither noticed
+// that the ARN was never resolved.
 
 func TestUpdateClusterConfiguration_success(t *testing.T) {
 	// Given: a cluster and a configuration both exist
@@ -1082,9 +1190,8 @@ func TestUpdateClusterConfiguration_success(t *testing.T) {
 
 	// When: UpdateClusterConfiguration is called
 	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/"+clusterArn+"/configuration", map[string]any{
-		"configurationArn":      configArn,
-		"configurationRevision": 1,
-		"currentVersion":        currentVersion,
+		"configurationInfo": map[string]any{"arn": configArn, "revision": 1},
+		"currentVersion":    currentVersion,
 	})
 
 	// Then: 200 with clusterArn and a clusterOperationArn
@@ -1102,9 +1209,11 @@ func TestUpdateClusterConfiguration_clusterNotFound(t *testing.T) {
 
 	// When: update configuration on a non-existent cluster
 	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/arn:aws:kafka:us-east-1:000000000000:cluster/nope/abc/configuration", map[string]any{
-		"configurationArn":      "arn:aws:kafka:us-east-1:000000000000:configuration/x/y",
-		"configurationRevision": 1,
-		"currentVersion":        "any",
+		"configurationInfo": map[string]any{
+			"arn":      "arn:aws:kafka:us-east-1:000000000000:configuration/x/y",
+			"revision": 1,
+		},
+		"currentVersion": "any",
 	})
 
 	// Then: 404 NotFoundException
@@ -1133,12 +1242,53 @@ func TestUpdateClusterConfiguration_staleVersion(t *testing.T) {
 
 	// When: update with a stale currentVersion
 	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/"+clusterArn+"/configuration", map[string]any{
-		"configurationArn":      configArn,
-		"configurationRevision": 1,
-		"currentVersion":        "stale-version",
+		"configurationInfo": map[string]any{"arn": configArn, "revision": 1},
+		"currentVersion":    "stale-version",
 	})
 
 	// Then: 400 BadRequestException
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	assertJSONError(t, resp, "BadRequestException")
+}
+
+func TestUpdateClusterConfiguration_unknownConfiguration(t *testing.T) {
+	// Given: a cluster exists, and the caller holds its current version, so the
+	// only thing wrong with the request is the configuration it names
+	srv := helpers.NewTestServer(t)
+	createCluster := mskRequest(t, srv, http.MethodPost, "/v1/clusters", map[string]any{
+		"clusterName": "unknown-config-target",
+	})
+	require.Equal(t, http.StatusOK, createCluster.StatusCode)
+	var clusterResult map[string]any
+	decodeJSON(t, createCluster, &clusterResult)
+	clusterArn := clusterResult["clusterArn"].(string)
+
+	descResp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+clusterArn, nil)
+	require.Equal(t, http.StatusOK, descResp.StatusCode)
+	var descResult map[string]any
+	decodeJSON(t, descResp, &descResult)
+	currentVersion := descResult["clusterInfo"].(map[string]any)["currentVersion"].(string)
+
+	// When: the update names a configuration that does not exist
+	resp := mskRequest(t, srv, http.MethodPut, "/v1/clusters/"+clusterArn+"/configuration", map[string]any{
+		"configurationInfo": map[string]any{
+			"arn":      "arn:aws:kafka:us-east-1:000000000000:configuration/no-such-config/0000",
+			"revision": 1,
+		},
+		"currentVersion": currentVersion,
+	})
+
+	// Then: 404 NotFoundException — the configuration is a resource the request
+	// refers to, and referring to a missing one cannot succeed
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assertJSONError(t, resp, "NotFoundException")
+
+	// And: the cluster's version did not move. A rejected update that still
+	// spent the optimistic-concurrency token would invalidate the caller's next
+	// request for a mutation that never happened.
+	afterResp := mskRequest(t, srv, http.MethodGet, "/v1/clusters/"+clusterArn, nil)
+	require.Equal(t, http.StatusOK, afterResp.StatusCode)
+	var afterResult map[string]any
+	decodeJSON(t, afterResp, &afterResult)
+	assert.Equal(t, currentVersion, afterResult["clusterInfo"].(map[string]any)["currentVersion"])
 }
