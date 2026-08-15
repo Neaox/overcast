@@ -67,7 +67,10 @@ func TestNestedStackTags_PropagateThroughCreateUpdateRemovalAndRollback(t *testi
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	create := router.requests[len(router.requests)-1]
+	// The create is no longer the last request the child stack makes: the
+	// function resource now waits for Lambda to report it Active, which reads
+	// the configuration back after the create. Pick the create out by its route.
+	create := findNestedRequest(t, router.requests, http.MethodPost, "/2015-03-31/functions")
 	if got := create.body["Tags"]; !reflect.DeepEqual(got, map[string]any{"owner": "child", "stage": "parent"}) {
 		t.Fatalf("create Tags = %#v", got)
 	}
@@ -95,6 +98,20 @@ func TestNestedStackTags_PropagateThroughCreateUpdateRemovalAndRollback(t *testi
 		t.Fatalf("Rollback tags: %v", err)
 	}
 	assertNestedTagRequest(t, router.requests, http.MethodPost, "", map[string]any{"owner": "updated"})
+}
+
+// findNestedRequest returns the one request a test means to assert against,
+// named by method and path rather than by position — resource waits dispatch
+// their own reads, so "the last request" is not the request that was made.
+func findNestedRequest(t *testing.T, requests []capturedRequest, method, path string) capturedRequest {
+	t.Helper()
+	for _, request := range requests {
+		if request.method == method && request.path == path {
+			return request
+		}
+	}
+	t.Fatalf("no %s %s request in %#v", method, path, requests)
+	return capturedRequest{}
 }
 
 func assertNestedTagRequest(t *testing.T, requests []capturedRequest, method, query string, tags map[string]any) {

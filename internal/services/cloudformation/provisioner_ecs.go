@@ -211,8 +211,8 @@ func (h *ecsServiceHandler) Create(ctx context.Context, router http.Handler, cfg
 // share it — they are the same wait on the same definition of done, and the bug
 // this exists for is what happened when the two drifted apart. See
 // resourceStabilizer.
-func (h *ecsServiceHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, _ clock.Clock, physicalID string, rCtx *resolveContext) error {
-	return waitForServiceStable(ctx, router, rCtx.Region, ecsClusterFromServiceARN(physicalID), physicalID)
+func (h *ecsServiceHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	return waitForServiceStable(ctx, clk, router, rCtx.Region, ecsClusterFromServiceARN(physicalID), physicalID)
 }
 
 // ecsClusterFromServiceARN reads the cluster out of a service ARN
@@ -292,13 +292,21 @@ func ecsServiceRolloutFailure(svc describedECSService) (string, bool) {
 // Create and update both come through here, deliberately: they are the same
 // wait on the same definition of done, and the bug this fixes is what happens
 // when the two drift apart.
-func waitForServiceStable(ctx context.Context, router http.Handler, region, cluster, serviceArn string) error {
+//
+// This is the one wait that does not run on the shared shape in
+// provisioner_stabilize.go, because its question is not the one that shape
+// answers: a service is done when its deployment count and its running count
+// say so, not when a status string matches a value the service documents.
+// Everything else about it is the same, including the clock — which is
+// injected, not read off time.Now(), so the timeout can be exercised without
+// spending it.
+func waitForServiceStable(ctx context.Context, clk clock.Clock, router http.Handler, region, cluster, serviceArn string) error {
 	body := map[string]any{"services": []string{serviceArn}}
 	if cluster != "" {
 		body["cluster"] = cluster
 	}
 
-	deadline := time.Now().Add(ecsServiceStabilizeTimeout)
+	deadline := clk.Now().Add(ecsServiceStabilizeTimeout)
 	lastReason := ""
 	for {
 		rec, err := internalJSON(ctx, router, region, "AmazonEC2ContainerServiceV20141113.DescribeServices", body)
@@ -330,7 +338,7 @@ func waitForServiceStable(ctx context.Context, router http.Handler, region, clus
 			}
 			return fmt.Errorf("service %s did not stabilize: %s", svc.ServiceName, reason)
 		}
-		if time.Now().After(deadline) {
+		if clk.Now().After(deadline) {
 			if lastReason == "" {
 				lastReason = fmt.Sprintf("%d of %d tasks running", svc.RunningCount, svc.DesiredCount)
 			}
@@ -339,7 +347,7 @@ func waitForServiceStable(ctx context.Context, router http.Handler, region, clus
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(ecsServiceStabilizeInterval):
+		case <-clk.After(ecsServiceStabilizeInterval):
 		}
 	}
 }
