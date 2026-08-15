@@ -421,7 +421,7 @@ func requestIAMResource(r *http.Request) string {
 // Lambda as S3 while this one did not, and every path this one missed fell
 // through to the logger's copy and produced actions like "lambda:PutObject".
 func requestLambdaIAMOperation(r *http.Request) string {
-	operation := restOperation("lambda", r.Method, r.URL.Path, r.URL.RawQuery)
+	operation := restOperation("lambda", r)
 	if operation == "" {
 		return ""
 	}

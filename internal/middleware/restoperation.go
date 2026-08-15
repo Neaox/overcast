@@ -52,14 +52,53 @@ import (
 // apigateway-signed caller and AppSync's ListApis for an appsync-signed one,
 // because the generated candidate set records both, not just whichever service
 // sorted first.
-func restOperation(svc, method, path, rawQuery string) string {
-	if svc == "" || path == "" || path[0] != '/' {
+func restOperation(svc string, r *http.Request) string {
+	if svc == "" || r.URL.Path == "" || r.URL.Path[0] != '/' {
 		return ""
 	}
-	if operation, ok := overcastRESTOperation(svc, method, path); ok {
+	if operation, ok := overcastRESTOperation(svc, r.Method, r.URL.Path); ok {
 		return operation
 	}
-	return awsapi.NewRegistry().RESTOperation(awsapiServiceKey(svc), method, path, rawQuery)
+	return modeledRESTOperation(awsapiServiceKey(svc), r)
+}
+
+// modeledRESTOperation walks the generated trie for a request, trying the
+// escaped path before the decoded one. It is restOperation's half of the fix
+// PR #1000 made in the router's claimModeledPath, on the second of the two
+// callers that walk the same trie.
+//
+// The escaped form is the one the model describes. A Smithy non-greedy
+// httpLabel binds a single URI segment, so an SDK percent-encodes a value that
+// contains a slash — every service that puts an ARN in the path does this, and
+// smithy-go, botocore and the JS SDK all agree. url.URL.Path is that value
+// *decoded*, so an MSK cluster ARN's "cluster/name/uuid" reappears as three
+// path segments and the request no longer has the shape of any binding.
+//
+// Matching on the decoded path alone therefore left every ARN-labelled binding
+// unnamed, which cost more than a label. The logger's line and the operation
+// metric went blank, and requestIAMAction returned "" — which is IAMEnforce's
+// one deliberately fail-open branch, so an explicitly denied operation was
+// never evaluated against the policy that denied it. That is not MSK-specific:
+// it holds for any modeled binding whose label carries an ARN.
+//
+// The decoded form is still tried, second, so trying escaped-then-decoded can
+// only add operations and never lose one; no path named before this is
+// unnamed after it. What it must never do is name the *wrong* operation, and
+// it cannot: the lookup stays scoped to the already-classified service, so a
+// path that service does not model still yields "" rather than borrowing
+// another service's name.
+//
+// EscapedPath returns Path re-encoded when the request carried no RawPath, so
+// the comparison — not a nil check — is what keeps an ordinary path to a single
+// trie walk.
+func modeledRESTOperation(service string, r *http.Request) string {
+	registry := awsapi.NewRegistry()
+	if escaped := r.URL.EscapedPath(); escaped != r.URL.Path {
+		if operation := registry.RESTOperation(service, r.Method, escaped, r.URL.RawQuery); operation != "" {
+			return operation
+		}
+	}
+	return registry.RESTOperation(service, r.Method, r.URL.Path, r.URL.RawQuery)
 }
 
 // awsapiServiceKey is middlewareServiceKey's inverse, applied where a service

@@ -271,6 +271,64 @@ func TestIAMEnforce_enabled_groupExplicitDenyOverridesUserAllow(t *testing.T) {
 	}
 }
 
+// TestIAMEnforce_enabled_arnLabelledPathExplicitDenyBlocks is the enforcement
+// consequence of the decoded-path blind spot, and the reason it is not merely a
+// labelling bug.
+//
+// requestIAMAction could name no action for a path carrying a percent-encoded
+// ARN, so every such request took IAMEnforce's deliberately fail-open
+// unnamed-action branch: a policy that explicitly denied the operation was
+// never consulted. The denial the user wrote is the assertion here — an Allow
+// passing proves only that nothing broke, while a Deny taking effect proves the
+// action reached the evaluator at all.
+func TestIAMEnforce_enabled_arnLabelledPathExplicitDenyBlocks(t *testing.T) {
+	st := state.NewMemoryStore()
+	seedIAMUserWithPolicies(t, st, "test", []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"kafka:*","Resource":"*"},{"Effect":"Deny","Action":"kafka:DeleteCluster","Resource":"*"}]}`}, nil)
+
+	h := IAMEnforce(true, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/clusters/"+escapedARN(testClusterARN), nil)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260423/us-east-1/kafka/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
+	req.Header.Set("X-Amz-Date", "20260423T000000Z")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, rec.Code)
+	}
+}
+
+// TestIAMEnforce_enabled_arnLabelledPathAllowPasses is the other half: naming
+// the action must not deny a caller whose policy permits it. Without this the
+// test above is satisfied by denying everything.
+func TestIAMEnforce_enabled_arnLabelledPathAllowPasses(t *testing.T) {
+	st := state.NewMemoryStore()
+	seedIAMUserWithPolicies(t, st, "test", []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"kafka:DescribeCluster","Resource":"*"}]}`}, nil)
+
+	called := false
+	h := IAMEnforce(true, st, zap.NewNop())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/clusters/"+escapedARN(testClusterARN), nil)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260423/us-east-1/kafka/aws4_request, SignedHeaders=host;x-amz-date, Signature=abc")
+	req.Header.Set("X-Amz-Date", "20260423T000000Z")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("expected next handler to be called")
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, rec.Code)
+	}
+}
+
 func TestIAMEnforce_enabled_restFallbackS3ExplicitDenyBlocks(t *testing.T) {
 	st := state.NewMemoryStore()
 	seedIAMUserWithPolicies(t, st, "test", []string{`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:ListBuckets","Resource":"*"}]}`}, nil)
