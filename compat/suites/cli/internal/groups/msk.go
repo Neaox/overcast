@@ -1156,12 +1156,27 @@ func (g *mskGroup) ListClustersV2Paginated(_ context.Context, t *harness.TestCon
 
 	// --no-paginate stops the CLI following the token for us; the point of the
 	// test is that the token works, so the walk is done here.
+	//
+	// The walk is filtered to this group's own clusters. Unfiltered it paged the
+	// whole account, which the sibling msk-clusters group creates and deletes in
+	// at the same time — and serviceutil.Paginate's token is an absolute index
+	// into a list rebuilt on every request, so a concurrent delete shifts each
+	// later entry down one and the walk steps straight over a cluster. Reaching
+	// outside the resources a group owns is what compat/AGENTS.md forbids, for
+	// exactly this reason; real AWS promises no stability across a collection
+	// mutating under a paginated read either. ClusterNameFilter matches on a
+	// prefix, and the two names this group creates share one.
 	const maxPages = 50
+	namePrefix := strings.TrimSuffix(mskProvisionedNamer.Name(t), "pv")
 	seen := map[string]bool{}
 	token := ""
 	pages := 0
 	for pages < maxPages {
-		args := []string{"kafka", "list-clusters-v2", "--max-results", "1", "--no-paginate"}
+		args := []string{
+			"kafka", "list-clusters-v2",
+			"--cluster-name-filter", namePrefix,
+			"--max-results", "1", "--no-paginate",
+		}
 		if token != "" {
 			args = append(args, "--next-token", token)
 		}
