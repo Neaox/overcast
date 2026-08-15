@@ -1,52 +1,80 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@/test/render"
+import { renderWithRouter, screen } from "@/test/render"
 import { HeaderActions } from "./header-actions"
 
 /**
  * The topbar tail — region select → theme toggle → settings — must be
- * identical on every page, with settings last whenever it is shown.
- * Page-specific or build-specific controls sit to the left of the region
- * select so they never shift the tail.
+ * identical on every page, with settings last. Page-specific or
+ * build-specific controls (dev tools, the connection quick-edit) sit to the
+ * left of the region select so they never shift the tail.
+ *
+ * Settings opens the /settings page, so it exists in every build — including
+ * bundled ones, where the endpoint is fixed but HTTPS is still configurable.
+ * The connection plug is the quick edit from any page, and is hidden in
+ * bundled builds because there is nothing there to edit.
  */
 describe("HeaderActions > action cluster order", () => {
-  const settings = () => screen.getByRole("button", { name: "Connection settings" })
+  // The router mounts asynchronously, so every test awaits the gear first.
+  const findGear = () => screen.findByRole("link", { name: "Settings" })
   const themeToggle = () => screen.getByRole("button", { name: /^Switch to .+ mode$/ })
   const regionSelect = () => screen.getByRole("combobox")
+  const plug = () => screen.getByRole("button", { name: "Connection settings" })
 
-  describe("when the endpoint is user-configurable", () => {
-    it("renders the connection settings button", () => {
-      render(<HeaderActions />)
+  const renderHeader = () => renderWithRouter(HeaderActions, { path: "/" })
 
-      expect(settings()).toBeInTheDocument()
-    })
+  it("renders the settings control as a link to the settings page", async () => {
+    renderHeader()
 
-    it("places the connection settings button last in the cluster", () => {
-      render(<HeaderActions />)
-
-      expect(settings().parentElement?.lastElementChild).toBe(settings())
-    })
-
-    it("places the theme toggle immediately before the connection settings button", () => {
-      render(<HeaderActions />)
-
-      expect(settings().previousElementSibling).toBe(themeToggle())
-    })
-
-    it("places the region select immediately before the theme toggle", () => {
-      render(<HeaderActions />)
-
-      expect(themeToggle().previousElementSibling).toContainElement(regionSelect())
-    })
-
-    it("places the developer tools toggle to the left of the region select", () => {
-      render(<HeaderActions />)
-
-      const devTools = screen.getByRole("button", { name: "Toggle developer tools" })
-      expect(devTools.nextElementSibling).toContainElement(regionSelect())
-    })
+    expect(await findGear()).toHaveAttribute("href", "/settings")
   })
 
-  describe("when the endpoint is not user-configurable (bundled)", () => {
+  it("places the settings control last in the cluster", async () => {
+    renderHeader()
+
+    const gear = await findGear()
+    expect(gear.parentElement?.lastElementChild).toBe(gear)
+  })
+
+  it("places the theme toggle immediately before the settings control", async () => {
+    renderHeader()
+
+    const gear = await findGear()
+    expect(gear.previousElementSibling).toBe(themeToggle())
+  })
+
+  it("places the region select immediately before the theme toggle", async () => {
+    renderHeader()
+
+    await findGear()
+    expect(themeToggle().previousElementSibling).toContainElement(regionSelect())
+  })
+
+  it("places the developer tools toggle to the left of the region select", async () => {
+    renderHeader()
+
+    await findGear()
+    const devTools = screen.getByRole("button", { name: "Toggle developer tools" })
+    expect(devTools.nextElementSibling).toBe(plug())
+  })
+
+  it("keeps the connection quick-edit to the left of the region select", async () => {
+    renderHeader()
+
+    await findGear()
+    expect(plug().nextElementSibling).toContainElement(regionSelect())
+  })
+
+  it("opens the connection modal from the plug without leaving the page", async () => {
+    const { user, router } = renderHeader()
+
+    await findGear()
+    await user.click(plug())
+
+    expect(screen.getByText("Connect to Overcast")).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe("/")
+  })
+
+  describe("in a bundled build", () => {
     beforeEach(() => {
       vi.stubEnv("VITE_BUNDLED", "true")
     })
@@ -55,22 +83,17 @@ describe("HeaderActions > action cluster order", () => {
       vi.unstubAllEnvs()
     })
 
-    it("still renders the connection settings button", () => {
-      render(<HeaderActions />)
+    it("keeps the settings control — the settings page exists in every build", async () => {
+      renderHeader()
 
-      expect(settings()).toBeInTheDocument()
+      expect(await findGear()).toBeInTheDocument()
     })
 
-    it("places the connection settings button last in the cluster", () => {
-      render(<HeaderActions />)
+    it("drops the connection quick-edit — the endpoint is fixed", async () => {
+      renderHeader()
 
-      expect(settings().parentElement?.lastElementChild).toBe(settings())
-    })
-
-    it("still places the region select immediately before the theme toggle", () => {
-      render(<HeaderActions />)
-
-      expect(themeToggle().previousElementSibling).toContainElement(regionSelect())
+      await findGear()
+      expect(screen.queryByRole("button", { name: "Connection settings" })).not.toBeInTheDocument()
     })
   })
 })

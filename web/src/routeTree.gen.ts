@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SesRouteImport } from './routes/ses'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as MapRouteImport } from './routes/map'
@@ -104,6 +105,11 @@ import { Route as StepfunctionsExecutionNameExecutionRouteImport } from './route
 import { Route as EcsClusterTasksTaskIdRouteImport } from './routes/ecs/$cluster.tasks.$taskId'
 import { Route as CloudwatchLogsGroupNameStreamNameRouteImport } from './routes/cloudwatch/logs/$groupName/$streamName'
 
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SesRoute = SesRouteImport.update({
   id: '/ses',
   path: '/ses',
@@ -596,6 +602,7 @@ export interface FileRoutesByFullPath {
   '/map': typeof MapRoute
   '/metrics': typeof MetricsRoute
   '/ses': typeof SesRoute
+  '/settings': typeof SettingsRoute
   '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
   '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
   '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
@@ -691,6 +698,7 @@ export interface FileRoutesByTo {
   '/map': typeof MapRoute
   '/metrics': typeof MetricsRoute
   '/ses': typeof SesRoute
+  '/settings': typeof SettingsRoute
   '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
   '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
   '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
@@ -782,6 +790,7 @@ export interface FileRoutesById {
   '/map': typeof MapRoute
   '/metrics': typeof MetricsRoute
   '/ses': typeof SesRoute
+  '/settings': typeof SettingsRoute
   '/apigateway/api-keys': typeof ApigatewayApiKeysRoute
   '/apigateway/usage-plans': typeof ApigatewayUsagePlansRoute
   '/applications/$applicationId': typeof ApplicationsApplicationIdRoute
@@ -880,6 +889,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/metrics'
     | '/ses'
+    | '/settings'
     | '/apigateway/api-keys'
     | '/apigateway/usage-plans'
     | '/applications/$applicationId'
@@ -975,6 +985,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/metrics'
     | '/ses'
+    | '/settings'
     | '/apigateway/api-keys'
     | '/apigateway/usage-plans'
     | '/applications/$applicationId'
@@ -1065,6 +1076,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/metrics'
     | '/ses'
+    | '/settings'
     | '/apigateway/api-keys'
     | '/apigateway/usage-plans'
     | '/applications/$applicationId'
@@ -1162,6 +1174,7 @@ export interface RootRouteChildren {
   MapRoute: typeof MapRoute
   MetricsRoute: typeof MetricsRoute
   SesRoute: typeof SesRoute
+  SettingsRoute: typeof SettingsRoute
   ApigatewayApiKeysRoute: typeof ApigatewayApiKeysRoute
   ApigatewayUsagePlansRoute: typeof ApigatewayUsagePlansRoute
   ApplicationsApplicationIdRoute: typeof ApplicationsApplicationIdRoute
@@ -1237,6 +1250,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/ses': {
       id: '/ses'
       path: '/ses'
@@ -2004,6 +2024,7 @@ const rootRouteChildren: RootRouteChildren = {
   MapRoute: MapRoute,
   MetricsRoute: MetricsRoute,
   SesRoute: SesRoute,
+  SettingsRoute: SettingsRoute,
   ApigatewayApiKeysRoute: ApigatewayApiKeysRoute,
   ApigatewayUsagePlansRoute: ApigatewayUsagePlansRoute,
   ApplicationsApplicationIdRoute: ApplicationsApplicationIdRoute,
