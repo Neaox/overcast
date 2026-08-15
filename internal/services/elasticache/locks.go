@@ -59,6 +59,11 @@ func (h *Handler) transitionCacheCluster(ctx context.Context, clusterID, to stri
 			return errRecordMovedOn
 		}
 		c.CacheClusterStatus = to
+		if to == "available" {
+			// A cluster that has answered has no failure left to explain, and a
+			// stale reason on a working record is worse than none.
+			c.StatusReason = ""
+		}
 		return nil
 	}); aerr != nil && aerr != errRecordMovedOn {
 		h.log.Warn("ElastiCache: persist cluster transition",
@@ -93,6 +98,9 @@ func (h *Handler) transitionReplicationGroup(ctx context.Context, rgID, to strin
 			return errRecordMovedOn
 		}
 		rg.Status = to
+		if to == "available" {
+			rg.StatusReason = ""
+		}
 		return nil
 	}); aerr != nil && aerr != errRecordMovedOn {
 		h.log.Warn("ElastiCache: persist replication group transition",
@@ -127,6 +135,9 @@ func (h *Handler) transitionServerlessCache(ctx context.Context, name, to string
 			return errRecordMovedOn
 		}
 		c.Status = to
+		if to == "available" {
+			c.StatusReason = ""
+		}
 		return nil
 	}); aerr != nil && aerr != errRecordMovedOn {
 		h.log.Warn("ElastiCache: persist serverless cache transition",

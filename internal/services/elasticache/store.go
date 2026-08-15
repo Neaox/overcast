@@ -42,6 +42,10 @@ type CacheCluster struct {
 	CacheParameterGroupName   string           `json:"CacheParameterGroupName,omitempty"`
 	ARN                       string           `json:"ARN"`
 	ConfigurationEndpoint     *ClusterEndpoint `json:"ConfigurationEndpoint,omitempty"`
+	// StatusReason says why a cluster reached a failure status. Kept on the
+	// record and deliberately not in the DescribeCacheClusters wire shape: the
+	// real CacheCluster has no such field. Same call as DBInstance.StatusReason.
+	StatusReason string `json:"StatusReason,omitempty"`
 	// Docker fields — internal only, not returned in API responses.
 	DockerContainerID string `json:"DockerContainerID,omitempty"`
 	HostPort          int    `json:"HostPort,omitempty"`
@@ -72,6 +76,9 @@ type ReplicationGroup struct {
 	// ReplicationGroup shape — it belongs to the member cache clusters — so it
 	// is stored and never echoed.
 	CacheSubnetGroupName string `json:"CacheSubnetGroupName,omitempty"`
+	// StatusReason says why a group reached "create-failed" — see
+	// CacheCluster.StatusReason for why it stays off the wire.
+	StatusReason string `json:"StatusReason,omitempty"`
 	// Docker fields — internal only, not returned in API responses.
 	DockerContainerID string `json:"DockerContainerID,omitempty"`
 	HostPort          int    `json:"HostPort,omitempty"`
@@ -98,8 +105,11 @@ type ServerlessCache struct {
 	NetworkType           string           `json:"NetworkType,omitempty"`
 	UserGroupId           string           `json:"UserGroupId,omitempty"`
 	KmsKeyId              string           `json:"KmsKeyId,omitempty"`
-	DockerContainerID     string           `json:"DockerContainerID,omitempty"`
-	HostPort              int              `json:"HostPort,omitempty"`
+	// StatusReason says why a cache reached "create-failed" — see
+	// CacheCluster.StatusReason for why it stays off the wire.
+	StatusReason      string `json:"StatusReason,omitempty"`
+	DockerContainerID string `json:"DockerContainerID,omitempty"`
+	HostPort          int    `json:"HostPort,omitempty"`
 }
 
 type CacheUsageLimits struct {

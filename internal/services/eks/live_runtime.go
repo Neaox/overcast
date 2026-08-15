@@ -335,11 +335,18 @@ const (
 // terminal for that waiter, and the issue message carries the daemon's own
 // words.
 //
-// Deliberately EKS-scoped. The same "a container failed to start and the
-// resource still claims progress" shape has now been reported three times
-// (#892 here, #881 for ElastiCache, #873 for Lambda INIT); fixing it once
-// across every container-starting service is worth doing and is a separate
-// piece of work.
+// This was the first service to take that decision; it is now the decision
+// every container-starting service takes, through serviceutil/readiness, which
+// owns the retry policy and the exhaustion outcome while each service supplies
+// its own probe. ElastiCache (#881), MSK, RDS and EFS all settle terminally
+// there and carry the reason with them.
+//
+// EKS itself is deliberately not on that helper. Its poll is a synchronous loop
+// inside a goroutine that startLiveCluster already detached, with no
+// lifecycle.Scheduler anywhere in it; moving it across would rewrite the
+// concurrency model of a bootstrap that also extracts CA data and mints an
+// endpoint, to arrive at the behaviour it already has. The policy is shared;
+// this is the one place the shape of the caller was the reason not to.
 //
 // Re-reading before writing avoids clobbering a concurrent mutation, the same
 // way setClusterActiveWithEndpoint does — a DeleteCluster that already removed

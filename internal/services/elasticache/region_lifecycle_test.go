@@ -7,6 +7,7 @@ package elasticache
 // created elsewhere were stuck in "creating" forever.
 
 import (
+	"bufio"
 	"context"
 	"net"
 	"net/http"
@@ -41,12 +42,30 @@ func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	// without ever asking the OS whether that port is free. Listening on the
 	// allocated port afterwards therefore fails with "address already in use"
 	// wherever something else holds it.
+	//
+	// The stand-in answers `+PONG`, because since the readiness rework a dial
+	// that merely connects no longer promotes anything: an accepting port is a
+	// port proxy, and only an engine that answers PING is an engine. A bare
+	// net.Listen here left the cluster in "creating" — correctly.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve a port for the cache node: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 	cachePort := ln.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close() //nolint:errcheck // test double
+				_, _ = bufio.NewReader(c).ReadString('\n')
+				_, _ = c.Write([]byte("+PONG\r\n"))
+			}(conn)
+		}
+	}()
 
 	clk := clock.NewMock()
 	svc := New(&config.Config{Region: "us-east-1", AccountID: "123456789012", ElastiCachePortBase: cachePort},
@@ -96,9 +115,9 @@ func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	if aerr != nil || started == nil {
 		t.Fatalf("getCacheCluster after start: %v", aerr)
 	}
-	// The health check promotes the cluster only once something answers on the
-	// published port — it is a real TCP dial, not a metadata flip — and the
-	// listener standing in for the cache node is the one reserved above.
+	// The health check promotes the cluster only once something answers PING on
+	// the published port — a real protocol exchange, not a metadata flip — and
+	// the listener standing in for the cache node is the one reserved above.
 	if started.HostPort != cachePort {
 		t.Fatalf("cluster published port %d, want the reserved %d: nothing is listening there",
 			started.HostPort, cachePort)

@@ -8,7 +8,7 @@ func init() {
 	capabilities.Default.Register(
 		// Clusters
 		capabilities.Capability{Service: "msk", Operation: "CreateCluster", Category: "Clusters",
-			Status: capabilities.StatusSupported, Notes: "Docker-backed (Redpanda); async CREATING→ACTIVE via TCP health check; port auto-alloc from MSK_PORT_BASE"},
+			Status: capabilities.StatusSupported, Notes: "Docker-backed (Redpanda); async CREATING→ACTIVE once the broker answers `ApiVersions`; a broker that never answers ends in `FAILED` with `stateInfo`; port auto-alloc from MSK_PORT_BASE"},
 		capabilities.Capability{Service: "msk", Operation: "DescribeCluster", Category: "Clusters",
 			Status: capabilities.StatusSupported, Notes: "Look up cluster by ARN"},
 		capabilities.Capability{Service: "msk", Operation: "ListClusters", Category: "Clusters",

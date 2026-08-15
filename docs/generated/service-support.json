@@ -5533,7 +5533,7 @@
           "operation": "CreateCacheCluster",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Docker-backed (redis/valkey/memcached); async creating→available via TCP health check; port auto-alloc"
+          "notes": "Docker-backed (redis/valkey/memcached); async creating→available once the engine answers PING; a cache that never answers ends in `incompatible-network`; port auto-alloc"
         },
         {
           "operation": "CreateCacheParameterGroup",
@@ -5551,13 +5551,13 @@
           "operation": "CreateReplicationGroup",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Docker-backed (single primary node); async creating→available via TCP health check; `CacheSubnetGroupName` places the group in that subnet group's VPC"
+          "notes": "Docker-backed (single primary node); async creating→available once the primary answers PING; a group that never answers ends in `create-failed`; `CacheSubnetGroupName` places the group in that subnet group’s VPC"
         },
         {
           "operation": "CreateServerlessCache",
           "category": "General",
           "status": "✅ Supported",
-          "notes": "Docker-backed (redis/valkey/memcached); async creating→available via TCP health check; CloudFormation ServerlessCache supported"
+          "notes": "Docker-backed (redis/valkey/memcached); async creating→available once the engine answers PING; a cache that never answers ends in `create-failed`; CloudFormation ServerlessCache supported"
         },
         {
           "operation": "DeleteCacheCluster",
@@ -8397,7 +8397,7 @@
           "operation": "CreateCluster",
           "category": "Clusters",
           "status": "✅ Supported",
-          "notes": "Docker-backed (Redpanda); async CREATING→ACTIVE via TCP health check; port auto-alloc from MSK_PORT_BASE"
+          "notes": "Docker-backed (Redpanda); async CREATING→ACTIVE once the broker answers `ApiVersions`; a broker that never answers ends in `FAILED` with `stateInfo`; port auto-alloc from MSK_PORT_BASE"
         },
         {
           "operation": "DescribeCluster",

@@ -10,7 +10,9 @@
 // AddTagsToResource, ListTagsForResource, RemoveTagsFromResource.
 //
 // On CreateCacheCluster, a real Redis container is started (same pattern as RDS).
-// The cluster reaches "available" state once the TCP health check succeeds.
+// The cluster reaches "available" once the engine answers its own protocol, and
+// a terminal failure status carrying the reason if it never does — see
+// readiness.go.
 //
 // All other operations return HTTP 501 Not Implemented.
 package elasticache

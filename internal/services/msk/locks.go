@@ -57,6 +57,11 @@ func (h *Handler) transitionCluster(ctx context.Context, clusterARN, to string, 
 			return errClusterMovedOn
 		}
 		c.State = to
+		if to == "ACTIVE" {
+			// A cluster that has answered has no failure left to explain, and a
+			// stale stateInfo on a working cluster is worse than none.
+			c.StateInfo = nil
+		}
 		return nil
 	}); aerr != nil && aerr != errClusterMovedOn {
 		log := h.log.WithRecorder(ctx)
