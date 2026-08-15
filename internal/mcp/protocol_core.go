@@ -274,8 +274,34 @@ func loggingLevelRank(level string) int {
 	return rank
 }
 
+// httpStatusForRPCError reports the HTTP status 2026-07-28 requires alongside
+// the error codes it defines. Each of the three is specified as "the response
+// status MUST be 400 Bad Request", so the status is part of the contract rather
+// than a detail of this transport.
+//
+// Everything else keeps 200 with a JSON-RPC error in the body, which is what
+// JSON-RPC over HTTP has always done here and what 2025-11-25 clients expect.
+func httpStatusForRPCError(code int) int {
+	switch code {
+	case RPCHeaderMismatch, RPCMissingRequiredClientCapability, RPCUnsupportedProtocolVersion:
+		return http.StatusBadRequest
+	default:
+		return http.StatusOK
+	}
+}
+
 func writeJSONRPCError(w http.ResponseWriter, id any, rpcErr *rpcError) {
 	if rpcErr == nil {
+		return
+	}
+	status := rpcErr.httpStatus
+	if status == 0 {
+		status = httpStatusForRPCError(rpcErr.Code)
+	}
+	if status != http.StatusOK {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(jsonRPCResponse{JSONRPC: "2.0", ID: id, Error: rpcErr})
 		return
 	}
 	writeRPCResult(w, id, jsonRPCResponse{JSONRPC: "2.0", ID: id, Error: rpcErr})

@@ -153,6 +153,18 @@ type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
+
+	// httpStatus overrides the status this error is written with, for the cases
+	// where 2026-07-28 pins one to a code that otherwise carries another.
+	//
+	// A missing required `_meta` field is the case that needs it: the revision
+	// says such a request "MUST" be rejected with -32602 *and* "the response
+	// status MUST be 400 Bad Request" — but -32602 is also plain JSON-RPC
+	// invalid-params, which this server has always answered 200 for on a bad
+	// tool argument. The code alone cannot distinguish them, so the site that
+	// knows which one it is says so. Never serialised; the wire carries only
+	// the JSON-RPC error.
+	httpStatus int
 }
 
 type promptDefinition struct {
@@ -218,13 +230,38 @@ type TasksCapability struct {
 }
 
 const (
-	RPCParseError         = -32700
-	RPCInvalidRequest     = -32600
-	RPCMethodNotFound     = -32601
-	RPCInvalidParams      = -32602
-	RPCInternalError      = -32603
-	ProtocolVersion       = "2025-11-25"
-	DefaultRequestTimeout = 30 * time.Second
+	RPCParseError     = -32700
+	RPCInvalidRequest = -32600
+	RPCMethodNotFound = -32601
+	RPCInvalidParams  = -32602
+	RPCInternalError  = -32603
+
+	// The codes 2026-07-28 allocates from the -32020..-32099 range it reserves
+	// for the specification. Implementations "MUST NOT emit any code from this
+	// sub-range that is not defined by this specification".
+	RPCHeaderMismatch                  = -32020
+	RPCMissingRequiredClientCapability = -32021
+	RPCUnsupportedProtocolVersion      = -32022
+
+	// ProtocolVersion is the revision the handshake negotiates and reports.
+	// Unchanged: a client that opens with `initialize` is a 2025-11-25 client
+	// and is answered as one.
+	ProtocolVersion = "2025-11-25"
+
+	// ModernProtocolVersion is the revision a request may declare for itself in
+	// `_meta`, skipping the handshake entirely. "Modern" and "legacy" are the
+	// spec's own terms for the two eras, and the distinction is exactly whether
+	// version and capabilities arrive per request or are negotiated once.
+	ModernProtocolVersion = "2026-07-28"
+
+	// The reserved `_meta` keys this server reads. The `io.modelcontextprotocol`
+	// prefix is reserved for MCP's own use, so these names cannot collide with
+	// anything a caller puts alongside them.
+	metaProtocolVersion    = "io.modelcontextprotocol/protocolVersion"
+	metaClientInfo         = "io.modelcontextprotocol/clientInfo"
+	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
+	metaLogLevel           = "io.modelcontextprotocol/logLevel"
+	DefaultRequestTimeout  = 30 * time.Second
 	// DefaultReplayLimit bounds in-memory SSE notification replay history per
 	// process. Replay state is intentionally ephemeral and not shared across
 	// restarts.
@@ -545,20 +582,42 @@ func (s *Server) handleRPCInternal(w http.ResponseWriter, r *http.Request) {
 	s.registerInFlight(reqIDKey, req.ID, req.Method, progressToken, cancel)
 	defer s.unregisterInFlight(reqIDKey)
 
-	s.mu.RLock()
-	lifecycleErr := validateLifecycle(s.initDone, s.ready)
-	s.mu.RUnlock()
-	if lifecycleErr != nil {
-		writeJSONRPCError(w, req.ID, lifecycleErr)
+	// What the request says about itself. A request that names a protocol
+	// version is a 2026-07-28 request: it carries its own version, identity and
+	// capabilities, so it needs no handshake and the lifecycle gate below has
+	// nothing left to check. Anything else is a 2025-11-25 request and is
+	// governed exactly as before. See request_meta.go.
+	meta, metaErr := parseRequestMeta(req.Params)
+	if metaErr != nil {
+		writeJSONRPCError(w, req.ID, metaErr)
 		return
+	}
+	if versionErr := meta.validate(r.Header.Get("MCP-Protocol-Version")); versionErr != nil {
+		writeJSONRPCError(w, req.ID, versionErr)
+		return
+	}
+
+	if !meta.modern {
+		s.mu.RLock()
+		lifecycleErr := validateLifecycle(s.initDone, s.ready)
+		s.mu.RUnlock()
+		if lifecycleErr != nil {
+			writeJSONRPCError(w, req.ID, lifecycleErr)
+			return
+		}
 	}
 	if err := s.validateOptionalSessionHeader(r.Header.Get("MCP-Session-Id")); err != nil {
 		writeJSONRPCError(w, req.ID, &rpcError{Code: RPCInvalidParams, Message: err.Error()})
 		return
 	}
-	if versionErr := validateProtocolVersionHeader(r.Header.Get("MCP-Protocol-Version")); versionErr != nil {
-		writeJSONRPCError(w, req.ID, versionErr)
-		return
+	// Only for legacy requests. A modern request has already had its header
+	// checked against the version in `_meta`, and this validator knows only the
+	// handshake's version — it would reject a conforming 2026-07-28 header.
+	if !meta.modern {
+		if versionErr := validateProtocolVersionHeader(r.Header.Get("MCP-Protocol-Version")); versionErr != nil {
+			writeJSONRPCError(w, req.ID, versionErr)
+			return
+		}
 	}
 
 	switch req.Method {
