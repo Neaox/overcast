@@ -51,6 +51,20 @@ func TestInternalDispatchPropagatesParentRequestID(t *testing.T) {
 		}
 	})
 
+	// internalGET is the one that could most easily have been written as a
+	// second dispatch implementation rather than another entry point onto
+	// internalCall — the emulator-only endpoint it reaches shares no shape with
+	// the JSON and Query calls above. Asserting it here is what keeps it honest.
+	t.Run("internalGET", func(t *testing.T) {
+		router := &parentCapturingRouter{}
+		if _, err := internalGET(ctx, router, "ecs", "us-east-1", "/_overcast/ecs/tasks/abc/logs/app"); err != nil {
+			t.Fatalf("internalGET: %v", err)
+		}
+		if router.parentID != "parent-req-1" {
+			t.Errorf("expected parent request ID parent-req-1, got %q", router.parentID)
+		}
+	})
+
 	t.Run("internalQuery", func(t *testing.T) {
 		router := &parentCapturingRouter{}
 		if _, err := internalQuery(ctx, router, "us-east-1", map[string]string{"Action": "CreateTopic"}); err != nil {

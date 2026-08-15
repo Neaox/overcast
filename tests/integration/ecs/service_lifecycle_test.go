@@ -195,9 +195,15 @@ func awaitServiceEvent(t *testing.T, srv *helpers.TestServer, cluster, service, 
 // pollService reads a service until done reports true, or the deadline passes —
 // returning the last view either way so the caller's assertions produce the
 // useful failure message rather than this helper.
+//
+// The budget is generous because a deployment does not reach its steady state
+// until its tasks have stayed up for a settle window — see settleWindow in
+// package ecs — so anything waiting on COMPLETED, or on the steady-state event,
+// waits seconds rather than milliseconds. It costs nothing when the condition
+// holds early: every caller here is waiting for something that does arrive.
 func pollService(t *testing.T, srv *helpers.TestServer, cluster, service string, done func(ecsServiceView) bool) ecsServiceView {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for {
 		resp := ecsCall(t, srv, "DescribeServices", map[string]any{
 			"cluster":  cluster,

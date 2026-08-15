@@ -42,18 +42,19 @@ const directEncode = "json.NewEncoder(w).Encode("
 // entry in this map.
 var emulatorOnlyWriters = map[string]string{
 	// Endpoints under /_<service>/… , served to the web console only.
-	"ec2/handler_debug.go":             "/_ec2 debug endpoints",
-	"ecs/handler_emulator.go":          "/_ecs task inspection for the console",
-	"lambda/handler_instances.go":      "/_overcast/lambda/instances for the console",
-	"rds/handler_emulator.go":          "/_rds diagnostics for the console",
-	"secretsmanager/service.go":        "/_secretsmanager console admin routes",
-	"ses/service.go":                   "/_ses console admin routes",
-	"sns/service.go":                   "/_sns console admin routes",
-	"lambda/handler_source.go":         "the console's source editor, on the Lambda path prefix but not an AWS operation",
-	"lambda/handler_layers.go":         "GetLayerVersionMetadata, a /_lambda extension-discovery route",
-	"lambda/handler_functions.go":      "ListRuntimes and the saved test-event routes, all emulator-only",
-	"cognito/handler_managed_login.go": "the hosted-UI OAuth endpoints, which answer as an OIDC provider rather than as an AWS API",
-	"cognito/jwt.go":                   "the pool's JWKS document, fetched by JWT verifiers at /.well-known/jwks.json",
+	"cloudformation/handler_emulator.go": "/_overcast/cloudformation deploy diagnostics for the console",
+	"ec2/handler_debug.go":               "/_ec2 debug endpoints",
+	"ecs/handler_emulator.go":            "/_ecs task inspection for the console",
+	"lambda/handler_instances.go":        "/_overcast/lambda/instances for the console",
+	"rds/handler_emulator.go":            "/_rds diagnostics for the console",
+	"secretsmanager/service.go":          "/_secretsmanager console admin routes",
+	"ses/service.go":                     "/_ses console admin routes",
+	"sns/service.go":                     "/_sns console admin routes",
+	"lambda/handler_source.go":           "the console's source editor, on the Lambda path prefix but not an AWS operation",
+	"lambda/handler_layers.go":           "GetLayerVersionMetadata, a /_lambda extension-discovery route",
+	"lambda/handler_functions.go":        "ListRuntimes and the saved test-event routes, all emulator-only",
+	"cognito/handler_managed_login.go":   "the hosted-UI OAuth endpoints, which answer as an OIDC provider rather than as an AWS API",
+	"cognito/jwt.go":                     "the pool's JWKS document, fetched by JWT verifiers at /.well-known/jwks.json",
 
 	// Not an AWS API at all: the Runtime and Extensions APIs Lambda serves to
 	// the inside of a function container.

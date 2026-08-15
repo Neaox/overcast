@@ -146,11 +146,18 @@ func (h *ecsTaskDefinitionHandler) Delete(ctx context.Context, router http.Handl
 
 type ecsServiceHandler struct{}
 
-// ecsServiceStabilizeTimeout bounds the wait for a new service to reach its
-// desired count. CloudFormation itself waits for hours before giving up; an
-// emulator placing containers locally either gets there in well under a second
-// or is not going to, so the wait is short enough to fail fast and long enough
-// to cover a slow image pull.
+// ecsServiceStabilizeTimeout bounds the wait for a new service to reach a
+// steady state. CloudFormation itself waits for hours before giving up; an
+// emulator placing containers locally gets there in seconds — the tasks start
+// at once and then have to stay up long enough for ECS to credit them — or is
+// not going to, so the wait is short enough to fail fast and long enough to
+// cover a slow image pull on top of that.
+//
+// The interval is what a `services-stable` waiter would call reckless: AWS's
+// polls every 15 seconds. Polling this fast is right for a local emulator,
+// where the whole deploy is over inside one of those intervals, but it is the
+// reason ecsServiceStable cannot read the counts alone — at 100 ms it samples
+// moments AWS's waiter would never see.
 const (
 	ecsServiceStabilizeTimeout  = 60 * time.Second
 	ecsServiceStabilizeInterval = 100 * time.Millisecond
@@ -206,11 +213,11 @@ func (h *ecsServiceHandler) Create(ctx context.Context, router http.Handler, cfg
 }
 
 // Stabilize holds the resource open until the service's current deployment
-// reaches its desired count, so a service that cannot place its tasks fails the
-// stack rather than leaving it complete with nothing running. Create and update
-// share it — they are the same wait on the same definition of done, and the bug
-// this exists for is what happened when the two drifted apart. See
-// resourceStabilizer.
+// reaches a steady state, so a service that cannot place its tasks — or cannot
+// keep them alive — fails the stack rather than leaving it complete with nothing
+// running. Create and update share it — they are the same wait on the same
+// definition of done, and the bug this exists for is what happened when the two
+// drifted apart. See resourceStabilizer.
 func (h *ecsServiceHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
 	return waitForServiceStable(ctx, clk, router, rCtx.Region, ecsClusterFromServiceARN(physicalID), physicalID)
 }
@@ -247,9 +254,9 @@ type describedECSEvent struct {
 	Message string `json:"message"`
 }
 
-// ecsServiceStable reports whether a service has finished rolling out, by the
-// same definition the AWS CLI's `ecs wait services-stable` uses: one deployment
-// left, running its desired count.
+// ecsServiceStable reports whether a service has finished rolling out: one
+// deployment left, running its desired count, and — where the service reports a
+// rollout state at all — that deployment saying it reached a steady state.
 //
 // The deployment count is the half that matters on an update. A service being
 // updated reports two deployments — the new one placing tasks and the one it
@@ -258,14 +265,40 @@ type describedECSEvent struct {
 // alone therefore calls a rollout complete the instant it begins, which is how
 // an update to a task definition whose tasks cannot start reported
 // UPDATE_COMPLETE around a service that never ran it.
+//
+// The rollout state is the half that matters on a create, and it is where this
+// deliberately goes further than the AWS CLI's `ecs wait services-stable`,
+// which is satisfied by the counts alone. Two things make the counts on their
+// own unsafe here. AWS defines the deployment's own state in terms of the one
+// this is trying to detect — "when the service reaches a steady state, the
+// deployment transitions to a COMPLETED state" (API_Deployment) — so asking the
+// deployment is asking the more direct question. And that waiter polls every
+// 15 seconds, where this polls every 100 (see ecsServiceStabilizeInterval): it
+// samples transient states real AWS would never show a caller, including the
+// instant a container that is about to exit is briefly RUNNING. Counting that
+// instant is what reported CREATE_COMPLETE on a service that was crash-looping.
+//
+// A CODE_DEPLOY or EXTERNAL controller reports no rolloutState at all, so for
+// those the counts remain the only evidence there is.
 func ecsServiceStable(svc describedECSService) bool {
-	return len(svc.Deployments) <= 1 && svc.RunningCount >= svc.DesiredCount
+	if len(svc.Deployments) > 1 || svc.RunningCount < svc.DesiredCount {
+		return false
+	}
+	for _, d := range svc.Deployments {
+		if d.Status == "PRIMARY" && d.RolloutState != "" {
+			return d.RolloutState == "COMPLETED"
+		}
+	}
+	return true
 }
 
 // ecsServiceRolloutFailure reports the reason the deployment currently being
 // rolled out has failed, if it has. Only the PRIMARY deployment counts: the one
 // it superseded may well be the failure that prompted this update, and holding
 // its history against the new one would fail every recovery.
+//
+// The reason it returns is never empty, so the caller has something to report
+// without a fallback of its own.
 func ecsServiceRolloutFailure(svc describedECSService) (string, bool) {
 	for _, d := range svc.Deployments {
 		if d.Status != "PRIMARY" {
@@ -274,18 +307,37 @@ func ecsServiceRolloutFailure(svc describedECSService) (string, bool) {
 		if d.RolloutState != "FAILED" && d.FailedTasks == 0 {
 			return "", false
 		}
-		if reason := ecsServiceFailureEvent(svc.Events); reason != "" {
-			return reason, true
-		}
-		if d.RolloutStateReason != "" {
-			return d.RolloutStateReason, true
-		}
-		if len(svc.Events) > 0 {
-			return svc.Events[0].Message, true
-		}
-		return "", true
+		return ecsRolloutFailureReason(svc, d), true
 	}
 	return "", false
+}
+
+// ecsRolloutFailureReason picks the most useful account of why a deployment
+// failed, from what DescribeServices carries.
+//
+// The order matters, and the middle rung is the one that had to be qualified. A
+// deployment's rolloutStateReason only describes a failure once a circuit
+// breaker has failed it; until then it still holds the "ECS deployment <id> in
+// progress." it was created with. Quoting that as the reason a stack failed
+// describes a deploy that is over as though it were still running, and a real
+// failed update reported exactly that: "service orders-api did not stabilize:
+// ECS deployment e3a3e8a0-… in progress."
+//
+// The last rung is a sentence built from the deployment's own numbers rather
+// than the newest service event. A service that is failing to keep tasks alive
+// emits ordinary progress events while it does — "has started 1 tasks." lands
+// on top after every replacement attempt — and reporting one of those as the
+// failure is worse than reporting no event at all. The deployment's failed-task
+// count is at least true.
+func ecsRolloutFailureReason(svc describedECSService, d describedECSDeployment) string {
+	if reason := ecsServiceFailureEvent(svc.Events); reason != "" {
+		return reason
+	}
+	if d.RolloutState == "FAILED" && d.RolloutStateReason != "" {
+		return d.RolloutStateReason
+	}
+	return fmt.Sprintf("%d task(s) failed to stay running; %d of %d tasks running",
+		d.FailedTasks, svc.RunningCount, svc.DesiredCount)
 }
 
 // ecsServiceFailureEvent returns the newest scheduler event that reports a
@@ -313,11 +365,11 @@ func ecsServiceFailureEvent(events []describedECSEvent) string {
 }
 
 // waitForServiceStable blocks until an ECS service's current deployment reaches
-// its desired count, so a service that cannot place its tasks fails the stack
-// instead of leaving it CREATE_COMPLETE or UPDATE_COMPLETE with nothing running.
-// This is what CloudFormation does: the resource is not complete until the
-// service stabilizes, and a service that never does fails with the reason its
-// own events give.
+// a steady state, so a service that cannot place its tasks — or cannot keep them
+// alive — fails the stack instead of leaving it CREATE_COMPLETE or
+// UPDATE_COMPLETE with nothing running. This is what CloudFormation does: the
+// resource is not complete until the service stabilizes, and a service that
+// never does fails with the reason its own deployment and events give.
 //
 // Create and update both come through here, deliberately: they are the same
 // wait on the same definition of done, and the bug this fixes is what happens
@@ -325,11 +377,13 @@ func ecsServiceFailureEvent(events []describedECSEvent) string {
 //
 // This is the one wait that does not run on the shared shape in
 // provisioner_stabilize.go, because its question is not the one that shape
-// answers: a service is done when its deployment count and its running count
-// say so, not when a status string matches a value the service documents.
-// Everything else about it is the same, including the clock — which is
-// injected, not read off time.Now(), so the timeout can be exercised without
-// spending it.
+// answers. That shape asks whether a single documented status string has
+// reached a documented value; a service is done only when a predicate over
+// three things holds at once — how many deployments it has left, whether the
+// surviving one is running its desired count, and what that deployment says
+// about its own rollout. Everything else about it is the same, including the
+// clock, which is injected rather than read off time.Now() so the timeout can
+// be exercised without spending it.
 func waitForServiceStable(ctx context.Context, clk clock.Clock, router http.Handler, region, cluster, serviceArn string) error {
 	body := map[string]any{"services": []string{serviceArn}}
 	if cluster != "" {
@@ -356,18 +410,19 @@ func waitForServiceStable(ctx context.Context, clk clock.Clock, router http.Hand
 		if ecsServiceStable(svc) {
 			return nil
 		}
+		// Only a failure event is worth remembering for the timeout message. A
+		// service that is failing keeps emitting ordinary progress events on
+		// top of the one that explains it, so the newest event is more often
+		// "has started 1 tasks." than anything a reader can act on — the counts
+		// below say more.
 		if reason := ecsServiceFailureEvent(svc.Events); reason != "" {
 			lastReason = reason
-		} else if lastReason == "" && len(svc.Events) > 0 {
-			lastReason = svc.Events[0].Message
 		}
 		// A task the scheduler could not place will not place itself on a
 		// retry here, so report it as soon as it is known rather than holding
-		// the stack open for the full timeout.
+		// the stack open for the full timeout. The reason comes back non-empty,
+		// so there is nothing to fall back to.
 		if reason, failed := ecsServiceRolloutFailure(svc); failed {
-			if reason == "" {
-				reason = lastReason
-			}
 			return fmt.Errorf("service %s did not stabilize: %s", svc.ServiceName, reason)
 		}
 		if clk.Now().After(deadline) {

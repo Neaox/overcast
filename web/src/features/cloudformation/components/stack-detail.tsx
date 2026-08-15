@@ -8,6 +8,7 @@ import {
   cfnResourcesQueryOptions,
   cfnEventsInfiniteQueryOptions,
   cfnTemplateQueryOptions,
+  cfnDiagnosticsQueryOptions,
   cfnKeys,
   deleteStackMutationOptions,
 } from "@/features/cloudformation/data"
@@ -24,6 +25,7 @@ import {
   stackStatusExplanation,
 } from "@/features/cloudformation/utils"
 import { UpdateStackDialog } from "./update-stack-dialog"
+import { StackDiagnosticsPanel } from "./stack-diagnostics"
 import { ApplicationOwnershipBanner } from "@/components/application-ownership-banner"
 import { useResourceMutation } from "@/hooks/use-resource-mutation"
 import { Button } from "@/components/ui/button"
@@ -47,12 +49,14 @@ interface Props {
   stackName: string
 }
 
-type TabKey = "overview" | "resources" | "events" | "template"
+// Diagnostics sits between Events and Template because it is what someone
+// reaches for immediately after the events failed to explain anything.
+type TabKey = "overview" | "resources" | "events" | "diagnostics" | "template"
 
 export function StackDetail({ stackName }: Props) {
   const navigate = useNavigate()
 
-  const [tab, setTab] = useState<TabKey>("overview")
+  const [selectedTab, setTab] = useState<TabKey>("overview")
   const [showUpdate, setShowUpdate] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
   const eventsScrollRef = useRef<HTMLDivElement>(null)
@@ -65,6 +69,35 @@ export function StackDetail({ stackName }: Props) {
     isFetching: stackFetching,
     refetch: refetchStack,
   } = useQuery(cfnStackQueryOptions(stackName))
+
+  const stackStatus = stack?.StackStatus ?? ""
+
+  // The one query that cannot be gated on its own tab: whether the Diagnostics
+  // tab exists at all is the answer to this request, so waiting for the tab to
+  // be selected would mean it never is.
+  //
+  // It is not gated on the stack's status either, deliberately. The server
+  // writes a journal only for a deploy that did not land and deletes it once one
+  // does, so "a journal exists" already means "the most recent deploy of this
+  // stack failed" — reading that off the status here would be a second, weaker
+  // copy of the same rule, and it would hide the answer in the cases where the
+  // two disagree: a stack redeploying after a failure reads IN_PROGRESS while
+  // still holding the last completed deploy's diagnosis, which is exactly what
+  // its reader is looking for.
+  const {
+    data: diagnostics,
+    isFetching: diagnosticsFetching,
+    refetch: refetchDiagnostics,
+  } = useQuery(cfnDiagnosticsQueryOptions(stackName))
+
+  const hasDiagnostics = Boolean(diagnostics)
+
+  // A successful redeploy clears the journal, so the diagnostics can vanish
+  // under a reader who is looking at them, taking their tab with them. Derived
+  // rather than corrected in an effect — an effect would render the tabless,
+  // panel-less page once before fixing it, and that flash is exactly what reads
+  // as a broken console rather than as "that record is gone".
+  const tab: TabKey = selectedTab === "diagnostics" && !hasDiagnostics ? "overview" : selectedTab
 
   const {
     data: resources = [],
@@ -138,6 +171,7 @@ export function StackDetail({ stackName }: Props) {
     void refetchStack()
     if (tab === "resources") void refetchResources()
     if (tab === "events") void refetchEvents()
+    if (tab === "diagnostics") void refetchDiagnostics()
     if (tab === "template") void refetchTemplate()
   }
 
@@ -145,6 +179,7 @@ export function StackDetail({ stackName }: Props) {
     stackFetching ||
     (tab === "resources" && resourcesFetching) ||
     (tab === "events" && eventsFetching) ||
+    (tab === "diagnostics" && diagnosticsFetching) ||
     (tab === "template" && templateFetching)
 
   if (stackLoading) {
@@ -163,7 +198,6 @@ export function StackDetail({ stackName }: Props) {
     )
   }
 
-  const stackStatus = stack.StackStatus ?? ""
   const statusExplanation = stackStatusExplanation(stackStatus)
   const rootCause = failedResource(resources)
 
@@ -229,11 +263,26 @@ export function StackDetail({ stackName }: Props) {
           >
             View events
           </Button>
+          {/* Offered only when there is an answer behind it. The events are a
+              mirror of DescribeStackEvents and often carry nothing more useful
+              than "is unable to consistently start tasks successfully", so this
+              is the better of the two actions whenever it is here at all — but
+              a button that leads to an empty tab would be worse than none. */}
+          {hasDiagnostics && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="shrink-0 text-xs"
+              onClick={() => setTab("diagnostics")}
+            >
+              Why did this fail?
+            </Button>
+          )}
         </div>
       )}
 
       {/* Tabs */}
-      <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TabKey)}>
+      <Tabs selectedKey={tab} onSelectionChange={(key) => setTab(key as TabKey)}>
         <TabList>
           <Tab id="overview">Overview</Tab>
           <Tab id="resources">
@@ -245,6 +294,10 @@ export function StackDetail({ stackName }: Props) {
             )}
           </Tab>
           <Tab id="events">Events</Tab>
+          {/* Absent, not empty: a healthy stack has no journal, and an always-
+              present tab that usually says "nothing here" trains people to
+              ignore the one time it does not. */}
+          {hasDiagnostics && <Tab id="diagnostics">Diagnostics</Tab>}
           <Tab id="template">Template</Tab>
         </TabList>
 
@@ -548,6 +601,11 @@ export function StackDetail({ stackName }: Props) {
               </div>
             </div>
           )}
+        </TabPanel>
+
+        {/* ── Diagnostics ───────────────────────────────────────────────── */}
+        <TabPanel id="diagnostics" className="mt-4">
+          {diagnostics && <StackDiagnosticsPanel diagnostics={diagnostics} />}
         </TabPanel>
 
         {/* ── Template ──────────────────────────────────────────────────── */}

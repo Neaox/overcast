@@ -154,6 +154,26 @@ export interface DebugMetrics {
   counters?: StoreCounters
 }
 
+/**
+ * Where a piece of emulator diagnostic evidence came from.
+ *
+ * Overcast is allowed to say things AWS never would, but only where it is
+ * unmistakably Overcast talking — see docs/dev/architecture.md § "Two things
+ * called a bus". The risk that creates is a developer reading a captured
+ * container log or an inferred summary, believing real AWS would have handed
+ * them the same thing, and writing a fix that depends on a signal production
+ * will never produce. Tagging every piece of evidence with its origin is what
+ * makes that mistake hard, so the tier is carried on the payload rather than
+ * being a blanket "emulator-only" badge on the panel.
+ *
+ * The vocabulary is deliberately service-neutral. CloudFormation deploy
+ * diagnostics is the first consumer; RDS's retained-logs panel — which already
+ * draws the same distinction with a bespoke `logSource: "container" |
+ * "retained"` field — is the obvious second, and a second vocabulary would put
+ * the two panels back to explaining the same idea in different words.
+ */
+export type DiagnosticProvenance = "aws-api" | "overcast-capture" | "overcast-inference"
+
 export type AdvisorySeverity = "info" | "warning" | "critical"
 
 /**

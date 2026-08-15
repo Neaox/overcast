@@ -136,6 +136,22 @@ func (r *StackResource) shouldRetainOnDelete() bool {
 // shouldRetainOnCreateRollback applies the initial-create exception that
 // ordinary deletion does not: template RetainExceptOnCreate is deleted, and
 // RollbackStack's operation flag can opt a Retain resource into deletion too.
+//
+// Snapshot ignores the flag on purpose, and the asymmetry with Retain is the
+// part worth explaining. AWS scopes the operation flag narrowly: it deletes
+// newly created resources when a stack operation rolls back, "including newly
+// created resources marked with a deletion policy of Retain". Retain is the
+// only policy it names, and the flag exists because a resource kept back by
+// Retain is kept with nothing to show for it — a rollback leaves an orphan the
+// operator has to find and delete by hand. Snapshot does not have that problem
+// on AWS, because AWS takes the snapshot on the way out.
+//
+// Overcast does not take the snapshot. So deleting a Snapshot resource here
+// would be data loss with no snapshot behind it, which is a worse outcome than
+// the orphan the flag was introduced to avoid, and worse than what the same
+// template does against real AWS. Retaining is the conservative reading, and it
+// keeps this in step with shouldRetainOnDelete, which treats Snapshot as Retain
+// for exactly the same reason.
 func (r *StackResource) shouldRetainOnCreateRollback(retainExceptOnCreate bool) bool {
 	switch r.DeletionPolicy {
 	case "Retain":

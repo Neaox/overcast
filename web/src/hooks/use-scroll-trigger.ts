@@ -11,7 +11,23 @@ interface UseScrollTriggerOptions {
   direction?: ScrollDirection
   /** IntersectionObserver rootMargin — how far beyond the observed edge to trigger. Default "200px" gives a head-start before the user reaches the edge. */
   rootMargin?: string
-  /** Scrollable element containing the sentinel. Omit to observe against the browser viewport. */
+  /**
+   * Scrollable element containing the sentinel. Omit to observe against the browser viewport.
+   *
+   * The element must already be mounted the first time `enabled` becomes true. A ref object keeps
+   * the same identity across renders, so listing it as an effect dependency does not make the
+   * effect re-run when `rootRef.current` goes from `null` to an element — the observer is built
+   * once, from whatever `current` held at that moment. If the scroll container mounts in a later
+   * commit than the sentinel, the observer is created with `root: null` and silently watches the
+   * browser viewport instead: nothing throws, but a sentinel sitting inside an off-screen or
+   * overflow-clipped container never intersects, so infinite scroll simply stops loading pages —
+   * or, in the opposite case, a sentinel that is inside the viewport but far from the container's
+   * scroll edge intersects immediately and loads every page at once.
+   *
+   * Render the container and the sentinel in the same commit and this does not arise, which is
+   * what the current caller does. A container that genuinely mounts later needs a callback ref or
+   * a re-subscribe trigger here, not just a dependency entry.
+   */
   rootRef?: RefObject<Element | null>
 }
 
@@ -69,6 +85,9 @@ export function useScrollTrigger({
     const margin = direction === "down" ? `0px 0px ${rootMargin} 0px` : `${rootMargin} 0px 0px 0px`
 
     const observer = new IntersectionObserver(handleIntersect, {
+      // Read once, when the observer is built. `rootRef` is in the dependency list below for
+      // completeness, but a ref's identity never changes, so a container that mounts after this
+      // effect first runs is never picked up — see the constraint documented on `rootRef`.
       root: rootRef?.current ?? null,
       rootMargin: margin,
       threshold: 0,

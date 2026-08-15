@@ -697,9 +697,18 @@ const rollbackTestTemplate = `{
   }
 }`
 
+// waitForStackStatus polls until the stack reports wantStatus.
+//
+// The budget covers the slowest resource a stack here provisions rather than
+// the typical one. An AWS::ECS::Service is not complete until its deployment
+// reaches a steady state, and a deployment does not reach one until its tasks
+// have stayed up for a settle window — see settleWindow in package ecs — so a
+// stack with a service in it takes seconds. Eventually returns as soon as the
+// status appears, so the larger budget only changes how long a genuine failure
+// takes to report.
 func waitForStackStatus(t *testing.T, srv *helpers.TestServer, stackName, wantStatus string) {
 	t.Helper()
-	helpers.Eventually(t, 5*time.Second, 20*time.Millisecond, func() bool {
+	helpers.Eventually(t, 30*time.Second, 20*time.Millisecond, func() bool {
 		resp := cfnQuery(t, srv, "DescribeStacks", url.Values{
 			"StackName": []string{stackName},
 		})

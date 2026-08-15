@@ -21,11 +21,13 @@ package ecs
 // which is a separate victim of the same lost update â€” remove the lock and this
 // test fails while that one still needs its own reconcile loop to trip.
 //
-// This is the one ECS test that runs on a real clock, and it costs the 200ms a
-// task takes to start. The race needs two of a service's transitions to
-// overlap, and the mock clock will not produce that dependably: it fires due
-// timers one at a time and sleeps a millisecond after each, which on an idle
-// machine is long enough for one callback to finish before the next begins.
+// This is the one ECS test that runs on a real clock, so it pays real time for
+// both waits a steady state now takes: the 200ms a task takes to start, and the
+// settle window it then has to stay up for. The race needs two of a service's
+// transitions to overlap, and the mock clock will not produce that dependably:
+// it fires due timers one at a time and sleeps a millisecond after each, which
+// on an idle machine is long enough for one callback to finish before the next
+// begins.
 //
 // NOTE — its sensitivity to lockService is not currently demonstrated. The
 // header above claims the steady-state event is lost on every run with the lock
@@ -103,6 +105,15 @@ func TestServiceSteadyState_concurrentTaskTransitions(t *testing.T) {
 	}
 
 	// When: every task reaches RUNNING, all transitions coming due together
+	h.scheduler.Settle()
+	// ...and then stays up long enough to be credited. Settling twice is not
+	// belt and braces: a deployment reaches its steady state a settle window
+	// after its tasks run (see settleWindow), and the check that notices is
+	// scheduled by the reconcile each RUNNING transition performs — so it does
+	// not exist yet when the first Settle decides what to wait for, and
+	// settling is defined over the transitions outstanding when it was called.
+	// This is where the test spends its time; on a real clock the second wait
+	// is the window itself.
 	h.scheduler.Settle()
 
 	// Then: each service recorded reaching its desired count. Read the stored
