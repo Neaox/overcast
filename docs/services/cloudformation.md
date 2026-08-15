@@ -122,21 +122,64 @@ generate a placeholder ID without side effects.
 
 Some services answer a create long before the thing they created is usable, and
 CloudFormation does not pass that on: the resource is not `CREATE_COMPLETE`
-until it settles, and anything downstream of it waits behind that. Three
+until it settles, and anything downstream of it waits behind that. These
 resource types stabilize in Overcast, matching AWS:
 
-| Resource Type              | Complete when                                   |
-| -------------------------- | ----------------------------------------------- |
-| `AWS::RDS::DBInstance`     | the instance reports `available`                |
-| `AWS::RDS::DBCluster`      | the cluster reports `available`                 |
-| `AWS::ECS::Service`        | the current deployment reaches its desired count |
+| Resource Type                        | Complete when                                    |
+| ------------------------------------ | ------------------------------------------------ |
+| `AWS::RDS::DBInstance`               | the instance reports `available`                 |
+| `AWS::RDS::DBCluster`                | the cluster reports `available`                  |
+| `AWS::ECS::Service`                  | the current deployment reaches its desired count |
+| `AWS::ElastiCache::CacheCluster`     | the cluster reports `available`                  |
+| `AWS::ElastiCache::ReplicationGroup` | the group reports `available`                    |
+| `AWS::ElastiCache::ServerlessCache`  | the cache reports `available`                    |
+| `AWS::MSK::Cluster`                  | the cluster reports `ACTIVE`                     |
+| `AWS::EKS::Cluster`                  | the cluster reports `ACTIVE`                     |
+| `AWS::EFS::FileSystem`               | the file system reports `available`              |
+| `AWS::EFS::MountTarget`              | the mount target reports `available`             |
+| `AWS::EFS::AccessPoint`              | the access point reports `available`             |
+| `AWS::Lambda::Function`              | the function reports `Active`                    |
+
+Status matching folds case, because AWS does not spell one service's vocabulary
+consistently — a replication group reports `available` and AWS documents a
+serverless cache's as `AVAILABLE`. An unrecognised status keeps the resource
+waiting rather than completing it: AWS adds statuses, and completing on one
+nothing here understands is the failure these waits exist to prevent.
 
 Updates wait on the same condition, so an `UPDATE_COMPLETE` means the change was
 applied *and* settled. A resource that cannot settle fails with the reason the
-service itself gives — an RDS event, or the newest actionable ECS service event
-rather than a later task-start progress event — and the stack rolls back. A failed
-update is never answered by replacing the resource: the change has already been
-applied to the one that exists, so a second copy would carry the same problem.
+service itself gives — an RDS event, the newest actionable ECS service event
+rather than a later task-start progress event, an MSK `stateInfo`, an EKS health
+issue, a Lambda `StateReason` — and the stack rolls back. Where a service records
+no reason of its own, the failure carries the status the resource reached and
+what it was being waited for, which is what tells a resource still starting apart
+from one wedged in a status that will never change. A failed update is never
+answered by replacing the resource: the change has already been applied to the
+one that exists, so a second copy would carry the same problem.
+
+Which statuses end a wait comes from AWS's own machine-readable answer wherever
+it has one — the waiters botocore ships for each service. `CacheClusterAvailable`,
+`ReplicationGroupAvailable`, `ClusterActive` (EKS) and `FunctionActive` (Lambda)
+are used as written; the vocabularies differ more than they look, and an
+ElastiCache cache cluster in particular has no `create-failed` status at all.
+Two gaps are filled from the API reference: a replication group's documented
+`create-failed`, which its waiter predates, and MSK and EFS, for which botocore
+ships no waiters.
+
+A Lambda function is complete at `Active`, which is what real CloudFormation
+waits for — an invoke, an `UpdateFunctionCode` or a `PublishVersion` against a
+`Pending` function fails. `Active` means deployed, not working: a function with
+a broken handler is `Active` on AWS too and fails at invoke, so the wait
+deliberately stops there rather than proving the handler runs. AWS's separate
+`FunctionUpdated` waiter reads `LastUpdateStatus` after an update; Overcast does
+not model that field, so nothing waits on it yet.
+
+Every wait runs whether or not the deployment has a container runtime for the
+service behind it. A resource with no container coming reaches its ready status
+as soon as it is recorded — there is no data plane being claimed, so there is
+nothing left to prove — and the wait gets its answer on the first poll. This is
+uniform across the services: an RDS instance, a Lambda function, a mock-mode EKS
+cluster, an ElastiCache cache and an MSK cluster all behave the same way.
 
 `AWS::ECS::Service.ForceNewDeployment` is translated to ECS's
 `forceNewDeployment` update flag, so changing the nonce emitted by CDK launches
