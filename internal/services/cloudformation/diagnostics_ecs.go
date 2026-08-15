@@ -45,6 +45,7 @@ type diagECSService struct {
 }
 
 type diagECSDeployment struct {
+	ID                 string `json:"id"`
 	Status             string `json:"status"`
 	FailedTasks        int    `json:"failedTasks"`
 	RolloutState       string `json:"rolloutState"`
@@ -57,8 +58,12 @@ type diagECSEvent struct {
 }
 
 type diagECSTask struct {
-	TaskArn       string           `json:"taskArn"`
-	Group         string           `json:"group"`
+	TaskArn string `json:"taskArn"`
+	Group   string `json:"group"`
+	// StartedBy carries the ID of the deployment that placed this task, which is
+	// what separates the tasks that failed from the ones merely swept up in the
+	// same teardown. See tasksOfDeployment.
+	StartedBy     string           `json:"startedBy"`
 	StoppedReason string           `json:"stoppedReason"`
 	StopCode      string           `json:"stopCode"`
 	StartedAt     *float64         `json:"startedAt"`
@@ -99,7 +104,8 @@ func collectECSServiceEvidence(ctx context.Context, router http.Handler, region 
 	// zero-valued, and an empty name would turn the ownership filter below
 	// into no filter at all — attributing every stopped task in the cluster,
 	// including other stacks', to this one resource.
-	tasks, omitted := stoppedTasksForECSService(ctx, router, region, cluster, ecsServiceNameFromARN(serviceARN))
+	tasks, omitted := stoppedTasksForECSService(ctx, router, region, cluster,
+		ecsServiceNameFromARN(serviceARN), primaryDeploymentID(svc))
 	if section, ok := ecsStoppedTasksSection(tasks, omitted); ok {
 		out.Sections = append(out.Sections, section)
 	}
@@ -133,16 +139,57 @@ func describeECSServiceForDiagnostics(ctx context.Context, router http.Handler, 
 	return resp.Services[0], true
 }
 
+// primaryDeploymentID returns the ID of the deployment being rolled out, or ""
+// when the service could not be described. That is the deployment whose failure
+// stopped the stack, so it is the one the evidence has to be about.
+func primaryDeploymentID(svc diagECSService) string {
+	for _, d := range svc.Deployments {
+		if d.Status == "PRIMARY" {
+			return d.ID
+		}
+	}
+	return ""
+}
+
+// tasksOfDeployment reports whether a stopped task belongs to the deployment
+// that failed, rather than to one it replaced.
+//
+// This is the difference between evidence and noise. A failed *update* stops
+// two quite different sets of tasks at almost the same moment: the new ones that
+// could not stay up, and the previous, working ones the scheduler drained to
+// make way for them. Both are stopped, both belong to the service, and the
+// drained ones carry a perfectly healthy-looking last log and an exit code of
+// 137 from the SIGKILL that retired them. Showing both invites the reader to
+// debug the version that was working.
+//
+// ECS keys the association on `startedBy`, and the reconciler in
+// internal/services/ecs already splits current from superseded exactly this way;
+// recordTaskStopFailureAt declines to count a superseded task against a
+// deployment for the same reason, calling it "draining, not failing".
+//
+// An unknown deployment ID keeps everything. It means DescribeServices did not
+// answer, which happens precisely when a service is being torn down — and an
+// over-broad pane a reader can still narrow beats an empty one. A task with no
+// startedBy is kept for the same reason: nothing placed it on behalf of a
+// deployment, so nothing rules it out.
+func tasksOfDeployment(t diagECSTask, primaryDeploymentID string) bool {
+	return primaryDeploymentID == "" || t.StartedBy == "" || t.StartedBy == primaryDeploymentID
+}
+
 // stoppedTasksForECSService lists the cluster's stopped tasks and describes as
-// many as the cap allows, keeping only the ones this service owns. It returns
-// the described tasks and how many were left out.
+// many as the cap allows, keeping only the ones this service's failing
+// deployment owns. It returns the described tasks and how many were left out.
 //
 // The service filter is applied here rather than in the request because
 // Overcast's ListTasks accepts only cluster, family and desiredStatus — real
 // ECS also takes serviceName, and sending a member the emulator ignores would
 // look like a filter that works. Each task states its own owner in `group`
 // ("service:<name>"), which is what ECS itself keys the association on.
-func stoppedTasksForECSService(ctx context.Context, router http.Handler, region, cluster, serviceName string) (tasks []diagECSTask, omitted int) {
+//
+// `omitted` counts only tasks dropped by the cap, never ones the deployment
+// filter excluded: a drained task is not part of this answer, so reporting it
+// as withheld evidence would describe the pane as less complete than it is.
+func stoppedTasksForECSService(ctx context.Context, router http.Handler, region, cluster, serviceName, deploymentID string) (tasks []diagECSTask, omitted int) {
 	if serviceName == "" {
 		// With no name there is no way to tell this service's tasks from any
 		// other's, and a wrong attribution is worse than a missing pane.
@@ -166,7 +213,7 @@ func stoppedTasksForECSService(ctx context.Context, router http.Handler, region,
 	described := describeECSTasks(ctx, router, region, cluster, listed.TaskArns)
 	group := "service:" + serviceName
 	for _, t := range described {
-		if t.Group != group {
+		if t.Group != group || !tasksOfDeployment(t, deploymentID) {
 			continue
 		}
 		if len(tasks) >= maxCapturedTasks {

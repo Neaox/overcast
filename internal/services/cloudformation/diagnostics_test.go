@@ -40,6 +40,14 @@ const (
 	diagContainerLog = "npm ERR! missing script: start\n" +
 		"Error: DATABASE_URL is not set\n" +
 		"    at loadConfig (/app/src/config.js:14:11)\n"
+
+	// The deployment being rolled out, and the one it replaced. A failed update
+	// stops tasks from both within a second of each other.
+	diagPrimaryDeployment    = "ecs-svc/1234"
+	diagSupersededDeployment = "ecs-svc/0001"
+
+	diagSupersededTaskARN = "arn:aws:ecs:us-east-1:000000000000:task/MyStack-Cluster/6391d11baaaa4f7a9c0d1e2f3a4b5c6d"
+	diagSupersededLog     = "web listening on :8080\n"
 )
 
 // ── The fake ECS router ────────────────────────────────────────────────────
@@ -58,6 +66,11 @@ type fakeECSRouter struct {
 	serviceDeleted bool
 	deleted        []string
 	targets        []string
+	// drainedTask adds the task the *previous* deployment was running, which the
+	// scheduler stopped to make way for the one that failed. Off by default so
+	// the ordinary fixture stays one failure with one explanation; the tests
+	// about telling evidence from noise turn it on.
+	drainedTask bool
 }
 
 func newFakeECSRouter() *fakeECSRouter { return &fakeECSRouter{} }
@@ -152,7 +165,11 @@ func (f *fakeECSRouter) stoppedTaskARNs() []string {
 	if f.torndown() {
 		return []string{}
 	}
-	return []string{diagTaskARN}
+	arns := []string{diagTaskARN}
+	if f.drainedTask {
+		arns = append(arns, diagSupersededTaskARN)
+	}
+	return arns
 }
 
 func (f *fakeECSRouter) describedTasks() []any {
@@ -160,10 +177,11 @@ func (f *fakeECSRouter) describedTasks() []any {
 		return []any{}
 	}
 	started, stopped := 1755230394.0, 1755230400.0
-	return []any{map[string]any{
+	tasks := []any{map[string]any{
 		"taskArn":       diagTaskARN,
 		"clusterArn":    "arn:aws:ecs:us-east-1:000000000000:cluster/MyStack-Cluster",
 		"group":         "service:MyStack-WebService-9f21c4",
+		"startedBy":     diagPrimaryDeployment,
 		"lastStatus":    "STOPPED",
 		"desiredStatus": "STOPPED",
 		"stoppedReason": "Essential container in task exited",
@@ -177,6 +195,30 @@ func (f *fakeECSRouter) describedTasks() []any {
 			"reason":     "",
 		}},
 	}}
+	if !f.drainedTask {
+		return tasks
+	}
+	// The version that was working, retired by the deployment that failed. Its
+	// log looks healthy and its exit code is the 137 of the SIGKILL that stopped
+	// it — which is precisely why it must not be offered as evidence.
+	return append(tasks, map[string]any{
+		"taskArn":       diagSupersededTaskARN,
+		"clusterArn":    "arn:aws:ecs:us-east-1:000000000000:cluster/MyStack-Cluster",
+		"group":         "service:MyStack-WebService-9f21c4",
+		"startedBy":     diagSupersededDeployment,
+		"lastStatus":    "STOPPED",
+		"desiredStatus": "STOPPED",
+		"stoppedReason": "Task stopped by a newer service deployment",
+		"stopCode":      "ServiceSchedulerInitiated",
+		"startedAt":     started,
+		"stoppedAt":     stopped,
+		"containers": []any{map[string]any{
+			"name":       diagContainer,
+			"lastStatus": "STOPPED",
+			"exitCode":   137.0,
+			"reason":     "",
+		}},
+	})
 }
 
 func (f *fakeECSRouter) serveContainerLogs(w http.ResponseWriter, r *http.Request) {
@@ -189,10 +231,16 @@ func (f *fakeECSRouter) serveContainerLogs(w http.ResponseWriter, r *http.Reques
 		writeFakeJSON(w, http.StatusNotFound, map[string]any{"error": "no such endpoint"})
 		return
 	}
+	// Keyed by task so a test can tell the failure's output from the drained
+	// task's; the endpoint takes the task ID rather than the whole ARN.
+	logs, taskArn := diagContainerLog, diagTaskARN
+	if strings.HasPrefix(parts[0], "6391d11b") {
+		logs, taskArn = diagSupersededLog, diagSupersededTaskARN
+	}
 	writeFakeJSON(w, http.StatusOK, map[string]any{
-		"taskArn":       diagTaskARN,
+		"taskArn":       taskArn,
 		"containerName": parts[2],
-		"logs":          diagContainerLog,
+		"logs":          logs,
 	})
 }
 
@@ -562,7 +610,8 @@ func TestStoppedTasksForECSService_attributesTasksToTheirOwnerOnly(t *testing.T)
 	ctx := t.Context()
 
 	t.Run("another service's stopped tasks are not claimed", func(t *testing.T) {
-		tasks, omitted := stoppedTasksForECSService(ctx, ecs, "us-east-1", "MyStack-Cluster", "SomeOtherService")
+		tasks, omitted := stoppedTasksForECSService(ctx, ecs, "us-east-1", "MyStack-Cluster",
+			"SomeOtherService", diagPrimaryDeployment)
 		if len(tasks) != 0 || omitted != 0 {
 			t.Errorf("got %d tasks (%d omitted), want none — the stopped task belongs to another service",
 				len(tasks), omitted)
@@ -570,7 +619,7 @@ func TestStoppedTasksForECSService_attributesTasksToTheirOwnerOnly(t *testing.T)
 	})
 
 	t.Run("an unnameable service gathers nothing", func(t *testing.T) {
-		tasks, _ := stoppedTasksForECSService(ctx, ecs, "us-east-1", "MyStack-Cluster", "")
+		tasks, _ := stoppedTasksForECSService(ctx, ecs, "us-east-1", "MyStack-Cluster", "", diagPrimaryDeployment)
 		if len(tasks) != 0 {
 			t.Errorf("got %d tasks, want none — with no service name every task in the cluster would be claimed",
 				len(tasks))
@@ -578,11 +627,73 @@ func TestStoppedTasksForECSService_attributesTasksToTheirOwnerOnly(t *testing.T)
 	})
 
 	t.Run("its own stopped tasks are found", func(t *testing.T) {
-		tasks, _ := stoppedTasksForECSService(ctx, ecs, "us-east-1", "MyStack-Cluster", "MyStack-WebService-9f21c4")
+		tasks, _ := stoppedTasksForECSService(ctx, ecs, "us-east-1", "MyStack-Cluster",
+			"MyStack-WebService-9f21c4", diagPrimaryDeployment)
 		if len(tasks) != 1 {
 			t.Fatalf("got %d tasks, want 1", len(tasks))
 		}
 	})
+}
+
+// A failed update stops two sets of tasks at once: the new ones that could not
+// stay up, and the previous, working ones the scheduler drained to make room.
+// Only the first set is evidence. The second carries a healthy last log and the
+// 137 of a SIGKILL, so offering it invites the reader to debug the version that
+// was working — which is what the console did until this filter existed.
+func TestStoppedTasksForECSService_excludesTheDeploymentBeingReplaced(t *testing.T) {
+	ecs := newFakeECSRouter()
+	ecs.drainedTask = true
+	ctx := t.Context()
+
+	t.Run("only the failing deployment's tasks are evidence", func(t *testing.T) {
+		tasks, omitted := stoppedTasksForECSService(ctx, ecs, "us-east-1", "MyStack-Cluster",
+			"MyStack-WebService-9f21c4", diagPrimaryDeployment)
+
+		if len(tasks) != 1 {
+			t.Fatalf("got %d tasks, want 1 — the drained task belongs to the deployment being replaced", len(tasks))
+		}
+		if tasks[0].TaskArn != diagTaskARN {
+			t.Errorf("kept task %s, want the one that failed (%s)", tasks[0].TaskArn, diagTaskARN)
+		}
+		// A drained task is not withheld evidence, it is not evidence, so it
+		// must not be counted as something the cap left out.
+		if omitted != 0 {
+			t.Errorf("omitted = %d, want 0 — only the cap may report omissions", omitted)
+		}
+	})
+
+	// Capture runs while a service is being torn down, which is exactly when
+	// DescribeServices may no longer answer. Losing the deployment ID must
+	// widen the pane rather than empty it.
+	t.Run("an unknown deployment keeps everything", func(t *testing.T) {
+		tasks, _ := stoppedTasksForECSService(ctx, ecs, "us-east-1", "MyStack-Cluster",
+			"MyStack-WebService-9f21c4", "")
+		if len(tasks) != 2 {
+			t.Errorf("got %d tasks, want 2 — with no deployment to compare against nothing is ruled out", len(tasks))
+		}
+	})
+}
+
+func TestTasksOfDeployment(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		startedBy string
+		primary   string
+		want      bool
+	}{
+		{"the failing deployment's own task", diagPrimaryDeployment, diagPrimaryDeployment, true},
+		{"a task from the deployment being replaced", diagSupersededDeployment, diagPrimaryDeployment, false},
+		{"an unknown primary rules nothing out", diagSupersededDeployment, "", true},
+		{"a task nothing placed on a deployment's behalf", "", diagPrimaryDeployment, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tasksOfDeployment(diagECSTask{StartedBy: tc.startedBy}, tc.primary)
+			if got != tc.want {
+				t.Errorf("tasksOfDeployment(startedBy=%q, primary=%q) = %v, want %v",
+					tc.startedBy, tc.primary, got, tc.want)
+			}
+		})
+	}
 }
 
 // The provenance, kind and operation values are the interface between this
