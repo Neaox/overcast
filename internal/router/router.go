@@ -1002,6 +1002,10 @@ func New(cfg *config.Config, store state.Store, logger *zap.Logger, clk clock.Cl
 	// GET /_overcast/topology — full cross-region resource graph for the system map.
 	r.Get("/_overcast/topology", newTopologyHandler(cfg, store))
 
+	// GET /_overcast/preflight/region — why a console list page came back
+	// empty when the resources are in a region the reader is not looking at.
+	r.Get("/_overcast/preflight/region", newPreflightRegionHandler(cfg, store))
+
 	// Register POST / handler for AWS target and query-protocol dispatch. The
 	// generated registry also owns modeled operations when no configured service
 	// dispatcher does, so this route is present even in a minimal S3-only setup.

@@ -482,6 +482,7 @@ Every response carries a request ID (`x-amzn-requestid` for most services,
 | `/_overcast/events`                  | GET    | SSE stream of internal events (always enabled)        |
 | `/_overcast/metrics`                 | GET    | Go runtime memory/GC/goroutine stats (always enabled) |
 | `/_overcast/topology`                | GET    | Full cross-region resource graph (always enabled)     |
+| `/_overcast/preflight/region`        | GET    | Whether resources of a `?kind=` exist in some region other than the caller's, and how many (always enabled). Answers with nothing to report when the caller's own region has any — it explains an empty list, it is not a census |
 | `/_overcast/debug/health`            | GET    | Detailed: uptime, services, state backend and health  |
 | `/_overcast/debug/config`            | GET    | Effective configuration (secrets redacted)            |
 | `/_overcast/debug/state`             | GET    | Every namespace and its keys (no values)              |

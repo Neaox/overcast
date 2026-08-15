@@ -37,6 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
+import { RegionElsewhereNotice } from "@/features/preflight/components/region-elsewhere-notice"
 import { CreateStackDialog } from "./create-stack-dialog"
 import { ServiceDocsButton, useDocsFromHash } from "@/features/docs/service-docs-modal"
 
@@ -95,14 +96,17 @@ export function StackList() {
             isEmpty={visibleStacks.length === 0}
             error={error}
             empty={
-              <EmptyState
-                icon={<Layers className="h-10 w-10" />}
-                title="No stacks yet"
-                description="Deploy infrastructure by creating a CloudFormation stack from a template."
-                action={
-                  <CreateAction onClick={() => setShowCreate(true)}>Create stack</CreateAction>
-                }
-              />
+              <>
+                <EmptyState
+                  icon={<Layers className="h-10 w-10" />}
+                  title="No stacks yet"
+                  description="Deploy infrastructure by creating a CloudFormation stack from a template."
+                  action={
+                    <CreateAction onClick={() => setShowCreate(true)}>Create stack</CreateAction>
+                  }
+                />
+                <RegionElsewhereNotice kind="cloudformation-stacks" noun="stacks" />
+              </>
             }
             errorTitle="Failed to load stacks"
           />
