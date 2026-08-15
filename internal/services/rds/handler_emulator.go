@@ -26,6 +26,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Neaox/overcast/internal/docker"
+	"github.com/Neaox/overcast/internal/serviceutil"
 )
 
 // maxRetainedLogBytes bounds what is copied off a dying container onto its
@@ -160,21 +161,8 @@ func (h *Handler) captureContainerLogs(ctx context.Context, inst *DBInstance) {
 	if logs == "" {
 		return
 	}
-	inst.LastLogs = tailBytes(logs, maxRetainedLogBytes)
+	inst.LastLogs = serviceutil.TailBytes(logs, maxRetainedLogBytes)
 	inst.LastLogsAt = h.clk.Now().UTC().Format("2006-01-02T15:04:05Z")
-}
-
-// tailBytes returns at most max bytes from the end of s, trimmed forward to
-// the next line boundary so the result never starts mid-line (or mid-rune).
-func tailBytes(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	s = s[len(s)-maxBytes:]
-	if i := strings.IndexByte(s, '\n'); i >= 0 && i+1 < len(s) {
-		s = s[i+1:]
-	}
-	return s
 }
 
 // writeRDSEmulatorError writes a simple JSON error for emulator-only endpoints.

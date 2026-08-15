@@ -35,6 +35,8 @@ type GC struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
+
+	beforeRemove func(containerID string)
 }
 
 // InstanceDomainFunc resolves the identity of the Overcast instance whose
@@ -134,6 +136,30 @@ func (g *GC) ScheduleRemove(containerID string) {
 	}
 }
 
+// SetBeforeRemove registers a hook run once against each container this GC is
+// about to remove, while the container is still there to be read.
+//
+// It exists because a container's removal destroys the only copy of things
+// worth keeping — its final output, above all — and every caller that schedules
+// one is a caller that could forget to take that copy first. Owning the
+// ordering here rather than at each call site is what makes it hold for callers
+// not yet written: ScheduleRemove is non-blocking by design, so a caller has no
+// point in its own control flow at which the removal has provably not happened
+// yet.
+//
+// Called on the remove loop's goroutine, after the container has been stopped
+// and before the first removal attempt — see removeContainer for why the stop
+// comes first. Retries do not run it again: it has already had its chance
+// against a container that was certainly present, and the failure being retried
+// is the removal, not the hook.
+//
+// Best-effort, and expected to be: it must not panic, and anything it cannot
+// do it must swallow, because a container whose hook fails still has to be
+// removed. Set before the remove loop starts; not safe to change afterwards.
+func (g *GC) SetBeforeRemove(fn func(containerID string)) {
+	g.beforeRemove = fn
+}
+
 // StopAndScheduleRemove stops a container immediately (to halt any code
 // running inside) and then queues it for deferred removal with exponential
 // backoff. The stop fires in a dedicated goroutine so the caller can proceed
@@ -181,9 +207,32 @@ func (g *GC) StartRemoveLoop(ctx context.Context) {
 // connection refused, etc.). Container-not-found errors terminate immediately.
 // Each retry gets a fresh 30 s context; the backoff starts at 1 s and doubles
 // each attempt up to a 60 s cap.
+//
+// A registered before-remove hook runs first, and the container is stopped
+// before it. The stop is not this loop's job — every caller that schedules a
+// removal has already asked for one — but it is the only way the hook can be
+// given what it is for. StopNow and ScheduleRemove are both non-blocking and
+// independent, so this loop routinely reaches a container whose stop is still
+// in flight, and a hook run there reads a container mid-shutdown: for the log
+// capture that is ECS's hook, that is the difference between keeping why a task
+// died and keeping the lines before it started dying. StopContainer on a
+// container that has already stopped is a no-op the daemon answers 304 to, so
+// the cost is one round trip on the common path, and only for a GC that has a
+// hook to order against.
 func (g *GC) removeContainer(containerID string) {
 	const baseDelay = 1 * time.Second
 	const maxDelay = 60 * time.Second
+
+	if g.beforeRemove != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := g.client.StopContainer(ctx, containerID, 10); err != nil {
+			g.logger.Debug("gc: stop container before remove hook",
+				zap.String("container", containerID), zap.Error(err))
+		}
+		cancel()
+		g.beforeRemove(containerID)
+	}
+
 	delay := baseDelay
 	attempt := 0
 	for {
