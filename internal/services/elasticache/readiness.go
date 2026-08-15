@@ -95,6 +95,57 @@ var (
 	serverlessAwaiting       = []string{"creating", "starting", "modifying", statusCreateFailed}
 )
 
+// ─── Nothing to wait for ─────────────────────────────────────────────────────
+//
+// A deployment with no Docker starts no container, so no readiness watch is
+// ever scheduled and nothing exists that could move the record out of
+// "creating". Leaving it there claims progress that will never be made — the
+// mirror image of the "available" with nothing behind it that the watches above
+// exist to prevent, and just as untrue. `aws elasticache wait` spins out its
+// attempts against it, and a CloudFormation stack that waits for the cache
+// holds open for its whole budget and then rolls back a cache that was already
+// as ready as it was ever going to be.
+//
+// So a metadata-only resource is ready the moment it is recorded, because there
+// is no runtime being claimed and nothing is coming to prove one. That is the
+// answer RDS gives on CreateDBInstance and Lambda gives a function with no
+// runtime wired, and the one MSK already gives a serverless cluster; these are
+// ElastiCache's three shapes agreeing with it.
+//
+// Two properties this relies on, both deliberate:
+//
+//   - The transition is guarded on the record still being in "creating", so a
+//     delete or a modify arriving in the same moment wins and this becomes a
+//     no-op rather than resurrecting what that call decided.
+//   - "available" is a status reconciliation still expects a runtime for (see
+//     cacheRuntimeExpected), so a daemon that appears later — a restart with a
+//     socket configured — still builds a container for the record and runs a
+//     real probe against it. Marking it ready is not the same as writing it off.
+
+// settleCacheClusterWithoutRuntime marks a cluster that has no container coming
+// available. Scheduled rather than written inline, so it runs on the same
+// scheduler as every other transition for this record and orders against them;
+// with the real clock a zero delay runs it inline, before the create returns.
+func (h *Handler) settleCacheClusterWithoutRuntime(region, clusterID string) {
+	h.scheduler.AfterScoped(region, clusterID, "available", 0, func(ctx context.Context) {
+		h.transitionCacheCluster(ctx, clusterID, "available", "creating")
+	})
+}
+
+// settleReplicationGroupWithoutRuntime is the same for a replication group.
+func (h *Handler) settleReplicationGroupWithoutRuntime(region, rgID string) {
+	h.scheduler.AfterScoped(region, rgID, "available", 0, func(ctx context.Context) {
+		h.transitionReplicationGroup(ctx, rgID, "available", "creating")
+	})
+}
+
+// settleServerlessCacheWithoutRuntime is the same for a serverless cache.
+func (h *Handler) settleServerlessCacheWithoutRuntime(region, name string) {
+	h.scheduler.AfterScoped(region, name, "available", 0, func(ctx context.Context) {
+		h.transitionServerlessCache(ctx, name, "available", "creating")
+	})
+}
+
 // failCacheCluster settles a cluster whose engine never answered, recording
 // why. Re-read inside the record's lock rather than written from a snapshot,
 // the same discipline every other writer here follows: a watch that has spent a

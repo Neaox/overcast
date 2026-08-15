@@ -171,13 +171,6 @@ func newTestProvisioner(t *testing.T, router http.Handler, clocks ...clock.Clock
 	cfg := &config.Config{
 		Region:    "us-east-1",
 		AccountID: "000000000000",
-		// A deployment with container runtimes for the services whose
-		// resources are only ready once a container is. Without these the
-		// ElastiCache and MSK waits do not run at all, by design — see
-		// noContainerRuntime — and a test meaning to exercise one would pass
-		// without ever asking a status.
-		ElastiCacheDockerSocket: "unix:///var/run/docker.sock",
-		MSKDockerSocket:         "unix:///var/run/docker.sock",
 	}
 	var clk clock.Clock = clock.New()
 	if len(clocks) > 0 {

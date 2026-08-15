@@ -34,29 +34,6 @@ import (
 // smaller still. The RDS wait settled on the same quarter-second.
 const resourceStabilizePollInterval = 250 * time.Millisecond
 
-// noContainerRuntime reports that this deployment has no container runtime for
-// the service behind a resource, given the Docker socket the config assigns
-// that service — the same value internal/router reads to decide whether the
-// service gets a Docker client at all.
-//
-// It exists because two services answer "is it ready yet?" with "creating"
-// forever when there is nothing to start. Overcast's services do not agree on
-// this: an RDS instance, a Lambda function and a mock-mode EKS cluster are
-// marked ready the moment their metadata exists, because a metadata-only
-// resource is complete as soon as it is recorded — but an ElastiCache cache and
-// an MSK cluster are deliberately left in "creating" with a health banner
-// explaining why. A wait against one of those in a deployment with no Docker
-// would hold every stack that uses them open for the whole budget and then roll
-// it back, which is a worse answer than the early completion it replaces.
-//
-// So the wait is run where there is something that can answer it. The right
-// fix is service-side — those two services should mark a metadata-only resource
-// ready, as the other three do — and this predicate is what should be deleted
-// when they do.
-func noContainerRuntime(socket string) bool {
-	return strings.TrimSpace(socket) == ""
-}
-
 // readinessOutcome is what a status means for the resource waiting on it.
 type readinessOutcome int
 

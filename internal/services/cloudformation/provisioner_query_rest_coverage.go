@@ -1484,12 +1484,6 @@ var mskClusterStatuses = statusVocabulary{
 // stack cannot complete around a cluster nothing can produce to. See
 // resourceStabilizer.
 func (h *mskClusterHandler) Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
-	// MSK leaves a cluster in CREATING when there is no broker container to
-	// start, so a deployment without Docker has nothing that can answer this
-	// wait — see noContainerRuntime.
-	if cfg == nil || noContainerRuntime(cfg.MSKDockerSocket) {
-		return nil
-	}
 	subject := fmt.Sprintf("MSK cluster %s", mskClusterNameFromARN(physicalID))
 	return awaitResourceReady(ctx, clk, stabilizeWait{
 		subject:  subject,

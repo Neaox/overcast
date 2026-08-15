@@ -2427,9 +2427,6 @@ func (h *elastiCacheCacheClusterHandler) Create(ctx context.Context, router http
 // engine is — and a GetAtt on ConfigurationEndpoint.Address is exactly the
 // dependency that must not run early. See resourceStabilizer.
 func (h *elastiCacheCacheClusterHandler) Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
-	if cfg == nil || noContainerRuntime(cfg.ElastiCacheDockerSocket) {
-		return nil
-	}
 	return awaitResourceReady(ctx, clk, elastiCacheWait(router, rCtx.Region,
 		fmt.Sprintf("cache cluster %s", physicalID),
 		"DescribeCacheClusters", "CacheClusterId", physicalID,
@@ -2504,9 +2501,6 @@ func (h *elastiCacheServerlessCacheHandler) Create(ctx context.Context, router h
 // same rule and for the same reason as a cache cluster — the endpoint it
 // exports is minted before there is anything behind it. See resourceStabilizer.
 func (h *elastiCacheServerlessCacheHandler) Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
-	if cfg == nil || noContainerRuntime(cfg.ElastiCacheDockerSocket) {
-		return nil
-	}
 	return awaitResourceReady(ctx, clk, elastiCacheWait(router, rCtx.Region,
 		fmt.Sprintf("serverless cache %s", physicalID),
 		"DescribeServerlessCaches", "ServerlessCacheName", physicalID,
@@ -2676,9 +2670,6 @@ func (h *elastiCacheReplicationGroupHandler) Create(ctx context.Context, router 
 // time, so the wait is what stands between a GetAtt on one of them and an
 // endpoint with no engine behind it. See resourceStabilizer.
 func (h *elastiCacheReplicationGroupHandler) Stabilize(ctx context.Context, router http.Handler, cfg *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
-	if cfg == nil || noContainerRuntime(cfg.ElastiCacheDockerSocket) {
-		return nil
-	}
 	return awaitResourceReady(ctx, clk, elastiCacheWait(router, rCtx.Region,
 		fmt.Sprintf("replication group %s", physicalID),
 		"DescribeReplicationGroups", "ReplicationGroupId", physicalID,

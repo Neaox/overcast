@@ -221,9 +221,11 @@ func (h *Handler) CreateServerlessCache(w http.ResponseWriter, r *http.Request) 
 			}
 			h.scheduleServerlessHealthCheck(region, cacheName, got.Endpoint.Address, got.Endpoint.Port)
 		}(name)
+	} else {
+		// No container is coming, so nothing else will ever move this cache out
+		// of "creating". See settleServerlessCacheWithoutRuntime.
+		h.settleServerlessCacheWithoutRuntime(region, name)
 	}
-	// Docker is not available — leave the cache in "creating".
-	// The /_overcast/health endpoint and web UI banner tell the user why.
 
 	protocol.WriteQueryXML(w, r, http.StatusOK, &xmlCreateServerlessCacheResponse{
 		Xmlns:            cacheXMLNS,

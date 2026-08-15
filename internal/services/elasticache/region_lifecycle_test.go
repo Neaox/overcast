@@ -28,9 +28,10 @@ import (
 
 func TestCacheClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	// Docker is wired to the package's fake daemon rather than skipped for want
-	// of a real one. Since #686 the creating → available transition only happens
-	// on the Docker path — the health check schedules it, and nothing schedules
-	// it otherwise — so a metadata-only handler never reaches the subject.
+	// of a real one. The subject is the health check's region handling, and only
+	// the Docker path schedules a health check: a metadata-only handler reaches
+	// "available" by the create path's own transition (readiness.go), which
+	// would pass this test without the health check having run at all.
 	fd := newFakeDockerDaemon(t)
 	fd.release() // nothing here is about the start-vs-delete race the fake can stage
 

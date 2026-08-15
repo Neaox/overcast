@@ -303,14 +303,17 @@ func TestElastiCacheCacheClusterCreate_failsWhenTheClusterDisappears(t *testing.
 	}
 }
 
-// ElastiCache leaves a cache in "creating" for as long as it exists when there
-// is no container to start — a deployment without Docker, which is the default
-// for a test server and for anyone running Overcast without a daemon. Waiting
-// there would hold every cache stack open for the full budget and then roll it
-// back, so the wait does not run where nothing can answer it.
-func TestElastiCacheCacheClusterCreate_doesNotWaitWithoutAContainerRuntime(t *testing.T) {
-	// Given: a deployment with no ElastiCache container runtime
-	f := &fakeElastiCache{script: statusScript{statuses: []string{"creating"}}}
+// A deployment with no ElastiCache container runtime — the default for a test
+// server and for anyone running Overcast without a daemon — is not a special
+// case. The wait used to be skipped there, because ElastiCache left a cache
+// with no container coming in "creating" and waiting for it would have held
+// every cache stack open for the full budget before rolling it back.
+// ElastiCache now marks such a cache available at once — there is no engine
+// being claimed — so the wait runs everywhere and gets its answer immediately.
+func TestElastiCacheCacheClusterCreate_withoutAContainerRuntimeStillWaitsAndCompletes(t *testing.T) {
+	// Given: a deployment with no ElastiCache container runtime, where the
+	// service answers "available" because nothing is coming that could change it
+	f := &fakeElastiCache{script: statusScript{statuses: []string{"available"}}}
 	p, rCtx := newTestProvisioner(t, f, newPollDrivenClock())
 	p.cfg.ElastiCacheDockerSocket = ""
 
@@ -318,16 +321,15 @@ func TestElastiCacheCacheClusterCreate_doesNotWaitWithoutAContainerRuntime(t *te
 	id, err := p.provisionResource(context.Background(), "Cache",
 		TemplateResource{Type: "AWS::ElastiCache::CacheCluster"}, cacheClusterProps("mockcache"), rCtx)
 
-	// Then: the resource completes on its metadata, with no status asked for
+	// Then: it completes, having actually asked
 	if err != nil {
-		t.Fatalf("provisionResource: %v — a cache with no data plane behind it cannot become "+
-			"available, and failing the stack over that is worse than completing it", err)
+		t.Fatalf("provisionResource: %v", err)
 	}
 	if id != "mockcache" {
 		t.Errorf("physical ID = %q, want %q", id, "mockcache")
 	}
-	if got := f.script.count(); got != 0 {
-		t.Errorf("DescribeCacheClusters calls = %d, want 0 — nothing was going to answer them", got)
+	if got := f.script.count(); got != 1 {
+		t.Errorf("DescribeCacheClusters calls = %d, want 1 — the wait no longer skips a socketless deployment", got)
 	}
 }
 
