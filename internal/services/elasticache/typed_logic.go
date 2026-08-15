@@ -502,8 +502,9 @@ func (h *Handler) createCacheClusterTyped(ctx context.Context, req *ecCreateCach
 				return
 			}
 			if err := h.startCacheContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for ElastiCache cluster — cluster stays in creating state",
-					zap.String("cluster", clusterID), zap.Error(err))
+				// See the form path in handler.go: a container that cannot be
+				// built is a failure to report, not a stall to leave behind.
+				h.failCacheCluster(bgCtx, clusterID, fmt.Sprintf("the cache container could not be created: %v", err))
 				return
 			}
 			// The start took real time; the cluster may have been deleted
@@ -665,8 +666,7 @@ func (h *Handler) createReplicationGroupTyped(ctx context.Context, req *ecCreate
 				return
 			}
 			if err := h.startReplicationGroupContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for replication group — group stays in creating state",
-					zap.String("rg", rgID), zap.Error(err))
+				h.failReplicationGroup(bgCtx, rgID, fmt.Sprintf("the cache container could not be created: %v", err))
 				return
 			}
 			// The start took real time; the group may have been deleted

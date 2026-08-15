@@ -316,8 +316,13 @@ func (h *Handler) CreateCacheCluster(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := h.startCacheContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for ElastiCache cluster — cluster stays in creating state",
-					zap.String("cluster", clusterID), zap.Error(err))
+				// Not a fall back to metadata-only: Docker was wired when the
+				// cluster was created, so a container that cannot be built is
+				// a real failure. Leaving the cluster in "creating" parks it in
+				// a state nothing will ever change — the readiness watch that
+				// owns that transition is scheduled below, after the start
+				// succeeds, so a failure here leaves nothing behind at all.
+				h.failCacheCluster(bgCtx, clusterID, fmt.Sprintf("the cache container could not be created: %v", err))
 				return
 			}
 			// The start took real time; the cluster may have been deleted

@@ -35,8 +35,9 @@ import (
 type fakeMSKDockerDaemon struct {
 	srv *httptest.Server
 
-	mu      sync.Mutex
-	started []string
+	mu         sync.Mutex
+	started    []string
+	failCreate bool
 }
 
 // startedCount reports how many containers have been started.
@@ -44,6 +45,15 @@ func (fd *fakeMSKDockerDaemon) startedCount() int {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 	return len(fd.started)
+}
+
+// refuseCreates makes building a broker container impossible, the way a daemon
+// out of disk does — the case container_start_failure_test.go is about.
+// Mirrors refuseCreates on rds's lifecycleDaemon.
+func (fd *fakeMSKDockerDaemon) refuseCreates() {
+	fd.mu.Lock()
+	defer fd.mu.Unlock()
+	fd.failCreate = true
 }
 
 func newFakeMSKDockerDaemon(t *testing.T) *fakeMSKDockerDaemon {
@@ -64,9 +74,17 @@ func newFakeMSKDockerDaemon(t *testing.T) *fakeMSKDockerDaemon {
 
 		case strings.HasSuffix(p, "/containers/create"):
 			fd.mu.Lock()
-			seq++
+			refuse := fd.failCreate
+			if !refuse {
+				seq++
+			}
 			id := fmt.Sprintf("mskfakecontainer%04d", seq)
 			fd.mu.Unlock()
+			if refuse {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"message":"no space left on device"}`))
+				return
+			}
 			w.Write([]byte(`{"Id":"` + id + `"}`)) //nolint:errcheck
 
 		case strings.HasSuffix(p, "/start"):

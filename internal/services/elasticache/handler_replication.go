@@ -178,8 +178,7 @@ func (h *Handler) CreateReplicationGroup(w http.ResponseWriter, r *http.Request)
 				return
 			}
 			if err := h.startReplicationGroupContainer(bgCtx, got); err != nil {
-				h.log.Warn("failed to start Docker container for replication group — group stays in creating state",
-					zap.String("rg", rgID), zap.Error(err))
+				h.failReplicationGroup(bgCtx, rgID, fmt.Sprintf("the cache container could not be created: %v", err))
 				return
 			}
 			// The start took real time; the group may have been deleted
