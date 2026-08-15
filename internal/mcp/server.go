@@ -233,6 +233,54 @@ const (
 	DefaultReplayLimit = 256
 )
 
+// sseHeartbeatInterval is how often an idle SSE stream emits a keep-alive, and
+// matches the interval the emulator's other two SSE endpoints use — see
+// eventsHandler and domainsWatchHandler in internal/router.
+//
+// # Why the keep-alive is an SSE comment
+//
+// Because that is the shape MCP itself points at. Revision 2026-07-28 says of
+// long-lived streams that "servers are encouraged to periodically emit an SSE
+// comment line (a line beginning with a colon, e.g. `:\r\n`) as a keep-alive.
+// This keeps the connection from being closed by intermediaries or client idle
+// timeouts during quiet periods when no notifications are flowing. Per the SSE
+// specification, any line beginning with a colon is a comment that carries no
+// event data; clients must ignore such lines and must not treat them as
+// malformed input."
+//
+// That passage is guidance rather than a requirement — "encouraged", not SHOULD
+// or MUST — so it is not license to call this mandated. What it settles is the
+// question that matters here: the client-side half ("clients must ignore such
+// lines") is stated flatly, so a comment cannot be mistaken for a message by a
+// conforming client. The cadence is left entirely undefined, which is why the
+// interval below is chosen to match this repo rather than the spec.
+//
+// That revision is not the one this server speaks — ProtocolVersion is
+// 2025-11-25, and 2026-07-28 removes the GET stream, sessions and
+// Last-Event-ID resumability wholesale — but the guidance is about SSE framing
+// rather than about any of those, and the stream it names is the same long-lived
+// shape the GET stream is here. 2025-11-25 permits it for the same underlying
+// reason: it defers to the SSE standard for stream syntax, where a comment is
+// discarded by the client's event parser before anything is dispatched, so it
+// reaches no JSON-RPC reader at all. Note the contrast with stdio, where the
+// spec does impose a "MUST NOT write anything that is not a valid MCP message"
+// rule; no such rule constrains this stream.
+//
+// Two shapes were rejected. A `data:` event carrying a heartbeat payload — what
+// eventsHandler sends on the emulator's own event stream — would put a frame on
+// this stream that clients parse as JSON-RPC, and there it would be a protocol
+// violation rather than a keep-alive. The `ping` utility method is a JSON-RPC
+// request that obliges the receiver to answer, so using it would change what
+// the client has to do, which is the opposite of additive.
+//
+// The comment also carries no `id:`, deliberately: under 2025-11-25 event IDs
+// are the resumability cursor a client sends back as Last-Event-ID, and a
+// heartbeat that consumed one would make a resuming client ask to replay from a
+// point no message was ever delivered at.
+//
+// A var rather than a const so tests can wind it down; nothing else writes it.
+var sseHeartbeatInterval = 15 * time.Second
+
 var (
 	errInvalidLastEventID = errors.New("invalid Last-Event-ID")
 	errUnknownLastEventID = errors.New("Last-Event-ID is no longer available")
@@ -1335,8 +1383,18 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Read once, before the loop: the value cannot change under a running
 	// stream, and reading it per-iteration would take the lock on every event.
 	shutdown := s.shutdownSignal()
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
 	for {
 		select {
+		case <-heartbeat.C:
+			// An SSE comment, not a message: see sseHeartbeatInterval for why
+			// this is the only shape a keep-alive may take on this stream.
+			// A write to a client that has gone away fails here rather than
+			// silently never being attempted, which is what turns a dead
+			// connection into a returned handler.
+			_, _ = fmt.Fprint(w, ": heartbeat\n\n")
+			flusher.Flush()
 		case <-shutdown:
 			// The emulator is going down. Ending the response is what lets a
 			// shutdown waiting on in-flight handlers finish; a client that
