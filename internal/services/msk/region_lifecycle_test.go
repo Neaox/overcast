@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -41,12 +40,11 @@ func TestClusterLifecycle_nonDefaultRegion(t *testing.T) {
 	// allocated port afterwards therefore fails with "address already in use"
 	// wherever something else holds it — which is how a hardcoded 49092 passed
 	// on one CI runner and reddened main on the next.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve a port for the broker: %v", err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
-	brokerPort := ln.Addr().(*net.TCPAddr).Port
+	// The stand-in answers ApiVersions, because since the readiness rework a
+	// dial that merely connects no longer promotes anything: an accepting port
+	// is a port proxy, and only something speaking Kafka is a broker. A bare
+	// net.Listen here left the cluster in CREATING — correctly.
+	_, brokerPort := serveBroker(t, 0)
 
 	clk := clock.NewMock()
 	// MSKPortBase must be set: the broker's published port is allocated from it,

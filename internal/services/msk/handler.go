@@ -829,6 +829,9 @@ func clusterV2View(c *Cluster, tags map[string]string) map[string]any {
 		"creationTime":   c.CreationTime,
 		"currentVersion": c.CurrentVersion,
 	}
+	if c.StateInfo != nil {
+		view["stateInfo"] = c.StateInfo
+	}
 	if len(tags) > 0 {
 		view["tags"] = tags
 	}

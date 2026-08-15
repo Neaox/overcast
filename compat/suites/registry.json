@@ -4661,6 +4661,305 @@
           "op": "CreateClusterV2"
         }
       ]
+    },
+    {
+      "service": "eks",
+      "name": "eks-clusters",
+      "tests": [
+        {
+          "name": "CreateCluster"
+        },
+        {
+          "name": "DescribeCluster",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "ListClusters",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "ListClustersPaginated",
+          "op": "ListClusters",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "UpdateClusterConfig",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "UpdateClusterVersion",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "ListUpdates",
+          "depends": [
+            "UpdateClusterConfig"
+          ]
+        },
+        {
+          "name": "DescribeUpdate",
+          "depends": [
+            "UpdateClusterConfig"
+          ]
+        },
+        {
+          "name": "DescribeClusterVersions"
+        },
+        {
+          "name": "DescribeClusterNotFound",
+          "op": "DescribeCluster"
+        },
+        {
+          "name": "CreateClusterAlreadyExists",
+          "op": "CreateCluster",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "UpdateClusterConfigNoChanges",
+          "op": "UpdateClusterConfig",
+          "depends": [
+            "CreateCluster"
+          ]
+        },
+        {
+          "name": "DeleteCluster"
+        },
+        {
+          "name": "DeleteClusterNotFound",
+          "op": "DeleteCluster"
+        }
+      ]
+    },
+    {
+      "service": "eks",
+      "name": "eks-nodegroups",
+      "tests": [
+        {
+          "name": "CreateNodegroup"
+        },
+        {
+          "name": "DescribeNodegroup",
+          "depends": [
+            "CreateNodegroup"
+          ]
+        },
+        {
+          "name": "ListNodegroups",
+          "depends": [
+            "CreateNodegroup"
+          ]
+        },
+        {
+          "name": "UpdateNodegroupConfig",
+          "depends": [
+            "CreateNodegroup"
+          ]
+        },
+        {
+          "name": "UpdateNodegroupVersion",
+          "depends": [
+            "CreateNodegroup"
+          ]
+        },
+        {
+          "name": "CreateNodegroupAlreadyExists",
+          "op": "CreateNodegroup",
+          "depends": [
+            "CreateNodegroup"
+          ]
+        },
+        {
+          "name": "DescribeNodegroupNotFound",
+          "op": "DescribeNodegroup"
+        },
+        {
+          "name": "ListNodegroupsClusterNotFound",
+          "op": "ListNodegroups"
+        },
+        {
+          "name": "DeleteNodegroup"
+        }
+      ]
+    },
+    {
+      "service": "eks",
+      "name": "eks-fargate-profiles",
+      "tests": [
+        {
+          "name": "CreateFargateProfile"
+        },
+        {
+          "name": "DescribeFargateProfile",
+          "depends": [
+            "CreateFargateProfile"
+          ]
+        },
+        {
+          "name": "ListFargateProfiles",
+          "depends": [
+            "CreateFargateProfile"
+          ]
+        },
+        {
+          "name": "DescribeFargateProfileNotFound",
+          "op": "DescribeFargateProfile"
+        },
+        {
+          "name": "DeleteFargateProfile"
+        }
+      ]
+    },
+    {
+      "service": "eks",
+      "name": "eks-addons",
+      "tests": [
+        {
+          "name": "CreateAddon"
+        },
+        {
+          "name": "DescribeAddon",
+          "depends": [
+            "CreateAddon"
+          ]
+        },
+        {
+          "name": "ListAddons",
+          "depends": [
+            "CreateAddon"
+          ]
+        },
+        {
+          "name": "UpdateAddon",
+          "depends": [
+            "CreateAddon"
+          ]
+        },
+        {
+          "name": "DescribeAddonVersions"
+        },
+        {
+          "name": "DescribeAddonConfiguration"
+        },
+        {
+          "name": "DescribeAddonNotFound",
+          "op": "DescribeAddon"
+        },
+        {
+          "name": "DeleteAddon"
+        }
+      ]
+    },
+    {
+      "service": "eks",
+      "name": "eks-cluster-access",
+      "tests": [
+        {
+          "name": "CreateAccessEntry"
+        },
+        {
+          "name": "DescribeAccessEntry",
+          "depends": [
+            "CreateAccessEntry"
+          ]
+        },
+        {
+          "name": "ListAccessEntries",
+          "depends": [
+            "CreateAccessEntry"
+          ]
+        },
+        {
+          "name": "UpdateAccessEntry",
+          "depends": [
+            "CreateAccessEntry"
+          ]
+        },
+        {
+          "name": "AssociateAccessPolicy",
+          "depends": [
+            "CreateAccessEntry"
+          ]
+        },
+        {
+          "name": "ListAssociatedAccessPolicies",
+          "depends": [
+            "AssociateAccessPolicy"
+          ]
+        },
+        {
+          "name": "DisassociateAccessPolicy",
+          "depends": [
+            "AssociateAccessPolicy"
+          ]
+        },
+        {
+          "name": "ListAccessPolicies"
+        },
+        {
+          "name": "DeleteAccessEntry",
+          "depends": [
+            "DisassociateAccessPolicy"
+          ]
+        },
+        {
+          "name": "AssociateIdentityProviderConfig"
+        },
+        {
+          "name": "ListIdentityProviderConfigs",
+          "depends": [
+            "AssociateIdentityProviderConfig"
+          ]
+        },
+        {
+          "name": "DescribeIdentityProviderConfig",
+          "depends": [
+            "AssociateIdentityProviderConfig"
+          ]
+        },
+        {
+          "name": "DisassociateIdentityProviderConfig",
+          "depends": [
+            "DescribeIdentityProviderConfig"
+          ]
+        }
+      ]
+    },
+    {
+      "service": "eks",
+      "name": "eks-tags",
+      "tests": [
+        {
+          "name": "TagResource"
+        },
+        {
+          "name": "ListTagsForResource",
+          "depends": [
+            "TagResource"
+          ]
+        },
+        {
+          "name": "UntagResource",
+          "depends": [
+            "ListTagsForResource"
+          ]
+        },
+        {
+          "name": "CreateClusterWithTags",
+          "op": "CreateCluster"
+        }
+      ]
     }
   ]
 }

@@ -328,6 +328,42 @@
     },
     {
       "suite": "dotnet-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "tests": 8
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "tests": 13
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "tests": 14
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "tests": 5
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "tests": 9
+    },
+    {
+      "suite": "dotnet-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "tests": 4
+    },
+    {
+      "suite": "dotnet-sdk",
       "service": "elasticache",
       "group": "elasticache-clusters",
       "tests": 3
@@ -634,6 +670,42 @@
     },
     {
       "suite": "go-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "tests": 8
+    },
+    {
+      "suite": "go-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "tests": 13
+    },
+    {
+      "suite": "go-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "tests": 14
+    },
+    {
+      "suite": "go-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "tests": 5
+    },
+    {
+      "suite": "go-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "tests": 9
+    },
+    {
+      "suite": "go-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "tests": 4
+    },
+    {
+      "suite": "go-sdk",
       "service": "msk",
       "group": "msk-clusters",
       "tests": 16
@@ -790,6 +862,42 @@
     },
     {
       "suite": "java-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "tests": 8
+    },
+    {
+      "suite": "java-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "tests": 13
+    },
+    {
+      "suite": "java-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "tests": 14
+    },
+    {
+      "suite": "java-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "tests": 5
+    },
+    {
+      "suite": "java-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "tests": 9
+    },
+    {
+      "suite": "java-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "tests": 4
+    },
+    {
+      "suite": "java-sdk",
       "service": "msk",
       "group": "msk-clusters",
       "tests": 16
@@ -946,6 +1054,42 @@
     },
     {
       "suite": "node-js-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "tests": 8
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "tests": 13
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "tests": 14
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "tests": 5
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "tests": 9
+    },
+    {
+      "suite": "node-js-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "tests": 4
+    },
+    {
+      "suite": "node-js-sdk",
       "service": "msk",
       "group": "msk-clusters",
       "tests": 16
@@ -1099,6 +1243,42 @@
       "service": "ecr",
       "group": "ecr-tags",
       "tests": 3
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "tests": 8
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "tests": 13
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "tests": 14
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "tests": 5
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "tests": 9
+    },
+    {
+      "suite": "python-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "tests": 4
     },
     {
       "suite": "python-sdk",
@@ -1459,6 +1639,42 @@
       "service": "efs",
       "group": "efs-mount-targets",
       "tests": 5
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eks",
+      "group": "eks-addons",
+      "tests": 8
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eks",
+      "group": "eks-cluster-access",
+      "tests": 13
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eks",
+      "group": "eks-clusters",
+      "tests": 14
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eks",
+      "group": "eks-fargate-profiles",
+      "tests": 5
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eks",
+      "group": "eks-nodegroups",
+      "tests": 9
+    },
+    {
+      "suite": "rust-sdk",
+      "service": "eks",
+      "group": "eks-tags",
+      "tests": 4
     },
     {
       "suite": "rust-sdk",

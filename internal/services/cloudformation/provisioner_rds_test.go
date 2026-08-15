@@ -161,10 +161,28 @@ func (f *fakeRDS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //
 // Nothing here is RDS-specific: the router is whatever the caller scripts, so
 // any resource handler's Create can be driven through it.
-func newTestProvisioner(t *testing.T, router http.Handler) (*provisioner, *resolveContext) {
+//
+// The optional clock is what makes a timeout testable. A stabilization budget
+// is minutes long, so a test that means to run one out hands in a clock that
+// moves when the wait waits rather than when the wall does — see
+// pollDrivenClock. Omit it and the provisioner runs on the real clock.
+func newTestProvisioner(t *testing.T, router http.Handler, clocks ...clock.Clock) (*provisioner, *resolveContext) {
 	t.Helper()
-	cfg := &config.Config{Region: "us-east-1", AccountID: "000000000000"}
-	clk := clock.New()
+	cfg := &config.Config{
+		Region:    "us-east-1",
+		AccountID: "000000000000",
+		// A deployment with container runtimes for the services whose
+		// resources are only ready once a container is. Without these the
+		// ElastiCache and MSK waits do not run at all, by design — see
+		// noContainerRuntime — and a test meaning to exercise one would pass
+		// without ever asking a status.
+		ElastiCacheDockerSocket: "unix:///var/run/docker.sock",
+		MSKDockerSocket:         "unix:///var/run/docker.sock",
+	}
+	var clk clock.Clock = clock.New()
+	if len(clocks) > 0 {
+		clk = clocks[0]
+	}
 	st := newCFNStore(state.NewMemoryStore(), cfg.Region, clk)
 	p := newProvisioner(cfg, st, clk, serviceutil.NewServiceLogger(zap.NewNop(), "cloudformation"))
 	p.initRouter(router)

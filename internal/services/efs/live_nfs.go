@@ -16,6 +16,7 @@ import (
 	"github.com/Neaox/overcast/internal/docker"
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/serviceutil/readiness"
 )
 
 // The NFS data plane (OVERCAST_EFS_NFS=true, live mode only) gives each mount
@@ -584,45 +585,68 @@ func (s *Service) settleMountTarget(ctx context.Context, region, mountTargetID, 
 
 // ─── Readiness ────────────────────────────────────────────────────────────────
 
-// scheduleExportReadiness polls the export with bounded retries and marks the
-// mount target available once it answers an NFSv4 NULL call. When the retries
-// run out it settles in "error" instead, so a wedged export neither leaves the
-// mount target "creating" forever nor passes itself off as a working one.
+// exportReadiness is the timing the NFS readiness watch runs on. Calibrated
+// against ganesha.nfsd in a container on this machine's Docker daemon: it reads
+// its configuration, binds and is answering NULL calls in well under a second,
+// so the interval is short and the budget only has to cover a cold image on a
+// loaded daemon. Expressed as a deadline rather than the attempt count it was
+// before, for the reason rds/health.go gives: a contended poll silently
+// shortens a count, because it is attempts that are counted and not time.
+var exportReadiness = readiness.Policy{
+	FirstDelay: nfsReadyInterval,
+	Interval:   nfsReadyInterval,
+	Budget:     nfsReadyAttempts * nfsReadyInterval,
+}
+
+// scheduleExportReadiness waits for the export to answer an NFSv4 NULL call and
+// marks the mount target available, or settles it in "error" carrying why when
+// it never does — so a wedged export neither leaves the mount target "creating"
+// forever nor passes itself off as a working one.
+//
+// The probe is unchanged: readiness.Watch owns the retry policy and the
+// exhaustion decision, and nfsNullPing stays exactly what it was. It is the
+// probe this whole rework was modelled on.
 func (s *Service) scheduleExportReadiness(region, mountTargetID, containerID string, hostPort int) {
 	if s.skipNFSReadiness {
 		s.markMountTargetAvailable(
 			middleware.ContextWithRegion(context.Background(), region), region, mountTargetID)
 		return
 	}
-	attempt := 0
-	var probe func(ctx context.Context)
-	probe = func(ctx context.Context) {
-		attempt++
-		// A delete landing between two probes cancels the pending timer, but
-		// not a probe already running — which would then reschedule itself
-		// and keep dialling a container that is being torn down.
-		if rec, found, err := s.getMountTarget(ctx, region, mountTargetID); err != nil ||
-			!found || rec.LifeCycleState == stateDeleting {
-			return
-		}
-		addr := s.exportProbeAddr(ctx, containerID, hostPort)
-		if err := nfsNullPing(ctx, addr, nfsProbeTimeout); err == nil {
+	readiness.Watch{
+		Scheduler:  s.scheduler,
+		Clock:      s.clk,
+		Region:     region,
+		ResourceID: mountTargetID,
+		Transition: "nfs-ready",
+		Subject:    "the NFS export for " + mountTargetID,
+		Policy:     exportReadiness,
+		Probe: func(ctx context.Context) readiness.Result {
+			// A delete landing between two probes cancels the pending timer, but
+			// not a probe already running — which would then reschedule itself
+			// and keep dialling a container that is being torn down.
+			if rec, found, err := s.getMountTarget(ctx, region, mountTargetID); err != nil ||
+				!found || rec.LifeCycleState == stateDeleting {
+				return readiness.Abandoned()
+			}
+			addr := s.exportProbeAddr(ctx, containerID, hostPort)
+			if err := nfsNullPing(ctx, addr, nfsProbeTimeout); err != nil {
+				return readiness.Retry(fmt.Errorf("%s: %w", addr, err))
+			}
+			return readiness.Answered()
+		},
+		OnReady: func(ctx context.Context) {
 			s.markMountTargetAvailable(ctx, region, mountTargetID)
-			return
-		}
-		if attempt >= nfsReadyAttempts {
+		},
+		OnFailed: func(ctx context.Context, reason string) {
 			// The container exists but never served: a configuration the daemon
 			// rejected, an image that is not Ganesha, a port that never bound.
 			// Its logs are the only place the reason lives, so name it here.
 			s.log.Warn("efs: NFS export never answered — mount target reports error",
-				zap.String("mount_target", mountTargetID), zap.String("addr", addr),
-				zap.Int("attempts", attempt), zap.String("container", containerID))
+				zap.String("mount_target", mountTargetID), zap.String("container", containerID),
+				zap.String("reason", reason))
 			s.markExportFailed(ctx, region, mountTargetID)
-			return
-		}
-		s.scheduler.AfterScoped(region, mountTargetID, "nfs-ready", nfsReadyInterval, probe)
-	}
-	s.scheduler.AfterScoped(region, mountTargetID, "nfs-ready", nfsReadyInterval, probe)
+		},
+	}.Start()
 }
 
 // mountTargetAliases is the set of DNS names an export container answers to on

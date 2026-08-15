@@ -6,7 +6,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/Neaox/overcast/internal/middleware"
 	"github.com/Neaox/overcast/internal/protocol"
 	"github.com/Neaox/overcast/internal/serviceutil"
+	"github.com/Neaox/overcast/internal/serviceutil/readiness"
 )
 
 const redpandaImage = "docker.redpanda.com/redpandadata/redpanda"
@@ -329,30 +329,46 @@ func (h *Handler) cleanupClusterContainer(ctx context.Context, clusterARN string
 	}
 }
 
-// scheduleHealthCheck polls TCP connectivity and transitions the cluster to
-// "ACTIVE" once Redpanda responds. After maxRetries the cluster stays in its
-// current state — it is never falsely marked ACTIVE when Kafka is not answering.
+// scheduleHealthCheck waits for the broker to answer Kafka's ApiVersions and
+// transitions the cluster to ACTIVE, or to FAILED carrying why when it never
+// does.
+//
+// Running out of retries used to leave the cluster in CREATING, which is a
+// state nothing was coming to change: `aws kafka wait cluster-active` spun on
+// it until it gave up with nothing to say, and the reason lived only in a log
+// line no API caller reads. See readiness.Watch for why terminal is the answer.
 func (h *Handler) scheduleHealthCheck(clusterARN, addr string, port int) {
-	const maxRetries = 60
 	region := serviceutil.ARNRegion(clusterARN)
-	var attempt int
-	var check func(ctx context.Context)
-	check = func(ctx context.Context) {
-		attempt++
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(addr, strconv.Itoa(port)), 2*time.Second)
-		if err == nil {
-			conn.Close()
-			h.transitionCluster(ctx, clusterARN, "ACTIVE", "CREATING", "STARTING", "HEALING")
-			return
-		}
-		if attempt < maxRetries {
-			h.scheduler.AfterScoped(region, clusterARN, "health", 2*time.Second, check)
-		} else {
-			h.log.Warn("MSK health check timed out — cluster stays in current state",
-				zap.String("cluster", clusterARN), zap.Int("attempts", attempt))
-		}
-	}
-	h.scheduler.AfterScoped(region, clusterARN, "health", 1*time.Second, check)
+	target := net.JoinHostPort(addr, strconv.Itoa(port))
+	readiness.Watch{
+		Scheduler:  h.scheduler,
+		Clock:      h.clk,
+		Region:     region,
+		ResourceID: clusterARN,
+		Transition: "health",
+		Subject:    "the Kafka broker at " + target,
+		Policy:     brokerReadiness,
+		Probe: func(ctx context.Context) readiness.Result {
+			got, aerr := h.store.getCluster(ctx, clusterARN)
+			if aerr != nil || got == nil {
+				return readiness.Abandoned()
+			}
+			if !stateIn(got.State, clusterAwaiting) {
+				// Deleted, or moved on by something with a reason of its own.
+				return readiness.Abandoned()
+			}
+			if err := probeBroker(ctx, target); err != nil {
+				return readiness.Retry(err)
+			}
+			return readiness.Answered()
+		},
+		OnReady: func(ctx context.Context) {
+			h.transitionCluster(ctx, clusterARN, "ACTIVE", clusterAwaiting...)
+		},
+		OnFailed: func(ctx context.Context, reason string) {
+			h.failCluster(ctx, clusterARN, reason)
+		},
+	}.Start()
 }
 
 // ── Docker container event handlers ──────────────────────────────────────────
@@ -384,7 +400,7 @@ func (h *Handler) handleContainerEvent(_ context.Context, e events.Event) {
 		return
 	}
 	switch cluster.State {
-	case "ACTIVE", "STARTING", "CREATING", "HEALING":
+	case "ACTIVE", "STARTING", "CREATING", "HEALING", stateFailed:
 		h.transitionCluster(ctx, p.ResourceID, "HEALING", cluster.State)
 		h.startClusterAsync(p.ResourceID)
 		h.log.Info("MSK cluster container stopped; replacement scheduled",
@@ -436,7 +452,7 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 		c := h.instances.OwnContainer(rctx, byResource[cluster.ClusterArn], cluster.DockerContainerID)
 		switch {
 		case c == nil:
-			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" || cluster.State == "HEALING" {
+			if clusterRuntimeExpected(cluster.State) {
 				h.transitionCluster(rctx, cluster.ClusterArn, "HEALING", cluster.State)
 				h.startClusterAsync(cluster.ClusterArn)
 				h.log.Info("reconcile: MSK container missing; replacement scheduled",
@@ -451,13 +467,13 @@ func (h *Handler) reconcileContainers(ctx context.Context, containers []docker.C
 			}); aerr != nil {
 				h.log.Warn("reconcile: persist MSK container", zap.String("cluster", cluster.ClusterArn), zap.String("error", aerr.Message))
 			}
-			if cluster.State == "CREATING" || cluster.State == "STARTING" || cluster.State == "HEALING" || cluster.State == "ACTIVE" {
+			if clusterRuntimeExpected(cluster.State) {
 				h.scheduleHealthCheck(cluster.ClusterArn, addr, port)
 				h.log.Info("reconcile: MSK container running — scheduling health check",
 					zap.String("cluster", cluster.ClusterArn))
 			}
 		default:
-			if cluster.State == "ACTIVE" || cluster.State == "STARTING" || cluster.State == "CREATING" || cluster.State == "HEALING" {
+			if clusterRuntimeExpected(cluster.State) {
 				h.transitionCluster(rctx, cluster.ClusterArn, "HEALING", cluster.State)
 				h.startClusterAsync(cluster.ClusterArn)
 				h.log.Info("reconcile: MSK container not running; replacement scheduled",

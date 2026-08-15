@@ -3923,6 +3923,87 @@ func (h *lambdaFunctionHandler) Create(ctx context.Context, router http.Handler,
 	return funcName, map[string]string{"FunctionName": funcName}, nil
 }
 
+// lambdaStabilizeTimeout bounds the wait for a function to become invocable.
+// AWS's own FunctionActive waiter allows five minutes (5s × 60 attempts); this
+// is twice that, because on real AWS the Pending window is seconds — a minute
+// or two for a function with VPC or EFS resources to configure — while here it
+// is however long the image takes to pull, which on a cold pull of a large
+// runtime image is minutes. The function's own "Failed" state is the fast way
+// out, so this budget only bites on one that never resolves either way.
+const lambdaStabilizeTimeout = 10 * time.Minute
+
+// lambdaFunctionStatuses is botocore's FunctionActive waiter, whose acceptors
+// over GetFunctionConfiguration are success on Active, failure on Failed, and
+// retry on Pending — the same three this classifies, with anything else
+// treated as work in progress.
+//
+// "Failed" is terminal by AWS's own account of it — a function whose
+// provisioning failed has to be deleted and recreated, so waiting one out only
+// delays the stack's rollback. "Inactive" is not, and the waiter does not name
+// it either: it means Lambda reclaimed an idle function's resources, and the
+// next invoke puts it back into Pending.
+var lambdaFunctionStatuses = statusVocabulary{
+	ready:  []string{"Active"},
+	failed: []string{"Failed"},
+}
+
+// Stabilize holds the resource open until Lambda reports the function Active,
+// which is what real CloudFormation waits for and what Overcast did not: a
+// stack completed while the function's image was still being pulled, and AWS
+// documents that an invoke — or an UpdateFunctionCode, or a PublishVersion —
+// against a Pending function fails.
+//
+// The wait deliberately stops there. "Active" means deployed, not working: a
+// function with a broken handler reaches Active on real AWS too and fails at
+// invoke, so proving the handler runs is not something CloudFormation does and
+// not something this should start doing. It would make every stack pay a cold
+// start, and would fail deploys that AWS completes.
+//
+// LastUpdateStatus is the other half of what real CloudFormation reads — the
+// update side of the same question, and AWS ships a separate FunctionUpdated
+// waiter for it. It is not read here because nothing in Overcast sets it, and a
+// wait on a field no service produces would hold every in-place function update
+// open for the whole budget. It belongs here the moment the Lambda service
+// reports it.
+//
+// See resourceStabilizer.
+func (h *lambdaFunctionHandler) Stabilize(ctx context.Context, router http.Handler, _ *config.Config, clk clock.Clock, physicalID string, rCtx *resolveContext) error {
+	name := physicalID
+	if i := strings.LastIndex(physicalID, ":"); i >= 0 {
+		name = physicalID[i+1:]
+	}
+	subject := fmt.Sprintf("function %s", name)
+	return awaitResourceReady(ctx, clk, stabilizeWait{
+		subject:  subject,
+		goal:     "become Active",
+		timeout:  lambdaStabilizeTimeout,
+		statuses: lambdaFunctionStatuses,
+		describe: func(ctx context.Context) (string, string, error) {
+			rec, err := internalRequest(ctx, router, rCtx.Region, http.MethodGet,
+				"/2015-03-31/functions/"+url.PathEscape(name)+"/configuration", "", nil)
+			if err != nil {
+				return "", "", fmt.Errorf("lambda GetFunctionConfiguration: %s: %w", subject, err)
+			}
+			var resp struct {
+				State           string `json:"State"`
+				StateReason     string `json:"StateReason"`
+				StateReasonCode string `json:"StateReasonCode"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				return "", "", fmt.Errorf("lambda GetFunctionConfiguration: parse response: %w", err)
+			}
+			// StateReason is where the reason a function is not Active ends up
+			// — a failed image pull says so there. The code on its own still
+			// beats reporting nothing.
+			reason := resp.StateReason
+			if reason == "" {
+				reason = resp.StateReasonCode
+			}
+			return resp.State, reason, nil
+		},
+	})
+}
+
 func (h *lambdaFunctionHandler) Delete(ctx context.Context, router http.Handler, _ *config.Config, physicalID string, rCtx *resolveContext) error {
 	name := physicalID
 	if i := strings.LastIndex(physicalID, ":"); i >= 0 {
